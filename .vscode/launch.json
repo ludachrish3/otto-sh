@@ -1,0 +1,40 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: with Arguments",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+        },
+        {
+        "name": "Python: Debug Tests",
+        "type": "debugpy",
+        "request": "launch",
+        "program": "${file}",
+        "purpose": [
+            "debug-test"
+        ],
+        "console": "integratedTerminal",
+        "justMyCode": false
+    },
+    {
+            "name": "uv debug",
+            "type": "debugpy",
+            "request": "launch",
+            "justMyCode": false,
+            "program": "${workspaceFolder}/src/otto/__main__.py",
+            "python": "${workspaceFolder}/.venv/bin/python",
+            "args": "${command:pickArgs}",
+            "console": "integratedTerminal",
+            "env": {
+                "OTTO_LAB": "veggies",
+                "OTTO_LOG_DAYS": "7",
+                "OTTO_SUT_DIRS": "${workspaceFolder}/tests/repo1",
+                "OTTO_XDIR": "${userHome}/xdir",
+            },
+        }
+    ]
+}

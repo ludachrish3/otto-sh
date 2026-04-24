@@ -1,0 +1,18 @@
+name = "repo1"
+version = "1.0.0"
+lab_data_type = "json"
+labs = [
+    "${sutDir}/../lab_data/tech1",
+]
+libs = [
+    "${sutDir}/pylib",
+]
+tests = [
+    "${sutDir}/tests"
+]
+init = [
+    'repo1_instructions',
+]
+
+[coverage]
+gcda_remote_dir = "/var/coverage/product"

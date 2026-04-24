@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Dummy files
+tests/repo1/product/product
+
+# Coverage files
+.coverage*
+coverage_report/
+*.gcno
+*.gcda
+
+# Performance files
+profile.txt
+
+# Sphinx build output
+docs/_build/
+
+# Claude files
+.claude/
+CLAUDE.md
+
+# Management files
+todo/*

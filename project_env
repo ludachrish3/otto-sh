@@ -1,0 +1,20 @@
+# Sample project environment
+
+# Default directory to store otto output
+export OTTO_XDIR=~/xdir
+
+# The directories with products under test
+export OTTO_SUT_DIRS=$(pwd)/tests/repo1,$(pwd)/tests/repo2
+
+# Default lab name (exists in test data)
+export OTTO_LAB=veggies
+
+# Default number of days to keep logs
+export OTTO_LOG_DAYS=1
+
+# Place otto on the system path
+export PATH=$PATH:$(pwd)/.venv/bin
+
+# Set up tab completion
+otto --install-completion
+source ~/.bash_completions/otto.sh

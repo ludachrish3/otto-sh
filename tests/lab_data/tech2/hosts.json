@@ -1,0 +1,49 @@
+[
+    {
+        "ip": "10.10.200.11",
+        "ne": "orange",
+        "board": "seed",
+        "creds": {
+            "vagrant": "vagrant",
+            "test": "Password1"
+        },
+        "resources": [
+            "orange"
+        ],
+        "labs": [
+            "fruits"
+        ]
+    },
+    {
+        "ip": "10.10.200.12",
+        "ne": "apple",
+        "board": "seed",
+        "creds": {
+            "vagrant": "vagrant",
+            "test": "Password1"
+        },
+        "resources": [
+            "apple"
+        ],
+        "hop": "orange_seed",
+        "labs": [
+            "fruits"
+        ]
+    },
+    {
+        "ip": "10.10.200.13",
+        "ne": "grape",
+        "board": "seed",
+        "creds": {
+            "vagrant": "vagrant",
+            "test": "Password1"
+        },
+        "resources": [
+            "grape"
+        ],
+        "hop": "apple_seed",
+        "labs": [
+            "fruits"
+        ]
+    }
+]

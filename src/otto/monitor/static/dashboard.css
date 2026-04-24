@@ -1,0 +1,373 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Theme variables ── */
+body {
+  /* Dark mode (default) */
+  --bg:             #0f1117;
+  --bg-panel:       #1a1d27;
+  --bg-bar:         #13151f;
+  --bg-input:       #1a1d27;
+  --bg-deep:        #0f1117;
+  --bg-cancel:      #2a2d3e;
+  --border:         #2e3147;
+  --border-ctrl:    #3a3d52;
+  --border-focus:   #5555aa;
+  --text:           #e0e0e0;
+  --text-head:      #c9d1f0;
+  --text-ctrl:      #8888cc;
+  --text-muted:     #888;
+  --text-cancel:    #aaa;
+  --modebar-filter: invert(0.15);
+
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+
+body.light {
+  --bg:             #f5f6fa;
+  --bg-panel:       #ffffff;
+  --bg-bar:         #eef0f7;
+  --bg-input:       #ffffff;
+  --bg-deep:        #f5f6fa;
+  --bg-cancel:      #e4e6f0;
+  --border:         #d0d3e8;
+  --border-ctrl:    #b8bcd8;
+  --border-focus:   #5555aa;
+  --text:           #1a1a2e;
+  --text-head:      #3a3f6e;
+  --text-ctrl:      #4a4f8a;
+  --text-muted:     #666;
+  --text-cancel:    #555;
+  --modebar-filter: none;
+}
+
+/* ── Header ── */
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 { font-size: 1.1rem; font-weight: 600; letter-spacing: 0.04em; color: var(--text-head); }
+
+#host-select {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-ctrl);
+  background: var(--bg-input);
+  color: var(--text-ctrl);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+#host-select:focus { outline: none; border-color: var(--border-focus); }
+
+#theme-btn, #pause-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-ctrl);
+  background: var(--bg-input);
+  color: var(--text-ctrl);
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#theme-btn:hover, #pause-btn:hover { border-color: var(--border-focus); color: var(--text-head); }
+#pause-btn:disabled { opacity: 0.4; cursor: default; }
+
+#export-btn {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border-ctrl);
+  background: var(--bg-input);
+  color: var(--text-ctrl);
+  font-size: 0.78rem;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+}
+#export-btn:hover { border-color: var(--border-focus); color: var(--text-head); }
+
+@keyframes status-blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.2; }
+}
+
+#status-label {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+#status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #888;
+  flex-shrink: 0;
+}
+#status-dot.live         { background: #2ca02c; box-shadow: 0 0 6px #2ca02c; animation: status-blink 1.25s ease-in-out infinite; }
+#status-dot.live.paused  { background: #e6c300; box-shadow: 0 0 6px #e6c300; animation: none; }
+#status-dot.disconnected { background: #d62728; box-shadow: 0 0 6px #d62728; }
+#status-dot.history      { background: #1f77b4; }
+
+/* ── Historical mode: hide live-only controls ── */
+body.historical #event-bar,
+body.historical #pause-btn,
+body.historical #export-btn { display: none; }
+
+/* ── Event bar ── */
+#event-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 20px;
+  background: var(--bg-bar);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.event-box {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
+}
+.event-box label { font-size: 0.78rem; color: var(--text-muted); white-space: nowrap; }
+#event-label, #span-label {
+  flex: 1 1 200px;
+  min-width: 120px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-ctrl);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+#event-color, #span-color {
+  width: 34px; height: 30px;
+  border: 1px solid var(--border-ctrl);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  padding: 2px;
+}
+#event-dash, #span-dash {
+  padding: 5px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border-ctrl);
+  background: var(--bg-input);
+  color: var(--text);
+  font-size: 0.82rem;
+}
+#event-btn {
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: none;
+  background: #3a3f6e;
+  color: #c9d1f0;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#event-btn:hover { background: #4a51a0; }
+#event-btn:disabled { opacity: 0.4; cursor: default; }
+body.light #event-btn         { background: #dde0f5; color: #3a3f6e; }
+body.light #event-btn:hover   { background: #c8cdf0; }
+
+#clear-events-btn {
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: none;
+  background: #3e2a2a;
+  color: #d09090;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#clear-events-btn:hover { background: #5a3030; }
+#clear-events-btn:disabled { opacity: 0.4; cursor: default; }
+body.light #clear-events-btn         { background: #f5dddd; color: #7a2020; }
+body.light #clear-events-btn:hover   { background: #edc8c8; }
+
+#span-btn {
+  padding: 5px 14px;
+  border-radius: 4px;
+  border: none;
+  background: #1e3a4a;
+  color: #80c8e0;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#span-btn:hover { background: #2a5068; }
+#span-btn:disabled { opacity: 0.4; cursor: default; }
+#span-btn.active { background: #1e3d28; color: #80d0a0; }
+#span-btn.active:hover { background: #2a5538; }
+body.light #span-btn         { background: #d5eef8; color: #1a5a7a; }
+body.light #span-btn:hover   { background: #b8dff0; }
+body.light #span-btn.active  { background: #d0ead8; color: #1a5a30; }
+body.light #span-btn.active:hover { background: #b8d8c8; }
+
+/* ── Tab bar ── */
+#tab-bar {
+  display: flex;
+  padding: 0 20px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+  padding: 10px 18px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.tab-btn:hover { color: var(--text-head); }
+.tab-btn.active { color: var(--text-head); border-bottom-color: #5555aa; }
+.tab-btn.hidden { display: none; }
+
+/* ── Tab panels ── */
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* ── Charts ── */
+.tab-charts { padding: 0; }
+.metric-plot { padding-bottom: 16px; }
+.tab-charts > .section-divider:first-child { border-top: none; padding-top: 10px; }
+
+.modebar-container { filter: var(--modebar-filter); }
+
+/* ── Section divider (between chart groups) ── */
+.section-divider {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 10px 20px 4px;
+  border-top: 1px solid var(--border);
+}
+
+#proc-section { display: none; }
+#proc-charts  { padding-bottom: 20px; }
+
+/* ── Event edit popover ── */
+#event-popover {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-ctrl);
+  border-radius: 6px;
+  padding: 10px 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  min-width: 220px;
+}
+#event-popover.visible { display: block; }
+#event-popover label { font-size: 0.75rem; color: var(--text-muted); display: block; margin-bottom: 2px; }
+#event-popover input[type=text] {
+  width: 100%;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-ctrl);
+  background: var(--bg-deep);
+  color: var(--text);
+  font-size: 0.83rem;
+  margin-bottom: 8px;
+}
+.popover-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+#popover-color {
+  width: 30px; height: 26px;
+  border: 1px solid var(--border-ctrl);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+  padding: 1px;
+  flex-shrink: 0;
+}
+#popover-dash {
+  flex: 1;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border-ctrl);
+  background: var(--bg-deep);
+  color: var(--text);
+  font-size: 0.82rem;
+}
+.popover-btns {
+  display: flex;
+  gap: 6px;
+}
+.popover-btns button {
+  flex: 1;
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: none;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+#popover-save   { background: #3a3f6e; color: #c9d1f0; }
+#popover-save:hover { background: #4a51a0; }
+#popover-delete { background: #3e2a2a; color: #d09090; }
+#popover-delete:hover { background: #5a3030; }
+#popover-cancel { background: var(--bg-cancel); color: var(--text-cancel); }
+#popover-cancel:hover { background: var(--border-ctrl); }
+
+/* ── Expand button on section dividers ── */
+.section-divider .expand-btn {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.section-divider .expand-btn:hover {
+  border-color: var(--border-ctrl);
+  color: var(--text);
+}
+
+/* ── Expanded plot mode ── */
+body.plot-expanded #tab-bar { display: none; }
+body.plot-expanded .tab-panel { display: block !important; }
+body.plot-expanded .tab-charts { display: none; }
+body.plot-expanded .tab-charts.expanded-section { display: block; }
+body.plot-expanded #proc-section { display: none !important; }
+body.plot-expanded #proc-section.expanded-section { display: block !important; }
+body.plot-expanded .section-divider { display: none; }
+body.plot-expanded .section-divider.expanded-title { display: flex; }
+body.plot-expanded .metric-plot { display: none; }
+body.plot-expanded .metric-plot.expanded-plot { display: block; }
+body.plot-expanded #proc-charts { display: none; }
+body.plot-expanded #proc-charts.expanded-plot { display: block; }

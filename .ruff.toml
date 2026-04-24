@@ -1,0 +1,66 @@
+target-version = "py310"
+line-length = 120
+indent-width = 4
+extend-exclude = [".vscode", ".idea", "__pycache__", ".python-version", ".ruff.toml", "ruff.toml", "setup.cfg", "pyproject.toml"]
+
+[format]
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = true
+docstring-code-line-length = 120
+
+[lint]
+# D - Enable all `pydocstyle` rules, limiting to those that adhere to the Pep257 convention enabled via `convention = "pep257"` below
+select = [
+    "E501",
+    "I",
+    "D",
+]
+ignore = [
+    "D100", # Missing docstring in public module // TODO: Stop ignoring this when ready to document modules
+    "D101", # Missing docstring in paublic class // TODO: Stop ignoring this when ready to document classes
+    "D102", # Missing docstring in public method // TODO: Stop ignoring this when ready to document methods
+    "D103", # Missing docstring in public function // TODO: Stop ignoring this when ready to document
+    "D104", # Missing docstring in public package // TODO: Stop ignoring this when ready to document packages
+    "D105", # Missing docstring in magic method // TODO: Stop ignoring
+    "D107", # Missing docstring in `__init__` // TODO: Stop ignoring this when ready to document constructors
+    "D200", # One-line docstring should fit on one line
+    "D202", # No blank lines allowed after function docstring
+    "D203",
+    "D204",
+    "D205",
+    "D211",
+    "D212",
+    "D301", # Use `r"""` if any backslashes in a docstring (Ignoring this because \n is sometimes needed in docstrings to render properly)
+    "D400",
+    "D406",
+    "D407",
+    "E266",
+    "C901",
+]
+
+[lint.pylint]
+# Maximum number of arguments for function / method
+max-args = 10
+# Maximum number of boolean expressions in a if statement
+max-bool-expr = 10
+# Maximum number of branch for function / method body
+max-branches = 100
+# Maximum number of locals for function / method body
+max-locals = 15
+# Maximum number of nested blocks for function / method body
+max-nested-blocks = 5
+# Maximum number of positional arguments allowed for a function or method definition
+max-positional-args = 10
+# Maximum number of public methods for a class (see R0904).
+max-public-methods = 30
+# Maximum number of return statements allowed for a function or method body
+max-returns = 10
+# Maximum number of statements in function / method body
+max-statements = 1000
+
+[lint.pydocstyle]
+convention = "pep257"
+
+[lint.mccabe]
+max-complexity = 10

@@ -1,0 +1,57 @@
+[
+    {
+        "ip": "10.10.200.11",
+        "ne": "carrot",
+        "board": "seed",
+        "term": "ssh",
+        "transfer": "scp",
+        "is_virtual": true,
+        "creds": {
+            "vagrant": "vagrant",
+            "test": "Password1"
+        },
+        "resources": [
+            "carrot"
+        ],
+        "labs": [
+            "veggies"
+        ]
+    },
+    {
+        "ip": "10.10.200.12",
+        "ne": "tomato",
+        "board": "seed",
+        "term": "telnet",
+        "transfer": "nc",
+        "is_virtual": true,
+        "creds": {
+            "vagrant": "vagrant",
+            "test": "Password1"
+        },
+        "resources": [
+            "tomato"
+        ],
+        "labs": [
+            "veggies"
+        ]
+    },
+    {
+        "ip": "10.10.200.13",
+        "ne": "pepper",
+        "board": "seed",
+        "term": "ssh",
+        "transfer": "scp",
+        "is_virtual": true,
+        "hop": "carrot_seed",
+        "creds": {
+            "vagrant": "vagrant",
+            "test": "Password1"
+        },
+        "resources": [
+            "pepper"
+        ],
+        "labs": [
+            "veggies"
+        ]
+    }
+]

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Otto Monitor</title>
+  <link rel="stylesheet" href="/static/dashboard.css" />
+  <script src="/static/plotly.min.js"></script>
+</head>
+<body>
+
+<header>
+  <h1>Otto Monitor</h1>
+  <select id="host-select" title="Select host to view"></select>
+  <button id="theme-btn" title="Switch to light mode">☀️</button>
+  <button id="pause-btn" title="Pause live updates" disabled>⏸</button>
+  <a id="export-btn" href="/api/export/json" title="Download metrics as JSON">↓ Export</a>
+  <span id="status-label">Connecting…</span>
+  <div id="status-dot"></div>
+</header>
+
+<nav id="tab-bar"></nav>
+
+<div id="event-bar">
+  <button id="clear-events-btn" disabled>Clear Events</button>
+  <div class="event-box">
+    <label for="event-label">Mark event:</label>
+    <input id="event-label" type="text" placeholder="e.g. Router rebooted" maxlength="120" />
+    <input id="event-color" type="color" value="#888888" title="Marker color" />
+    <select id="event-dash" title="Line style">
+      <option value="dash">dash</option>
+      <option value="dot">dot</option>
+      <option value="solid">solid</option>
+      <option value="longdash">longdash</option>
+      <option value="dashdot">dashdot</option>
+      <option value="longdashdot">longdashdot</option>
+    </select>
+    <button id="event-btn" disabled>Mark Event</button>
+  </div>
+  <div class="event-box">
+    <label for="span-label">Span event:</label>
+    <input id="span-label" type="text" placeholder="e.g. Maintenance window" maxlength="120" />
+    <input id="span-color" type="color" value="#888888" title="Span color" />
+    <select id="span-dash" title="Line style">
+      <option value="dash">dash</option>
+      <option value="dot">dot</option>
+      <option value="solid">solid</option>
+      <option value="longdash">longdash</option>
+      <option value="dashdot">dashdot</option>
+      <option value="longdashdot">longdashdot</option>
+    </select>
+    <button id="span-btn" disabled>Start event</button>
+  </div>
+</div>
+
+<div id="event-popover">
+  <label for="popover-label">Label</label>
+  <input id="popover-label" type="text" maxlength="120" />
+  <div class="popover-row">
+    <input id="popover-color" type="color" title="Marker color" />
+    <select id="popover-dash" title="Line style">
+      <option value="dash">dash</option>
+      <option value="dot">dot</option>
+      <option value="solid">solid</option>
+      <option value="longdash">longdash</option>
+      <option value="dashdot">dashdot</option>
+      <option value="longdashdot">longdashdot</option>
+    </select>
+  </div>
+  <div class="popover-btns">
+    <button id="popover-save">Save</button>
+    <button id="popover-delete">Delete</button>
+    <button id="popover-cancel">Cancel</button>
+  </div>
+</div>
+
+
+<script src="/static/dashboard.js"></script>
+</body>
+</html>

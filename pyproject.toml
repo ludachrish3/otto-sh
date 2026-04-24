@@ -1,0 +1,96 @@
+[project]
+name = "otto-sh"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aioftp>=0.27.2",
+    "aiosqlite>=0.21.0",
+    "asyncssh>=2.22.0",
+    "fastapi>=0.135.1",
+    "jinja2>=3.1.0",
+    "rich>=14.3.3",
+    "sse-starlette>=3.3.3",
+    "telnetlib3>=4.0.1",
+    "tomli>=2.4.0",
+    "typer>=0.24.0",
+    "uvicorn>=0.42.0",
+]
+
+[project.scripts]
+otto = "otto:app"
+
+[build-system]
+requires = [
+    "uv_build>=0.10.0",
+    "uv_build<0.11.0",
+]
+build-backend = "uv_build"
+
+# Dist name is `otto-sh` (for PyPI); the import package stays `otto`, so the
+# build backend needs to be pointed at src/otto/ explicitly.
+[tool.uv.build-backend]
+module-name = "otto"
+
+[dependency-groups]
+dev = [
+    "bump-my-version>=1.3.0",
+    "furo",
+    "myst-parser>=4.0.1",
+    "py-spy>=0.4.1",
+    "pyinstrument>=5.1.2",
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.14.7",
+    "sphinx>=8.0",
+    "sphinx-autodoc-typehints>=2.0",
+    "ty==0.0.31",
+]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+ignore = [
+    #"tests", # pytest does not play nice with type checking
+]
+
+# ty is being trialled alongside pyright; see todo/ty_vs_pylance_eval.md.
+# Pinned hard because ty uses 0.0.x versioning with breaking changes between
+# any two releases.
+[tool.ty.environment]
+python-version = "3.10"
+root = ["./src"]
+
+[tool.ty.src]
+include = ["src"]
+exclude = ["tests", "typings", "docs", "build", "dist"]
+
+# All rules at error — there is no pyright-style --strict preset, so we
+# escalate everything uniformly. Rules that turn out to be too noisy should
+# be demoted individually here (not silenced globally) so the decision is
+# visible in diff review.
+[tool.ty.rules]
+all = "error"
+
+[tool.pytest.ini_options]
+testpaths = [
+    "tests/unit",
+    "tests/integration",
+]
+pythonpath = ["src", "."]
+log_cli = true
+log_level = "INFO"
+log_format = "%(asctime)s [%(levelname)s] %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S.%f"
+addopts = "--doctest-modules --cov=otto --cov-context=test --cov-report term-missing --cov-report html -n auto --dist loadgroup"
+doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
+asyncio_default_fixture_loop_scope = "function"
+asyncio_mode = "strict"
+markers = [
+    "integration: requires running Vagrant VMs (deselect with -m 'not integration')",
+    "hops: multi-hop integration tests requiring 3 Vagrant VMs (deselect with -m 'not hops')",
+    "timeout(seconds): fail the test if it exceeds the given number of seconds",
+    "retry(n): retry the test up to n times on failure before reporting it as failed",
+]

@@ -1,0 +1,15 @@
+name = "repo2"
+version = "1.0.4"
+lab_data_type = "json"
+labs = [
+    "${sutDir}/../lab_data/tech2",
+]
+libs = [
+    "${sutDir}/pylib",
+]
+tests = [
+    "${sutDir}/tests"
+]
+init = [
+    'repo2_instructions',
+]
