@@ -466,7 +466,11 @@ class Repo():
     ) -> CommandStatus:
         from ..host.localHost import LocalHost
 
-        return (await LocalHost(log=False).run(f'git -C {self.sutDir} {cmd}')).only
+        host = LocalHost(log=False)
+        try:
+            return (await host.run(f'git -C {self.sutDir} {cmd}')).only
+        finally:
+            await host.close()
 
 
 def applyRepoSettings(
