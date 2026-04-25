@@ -42,7 +42,7 @@ Goal: otto is legally distributable and every push runs through automation. No p
 
 ### Documentation hosting
 
-✅ RTD project imported into the GitHub repo. ✅ Created [.readthedocs.yaml](../.readthedocs.yaml) using the Astral-recommended `asdf`-installs-uv recipe; `fail_on_warning: true` mirrors `make docs-html`'s `-W`. ✅ `Documentation = "https://otto-sh.readthedocs.io"` added to `[project.urls]` and to [README.md](../README.md) — assumed slug based on the GitHub repo name; **confirm against the RTD dashboard** (`app.readthedocs.org/projects/<slug>/`) and fix here, in `pyproject.toml`, and in `README.md` if RTD assigned a different slug. ⏳ First build will go live only after a commit is pushed to `main` (or the user clicks **Build version** in the RTD dashboard).
+✅ RTD project imported into the GitHub repo. ✅ Created [.readthedocs.yaml](../.readthedocs.yaml) using the Astral-recommended `asdf`-installs-uv recipe; `fail_on_warning: true` mirrors `make docs-html`'s `-W`. ✅ `Documentation = "https://otto-sh.readthedocs.io"` added to `[project.urls]` and to [README.md](../README.md) — slug confirmed against the RTD dashboard. ⏳ First build goes live once a commit is pushed to `main` (or the user clicks **Build version** in the RTD dashboard).
 
 **Recommendation: Read the Docs (RTD) at `otto.readthedocs.io`.** Otto's stack (Sphinx + myst-parser + furo) is RTD's canonical configuration — no migration friction. RTD gives you, out of the box: free hosting for OSS projects, a native version selector flyout menu (latest / stable / v0.1.0 / v0.1.1 / …), PR preview builds, full-text search, and a webhook-driven build on every tag push.
 
