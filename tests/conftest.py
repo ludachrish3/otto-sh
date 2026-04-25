@@ -7,8 +7,9 @@ import os
 # ANSI escapes in help/error text and breaks substring assertions like
 # `'--flag' in result.output`.
 os.environ["NO_COLOR"] = "1"
-os.environ.pop("FORCE_COLOR", None)
-os.environ.pop("CLICOLOR_FORCE", None)
+os.environ["TERM"] = "dumb"
+for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
+    os.environ.pop(_var, None)
 
 from otto.suite import timeout  # noqa: E402
 

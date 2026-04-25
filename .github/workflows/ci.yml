@@ -13,6 +13,17 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Force Rich/typer to render help and error output without ANSI styling.
+      # GitHub-Actions runners set PY_COLORS/FORCE_COLOR, which makes Rich emit
+      # bold/dim SGR codes that split flag names like '--region' across escapes
+      # and break substring assertions in tests.
+      NO_COLOR: "1"
+      TERM: dumb
+      FORCE_COLOR: ""
+      CLICOLOR_FORCE: ""
+      PY_COLORS: ""
+      CLICOLOR: ""
     steps:
       - uses: actions/checkout@v4
 
