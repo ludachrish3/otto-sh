@@ -1,13 +1,31 @@
 # Contributing
 
+## Development environment
+
+Vagrant can be used to develop and test changes to `otto`. After
+[installing Vagrant](https://developer.hashicorp.com/vagrant/install), run:
+
+```bash
+vagrant up            # start the dev VM and three test VMs
+vagrant ssh           # connect to the `dev` VM (the default)
+```
+
+The `dev` VM is privately networked with three test VMs (`test`, `test2`,
+`test3`). Develop and test from the `dev` VM — unit, integration, and
+end-to-end tests assume connectivity to the test VMs.
+
 ## Development setup
 
-Otto uses [uv](https://docs.astral.sh/uv/) for dependency management:
+Otto uses [uv](https://docs.astral.sh/uv/) for dependency management. Once
+the repo is cloned in the dev VM:
 
 ```bash
 make dev              # runs `uv sync` and sets up git hooks
+source project_env    # optional: sets up usage with test repos
 uv run pytest         # run the test suite
 ```
+
+`make dev` places `otto` at `otto-sh/.venv/bin/otto`.
 
 ## Running tests
 
@@ -99,6 +117,33 @@ make coverage
 uv run coverage run --source=otto --context=manual -m otto <subcommand> [args]
 uv run coverage html -d coverage_report
 ```
+
+## Type checking
+
+`ty` (from astral) is being trialled as a replacement for pyright. The
+project keeps a `[tool.pyright]` block for Pylance/VS Code, while
+`[tool.ty]` drives the CLI checker and the optional ty language server.
+
+```bash
+make typecheck     # run ty check against src/ with all rules at error
+```
+
+Config lives under `[tool.ty.*]` in `pyproject.toml`. ty is pinned to an
+exact version (`ty==0.0.31`) because its 0.0.x releases allow breaking
+diagnostic changes between any two versions — floating the pin would cause
+unannounced CI churn.
+
+Work the count down with per-line `# ty: ignore[rule-name]` suppressions
+(justified in the surrounding context) or by fixing the underlying type.
+Do not silence rules globally in `[tool.ty.rules]` — an individual
+demotion there needs to be defensible in review.
+
+Use `uv run ty explain rule <name>` for the full rationale and examples
+behind any diagnostic.
+
+For VS Code: install the "Astral ty" extension (Ctrl+Shift+P → Extensions
+→ search "ty"). It reads `[tool.ty]` from `pyproject.toml`, so LSP
+diagnostics and `make typecheck` stay in sync.
 
 ## Performance reports
 
