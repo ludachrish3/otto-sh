@@ -21,18 +21,18 @@ Goal: otto is legally distributable and every push runs through automation. No p
 
 ### Changes
 
-- **Create** [LICENSE](../LICENSE) — verbatim MIT text, `Copyright (c) 2026 Chris Collins`.
-- **Modify** [pyproject.toml](../pyproject.toml):
+- ✅ **Created** [LICENSE](../LICENSE) — verbatim MIT text, `Copyright (c) 2026 Chris Collins`.
+- ✅ **Modified** [pyproject.toml](../pyproject.toml):
   - ✅ `name` changed from `otto` → `otto-sh` (done ahead of Phase 4 to avoid churn; see "Name decision" below). Required a `[tool.uv.build-backend] module-name = "otto"` override so the build backend still finds [src/otto/](../src/otto/).
-  - Replace the placeholder `description`.
-  - Add `license = "MIT"` (PEP 639 SPDX form).
-  - Add `license-files = ["LICENSE"]`.
-  - Add `authors`, `keywords`, `classifiers` (`License :: OSI Approved :: MIT License`, `Programming Language :: Python :: 3.10`, `Development Status :: 3 - Alpha`, `Framework :: AsyncIO`).
-  - Add `[project.urls]` (Homepage, Source, Issues, Documentation).
-- **Create** [.github/workflows/ci.yml](../.github/workflows/ci.yml) — on push/PR: checkout, `astral-sh/setup-uv@v6` (has built-in cache), `uv sync --all-extras --dev`, `make all`. Single job on 3.10 for now; matrix lands in Phase 3.
-- **Create** [.github/dependabot.yml](../.github/dependabot.yml) — Dependabot is a GitHub bot that opens PRs bumping dependencies whenever a newer version is published (and flags known CVEs). The `weekly` cadence means it checks once a week and opens at most one PR per stale dep that week (daily is noisier, monthly risks missing security patches). Two ecosystems to configure: `pip` (covers uv-managed deps in `pyproject.toml`/`uv.lock`) and `github-actions` (so `setup-uv@v6`, `checkout@v4`, etc. stay current). Each PR triggers CI, so upgrades that break something surface as red CI before you merge.
-- **Create** [CHANGELOG.md](../CHANGELOG.md) — seeded with an "Unreleased" section using Keep a Changelog format.
-- **Create** [CONTRIBUTING.md](../CONTRIBUTING.md) — a stub pointing at the Makefile contract (`make all`).
+  - ✅ Replaced the placeholder `description`.
+  - ✅ Added `license = "MIT"` (PEP 639 SPDX form).
+  - ✅ Added `license-files = ["LICENSE"]`.
+  - ✅ Added `authors`, `keywords`, `classifiers` (`License :: OSI Approved :: MIT License`, `Programming Language :: Python :: 3.10`, `Development Status :: 3 - Alpha`, `Framework :: AsyncIO`, plus `Environment :: Console`, `Intended Audience :: Developers`, `Operating System :: POSIX :: Linux`, `Topic :: Software Development :: Testing`, `Topic :: System :: Systems Administration`).
+  - ✅ Added `[project.urls]` (Homepage, Source, Issues, Changelog). **Documentation URL deferred** until RTD project is actually published — add once `https://otto.readthedocs.io` resolves.
+- ✅ **Created** [.github/workflows/ci.yml](../.github/workflows/ci.yml) — on push/PR: checkout, `astral-sh/setup-uv@v6` (has built-in cache), `uv sync --all-extras --dev`, `make all`. Single job on 3.10 for now; matrix lands in Phase 3.
+- ✅ **Created** [.github/dependabot.yml](../.github/dependabot.yml) — Dependabot is a GitHub bot that opens PRs bumping dependencies whenever a newer version is published (and flags known CVEs). The `weekly` cadence means it checks once a week and opens at most one PR per stale dep that week (daily is noisier, monthly risks missing security patches). Two ecosystems configured: **`uv`** (Dependabot gained native uv support GA March 2025 — uses `uv.lock` directly; the older `pip` ecosystem still works for uv projects but `uv` is now preferred) and `github-actions` (so `setup-uv@v6`, `checkout@v4`, etc. stay current). Each PR triggers CI, so upgrades that break something surface as red CI before you merge.
+- ✅ **Created** [CHANGELOG.md](../CHANGELOG.md) — seeded with an "Unreleased" section using Keep a Changelog format.
+- ✅ **Created** [CONTRIBUTING.md](../CONTRIBUTING.md) at repo root — a stub pointing contributors at [docs/contributing.md](../docs/contributing.md) (the detailed guide that's part of the Sphinx build) and at the `make all` Makefile contract. Root-level placement is what GitHub auto-discovers for PR/issue UI surfacing; the docs/ version stays put because it's referenced from [docs/index.rst](../docs/index.rst).
 
 ### Rationale
 
@@ -41,12 +41,14 @@ Goal: otto is legally distributable and every push runs through automation. No p
 
 ### Documentation hosting
 
+✅ RTD project imported into the GitHub repo. ✅ Created [.readthedocs.yaml](../.readthedocs.yaml) using the Astral-recommended `asdf`-installs-uv recipe; `fail_on_warning: true` mirrors `make docs-html`'s `-W`. ✅ `Documentation = "https://otto-sh.readthedocs.io"` added to `[project.urls]` and to [README.md](../README.md) — assumed slug based on the GitHub repo name; **confirm against the RTD dashboard** (`app.readthedocs.org/projects/<slug>/`) and fix here, in `pyproject.toml`, and in `README.md` if RTD assigned a different slug. ⏳ First build will go live only after a commit is pushed to `main` (or the user clicks **Build version** in the RTD dashboard).
+
 **Recommendation: Read the Docs (RTD) at `otto.readthedocs.io`.** Otto's stack (Sphinx + myst-parser + furo) is RTD's canonical configuration — no migration friction. RTD gives you, out of the box: free hosting for OSS projects, a native version selector flyout menu (latest / stable / v0.1.0 / v0.1.1 / …), PR preview builds, full-text search, and a webhook-driven build on every tag push.
 
-- **Create** [.readthedocs.yaml](../.readthedocs.yaml) at repo root — pins build OS, Python, tells RTD to install with uv, and points at the Sphinx `conf.py` path. Version 2 schema.
-- **Sign up** at readthedocs.org, import the GitHub repo, enable the webhook. Activate the `latest` version (tracks `main`) and turn on "Build pull requests for this project".
-- **Configure** in RTD: set the default version to `stable` (which RTD auto-tracks to the highest semver tag once you have tags), and enable "Privacy Level: Public" + "Ad-free project" (request once under the community plan if ads bother you).
-- **Modify** [README.md](../README.md) and [pyproject.toml](../pyproject.toml) `[project.urls]` — point Documentation URL at `https://otto.readthedocs.io`.
+- ✅ **Created** [.readthedocs.yaml](../.readthedocs.yaml) at repo root — pins build OS (`ubuntu-24.04`), Python 3.10, installs uv via `asdf`, runs `uv sync --all-extras --dev`, builds with `uv run sphinx-build -W` to mirror `make docs-html`, points `sphinx.configuration` at `docs/conf.py` with `fail_on_warning: true`. Version 2 schema.
+- ⏳ **Sign up** at readthedocs.org, import the GitHub repo, enable the webhook. Activate the `latest` version (tracks `main`) and turn on "Build pull requests for this project". *(Repo is imported per user; pending first successful build.)*
+- ⏳ **Configure** in RTD: set the default version to `stable` (which RTD auto-tracks to the highest semver tag once you have tags), and enable "Privacy Level: Public" + "Ad-free project" (request once under the community plan if ads bother you).
+- ✅ **Modified** [README.md](../README.md) and [pyproject.toml](../pyproject.toml) `[project.urls]` — point Documentation URL at `https://otto-sh.readthedocs.io` (working assumption; may need fix if RTD assigned a different slug).
 
 How the version selector appears automatically: RTD detects git tags matching PEP 440 (so `v0.1.0`, `v0.1.1rc1`, etc.) and builds each one as a separate version. The furo theme's flyout menu (bottom-right on every doc page) lists every built version so readers can jump between `latest`, `stable`, and any tagged release. Nothing extra needs to be wired in Sphinx.
 
@@ -91,11 +93,11 @@ Recommendation sequence:
 
 ### Verification
 
-- Push a branch → CI green.
-- `uv build` produces a wheel whose `METADATA` contains `License-Expression: MIT`.
-- `uv run twine check dist/*` reports PASSED for both sdist and wheel.
-- RTD builds `latest` successfully on the next push to `main`; docs load at `https://otto.readthedocs.io/en/latest/`.
-- Opening a PR triggers an RTD preview build and posts a link as a commit status.
+- ⏳ Push a branch → CI green. *(Pending — workflow runs once first push lands on GitHub.)*
+- ✅ `uv build` produces a wheel whose `METADATA` contains `License-Expression: MIT`. *(Verified locally with `pkginfo`.)*
+- ✅ `uv run twine check dist/*` reports PASSED for both sdist and wheel.
+- ⏳ RTD builds `latest` successfully on the next push to `main`; docs load at `https://otto-sh.readthedocs.io/en/latest/`. *(Pending first build trigger.)*
+- ⏳ Opening a PR triggers an RTD preview build and posts a link as a commit status. *(Enable "Build pull requests for this project" in RTD admin if not already on.)*
 
 ---
 

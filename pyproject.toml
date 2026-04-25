@@ -1,9 +1,36 @@
 [project]
 name = "otto-sh"
 version = "0.1.0"
-description = "Add your description here"
+description = "Our Trusty Testing Orchestrator - framework and CLI for deploying, testing, and monitoring software across remote hosts."
 readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Chris Collins", email = "chriscoll93@gmail.com" },
+]
+keywords = [
+    "testing",
+    "automation",
+    "orchestration",
+    "ssh",
+    "telnet",
+    "asyncio",
+    "cli",
+    "remote-execution",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Framework :: AsyncIO",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Software Development :: Testing",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "aioftp>=0.27.2",
     "aiosqlite>=0.21.0",
@@ -20,6 +47,13 @@ dependencies = [
 
 [project.scripts]
 otto = "otto:app"
+
+[project.urls]
+Homepage = "https://github.com/ludachrish3/otto-sh"
+Source = "https://github.com/ludachrish3/otto-sh"
+Issues = "https://github.com/ludachrish3/otto-sh/issues"
+Documentation = "https://otto-sh.readthedocs.io"
+Changelog = "https://github.com/ludachrish3/otto-sh/blob/main/CHANGELOG.md"
 
 [build-system]
 requires = [

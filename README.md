@@ -178,8 +178,10 @@ Monitoring can also be started from within a test suite using
 
 ## Documentation
 
-Full documentation lives under `docs/` and can be built with `make docs` —
-the generated HTML is written to `docs/_build/html/`. Key entry points:
+Hosted documentation: [otto-sh.readthedocs.io](https://otto-sh.readthedocs.io).
+
+The same content lives under `docs/` and can be built locally with `make docs`
+— the generated HTML is written to `docs/_build/html/`. Key entry points:
 
 - `docs/getting-started.md` — installation and first steps
 - `docs/guide/` — detailed guides for each CLI command
