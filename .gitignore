@@ -14,7 +14,7 @@ tests/repo1/product/product
 
 # Coverage files
 .coverage*
-coverage_report/
+coverage_report
 *.gcno
 *.gcda
 
@@ -22,11 +22,7 @@ coverage_report/
 profile.txt
 
 # Sphinx build output
-docs/_build/
+docs/_build
 
 # Claude files
-.claude/
-CLAUDE.md
-
-# Management files
-todo/*
+.claude
