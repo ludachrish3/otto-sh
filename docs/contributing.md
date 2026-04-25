@@ -5,8 +5,8 @@
 Otto uses [uv](https://docs.astral.sh/uv/) for dependency management:
 
 ```bash
-uv sync               # install all dependencies
-uv run pytest          # run the test suite
+make dev              # runs `uv sync` and sets up git hooks
+uv run pytest         # run the test suite
 ```
 
 ## Running tests
@@ -105,3 +105,10 @@ uv run coverage html -d coverage_report
 ```bash
 uv run pyinstrument -o profile.txt -m otto <subcommand> [args]
 ```
+
+## AI-Assisted Contributions
+
+AI coding tools (e.g., GitHub Copilot, Claude, Cursor) are permitted for
+contributions to otto. If your PR contains AI-assisted code, please note it
+in the PR description. Regardless of how code was generated, contributors
+are responsible for understanding, testing, and owning what they submit.

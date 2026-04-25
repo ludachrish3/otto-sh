@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all clean-dist build test coverage docs docs-html doctest typecheck clean
+.PHONY: help all clean-dist dev build test coverage docs docs-html doctest typecheck clean
 
 COVERAGE_THRESHOLD := 85
 
@@ -13,6 +13,11 @@ all: ## Run full CI pipeline (stops at the first failing step)
 
 clean-dist:
 	@rm -rf dist
+
+dev:
+	uv sync
+	git config core.hooksPath .githooks
+	@echo "Dev environment ready"
 
 build: ## Build the project with uv
 	uv build

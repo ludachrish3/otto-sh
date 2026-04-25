@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# prepare-commit-msg
+#
+# Prompts the user to tag a commit with the AI tool used, if any.
+# Install: cp prepare-commit-msg .git/hooks/prepare-commit-msg
+#          chmod +x .git/hooks/prepare-commit-msg
+#
+# To share with your team, commit this file to .githooks/ and add to
+# your project setup instructions:
+#   git config core.hooksPath .githooks
+
+COMMIT_MSG_FILE="$1"
+COMMIT_SOURCE="$2"
+
+# ── Options ────────────────────────────────────────────────────────────────────
+# OPT_NONE and OPT_CUSTOM are sentinel values — they drive behavior, not tags.
+# OPT_DEFAULT controls which option number is selected on empty input.
+OPT_NONE="None"
+OPT_CLAUDE_OPUS="Claude Opus 4.7"
+OPT_CLAUDE_SONNET="Claude Sonnet 4.6"
+OPT_CUSTOM="Custom"
+OPT_DEFAULT=1   # Options are 1-indexed
+
+OPTIONS=(
+    "$OPT_NONE"             # 1
+    "$OPT_CLAUDE_OPUS"      # 2
+    "$OPT_CLAUDE_SONNET"    # 3
+    "$OPT_CUSTOM"           # 4
+)
+# ──────────────────────────────────────────────────────────────────────────────
+
+# Skip automated commit sources (merges, squashes, amends, -m flag)
+case "$COMMIT_SOURCE" in
+    merge|squash|commit)
+        exit 0
+        ;;
+esac
+
+# Read from terminal directly — stdin is not available in git hooks
+exec < /dev/tty
+
+echo ""
+echo "┌─ AI assistance used in this commit? ───────────────────┐"
+echo "│                                                        │"
+for i in "${!OPTIONS[@]}"; do
+    num=$((i + 1))
+    label="${OPTIONS[$i]}"
+    if [ "$num" -eq "$OPT_DEFAULT" ]; then
+        printf "│  [%s] %-50s│\n" "$num" "$label  (default)"
+    else
+        printf "│  [%s] %-50s│\n" "$num" "$label"
+    fi
+done
+echo "│                                                        │"
+echo "└────────────────────────────────────────────────────────┘"
+printf "  Select [%s]: " "$OPT_DEFAULT"
+read -r choice
+
+# Resolve empty input to the default option number
+[ -z "$choice" ] && choice="$OPT_DEFAULT"
+
+# Validate numeric input is in range
+if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#OPTIONS[@]}" ]; then
+    echo "  Invalid selection — skipping tag."
+    exec < /dev/null
+    exit 0
+fi
+
+selected="${OPTIONS[$((choice - 1))]}"
+
+if [ "$selected" = "$OPT_NONE" ]; then
+    exec < /dev/null
+    exit 0
+elif [ "$selected" = "$OPT_CUSTOM" ]; then
+    printf "  Name: "
+    read -r selected
+    if [ -z "$selected" ]; then
+        echo "  No name entered — skipping tag."
+        exec < /dev/null
+        exit 0
+    fi
+fi
+
+AI_TAG="$selected"
+
+exec < /dev/null
+
+# Add as a properly formatted git trailer (blank line + Token: Value)
+git interpret-trailers --in-place --trailer "Assisted-by: $AI_TAG" "$COMMIT_MSG_FILE"
+
+exit 0
