@@ -1,13 +1,30 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all clean-dist dev build test coverage docs docs-html doctest typecheck clean
+.PHONY: help all ci clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean
 
 COVERAGE_THRESHOLD := 85
+# CI runs unit tests only (integration/hops markers need Vagrant VMs that
+# don't exist in GitHub Actions), so the achievable threshold is lower.
+CI_COVERAGE_THRESHOLD := 80
 
-all: ## Run full CI pipeline (stops at the first failing step)
+# Hard ceiling on the pytest invocation so a hung test (e.g. an integration
+# test waiting on an unreachable VM) can't stall the pipeline indefinitely.
+# Full suite runs in ~40s locally; 2 min leaves headroom for slower runners.
+# --kill-after escalates SIGTERM → SIGKILL if xdist workers don't drain.
+PYTEST_TIMEOUT := 120s
+TIMEOUT_CMD := timeout --kill-after=10s $(PYTEST_TIMEOUT)
+
+all: ## Run full pipeline against the dev VM (includes integration tests)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) typecheck \
 		&& $(MAKE) coverage \
+		&& $(MAKE) docs \
+		&& $(MAKE) build
+
+ci: ## Run pipeline without VM-dependent tests (used by GitHub Actions)
+	@$(MAKE) clean-dist \
+		&& $(MAKE) typecheck \
+		&& $(MAKE) coverage-unit \
 		&& $(MAKE) docs \
 		&& $(MAKE) build
 
@@ -26,7 +43,10 @@ test: ## Run tests (use TESTS= to filter)
 	uv run pytest -k '$(TESTS)'
 
 coverage: ## Run tests and enforce coverage threshold
-	uv run pytest --cov-fail-under=$(COVERAGE_THRESHOLD)
+	$(TIMEOUT_CMD) uv run pytest --cov-fail-under=$(COVERAGE_THRESHOLD)
+
+coverage-unit: ## Run unit tests only (no Vagrant VMs needed) and enforce CI threshold
+	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not integration and not hops" --cov-fail-under=$(CI_COVERAGE_THRESHOLD)
 
 typecheck: ## Run ty type checker (advisory during trial; not wired into `all`)
 	uv run ty check
