@@ -101,8 +101,14 @@ class TestTimeout:
     @pytest.mark.integration
     async def test_timeout_returns_error(self, host1: Host):
         result = (await host1.run("sleep 999", timeout=0.5)).only
-        assert result.status == Status.Error
-        assert "timed out" in result.output
+        assert result.status == Status.Error, (
+            f"expected Status.Error, got {result.status!r}; "
+            f"retcode={result.retcode!r} output={result.output!r}"
+        )
+        assert "timed out" in result.output, (
+            f"expected 'timed out' in output; "
+            f"status={result.status!r} retcode={result.retcode!r} output={result.output!r}"
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.integration
