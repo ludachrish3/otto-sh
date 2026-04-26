@@ -1,18 +1,92 @@
 #!/usr/bin/env bash
 # prepare-commit-msg
 #
-# Prompts the user to tag a commit with the AI tool used, if any.
+# Two interactive prompts on `git commit`:
+#   1. Commit type prefix (feat/fix/chore/...) — prepended to the subject.
+#      Skipped if the message already starts with a Conventional Commits
+#      prefix (so re-edits and tool-generated commits like bump-my-version
+#      are not double-prefixed).
+#   2. AI assistance tag — added as an `Assisted-by:` trailer.
+#
+# Both prompts skip for merge/squash/amend commits and `git commit -m "..."`.
+#
 # Install: cp prepare-commit-msg .git/hooks/prepare-commit-msg
 #          chmod +x .git/hooks/prepare-commit-msg
 #
-# To share with your team, commit this file to .githooks/ and add to
-# your project setup instructions:
+# To share with your team, commit this file to .githooks/ and set:
 #   git config core.hooksPath .githooks
+# (otto-sh's `make dev` does this for you.)
 
 COMMIT_MSG_FILE="$1"
 COMMIT_SOURCE="$2"
 
-# ── Options ────────────────────────────────────────────────────────────────────
+# Skip automated commit sources (merges, squashes, amends, -m flag)
+case "$COMMIT_SOURCE" in
+    merge|squash|commit)
+        exit 0
+        ;;
+esac
+
+# ── Commit type prompt ────────────────────────────────────────────────────────
+# Conventional Commits prefixes. Keep in sync with the table in
+# docs/contributing.md > "Branching and commits".
+TYPE_OPTIONS=(feat fix chore docs test refactor ci)
+TYPE_LABELS=(
+    "New feature"
+    "Bug fix"
+    "No production code change (tooling, deps, refactors)"
+    "Documentation only"
+    "Tests only"
+    "Code restructuring, no behavior change"
+    "CI/CD configuration"
+)
+TYPE_DEFAULT=3   # chore — safest default if you're unsure
+TYPE_SKIP=$((${#TYPE_OPTIONS[@]} + 1))
+
+# First non-comment line of the existing message — used to detect a
+# pre-existing conventional prefix and skip the prompt in that case.
+first_line=$(grep -m1 -v '^#' "$COMMIT_MSG_FILE" | head -n1)
+
+# Regex must live in a variable so bash's `[[ =~ ]]` parses the parens as
+# regex syntax rather than shell grouping. Reference unquoted below.
+conventional_prefix_re='^(feat|fix|chore|docs|test|refactor|ci|build|perf|style|revert)(\([^)]+\))?!?:'
+
+if [[ ! "$first_line" =~ $conventional_prefix_re ]]; then
+    # Read from terminal directly — stdin is not available in git hooks
+    exec < /dev/tty
+
+    echo ""
+    echo "Commit type (Conventional Commits):"
+    for i in "${!TYPE_OPTIONS[@]}"; do
+        num=$((i + 1))
+        marker=""
+        [ "$num" -eq "$TYPE_DEFAULT" ] && marker="  (default)"
+        printf "  [%s] %-10s %s%s\n" "$num" "${TYPE_OPTIONS[$i]}:" "${TYPE_LABELS[$i]}" "$marker"
+    done
+    printf "  [%s] %-10s leave message as-is\n" "$TYPE_SKIP" "skip:"
+    printf "Select [%s]: " "$TYPE_DEFAULT"
+    read -r tchoice
+
+    # Resolve empty input to the default
+    [ -z "$tchoice" ] && tchoice="$TYPE_DEFAULT"
+
+    if [[ "$tchoice" =~ ^[0-9]+$ ]] \
+       && [ "$tchoice" -ge 1 ] \
+       && [ "$tchoice" -le "${#TYPE_OPTIONS[@]}" ]; then
+        prefix="${TYPE_OPTIONS[$((tchoice - 1))]}: "
+        # Prepend without trailing newline — first line becomes "<prefix> "
+        # followed by whatever was on the original first line (typically blank).
+        tmp=$(mktemp)
+        printf '%s' "$prefix" > "$tmp"
+        cat "$COMMIT_MSG_FILE" >> "$tmp"
+        mv "$tmp" "$COMMIT_MSG_FILE"
+    fi
+    # Skip option or invalid input → leave the message untouched.
+
+    exec < /dev/null
+fi
+
+# ── Options for AI assistance prompt ──────────────────────────────────────────
 # OPT_NONE and OPT_CUSTOM are sentinel values — they drive behavior, not tags.
 # OPT_DEFAULT controls which option number is selected on empty input.
 OPT_NONE="None"
@@ -28,13 +102,6 @@ OPTIONS=(
     "$OPT_CUSTOM"           # 4
 )
 # ──────────────────────────────────────────────────────────────────────────────
-
-# Skip automated commit sources (merges, squashes, amends, -m flag)
-case "$COMMIT_SOURCE" in
-    merge|squash|commit)
-        exit 0
-        ;;
-esac
 
 # Read from terminal directly — stdin is not available in git hooks
 exec < /dev/tty
