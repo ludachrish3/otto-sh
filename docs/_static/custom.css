@@ -1,0 +1,25 @@
+/* Astral-uv-inspired palette overrides. */
+
+:root,
+[data-md-color-scheme="default"] {
+    --md-primary-fg-color: #261230;
+    --md-primary-fg-color--light: #3a1d47;
+    --md-primary-fg-color--dark: #1a0c22;
+}
+
+body[data-md-color-scheme="slate"],
+[data-md-color-scheme="slate"] {
+    --md-primary-fg-color: #261230;
+    --md-primary-fg-color--light: #3a1d47;
+    --md-primary-fg-color--dark: #1a0c22;
+
+    --md-default-bg-color: #1d1424 !important;
+    --md-default-bg-color--light: hsla(280, 25%, 11%, 0.54) !important;
+    --md-default-bg-color--lighter: hsla(280, 25%, 11%, 0.26) !important;
+    --md-default-bg-color--lightest: hsla(280, 25%, 11%, 0.07) !important;
+
+    --md-code-bg-color: #2a1f33;
+
+    --md-typeset-a-color: #ffd54f !important;
+    --md-accent-fg-color: #ffeb3b !important;
+}

@@ -15,6 +15,7 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx_autodoc_typehints",
     "myst_parser",
+    "sphinx_immaterial",
 ]
 
 source_suffix = {
@@ -22,7 +23,44 @@ source_suffix = {
     '.md': 'markdown',
 }
 
-html_theme = "furo"
+html_theme = "sphinx_immaterial"
+html_static_path = ["_static"]
+html_css_files = ["custom.css"]
+
+html_theme_options = {
+    "palette": [
+        {
+            "media": "(prefers-color-scheme)",
+            "scheme": "default",
+            "primary": "custom",
+            "accent": "pink",
+            "toggle": {
+                "icon": "material/brightness-auto",
+                "name": "Switch to dark mode",
+            }
+        },
+        {
+            "media": "(prefers-color-scheme: dark)",
+            "scheme": "slate",
+            "primary": "custom",
+            "accent": "pink",
+            "toggle": {
+                "icon": "material/brightness-4",
+                "name": "Switch to light mode",
+            }
+        },
+        {
+            "media": "(prefers-color-scheme: light)",
+            "scheme": "default",
+            "primary": "custom",
+            "accent": "pink",
+            "toggle": {
+                "icon": "material/brightness-7",
+                "name": "Switch to system preference",
+            }
+        },
+    ]
+}
 
 exclude_patterns = ["RESTRUCTURE_PLAN.md"]
 

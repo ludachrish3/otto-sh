@@ -70,7 +70,7 @@ module-name = "otto"
 [dependency-groups]
 dev = [
     "bump-my-version>=1.3.0",
-    "furo",
+    "sphinx-immaterial",
     "myst-parser>=4.0.1",
     "py-spy>=0.4.1",
     "pyinstrument>=5.1.2",
