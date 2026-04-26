@@ -47,7 +47,7 @@ Goal: otto is legally distributable and every push runs through automation. No p
 **Recommendation: Read the Docs (RTD) at `otto.readthedocs.io`.** Otto's stack (Sphinx + myst-parser + furo) is RTD's canonical configuration — no migration friction. RTD gives you, out of the box: free hosting for OSS projects, a native version selector flyout menu (latest / stable / v0.1.0 / v0.1.1 / …), PR preview builds, full-text search, and a webhook-driven build on every tag push.
 
 - ✅ **Created** [.readthedocs.yaml](../.readthedocs.yaml) at repo root — pins build OS (`ubuntu-24.04`), Python 3.10, installs uv via `asdf`, runs `uv sync --all-extras --dev`, builds with `uv run sphinx-build -W` to mirror `make docs-html`, points `sphinx.configuration` at `docs/conf.py` with `fail_on_warning: true`. Version 2 schema.
-- ✅ **Signed up** at readthedocs.org, import the GitHub repo, enable the webhook. Activate the `latest` version (tracks `main`) and turn on "Build pull requests for this project".
+- ⏳ **Sign up** at readthedocs.org, import the GitHub repo, enable the webhook. Activate the `latest` version (tracks `main`) and turn on "Build pull requests for this project". *(Repo is imported per user; pending first successful build.)*
 - ⏳ **Configure** in RTD: set the default version to `stable` (which RTD auto-tracks to the highest semver tag once you have tags), and enable "Privacy Level: Public" + "Ad-free project" (request once under the community plan if ads bother you).
 - ✅ **Modified** [README.md](../README.md) and [pyproject.toml](../pyproject.toml) `[project.urls]` — point Documentation URL at `https://otto-sh.readthedocs.io` (working assumption; may need fix if RTD assigned a different slug).
 
@@ -94,10 +94,10 @@ Recommendation sequence:
 
 ### Verification
 
-- ✅ Pushed a branch → CI green.
+- ⏳ Push a branch → CI green. *(Pending — workflow runs once first push lands on GitHub.)*
 - ✅ `uv build` produces a wheel whose `METADATA` contains `License-Expression: MIT`. *(Verified locally with `pkginfo`.)*
 - ✅ `uv run twine check dist/*` reports PASSED for both sdist and wheel.
-- ✅ RTD builds `latest` successfully on the next push to `main`; docs load at `https://otto-sh.readthedocs.io/en/latest/`
+- ⏳ RTD builds `latest` successfully on the next push to `main`; docs load at `https://otto-sh.readthedocs.io/en/latest/`. *(Pending first build trigger.)*
 - ⏳ Opening a PR triggers an RTD preview build and posts a link as a commit status. *(Enable "Build pull requests for this project" in RTD admin if not already on.)*
 
 ---
