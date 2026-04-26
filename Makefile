@@ -1,10 +1,15 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean release
+.PHONY: help all ci validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean release
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
 BUMP ?= patch
+
+# Coverage target invoked by `validate`. `ci` overrides this to
+# `coverage-unit` because GitHub Actions doesn't have the Vagrant VMs
+# that integration/hops tests require.
+COVERAGE_TARGET ?= coverage
 
 COVERAGE_THRESHOLD := 85
 # CI runs unit tests only (integration/hops markers need Vagrant VMs that
@@ -19,29 +24,26 @@ PYTEST_TIMEOUT := 120s
 TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 
 all: ## Run full pipeline against the dev VM (includes integration tests)
-	@$(MAKE) clean-dist \
-		&& $(MAKE) typecheck \
-		&& $(MAKE) coverage \
-		&& $(MAKE) docs \
+	@$(MAKE) validate \
 		&& $(MAKE) build
 
 ci: ## Run pipeline without VM-dependent tests (used by GitHub Actions)
-	@$(MAKE) clean-dist \
-		&& $(MAKE) typecheck \
-		&& $(MAKE) coverage-unit \
-		&& $(MAKE) docs \
+	@$(MAKE) validate COVERAGE_TARGET=coverage-unit \
 		&& $(MAKE) build
 
 release: ## Validate, bump version, then build dist at the new version (BUMP=patch|minor|major, default patch)
-	@$(MAKE) clean-dist \
-		&& $(MAKE) typecheck \
-		&& $(MAKE) coverage \
-		&& $(MAKE) docs \
+	@$(MAKE) validate \
 		&& bump-my-version bump --verbose $(BUMP) \
 		&& $(MAKE) build \
 		&& echo \
 		&& echo "Bumped version, tagged, and built dist/ at the new version. Push with:" \
 		&& echo "    git push --follow-tags"
+
+validate: ## Run validation (clean-dist, typecheck, coverage, docs) without building dist
+	@$(MAKE) clean-dist \
+		&& $(MAKE) typecheck \
+		&& $(MAKE) $(COVERAGE_TARGET) \
+		&& $(MAKE) docs
 
 clean-dist:
 	@rm -rf dist
