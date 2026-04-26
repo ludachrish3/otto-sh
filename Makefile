@@ -34,7 +34,7 @@ ci: ## Run pipeline without VM-dependent tests (used by GitHub Actions)
 
 release: ## Run full pipeline, then bump version (BUMP=patch|minor|major, default patch)
 	@$(MAKE) all \
-		&& bump-my-version bump $(BUMP) \
+		&& bump-my-version bump --verbose $(BUMP) \
 		&& echo \
 		&& echo "Bumped version and tagged locally. Push with:" \
 		&& echo "    git push --follow-tags"
