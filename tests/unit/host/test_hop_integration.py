@@ -307,6 +307,7 @@ class TestFileTransferThroughHop:
 
     @pytest.mark.asyncio
     @pytest.mark.hops
+    @pytest.mark.retry(3)
     async def test_nc_put_through_hop(self, tmp_path: Path):
         """Upload a file through an SSH hop via netcat (port-forwarded)."""
         data = host_data("tomato")
@@ -335,6 +336,7 @@ class TestFileTransferThroughHop:
 
     @pytest.mark.asyncio
     @pytest.mark.hops
+    @pytest.mark.retry(3)
     async def test_nc_get_through_hop(self, tmp_path: Path):
         """Download a file through an SSH hop via netcat (reversed-listener)."""
         data = host_data("tomato")

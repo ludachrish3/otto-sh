@@ -18,6 +18,7 @@
 - Further nc transfer startup optimizations deferred to dedicated todos:
   - [nc_monitor_retirement.md](nc_monitor_retirement.md) — replace `_nc_monitor` session with a lock around the exec pool.
   - [telnet_login_drain.md](telnet_login_drain.md) — remove the 1 s silence-drain in telnet login via sentinel-driven readiness.
+  - [hop_nc_transfer_flake.md](hop_nc_transfer_flake.md) — root-cause the nc-through-hop transfer hang (currently band-aided with `@pytest.mark.retry(3)`).
 - Maybe hosts can have their own list of all supported protocols? This would allow for sane flexibility when choosing a host's term or transfer type, but the host might be limited.
 - Move coverage collection to be a subpage of the test command
 - Add darkmode toggle to coverage reports
