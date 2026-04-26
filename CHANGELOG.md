@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.1] - 2026-04-26
+
 ### Added
 
 - MIT license and PEP 639 metadata in `pyproject.toml`.
@@ -18,4 +20,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Root-level `CONTRIBUTING.md` pointing at the detailed contributor guide.
 - Read the Docs config (`.readthedocs.yaml`) building Sphinx docs via uv.
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.0.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/ludachrish3/otto-sh/compare/v0.0.0...v0.0.1
