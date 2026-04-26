@@ -12,7 +12,7 @@ CI_COVERAGE_THRESHOLD := 80
 # Full suite runs in ~40s locally; 2 min leaves headroom for slower runners.
 # --kill-after escalates SIGTERM → SIGKILL if xdist workers don't drain.
 PYTEST_TIMEOUT := 120s
-TIMEOUT_CMD := timeout --kill-after=10s $(PYTEST_TIMEOUT)
+TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 
 all: ## Run full pipeline against the dev VM (includes integration tests)
 	@$(MAKE) clean-dist \
