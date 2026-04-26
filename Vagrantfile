@@ -56,8 +56,10 @@ Vagrant.configure("2") do |config|
 
         dev.vm.provision "shell", name: "dev-root", keep_color: true, inline: <<-SHELL
 
-            # Install development tools for coverage testing
-            apt install -y gcc lcov
+            # Install GitHub client and development tools for coverage testing
+            apt install -y  gcc     \
+                            gh      \
+                            lcov    \
 
             # Set MTU to 1350 on all ethernet interfaces to support mobile
             # connections that have a smaller MTU size

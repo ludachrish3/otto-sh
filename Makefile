@@ -1,6 +1,10 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean
+.PHONY: help all ci clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean release
+
+# Bump component for `make release`. Override on the command line:
+#   make release BUMP=minor
+BUMP ?= patch
 
 COVERAGE_THRESHOLD := 85
 # CI runs unit tests only (integration/hops markers need Vagrant VMs that
@@ -27,6 +31,13 @@ ci: ## Run pipeline without VM-dependent tests (used by GitHub Actions)
 		&& $(MAKE) coverage-unit \
 		&& $(MAKE) docs \
 		&& $(MAKE) build
+
+release: ## Run full pipeline, then bump version (BUMP=patch|minor|major, default patch)
+	@$(MAKE) all \
+		&& bump-my-version bump $(BUMP) \
+		&& echo \
+		&& echo "Bumped version and tagged locally. Push with:" \
+		&& echo "    git push --follow-tags"
 
 clean-dist:
 	@rm -rf dist

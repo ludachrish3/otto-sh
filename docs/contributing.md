@@ -27,6 +27,114 @@ uv run pytest         # run the test suite
 
 `make dev` places `otto` at `otto-sh/.venv/bin/otto`.
 
+## Branching and commits
+
+All work branches off `main`. `main` is protected — direct pushes are
+rejected, so every change lands via a pull request.
+
+```bash
+git checkout main
+git pull --rebase
+git checkout -b <type>/<short-description>
+```
+
+Use one of these branch prefixes:
+
+| Prefix     | Use for                              |
+|------------|--------------------------------------|
+| `feature/` | New functionality                    |
+| `fix/`     | Bug fixes                            |
+| `chore/`   | Tooling, deps, CI, refactors         |
+| `docs/`    | Documentation only                   |
+
+Examples: `feature/add-ssh-retry-logic`, `fix/gcda-parse-error-on-empty-file`.
+
+Keep commits focused — one logical concern per commit. Use
+[Conventional Commit](https://www.conventionalcommits.org/) prefixes in
+the message subject:
+
+| Prefix      | Meaning                                     |
+|-------------|---------------------------------------------|
+| `feat:`     | New feature                                 |
+| `fix:`      | Bug fix                                     |
+| `chore:`    | No production code change                   |
+| `docs:`     | Documentation only                          |
+| `test:`     | Tests only                                  |
+| `refactor:` | Code restructuring, no behavior change      |
+| `ci:`       | CI/CD configuration                         |
+
+Before pushing, run `make all` locally — it mirrors CI
+(`clean-dist → typecheck → coverage → docs → build`).
+
+## Keeping your branch up to date
+
+Always rebase, never merge, so history stays linear:
+
+```bash
+git checkout main
+git pull --rebase
+
+git checkout <your-branch>
+git rebase main
+```
+
+Resolve conflicts commit by commit during the rebase
+(`git add <file>` then `git rebase --continue`, or `git rebase --abort`
+to start over). Push with `--force-with-lease` — it refuses to clobber
+upstream commits you haven't seen:
+
+```bash
+git push origin <your-branch> --force-with-lease
+```
+
+## Pull requests
+
+PRs target `main`. Link the related issue in the body using a closing
+keyword so it auto-closes on merge:
+
+```text
+Closes #42
+```
+
+Open as a draft while work is in progress, then mark Ready for review
+once `make all` is green:
+
+```bash
+gh pr create --draft --base main --title "feat: add SSH retry logic"
+```
+
+A maintainer will **squash and merge** once approved — you do not need
+to squash yourself. After merge, delete the branch and pull `main`:
+
+```bash
+git checkout main
+git pull --rebase
+git branch -d <your-branch>
+```
+
+### PR checklist
+
+- [ ] Commits follow the conventional commit format
+- [ ] `make all` passes locally
+- [ ] Branch is rebased on the latest `main`
+- [ ] Related issue linked (`Closes #N`)
+- [ ] `CHANGELOG.md` updated under `## [Unreleased]` for user-facing changes
+- [ ] No manual edits to the version string
+
+## Version management
+
+Versioning is owned by maintainers and driven by
+[`bump-my-version`](https://github.com/callowayproject/bump-my-version).
+Do not hand-edit the `version` field in `pyproject.toml` — your PR will
+be asked to revert the change.
+
+For user-facing changes, add an entry to `CHANGELOG.md` under the
+`## [Unreleased]` section. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) (`Added`,
+`Changed`, `Fixed`, `Removed`). When a release is cut, the maintainer
+runs `bump-my-version` to promote `[Unreleased]` to a numbered version
+and update `pyproject.toml` in the same commit.
+
 ## Running tests
 
 ```bash

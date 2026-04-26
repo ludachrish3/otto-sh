@@ -18,4 +18,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Root-level `CONTRIBUTING.md` pointing at the detailed contributor guide.
 - Read the Docs config (`.readthedocs.yaml`) building Sphinx docs via uv.
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/HEAD...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.0.0...HEAD

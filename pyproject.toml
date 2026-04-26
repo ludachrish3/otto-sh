@@ -1,6 +1,6 @@
 [project]
 name = "otto-sh"
-version = "0.1.0"
+version = "0.0.0"
 description = "Our Trusty Testing Orchestrator - framework and CLI for deploying, testing, and monitoring software across remote hosts."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -128,3 +128,34 @@ markers = [
     "timeout(seconds): fail the test if it exceeds the given number of seconds",
     "retry(n): retry the test up to n times on failure before reporting it as failed",
 ]
+
+[tool.bumpversion]
+current_version = "0.0.0"
+commit = true
+tag = true
+tag_name = "v{new_version}"
+tag_message = "Release v{new_version}"
+message = "chore(release): bump version {current_version} -> {new_version}"
+
+[[tool.bumpversion.files]]
+filename = "pyproject.toml"
+search = 'version = "{current_version}"'
+replace = 'version = "{new_version}"'
+
+[[tool.bumpversion.files]]
+filename = "CHANGELOG.md"
+search = "## [Unreleased]"
+replace = "## [Unreleased]\n\n## [{new_version}] - {now:%Y-%m-%d}"
+
+[[tool.bumpversion.files]]
+filename = "CHANGELOG.md"
+search = "[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v{current_version}...HEAD"
+replace = "[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v{new_version}...HEAD\n[{new_version}]: https://github.com/ludachrish3/otto-sh/compare/v{current_version}...v{new_version}"
+
+# Keep the lock entry for otto-sh in sync. Without this, every `uv run`
+# after a bump detects pyproject ↔ lock drift and re-syncs the lock,
+# dirtying the tree and blocking the next `make release`.
+[[tool.bumpversion.files]]
+filename = "uv.lock"
+search = "name = \"otto-sh\"\nversion = \"{current_version}\""
+replace = "name = \"otto-sh\"\nversion = \"{new_version}\""
