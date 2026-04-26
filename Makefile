@@ -32,11 +32,15 @@ ci: ## Run pipeline without VM-dependent tests (used by GitHub Actions)
 		&& $(MAKE) docs \
 		&& $(MAKE) build
 
-release: ## Run full pipeline, then bump version (BUMP=patch|minor|major, default patch)
-	@$(MAKE) all \
+release: ## Validate, bump version, then build dist at the new version (BUMP=patch|minor|major, default patch)
+	@$(MAKE) clean-dist \
+		&& $(MAKE) typecheck \
+		&& $(MAKE) coverage \
+		&& $(MAKE) docs \
 		&& bump-my-version bump --verbose $(BUMP) \
+		&& $(MAKE) build \
 		&& echo \
-		&& echo "Bumped version and tagged locally. Push with:" \
+		&& echo "Bumped version, tagged, and built dist/ at the new version. Push with:" \
 		&& echo "    git push --follow-tags"
 
 clean-dist:
