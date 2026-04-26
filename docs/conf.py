@@ -72,7 +72,7 @@ autodoc_default_options = {
     'undoc-members': True,
     'show-inheritance': True,
 }
-autodoc_typehints = 'description'
+autodoc_typehints = 'signature'
 
 # -- napoleon -----------------------------------------------------------------
 

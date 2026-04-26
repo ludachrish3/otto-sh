@@ -15,6 +15,7 @@ Package summary
 ---------------
 
 .. automodule:: otto.reservations
+   :no-members:
 
 The backend contract
 --------------------
@@ -89,7 +90,6 @@ Backend factory
 ---------------
 
 .. autofunction:: otto.reservations.build_backend
-   :no-index:
 
 Extension points for implementers
 ---------------------------------
