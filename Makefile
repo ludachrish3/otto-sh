@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean release
+.PHONY: help all ci validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean release publish-test
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -37,7 +37,14 @@ release: ## Validate, bump version, then build dist at the new version (BUMP=pat
 		&& $(MAKE) build \
 		&& echo \
 		&& echo "Bumped version, tagged, and built dist/ at the new version. Push with:" \
-		&& echo "    git push --follow-tags"
+		&& echo "    git push --follow-tags" \
+		&& echo "Publish to TestPyPI with:" \
+		&& echo "    make publish-test    (requires UV_PUBLISH_TOKEN in env)"
+
+publish-test: ## Upload dist/ to TestPyPI (requires UV_PUBLISH_TOKEN in env)
+	uv publish \
+		--publish-url https://test.pypi.org/legacy/ \
+		--check-url   https://test.pypi.org/simple/
 
 validate: ## Run validation (clean-dist, typecheck, coverage, docs) without building dist
 	@$(MAKE) clean-dist \
