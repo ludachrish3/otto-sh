@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-27
+
 ## [0.0.2] - 2026-04-27
 
 ## [0.0.1] - 2026-04-26
@@ -22,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Root-level `CONTRIBUTING.md` pointing at the detailed contributor guide.
 - Read the Docs config (`.readthedocs.yaml`) building Sphinx docs via uv.
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ludachrish3/otto-sh/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/ludachrish3/otto-sh/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/ludachrish3/otto-sh/compare/v0.0.0...v0.0.1
