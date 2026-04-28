@@ -47,7 +47,7 @@ dependencies = [
     "telnetlib3>=4.0.1",
     "tomli>=2.4.0",
     "typer>=0.24.0",
-    "uvicorn>=0.42.0",
+    "uvicorn>=0.46.0",
 ]
 
 [project.scripts]
