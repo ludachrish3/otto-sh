@@ -83,8 +83,15 @@ _OPTIONS_BUILDERS: dict[str, Any] = {
     'nc_options': _build_nc_options,
 }
 
+OPTIONS_KEYS: frozenset[str] = frozenset(_OPTIONS_BUILDERS)
+"""Names of the per-protocol option tables accepted on host dicts and as
+repo-level ``[host_defaults.<key>]`` tables."""
 
-def create_host_from_dict(host_data: dict[str, Any]) -> RemoteHost:
+
+def create_host_from_dict(
+    host_data: dict[str, Any],
+    defaults: dict[str, dict[str, Any]] | None = None,
+) -> RemoteHost:
     """
     Create appropriate Host subclass from dictionary.
 
@@ -111,6 +118,11 @@ def create_host_from_dict(host_data: dict[str, Any]) -> RemoteHost:
         - scp_options (optional): dict mapped onto ``ScpOptions`` fields
         - ftp_options (optional): dict mapped onto ``FtpOptions`` fields
         - nc_options (optional): dict mapped onto ``NcOptions`` fields
+    defaults : dict[str, dict[str, Any]] | None
+        Optional repo-level option defaults, keyed by ``*_options`` table
+        name. When supplied, each table is merged per-key beneath the
+        host's own ``*_options`` (host keys win). ``None`` (the default)
+        reproduces today's behavior bit-for-bit.
 
     Returns
     -------
@@ -136,10 +148,14 @@ def create_host_from_dict(host_data: dict[str, Any]) -> RemoteHost:
     if 'toolchain' in kwargs and isinstance(kwargs['toolchain'], dict):
         kwargs['toolchain'] = _build_toolchain(kwargs['toolchain'])
 
-    # Convert each *_options dict to its dataclass instance
+    # Convert each *_options dict to its dataclass instance, merging
+    # repo-level defaults beneath the host's own values per-key.
+    defaults = defaults or {}
     for opt_key, builder in _OPTIONS_BUILDERS.items():
-        if opt_key in kwargs and isinstance(kwargs[opt_key], dict):
-            kwargs[opt_key] = builder(kwargs[opt_key])
+        host_table = kwargs.get(opt_key) if isinstance(kwargs.get(opt_key), dict) else {}
+        default_table = defaults.get(opt_key, {})
+        if default_table or host_table:
+            kwargs[opt_key] = builder({**default_table, **host_table})
 
     # Determine which Host subclass to instantiate
     return RemoteHost(**kwargs)

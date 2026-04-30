@@ -10,9 +10,11 @@ from otto.configmodule.configmodule import (
     ConfigModuleManager,
     ConfigModule,
     do_for_all_hosts,
+    get_host,
     run_on_all_hosts,
 )
 from otto.configmodule.lab import Lab
+from otto.host.options import SshOptions, TelnetOptions
 from otto.utils import CommandStatus, Status
 
 from tests.unit.conftest import make_host
@@ -188,3 +190,87 @@ class TestRunOnAllHosts:
             )
 
         assert set(result.keys()) == {"pepper_seed"}
+
+
+class TestPerCallOptionOverrides:
+    """Tests for the per-call ``*_options=`` kwargs on get_host / all_hosts.
+
+    The override path must produce a *fresh* RemoteHost via
+    ``dataclasses.replace`` so ``__post_init__`` re-runs and the new
+    ConnectionManager is constructed with the override options. Stored
+    hosts must be untouched, and identity must be preserved when no
+    overrides are passed.
+    """
+
+    def test_get_host_no_overrides_preserves_identity(self, three_hosts):
+        """Without overrides, get_host returns the stored instance."""
+        a = get_host("carrot_seed")
+        b = get_host("carrot_seed")
+        assert a is b
+        assert a is three_hosts["carrot_seed"]
+
+    def test_get_host_with_override_returns_copy(self, three_hosts):
+        """With an override, get_host returns a fresh RemoteHost copy."""
+        original = three_hosts["carrot_seed"]
+        override = SshOptions(port=9999, connect_timeout=5.0)
+        host = get_host("carrot_seed", ssh_options=override)
+
+        assert host is not original
+        assert host.ssh_options is override
+
+    def test_override_does_not_mutate_stored_host(self, three_hosts):
+        """Stored host's options remain untouched after an override call."""
+        original = three_hosts["carrot_seed"]
+        original_options = original.ssh_options
+        get_host("carrot_seed", ssh_options=SshOptions(port=12345))
+
+        re_fetched = get_host("carrot_seed")
+        assert re_fetched is original
+        assert re_fetched.ssh_options is original_options
+
+    def test_override_rebuilds_connection_manager(self, three_hosts):
+        """``__post_init__`` re-runs, so the override host has a *fresh*
+        ConnectionManager — proving options are wired in via construction
+        rather than post-hoc field assignment."""
+        original = three_hosts["carrot_seed"]
+        override = SshOptions(port=9999)
+        host = get_host("carrot_seed", ssh_options=override)
+
+        assert host._connections is not original._connections
+
+    def test_multiple_protocol_overrides_in_one_call(self, three_hosts):
+        """Each provided ``*_options=`` kwarg replaces only its own field."""
+        original = three_hosts["carrot_seed"]
+        ssh_override = SshOptions(port=7777)
+        telnet_override = TelnetOptions(cols=300)
+        host = get_host(
+            "carrot_seed",
+            ssh_options=ssh_override,
+            telnet_options=telnet_override,
+        )
+
+        assert host.ssh_options is ssh_override
+        assert host.telnet_options is telnet_override
+        # Other options fields fall through unchanged.
+        assert host.sftp_options == original.sftp_options
+        assert host.ftp_options == original.ftp_options
+
+    def test_all_hosts_with_override_yields_copies(self, three_hosts):
+        """all_hosts applies the override to every yielded host."""
+        override = SshOptions(port=8888)
+        yielded = list(all_hosts(ssh_options=override))
+
+        assert len(yielded) == 3
+        for h in yielded:
+            assert h.ssh_options is override
+            # The yielded host must not be the stored instance.
+            assert h is not three_hosts[h.id]
+        # Stored hosts must still have their original options.
+        for stored in three_hosts.values():
+            assert stored.ssh_options is not override
+
+    def test_all_hosts_no_override_preserves_identity(self, three_hosts):
+        """Without overrides, all_hosts yields the stored instances."""
+        yielded = list(all_hosts())
+        for h in yielded:
+            assert h is three_hosts[h.id]

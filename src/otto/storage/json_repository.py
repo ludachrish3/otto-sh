@@ -31,6 +31,7 @@ class JsonFileLabRepository:
     def load_lab(self,
         name: str,
         search_paths: list[Path],
+        defaults: dict[str, dict[str, Any]] | None = None,
     ) -> Lab:
         """
         Load a lab by filtering hosts from hosts.json files.
@@ -44,6 +45,9 @@ class JsonFileLabRepository:
             Name of the lab to load
         search_paths : list[Path]
             Directories to search for hosts.json files
+        defaults : dict[str, dict[str, Any]] | None
+            Optional repo-level option defaults forwarded to the host
+            factory; merged per-key beneath each host's own ``*_options``.
 
         Returns
         -------
@@ -88,7 +92,7 @@ class JsonFileLabRepository:
 
         for idx, host_data in enumerate(matching):
             try:
-                host = create_host_from_dict(host_data)
+                host = create_host_from_dict(host_data, defaults=defaults)
                 lab.addHost(host)
                 lab.resources.update(host.resources)
             except Exception as e:

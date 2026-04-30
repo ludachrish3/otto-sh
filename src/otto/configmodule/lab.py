@@ -5,7 +5,10 @@ from dataclasses import (
     field,
 )
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import (
+    TYPE_CHECKING,
+    Any,
+)
 
 if TYPE_CHECKING:
     from ..host import RemoteHost
@@ -53,6 +56,7 @@ class Lab():
 def _getIndividualLab(
     labname: str,
     search_paths: list[Path] | None = None,
+    defaults: dict[str, dict[str, Any]] | None = None,
 ) -> Lab:
     """
     Load an individual lab by name.
@@ -63,6 +67,8 @@ def _getIndividualLab(
         Name of the lab to load
     search_paths : list[Path] | None
         Directories to search for lab data. If None, uses empty list.
+    defaults : dict[str, dict[str, Any]] | None
+        Optional repo-level option defaults forwarded to the lab repository.
 
     Returns
     -------
@@ -78,11 +84,12 @@ def _getIndividualLab(
         search_paths = []
 
     repo = JsonFileLabRepository()
-    return repo.load_lab(labname, search_paths)
+    return repo.load_lab(labname, search_paths, defaults=defaults)
 
 def getLab(
     labnames: str | list[str],
     search_paths: list[Path] | None = None,
+    defaults: dict[str, dict[str, Any]] | None = None,
 ) -> Lab:
     """
     Perform all actions necessary to build a Lab object based on a list of lab names.
@@ -93,6 +100,10 @@ def getLab(
         Name(s) of lab data to retrieve.
     search_paths : list[Path] | None
         Directories to search for lab data.
+    defaults : dict[str, dict[str, Any]] | None
+        Optional repo-level option defaults applied to every host in the
+        resulting lab. Keys are ``*_options`` table names; values are
+        per-field dicts merged beneath each host's own options.
 
     Returns
     -------
@@ -106,7 +117,7 @@ def getLab(
         case _:
             labnameList = labnames
 
-    labs = [_getIndividualLab(name, search_paths) for name in labnameList]
+    labs = [_getIndividualLab(name, search_paths, defaults=defaults) for name in labnameList]
     lab = labs[0]
     for additionalLab in labs[1:]:
         lab += additionalLab

@@ -1,4 +1,5 @@
 import asyncio
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from typing import (
@@ -18,6 +19,14 @@ from .repo import Repo
 
 if TYPE_CHECKING:
     from ..host import RemoteHost, RunResult
+    from ..host.options import (
+        FtpOptions,
+        NcOptions,
+        ScpOptions,
+        SftpOptions,
+        SshOptions,
+        TelnetOptions,
+    )
     from ..reservations import ReservationBackend, ResolvedIdentity
 
 T = TypeVar("T")
@@ -117,6 +126,52 @@ def setConfigModule(
 
     _manager.configModule = configModule
 
+def _apply_option_overrides(
+    host: 'RemoteHost',
+    *,
+    ssh_options: 'SshOptions | None' = None,
+    telnet_options: 'TelnetOptions | None' = None,
+    sftp_options: 'SftpOptions | None' = None,
+    scp_options: 'ScpOptions | None' = None,
+    ftp_options: 'FtpOptions | None' = None,
+    nc_options: 'NcOptions | None' = None,
+) -> 'RemoteHost':
+    """Return a copy of *host* with the given ``*_options`` fields replaced.
+
+    Each non-``None`` argument **replaces** the corresponding field on the
+    returned copy wholesale; the caller is responsible for constructing
+    the full options instance they want.
+
+    The copy is built via :func:`dataclasses.replace`, which re-runs
+    :meth:`RemoteHost.__post_init__` and therefore constructs a *fresh*
+    :class:`ConnectionManager` with the override options wired in from
+    the start. This is required because protocol options shape the
+    connection itself (key algorithms, hop wiring, etc.) and cannot be
+    swapped on an already-open connection. The original *host* and any
+    connection it owns are untouched; the override copy will open its
+    own connection on first use.
+
+    When no overrides are supplied, the original *host* is returned
+    unchanged so identity (``host is host``) is preserved for non-override
+    callers.
+    """
+    overrides: dict[str, Any] = {
+        k: v
+        for k, v in (
+            ('ssh_options', ssh_options),
+            ('telnet_options', telnet_options),
+            ('sftp_options', sftp_options),
+            ('scp_options', scp_options),
+            ('ftp_options', ftp_options),
+            ('nc_options', nc_options),
+        )
+        if v is not None
+    }
+    if not overrides:
+        return host
+    return dataclasses.replace(host, **overrides)
+
+
 def getHost(
     name: str,
 ) -> 'RemoteHost':
@@ -129,6 +184,13 @@ def getHost(
 
 def all_hosts(
     pattern: re.Pattern[str] | None = None,
+    *,
+    ssh_options: 'SshOptions | None' = None,
+    telnet_options: 'TelnetOptions | None' = None,
+    sftp_options: 'SftpOptions | None' = None,
+    scp_options: 'ScpOptions | None' = None,
+    ftp_options: 'FtpOptions | None' = None,
+    nc_options: 'NcOptions | None' = None,
 ) -> Generator['RemoteHost', Any, Any]:
     """Yield every host in the active lab, optionally filtered by regex.
 
@@ -136,6 +198,18 @@ def all_hosts(
         pattern: Compiled regex matched against each host's ``id`` via
             ``pattern.search()``.  When *None* (the default), all hosts
             are yielded.
+        ssh_options, telnet_options, sftp_options, scp_options,
+        ftp_options, nc_options: Optional per-call option overrides. When
+            supplied, each yielded host is a fresh
+            :func:`dataclasses.replace`-style copy whose corresponding
+            ``*_options`` field is replaced by the caller's instance
+            (wholesale replacement, not per-key merge). The new host has
+            a fresh :class:`ConnectionManager` constructed with the
+            override options, so the override values shape whichever
+            connection opens first. Stored hosts in ``lab.hosts`` are
+            untouched. When no overrides are passed, the stored
+            instances are yielded as-is so identity is preserved. Hop
+            resolution is internal and is *not* affected by overrides.
 
     Yields:
         RemoteHost: Each matching host from the lab configuration.
@@ -149,13 +223,27 @@ def all_hosts(
     for host in configModule.lab.hosts.values():
         if pattern is not None and not pattern.search(host.id):
             continue
-        yield host
+        yield _apply_option_overrides(
+            host,
+            ssh_options=ssh_options,
+            telnet_options=telnet_options,
+            sftp_options=sftp_options,
+            scp_options=scp_options,
+            ftp_options=ftp_options,
+            nc_options=nc_options,
+        )
 
 async def do_for_all_hosts(
     method: Callable[..., Awaitable[T]],
     *args: Any,
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,
+    ssh_options: 'SshOptions | None' = None,
+    telnet_options: 'TelnetOptions | None' = None,
+    sftp_options: 'SftpOptions | None' = None,
+    scp_options: 'ScpOptions | None' = None,
+    ftp_options: 'FtpOptions | None' = None,
+    nc_options: 'NcOptions | None' = None,
     **kwargs: Any,
 ) -> dict[str, T | BaseException]:
     """Call an async host method on every matching host.
@@ -167,6 +255,10 @@ async def do_for_all_hosts(
         concurrent: When ``True`` (default), run all calls via
             ``asyncio.gather`` with ``return_exceptions=True``.
             When ``False``, execute serially.
+        ssh_options, telnet_options, sftp_options, scp_options,
+        ftp_options, nc_options: Optional per-call option overrides
+            forwarded to :func:`all_hosts`. See its docstring for
+            semantics.
         **kwargs: Keyword arguments forwarded to *method*.
 
     Returns:
@@ -181,7 +273,15 @@ async def do_for_all_hosts(
         ...     pattern=re.compile(r"router"),
         ... )
     """
-    hosts = list(all_hosts(pattern=pattern))
+    hosts = list(all_hosts(
+        pattern=pattern,
+        ssh_options=ssh_options,
+        telnet_options=telnet_options,
+        sftp_options=sftp_options,
+        scp_options=scp_options,
+        ftp_options=ftp_options,
+        nc_options=nc_options,
+    ))
 
     if concurrent:
         results = await asyncio.gather(
@@ -204,6 +304,13 @@ async def run_on_all_hosts(
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,
     timeout: float | None = None,
+    *,
+    ssh_options: 'SshOptions | None' = None,
+    telnet_options: 'TelnetOptions | None' = None,
+    sftp_options: 'SftpOptions | None' = None,
+    scp_options: 'ScpOptions | None' = None,
+    ftp_options: 'FtpOptions | None' = None,
+    nc_options: 'NcOptions | None' = None,
 ) -> 'dict[str, RunResult | BaseException]':
     """Run commands on every matching host via :meth:`RemoteHost.run`.
 
@@ -216,6 +323,9 @@ async def run_on_all_hosts(
         concurrent: When ``True`` (default), run all calls via
             ``asyncio.gather``.  When ``False``, execute serially.
         timeout: Per-host timeout forwarded to ``run``.
+        ssh_options, telnet_options, sftp_options, scp_options,
+        ftp_options, nc_options: Optional per-call option overrides
+            forwarded to :func:`do_for_all_hosts`.
 
     Returns:
         A dict keyed by host ID.  Values are :class:`RunResult` instances,
@@ -237,12 +347,50 @@ async def run_on_all_hosts(
         _run_list,
         pattern=pattern,
         concurrent=concurrent,
+        ssh_options=ssh_options,
+        telnet_options=telnet_options,
+        sftp_options=sftp_options,
+        scp_options=scp_options,
+        ftp_options=ftp_options,
+        nc_options=nc_options,
     )
 
 
 def get_host(
     host_id: str,
+    *,
+    ssh_options: 'SshOptions | None' = None,
+    telnet_options: 'TelnetOptions | None' = None,
+    sftp_options: 'SftpOptions | None' = None,
+    scp_options: 'ScpOptions | None' = None,
+    ftp_options: 'FtpOptions | None' = None,
+    nc_options: 'NcOptions | None' = None,
 ) -> 'RemoteHost':
+    """Return the host registered under *host_id* in the active lab.
+
+    Args:
+        host_id: Unique host id (as produced by ``RemoteHost.id``).
+        ssh_options, telnet_options, sftp_options, scp_options,
+        ftp_options, nc_options: Optional per-call option overrides.
+            Each non-``None`` argument **replaces** the corresponding
+            ``*_options`` field on a returned copy wholesale; the copy is
+            built via :func:`dataclasses.replace` so the new host's
+            :class:`ConnectionManager` is constructed with the override
+            options from the start. The stored host (and any connection
+            it owns) is untouched. With no overrides, the stored
+            instance is returned unchanged so
+            ``get_host('x') is get_host('x')`` still holds. Hop
+            resolution is internal and is *not* affected by overrides.
+    """
 
     configModule = getConfigModule()
-    return configModule.lab.hosts[host_id]
+    host = configModule.lab.hosts[host_id]
+    return _apply_option_overrides(
+        host,
+        ssh_options=ssh_options,
+        telnet_options=telnet_options,
+        sftp_options=sftp_options,
+        scp_options=scp_options,
+        ftp_options=ftp_options,
+        nc_options=nc_options,
+    )

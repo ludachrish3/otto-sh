@@ -222,3 +222,78 @@ class TestToolchainDeserialization:
         assert host.toolchain.sysroot == Path('/')
         assert host.toolchain.gcov_bin == '/bin/custom-gcov'
         assert host.toolchain.lcov_bin == '/usr/bin/lcov'
+
+
+class TestRepoLevelOptionDefaults:
+    """Tests for the ``defaults=`` parameter on ``create_host_from_dict``."""
+
+    def _base_host(self, **extra):
+        data = {
+            'ip': '10.10.200.11',
+            'ne': 'orange',
+            'creds': {'vagrant': 'vagrant'},
+        }
+        data.update(extra)
+        return data
+
+    def test_defaults_none_reproduces_today_behavior(self):
+        """``defaults=None`` is bit-for-bit identical to the prior signature."""
+        before = create_host_from_dict(self._base_host())
+        after = create_host_from_dict(self._base_host(), defaults=None)
+        assert before.ssh_options == after.ssh_options
+        assert before.telnet_options == after.telnet_options
+
+    def test_defaults_only_applied_when_host_has_no_options(self):
+        """A repo default fills in fields the host did not specify."""
+        host = create_host_from_dict(
+            self._base_host(),
+            defaults={'ssh_options': {'connect_timeout': 99.0, 'port': 2222}},
+        )
+        assert host.ssh_options.connect_timeout == 99.0
+        assert host.ssh_options.port == 2222
+
+    def test_host_overrides_default_per_key(self):
+        """Per-key merge: host wins for keys it sets, default fills the rest."""
+        host = create_host_from_dict(
+            self._base_host(ssh_options={'port': 9000}),
+            defaults={'ssh_options': {'connect_timeout': 99.0, 'port': 2222}},
+        )
+        assert host.ssh_options.port == 9000          # host wins
+        assert host.ssh_options.connect_timeout == 99.0  # inherited from default
+
+    def test_defaults_for_one_protocol_dont_affect_another(self):
+        """An ``ssh_options`` default doesn't leak into ``telnet_options``."""
+        host = create_host_from_dict(
+            self._base_host(),
+            defaults={'ssh_options': {'connect_timeout': 99.0}},
+        )
+        # telnet_options is untouched — its dataclass defaults apply.
+        from otto.host.options import TelnetOptions
+        assert host.telnet_options == TelnetOptions()
+
+    def test_defaults_apply_across_multiple_protocols(self):
+        """Multiple ``[host_defaults.<key>]`` tables are honored simultaneously."""
+        host = create_host_from_dict(
+            self._base_host(),
+            defaults={
+                'ssh_options': {'connect_timeout': 99.0},
+                'telnet_options': {'cols': 200},
+            },
+        )
+        assert host.ssh_options.connect_timeout == 99.0
+        assert host.telnet_options.cols == 200
+
+    def test_unknown_field_in_defaults_table_raises(self):
+        """Typos inside an options sub-table fail loudly via the builder."""
+        with pytest.raises(TypeError):
+            create_host_from_dict(
+                self._base_host(),
+                defaults={'ssh_options': {'totally_unknown_field': 1}},
+            )
+
+    def test_empty_defaults_dict_is_a_noop(self):
+        """An empty defaults dict matches today's behavior."""
+        before = create_host_from_dict(self._base_host())
+        after = create_host_from_dict(self._base_host(), defaults={})
+        assert before.ssh_options == after.ssh_options
+        assert before.telnet_options == after.telnet_options

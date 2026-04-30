@@ -257,8 +257,16 @@ def main(
     for repo in repos:
         lab_search_paths.extend(repo.labs)
 
-    # Pass search paths to getLab
-    lab = getLab(labs, search_paths=lab_search_paths)
+    # Reduce repos' [host_defaults] tables in OTTO_SUT_DIRS order; later
+    # repos overlay earlier ones per-key. The factory then merges this
+    # beneath each host's own *_options.
+    merged_host_defaults: dict[str, dict[str, Any]] = {}
+    for repo in repos:
+        for opt_key, table in repo.host_defaults.items():
+            merged_host_defaults.setdefault(opt_key, {}).update(table)
+
+    # Pass search paths and merged defaults to getLab
+    lab = getLab(labs, search_paths=lab_search_paths, defaults=merged_host_defaults)
 
     # Build the reservation backend (first repo with a [reservations] section wins;
     # empty settings across all repos yields a null backend — effectively disabled).

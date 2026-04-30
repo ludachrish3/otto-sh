@@ -102,6 +102,15 @@ class Repo():
     tests: list[Path] = field(default_factory=list[Path], init=False)
     """Directories that contain test suites."""
 
+    host_defaults: dict[str, dict[str, Any]] = field(
+        default_factory=dict[str, dict[str, Any]],
+        init=False,
+    )
+    """Per-protocol option defaults applied to every host loaded under this
+    repo's labs. Keys are ``*_options`` table names (``ssh_options``,
+    ``telnet_options``, etc.); values are dicts whose keys correspond to
+    fields on the matching options dataclass."""
+
     settings: dict[str, Any] = field(default_factory=dict[str, Any])
     """Repo settings dict as parsed from the `settings.toml` file"""
 
@@ -327,6 +336,8 @@ class Repo():
         self.tests = [ Path(self._expandString(dir)) for dir in self.settings.get('tests', []) ]
         self.init  = [      self._expandString(mod)  for mod in self.settings.get('init',  []) ]
 
+        self.host_defaults = self._parseHostDefaults(self.settings.get('host_defaults', {}))
+
         try:
             self.name = self._expandString(self.settings['name'])
             self.version = Version(self._expandString(self.settings['version']))
@@ -334,6 +345,44 @@ class Repo():
             errorStr = f"{TOML_SETTINGS_PATH} does not specify a required field: {e}"
             logger.critical(errorStr)
             raise KeyError(errorStr) from e
+
+    def _parseHostDefaults(self,
+        raw: dict[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        """Validate, expand, and normalize the ``[host_defaults]`` TOML table.
+
+        The table groups option-default sub-tables by ``*_options`` key
+        (mirroring the host-dict shape consumed by
+        :func:`otto.storage.factory.create_host_from_dict`). Unknown keys
+        raise ``ValueError`` so typos don't silently no-op.
+        """
+        from ..storage.factory import OPTIONS_KEYS
+
+        if not raw:
+            return {}
+
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"{TOML_SETTINGS_PATH}: [host_defaults] must be a table, "
+                f"got {type(raw).__name__}"
+            )
+
+        unknown = set(raw) - OPTIONS_KEYS
+        if unknown:
+            raise ValueError(
+                f"{TOML_SETTINGS_PATH}: unknown [host_defaults] sub-table(s): "
+                f"{sorted(unknown)}. Valid keys are: {sorted(OPTIONS_KEYS)}"
+            )
+
+        result: dict[str, dict[str, Any]] = {}
+        for opt_key, table in raw.items():
+            if not isinstance(table, dict):
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [host_defaults.{opt_key}] must be a "
+                    f"table, got {type(table).__name__}"
+                )
+            result[opt_key] = self._expandRecursive(table)
+        return result
 
     @property
     def reservationSettings(self) -> dict[str, Any]:

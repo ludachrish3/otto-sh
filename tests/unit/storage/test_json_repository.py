@@ -300,3 +300,43 @@ class TestJsonFileLabRepository:
         repo = JsonFileLabRepository()
         labs = repo.list_labs([tmp_path])
         assert labs == []
+
+
+class TestLoadLabWithDefaults:
+    """End-to-end tests for the ``defaults=`` parameter on ``load_lab``."""
+
+    def _hosts(self, tmp_path):
+        _hosts_file(tmp_path, [
+            {
+                "ip": "10.10.200.11",
+                "ne": "orange",
+                "creds": {"vagrant": "vagrant"},
+                "resources": [],
+                "labs": ["testlab"],
+                "ssh_options": {"port": 9000},
+            },
+        ])
+
+    def test_defaults_apply_during_load(self, tmp_path):
+        """Repo defaults are merged into hosts during ``load_lab``."""
+        self._hosts(tmp_path)
+        repo = JsonFileLabRepository()
+        lab = repo.load_lab(
+            "testlab",
+            [tmp_path],
+            defaults={'ssh_options': {'connect_timeout': 99.0, 'port': 2222}},
+        )
+        host = next(iter(lab.hosts.values()))
+        assert host.ssh_options.port == 9000        # host wins
+        assert host.ssh_options.connect_timeout == 99.0  # default fills in
+
+    def test_defaults_none_unchanged_behavior(self, tmp_path):
+        """``defaults=None`` matches today's behavior."""
+        self._hosts(tmp_path)
+        repo = JsonFileLabRepository()
+        lab = repo.load_lab("testlab", [tmp_path])
+        host = next(iter(lab.hosts.values()))
+        assert host.ssh_options.port == 9000
+        # connect_timeout falls through to the dataclass default.
+        from otto.host.options import SshOptions
+        assert host.ssh_options.connect_timeout == SshOptions().connect_timeout
