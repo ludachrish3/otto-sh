@@ -3,6 +3,7 @@
 ## General
 
 - Start addressing release management in the todo file
+- Update host.json docs to match the current possible configuration options.
 - Hosts should support per-project default values for protocol options. Ideally, these options apply to only hosts related to the relevant project. In cases of overlap, the last project in the list wins out.
 - Add `--monitor` option to test suites so that monitoring results are saved at the end and events are also tracked and saved.
 - The `--hosts` param for `otto monitor` should take a regex string so that it's easier to specify a list of hosts.
