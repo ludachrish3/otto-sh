@@ -192,6 +192,69 @@ class TestRunSuiteInternals:
         m_index = args_list.index('-m')
         assert args_list[m_index + 1] == 'not integration'
 
+    def test_monitor_flags_reach_otto_plugin(self, tmp_path):
+        """run_suite must hand --monitor settings to OttoPlugin and default the
+        output path to ``<output_dir>/monitor.json`` when the user didn't
+        supply ``--monitor-output``."""
+        import otto.cli.test as test_module
+
+        mock_logger = MagicMock()
+        mock_logger.output_dir = tmp_path
+
+        captured: dict = {}
+
+        class _CapturingPlugin:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        class _FakeMonSuite:
+            __name__ = '_FakeMonSuite'
+
+        with patch('otto.cli.test.getRepos', return_value=[]), \
+             patch.object(test_module, 'logger', mock_logger), \
+             patch('otto.cli.test.pytest'), \
+             patch('otto.cli.test.OttoPlugin', _CapturingPlugin), \
+             self._patch_parent_ctx({
+                 'monitor': True,
+                 'monitor_interval': 2.0,
+                 'monitor_output': None,
+                 'monitor_hosts': 'router',
+             }):
+            run_suite(_FakeMonSuite, 'fake.py', None)
+
+        assert captured.get('monitor') is True
+        assert captured.get('monitor_interval') == 2.0
+        assert captured.get('monitor_hosts') == 'router'
+        assert captured.get('monitor_output') == tmp_path / 'monitor.json'
+
+    def test_monitor_output_override_passes_through(self, tmp_path):
+        import otto.cli.test as test_module
+
+        mock_logger = MagicMock()
+        mock_logger.output_dir = tmp_path
+
+        captured: dict = {}
+
+        class _CapturingPlugin:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        class _FakeMonSuite2:
+            __name__ = '_FakeMonSuite2'
+
+        out = tmp_path / 'somewhere.db'
+        with patch('otto.cli.test.getRepos', return_value=[]), \
+             patch.object(test_module, 'logger', mock_logger), \
+             patch('otto.cli.test.pytest'), \
+             patch('otto.cli.test.OttoPlugin', _CapturingPlugin), \
+             self._patch_parent_ctx({
+                 'monitor': True,
+                 'monitor_output': out,
+             }):
+            run_suite(_FakeMonSuite2, 'fake.py', None)
+
+        assert captured.get('monitor_output') == out
+
 
 # ── Type enforcement ──────────────────────────────────────────────────────────
 
@@ -392,6 +455,60 @@ class TestParentRunnerOptionsCtx:
         assert ctx_obj.get('duration') == 0
         assert ctx_obj.get('threshold') == 100.0
         assert ctx_obj.get('results') == ''
+        # Monitor defaults: disabled, default interval, no override path / regex.
+        assert ctx_obj.get('monitor') is False
+        assert ctx_obj.get('monitor_interval') == 5.0
+        assert ctx_obj.get('monitor_output') is None
+        assert ctx_obj.get('monitor_hosts') is None
+
+    def test_monitor_flag_forwarded_via_ctx(self):
+        @register_suite()
+        class _CtxMonSuite:
+            pass
+
+        for name, sub_app in reversed(_SUITE_REGISTRY):
+            if name == '_CtxMonSuite':
+                suite_app.add_typer(sub_app)
+                break
+
+        ctx_obj = self._capture_ctx(['--monitor'], '_CtxMonSuite')
+        assert ctx_obj.get('monitor') is True
+
+    def test_monitor_options_forwarded_via_ctx(self, tmp_path):
+        @register_suite()
+        class _CtxMonOptSuite:
+            pass
+
+        for name, sub_app in reversed(_SUITE_REGISTRY):
+            if name == '_CtxMonOptSuite':
+                suite_app.add_typer(sub_app)
+                break
+
+        out = tmp_path / 'm.json'
+        ctx_obj = self._capture_ctx(
+            ['--monitor', '--monitor-interval', '2',
+             '--monitor-output', str(out),
+             '--monitor-hosts', 'router|switch'],
+            '_CtxMonOptSuite',
+        )
+        assert ctx_obj.get('monitor') is True
+        assert ctx_obj.get('monitor_interval') == 2.0
+        assert ctx_obj.get('monitor_output') == out
+        assert ctx_obj.get('monitor_hosts') == 'router|switch'
+
+    def test_monitor_implied_by_output_or_hosts(self):
+        """--monitor-output or --monitor-hosts alone should imply --monitor."""
+        @register_suite()
+        class _CtxMonImplSuite:
+            pass
+
+        for name, sub_app in reversed(_SUITE_REGISTRY):
+            if name == '_CtxMonImplSuite':
+                suite_app.add_typer(sub_app)
+                break
+
+        ctx_obj = self._capture_ctx(['--monitor-hosts', 'router'], '_CtxMonImplSuite')
+        assert ctx_obj.get('monitor') is True
 
 
 # ── --cov-dir option (destination override + validation) ─────────────────────

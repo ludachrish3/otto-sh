@@ -76,6 +76,24 @@ either limit is reached first.
 ``--project-name STR``
     Title shown in the HTML report header (only used with ``--cov-report``).
 
+``--monitor``
+    Enable host performance monitoring for the duration of the run.  Samples
+    every host (or those matched by ``--monitor-hosts``) on a fixed interval
+    and emits per-test start/end events automatically.  At the end of the run
+    a JSON snapshot of all metrics and events is written to
+    ``<output_dir>/monitor.json``.
+
+``--monitor-interval SECONDS``
+    Sampling interval for ``--monitor`` (default: 5).
+
+``--monitor-output PATH``
+    Override the destination for the captured monitor data.  Format inferred
+    from the suffix: ``.json`` (default) writes a self-contained snapshot,
+    ``.db`` writes a SQLite database loadable via ``otto monitor --file``.
+
+``--monitor-hosts REGEX``
+    Restrict ``--monitor`` to host IDs matching this regex (``re.search``).
+
 **Examples**::
 
     otto test --list-suites
@@ -173,6 +191,10 @@ def run_suite(
     overwrite_cov_report_dir: bool = bool(
         parent_opts.get('overwrite_cov_report_dir', False))
     project_name: str = str(parent_opts.get('project_name', 'Coverage Report'))
+    monitor: bool = bool(parent_opts.get('monitor', False))
+    monitor_interval: float = float(cast(float, parent_opts.get('monitor_interval', 5.0)))
+    monitor_output: Optional[Path] = cast(Optional[Path], parent_opts.get('monitor_output'))
+    monitor_hosts: Optional[str] = cast(Optional[str], parent_opts.get('monitor_hosts'))
 
     repos = getRepos()
     sut_test_dirs = [path for repo in repos for path in repo.tests]
@@ -206,9 +228,15 @@ def run_suite(
         base_args += ['-m', markers]
 
     is_stability = iterations > 0 or duration > 0
+    if monitor and monitor_output is None:
+        monitor_output = log_dir / 'monitor.json'
     otto_plugin = OttoPlugin(
         sut_test_dirs=sut_test_dirs, cov=cov,
         iterations=iterations, duration=duration,
+        monitor=monitor,
+        monitor_interval=monitor_interval,
+        monitor_output=monitor_output,
+        monitor_hosts=monitor_hosts,
     )
     options_plugin = OttoOptionsPlugin(opts_instance)
 
@@ -408,6 +436,25 @@ def main(
         '--project-name',
         help='Title shown in the HTML report header (only used with --cov-report).',
     )] = 'Coverage Report',
+    monitor: Annotated[bool, typer.Option(
+        help='Collect host performance metrics for the entire test run.',
+    )] = False,
+    monitor_interval: Annotated[float, typer.Option(
+        '--monitor-interval', metavar='SECONDS',
+        help='Sampling interval for --monitor.',
+        min=1.0,
+    )] = 5.0,
+    monitor_output: Annotated[Optional[Path], typer.Option(
+        '--monitor-output', metavar='PATH',
+        help=(
+            'Override the destination for monitor data. Format inferred from '
+            'suffix (.json or .db). Default: <output_dir>/monitor.json.'
+        ),
+    )] = None,
+    monitor_hosts: Annotated[Optional[str], typer.Option(
+        '--monitor-hosts', metavar='REGEX',
+        help='Regex matched against host IDs to restrict --monitor (re.search).',
+    )] = None,
 ) -> None:
     if ctx.resilient_parsing:
         return
@@ -434,6 +481,11 @@ def main(
     ctx.obj['cov_report_dir'] = cov_report_dir
     ctx.obj['overwrite_cov_report_dir'] = overwrite_cov_report_dir
     ctx.obj['project_name'] = project_name
+    monitor_effective = monitor or monitor_output is not None or monitor_hosts is not None
+    ctx.obj['monitor'] = monitor_effective
+    ctx.obj['monitor_interval'] = monitor_interval
+    ctx.obj['monitor_output'] = monitor_output
+    ctx.obj['monitor_hosts'] = monitor_hosts
     if ctx.invoked_subcommand is not None:
         logger.create_output_dir('test', ctx.invoked_subcommand)
         from ..configmodule import tryGetConfigModule

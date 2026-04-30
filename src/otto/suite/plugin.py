@@ -26,11 +26,15 @@ Additional hooks:
     ``StabilityCollector`` attached to the plugin instance.
 """
 
+import asyncio
+import re
 import time
+from datetime import timedelta
 from pathlib import Path
-from typing import Any, Generator, cast
+from typing import Any, AsyncGenerator, Generator, Optional, cast
 
 import pytest
+import pytest_asyncio
 from _pytest.runner import call_and_report, runtestprotocol, show_test_item
 
 from ..logger import getOttoLogger
@@ -80,12 +84,20 @@ class OttoPlugin:
         cov: bool = False,
         iterations: int = 0,
         duration: int = 0,
+        monitor: bool = False,
+        monitor_interval: float = 5.0,
+        monitor_output: Optional[Path] = None,
+        monitor_hosts: Optional[str] = None,
     ) -> None:
         self._sut_test_dirs = sut_test_dirs or []
         self._stability_collector = stability_collector
         self._cov = cov
         self._iterations = iterations
         self._duration = duration
+        self._monitor = monitor
+        self._monitor_interval = monitor_interval
+        self._monitor_output = monitor_output
+        self._monitor_hosts = monitor_hosts
 
     def pytest_configure(self, config: pytest.Config) -> None:
         """Register the shared async timeout fixture and enforce auto asyncio mode.
@@ -249,3 +261,54 @@ class OttoPlugin:
         # as None, so cast to access the runtime API.
         rep = cast(Any, outcome).get_result()
         setattr(item, f'rep_{rep.when}', rep)
+
+    @pytest_asyncio.fixture(
+        scope='session',
+        loop_scope='session',
+        autouse=True,
+    )
+    async def _otto_session_monitor(self) -> AsyncGenerator[None, None]:
+        """Drive session-scoped host monitoring when ``--monitor`` is set.
+
+        Builds a :class:`MetricCollector` over the configured hosts, exposes
+        it on the :class:`OttoSuite` class so per-test event fixtures pick
+        it up, runs collection in a background task for the lifetime of the
+        pytest session, then exports the collected data on teardown.
+        """
+        if not self._monitor:
+            yield
+            return
+
+        from ..configmodule import all_hosts
+        from ..monitor.factory import build_monitor_collector
+        from .suite import OttoSuite
+
+        pattern = re.compile(self._monitor_hosts) if self._monitor_hosts else None
+        hosts = list(all_hosts(pattern=pattern))
+        if not hosts:
+            label = f'matching "{self._monitor_hosts}"' if self._monitor_hosts else ''
+            logger.warning(f'--monitor: no hosts {label} — collection disabled.')
+            yield
+            return
+
+        output = self._monitor_output
+        db_path = output if output is not None and output.suffix.lower() == '.db' else None
+        collector = build_monitor_collector(hosts=hosts, db_path=db_path)
+
+        OttoSuite._session_monitor_collector = collector
+        task = asyncio.create_task(
+            collector.run(interval=timedelta(seconds=self._monitor_interval))
+        )
+        try:
+            yield
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            if output is not None and output.suffix.lower() != '.db':
+                output.parent.mkdir(parents=True, exist_ok=True)
+                collector.export_json(str(output))
+                logger.info(f'Monitor data written to {output}')
+            elif db_path is not None:
+                logger.info(f'Monitor data written to {db_path}')
+            await collector.close()
+            OttoSuite._session_monitor_collector = None

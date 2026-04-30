@@ -401,3 +401,52 @@ class TestReset(OttoSuite):
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.OK
         assert capture_file.read_text() == "0"
+
+
+# ── _activeMonitorCollector accessor ─────────────────────────────────────────
+
+class TestActiveMonitorCollector:
+    """Per-suite ``_monitor_collector`` takes precedence; falls back to the
+    class-level session collector set by ``OttoPlugin._otto_session_monitor``."""
+
+    @staticmethod
+    def _make_suite(tmp_path: Path):
+        from otto.suite.suite import OttoSuite
+
+        class _Suite(OttoSuite):
+            pass
+
+        mock_logger = MagicMock()
+        mock_logger.output_dir = tmp_path
+        with patch.object(suite_module, 'logger', mock_logger):
+            s = _Suite()
+            s.setup_method()
+        return s
+
+    def test_returns_none_when_no_monitor_active(self, tmp_path: Path):
+        s = self._make_suite(tmp_path)
+        assert s._activeMonitorCollector() is None
+
+    def test_per_suite_collector_takes_precedence(self, tmp_path: Path):
+        from otto.suite.suite import OttoSuite
+
+        per_suite = MagicMock(name='per_suite')
+        session = MagicMock(name='session')
+        try:
+            OttoSuite._session_monitor_collector = session
+            s = self._make_suite(tmp_path)
+            s._monitor_collector = per_suite
+            assert s._activeMonitorCollector() is per_suite
+        finally:
+            OttoSuite._session_monitor_collector = None
+
+    def test_falls_back_to_session_collector(self, tmp_path: Path):
+        from otto.suite.suite import OttoSuite
+
+        session = MagicMock(name='session')
+        try:
+            OttoSuite._session_monitor_collector = session
+            s = self._make_suite(tmp_path)
+            assert s._activeMonitorCollector() is session
+        finally:
+            OttoSuite._session_monitor_collector = None

@@ -13,11 +13,15 @@ otto --lab my_lab monitor
 
 ### Selecting hosts
 
-Pass a comma-separated list of host IDs to monitor a subset:
+Pass a regex to `--hosts` (matched against host IDs via `re.search`) to
+narrow the live host set:
 
 ```bash
-otto --lab my_lab monitor router1,switch1
+otto --lab my_lab monitor --hosts 'router|switch'
+otto --lab my_lab monitor --hosts router1
 ```
+
+Omit the option to monitor every host in the lab.
 
 ### Collection interval
 
@@ -56,9 +60,23 @@ listens on port 8000.  The dashboard shows:
 - Timeline with events
 - Per-host breakdowns
 
+## Monitoring during a test run
+
+Pass `--monitor` to `otto test` to collect metrics for the entire run.
+Per-test start/end events are emitted automatically and the captured
+data is written to `<output_dir>/monitor.json` at exit:
+
+```bash
+otto --lab my_lab test --monitor TestPerformance
+otto --lab my_lab test --monitor --monitor-interval 2 --monitor-hosts router TestPerformance
+otto --lab my_lab test --monitor --monitor-output run.db TestPerformance
+```
+
+Reload a captured run in the dashboard via `otto monitor --file <path>`.
+
 ## Monitoring from test suites
 
-You can start the monitor programmatically from within a test suite:
+You can also start the monitor programmatically from within a single test:
 
 ```python
 class TestPerformance(OttoSuite[_Options]):
@@ -73,8 +91,10 @@ class TestPerformance(OttoSuite[_Options]):
         await self.stopMonitor()
 ```
 
-Events appear as markers on the dashboard timeline, making it easy to
-correlate metric changes with test actions.
+When both per-suite and `--monitor`-driven session collectors are active,
+the per-suite collector takes precedence for that test.  Events appear as
+markers on the dashboard timeline, making it easy to correlate metric
+changes with test actions.
 
 ## Custom parsers
 

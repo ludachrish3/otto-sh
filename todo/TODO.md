@@ -3,11 +3,8 @@
 ## General
 
 - add nox testing before next release
+- Look into whether there's benefit to changing the asyncio_default_fixture_loop_scope to session instead of the current, which appears to be function. I would think we'd want long lives event loops for an entire test suite because host connections should ideally be reused from test to test by default. Maybe there are downsides to this approach?
 - Start addressing release management in the todo file
-- Update host.json docs to match the current possible configuration options.
-- Hosts should support per-project default values for protocol options. Ideally, these options apply to only hosts related to the relevant project. In cases of overlap, the last project in the list wins out.
-- Add `--monitor` option to test suites so that monitoring results are saved at the end and events are also tracked and saved.
-- The `--hosts` param for `otto monitor` should take a regex string so that it's easier to specify a list of hosts.
 - Remote docker management
 - Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name
 - Add a `--list-markers` option to the test subcommand

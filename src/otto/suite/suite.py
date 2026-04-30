@@ -145,6 +145,11 @@ class OttoSuite(Generic[TOptions]):
     or set a ``timeout`` class attribute on the suite.
     """
 
+    #: Set by ``OttoPlugin._otto_session_monitor`` when ``otto test --monitor``
+    #: drives session-wide collection.  Falls back to ``None`` so per-suite
+    #: ``startMonitor()`` calls keep working unchanged.
+    _session_monitor_collector: 'MetricCollector | None' = None
+
     def setup_method(self, method: object = None) -> None:
         self.suiteDir = logger.output_dir
         """Base directory where all artifacts go for the suite"""
@@ -158,6 +163,12 @@ class OttoSuite(Generic[TOptions]):
         self._monitor_collector: 'MetricCollector | None' = None
         self._monitor_server:    'MonitorServer | None'   = None
         self._monitor_task:      'asyncio.Task[None] | None' = None
+
+    def _activeMonitorCollector(self) -> 'MetricCollector | None':
+        """Return the per-suite collector if active, else the session-wide one."""
+        if self._monitor_collector is not None:
+            return self._monitor_collector
+        return type(self)._session_monitor_collector
 
     def teardown_method(self, method: object = None) -> None:
         logger.debug('Welcome to the base teardown_method() method')
@@ -283,8 +294,9 @@ class OttoSuite(Generic[TOptions]):
         node      = cast(pytest.Item, request.node)
         node_name: str = node.name
 
-        if self._monitor_collector is not None:
-            await self._monitor_collector.add_event(
+        collector = self._activeMonitorCollector()
+        if collector is not None:
+            await collector.add_event(
                 label=f'{type(self).__name__}.{node_name}: start',
                 color='#888888',
                 dash='dash',
@@ -293,11 +305,12 @@ class OttoSuite(Generic[TOptions]):
 
         yield
 
-        if self._monitor_collector is not None:
+        collector = self._activeMonitorCollector()
+        if collector is not None:
             rep     = getattr(node, 'rep_call', None)  # type: ignore[arg-type]
             outcome = 'fail' if (rep is not None and not rep.passed) else 'pass'
             color   = '#2ca02c' if outcome == 'pass' else '#d62728'
-            await self._monitor_collector.add_event(
+            await collector.add_event(
                 label=f'{type(self).__name__}.{node_name}: {outcome}',
                 color=color,
                 dash='solid',
@@ -415,10 +428,13 @@ class OttoSuite(Generic[TOptions]):
         """
         Record a labeled event on the live dashboard at the current time.
 
-        Has no effect if monitoring is not active.
+        Has no effect if monitoring is not active.  Honors a per-suite
+        collector created by :meth:`startMonitor` first, then falls back to
+        the session-wide collector started by ``otto test --monitor``.
         """
-        if self._monitor_collector is not None:
-            await self._monitor_collector.add_event(
+        collector = self._activeMonitorCollector()
+        if collector is not None:
+            await collector.add_event(
                 label=label,
                 color=color,
                 dash=dash,

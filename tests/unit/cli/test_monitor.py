@@ -4,7 +4,7 @@ Unit tests for the ``otto monitor`` subcommand.
 Covers:
   - Argument and option parsing / constraint validation
   - ``_load_historical()`` helper for .db / .json / .csv files
-  - ``_build_collector()`` helper (parser selection, host.log suppression)
+  - ``build_monitor_collector()`` factory (parser selection, host.log suppression)
   - Routing: live mode vs historical mode inside ``monitor()``
 
 The monitor command is tested via ``monitor_app`` directly so the main
@@ -21,10 +21,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
-from otto.cli.monitor import _build_collector, _load_historical, monitor_app
+from otto.cli.monitor import _load_historical, monitor_app
 from otto.host import RunResult
 from otto.host.remoteHost import RemoteHost
 from otto.monitor.collector import MetricCollector
+from otto.monitor.factory import build_monitor_collector
 from otto.monitor.parsers import LoadParser, MemParser
 from otto.utils import CommandStatus, Status
 
@@ -56,8 +57,7 @@ def live_mode_mocks():
 
     with (
         patch('otto.cli.monitor.all_hosts', return_value=iter([mock_host])),
-        patch('otto.cli.monitor.get_host', return_value=mock_host),
-        patch('otto.cli.monitor.MetricCollector', return_value=mock_collector),
+        patch('otto.cli.monitor.build_monitor_collector', return_value=mock_collector),
         patch('otto.cli.monitor.MonitorServer', return_value=mock_server),
         patch('asyncio.run', side_effect=_close_coro),
     ):
@@ -105,28 +105,44 @@ class TestIntervalOption:
         assert result.exit_code == 0
 
 
-# ── Hosts positional argument ─────────────────────────────────────────────────
+# ── --hosts regex option ──────────────────────────────────────────────────────
 
 class TestHostsArgument:
-    def test_single_host_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ['host1'])
+    def test_single_host_regex_accepted(self, live_mode_mocks):
+        result = runner.invoke(monitor_app, ['--hosts', 'host1'])
         assert result.exit_code == 0
 
-    def test_comma_separated_hosts_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ['host1,host2'])
+    def test_alternation_regex_accepted(self, live_mode_mocks):
+        result = runner.invoke(monitor_app, ['--hosts', 'host1|host2'])
         assert result.exit_code == 0
 
-    def test_specific_hosts_routed_to_get_host(self, live_mode_mocks):
-        """When host IDs are given, get_host() is called for each one."""
-        with patch('otto.cli.monitor.get_host', return_value=live_mode_mocks['host']) as p:
-            runner.invoke(monitor_app, ['router1'])
-        p.assert_called()
-
-    def test_no_hosts_uses_all_hosts(self, live_mode_mocks):
-        """With no positional hosts, all_hosts() provides the list."""
-        with patch('otto.cli.monitor.all_hosts', return_value=iter([])) as p:
+    def test_no_hosts_option_uses_all_hosts(self, live_mode_mocks):
+        """Without --hosts, all_hosts() provides the list (called with pattern=None)."""
+        with patch(
+            'otto.cli.monitor.all_hosts',
+            return_value=iter([live_mode_mocks['host']]),
+        ) as p:
             runner.invoke(monitor_app, [])
         p.assert_called_once()
+        assert p.call_args.kwargs.get('pattern') is None
+
+    def test_hosts_regex_passed_to_all_hosts(self, live_mode_mocks):
+        """A --hosts regex is compiled and forwarded to all_hosts(pattern=...)."""
+        with patch(
+            'otto.cli.monitor.all_hosts',
+            return_value=iter([live_mode_mocks['host']]),
+        ) as p:
+            runner.invoke(monitor_app, ['--hosts', 'router'])
+        p.assert_called_once()
+        pattern = p.call_args.kwargs.get('pattern')
+        assert pattern is not None
+        assert pattern.search('router1')
+        assert pattern.search('switch1') is None
+
+    def test_no_matching_hosts_exits_nonzero(self, live_mode_mocks):
+        with patch('otto.cli.monitor.all_hosts', return_value=iter([])):
+            result = runner.invoke(monitor_app, ['--hosts', 'nope'])
+        assert result.exit_code != 0
 
 
 # ── --db option ───────────────────────────────────────────────────────────────
@@ -263,22 +279,22 @@ class TestLoadHistorical:
         assert value == 55.0
 
 
-# ── _build_collector() unit tests ─────────────────────────────────────────────
+# ── build_monitor_collector() unit tests ──────────────────────────────────────
 
 class TestBuildCollector:
-    """Direct unit tests for the private _build_collector() helper."""
+    """Direct unit tests for the build_monitor_collector() factory."""
 
     def test_disables_host_logging(self):
         host = _make_host()
         assert host.log is True
-        _build_collector(hosts=[host])
+        build_monitor_collector(hosts=[host])
         assert host.log is False
 
     @pytest.mark.asyncio
     async def test_db_path_forwarded(self, tmp_path):
         host = _make_host()
         db_file = tmp_path / 'out.db'
-        collector = _build_collector(hosts=[host], db_path=db_file)
+        collector = build_monitor_collector(hosts=[host], db_path=db_file)
         # DB is created lazily on init_db(), not on construction
         await collector.init_db()
         assert db_file.exists()
@@ -286,7 +302,7 @@ class TestBuildCollector:
 
     def test_no_db_path_leaves_no_file(self):
         host = _make_host()
-        collector = _build_collector(hosts=[host], db_path=None)
+        collector = build_monitor_collector(hosts=[host], db_path=None)
         # Just verifies it doesn't raise
         assert collector is not None
 

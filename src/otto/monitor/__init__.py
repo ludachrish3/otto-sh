@@ -20,6 +20,7 @@ Historical mode:
 
 from .collector import MetricCollector
 from .events import MonitorEvent
+from .factory import build_monitor_collector
 from .parsers import DEFAULT_PARSERS, MetricParser
 from .server import MonitorServer
 
@@ -29,4 +30,5 @@ __all__ = [
     'MonitorEvent',
     'MonitorServer',
     'DEFAULT_PARSERS',
+    'build_monitor_collector',
 ]
