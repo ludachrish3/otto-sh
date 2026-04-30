@@ -183,7 +183,12 @@ class OttoPlugin:
 
         # ── Call (repeated) ───────────────────────────────────────────
         iteration = 0
+        is_stability = self._iterations > 1 or self._duration > 0
         while iteration < max_iters and time.monotonic() < deadline:
+            if is_stability:
+                logger.info(
+                    f'[bold cyan]--- {item.name} iteration {iteration + 1} ---[/bold cyan]'
+                )
             call_and_report(item, 'call', log=True)
             iteration += 1
 
