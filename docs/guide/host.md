@@ -208,6 +208,25 @@ the host entry:
 | ``ftp_options``   | FTP transfers (aioftp)         |
 | ``nc_options``    | Netcat transfers               |
 
+The same six tables are recognized in three places, layered from least
+to most specific:
+
+1. **Hardcoded defaults** in `otto.host.options` — what you get when no
+   `*_options` is supplied anywhere.
+2. **Repo-level `[host_defaults]`** in `.otto/settings.toml` — applied
+   to every host the repo touches.  See {ref}`host-defaults`.
+3. **Per-host `*_options`** in `hosts.json` — overrides for a single
+   host.
+
+Merging is **per key** between layers.  A host that sets only `port`
+still inherits `connect_timeout` from the repo default, and so on.  The
+fully resolved options are baked into the `RemoteHost` at construction
+time.
+
+For one-off tuning at the call site (e.g. a single test wants a
+different port), pass an `*_options=` keyword to `get_host()` /
+`all_hosts()`.  See {ref}`per-call-overrides` in the cookbook.
+
 ### SSH
 
 Set non-standard port, enable strict host-key checking, and tune the

@@ -2,6 +2,7 @@
 
 ## General
 
+- add nox testing before next release
 - Start addressing release management in the todo file
 - Update host.json docs to match the current possible configuration options.
 - Hosts should support per-project default values for protocol options. Ideally, these options apply to only hosts related to the relevant project. In cases of overlap, the last project in the list wins out.

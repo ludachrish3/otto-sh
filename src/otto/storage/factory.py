@@ -152,8 +152,9 @@ def create_host_from_dict(
     # repo-level defaults beneath the host's own values per-key.
     defaults = defaults or {}
     for opt_key, builder in _OPTIONS_BUILDERS.items():
-        host_table = kwargs.get(opt_key) if isinstance(kwargs.get(opt_key), dict) else {}
-        default_table = defaults.get(opt_key, {})
+        raw_host = kwargs.get(opt_key)
+        host_table: dict[str, Any] = raw_host if isinstance(raw_host, dict) else {}
+        default_table: dict[str, Any] = defaults.get(opt_key, {})
         if default_table or host_table:
             kwargs[opt_key] = builder({**default_table, **host_table})
 
