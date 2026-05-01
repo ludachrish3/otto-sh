@@ -2,6 +2,7 @@
 
 ## General
 
+- Monitor data is not appearing in monitor.json output file. Events are, though.
 - add nox testing before next release
 - Start addressing release management in the todo file
 - Remote docker management

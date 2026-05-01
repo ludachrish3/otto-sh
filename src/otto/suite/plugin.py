@@ -273,12 +273,18 @@ class OttoPlugin:
         autouse=True,
     )
     async def _otto_session_monitor(self) -> AsyncGenerator[None, None]:
-        """Drive session-scoped host monitoring when ``--monitor`` is set.
+        """Build the session-scoped :class:`MetricCollector` when ``--monitor`` is set.
 
-        Builds a :class:`MetricCollector` over the configured hosts, exposes
-        it on the :class:`OttoSuite` class so per-test event fixtures pick
-        it up, runs collection in a background task for the lifetime of the
-        pytest session, then exports the collected data on teardown.
+        Owns the collector lifecycle: construct the collector over the
+        configured hosts, expose it on :class:`OttoSuite` so per-test event
+        fixtures (and the per-class collection task below) can reach it,
+        export collected data on teardown, then close.
+
+        Note: this fixture *does not* drive ``collector.run()``. OttoSuites
+        use ``loop_scope='class'``, so each test class runs on its own event
+        loop while the session loop is dormant. A task created here would
+        be starved during tests. ``_otto_class_monitor_task`` (class-scoped,
+        class loop) drives collection on the loop that's actually ticking.
         """
         if not self._monitor:
             yield
@@ -301,14 +307,9 @@ class OttoPlugin:
         collector = build_monitor_collector(hosts=hosts, db_path=db_path)
 
         OttoSuite._session_monitor_collector = collector
-        task = asyncio.create_task(
-            collector.run(interval=timedelta(seconds=self._monitor_interval))
-        )
         try:
             yield
         finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
             if output is not None and output.suffix.lower() != '.db':
                 output.parent.mkdir(parents=True, exist_ok=True)
                 collector.export_json(str(output))
@@ -317,3 +318,36 @@ class OttoPlugin:
                 logger.info(f'Monitor data written to {db_path}')
             await collector.close()
             OttoSuite._session_monitor_collector = None
+
+    @pytest_asyncio.fixture(
+        scope='class',
+        loop_scope='class',
+        autouse=True,
+    )
+    async def _otto_class_monitor_task(self) -> AsyncGenerator[None, None]:
+        """Drive ``collector.run()`` on the test class's event loop.
+
+        OttoSuite tests use ``loop_scope='class'``, so a task on the session
+        loop never ticks while tests run (events still record because
+        ``add_event`` is just a list append from the class loop). Restarting
+        the collection task per class on the class loop ensures
+        ``_collect_one`` actually executes during tests.
+
+        Collected metrics accumulate on the shared session-scoped collector,
+        so a single export at session teardown captures every class's data.
+        Between classes, collection pauses — gaps are expected.
+        """
+        from .suite import OttoSuite
+        collector = getattr(OttoSuite, '_session_monitor_collector', None)
+        if not self._monitor or collector is None:
+            yield
+            return
+
+        task = asyncio.create_task(
+            collector.run(interval=timedelta(seconds=self._monitor_interval))
+        )
+        try:
+            yield
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
