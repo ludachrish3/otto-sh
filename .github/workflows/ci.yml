@@ -10,20 +10,26 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Force Rich/typer to render help and error output without ANSI styling.
+  # GitHub-Actions runners set PY_COLORS/FORCE_COLOR, which makes Rich emit
+  # bold/dim SGR codes that split flag names like '--region' across escapes
+  # and break substring assertions in tests.
+  NO_COLOR: "1"
+  TERM: dumb
+  FORCE_COLOR: ""
+  CLICOLOR_FORCE: ""
+  PY_COLORS: ""
+  CLICOLOR: ""
+
 jobs:
-  build:
+  tests:
+    name: tests-${{ matrix.python }}
     runs-on: ubuntu-latest
-    env:
-      # Force Rich/typer to render help and error output without ANSI styling.
-      # GitHub-Actions runners set PY_COLORS/FORCE_COLOR, which makes Rich emit
-      # bold/dim SGR codes that split flag names like '--region' across escapes
-      # and break substring assertions in tests.
-      NO_COLOR: "1"
-      TERM: dumb
-      FORCE_COLOR: ""
-      CLICOLOR_FORCE: ""
-      PY_COLORS: ""
-      CLICOLOR: ""
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
 
@@ -32,11 +38,28 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Set up Python
-        run: uv python install 3.10
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
 
-      - name: Install dependencies
-        run: uv sync --all-extras --dev
+      - name: Run tests under Python ${{ matrix.python }}
+        run: uv run nox -s tests-${{ matrix.python }}
 
-      - name: Run CI pipeline
-        run: make ci
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.10
+      - run: uv run nox -s typecheck
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv python install 3.10
+      - run: uv run nox -s docs
