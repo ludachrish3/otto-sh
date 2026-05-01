@@ -143,6 +143,26 @@ make test TESTS=test_host     # filter by keyword
 make coverage                 # run tests and enforce coverage threshold
 ```
 
+### Cross-version testing with nox
+
+`make ci` runs the unit suite under one Python (whichever uv resolves by
+default). To exercise the full matrix the way CI does — Python 3.10
+through 3.14 — use `nox`:
+
+```bash
+make nox                       # full matrix: all Pythons + lint + typecheck + docs
+uv run nox -s tests-3.12       # just one Python's tests
+uv run nox -s tests-3.14 -- -k test_session    # forward args to pytest
+uv run nox --list              # show every available session
+```
+
+Nox sessions are defined in `noxfile.py` and use uv as the venv backend
+via `nox-uv`, so each session reuses the same lockfile-resolved deps as
+local development. The toolchains themselves come from
+`uv python install 3.10 3.11 3.12 3.13 3.14` (run once per machine).
+`make all` is unchanged and remains the dev-VM contract — `nox` covers
+the cross-Python axis that `make all` doesn't.
+
 ## Documentation
 
 ### Building docs

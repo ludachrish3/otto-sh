@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean release publish-test publish
+.PHONY: help all ci nox validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean release publish-test publish
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -36,21 +36,27 @@ release: ## Validate, bump version, then build dist at the new version (BUMP=pat
 		&& bump-my-version bump --verbose $(BUMP) \
 		&& $(MAKE) build \
 		&& echo \
-		&& echo "Bumped version, tagged, and built dist/ at the new version. Push with:" \
+		&& echo "Bumped version, tagged, and built dist/ at the new version." \
+		&& echo "Pushing the tag fires .github/workflows/release.yml, which" \
+		&& echo "publishes to PyPI via OIDC (gated by the 'pypi' environment)." \
+		&& echo "Push with:" \
 		&& echo "    git push --follow-tags" \
-		&& echo "Publish to TestPyPI with:" \
-		&& echo "    make publish-test    (requires UV_PUBLISH_TOKEN in env)"
-		&& echo "Publish to PyPI with:" \
-		&& echo "    make publish    (requires UV_PUBLISH_TOKEN in env)"
+		&& echo \
+		&& echo "Manual fallbacks (require UV_PUBLISH_TOKEN in env):" \
+		&& echo "    make publish-test    # upload dist/ to TestPyPI" \
+		&& echo "    make publish         # upload dist/ to PyPI"
 
-publish-test: ## Upload dist/ to TestPyPI (requires UV_PUBLISH_TOKEN in env)
+publish-test: ## Manual fallback: upload dist/ to TestPyPI (prefer dispatching release-testpypi.yml; requires UV_PUBLISH_TOKEN)
 	uv publish \
 		--publish-url https://test.pypi.org/legacy/ \
 		--check-url   https://test.pypi.org/simple/
 
-publish: ## Upload dist/ to PyPI — permanent (requires UV_PUBLISH_TOKEN in env)
+publish: ## Manual fallback: upload dist/ to PyPI — permanent (prefer pushing a v* tag to fire release.yml; requires UV_PUBLISH_TOKEN)
 	uv publish \
 		--check-url https://pypi.org/simple/
+
+nox: ## Run the full nox session matrix (tests across all supported Pythons + lint + typecheck + docs)
+	uv run nox
 
 validate: ## Run validation (clean-dist, typecheck, coverage, docs) without building dist
 	@$(MAKE) clean-dist \
