@@ -90,7 +90,7 @@ dev = [
     "ruff>=0.14.7",
     "sphinx>=8.0",
     "sphinx-autodoc-typehints>=2.0",
-    "ty==0.0.31",
+    "ty==0.0.34",
 ]
 
 [tool.pyright]
