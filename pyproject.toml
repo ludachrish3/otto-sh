@@ -67,7 +67,7 @@ Changelog = "https://github.com/ludachrish3/otto-sh/blob/main/CHANGELOG.md"
 [build-system]
 requires = [
     "uv_build>=0.10.0",
-    "uv_build<0.11.0",
+    "uv_build<0.12.0",
 ]
 build-backend = "uv_build"
 
