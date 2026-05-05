@@ -37,6 +37,18 @@ def tests(session: nox.Session) -> None:
     session.run("pytest", *UNIT_TEST_ARGS, *session.posargs)
 
 
+@nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
+def tests_all(session: nox.Session) -> None:
+    """Run the full suite — unit + integration + hops — under each supported Python.
+
+    Requires the dev VM with Vagrant hosts up; not run in CI. Pytest's
+    default ``testpaths`` and addopts (from pyproject.toml) cover the full
+    tree, so no marker filter is passed here. Coverage threshold matches
+    ``make coverage`` (85%).
+    """
+    session.run("pytest", "--cov-fail-under=85", *session.posargs)
+
+
 @nox_uv.session(uv_groups=["dev"])
 def lint(session: nox.Session) -> None:
     """Run ruff lint + format checks."""

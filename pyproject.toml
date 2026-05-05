@@ -79,6 +79,7 @@ module-name = "otto"
 [dependency-groups]
 dev = [
     "bump-my-version>=1.3.0",
+    "git-cliff>=2.13.1",
     "sphinx-immaterial",
     "myst-parser>=4.0.1",
     "nox>=2024.10.9",
@@ -151,15 +152,9 @@ filename = "pyproject.toml"
 search = 'version = "{current_version}"'
 replace = 'version = "{new_version}"'
 
-[[tool.bumpversion.files]]
-filename = "CHANGELOG.md"
-search = "## [Unreleased]"
-replace = "## [Unreleased]\n\n## [{new_version}] - {now:%Y-%m-%d}"
-
-[[tool.bumpversion.files]]
-filename = "CHANGELOG.md"
-search = "[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v{current_version}...HEAD"
-replace = "[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v{new_version}...HEAD\n[{new_version}]: https://github.com/ludachrish3/otto-sh/compare/v{current_version}...v{new_version}"
+# CHANGELOG.md is owned by git-cliff (see cliff.toml + `make changelog`).
+# bump-my-version no longer touches it — the release flow regenerates the
+# whole file from conventional commit history immediately before bumping.
 
 # Keep the lock entry for otto-sh in sync. Without this, every `uv run`
 # after a bump detects pyproject ↔ lock drift and re-syncs the lock,

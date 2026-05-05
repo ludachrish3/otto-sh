@@ -1,0 +1,105 @@
+# git-cliff configuration for otto-sh.
+#
+# Renders CHANGELOG.md in Keep a Changelog format from Conventional
+# Commits. Run via `uvx --from git-cliff git-cliff ...` (the `make
+# changelog` target wraps it).
+
+[changelog]
+# Header sits above all release sections. Mirrors the prose that was in
+# the hand-edited CHANGELOG.md.
+header = """
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+"""
+
+# One block per release. `version` is "Unreleased" for unreleased commits
+# (when --tag is not passed) or the value passed via --tag.
+body = """
+
+{% if version -%}
+## [{{ version | trim_start_matches(pat="v") }}] - {{ timestamp | date(format="%Y-%m-%d") }}
+{% else -%}
+## [Unreleased]
+{% endif %}
+{%- for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+
+{% for commit in commits -%}
+- {{ commit.message | split(pat="\\n") | first | trim }}
+{% endfor %}
+{% endfor %}
+"""
+
+# Footer holds the comparison links Keep a Changelog uses. git-cliff
+# renders it once at the bottom; we iterate every release in reverse
+# chronological order and emit a link per release.
+footer = """
+{% if releases | length > 0 %}\
+{% if releases[0].version %}\
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/{{ releases[0].version }}...HEAD
+{% else %}\
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/{{ releases[0].previous.version }}...HEAD
+{% endif %}\
+{% for release in releases %}\
+{% if release.version and release.previous.version %}\
+[{{ release.version | trim_start_matches(pat="v") }}]: https://github.com/ludachrish3/otto-sh/compare/{{ release.previous.version }}...{{ release.version }}
+{% elif release.version %}\
+[{{ release.version | trim_start_matches(pat="v") }}]: https://github.com/ludachrish3/otto-sh/releases/tag/{{ release.version }}
+{% endif %}\
+{% endfor %}\
+{% endif %}\
+"""
+
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+split_commits = false
+# Strip the trailing "(#NN)" PR reference from squash-merge subjects.
+# git-cliff's body template would otherwise render it twice (once from
+# the message, once from commit.remote.pr_number).
+commit_preprocessors = [
+  { pattern = ' \\(#\\d+\\)$', replace = "" },
+]
+
+# Map Conventional Commit types into Keep a Changelog sections.
+# `group` is the section heading; `default_scope` lets dependabot's
+# `chore(deps)` land in its own bucket. Order here = order in the rendered
+# section list (after sort_commits below sorts within each group).
+commit_parsers = [
+  # Drop bump-my-version's auto-generated release commits so the changelog
+  # doesn't list "bump version X -> Y" entries against itself.
+  { message = "^chore\\(release\\):", skip = true },
+  { message = "^feat", group = "Added" },
+  { message = "^fix", group = "Fixed" },
+  { message = "^perf", group = "Changed" },
+  { message = "^refactor", group = "Changed" },
+  { message = "^revert", group = "Changed" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^chore\\(deps", group = "Dependencies" },
+  { message = "^chore\\(deps-dev", group = "Dependencies" },
+  { message = "^build\\(deps", group = "Dependencies" },
+  { message = "^chore", group = "Maintenance" },
+  # Skip non-user-facing categories. Flip any of these to a group if you'd
+  # rather surface them.
+  { message = "^ci", skip = true },
+  { message = "^test", skip = true },
+  { message = "^style", skip = true },
+  # Anything that doesn't follow Conventional Commits (e.g. legacy
+  # "Added todo items" subjects) is dropped so the rendered file stays
+  # opinionated and predictable.
+  { message = ".*", skip = true },
+]
+
+filter_commits = false
+tag_pattern = "v[0-9]*"
+sort_commits = "newest"
+
+[remote.github]
+owner = "ludachrish3"
+repo = "otto-sh"

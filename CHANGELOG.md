@@ -7,24 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-04-27
+### Added
 
-## [0.0.2] - 2026-04-27
+- nox matrix on Python 3.10-3.14, OIDC release workflows (#12)
+- add event monitoring to test suites
+- add iteration banners
+- add suite-level monitoring
+- Added repo-wide and per-invocation host options
+
+
+### Dependencies
+
+- bump uvicorn from 0.42.0 to 0.46.0 (#7)
+- bump pytest-cov from 7.0.0 to 7.1.0 (#5)
+- bump typer from 0.24.1 to 0.25.1 (#19)
+- bump rich from 14.3.3 to 15.0.0 (#9)
+- bump py-spy from 0.4.1 to 0.4.2 (#6)
+- bump tomli from 2.4.0 to 2.4.1 (#4)
+- bump pytest from 9.0.1 to 9.0.3 (#3)
+
+
+### Documentation
+
+- add host options to docs
+
+
+### Maintenance
+
+- Updated checkout and setup-uv github action versions (#20)
+- Added plan for defining host default options
+- Added official publish make target
+
+
+## [0.1.0] - 2026-04-28
+
+### Maintenance
+
+- Added a `publish-test` makefile target
+
+
+## [0.0.2] - 2026-04-28
+
+### Fixed
+
+- fix pytest requirement vs dev dependency
+
+
+### Maintenance
+
+- Added to the existing commit hook to prompt for commit type
+- fixed release build versioning
+
 
 ## [0.0.1] - 2026-04-26
 
-### Added
+### Maintenance
 
-- MIT license and PEP 639 metadata in `pyproject.toml`.
-- GitHub Actions CI workflow running `make ci` on every push and pull request.
-- `make ci` and `make coverage-unit` Makefile targets that run unit-only
-  tests (skipping `integration`/`hops` markers) so the pipeline works
-  without Vagrant VMs.
-- Dependabot configuration for `uv` and `github-actions` ecosystems.
-- Root-level `CONTRIBUTING.md` pointing at the detailed contributor guide.
-- Read the Docs config (`.readthedocs.yaml`) building Sphinx docs via uv.
+- Made release target more verbose
+- added GitHub templates
+- set up release management
 
 [Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/ludachrish3/otto-sh/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/ludachrish3/otto-sh/compare/v0.0.1...v0.0.2
-[0.0.1]: https://github.com/ludachrish3/otto-sh/compare/v0.0.0...v0.0.1
+[0.0.1]: https://github.com/ludachrish3/otto-sh/releases/tag/v0.0.1
+
