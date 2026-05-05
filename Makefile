@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean release publish-test publish
+.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -31,12 +31,19 @@ ci: ## Run pipeline without VM-dependent tests (used by GitHub Actions)
 	@$(MAKE) validate COVERAGE_TARGET=coverage-unit \
 		&& $(MAKE) build
 
-release: ## Validate, bump version, then build dist at the new version (BUMP=patch|minor|major, default patch)
+changelog: ## Regenerate CHANGELOG.md from conventional commit history (Unreleased only — does not touch released sections)
+	git-cliff -o CHANGELOG.md
+
+release: ## Validate, regenerate changelog at the new version, bump version, then build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
 	@$(MAKE) validate \
-		&& bump-my-version bump --verbose $(BUMP) \
+		&& NEW_VERSION="$${NEW_VERSION:-$$(bump-my-version show new_version --increment $(BUMP))}" \
+		&& echo "Targeting v$$NEW_VERSION" \
+		&& git-cliff --tag "v$$NEW_VERSION" -o CHANGELOG.md \
+		&& git add CHANGELOG.md \
+		&& bump-my-version bump --verbose --allow-dirty --new-version "$$NEW_VERSION" $(BUMP) \
 		&& $(MAKE) build \
 		&& echo \
-		&& echo "Bumped version, tagged, and built dist/ at the new version." \
+		&& echo "Regenerated CHANGELOG.md, bumped version, tagged, and built dist/." \
 		&& echo "Pushing the tag fires .github/workflows/release.yml, which" \
 		&& echo "publishes to PyPI via OIDC (gated by the 'pypi' environment)." \
 		&& echo "Push with:" \
@@ -55,8 +62,11 @@ publish: ## Manual fallback: upload dist/ to PyPI — permanent (prefer pushing 
 	uv publish \
 		--check-url https://pypi.org/simple/
 
-nox: ## Run the full nox session matrix (tests across all supported Pythons + lint + typecheck + docs)
+nox: ## Run the default nox session matrix (unit tests across all supported Pythons + typecheck + docs)
 	uv run nox
+
+nox-all: ## Run the FULL test suite (unit + integration + hops) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI.
+	uv run nox -s tests_all
 
 validate: ## Run validation (clean-dist, typecheck, coverage, docs) without building dist
 	@$(MAKE) clean-dist \
