@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-05-05
 
 ### Added
 
@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
+- bump sse-starlette from 3.3.3 to 3.4.1 (#18)
+- update uv-build requirement from <0.11.0 to <0.12.0 (#17)
+- bump ruff from 0.14.7 to 0.15.12 (#16)
+- bump ty from 0.0.31 to 0.0.34 (#15)
+- bump actions/upload-artifact from 4 to 7 (#14)
+- bump actions/download-artifact from 4 to 8 (#13)
+- bump fastapi from 0.135.2 to 0.136.1 (#11)
+- bump telnetlib3 from 4.0.1 to 4.0.2 (#8)
 - bump uvicorn from 0.42.0 to 0.46.0 (#7)
 - bump pytest-cov from 7.0.0 to 7.1.0 (#5)
 - bump typer from 0.24.1 to 0.25.1 (#19)
@@ -67,7 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/ludachrish3/otto-sh/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/ludachrish3/otto-sh/compare/v0.0.2...v0.1.0
 [0.0.2]: https://github.com/ludachrish3/otto-sh/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/ludachrish3/otto-sh/releases/tag/v0.0.1
