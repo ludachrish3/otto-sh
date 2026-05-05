@@ -34,8 +34,11 @@ ci: ## Run pipeline without VM-dependent tests (used by GitHub Actions)
 changelog: ## Regenerate CHANGELOG.md from conventional commit history (Unreleased only — does not touch released sections)
 	git-cliff -o CHANGELOG.md
 
-release: ## Validate, regenerate changelog at the new version, bump version, then build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
-	@$(MAKE) validate \
+release: ## Validate (typecheck + docs + FULL nox matrix across all Pythons, requires dev VM), regenerate changelog at the new version, bump version, then build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
+	@$(MAKE) clean-dist \
+		&& $(MAKE) typecheck \
+		&& $(MAKE) docs \
+		&& $(MAKE) nox-all \
 		&& NEW_VERSION="$${NEW_VERSION:-$$(bump-my-version show new_version --increment $(BUMP))}" \
 		&& echo "Targeting v$$NEW_VERSION" \
 		&& git-cliff --tag "v$$NEW_VERSION" -o CHANGELOG.md \
