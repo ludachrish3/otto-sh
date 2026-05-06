@@ -21,6 +21,7 @@ Covers:
 
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -73,7 +74,7 @@ class TestSchemaInit:
     async def test_creates_metrics_table(self, tmp_path):
         db_path = str(tmp_path / 'test.db')
         collector = await _empty_collector_with_db(db_path)
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert 'metrics' in tables
         await collector.close_db()
@@ -82,7 +83,7 @@ class TestSchemaInit:
     async def test_creates_events_table(self, tmp_path):
         db_path = str(tmp_path / 'test.db')
         collector = await _empty_collector_with_db(db_path)
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert 'events' in tables
         await collector.close_db()
@@ -91,7 +92,7 @@ class TestSchemaInit:
     async def test_metrics_table_has_expected_columns(self, tmp_path):
         db_path = str(tmp_path / 'test.db')
         collector = await _empty_collector_with_db(db_path)
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             cols = {row[1] for row in conn.execute('PRAGMA table_info(metrics)')}
         assert {'id', 'ts', 'host', 'label', 'value'}.issubset(cols)
         await collector.close_db()
@@ -100,7 +101,7 @@ class TestSchemaInit:
     async def test_events_table_has_end_ts_column(self, tmp_path):
         db_path = str(tmp_path / 'test.db')
         collector = await _empty_collector_with_db(db_path)
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             cols = {row[1] for row in conn.execute('PRAGMA table_info(events)')}
         assert 'end_ts' in cols
         await collector.close_db()
@@ -113,7 +114,7 @@ class TestWalMode:
     async def test_wal_mode_enabled(self, tmp_path):
         db_path = str(tmp_path / 'test.db')
         collector = await _empty_collector_with_db(db_path)
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             mode = conn.execute('PRAGMA journal_mode').fetchone()[0]
         assert mode == 'wal'
         await collector.close_db()
@@ -170,7 +171,7 @@ class TestMetricPersistence:
         ts = datetime(2024, 6, 1, 12, 0, 0)
         await _inject_point(collector, 'router1', 'CPU %', 42.5, ts)
         await collector.close_db()
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             rows = list(conn.execute('SELECT ts, host, label, value FROM metrics'))
         assert len(rows) == 1
         assert rows[0][1] == 'router1'
@@ -185,7 +186,7 @@ class TestMetricPersistence:
         await _inject_point(collector, 'h1', 'Memory %', 60.0)
         await _inject_point(collector, 'h2', 'CPU %', 20.0)
         await collector.close_db()
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             count = conn.execute('SELECT COUNT(*) FROM metrics').fetchone()[0]
         assert count == 3
 
@@ -207,7 +208,7 @@ class TestEventPersistence:
         ts = datetime(2024, 6, 1, 13, 0, 0)
         await collector.add_event(label='test start', timestamp=ts, color='#888888', source='auto')
         await collector.close_db()
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             rows = list(conn.execute('SELECT label, source, color FROM events'))
         assert len(rows) == 1
         assert rows[0][0] == 'test start'
@@ -221,7 +222,7 @@ class TestEventPersistence:
         end = datetime(2024, 6, 1, 13, 5, 0)
         await collector.add_event(label='my span', timestamp=start, end_timestamp=end)
         await collector.close_db()
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             rows = list(conn.execute('SELECT end_ts FROM events'))
         assert rows[0][0] == end.isoformat()
 
@@ -232,7 +233,7 @@ class TestEventPersistence:
         event = await collector.add_event(label='old label', color='#888888', dash='dash')
         await collector.update_event(event.id, label='new label', color='#ff0000', dash='solid')
         await collector.close_db()
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             row = conn.execute('SELECT label, color, dash FROM events WHERE id = ?', (event.id,)).fetchone()
         assert row[0] == 'new label'
         assert row[1] == '#ff0000'
@@ -245,7 +246,7 @@ class TestEventPersistence:
         event = await collector.add_event(label='to delete')
         await collector.delete_event(event.id)
         await collector.close_db()
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             count = conn.execute('SELECT COUNT(*) FROM events').fetchone()[0]
         assert count == 0
 
@@ -261,7 +262,7 @@ class TestSchemaMigration:
         """
         db_path = str(tmp_path / 'old.db')
         # Create old-style schema without end_ts
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             conn.executescript("""
                 CREATE TABLE metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -279,7 +280,7 @@ class TestSchemaMigration:
         # Opening via MetricCollector should migrate the schema
         collector = await _empty_collector_with_db(db_path)
         await collector.close_db()
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             cols = {row[1] for row in conn.execute('PRAGMA table_info(events)')}
         assert 'end_ts' in cols
 
@@ -289,7 +290,7 @@ class TestSchemaMigration:
 class TestFromSqlite:
     def _make_db(self, tmp_path, rows=None, events=None) -> str:
         db_path = str(tmp_path / 'data.db')
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             conn.executescript("""
                 CREATE TABLE metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -390,7 +391,7 @@ class TestFromSqlite:
         """from_sqlite() should handle old DBs that lack the host column."""
         db_path = str(tmp_path / 'old.db')
         ts = datetime(2024, 3, 1, 10, 0, 0).isoformat()
-        with sqlite3.connect(db_path) as conn:
+        with closing(sqlite3.connect(db_path)) as conn, conn:
             conn.executescript("""
                 CREATE TABLE metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,

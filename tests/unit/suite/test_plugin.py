@@ -399,6 +399,7 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
             ['-s', '-p', 'no:cacheprovider',
              '--override-ini', 'addopts=',
              '-o', 'asyncio_mode=auto',
+             '-o', 'asyncio_default_fixture_loop_scope=function',
              str(suite_path)],
             plugins=[plugin],
         )

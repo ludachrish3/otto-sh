@@ -132,6 +132,9 @@ addopts = "--doctest-modules --cov=otto --cov-context=test --cov-report term-mis
 doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
+filterwarnings = [
+    "error",
+]
 markers = [
     "integration: requires running Vagrant VMs (deselect with -m 'not integration')",
     "hops: multi-hop integration tests requiring 3 Vagrant VMs (deselect with -m 'not hops')",

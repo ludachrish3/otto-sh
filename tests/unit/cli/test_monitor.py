@@ -14,6 +14,7 @@ callback (which requires a real lab) is not involved.
 import asyncio
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -171,7 +172,7 @@ class TestFileOption:
     def test_db_file_accepted(self, tmp_path):
         db_file = tmp_path / 'metrics.db'
         # Create a valid SQLite file with the expected schema
-        with sqlite3.connect(str(db_file)) as conn:
+        with closing(sqlite3.connect(str(db_file))) as conn, conn:
             conn.executescript("""
                 CREATE TABLE metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -206,7 +207,7 @@ class TestLoadHistorical:
     @pytest.mark.asyncio
     async def test_sqlite_extension_uses_from_sqlite(self, tmp_path):
         db_file = tmp_path / 'data.db'
-        with sqlite3.connect(str(db_file)) as conn:
+        with closing(sqlite3.connect(str(db_file))) as conn, conn:
             conn.executescript("""
                 CREATE TABLE metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -253,7 +254,7 @@ class TestLoadHistorical:
     async def test_sqlite_with_data_loads_metrics(self, tmp_path):
         db_file = tmp_path / 'data.db'
         ts = datetime(2024, 1, 1, 12, 0, 0).isoformat()
-        with sqlite3.connect(str(db_file)) as conn:
+        with closing(sqlite3.connect(str(db_file))) as conn, conn:
             conn.executescript("""
                 CREATE TABLE metrics (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -420,7 +421,7 @@ class TestCollectorLiveRun:
         await collector.close_db()
 
         assert db_file.exists()
-        with sqlite3.connect(str(db_file)) as conn:
+        with closing(sqlite3.connect(str(db_file))) as conn, conn:
             rows = conn.execute('SELECT host, label, value FROM metrics').fetchall()
         # 1 Memory Usage + 3 Load averages = 4 rows
         assert len(rows) >= 4

@@ -154,6 +154,7 @@ class TestDeleteEndpoint:
             with pytest.raises(urllib.error.HTTPError) as exc_info:
                 await asyncio.to_thread(urllib.request.urlopen, req)
             assert exc_info.value.code == 404
+            exc_info.value.close()
         finally:
             server.stop()
             await task
