@@ -1,3 +1,7 @@
+---
+orphan: true
+---
+
 # Design: Docker container hosts
 
 ## Why parent-delegation

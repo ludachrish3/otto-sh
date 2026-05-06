@@ -46,7 +46,7 @@ services = ["api", "db"]                 # used for tab-completion only
 
 Mark hosts that can host containers:
 
-```json
+```text
 { "ne": "pepper", "board": "seed", "ip": "...", "creds": {...},
   "docker_capable": true,
   "labs": ["veggies"] }
