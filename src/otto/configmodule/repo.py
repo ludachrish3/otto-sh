@@ -47,6 +47,59 @@ def _test_run_syntax(t: 'CollectedTest', sut_dir: Path) -> str:
 
 
 @dataclass(frozen=True)
+class DockerImage:
+    """A Dockerfile-built image declared by a project."""
+
+    name: str
+    """Short logical name used in tags and CLI selection."""
+
+    dockerfile: Path
+    """Absolute path to the Dockerfile."""
+
+    context: Path
+    """Absolute path to the build context directory."""
+
+    target: str | None = None
+    """Optional multi-stage build target."""
+
+    build_args: tuple[tuple[str, str], ...] = ()
+    """Frozen list of (name, value) build args. Tuples (not dicts) so the
+    container is hashable and order is preserved for context-hash inputs."""
+
+
+@dataclass(frozen=True)
+class DockerCompose:
+    """A docker-compose file contributed by a project."""
+
+    path: Path
+    """Absolute path to the compose YAML file."""
+
+    default_host: str | None = None
+    """Lab host id where this stack should run by default. Overridden by
+    ``otto docker up --on <host>``."""
+
+    services: tuple[str, ...] = ()
+    """Service names declared in the compose file. Used to synthesize
+    container host ids for tab-completion without parsing YAML at
+    completion-fast-path time. The runtime is the source of truth and
+    will warn on mismatch with ``docker compose config --services``."""
+
+
+@dataclass(frozen=True)
+class DockerSettings:
+    """Per-repo docker configuration parsed from `[docker]` in `settings.toml`."""
+
+    registry_url: str = "docker.io"
+    """Default registry. Overridable per-image via the image's tag prefix."""
+
+    images: tuple[DockerImage, ...] = ()
+    """Images this project knows how to build."""
+
+    composes: tuple[DockerCompose, ...] = ()
+    """Compose files this project contributes."""
+
+
+@dataclass(frozen=True)
 class CollectedTest:
     """A single test item collected from a SUT repo's test directories.
 
@@ -113,6 +166,14 @@ class Repo():
 
     settings: dict[str, Any] = field(default_factory=dict[str, Any])
     """Repo settings dict as parsed from the `settings.toml` file"""
+
+    docker_settings: DockerSettings = field(
+        default_factory=DockerSettings,
+        init=False,
+    )
+    """Parsed `[docker]` table — image build definitions, compose files, and
+    registry URL. Defaults to an empty :class:`DockerSettings` when the
+    section is absent."""
 
     def __post_init__(self):
         self.parseSettings()
@@ -338,6 +399,8 @@ class Repo():
 
         self.host_defaults = self._parseHostDefaults(self.settings.get('host_defaults', {}))
 
+        self.docker_settings = self._parseDockerSettings(self.settings.get('docker', {}))
+
         try:
             self.name = self._expandString(self.settings['name'])
             self.version = Version(self._expandString(self.settings['version']))
@@ -383,6 +446,97 @@ class Repo():
                 )
             result[opt_key] = self._expandRecursive(table)
         return result
+
+    def _parseDockerSettings(self,
+        raw: dict[str, Any],
+    ) -> DockerSettings:
+        """Validate and normalize the ``[docker]`` TOML table.
+
+        Defaults are applied when keys are absent so projects only need to
+        specify what differs. ``${sutDir}`` is expanded in path-shaped values.
+        Unknown top-level keys raise ``ValueError`` so typos don't silently
+        no-op; sub-tables (images, composes) only validate the fields they
+        consume.
+        """
+        if not raw:
+            return DockerSettings()
+
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"{TOML_SETTINGS_PATH}: [docker] must be a table, "
+                f"got {type(raw).__name__}"
+            )
+
+        allowed = {'registry_url', 'images', 'composes'}
+        unknown = set(raw) - allowed
+        if unknown:
+            raise ValueError(
+                f"{TOML_SETTINGS_PATH}: unknown [docker] key(s): {sorted(unknown)}. "
+                f"Valid keys are: {sorted(allowed)}"
+            )
+
+        registry_url = self._expandString(raw.get('registry_url', 'docker.io'))
+
+        images: list[DockerImage] = []
+        for idx, entry in enumerate(raw.get('images', []) or []):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [[docker.images]][{idx}] must be a table"
+                )
+            try:
+                name = entry['name']
+                dockerfile = entry['dockerfile']
+                context = entry['context']
+            except KeyError as e:
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [[docker.images]][{idx}] missing required key {e}"
+                ) from e
+            build_args_raw = entry.get('build_args', {}) or {}
+            if not isinstance(build_args_raw, dict):
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [[docker.images]][{idx}].build_args "
+                    f"must be a table, got {type(build_args_raw).__name__}"
+                )
+            images.append(DockerImage(
+                name=self._expandString(name),
+                dockerfile=Path(self._expandString(dockerfile)),
+                context=Path(self._expandString(context)),
+                target=self._expandString(entry['target']) if entry.get('target') else None,
+                build_args=tuple(
+                    (self._expandString(k), self._expandString(str(v)))
+                    for k, v in sorted(build_args_raw.items())
+                ),
+            ))
+
+        composes: list[DockerCompose] = []
+        for idx, entry in enumerate(raw.get('composes', []) or []):
+            if not isinstance(entry, dict):
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [[docker.composes]][{idx}] must be a table"
+                )
+            try:
+                path = entry['path']
+            except KeyError as e:
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [[docker.composes]][{idx}] missing required key {e}"
+                ) from e
+            services_raw = entry.get('services', []) or []
+            if not isinstance(services_raw, list) or not all(isinstance(s, str) for s in services_raw):
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [[docker.composes]][{idx}].services "
+                    f"must be a list of strings"
+                )
+            composes.append(DockerCompose(
+                path=Path(self._expandString(path)),
+                default_host=self._expandString(entry['default_host']) if entry.get('default_host') else None,
+                services=tuple(services_raw),
+            ))
+
+        return DockerSettings(
+            registry_url=registry_url,
+            images=tuple(images),
+            composes=tuple(composes),
+        )
 
     @property
     def reservationSettings(self) -> dict[str, Any]:

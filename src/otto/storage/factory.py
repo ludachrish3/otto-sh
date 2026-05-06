@@ -108,6 +108,7 @@ def create_host_from_dict(
         - neId (optional): int
         - resources (optional): list[str] or set[str]
         - hop (optional): str (host ID of an intermediate hop)
+        - docker_capable (optional): bool (host can run docker containers)
         - log (optional): bool
         - log_stdout (optional): bool
         - name (optional): str

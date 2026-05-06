@@ -10,6 +10,7 @@ These guides cover otto's CLI commands and project configuration in detail.
    test
    monitor
    host
+   docker
    reservations
    coverage
    cli-reference

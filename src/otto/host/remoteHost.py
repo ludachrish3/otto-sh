@@ -134,6 +134,11 @@ class RemoteHost(BaseHost):
     is_virtual: bool = False
     """Determines whether a host is a VM or not."""
 
+    docker_capable: bool = False
+    """Whether this host can run Docker containers (i.e., has a docker daemon
+    and the configured user can talk to it). Containers declared by projects
+    are scheduled onto docker-capable hosts; non-capable hosts are skipped."""
+
     transfer: FileTransferType = 'scp'
     """Protocol used to transfer files."""
 

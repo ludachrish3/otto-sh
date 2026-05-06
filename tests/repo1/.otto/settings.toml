@@ -16,3 +16,16 @@ init = [
 
 [coverage]
 gcda_remote_dir = "/var/coverage/product"
+
+[docker]
+registry_url = "docker.io"
+
+[[docker.images]]
+name = "api"
+dockerfile = "${sutDir}/docker/Dockerfile"
+context = "${sutDir}/docker"
+
+[[docker.composes]]
+path = "${sutDir}/docker/compose.yml"
+default_host = "pepper_seed"
+services = ["api"]

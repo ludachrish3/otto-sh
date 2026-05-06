@@ -402,6 +402,7 @@ async def run_ssh_login(
     *,
     conn: Any,
     host_name: str,
+    command: str | None = None,
 ) -> None:
     """Open a PTY-backed SSH shell on ``conn`` and bridge it to the terminal.
 
@@ -410,19 +411,27 @@ async def run_ssh_login(
     size is forwarded to the remote PTY via
     ``SSHClientProcess.change_terminal_size`` — without this, the remote
     has no way to know the local terminal was resized.
+
+    When *command* is supplied, the SSH side runs that command instead of
+    the default login shell — used by container hosts to wrap
+    ``docker exec -it <container> /bin/sh`` over the parent's existing
+    SSH connection.
     """
     import asyncssh
 
     term_type = os.environ.get('TERM') or 'xterm'
     cols, rows = _initial_term_size()
 
-    process = await conn.create_process(
+    process_kwargs: dict[str, Any] = dict(
         request_pty='force',
         term_type=term_type,
         term_size=(cols, rows),
         stderr=asyncssh.STDOUT,
         encoding=None,
     )
+    if command is not None:
+        process_kwargs['command'] = command
+    process = await conn.create_process(**process_kwargs)
 
     async def write_remote(data: bytes) -> None:
         process.stdin.write(data)

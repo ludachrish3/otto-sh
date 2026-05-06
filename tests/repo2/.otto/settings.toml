@@ -13,3 +13,16 @@ tests = [
 init = [
     'repo2_instructions',
 ]
+
+[docker]
+registry_url = "docker.io"
+
+[[docker.images]]
+name = "worker"
+dockerfile = "${sutDir}/docker/Dockerfile"
+context = "${sutDir}/docker"
+
+[[docker.composes]]
+path = "${sutDir}/docker/compose.yml"
+default_host = "grape_seed"
+services = ["worker"]

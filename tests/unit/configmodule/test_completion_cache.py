@@ -88,7 +88,7 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     cache = _read_cache(tmp_path)
     assert len(cache) == 1
     entry = next(iter(cache.values()))
-    assert entry['schema_version'] == 3
+    assert entry['schema_version'] == 4
     assert isinstance(entry['generated_at'], int)
     instruction_names = {i['name'] for i in entry['instructions']}
     suite_names = {s['name'] for s in entry['suites']}
@@ -97,6 +97,9 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     # Host IDs from tests/lab_data/tech1/hosts.json — co-cached alongside
     # instructions/suites so `otto host <TAB>` hits the fast path.
     assert {'carrot_seed', 'tomato_seed', 'pepper_seed'} <= set(entry['hosts'])
+    # docker-capable parents are cached separately so `otto docker --on <TAB>`
+    # only suggests hosts that can actually run containers.
+    assert entry['docker_hosts'] == ['pepper_seed']
 
 
 def test_slow_path_seeds_cache_with_option_schemas(tmp_path: Path) -> None:

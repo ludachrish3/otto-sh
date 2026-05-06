@@ -1,0 +1,367 @@
+"""
+Docker Compose orchestration: bring stacks up/down, register containers
+as live hosts in the active Lab, and idempotently re-enter when the same
+stack is already running.
+
+The public surface (re-exported from :mod:`otto.docker`) is:
+
+- :func:`compose_up` — bring a stack up; returns ``{service: DockerContainerHost}``.
+- :func:`compose_down` — stop a stack and remove its container hosts from the lab.
+- :func:`composed` — async context manager wrapping the above.
+- :func:`compose_ps` — list running stacks on a parent.
+- :func:`get_container_host` — lab lookup by id (typed convenience).
+- :func:`get_user_compose_project` — name a stack so concurrent runs don't collide.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import getpass
+import json
+import os
+import shlex
+from typing import AsyncIterator, Optional
+
+from ..configmodule.lab import Lab
+from ..configmodule.repo import DockerCompose, Repo
+from ..host.dockerHost import DockerContainerHost
+from ..host.host import Host
+from ..host.remoteHost import RemoteHost
+from ..logger import getOttoLogger
+from ..utils import Status
+
+logger = getOttoLogger()
+
+
+def get_user_compose_project(repo_name: str, suffix: Optional[str] = None) -> str:
+    """Return a compose project name unique enough to coexist with other runs.
+
+    Format: ``otto-<repo>-<suffix>``. *suffix* defaults to the OS username,
+    or ``OTTO_COMPOSE_SUFFIX`` if set in the environment. Lowercase only —
+    compose project names must be lowercase.
+    """
+    raw_suffix = suffix or os.environ.get("OTTO_COMPOSE_SUFFIX") or _safe_username()
+    return f"otto-{repo_name}-{raw_suffix}".lower()
+
+
+def _safe_username() -> str:
+    try:
+        return getpass.getuser()
+    except Exception:
+        return "anon"
+
+
+def _resolve_parent(repo: Repo, lab: Lab, on: Optional[str], composes: list[DockerCompose]) -> RemoteHost:
+    """Pick a parent host for *repo*'s compose stack.
+
+    Order: explicit *on* > the first compose entry's ``default_host`` > error.
+    The chosen host must be ``docker_capable``.
+    """
+    candidate = on
+    if candidate is None:
+        for compose in composes:
+            if compose.default_host:
+                candidate = compose.default_host
+                break
+    if candidate is None:
+        raise ValueError(
+            f"No docker host specified for repo {repo.name!r}. "
+            f"Pass on=<host_id>, or set default_host in [[docker.composes]]."
+        )
+
+    if candidate not in lab.hosts:
+        raise ValueError(
+            f"Docker host {candidate!r} is not in lab {lab.name!r}. "
+            f"Available hosts: {sorted(lab.hosts)}"
+        )
+    host = lab.hosts[candidate]
+    if not isinstance(host, RemoteHost):
+        raise TypeError(
+            f"Docker host {candidate!r} must be a RemoteHost; got {type(host).__name__}"
+        )
+    if not host.docker_capable:
+        raise ValueError(
+            f"Host {candidate!r} is not docker_capable. Mark it in hosts.json with "
+            f'"docker_capable": true.'
+        )
+    return host
+
+
+async def _compose_cmd(parent: Host, project_name: str, files: list[str], action: str, *, extra: str = "") -> tuple[Status, str]:
+    file_args = " ".join(f"-f {shlex.quote(f)}" for f in files)
+    cmd = f"docker compose -p {shlex.quote(project_name)} {file_args} {action}"
+    if extra:
+        cmd += f" {extra}"
+    result = await parent.oneshot(cmd, timeout=None)
+    return result.status, result.output
+
+
+async def _stack_already_up(parent: Host, project_name: str) -> bool:
+    """Return True if any container is running under *project_name* on *parent*."""
+    result = await parent.oneshot(
+        f"docker ps -q --filter "
+        f"label=com.docker.compose.project={shlex.quote(project_name)}"
+    )
+    return result.status.is_ok and bool(result.output.strip())
+
+
+async def _resolve_container_id(
+    parent: Host,
+    project_name: str,
+    service: str,
+) -> Optional[str]:
+    """Look up the running container id for ``project_name/service`` on *parent*."""
+    result = await parent.oneshot(
+        f"docker ps -q "
+        f"--filter label=com.docker.compose.project={shlex.quote(project_name)} "
+        f"--filter label=com.docker.compose.service={shlex.quote(service)}"
+    )
+    if not result.status.is_ok:
+        return None
+    cid = result.output.strip().splitlines()
+    return cid[0] if cid else None
+
+
+async def compose_up(
+    repo: Repo,
+    lab: Lab,
+    *,
+    on: Optional[str] = None,
+    project_name: Optional[str] = None,
+    build: bool = True,
+) -> dict[str, DockerContainerHost]:
+    """Bring up *repo*'s compose stack on a parent host.
+
+    Idempotent at the project-name level: if a stack with the same
+    *project_name* is already running on *parent*, this becomes a lookup
+    instead of a fresh ``up``. Either way, returns a dict mapping each
+    declared service to its :class:`DockerContainerHost`, with the hosts
+    also registered in ``lab.hosts`` so ``--list-hosts`` and
+    ``otto host <id>`` see them.
+
+    Args:
+        build: When True (the default) and the repo declares
+            ``[[docker.images]]``, run :func:`build_images` first so locally-
+            built images exist on the parent before compose tries to pull
+            them. The build is idempotent via the context-hash skip, so this
+            is cheap when nothing changed. Pass ``build=False`` if the
+            compose file references only published images (or if you
+            already built explicitly).
+    """
+    settings = repo.docker_settings
+    if not settings.composes:
+        raise ValueError(
+            f"Repo {repo.name!r} has no [[docker.composes]] entries; nothing to up."
+        )
+
+    parent = _resolve_parent(repo, lab, on, list(settings.composes))
+    proj = project_name or get_user_compose_project(repo.name)
+
+    if build and settings.images:
+        # Late import to avoid a circular `compose <-> build` import.
+        from .build import build_images
+
+        results = await build_images(repo, parent, rebuild=False)
+        for name, (status, msg) in results.items():
+            if not status.is_ok:
+                raise RuntimeError(
+                    f"build for image {name!r} failed before compose up: {msg}"
+                )
+
+    from .staging import stage_compose_files
+    remote_files = await stage_compose_files(parent, repo.name, list(settings.composes))
+    remote_file_strs = [str(p) for p in remote_files]
+
+    if not await _stack_already_up(parent, proj):
+        logger.info(f"[docker] composing {proj} on {parent.id}")
+        status, output = await _compose_cmd(parent, proj, remote_file_strs, "up -d")
+        if not status.is_ok:
+            raise RuntimeError(f"docker compose up failed: {output}")
+    else:
+        logger.info(f"[docker] {proj} already running on {parent.id}; reusing")
+
+    # Enumerate services. Project-declared list is authoritative for the
+    # mapping we return; cross-check against the live list and warn on drift.
+    declared_services: list[str] = []
+    for compose in settings.composes:
+        declared_services.extend(compose.services)
+    declared_services = list(dict.fromkeys(declared_services))  # dedupe, preserve order
+
+    live_status, live_out = await _compose_cmd(parent, proj, remote_file_strs, "config", extra="--services")
+    live_services: set[str] = set()
+    if live_status.is_ok:
+        live_services = {s.strip() for s in live_out.splitlines() if s.strip()}
+        if declared_services and set(declared_services) != live_services:
+            logger.warning(
+                f"[docker] declared services {sorted(declared_services)} differ from "
+                f"compose-listed services {sorted(live_services)} for {proj}"
+            )
+    services = declared_services or sorted(live_services)
+
+    hosts: dict[str, DockerContainerHost] = {}
+    for service in services:
+        cid = await _resolve_container_id(parent, proj, service)
+        if not cid:
+            logger.warning(
+                f"[docker] could not resolve container id for {proj}/{service}; "
+                f"skipping registration"
+            )
+            continue
+        host = DockerContainerHost(
+            parent=parent,
+            container_id=cid,
+            project=repo.name,
+            service=service,
+            compose_project=proj,
+            resources=set(parent.resources),
+        )
+        # Register in the lab so otto host <id> finds it.
+        lab.hosts[host.id] = host  # type: ignore[assignment]
+        hosts[service] = host
+
+    return hosts
+
+
+async def compose_down(
+    repo: Repo,
+    lab: Lab,
+    *,
+    on: Optional[str] = None,
+    project_name: Optional[str] = None,
+) -> Status:
+    """Tear down *repo*'s compose stack and unregister its container hosts."""
+    settings = repo.docker_settings
+    if not settings.composes:
+        return Status.Skipped
+
+    parent = _resolve_parent(repo, lab, on, list(settings.composes))
+    proj = project_name or get_user_compose_project(repo.name)
+
+    from .staging import stage_compose_files
+    remote_files = await stage_compose_files(parent, repo.name, list(settings.composes))
+    status, output = await _compose_cmd(
+        parent, proj, [str(p) for p in remote_files], "down",
+    )
+    if not status.is_ok:
+        logger.error(f"[docker] compose down failed: {output}")
+
+    # Unregister any hosts that came from this stack.
+    parent_id = parent.id
+    prefix = f"{parent_id}.{repo.name.lower()}."
+    drop = [hid for hid in lab.hosts if hid.startswith(prefix)]
+    for hid in drop:
+        lab.hosts.pop(hid, None)
+
+    return status
+
+
+@contextlib.asynccontextmanager
+async def composed(
+    repo: Repo,
+    lab: Lab,
+    *,
+    on: Optional[str] = None,
+    project_name: Optional[str] = None,
+    own: bool = False,
+    build: bool = True,
+) -> AsyncIterator[dict[str, DockerContainerHost]]:
+    """Context manager wrapping ``compose_up`` / ``compose_down``.
+
+    By default the stack is **not** torn down on exit if it was already
+    running on entry — this lets a suite-level fixture hold the stack
+    while inner instructions also call ``composed`` without yanking it
+    from each other. Pass ``own=True`` to force teardown.
+
+    *build* is forwarded to :func:`compose_up`.
+    """
+    parent = _resolve_parent(repo, lab, on, list(repo.docker_settings.composes))
+    proj = project_name or get_user_compose_project(repo.name)
+
+    was_up = await _stack_already_up(parent, proj)
+
+    hosts = await compose_up(repo, lab, on=on, project_name=proj, build=build)
+    try:
+        yield hosts
+    finally:
+        if own or not was_up:
+            await compose_down(repo, lab, on=on, project_name=proj)
+
+
+async def compose_ps(parent: Host) -> list[dict]:
+    """Return a list of dicts describing running containers on *parent*.
+
+    Uses ``docker ps --format '{{json .}}'`` so the output is structured.
+    """
+    result = await parent.oneshot("docker ps --format '{{json .}}'")
+    if not result.status.is_ok:
+        return []
+    out: list[dict] = []
+    for line in result.output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
+    """Pre-register *placeholder* container hosts in *lab* for every declared
+    ``<parent>.<project>.<service>``.
+
+    The placeholders carry an empty ``container_id`` so that any operation
+    against a not-yet-up container fails with a clear "run `otto docker up`"
+    message rather than a confusing not-found error. Once :func:`compose_up`
+    runs, it overwrites the placeholder with a real entry containing the
+    resolved container id.
+
+    Returns the number of placeholders registered.
+    """
+    count = 0
+    for repo in repos:
+        settings = repo.docker_settings
+        if not settings.composes:
+            continue
+        # Build a map of docker-capable parents in the lab, by id.
+        capable: list[RemoteHost] = [
+            h for h in lab.hosts.values()
+            if isinstance(h, RemoteHost) and h.docker_capable
+        ]
+        if not capable:
+            continue
+        for compose in settings.composes:
+            if compose.default_host:
+                parents = [h for h in capable if h.id == compose.default_host]
+            else:
+                parents = capable
+            for parent in parents:
+                for service in compose.services:
+                    placeholder = DockerContainerHost(
+                        parent=parent,
+                        container_id="",
+                        project=repo.name,
+                        service=service,
+                        compose_project=get_user_compose_project(repo.name),
+                        resources=set(parent.resources),
+                    )
+                    if placeholder.id in lab.hosts:
+                        continue
+                    lab.hosts[placeholder.id] = placeholder  # type: ignore[assignment]
+                    count += 1
+    return count
+
+
+def get_container_host(host_id: str) -> DockerContainerHost:
+    """Look up a registered container host by id. Raises if not present."""
+    from ..configmodule import getConfigModule
+
+    cfg = getConfigModule()
+    host = cfg.lab.hosts.get(host_id)
+    if not isinstance(host, DockerContainerHost):
+        raise KeyError(
+            f"No container host registered with id {host_id!r}. "
+            f"Did you call `otto docker up` (or `compose_up`) first?"
+        )
+    return host

@@ -82,7 +82,7 @@ XDIR_ENV_VAR = 'OTTO_XDIR'
 CACHE_FILENAME = 'completion_cache.json'
 
 # Bump when the on-disk schema changes in a way older readers can't parse.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 HOSTS_FILENAME = 'hosts.json'
 
@@ -356,11 +356,18 @@ def read_cache(repos: list['Repo']) -> dict[str, Any] | None:
     instructions = entry.get('instructions')
     suites = entry.get('suites')
     hosts = entry.get('hosts')
+    docker_hosts = entry.get('docker_hosts', [])
     if (not isinstance(instructions, list)
             or not isinstance(suites, list)
-            or not isinstance(hosts, list)):
+            or not isinstance(hosts, list)
+            or not isinstance(docker_hosts, list)):
         return None
-    return {'instructions': instructions, 'suites': suites, 'hosts': hosts}
+    return {
+        'instructions': instructions,
+        'suites': suites,
+        'hosts': hosts,
+        'docker_hosts': docker_hosts,
+    }
 
 
 def write_cache(
@@ -368,6 +375,7 @@ def write_cache(
     instructions: list[dict[str, Any]],
     suites: list[dict[str, Any]],
     hosts: list[str],
+    docker_hosts: list[str] | None = None,
 ) -> None:
     """Write (or update) the entry for the current fingerprint.
 
@@ -404,6 +412,7 @@ def write_cache(
         'instructions': instructions,
         'suites': suites,
         'hosts': hosts,
+        'docker_hosts': docker_hosts or [],
     }
 
     tmp = tempfile.NamedTemporaryFile(
@@ -481,14 +490,54 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
     return instructions, suites
 
 
+def collect_docker_capable_host_ids(repos: list['Repo']) -> list[str]:
+    """Enumerate host IDs whose ``hosts.json`` entry has ``docker_capable: true``.
+
+    Used as the completion source for ``otto docker --on <TAB>`` and any
+    other surface that should be limited to docker-capable parents.
+    Mirrors :func:`collect_host_ids` (no ConfigModule needed; safe in the
+    completion fast path).
+    """
+    from ..storage.factory import create_host_from_dict, validate_host_dict
+
+    ids: set[str] = set()
+    for repo in repos:
+        for lab_path in repo.labs:
+            hosts_file = lab_path / HOSTS_FILENAME
+            if not hosts_file.is_file():
+                continue
+            try:
+                data = json.loads(hosts_file.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(data, list):
+                continue
+            for host_data in data:
+                if not isinstance(host_data, dict):
+                    continue
+                if not host_data.get('docker_capable'):
+                    continue
+                try:
+                    validate_host_dict(host_data)
+                    host = create_host_from_dict(host_data)
+                except (ValueError, TypeError):
+                    continue
+                ids.add(host.id)
+    return sorted(ids)
+
+
 def collect_host_ids(repos: list['Repo']) -> list[str]:
     """Enumerate every host ID reachable via the configured lab search paths.
 
     Reads each repo's ``labs`` directories for a ``hosts.json`` file and
     builds :class:`RemoteHost` objects via the existing factory so the
-    resulting IDs match what ``get_host`` will look up at runtime. Runs
-    without an initialized ConfigModule, so it's safe to call from the
-    completion fast path as well as the cache writer on the slow path.
+    resulting IDs match what ``get_host`` will look up at runtime. Also
+    synthesizes container host IDs of the form ``<parent>.<project>.<service>``
+    from each repo's ``[docker]`` settings so declared container hosts
+    are tab-completable before they're actually brought up.
+
+    Runs without an initialized ConfigModule, so it's safe to call from
+    the completion fast path as well as the cache writer on the slow path.
 
     Returns a sorted, de-duplicated list. Malformed files / entries are
     silently skipped — completion must never crash on bad user data.
@@ -497,6 +546,10 @@ def collect_host_ids(repos: list['Repo']) -> list[str]:
 
     ids: set[str] = set()
     for repo in repos:
+        # Map of host_id -> docker_capable flag, scoped to this repo's labs.
+        # Populated as we walk hosts.json so we can synthesize container
+        # ids in the same pass.
+        docker_capable_ids: list[str] = []
         for lab_path in repo.labs:
             hosts_file = lab_path / HOSTS_FILENAME
             if not hosts_file.is_file():
@@ -516,4 +569,22 @@ def collect_host_ids(repos: list['Repo']) -> list[str]:
                 except (ValueError, TypeError):
                     continue
                 ids.add(host.id)
+                if getattr(host, 'docker_capable', False):
+                    docker_capable_ids.append(host.id)
+
+        docker = getattr(repo, 'docker_settings', None)
+        if docker is None or not docker.composes:
+            continue
+        for compose in docker.composes:
+            # Pick parents to enumerate against. Prefer an explicit
+            # default_host; otherwise enumerate every docker-capable host
+            # in this repo's labs (pessimistic but stable; the actual
+            # bring-up picks one).
+            if compose.default_host:
+                parents = [compose.default_host]
+            else:
+                parents = list(docker_capable_ids)
+            for parent in parents:
+                for service in compose.services:
+                    ids.add(f"{parent}.{repo.name}.{service}".lower())
     return sorted(ids)

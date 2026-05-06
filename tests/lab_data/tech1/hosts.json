@@ -42,6 +42,7 @@
         "term": "ssh",
         "transfer": "scp",
         "is_virtual": true,
+        "docker_capable": true,
         "hop": "carrot_seed",
         "creds": {
             "vagrant": "vagrant",

@@ -31,6 +31,15 @@ from .lab import (
     getLab as getLab,
 )
 from .repo import (
+    DockerCompose as DockerCompose,
+)
+from .repo import (
+    DockerImage as DockerImage,
+)
+from .repo import (
+    DockerSettings as DockerSettings,
+)
+from .repo import (
     Repo,
 )
 from .repo import (
@@ -62,6 +71,7 @@ _repos = _getRepos(_env.sutDirs)
 # ---------------------------------------------------------------------------
 from .completion_cache import (
     collect_current_commands,
+    collect_docker_capable_host_ids,
     collect_host_ids,
     is_completion_mode,
     read_cache,
@@ -83,8 +93,9 @@ if _completion_names is None:
     # Safe no-op if OTTO_XDIR isn't set.
     _instructions, _suites = collect_current_commands()
     _host_ids = collect_host_ids(_repos)
+    _docker_host_ids = collect_docker_capable_host_ids(_repos)
     try:
-        write_cache(_repos, _instructions, _suites, _host_ids)
+        write_cache(_repos, _instructions, _suites, _host_ids, _docker_host_ids)
     except OSError:
         # Cache writes are best-effort — never block real work on them.
         pass

@@ -100,8 +100,28 @@ Vagrant.configure("2") do |config|
     config.vm.define "test3", autostart: false do |test3|
         test3.vm.network "private_network", ip: "10.10.200.13"
 
-        # Apply test provisioning
+        # Apply test provisioning (shared with test1, test2)
         provision_test_vm(test3, "test3")
+
+        # Install Docker so otto's docker container hosts can use test3 as
+        # their parent. test3 is the only docker-capable VM in the lab data
+        # (`docker_capable: true` on `pepper` in tests/lab_data/tech1/hosts.json).
+        test3.vm.provision "shell", name: "test3 docker", keep_color: true, inline: <<-SHELL
+
+            # Install docker engine + compose v2 plugin from Ubuntu's repos.
+            # `docker-compose-v2` provides `docker compose` (v2 plugin) which
+            # is the spelling otto uses; the legacy `docker-compose` binary
+            # is intentionally not installed.
+            apt -y install  docker.io                \
+                            docker-compose-v2
+
+            # Let the `vagrant` user (the credential otto authenticates as)
+            # talk to the docker socket without sudo. Otto authenticates as
+            # `vagrant` per tests/lab_data/tech1/hosts.json.
+            usermod -aG docker vagrant
+
+            systemctl enable --now docker
+        SHELL
     end
 
     # Dynamically set hostname based on VM name

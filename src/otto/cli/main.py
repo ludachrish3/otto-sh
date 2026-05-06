@@ -268,6 +268,14 @@ def main(
     # Pass search paths and merged defaults to getLab
     lab = getLab(labs, search_paths=lab_search_paths, defaults=merged_host_defaults)
 
+    # Synthesize placeholder Docker container hosts from each repo's
+    # `[docker]` settings. They appear in `--list-hosts` and tab-completion
+    # immediately; operations against them surface a clear "run otto docker
+    # up" error until `compose_up` overwrites the placeholder with a real
+    # entry.
+    from ..docker.compose import register_declared_container_hosts
+    register_declared_container_hosts(lab, repos)
+
     # Build the reservation backend (first repo with a [reservations] section wins;
     # empty settings across all repos yields a null backend — effectively disabled).
     from ..reservations import (
@@ -356,6 +364,7 @@ _SUBCOMMAND_MODULES: dict[str, tuple[str, str]] = {
     'monitor':     ('.monitor',     'monitor_app'),
     'cov':         ('.cov',         'cov_app'),
     'host':        ('.host',        'host_app'),
+    'docker':      ('.docker',      'docker_app'),
     'reservation': ('.reservation', 'reservation_app'),
 }
 

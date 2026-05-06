@@ -6,6 +6,7 @@ from .host import ShellCommand as ShellCommand
 from .host import SuppressCommandOutput as SuppressCommandOutput
 from .host import isDryRun as isDryRun
 from .host import setDryRun as setDryRun
+from .dockerHost import DockerContainerHost as DockerContainerHost
 from .localHost import LocalHost as LocalHost
 from .remoteHost import RemoteHost as RemoteHost
 from .toolchain import Toolchain as Toolchain
