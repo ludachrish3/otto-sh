@@ -15,9 +15,9 @@ grow a `if term == 'docker'` branch in five places (no real TCP, no
 port to forward, no FTP, no NetCat). Container "transport" is just
 `docker exec` against a daemon, plus `docker cp` for files.
 
-Instead, `DockerContainerHost` holds a reference to a *parent* `Host`
-(typically a `RemoteHost`) and implements every method by delegating
-to that parent with a `docker exec` / `docker cp` wrapper. The parent
+Instead, `DockerContainerHost` holds a reference to a *parent*
+`RemoteHost` (SSH-based) and implements every method by delegating to
+that parent with a `docker exec` / `docker cp` wrapper. The parent
 owns:
 
 - Authentication
@@ -100,12 +100,50 @@ through the existing reservation backend. There's no separate
 container-reservation concept — the parent's reservation transitively
 covers its containers.
 
-## Out of scope (MVP)
+## Persistent shell sessions
+
+`run()`, `open_session()`, `send()`, and `expect()` use a persistent
+`docker exec -it <ctr> sh` session multiplexed on the parent's
+existing asyncssh connection (`SSHClientConnection.create_process()`).
+This is the one place the docker host reaches past parent-delegation
+purity into the parent's transport — the same shape that `_interact`
+already takes when it grabs `parent._connections.ssh()` for a
+PTY-backed login. The trade-off is small: in exchange for one extra
+SSH channel per active container, `run()` becomes consistent with
+`LocalHost` and `RemoteHost` (state persists across calls; no `&&`
+chains required) and the session protocol's expect/send primitives
+become available inside containers.
+
+The session is implemented as `_DockerSshSession`, a thin subclass of
+`SshSession` that overrides only `_open` to splice
+`docker exec -it <cid> sh` in front of the channel's default shell.
+The sentinel-wrapped command execution, expect handling, line-by-line
+output streaming, and `\x03`-based timeout recovery all come from the
+base class. `-it` is required for SIGINT semantics: without a TTY,
+`\x03` is just data on stdin and timeout recovery wouldn't actually
+interrupt the foreground process. asyncssh's `term_type='dumb'`
+allocates the PTY for free.
+
+`oneshot()` stays stateless — it keeps the original
+`parent.oneshot("docker exec ...")` path and remains concurrent-safe.
+
+The container id is resolved lazily at session-open time so that
+hosts pre-registered as placeholders (with `container_id=""`) work
+correctly once `compose_up` populates the id.
+
+Lifecycle: `compose_down` now `await`s `host.close()` on each
+container host before popping it from `lab.hosts`, ensuring the
+session's docker exec channel drains while the parent's SSH
+connection is still alive. Container hosts must close before their
+parents.
+
+## Out of scope
 
 - Local docker builds: builds always go to the parent.
 - Cross-host networking between containers on different parents.
 - Image push to a registry (only local tagging on the parent).
-- Persistent shell state across separate `run()` calls. Chain with
-  `&&` until/unless we layer a `docker exec -i bash` session on top
-  of asyncssh channel multiplexing.
-- Telnet parents for `interact()` — rejected with a clear error.
+- Non-SSH parents for `run` / `open_session` / `send` / `expect` /
+  `interact` — rejected with a clear `NotImplementedError`. Local
+  docker is expected to be managed via Kubernetes rather than as a
+  first-class otto host. `oneshot()` (and `get` / `put`) still work
+  against any parent.

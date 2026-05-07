@@ -46,6 +46,37 @@ def _make_container(parent=None, container_id: str = "abc123def456") -> DockerCo
     )
 
 
+def _build_fake_ssh_remote_host():
+    """Construct a real RemoteHost with an injected fake ConnectionManager.
+
+    Real RemoteHost is needed so `isinstance(parent, RemoteHost)` passes in
+    `_make_session`; the fake ConnectionManager keeps the test offline.
+    """
+    from otto.host.connections import ConnectionManager
+    from otto.host.remoteHost import RemoteHost
+
+    class FakeConnections(ConnectionManager):
+        def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            self._ssh_conn = MagicMock()  # not awaited in unit tests
+            self._sftp_conn = None
+            self._ftp_conn = None
+            self._telnet_conn = None
+            self._name = kwargs.get('name', 'fake')
+            self._term = kwargs.get('term', 'ssh')
+            self._hop = None
+
+        async def ssh(self):
+            return self._ssh_conn
+
+    return RemoteHost(
+        ip="10.0.0.1",
+        creds={"root": "x"},
+        ne="fake_ne",
+        term="ssh",
+        _connection_factory=FakeConnections,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Construction & identity
 # ---------------------------------------------------------------------------
@@ -106,30 +137,65 @@ async def test_oneshot_quotes_dangerous_chars():
 
 
 # ---------------------------------------------------------------------------
-# run — list of commands
+# run — persistent-shell dispatch
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_run_list_dispatches_each_via_docker_exec():
-    parent = _mock_parent()
+async def test_run_rejects_non_ssh_remote_parent():
+    """run() requires an SSH-based RemoteHost parent (telnet → NotImplementedError)."""
+    parent = _mock_parent(term="telnet")
     h = _make_container(parent)
-    parent.oneshot.return_value = _ok()
-
-    result = await h.run(["pwd", "uname -a"])
-
-    assert result.status == Status.Success
-    assert len(result.statuses) == 2
-    # Two parent.oneshot calls, both wrapped in docker exec.
-    assert parent.oneshot.await_count == 2
-    for c in parent.oneshot.call_args_list:
-        assert c.args[0].startswith(f"docker exec -i {h.container_id} sh -c ")
+    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
+        await h.run("pwd")
 
 
 @pytest.mark.asyncio
-async def test_run_with_expects_raises():
-    h = _make_container()
-    with pytest.raises(NotImplementedError):
-        await h._run_one("read x", expects=[("password:", "secret")])
+async def test_run_rejects_localhost_parent():
+    """run() requires a RemoteHost parent — LocalHost is rejected."""
+    from otto.host.localHost import LocalHost
+    h = DockerContainerHost(
+        parent=LocalHost(),
+        container_id="abc123",
+        project="repo1",
+        service="api",
+        compose_project="otto-repo1-vagrant",
+    )
+    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
+        await h.run("pwd")
+
+
+@pytest.mark.asyncio
+async def test_run_with_ssh_parent_uses_docker_session():
+    """run() against an SSH-based RemoteHost parent opens a _DockerSshSession."""
+    from otto.host.session import _DockerSshSession
+    parent = _build_fake_ssh_remote_host()
+    h = _make_container(parent)
+
+    # Patch the factory to return a controllable mock; verify the right session
+    # type would be requested without actually opening a docker exec channel.
+    real_factory = h._session_mgr._session_factory
+    sentinel_session = real_factory()
+    assert isinstance(sentinel_session, _DockerSshSession)
+
+
+@pytest.mark.asyncio
+async def test_session_factory_resolves_container_id_lazily():
+    """The cid_getter closure reads the host's current container_id at session-open
+    time — not the value at construction time. This means a placeholder host
+    constructed with `container_id=""` works correctly once `_ensure_running`
+    populates the id (e.g., via parent.oneshot lookup)."""
+    parent = _build_fake_ssh_remote_host()
+    h = DockerContainerHost(
+        parent=parent,
+        container_id="",  # placeholder
+        project="repo1",
+        service="api",
+        compose_project="otto-repo1-vagrant",
+    )
+    # Simulate _ensure_running populating the id post-hoc.
+    h.container_id = "resolved_cid_xyz"
+    session = h._session_mgr._session_factory()
+    assert session._cid_getter() == "resolved_cid_xyz"
 
 
 # ---------------------------------------------------------------------------
@@ -160,27 +226,27 @@ async def test_get_placeholder_raises():
 
 
 # ---------------------------------------------------------------------------
-# Sessions / send / expect — explicit "not implemented" surface
+# Sessions / send / expect — gated on SSH-based RemoteHost parent
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_open_session_raises():
-    h = _make_container()
-    with pytest.raises(NotImplementedError):
+async def test_open_session_rejects_non_remote_parent():
+    h = _make_container()  # MagicMock parent
+    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
         await h.open_session("foo")
 
 
 @pytest.mark.asyncio
-async def test_send_raises():
+async def test_send_rejects_non_remote_parent():
     h = _make_container()
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
         await h.send("hi")
 
 
 @pytest.mark.asyncio
-async def test_expect_raises():
+async def test_expect_rejects_non_remote_parent():
     h = _make_container()
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
         await h.expect("prompt> ")
 
 

@@ -2,15 +2,8 @@
 
 ## General
 
+- Add python version support badges to the readme and docs.
 - Is there a way to make an annotated release tag based on the CHANGELOG? Every release tag is currently empty, but it would be great if the changelog content would show up so that it's visible on github.
-- Can pytest fail the suite if there are warnings? I don't like it that warnings exist and are easy to miss during regression runs.
-- Resolve the warnings in python 3.11+ versions of the test suite
-  - There's actually a warning in 3.10:
-    - tests/unit/suite/test_plugin.py::test_e2e_monitor_collects_metrics_under_class_loop_scope
-  /home/vagrant/otto-sh/.venv/lib/python3.10/site-packages/pytest_asyncio/plugin.py:247: PytestDeprecationWarning: The configuration option "asyncio_default_fixture_loop_scope" is unset.
-  The event loop scope for asynchronous fixtures will default to the fixture caching scope. Future versions of pytest-asyncio will default the loop scope for asynchronous fixtures to function scope. Set the default fixture loop scope explicitly in order to avoid unexpected behavior in the future. Valid fixture loop scopes are: "function", "class", "module", "package", "session"
-
-    warnings.warn(PytestDeprecationWarning(_DEFAULT_FIXTURE_LOOP_SCOPE_UNSET))
 - Remove the testpypi release workflow. Releases to pypi are working just fine, so there's no need to testpypi anymore. There's alwasy the `make publish` approach that can work if needed
 - Running just `otto` clears old logs and then displays the help menu. Old logs should NOT be deleted in this case. Just the help menu should be displayed and then otto should exit.
 - Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name

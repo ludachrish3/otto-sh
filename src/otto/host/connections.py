@@ -23,6 +23,7 @@ transport with a test double — no monkeypatching of library functions needed.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Literal, Optional
 
 import aioftp
@@ -71,8 +72,19 @@ class TunneledFtpClient(aioftp.Client):
     async def _open_connection(self, host, port):  # type: ignore[no-untyped-def, override]
         if not self._tunnel_data:
             return await super()._open_connection(host, port)
-        local_port = await self._hop.forward_port(self._dest_host, port)
-        return await super()._open_connection('localhost', local_port)
+        # Open a direct SSH channel to the FTP server's data port instead of
+        # opening a local listener and connecting through it. The listener
+        # approach (via ``forward_local_port``) leaves both the listener and
+        # the local-side accept socket in ``HopTransport._port_forwards``;
+        # those linger until the hop closes, and the local socket pair
+        # (127.0.0.1:X → 127.0.0.1:Y) hits asyncio's ``__del__`` after the
+        # test ends, raising ``ResourceWarning`` which pytest's
+        # ``[unraisable]`` plugin escalates into a flake on the *next* test.
+        # ``conn.open_connection`` returns ``(SSHReader, SSHWriter)`` (duck-
+        # compatible with asyncio's stream pair) tied directly to the SSH
+        # channel — closes cleanly when aioftp closes the writer.
+        conn = await self._hop.get_tunnel()
+        return await conn.open_connection(self._dest_host, port)
 
 
 class ConnectionManager:
@@ -285,8 +297,22 @@ class ConnectionManager:
             self._sftp_conn = None
 
         if self._ssh_conn:
+            # asyncssh's ``wait_closed()`` returns when the SSH session
+            # finishes — but in some teardown paths (notably hopped
+            # connections where the parent tunnel survives the child) the
+            # underlying asyncio ``_SelectorSocketTransport`` is left with
+            # ``_closing=False`` even though the OS socket is gone (fd=-1).
+            # That zombie transport sits in GC until later, when its
+            # ``__del__`` fires ``ResourceWarning`` on a closed loop and
+            # pytest's ``[unraisable]`` plugin escalates it into a flake on
+            # whichever next test happens to be running. Grab the asyncio
+            # transport before close and explicitly close() it after — this
+            # sets ``_closing=True`` so ``__del__`` is a no-op.
+            asyncio_transport = getattr(self._ssh_conn, '_transport', None)
             self._ssh_conn.close()
             await self._ssh_conn.wait_closed()
+            if asyncio_transport is not None:
+                asyncio_transport.close()
             self._ssh_conn = None
 
         if self._ftp_conn:
@@ -299,3 +325,17 @@ class ConnectionManager:
 
         if self._hop is not None:
             await self._hop.close()
+
+        # asyncssh's ``wait_closed()`` returns once the SSH session is gone,
+        # but the underlying ``_SelectorSocketTransport`` is left with
+        # ``_sock`` still pointing at a (now-detached, fd=-1) socket object
+        # — its own ``close()`` was never invoked, only the inner socket's,
+        # so ``transport._closing`` is still False. When that transport gets
+        # GC'd later (often on a closed loop, as the test's loop has been
+        # torn down by then), its ``__del__`` fires ``ResourceWarning`` for
+        # the still-"open" transport, which pytest's ``[unraisable]`` plugin
+        # then escalates into a flake on the *next* test. Force GC now,
+        # while our loop is still alive, so the ``__del__`` either runs
+        # cleanly or finds nothing to complain about.
+        import gc
+        gc.collect()

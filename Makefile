@@ -18,9 +18,12 @@ CI_COVERAGE_THRESHOLD := 80
 
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
-# Full suite runs in ~40s locally; 2 min leaves headroom for slower runners.
+# Docker integration tests are pinned to one xdist worker (xdist_group)
+# because they share /tmp/otto-docker/repo1/ on the parent and can't safely
+# parallelize compose_up's `rm -rf` of the staging dir. That serialization
+# is what dominates wall time; 4 min leaves headroom for slower runners.
 # --kill-after escalates SIGTERM → SIGKILL if xdist workers don't drain.
-PYTEST_TIMEOUT := 120s
+PYTEST_TIMEOUT := 240s
 TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 
 all: ## Run full pipeline against the dev VM (includes integration tests)
@@ -117,7 +120,7 @@ doctest: ## Run Sphinx doctests
 
 clean: ## Remove all generated artifacts
 	@rm -rf dist
-	@rm -rf coverage_report .coverage
+	@rm -rf coverage_report .coverage .coverage.*
 	@rm -rf docs/_build
 
 help: ## Show this help message

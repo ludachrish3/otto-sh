@@ -19,6 +19,9 @@
     ],
     "autoDocstring.startOnNewLine": true,
     "files.watcherExclude": {
+        ".pytest_cache/**": true,
+        ".nox/**": true,
+        ".ruff_cache/**": true,
         ".venv/**": true
     },
 }

@@ -961,7 +961,7 @@ class TestTimeout:
     @pytest.mark.integration
     async def test_timeout_returns_error(self, host1: RemoteHost):
         try:
-            result = (await host1.run("sleep 999", timeout=0.5)).only
+            result = (await host1.run("sleep 999", timeout=0.1)).only
             assert result.status == Status.Error
             assert "timed out" in result.output
             if host1.term == 'ssh':
@@ -973,7 +973,7 @@ class TestTimeout:
     @pytest.mark.integration
     async def test_session_recovers_after_timeout(self, host1: RemoteHost):
         try:
-            await host1.run("sleep 999", timeout=0.5)
+            await host1.run("sleep 999", timeout=0.1)
             result = (await host1.run("echo recovered")).only
             assert result.status == Status.Success
             assert "recovered" in result.output

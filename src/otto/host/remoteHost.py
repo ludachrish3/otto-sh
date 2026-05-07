@@ -300,8 +300,17 @@ class RemoteHost(BaseHost):
         it. Each target host gets its own tunnel connection (not shared with
         the hop's own connections).
 
-        For multi-hop chains the transport holds a reference to the parent
-        transport so that ``close()`` cascades down the chain.
+        For multi-hop chains the transport holds a reference to its parent
+        :class:`SshHopTransport`, so ``close()`` cascades down the entire
+        chain — every intermediate SSH connection (and its underlying
+        asyncio transport) gets closed explicitly. Without that linkage,
+        the outermost SSH connection (e.g. carrot in an
+        otto→carrot→tomato→pepper chain) is owned only by asyncssh's
+        tunnel mechanism, never has ``close()`` called on its asyncio
+        transport, and leaves a zombie ``_SelectorSocketTransport`` that
+        fires ``ResourceWarning`` from ``__del__`` after the test's loop
+        closes — which pytest's ``[unraisable]`` plugin then escalates
+        into a flake on the next test.
 
         Cycle detection prevents infinite loops (e.g. A hops through B, B hops through A).
         """
@@ -311,6 +320,17 @@ class RemoteHost(BaseHost):
 
         hop_id = self.hop
         host_name = self.name
+
+        # The outer SshHopTransport — its ``_parent`` is set lazily on the
+        # first call to ``_create_tunnel`` (when the configmodule is
+        # available and we can resolve the hop chain). Linking ``_parent``
+        # makes ``close()`` walk the chain so every intermediate SSH
+        # connection's asyncio transport gets explicitly closed.
+        # placeholder factory is replaced below; needed to satisfy the
+        # constructor without doing anything that requires the configmodule.
+        async def _placeholder(*args, **kwargs):
+            raise RuntimeError("SshHopTransport factory not initialized")
+        outer = SshHopTransport(_placeholder)
 
         async def _create_tunnel(
             _visited: set[str] | None = None,
@@ -322,13 +342,18 @@ class RemoteHost(BaseHost):
 
             hop_host = get_host(hop_id)
 
-            # If the hop itself has a hop, recursively build the tunnel chain.
-            # We call the inner factory directly (not via SshHopTransport) so
-            # that the _visited set propagates for cycle detection.
             parent_tunnel = None
             if hop_host.hop:
-                parent_factory = hop_host._build_hop_transport()._factory
-                parent_tunnel = await parent_factory(_visited=visited)
+                # Build the parent SshHopTransport lazily on first use and
+                # cache it on ``outer._parent`` so close() can walk it.
+                # Reusing the cached connection avoids re-tunneling on
+                # subsequent calls and gives close() a single object to
+                # tear down.
+                if outer._parent is None:
+                    outer._parent = hop_host._build_hop_transport()
+                if outer._parent._conn is None:
+                    outer._parent._conn = await outer._parent._factory(_visited=visited)
+                parent_tunnel = outer._parent._conn
 
             user, password = next(iter(hop_host.creds.items())) if hop_host.user is None else (hop_host.user, hop_host.creds[hop_host.user])
             logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
@@ -341,7 +366,8 @@ class RemoteHost(BaseHost):
             )
             return conn
 
-        return SshHopTransport(_create_tunnel)
+        outer._factory = _create_tunnel
+        return outer
 
     def set_term_type(self,
         term: Any,

@@ -48,7 +48,7 @@ class SshHopTransport:
 
     def __init__(
         self,
-        factory: Callable[[], Awaitable[SSHClientConnection]],
+        factory: Callable[..., Awaitable[SSHClientConnection]],
         parent: SshHopTransport | None = None,
     ) -> None:
         self._factory = factory
@@ -79,8 +79,20 @@ class SshHopTransport:
         self._port_forwards.clear()
 
         if self._conn is not None:
+            # See ``ConnectionManager.close`` for the full story: asyncssh's
+            # ``wait_closed()`` returns before the underlying asyncio
+            # transport's ``connection_lost`` callback fires, which leaves
+            # ``transport._closing=False`` even though the OS socket is
+            # already torn down. The zombie transport then triggers
+            # ``ResourceWarning`` from ``__del__`` on a closed loop, which
+            # pytest's ``[unraisable]`` plugin escalates into a flake on
+            # the *next* test. Capture the asyncio transport before close
+            # and explicitly ``close()`` it after.
+            asyncio_transport = getattr(self._conn, '_transport', None)
             self._conn.close()
             await self._conn.wait_closed()
+            if asyncio_transport is not None:
+                asyncio_transport.close()
             self._conn = None
 
         if self._parent is not None:

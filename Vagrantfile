@@ -146,10 +146,16 @@ Vagrant.configure("2") do |config|
 
             # Enable FTP write access (needed for uploads) and disable the seccomp
             # sandbox (vsftpd 3.0.5+ on Ubuntu 24.04 blocks writes by default),
-            # then start and enable vsftpd
+            # then start and enable vsftpd. ``restart`` (not ``enable --now``)
+            # is required because the package installer above already started
+            # the service with the unedited default config — ``--now`` is a
+            # no-op on an already-running service, so without an explicit
+            # restart the conf edits don't take effect and FTP uploads return
+            # 550 Permission denied.
             sed -i 's/#write_enable=YES/write_enable=YES/' /etc/vsftpd.conf
             grep -q seccomp_sandbox /etc/vsftpd.conf || echo 'seccomp_sandbox=NO' >> /etc/vsftpd.conf
-            systemctl enable --now vsftpd
+            systemctl enable vsftpd
+            systemctl restart vsftpd
 
             # Set the vagrant user's password to 'vagrant' for SSH/telnet access
             echo 'vagrant:vagrant' | sudo chpasswd

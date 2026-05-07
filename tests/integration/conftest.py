@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest_asyncio
 
-from src.otto.host.remoteHost import RemoteHost
+from otto.host.remoteHost import RemoteHost
 
 _LAB_DATA = Path(__file__).parent.parent / "lab_data" / "tech1" / "hosts.json"
 

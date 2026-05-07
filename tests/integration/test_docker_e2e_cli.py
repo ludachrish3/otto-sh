@@ -30,10 +30,22 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 REPO1 = PROJECT_ROOT / "tests" / "repo1"
 REPO2 = PROJECT_ROOT / "tests" / "repo2"
 OTTO_BIN = Path(sys.executable).parent / "otto"
+COVERAGERC = PROJECT_ROOT / ".coveragerc"
+# Same subprocess-coverage bootstrap that test_completion_cache.py and
+# test_coverage_e2e.py use: prepending tests/_coverage_bootstrap to
+# PYTHONPATH makes each subprocess run sitecustomize.py, which calls
+# coverage.process_startup() so the otto subprocess's line execution
+# is merged into the parent test run's coverage data.
+COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
-# Serialize every test in this file on a single xdist worker so concurrent
-# test_docker_e2e_* invocations don't fight over /tmp/otto-docker/<repo>/
-# on the shared docker host.
+# Serialize every test in this file on a single xdist worker. Each test
+# DOES use a unique ``OTTO_COMPOSE_SUFFIX`` (via ``fresh_suffix``) and
+# staging is now keyed on the compose-project name, so the staging-dir
+# race that originally motivated this group is gone — but parallelizing
+# 4 ``docker compose up`` operations against the same daemon ends up
+# *slower* due to docker-daemon-level serialization on image/network
+# state, which makes each test slower without reducing wall time. Single
+# worker keeps each test fast and the total deterministic.
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
 
 
@@ -60,6 +72,12 @@ def _run_otto(
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
         "OTTO_SUT_DIRS": sut_dirs,
+        # Subprocess coverage: coverage_bootstrap/sitecustomize.py runs
+        # coverage.process_startup() when this env var points at a config.
+        "COVERAGE_PROCESS_START": str(COVERAGERC),
+        "PYTHONPATH": os.pathsep.join(
+            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep),
     }
     if xdir is not None:
         env["OTTO_XDIR"] = str(xdir)
@@ -87,11 +105,17 @@ def fresh_suffix() -> str:
 def teardown_after(fresh_suffix, tmp_path):
     """Yield the suffix; on test exit, ensure the stack is torn down even if
     the test failed mid-flight. Idempotent — `down` is harmless when the
-    stack isn't up."""
+    stack isn't up. Tears down both repo1 and repo2 because the multi-repo
+    tests bring up stacks for both, and a half-torn-down repo2 stack leaks
+    a docker network on each run; enough leaks (~30) and the docker daemon
+    runs out of subnet pools and subsequent ``compose up``s fail with
+    ``all predefined address pools have been fully subnetted``."""
     yield fresh_suffix
+    # Run a single ``otto docker down`` against both repos so any partially-
+    # created repo2 stack from a multi-repo test is cleaned up too.
     _run_otto(
         "docker", "down",
-        sut_dirs=str(REPO1),
+        sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
         compose_suffix=fresh_suffix,
     )

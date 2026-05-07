@@ -48,9 +48,15 @@ async def _fetch_one_host(
     Returns the per-host staging directory on success, or ``None`` if
     no files were found or the transfer failed.
     """
+    # DockerContainerHost piggybacks on a parent and doesn't compile the
+    # SUT, so it never has its own .gcda files. Skip without creating an
+    # empty dest dir that would trip up downstream tools (e.g. lcov's
+    # ``geninfo`` errors out on empty dirs).
+    from ...host.dockerHost import DockerContainerHost
+    if isinstance(host, DockerContainerHost):
+        return None
+
     label = host.id
-    dest = staging_root / label
-    dest.mkdir(parents=True, exist_ok=True)
 
     logger.info("Discovering .gcda files on %s:%s", label, gcda_remote_dir)
     find_result = await host.oneshot(
@@ -69,6 +75,11 @@ async def _fetch_one_host(
     if not gcda_files:
         logger.warning("No .gcda files found on %s", label)
         return None
+
+    # Only create the per-host dir once we know there are files — keeps
+    # the staging tree free of empty subdirs that downstream tools choke on.
+    dest = staging_root / label
+    dest.mkdir(parents=True, exist_ok=True)
 
     logger.info("Fetching .gcda files from %s", label)
     status, msg = await host.get(gcda_files, dest, show_progress=False)

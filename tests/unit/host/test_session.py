@@ -514,7 +514,7 @@ class TestLocalSession:
 
     @pytest.mark.asyncio
     async def test_timeout_recovery(self, local_session: LocalSession):
-        result = await local_session.run_cmd("sleep 999", timeout=0.5)
+        result = await local_session.run_cmd("sleep 999", timeout=0.1)
         assert result.status == Status.Error
         assert "timed out" in result.output
 
@@ -653,7 +653,16 @@ class TestCommandLogging:
             # Never send end sentinel — command will time out
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd("long_running_cmd", timeout=0.3)
+        # Patch the recovery timeout to a small value so the post-timeout
+        # ``_recover_session`` call doesn't block this test for the full
+        # 5-second recovery window (no recovery sentinel ever arrives).
+        import otto.host.session as session_mod
+        original = session_mod._RECOVERY_TIMEOUT
+        session_mod._RECOVERY_TIMEOUT = 0.05
+        try:
+            result = await session.run_cmd("long_running_cmd", timeout=0.1)
+        finally:
+            session_mod._RECOVERY_TIMEOUT = original
 
         assert result.status == Status.Error
         assert "early line" in logged

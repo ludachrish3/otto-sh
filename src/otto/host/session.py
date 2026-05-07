@@ -333,16 +333,27 @@ class ShellSession(ABC):
 class SshSession(ShellSession):
     """SSH persistent shell session via asyncssh create_process()."""
 
-    def __init__(self, conn: SSHClientConnection) -> None:
+    def __init__(self, conn: SSHClientConnection | None) -> None:
         super().__init__()
         self._conn = conn
         self._process: Any = None
+        # When set by a subclass, _open passes this as the command to
+        # create_process() instead of opening the channel's default shell.
+        self._open_cmd: str | None = None
 
     async def _open(self) -> None:
-        self._process = await self._conn.create_process(
-            term_type='dumb',
-            stderr=asyncssh.STDOUT,
-        )
+        assert self._conn is not None, "SshSession._conn must be set before _open()"
+        if self._open_cmd is not None:
+            self._process = await self._conn.create_process(
+                self._open_cmd,
+                term_type='dumb',
+                stderr=asyncssh.STDOUT,
+            )
+        else:
+            self._process = await self._conn.create_process(
+                term_type='dumb',
+                stderr=asyncssh.STDOUT,
+            )
 
     async def _write(self, data: str) -> None:
         assert self._process is not None
@@ -523,6 +534,44 @@ class LocalSession(ShellSession):
             self._process = None
         self._alive = False
         self._initialized = False
+
+
+class _DockerSshSession(SshSession):
+    """Persistent shell inside a docker container, reached via the parent's SSH conn.
+
+    Wraps ``docker exec -it <container_id> sh`` on top of a multiplexed channel of
+    the parent's existing :class:`SSHClientConnection`. ``-it`` allocates a TTY
+    for the container so that ``\\x03`` sent on timeout is delivered as SIGINT
+    to the in-container foreground process — recovery semantics match plain
+    :class:`SshSession`.
+
+    The container id is resolved lazily at session-open time so that hosts
+    constructed with a placeholder ``container_id=""`` (declared but not yet
+    up) work correctly once :meth:`DockerContainerHost._ensure_running`
+    populates the id.
+    """
+
+    def __init__(
+        self,
+        conn_provider: Callable[[], Awaitable[SSHClientConnection]],
+        container_id_getter: Callable[[], str],
+    ) -> None:
+        super().__init__(conn=None)
+        self._conn_provider = conn_provider
+        self._cid_getter = container_id_getter
+
+    async def _open(self) -> None:
+        import shlex
+
+        self._conn = await self._conn_provider()
+        cid = self._cid_getter()
+        if not cid:
+            raise RuntimeError(
+                "DockerSshSession opened with empty container_id — "
+                "DockerContainerHost._ensure_running must populate the id first."
+            )
+        self._open_cmd = f"docker exec -it {shlex.quote(cid)} sh"
+        await super()._open()
 
 
 class HostSession:

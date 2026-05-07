@@ -147,6 +147,10 @@ class OttoLogger(Logger):
 
         for cmd_dir_name in listdir(xdir):
             cmd_dir = xdir / cmd_dir_name
+            # Skip stray files that callers (e.g. tests) may have written
+            # alongside the expected ``<cmd>/<log_dir>/`` tree.
+            if not cmd_dir.is_dir():
+                continue
             for log_dir_name in listdir(cmd_dir):
                 output_dir = cmd_dir / log_dir_name
                 if output_dir.stat().st_mtime < oldest:

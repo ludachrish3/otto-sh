@@ -56,13 +56,13 @@ class TestRunTimeout:
         """When the budget runs out, remaining commands are skipped."""
         async def slow_cmd(cmd, **kwargs):
             # Simulate a command that takes nearly all the budget
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(0.08)
             return CommandStatus(cmd, 'ok', Status.Success, 0)
 
         with patch.object(host, '_run_one', new_callable=AsyncMock, side_effect=slow_cmd):
             result = await host.run(
                 ['slow1', 'slow2', 'skipped'],
-                timeout=0.5,
+                timeout=0.1,
             )
 
         # First two might run; third should be skipped with Status.Error
@@ -118,11 +118,11 @@ class TestRunTimeoutIntegration:
         """A slow command triggers timeout recovery, and the session stays usable."""
         host = LocalHost()
         try:
-            # sleep 10 will exceed the 1s budget — _run_one's wait_for fires,
+            # sleep 10 will exceed the 0.1s budget — _run_one's wait_for fires,
             # triggers Ctrl+C recovery, returns Status.Error
             result = await host.run(
                 ['sleep 10', 'echo after'],
-                timeout=1.0,
+                timeout=0.1,
             )
             assert result.statuses[0].status == Status.Error
             assert 'timed out' in result.statuses[0].output.lower()
@@ -154,12 +154,12 @@ class TestRunTimeoutIntegration:
         """Fast early commands leave enough budget for a slightly slow later one."""
         host = LocalHost()
         try:
-            # 3s total budget: two instant commands + one 0.5s sleep
-            # Without donation, each would get 1s — still enough
-            # but the point is the later command gets nearly the full 3s
+            # 0.5s total budget: two instant commands + one 0.1s sleep.
+            # The point is that the later command gets nearly the full 0.5s
+            # budget (donation), not just an even-split 0.17s slice.
             result = await host.run(
-                ['echo fast1', 'echo fast2', 'sleep 0.5 && echo done'],
-                timeout=3.0,
+                ['echo fast1', 'echo fast2', 'sleep 0.1 && echo done'],
+                timeout=0.5,
             )
             assert result.status == Status.Success
             assert len(result.statuses) == 3

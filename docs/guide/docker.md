@@ -113,7 +113,29 @@ match short-circuits the build; `--rebuild` forces it.
 - Builds run on the parent only. No local-build path yet.
 - Cross-host networking between containers on different parents is not
   managed.
-- `DockerContainerHost.run()` does not preserve shell state across
-  separate calls. Chain commands with `&&` if you need state.
+- `run()`, `open_session()`, `send()`, and `expect()` require an
+  SSH-based `RemoteHost` parent — they open a persistent
+  `docker exec -it` channel multiplexed on the parent's SSH
+  connection. Telnet parents and `LocalHost` parents are rejected with
+  `NotImplementedError`. `oneshot()` (and `get` / `put`) still work
+  through any parent.
+- The container must provide `/bin/sh`. Distroless or minimal images
+  without a shell will fail at session-open time.
 - `interact()` requires `parent.term == 'ssh'`. Telnet parents are
   rejected.
+
+## Persistent shell state
+
+`run()` preserves shell state (`cd`, environment variables, shell
+variables) across separate calls — same as `LocalHost` and `RemoteHost`:
+
+```python
+await api.run(["cd /tmp", "pwd"])         # prints /tmp
+await api.run("export FOO=bar")
+await api.run("echo $FOO")                # prints bar
+```
+
+`oneshot()` is the stateless, concurrent-safe counterpart — each call
+spawns a fresh `docker exec` against the parent. Use `oneshot()` when
+you want to fan out independent commands; use `run()` when you need
+stateful or interactive flows.

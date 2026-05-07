@@ -169,7 +169,11 @@ async def compose_up(
                 )
 
     from .staging import stage_compose_files
-    remote_files = await stage_compose_files(parent, repo.name, list(settings.composes))
+    # Stage under the compose-project key (e.g. ``otto-repo1-vagrant`` or a
+    # ``OTTO_COMPOSE_SUFFIX``-suffixed variant) rather than ``repo.name`` so
+    # concurrent ``otto docker up`` invocations with different suffixes
+    # don't ``rm -rf`` each other's compose dir mid-stage.
+    remote_files = await stage_compose_files(parent, proj, list(settings.composes))
     remote_file_strs = [str(p) for p in remote_files]
 
     if not await _stack_already_up(parent, proj):
@@ -228,8 +232,18 @@ async def compose_down(
     *,
     on: Optional[str] = None,
     project_name: Optional[str] = None,
+    stop_timeout: int = 1,
 ) -> Status:
-    """Tear down *repo*'s compose stack and unregister its container hosts."""
+    """Tear down *repo*'s compose stack and unregister its container hosts.
+
+    *stop_timeout* is the per-container graceful-shutdown grace period in
+    seconds passed to ``docker compose down --timeout``. Defaults to 1s
+    rather than docker's default of 10s — otto's typical workload is
+    integration tests with disposable stacks where waiting 10s on every
+    teardown adds up fast (4 tests × 10s = 40s of wall time on the
+    serialized ``docker_e2e`` group). Pass a larger value for stacks where
+    graceful shutdown matters.
+    """
     settings = repo.docker_settings
     if not settings.composes:
         return Status.Skipped
@@ -238,19 +252,29 @@ async def compose_down(
     proj = project_name or get_user_compose_project(repo.name)
 
     from .staging import stage_compose_files
-    remote_files = await stage_compose_files(parent, repo.name, list(settings.composes))
+    # See compose_up() for the staging-key rationale: keyed on the compose
+    # project (suffix-aware) so concurrent stacks don't collide.
+    remote_files = await stage_compose_files(parent, proj, list(settings.composes))
     status, output = await _compose_cmd(
         parent, proj, [str(p) for p in remote_files], "down",
+        extra=f"--timeout {int(stop_timeout)}",
     )
     if not status.is_ok:
         logger.error(f"[docker] compose down failed: {output}")
 
-    # Unregister any hosts that came from this stack.
+    # Unregister any hosts that came from this stack. Close each container
+    # host first so its persistent session and repeater drain cleanly while
+    # the parent's connection is still alive.
     parent_id = parent.id
     prefix = f"{parent_id}.{repo.name.lower()}."
     drop = [hid for hid in lab.hosts if hid.startswith(prefix)]
     for hid in drop:
-        lab.hosts.pop(hid, None)
+        host = lab.hosts.pop(hid, None)
+        if host is not None:
+            try:
+                await host.close()
+            except Exception as e:
+                logger.warning(f"[docker] error closing container host {hid}: {e}")
 
     return status
 

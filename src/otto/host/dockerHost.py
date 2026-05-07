@@ -1,22 +1,22 @@
 """
 Docker container host.
 
-A :class:`DockerContainerHost` is a thin wrapper that satisfies the otto
-:class:`Host` protocol by delegating every operation through a *parent*
-host that runs the docker daemon. ``run`` / ``oneshot`` become
-``parent.oneshot("docker exec ...")``; ``get`` / ``put`` are two-step
-``docker cp`` via the parent's filesystem; ``interact`` opens a PTY-backed
-``docker exec -it`` over the parent's existing SSH connection.
+A :class:`DockerContainerHost` satisfies the otto :class:`Host` protocol by
+delegating most operations through a *parent* host that runs the docker
+daemon. ``oneshot`` becomes ``parent.oneshot("docker exec ...")``;
+``get`` / ``put`` are two-step ``docker cp`` via the parent's filesystem;
+``interact`` opens a PTY-backed ``docker exec -it`` over the parent's
+existing SSH connection.
 
-This avoids any duplication of connection/transport machinery. Hops "just
-work" because the parent owns the hop chain — the container piggybacks.
+``run`` (and ``open_session`` / ``send`` / ``expect``) use a persistent
+``docker exec -it <ctr> sh`` session multiplexed on the parent's SSH
+connection — shell state (``cd``, env vars, shell vars) persists across
+calls, matching :class:`LocalHost` and :class:`RemoteHost`. ``oneshot``
+stays stateless and concurrent-safe.
 
-Persistent shell state across separate ``run()`` calls is **not** preserved
-in this MVP: each command spawns a fresh ``docker exec``. Multiple commands
-inside a single ``run([...])`` call also each spawn a fresh exec — chain
-with ``&&`` if they need to share state. A future version may layer a
-persistent ``docker exec -i bash`` session on top of the parent's SSH
-channel multiplexing.
+Persistent-shell support requires an SSH-based :class:`RemoteHost` parent.
+Local-host parents and telnet parents are rejected at session-open time —
+the per-call ``oneshot`` path still works against any parent.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ from .repeat import RepeatRunner
 if TYPE_CHECKING:
     import re
 
-    from .session import Expect, HostSession
+from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
 
 logger = getOttoLogger()
 
@@ -54,8 +54,12 @@ class DockerContainerHost(BaseHost):
     parent: 'Host'
     """The lab host running the docker daemon. Owns auth, hop chain, and
     the SSH connection used to reach the daemon. Typed as
-    :class:`Host` (the protocol) so :class:`LocalHost` can also serve when
-    the dev machine itself runs docker."""
+    :class:`Host` (the protocol) so the type-system surface stays narrow,
+    but ``run`` / ``open_session`` / ``send`` / ``expect`` / ``interact``
+    additionally require an SSH-based :class:`RemoteHost` at runtime —
+    they open a persistent ``docker exec`` channel on the parent's
+    asyncssh connection. ``oneshot`` and file transfer work against any
+    parent."""
 
     container_id: str
     """Docker container id or unique name. Resolved by
@@ -97,11 +101,46 @@ class DockerContainerHost(BaseHost):
     _repeater: RepeatRunner = field(init=False, repr=False)
     """Periodic-task runner. Required by :class:`BaseHost`."""
 
+    _session_mgr: SessionManager = field(init=False, repr=False)
+    """Manages the persistent shell session(s) inside the container. The
+    underlying transport is a ``docker exec -it`` channel multiplexed on the
+    parent's SSH connection; opening is lazy and gated on the parent being
+    an SSH-based :class:`RemoteHost`."""
+
     def __post_init__(self) -> None:
         parent_id = getattr(self.parent, 'id', getattr(self.parent, 'name', 'localhost'))
         self.id = f"{parent_id}.{self.project}.{self.service}".lower()
         self.name = f"{parent_id}:{self.service}"
         self._repeater = RepeatRunner(run_cmds=self.run)
+        self._session_mgr = self._build_session_mgr()
+
+    def _build_session_mgr(self) -> SessionManager:
+        """Build a fresh SessionManager wired to this host. Called from
+        :meth:`__post_init__` and :meth:`rebuild_connections`."""
+
+        def _make_session() -> ShellSession:
+            from .remoteHost import RemoteHost
+            if not (isinstance(self.parent, RemoteHost) and self.parent.term == 'ssh'):
+                term = getattr(self.parent, 'term', None)
+                raise NotImplementedError(
+                    f"DockerContainerHost persistent shell requires an SSH-based "
+                    f"RemoteHost parent; got {type(self.parent).__name__}"
+                    + (f" with term={term!r}" if term is not None else "")
+                    + ". Use oneshot() with chained `&&` commands instead, or "
+                    "configure an SSH-based parent."
+                )
+            return _DockerSshSession(
+                conn_provider=self.parent._connections.ssh,
+                container_id_getter=lambda: self.container_id,
+            )
+
+        return SessionManager(
+            name=self.name,
+            log_command=self._log_command,
+            log_output=self._log_output,
+            session_factory=_make_session,
+            oneshot_factory=self._oneshot_via_parent,
+        )
 
     ####################
     #  Command execution
@@ -153,11 +192,19 @@ class DockerContainerHost(BaseHost):
         """Run a single command in the container via the parent.
 
         Stateless and concurrent-safe — each call spawns a fresh
-        ``docker exec``. For multi-step workflows that must share shell
-        state, combine commands with ``&&`` in a single string.
+        ``docker exec``. ``run()`` is the stateful counterpart that
+        preserves shell state across calls.
         """
         if isDryRun():
             return self._dry_run_result(cmd)
+        return await self._oneshot_via_parent(cmd, timeout)
+
+    async def _oneshot_via_parent(
+        self,
+        cmd: str,
+        timeout: float | None = None,
+    ) -> CommandStatus:
+        """Wrap *cmd* in ``docker exec`` and dispatch through the parent."""
         wrapped = await self._docker_exec(cmd)
         result = await self.parent.oneshot(wrapped, timeout=timeout)
         # Replace the wrapped command in the result so callers see what
@@ -175,37 +222,43 @@ class DockerContainerHost(BaseHost):
         expects: 'list[Expect] | None' = None,
         timeout: float | None = 10.0,
     ) -> CommandStatus:
-        """Execute one command; aliases :meth:`oneshot` (no persistent shell)."""
-        if expects:
-            raise NotImplementedError(
-                "DockerContainerHost does not support expect-driven prompts in run(). "
-                "Use parent.run() directly for interactive flows on the docker host, "
-                "or open_session() once a persistent exec channel is implemented."
-            )
-        return await self.oneshot(cmd, timeout=timeout)
+        """Execute one command on the persistent in-container shell.
+
+        Shell state (``cd``, env vars, shell vars) persists across calls,
+        matching :class:`LocalHost` and :class:`RemoteHost`. Requires an
+        SSH-based :class:`RemoteHost` parent.
+        """
+        if isDryRun():
+            return self._dry_run_result(cmd)
+        await self._ensure_running()
+        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout)
 
     async def open_session(self, name: str) -> 'HostSession':
-        raise NotImplementedError(
-            "DockerContainerHost.open_session is not implemented in this MVP. "
-            "Use oneshot() / run() with chained commands; or call open_session() "
-            "on the parent and run docker exec there."
-        )
+        """Open a named persistent shell session inside the container."""
+        if isDryRun():
+            self._log_command(f"[DRY RUN] open_session({name!r})")
+        await self._ensure_running()
+        return await self._session_mgr.open_session(name)
 
     async def send(self, text: str) -> None:
-        raise NotImplementedError(
-            "DockerContainerHost.send requires a persistent session, "
-            "which is not implemented in this MVP."
-        )
+        """Send raw text to the container's persistent session."""
+        if isDryRun():
+            self._log_command(f"[DRY RUN] send({text!r})")
+            return
+        await self._ensure_running()
+        await self._session_mgr.send(text)
 
     async def expect(
         self,
         pattern: 'str | re.Pattern[str]',
         timeout: float = 10.0,
     ) -> str:
-        raise NotImplementedError(
-            "DockerContainerHost.expect requires a persistent session, "
-            "which is not implemented in this MVP."
-        )
+        """Wait for a pattern in the container's session output stream."""
+        if isDryRun():
+            self._log_command("[DRY RUN] expect() skipped — pattern would never match without a live session")
+            return ""
+        await self._ensure_running()
+        return await self._session_mgr.expect(pattern, timeout)
 
     ####################
     #  Interactive shell
@@ -320,14 +373,34 @@ class DockerContainerHost(BaseHost):
         finally:
             await self.parent.oneshot(f"rm -rf {shlex.quote(str(stage))}")
 
+    def rebuild_connections(self) -> None:
+        """Drop any persistent session so the next call reopens it.
+
+        Mirrors :meth:`RemoteHost.rebuild_connections` for the
+        ``all_hosts() → host.rebuild_connections()`` pattern that ``otto
+        test --cov`` uses to refresh hosts after pytest installs a new
+        event loop. The container host doesn't own any raw transport
+        (the parent does), but its ``_session_mgr`` may hold a
+        ``ShellSession`` whose ``asyncssh`` process is bound to the old
+        loop. Replacing the manager forces lazy re-opens against the
+        parent's freshly-rebuilt SSH connection.
+        """
+        self._session_mgr = self._build_session_mgr()
+
     ####################
     #  Cleanup
     ####################
 
     async def close(self) -> None:
-        """No-op — the parent owns the connection. Stops any background
-        tasks attached to this container host."""
+        """Stop background tasks and tear down the persistent session.
+
+        Repeater stops first so a periodic task can't reopen the session
+        mid-shutdown. The parent's underlying connection is owned by the
+        parent and is not closed here — but this host *must* close before
+        its parent so the session's docker exec channel can drain cleanly.
+        """
         await self._repeater.stop_all()
+        await self._session_mgr.close_all()
 
 
 __all__ = ["DockerContainerHost"]

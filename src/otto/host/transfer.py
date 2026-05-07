@@ -286,6 +286,19 @@ async def _connect_with_retry(
             await asyncio.sleep(retry_interval)
 
 
+async def _ftp_size(ftp_conn: aioftp.Client, path: str) -> int:
+    """Return remote file size via the SIZE command, or 0 if unsupported.
+
+    Avoids `aioftp.Client.stat()`, whose MLST→LIST fallback leaks a passive
+    StreamWriter on servers that 500 MLSD (e.g. vsftpd).
+    """
+    try:
+        _code, info = await ftp_conn.command(f"SIZE {path}", "213")
+        return int(info[0].strip()) if info else 0
+    except Exception:
+        return 0
+
+
 def _make_sftp_progress(
     handler: TransferProgressHandler,
 ) -> Callable[[bytes, bytes, int, int], None]:
@@ -559,8 +572,14 @@ class FileTransfer:
                     await ftp_conn.download(str(src), str(dst))
                 else:
                     handler = progress_factory()
-                    info = await ftp_conn.stat(str(src))
-                    total = int(info.get('size', 0))
+                    # Use SIZE rather than aioftp's `stat()`: stat() falls back
+                    # to LIST when MLST is unsupported (e.g. vsftpd returns 500),
+                    # but `Client.get_stream` opens the passive data connection
+                    # *before* sending MLSD — when MLSD then 500s, the suppressed
+                    # StatusCodeError leaves the data StreamWriter unreferenced.
+                    # Python 3.11+ surfaces that as a ResourceWarning that pytest's
+                    # unraisable plugin escalates into a test failure.
+                    total = await _ftp_size(ftp_conn, str(src))
                     bytes_done = 0
                     async with ftp_conn.download_stream(str(src)) as stream:
                         with open(dst, 'wb') as f:

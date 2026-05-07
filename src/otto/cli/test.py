@@ -579,7 +579,11 @@ async def _run_coverage(
         logger.error('coverage.gcda_remote_dir is required in .otto/settings.toml')
         return
 
-    hosts = list(all_hosts())
+    # Coverage collection targets RemoteHosts that compile the SUT and emit
+    # .gcda files. Container hosts piggyback on a parent and don't have
+    # toolchains of their own, so exclude them.
+    from ..host.dockerHost import DockerContainerHost
+    hosts = [h for h in all_hosts() if not isinstance(h, DockerContainerHost)]
     if not hosts:
         logger.warning('No hosts available for coverage collection')
         return

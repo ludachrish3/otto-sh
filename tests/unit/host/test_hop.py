@@ -211,42 +211,41 @@ class TestTunneledFtpClient:
 
     @pytest.mark.asyncio
     async def test_open_connection_forwards_data_port(self):
-        """_open_connection creates an SSH forward for the PASV data port."""
+        """_open_connection opens a direct SSH channel to the PASV data port."""
         from otto.host.connections import TunneledFtpClient
 
+        mock_conn = MagicMock()
+        mock_conn.open_connection = AsyncMock(return_value=(MagicMock(), MagicMock()))
         mock_hop = MagicMock()
-        mock_hop.forward_port = AsyncMock(return_value=44444)
+        mock_hop.get_tunnel = AsyncMock(return_value=mock_conn)
 
         client = TunneledFtpClient(hop=mock_hop, dest_host='10.0.0.1')
         client._tunnel_data = True  # Simulate post-connect state
 
-        with patch('aioftp.Client._open_connection', new_callable=AsyncMock) as mock_super:
-            mock_super.return_value = (MagicMock(), MagicMock())
-            await client._open_connection('10.0.0.1', 7725)
+        await client._open_connection('10.0.0.1', 7725)
 
-            # Should forward the PASV data port through the hop
-            mock_hop.forward_port.assert_awaited_once_with('10.0.0.1', 7725)
-            # Should connect to localhost via the forwarded port
-            mock_super.assert_awaited_once_with('localhost', 44444)
+        mock_hop.get_tunnel.assert_awaited_once()
+        # Should open a direct channel to the PASV data port via the tunnel —
+        # no local listener, no proxied socket pair.
+        mock_conn.open_connection.assert_awaited_once_with('10.0.0.1', 7725)
 
     @pytest.mark.asyncio
     async def test_open_connection_uses_dest_host_not_pasv_host(self):
-        """Even if PASV returns a different IP (e.g. 0.0.0.0), we forward to dest_host."""
+        """Even if PASV returns a different IP (e.g. 0.0.0.0), we connect to dest_host."""
         from otto.host.connections import TunneledFtpClient
 
+        mock_conn = MagicMock()
+        mock_conn.open_connection = AsyncMock(return_value=(MagicMock(), MagicMock()))
         mock_hop = MagicMock()
-        mock_hop.forward_port = AsyncMock(return_value=55555)
+        mock_hop.get_tunnel = AsyncMock(return_value=mock_conn)
 
         client = TunneledFtpClient(hop=mock_hop, dest_host='10.0.0.1')
         client._tunnel_data = True  # Simulate post-connect state
 
-        with patch('aioftp.Client._open_connection', new_callable=AsyncMock) as mock_super:
-            mock_super.return_value = (MagicMock(), MagicMock())
-            # PASV response might return 0.0.0.0 — we ignore that and use dest_host
-            await client._open_connection('0.0.0.0', 9999)
+        # PASV response might return 0.0.0.0 — we ignore that and use dest_host
+        await client._open_connection('0.0.0.0', 9999)
 
-            mock_hop.forward_port.assert_awaited_once_with('10.0.0.1', 9999)
-            mock_super.assert_awaited_once_with('localhost', 55555)
+        mock_conn.open_connection.assert_awaited_once_with('10.0.0.1', 9999)
 
     @pytest.mark.asyncio
     async def test_open_connection_passthrough_before_connect(self):

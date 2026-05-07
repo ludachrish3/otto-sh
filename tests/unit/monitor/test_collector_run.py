@@ -167,10 +167,16 @@ class TestCollectorRun:
         host = _make_mock_host('host')
         collector = _build_collector([host])
 
-        await collector.run(
-            interval=timedelta(seconds=3),
-            duration=timedelta(milliseconds=100),
-        )
+        # Patch asyncio.sleep inside the collector module so the inter-
+        # iteration wait completes instantly. Without this the test waits
+        # the full 3-second interval between iterations even though
+        # duration is only 100ms.
+        from unittest.mock import patch
+        with patch('otto.monitor.collector.asyncio.sleep', new=AsyncMock()):
+            await collector.run(
+                interval=timedelta(seconds=3),
+                duration=timedelta(milliseconds=100),
+            )
 
         # Inspect the calls to run — each should have timeout=3.0
         for call in host.run.call_args_list:

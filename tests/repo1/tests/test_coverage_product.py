@@ -15,6 +15,7 @@ merged coverage across hosts is greater than any single host's
 coverage alone.
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -39,6 +40,13 @@ logger = getOttoLogger()
 PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
 GCDA_REMOTE_DIR = "/var/coverage/product"
+
+# Match bare RemoteHost ids (e.g. ``pepper_seed``) and exclude the
+# dotted ``<parent>.<project>.<service>`` ids of DockerContainerHost
+# placeholders that ``register_declared_container_hosts`` synthesizes
+# at lab-load time. Coverage runs target compile-and-run hosts only —
+# placeholders fail oneshot until ``otto docker up`` populates them.
+_REAL_HOSTS = re.compile(r'^[^.]+$')
 
 
 @dataclass
@@ -122,9 +130,9 @@ class TestCoverageProduct(OttoSuite[_Options]):
         """Compile and deploy the product to all remote hosts; uninstall on teardown."""
         await _compile_product()
 
-        request.cls._hosts = list(all_hosts())
+        request.cls._hosts = list(all_hosts(_REAL_HOSTS))
 
-        await do_for_all_hosts(_install_on_host)
+        await do_for_all_hosts(_install_on_host, pattern=_REAL_HOSTS)
 
         yield
 
@@ -135,9 +143,10 @@ class TestCoverageProduct(OttoSuite[_Options]):
                 RemoteHost.oneshot,
                 f"sudo rm -rf {REMOTE_INSTALL_DIR}",
                 timeout=10,
+                pattern=_REAL_HOSTS,
             )
         else:
-            await do_for_all_hosts(_uninstall_from_host)
+            await do_for_all_hosts(_uninstall_from_host, pattern=_REAL_HOSTS)
 
     @staticmethod
     def _assert_all(
@@ -156,25 +165,25 @@ class TestCoverageProduct(OttoSuite[_Options]):
     @pytest.mark.integration
     async def test_add(self) -> None:
         """Run 'add' on all hosts — exercises add() and the 'add' branch in main."""
-        results = await do_for_all_hosts(_run_product, "add", 2, 3)
+        results = await do_for_all_hosts(_run_product, "add", 2, 3, pattern=_REAL_HOSTS)
         self._assert_all(results, "5")
 
     @pytest.mark.integration
     async def test_subtract(self) -> None:
         """Run 'sub' on all hosts — exercises subtract() and the 'sub' branch."""
-        results = await do_for_all_hosts(_run_product, "sub", 10, 4)
+        results = await do_for_all_hosts(_run_product, "sub", 10, 4, pattern=_REAL_HOSTS)
         self._assert_all(results, "6")
 
     @pytest.mark.integration
     async def test_multiply(self) -> None:
         """Run 'mul' on all hosts — exercises multiply() and the 'mul' branch."""
-        results = await do_for_all_hosts(_run_product, "mul", 3, 7)
+        results = await do_for_all_hosts(_run_product, "mul", 3, 7, pattern=_REAL_HOSTS)
         self._assert_all(results, "21")
 
     @pytest.mark.integration
     async def test_divide(self) -> None:
         """Run 'div' on all hosts — exercises divide() success path."""
-        results = await do_for_all_hosts(_run_product, "div", 20, 4)
+        results = await do_for_all_hosts(_run_product, "div", 20, 4, pattern=_REAL_HOSTS)
         self._assert_all(results, "5")
 
     @pytest.mark.integration
