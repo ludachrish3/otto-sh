@@ -8,8 +8,9 @@ hosts.  This page demonstrates the most common patterns.
 The simplest pattern: run one command and inspect the result.
 
 ```{doctest}
+>>> import asyncio
 >>> host = LocalHost()
->>> result = run(host.run("echo hello")).only
+>>> result = asyncio.run(host.run("echo hello")).only
 >>> result.status
 <Status.Success: 0>
 >>> result.output.strip()
@@ -35,8 +36,9 @@ in order and get back a {class}`~otto.host.host.RunResult` with an
 aggregate status plus individual per-command results:
 
 ```{doctest}
+>>> import asyncio
 >>> host = LocalHost()
->>> result = run(host.run(["echo first", "echo second"]))
+>>> result = asyncio.run(host.run(["echo first", "echo second"]))
 >>> result.status
 <Status.Success: 0>
 >>> [cs.output.strip() for cs in result.statuses]
