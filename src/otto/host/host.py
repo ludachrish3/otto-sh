@@ -200,10 +200,16 @@ class Host(Protocol):
     log: bool
     """Determines whether this host should log its output to stdout and log files."""
 
+    id: str
+    """Unique identifier for this host."""
+
+    resources: set[str]
+    """Resources required to reserve this host."""
+
     async def _interact(self) -> None:
         ...
 
-    def interact(self) -> None:
+    async def interact(self) -> None:
         ...
 
     async def run(self,

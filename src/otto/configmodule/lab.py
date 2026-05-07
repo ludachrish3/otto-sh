@@ -11,7 +11,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from ..host import RemoteHost
+    from ..host.host import Host
 
 
 @dataclass
@@ -22,11 +22,11 @@ class Lab():
     resources: set[str] = field(default_factory=set)
     """Resources required to reserve this lab."""
 
-    hosts: dict[str, RemoteHost] = field(default_factory=dict)
+    hosts: dict[str, Host] = field(default_factory=dict)
     """Host objects, keyed by unique host id."""
 
     def addHost(self,
-        host: RemoteHost,
+        host: Host,
     ) -> None:
         """Add a Host object to the `Lab`'s dictionary of hosts.
 
