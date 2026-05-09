@@ -48,6 +48,12 @@ _TRANSFERS = pytest.mark.parametrize(
     indirect=True,
 )
 
+_NC_TELNET = pytest.mark.parametrize(
+    "transfer_host",
+    [pytest.param(("nc", "telnet"), id="nc-telnet")],
+    indirect=True,
+)
+
 
 # ── 1. Oneshot pool fan-out ───────────────────────────────────────────────────
 
@@ -274,3 +280,171 @@ async def test_real_cancel_mid_run_recovers(host1: RemoteHost) -> None:
         assert f'recovered_{i}' in result.output, (
             f"recovery iter {i} got mangled output: {result.output!r}"
         )
+
+
+# ── 7. nc — concurrent gets ───────────────────────────────────────────────────
+
+@_NC_TELNET
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_real_nc_concurrent_gets(
+    transfer_host: RemoteHost, tmp_path: Path,
+) -> None:
+    """5 concurrent nc gets must all complete with intact content.
+
+    Mirrors ``test_real_concurrent_transfers`` for the GET path —
+    ``_get_files_nc`` is a separate ~80-line code path (local listener
+    rather than remote) and its concurrent behavior wasn't otherwise
+    exercised.
+    """
+    remote_paths = []
+    for i in range(5):
+        remote = f'/tmp/get_test_{i}_{transfer_host.term}.txt'
+        await transfer_host.run(f'echo content_{i} > {remote}')
+        remote_paths.append(Path(remote))
+
+    try:
+        statuses = await asyncio.gather(
+            *(transfer_with_retry(lambda p=p: transfer_host.get([p], tmp_path))
+              for p in remote_paths),
+            return_exceptions=True,
+        )
+
+        exceptions = [s for s in statuses if isinstance(s, BaseException)]
+        assert not exceptions, (
+            f"{len(exceptions)} gets raised; first: {exceptions[0]!r}"
+        )
+
+        for i, item in enumerate(statuses):
+            status, msg = cast(tuple[Status, str], item)
+            assert status == Status.Success, f"get {i} failed: {msg}"
+
+        for i, p in enumerate(remote_paths):
+            local = tmp_path / p.name
+            assert local.exists(), f"local file {local} missing after get"
+            content = local.read_text().strip()
+            assert content == f'content_{i}', (
+                f"get {i} content mismatch: got {content!r}"
+            )
+
+        # Local-listener leak check: with ``_get_files_nc`` we listen locally
+        # and have the remote ``nc`` connect to us. Any leftover ``nc -l``
+        # *on the local box* would indicate the orchestrator's local listener
+        # wasn't reaped.
+        import subprocess
+        local_listeners = subprocess.run(
+            ['pgrep', '-af', 'nc -l'],
+            capture_output=True, text=True,
+        ).stdout.strip()
+        assert not local_listeners, (
+            f"leftover local nc listeners after concurrent get: {local_listeners}"
+        )
+    finally:
+        for p in remote_paths:
+            await transfer_host.run(f'rm -f {p}')
+
+
+# ── 8. nc — high fan-out put ──────────────────────────────────────────────────
+
+@_NC_TELNET
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_real_nc_high_fanout_put(
+    transfer_host: RemoteHost, tmp_path: Path,
+) -> None:
+    """20 concurrent nc puts stress port allocation + listener cleanup.
+
+    The cross-protocol ``test_real_concurrent_transfers`` runs at N=5 to
+    avoid sshd MaxSessions backpressure for non-nc transfers; nc uses
+    ephemeral remote ports rather than SSH channels so it can scale
+    further without infrastructure noise. N=20 pushes ``_find_free_port``
+    contention and per-transfer listener spin-up/teardown harder than the
+    N=5 baseline.
+    """
+    N = 20
+    files = []
+    for i in range(N):
+        src = tmp_path / f'fanout_{i}_{transfer_host.term}.txt'
+        src.write_text(f'fanout_content_{i}')
+        files.append(src)
+
+    statuses = await asyncio.gather(
+        *(transfer_with_retry(lambda f=f: transfer_host.put([f], Path('/tmp')))
+          for f in files),
+        return_exceptions=True,
+    )
+
+    exceptions = [s for s in statuses if isinstance(s, BaseException)]
+    assert not exceptions, f"{len(exceptions)} puts raised; first: {exceptions[0]!r}"
+
+    for i, item in enumerate(statuses):
+        status, msg = cast(tuple[Status, str], item)
+        assert status == Status.Success, f"put {i} failed: {msg}"
+
+    # Verify all files arrived intact.
+    for i, src in enumerate(files):
+        remote_path = f'/tmp/{src.name}'
+        result = (await transfer_host.run(f'cat {remote_path}')).only
+        assert f'fanout_content_{i}' in result.output, (
+            f"file {i} corrupt: {result.output!r}"
+        )
+        await transfer_host.run(f'rm -f {remote_path}')
+
+    result = (await transfer_host.run(
+        'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
+    )).only
+    leftover = result.output.strip()
+    assert not leftover, (
+        f"leftover nc listeners after N={N} concurrent puts: {leftover}"
+    )
+
+
+# ── 9. nc — cancellation cleans up listener ───────────────────────────────────
+
+@_NC_TELNET
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_real_nc_cancel_cleans_up_listener(
+    transfer_host: RemoteHost, tmp_path: Path,
+) -> None:
+    """External cancellation mid-transfer must reap the spawned ``nc -l``.
+
+    ``_put_files_nc`` spawns the remote listener as an ``asyncio.Task``;
+    when the parent task is cancelled, the spawned task isn't
+    automatically cancelled, so a careless cleanup path leaves an
+    orphaned ``nc -l <port>`` running on the remote indefinitely.
+    """
+    # 20MB file: large enough that the transfer is reliably mid-flight when
+    # the cancel timeout fires, small enough not to slow the test down.
+    src = tmp_path / 'cancel_target.bin'
+    with open(src, 'wb') as f:
+        f.seek(20 * 1024 * 1024 - 1)
+        f.write(b'\0')
+
+    # Snapshot listener count before — if the remote already has stray
+    # listeners from a prior test, attribute that separately.
+    before = (await transfer_host.run(
+        'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
+    )).only.output.strip().splitlines()
+
+    try:
+        await asyncio.wait_for(
+            transfer_host.put([src], Path('/tmp')),
+            timeout=0.2,
+        )
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        pass  # expected — we cancelled mid-transfer
+
+    # Allow a brief grace period for cleanup to settle before checking.
+    await asyncio.sleep(2.0)
+
+    after = (await transfer_host.run(
+        'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
+    )).only.output.strip().splitlines()
+    new_listeners = [line for line in after if line not in before]
+    assert not new_listeners, (
+        f"cancellation orphaned remote nc listener(s): {new_listeners}"
+    )
+
+    # Cleanup any partial file from the cancelled put.
+    await transfer_host.run('rm -f /tmp/cancel_target.bin')
