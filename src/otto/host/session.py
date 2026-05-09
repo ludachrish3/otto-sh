@@ -60,6 +60,12 @@ class ShellSession(ABC):
         self._recover_marker = f"__OTTO_{self._session_id}_RECOVER__"
         self._initialized = False
         self._alive = False
+        # Set when an in-flight operation (run_cmd / expect) is externally
+        # cancelled, leaving the remote shell mid-command with possibly
+        # buffered output we never consumed. The next operation runs
+        # _recover_session before doing anything to drain that state and
+        # return the shell to a clean prompt.
+        self._needs_recovery = False
         self._on_output: Callable[[str], None] = lambda _: None
 
     @property
@@ -91,6 +97,16 @@ class ShellSession(ABC):
 
     # --- Session lifecycle ---
 
+    async def _ensure_ready(self) -> None:
+        """Initialize the session if needed, and recover it if the prior op was cancelled."""
+        await self._ensure_initialized()
+        if self._needs_recovery:
+            # Clear the flag first so a recovery that itself fails doesn't
+            # loop forever on subsequent calls — _recover_session marks
+            # _alive=False on its own failures.
+            self._needs_recovery = False
+            await self._recover_session()
+
     async def _ensure_initialized(self) -> None:
         """Open the transport and initialize the session. Idempotent."""
         if self._initialized:
@@ -113,8 +129,12 @@ class ShellSession(ABC):
         Use this for driving interactive programs (REPLs, custom CLIs).
         The caller is responsible for including line endings.
         """
-        await self._ensure_initialized()
-        await self._write(text)
+        await self._ensure_ready()
+        try:
+            await self._write(text)
+        except asyncio.CancelledError:
+            self._needs_recovery = True
+            raise
 
     async def expect(
         self,
@@ -127,7 +147,7 @@ class ShellSession(ABC):
         Raises asyncio.TimeoutError if the pattern isn't seen within timeout.
         Marks the session as dead if EOF is received.
         """
-        await self._ensure_initialized()
+        await self._ensure_ready()
         compiled = re.compile(pattern) if isinstance(pattern, str) else pattern
         try:
             return await asyncio.wait_for(
@@ -136,6 +156,9 @@ class ShellSession(ABC):
             )
         except asyncio.IncompleteReadError:
             self._alive = False
+            raise
+        except asyncio.CancelledError:
+            self._needs_recovery = True
             raise
 
     async def run_cmd(
@@ -161,7 +184,7 @@ class ShellSession(ABC):
         Returns:
             CommandStatus with exit code extracted from the sentinel.
         """
-        await self._ensure_initialized()
+        await self._ensure_ready()
         try:
             if timeout is not None:
                 return await asyncio.wait_for(
@@ -178,6 +201,14 @@ class ShellSession(ABC):
                 status=Status.Error,
                 retcode=-1,
             )
+        except asyncio.CancelledError:
+            # External cancellation (e.g., asyncio.wait_for at the caller
+            # level) leaves the remote shell mid-command with buffered output
+            # we never consumed. Mark for recovery on next use rather than
+            # running it inline — running here would race the cancellation
+            # propagation and could leave the recover-marker write detached.
+            self._needs_recovery = True
+            raise
         except asyncio.IncompleteReadError:
             self._alive = False
             return CommandStatus(
