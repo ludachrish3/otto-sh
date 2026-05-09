@@ -1,0 +1,53 @@
+name: Nightly
+
+# Nightly stability run: executes the SessionManager concurrency tests
+# and the existing telnet deadlock regression at high iteration count to
+# catch timing-only races. Tier 1 only — no Vagrant VMs in GHA, so this
+# exercises the manager-level interleaving via FakeSession (transports are
+# mocked).
+on:
+  schedule:
+    # Nightly at 06:00 UTC. cron is in UTC regardless of repo timezone.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      count:
+        description: 'pytest-repeat iteration count'
+        required: false
+        default: '500'
+
+concurrency:
+  group: nightly-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NO_COLOR: "1"
+  TERM: dumb
+  FORCE_COLOR: ""
+  CLICOLOR_FORCE: ""
+  PY_COLORS: ""
+  CLICOLOR: ""
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v6.0.2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run stability tests
+        run: make stability COUNT=${{ inputs.count || '500' }}
