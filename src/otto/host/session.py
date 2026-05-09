@@ -928,7 +928,20 @@ class SessionManager:
                             password=password,
                             options=self._connections.telnet_options,
                         )
-                        await client.connect()
+                        # ``connect()`` runs login (~1 s on real hardware); a
+                        # caller-side ``wait_for`` cancellation lands inside
+                        # that handshake and drops ``client`` on the floor with
+                        # its socket still open. Tear down on any exception
+                        # (including CancelledError) so the FD is released
+                        # before control returns to the caller.
+                        try:
+                            await client.connect()
+                        except BaseException:
+                            try:
+                                await client.close()
+                            except Exception:
+                                pass
+                            raise
                         shell_session = TelnetSession(
                             client.reader,
                             client.writer,

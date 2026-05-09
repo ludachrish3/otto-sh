@@ -206,7 +206,20 @@ class TelnetClient():
         _naws_subscribers.discard(self)
         _uninstall_sigwinch_handler_if_unused()
         if self.writer:
+            # ``writer.close()`` schedules a graceful close; the underlying
+            # ``_SelectorSocketTransport`` releases its socket only when the
+            # event loop next drains its callbacks. When ``connect()`` is
+            # cancelled mid-handshake (e.g. caller-side ``wait_for`` timeout),
+            # control returns to the test before the loop gets that chance —
+            # the socket then surfaces later as a ``ResourceWarning`` that
+            # pytest's ``[unraisable]`` plugin escalates into an end-of-session
+            # failure. ``transport.abort()`` skips the graceful drain and
+            # releases the FD synchronously, which is fine for a half-built
+            # connection we're discarding.
+            transport = getattr(self.writer, 'transport', None)
             self.writer.close()
+            if transport is not None:
+                transport.abort()
 
         self.writer = None
         self.reader = None

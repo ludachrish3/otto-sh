@@ -281,14 +281,30 @@ class ConnectionManager:
                 connect_host = self._ip
                 connect_port = remote_port
             logger.debug(f"Connecting to {self._name} via telnet")
-            self._telnet_conn = TelnetClient(
+            client = TelnetClient(
                 connect_host,
                 user=user,
                 password=password,
                 options=self._telnet_options,
                 connect_port=connect_port,
             )
-            await self._telnet_conn.connect()
+            # Don't publish the cached attribute until ``connect()`` succeeds.
+            # ``connect()`` runs login (~1 s on real hardware), and a caller-
+            # level ``wait_for`` cancellation lands somewhere in that handshake
+            # — leaving the client at the login prompt with the writer still
+            # open. ``alive`` only inspects the writer, so the next call would
+            # reuse the half-built client and get the login banner echoed back
+            # instead of a shell. Tear down on any exception (including
+            # CancelledError) so the next call rebuilds cleanly.
+            try:
+                await client.connect()
+            except BaseException:
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+                raise
+            self._telnet_conn = client
             logger.debug(f"Connected to {self._name} via telnet")
         return self._telnet_conn
 
