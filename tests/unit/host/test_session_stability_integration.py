@@ -135,12 +135,6 @@ async def test_real_default_session_recreate_under_load(host1: RemoteHost) -> No
     assert sess is not None and sess.alive
     initial_id = id(sess)
     await sess.close()
-    # Telnet doesn't multiplex — a real server-side close kills the only TCP
-    # connection, which ConnectionManager's cache currently doesn't notice.
-    # Invalidate the cache to mimic the real-world scenario; remove this
-    # workaround once ConnectionManager.telnet() learns to recheck liveness.
-    if host1._connections.term == 'telnet':
-        host1._connections._telnet_conn = None
 
     M = 20
     results = await asyncio.gather(

@@ -253,7 +253,23 @@ class ConnectionManager:
         return self._ftp_conn
 
     async def telnet(self) -> TelnetClient:
-        """Return the live TelnetClient, opening it if needed."""
+        """Return the live TelnetClient, opening it if needed.
+
+        Telnet has no channel multiplexing — the underlying TCP connection
+        and the TelnetClient are 1:1, so when a TelnetSession built on this
+        client closes its writer (or the peer closes the connection), the
+        cached client becomes stale. Rechecking ``alive`` here catches that
+        case and reconnects, rather than handing back a dead client.
+        """
+        if self._telnet_conn is not None and not self._telnet_conn.alive:
+            # Best-effort cleanup of the stale client; close() is idempotent
+            # and clears the writer/reader so a partial-close doesn't linger.
+            try:
+                await self._telnet_conn.close()
+            except Exception:
+                pass
+            self._telnet_conn = None
+
         if self._telnet_conn is None:
             user, password = self.credentials
             remote_port = self._telnet_options.port

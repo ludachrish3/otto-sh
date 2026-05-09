@@ -188,6 +188,19 @@ class TelnetClient():
                 except asyncio.TimeoutError:
                     break  # silence means the shell is ready
 
+    @property
+    def alive(self) -> bool:
+        """Whether the underlying TCP transport is still usable.
+
+        ``close()`` clears ``writer``/``reader`` to None, and the asyncio
+        writer reports ``is_closing()`` after a peer-initiated EOF. Either
+        signal means the next read/write would fail, so callers (notably
+        ``ConnectionManager.telnet()``) should treat the client as stale.
+        """
+        if self.writer is None or self.reader is None:
+            return False
+        return not self.writer.is_closing()
+
     async def close(self) -> None:
         """Gracefully close the telnet connection."""
         _naws_subscribers.discard(self)
