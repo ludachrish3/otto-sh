@@ -2,9 +2,8 @@
 
 ## General
 
-- Is there a way to make an annotated release tag based on the CHANGELOG? Every release tag is currently empty, but it would be great if the changelog content would show up so that it's visible on github.
-- Remove the testpypi release workflow. Releases to pypi are working just fine, so there's no need to testpypi anymore. There's alwasy the `make publish` approach that can work if needed
 - Running just `otto` clears old logs and then displays the help menu. Old logs should NOT be deleted in this case. Just the help menu should be displayed and then otto should exit.
+- Have one of the projects define a custom stat collector beyond the default definitions. This helps prove out the workflow for defining custom parsers and graphs.
 - Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name
 - Add a `--list-markers` option to the test subcommand
 - Make --show-hosts display a Rich.Tree of hosts within an NE. Group by NE in panels and order by slot number.
