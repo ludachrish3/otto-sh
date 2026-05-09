@@ -17,8 +17,8 @@ COVERAGE_THRESHOLD := 85
 CI_COVERAGE_THRESHOLD := 80
 
 # Iteration count for `make repeat`. Override on the command line:
-#   make repeat TIMES=50
-TIMES ?= 10
+#   make repeat COUNT=50
+COUNT ?= 10
 
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
@@ -75,7 +75,7 @@ publish: ## Manual fallback: upload dist/ to PyPI — permanent (prefer pushing 
 nox: ## Run the default nox session matrix (unit tests across all supported Pythons + typecheck + docs)
 	uv run nox
 
-nox-all: ## Run the FULL test suite (unit + integration + hops) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI.
+nox-all: ## Run the FULL test suite across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI.
 	uv run nox -s tests_all
 
 validate: ## Run validation (clean-dist, typecheck, coverage, docs) without building dist
@@ -104,14 +104,14 @@ coverage: ## Run tests and enforce coverage threshold
 coverage-unit: ## Run unit tests only (no Vagrant VMs needed) and enforce CI threshold
 	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not integration and not hops" --cov-fail-under=$(CI_COVERAGE_THRESHOLD)
 
-stability: ## Run targeted SessionManager concurrency tests under pytest-repeat (Tier 1; no VMs). Override iterations with COUNT=N (default 50).
+stability: ## Run targeted SessionManager concurrency tests under pytest-repeat (no VMs). Override iterations with COUNT=N (default 50).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    tests/unit/host/test_session_concurrency.py \
 	    tests/unit/host/test_remoteHost.py::TestOneshot::test_oneshot_telnet_concurrent_does_not_deadlock \
 	    --count=$(or $(COUNT),50) \
 	    -p no:cacheprovider
 
-stability-local: ## Tier 1 + Tier 2 (real telnet/SSH against Vagrant VMs). Runs both tiers even if Tier 1 is RED. Pings test VMs first; override COUNT (default 10).
+stability-local: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if unit-level tests are RED. Override iterations with COUNT=N (default 10).
 	@echo "── Tier 1 (unit-level concurrency) ──"
 	-@$(MAKE) stability COUNT=$(or $(COUNT),50)
 	@echo
@@ -139,9 +139,9 @@ stability-local: ## Tier 1 + Tier 2 (real telnet/SSH against Vagrant VMs). Runs 
 	    -p no:cacheprovider \
 	    -n0
 
-repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. Override TIMES=N (default 10).
+repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. Override COUNT=N (default 10).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest tests/unit \
-	    --count=$(TIMES) \
+	    --count=$(COUNT) \
 	    -p no:cacheprovider
 
 typecheck: ## Run ty type checker (advisory during trial; not wired into `all`)
