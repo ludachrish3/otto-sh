@@ -31,6 +31,33 @@ uv build --wheel                   # produces dist/otto_sh-<version>-py3-none-an
 pip install dist/otto_sh-*.whl     # installs otto + downloads runtime deps from PyPI
 ```
 
+### From a GitHub release
+
+Each tagged release on
+[GitHub Releases](https://github.com/ludachrish3/otto-sh/releases)
+attaches the same `.whl` and `.tar.gz` artifacts that are published to PyPI.
+This is useful when you cannot reach PyPI but can reach GitHub, or when you
+want to pin to an exact build.
+
+Download the wheel for the version you want and install it directly:
+
+```bash
+VERSION=0.3.0
+curl -LO "https://github.com/ludachrish3/otto-sh/releases/download/v${VERSION}/otto_sh-${VERSION}-py3-none-any.whl"
+pip install "otto_sh-${VERSION}-py3-none-any.whl"
+```
+
+Or with the GitHub CLI:
+
+```bash
+gh release download v0.3.0 --repo ludachrish3/otto-sh --pattern '*.whl'
+pip install otto_sh-*.whl
+```
+
+`pip` will still need internet access to fetch otto's runtime dependencies
+from PyPI.  For a fully offline install, follow the air-gapped instructions
+below using the downloaded wheel as the starting point.
+
 ### Air-gapped installation
 
 Otto is designed to work on air-gapped networks.  Since `pip install` and
