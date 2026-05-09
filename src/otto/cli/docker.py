@@ -101,11 +101,15 @@ def _select_repos(repo_name: Optional[str], on: Optional[str] = None):
 
     applicable: list = []
     for r in docker_repos:
-        candidates: list[str] = [on] if on else [
+        # Lab applicability is determined by the repo's declared default_hosts,
+        # not by --on. --on is a runtime override of where to deploy, not a
+        # signal of which repos belong to the active lab — using [on] here
+        # would incorrectly keep every repo whenever the override is in lab.
+        candidates: list[str] = [
             c.default_host for c in r.docker_settings.composes if c.default_host
         ]
-        # A repo with no candidate hosts at all (no --on, no default_host)
-        # is kept — _resolve_parent will surface a clear error of its own.
+        # A repo with no candidate hosts at all (no default_host) is kept —
+        # _resolve_parent will surface a clear error of its own.
         if not candidates or any(c in cfg.lab.hosts for c in candidates):
             applicable.append(r)
         else:

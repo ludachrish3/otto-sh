@@ -51,9 +51,14 @@ def test_select_repos_filters_by_lab_applicability(tmp_path):
     assert names == ["repo1"], f"repo2 (grape_seed) must be skipped, got {names}"
 
 
-def test_select_repos_explicit_on_overrides_default_filter(tmp_path):
-    """When --on points to an in-lab host, repos with otherwise-unreachable
-    defaults still get included (the override applies)."""
+def test_select_repos_on_does_not_override_lab_filter(tmp_path):
+    """--on chooses where to deploy, not which repos belong to the active lab.
+
+    A repo whose declared default_host lives in another lab must still be
+    skipped even when --on names an in-lab host — otherwise multi-repo
+    workspaces would bring up stacks for unrelated labs (see
+    test_e2e_multi_repo_only_active_lab_runs).
+    """
     from otto.cli import docker as docker_cli
 
     repo = _make_repo(tmp_path, name="repo2", default_host="grape_seed")
@@ -68,4 +73,4 @@ def test_select_repos_explicit_on_overrides_default_filter(tmp_path):
          patch.object(docker_cli, "getConfigModule", return_value=fake_cfg):
         selected = docker_cli._select_repos(repo_name=None, on="pepper_seed")
 
-    assert [r.name for r in selected] == ["repo2"]
+    assert [r.name for r in selected] == []
