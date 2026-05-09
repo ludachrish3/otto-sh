@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish
+.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-local repeat
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -15,6 +15,10 @@ COVERAGE_THRESHOLD := 85
 # CI runs unit tests only (integration/hops markers need Vagrant VMs that
 # don't exist in GitHub Actions), so the achievable threshold is lower.
 CI_COVERAGE_THRESHOLD := 80
+
+# Iteration count for `make repeat`. Override on the command line:
+#   make repeat TIMES=50
+TIMES ?= 10
 
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
@@ -41,7 +45,7 @@ release: ## Validate (typecheck + docs + FULL nox matrix across all Pythons, req
 	@$(MAKE) clean-dist \
 		&& $(MAKE) typecheck \
 		&& $(MAKE) docs \
-		&& $(MAKE) nox-all \
+		&& OTTO_DETECT_ASYNCIO_LEAKS=1 $(MAKE) nox-all \
 		&& NEW_VERSION="$${NEW_VERSION:-$$(bump-my-version show new_version --increment $(BUMP))}" \
 		&& echo "Targeting v$$NEW_VERSION" \
 		&& git-cliff --tag "v$$NEW_VERSION" -o CHANGELOG.md \
@@ -99,6 +103,46 @@ coverage: ## Run tests and enforce coverage threshold
 
 coverage-unit: ## Run unit tests only (no Vagrant VMs needed) and enforce CI threshold
 	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not integration and not hops" --cov-fail-under=$(CI_COVERAGE_THRESHOLD)
+
+stability: ## Run targeted SessionManager concurrency tests under pytest-repeat (Tier 1; no VMs). Override iterations with COUNT=N (default 50).
+	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	    tests/unit/host/test_session_concurrency.py \
+	    tests/unit/host/test_remoteHost.py::TestOneshot::test_oneshot_telnet_concurrent_does_not_deadlock \
+	    --count=$(or $(COUNT),50) \
+	    -p no:cacheprovider
+
+stability-local: ## Tier 1 + Tier 2 (real telnet/SSH against Vagrant VMs). Runs both tiers even if Tier 1 is RED. Pings test VMs first; override COUNT (default 10).
+	@echo "── Tier 1 (unit-level concurrency) ──"
+	-@$(MAKE) stability COUNT=$(or $(COUNT),50)
+	@echo
+	@echo "── Tier 2 (real telnet/SSH) ──"
+	@if command -v jq >/dev/null 2>&1; then \
+	    reachable=0; total=0; \
+	    for ip in $$(jq -r '.[].ip' tests/lab_data/tech1/hosts.json); do \
+	        total=$$((total+1)); \
+	        if ping -c 1 -W 1 $$ip >/dev/null 2>&1; then \
+	            reachable=$$((reachable+1)); \
+	        fi; \
+	    done; \
+	    if [ $$reachable -eq 0 ]; then \
+	        echo "  WARNING: 0/$$total test VMs responded — run 'vagrant up' in the lab if tests fail at fixture connect."; \
+	    else \
+	        echo "  Reachable: $$reachable/$$total test VM(s)."; \
+	    fi; \
+	else \
+	    echo "  jq not installed; skipping ping check (tests will fail fast at fixture connect if VMs are down)."; \
+	fi
+	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	    tests/unit/host/test_session_stability_integration.py \
+	    -m integration \
+	    --count=$(or $(COUNT),10) \
+	    -p no:cacheprovider \
+	    -n0
+
+repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. Override TIMES=N (default 10).
+	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest tests/unit \
+	    --count=$(TIMES) \
+	    -p no:cacheprovider
 
 typecheck: ## Run ty type checker (advisory during trial; not wired into `all`)
 	uv run ty check
