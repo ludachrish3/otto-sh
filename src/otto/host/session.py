@@ -712,6 +712,11 @@ class SessionManager:
         # that concurrent calls run independently.
         self._oneshot_pool: list[HostSession] = []
         self._oneshot_pool_count: int = 0
+        # Serializes the get-or-create paths so concurrent callers can't all
+        # observe a dead/missing session, all close it, and all create
+        # replacements that clobber each other (each clobber leaks the prior).
+        self._ensure_session_lock = asyncio.Lock()
+        self._named_session_lock = asyncio.Lock()
 
     @property
     def has_live_sessions(self) -> bool:
@@ -721,34 +726,55 @@ class SessionManager:
         return any(s.alive for s in self._named_sessions.values())
 
     async def _ensure_session(self) -> None:
-        """Create a ShellSession if one doesn't exist or if the current one is dead."""
+        """Create a ShellSession if one doesn't exist or if the current one is dead.
+
+        Serialized via ``_ensure_session_lock`` with a double-checked-locking
+        pattern: the fast path returns without lock acquisition when the
+        existing session is alive; the slow path takes the lock and re-checks
+        before recreating, so concurrent callers cannot all create replacement
+        sessions that clobber each other.
+
+        Eagerly runs ``_ensure_initialized`` inside the lock so the new
+        session's ``alive`` flag is True before the lock is released — this
+        prevents a follow-on caller from observing the just-created session
+        as ``alive=False`` (because the handshake hasn't run yet) and falling
+        through to recreate.
+        """
         if self._session and self._session.alive:
             return
 
-        # Close the old dead session to release its subprocess transport.
-        # Without this, the orphaned transport is GC'd after the event loop
-        # closes and raises "RuntimeError: Event loop is closed" from __del__.
-        if self._session is not None:
-            await self._session.close()
+        async with self._ensure_session_lock:
+            # Re-check after acquiring the lock — another task may have
+            # created the session while we waited.
+            if self._session and self._session.alive:
+                return
 
-        if self._session_factory is not None:
-            self._session = self._session_factory()
-        else:
-            assert self._connections is not None
-            match self._connections.term:
-                case 'ssh':
-                    ssh_conn = await self._connections.ssh()
-                    self._session = SshSession(ssh_conn)
-                case 'telnet':
-                    telnet_conn = await self._connections.telnet()
-                    self._session = TelnetSession(
-                        telnet_conn.reader,
-                        telnet_conn.writer,
-                    )
-                case _:
-                    raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
+            # Close the old dead session to release its subprocess transport.
+            # Without this, the orphaned transport is GC'd after the event loop
+            # closes and raises "RuntimeError: Event loop is closed" from __del__.
+            if self._session is not None:
+                await self._session.close()
 
-        self._session._on_output = self._log_output
+            if self._session_factory is not None:
+                new_session: ShellSession = self._session_factory()
+            else:
+                assert self._connections is not None
+                match self._connections.term:
+                    case 'ssh':
+                        ssh_conn = await self._connections.ssh()
+                        new_session = SshSession(ssh_conn)
+                    case 'telnet':
+                        telnet_conn = await self._connections.telnet()
+                        new_session = TelnetSession(
+                            telnet_conn.reader,
+                            telnet_conn.writer,
+                        )
+                    case _:
+                        raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
+
+            new_session._on_output = self._log_output
+            await new_session._ensure_initialized()
+            self._session = new_session
 
     async def run_cmd(
         self,
@@ -826,46 +852,72 @@ class SessionManager:
         return await self.open_session(f'__oneshot_pool_{self._oneshot_pool_count}__')
 
     async def open_session(self, name: str) -> 'HostSession':
-        """Open or reuse a named persistent shell session."""
+        """Open or reuse a named persistent shell session.
+
+        Serialized via ``_named_session_lock`` with a double-checked-locking
+        pattern: concurrent callers requesting the same name resolve to a
+        single underlying session rather than each creating their own and
+        clobbering the dict.
+
+        Eagerly runs ``_ensure_initialized`` inside the lock so the stored
+        ``HostSession.alive`` is True on return — this prevents follow-on
+        callers from observing a just-created (un-handshaken) session as
+        dead and recreating it.
+        """
         existing = self._named_sessions.get(name)
         if existing and existing.alive:
             return existing
 
-        if self._session_factory is not None:
-            shell_session: ShellSession = self._session_factory()
-        else:
-            assert self._connections is not None
-            match self._connections.term:
-                case 'ssh':
-                    ssh_conn = await self._connections.ssh()
-                    shell_session = SshSession(ssh_conn)
-                case 'telnet':
-                    user, password = self._connections.credentials
-                    client = TelnetClient(
-                        self._connections.ip,
-                        user=user,
-                        password=password,
-                        options=self._connections.telnet_options,
-                    )
-                    await client.connect()
-                    shell_session = TelnetSession(
-                        client.reader,
-                        client.writer,
-                        _owned_client=client,
-                    )
-                case _:
-                    raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
+        async with self._named_session_lock:
+            existing = self._named_sessions.get(name)
+            if existing and existing.alive:
+                return existing
 
-        shell_session._on_output = self._log_output
-        host_session = HostSession(
-            name=name,
-            session=shell_session,
-            log_command=self._log_command,
-            log_output=self._log_output,
-            deregister=lambda n: (self._named_sessions.pop(n, None), None)[1],
-        )
-        self._named_sessions[name] = host_session
-        return host_session
+            # Close the underlying transport of the dead entry (if any) but
+            # leave the dict slot intact — we'll overwrite it below.  Calling
+            # existing.close() here would deregister via the close-callback
+            # and remove the slot, opening a tiny window where _named_sessions
+            # has no entry for this name.
+            if existing is not None:
+                await existing._session.close()
+
+            if self._session_factory is not None:
+                shell_session: ShellSession = self._session_factory()
+            else:
+                assert self._connections is not None
+                match self._connections.term:
+                    case 'ssh':
+                        ssh_conn = await self._connections.ssh()
+                        shell_session = SshSession(ssh_conn)
+                    case 'telnet':
+                        user, password = self._connections.credentials
+                        client = TelnetClient(
+                            self._connections.ip,
+                            user=user,
+                            password=password,
+                            options=self._connections.telnet_options,
+                        )
+                        await client.connect()
+                        shell_session = TelnetSession(
+                            client.reader,
+                            client.writer,
+                            _owned_client=client,
+                        )
+                    case _:
+                        raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
+
+            shell_session._on_output = self._log_output
+            await shell_session._ensure_initialized()
+
+            host_session = HostSession(
+                name=name,
+                session=shell_session,
+                log_command=self._log_command,
+                log_output=self._log_output,
+                deregister=lambda n: (self._named_sessions.pop(n, None), None)[1],
+            )
+            self._named_sessions[name] = host_session
+            return host_session
 
     async def send(self, text: str) -> None:
         await self._ensure_session()

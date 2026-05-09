@@ -331,6 +331,7 @@ class TestOneshot:
         mock_session = MagicMock()
         mock_session.run_cmd = AsyncMock(return_value=expected)
         mock_session.close = AsyncMock()
+        mock_session._ensure_initialized = AsyncMock()
 
         with patch('otto.host.session.TelnetClient', return_value=mock_client):
             with patch('otto.host.session.TelnetSession', return_value=mock_session):
@@ -383,6 +384,7 @@ class TestOneshot:
             s = MagicMock()
             s.run_cmd = AsyncMock(side_effect=_fake_run_cmd)
             s.close = AsyncMock()
+            s._ensure_initialized = AsyncMock()
             s.alive = True
             s._on_output = None
             return s
