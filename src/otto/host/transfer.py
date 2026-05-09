@@ -353,6 +353,12 @@ class FileTransfer:
         # Serializes concurrent `prepare()` calls so the compound strategy
         # probe runs exactly once per host lifetime.
         self._prepare_lock = asyncio.Lock()
+        # Serializes all FTP ops on the shared aioftp.Client. The client uses
+        # one control connection with one data channel per transfer; concurrent
+        # callers stomp on each other's STOR/RETR exchanges, surfacing as
+        # "Connect first" or stuck data channels. FTP is inherently sequential
+        # at the protocol layer, so this lock just enforces that.
+        self._ftp_lock = asyncio.Lock()
 
     @property
     def _nc_exec(self) -> str:
@@ -562,34 +568,37 @@ class FileTransfer:
     ) -> tuple[Status, str]:
         # FTP transfers are sequential: aioftp.Client uses a single control
         # connection with one data channel per transfer, so concurrent ops on
-        # the same client are not supported.
-        ftp_conn = await self._connections.ftp()
-        try:
-            for src in srcFiles:
-                dst = destDir / src.name
-                _logger.debug(f"{self._name}: FTP get {src} -> {dst}")
-                if progress_factory is None:
-                    await ftp_conn.download(str(src), str(dst))
-                else:
-                    handler = progress_factory()
-                    # Use SIZE rather than aioftp's `stat()`: stat() falls back
-                    # to LIST when MLST is unsupported (e.g. vsftpd returns 500),
-                    # but `Client.get_stream` opens the passive data connection
-                    # *before* sending MLSD — when MLSD then 500s, the suppressed
-                    # StatusCodeError leaves the data StreamWriter unreferenced.
-                    # Python 3.11+ surfaces that as a ResourceWarning that pytest's
-                    # unraisable plugin escalates into a test failure.
-                    total = await _ftp_size(ftp_conn, str(src))
-                    bytes_done = 0
-                    async with ftp_conn.download_stream(str(src)) as stream:
-                        with open(dst, 'wb') as f:
-                            async for block in stream.iter_by_block():
-                                f.write(block)
-                                bytes_done += len(block)
-                                handler(str(src), str(dst), bytes_done, total)
-            return Status.Success, ''
-        except Exception as e:
-            return Status.Error, str(e)
+        # the same client are not supported.  _ftp_lock serializes external
+        # callers so concurrent host.get() invocations queue rather than
+        # collide on the shared client.
+        async with self._ftp_lock:
+            ftp_conn = await self._connections.ftp()
+            try:
+                for src in srcFiles:
+                    dst = destDir / src.name
+                    _logger.debug(f"{self._name}: FTP get {src} -> {dst}")
+                    if progress_factory is None:
+                        await ftp_conn.download(str(src), str(dst))
+                    else:
+                        handler = progress_factory()
+                        # Use SIZE rather than aioftp's `stat()`: stat() falls back
+                        # to LIST when MLST is unsupported (e.g. vsftpd returns 500),
+                        # but `Client.get_stream` opens the passive data connection
+                        # *before* sending MLSD — when MLSD then 500s, the suppressed
+                        # StatusCodeError leaves the data StreamWriter unreferenced.
+                        # Python 3.11+ surfaces that as a ResourceWarning that pytest's
+                        # unraisable plugin escalates into a test failure.
+                        total = await _ftp_size(ftp_conn, str(src))
+                        bytes_done = 0
+                        async with ftp_conn.download_stream(str(src)) as stream:
+                            with open(dst, 'wb') as f:
+                                async for block in stream.iter_by_block():
+                                    f.write(block)
+                                    bytes_done += len(block)
+                                    handler(str(src), str(dst), bytes_done, total)
+                return Status.Success, ''
+            except Exception as e:
+                return Status.Error, str(e)
 
     async def _put_files_ftp(
         self,
@@ -598,29 +607,30 @@ class FileTransfer:
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         # Sequential for the same reason as _get_files_ftp (single data channel).
-        ftp_conn = await self._connections.ftp()
-        try:
-            for src in srcFiles:
-                dst = destDir / src.name
-                _logger.debug(f"{self._name}: FTP put {src} -> {dst}")
-                if progress_factory is None:
-                    await ftp_conn.upload(str(src), str(dst))
-                else:
-                    handler = progress_factory()
-                    total = src.stat().st_size
-                    bytes_done = 0
-                    async with ftp_conn.upload_stream(str(dst)) as stream:
-                        with open(src, 'rb') as f:
-                            while True:
-                                block = f.read(aioftp.DEFAULT_BLOCK_SIZE)
-                                if not block:
-                                    break
-                                await stream.write(block)
-                                bytes_done += len(block)
-                                handler(str(src), str(dst), bytes_done, total)
-            return Status.Success, ''
-        except Exception as e:
-            return Status.Error, str(e)
+        async with self._ftp_lock:
+            ftp_conn = await self._connections.ftp()
+            try:
+                for src in srcFiles:
+                    dst = destDir / src.name
+                    _logger.debug(f"{self._name}: FTP put {src} -> {dst}")
+                    if progress_factory is None:
+                        await ftp_conn.upload(str(src), str(dst))
+                    else:
+                        handler = progress_factory()
+                        total = src.stat().st_size
+                        bytes_done = 0
+                        async with ftp_conn.upload_stream(str(dst)) as stream:
+                            with open(src, 'rb') as f:
+                                while True:
+                                    block = f.read(aioftp.DEFAULT_BLOCK_SIZE)
+                                    if not block:
+                                        break
+                                    await stream.write(block)
+                                    bytes_done += len(block)
+                                    handler(str(src), str(dst), bytes_done, total)
+                return Status.Success, ''
+            except Exception as e:
+                return Status.Error, str(e)
 
     # ------------------------------------------------------------------
     # Netcat
