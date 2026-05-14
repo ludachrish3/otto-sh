@@ -2,6 +2,7 @@
 
 ## General
 
+- Make sure that the list of dependencies and their versions are accurate in getting_started.html
 - Running just `otto` clears old logs and then displays the help menu. Old logs should NOT be deleted in this case. Just the help menu should be displayed and then otto should exit.
 - Have one of the projects define a custom stat collector beyond the default definitions. This helps prove out the workflow for defining custom parsers and graphs.
 - Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name
