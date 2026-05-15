@@ -14,6 +14,7 @@ entire chain from the outermost hop inward.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
@@ -55,12 +56,31 @@ class SshHopTransport:
         self._parent = parent
         self._conn: SSHClientConnection | None = None
         self._port_forwards: list[SSHListener] = []
+        # Serialize tunnel creation: without this, concurrent callers that
+        # find ``_conn is None`` each open their own SSH connection to the
+        # hop and race to assign the slot. The losers are orphaned (no
+        # ``close()`` ever called on their transports → ``ResourceWarning``
+        # on GC). Double-checked locking matches the pattern in
+        # ``ConnectionManager.ssh`` and ``SessionManager._ensure_session``.
+        self._conn_lock = asyncio.Lock()
 
-    async def get_tunnel(self) -> SSHClientConnection:
-        """Return the hop SSH connection, creating it via the factory if needed."""
-        if self._conn is None:
-            self._conn = await self._factory()
-        return self._conn
+    async def get_tunnel(self, _visited: set[str] | None = None) -> SSHClientConnection:
+        """Return the hop SSH connection, creating it via the factory if needed.
+
+        ``_visited`` threads the cycle-detection set used by
+        :meth:`RemoteHost._build_hop_transport`'s factory through the
+        parent chain.  External callers don't need to pass it.
+        """
+        if self._conn is not None:
+            return self._conn
+        async with self._conn_lock:
+            if self._conn is not None:
+                return self._conn
+            if _visited is None:
+                self._conn = await self._factory()
+            else:
+                self._conn = await self._factory(_visited=_visited)
+            return self._conn
 
     async def forward_port(self, dest_host: str, dest_port: int) -> int:
         """Forward a local ephemeral port to *dest_host:dest_port* through the tunnel.

@@ -348,12 +348,13 @@ class RemoteHost(BaseHost):
                 # cache it on ``outer._parent`` so close() can walk it.
                 # Reusing the cached connection avoids re-tunneling on
                 # subsequent calls and gives close() a single object to
-                # tear down.
+                # tear down.  ``get_tunnel`` holds the parent's
+                # ``_conn_lock``, which is what prevents concurrent callers
+                # of the outer factory from each opening their own parent
+                # connection and leaking the race losers.
                 if outer._parent is None:
                     outer._parent = hop_host._build_hop_transport()
-                if outer._parent._conn is None:
-                    outer._parent._conn = await outer._parent._factory(_visited=visited)
-                parent_tunnel = outer._parent._conn
+                parent_tunnel = await outer._parent.get_tunnel(_visited=visited)
 
             user, password = next(iter(hop_host.creds.items())) if hop_host.user is None else (hop_host.user, hop_host.creds[hop_host.user])
             logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")

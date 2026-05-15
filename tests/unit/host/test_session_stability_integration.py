@@ -26,15 +26,15 @@ from tests.unit.host._transfer_retry import transfer_with_retry
 
 
 # Real I/O is meaningfully slower than mocked; bump the per-test ceiling.
-# Filter the unraisable-warnings cascade: when the recreate race leaks
-# transports, their __del__ raises ResourceWarning later, which pytest's
-# unraisableexception plugin attributes to whichever test happens to be
-# running at GC time. That mis-attribution drowns the real RED test signal,
-# so suppress it here. The leaks themselves remain visible via the
-# OTTO_DETECT_ASYNCIO_LEAKS fixture (which prints, not raises).
+# These tests double as a regression guard for the concurrent lazy-init race
+# in ``ConnectionManager`` (fan-out callers used to each open their own SSH
+# transport and orphan the losers, surfacing as
+# ``PytestUnraisableExceptionWarning`` on a later test). The race is now
+# serialized via per-protocol locks (see ``tests/unit/host/test_connection_race.py``
+# for the unit-level invariant), so we let the unraisable plugin fail the
+# suite loudly if it ever comes back — no warning filter here.
 pytestmark = [
     pytest.mark.timeout(60),
-    pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning"),
 ]
 
 

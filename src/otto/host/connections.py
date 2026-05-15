@@ -143,6 +143,17 @@ class ConnectionManager:
         self._ftp_conn: aioftp.Client | None = None
         self._telnet_conn: TelnetClient | None = None
 
+        # Concurrent callers of ``ssh()``/``telnet()``/``ftp()``/``sftp()``
+        # would otherwise all see ``_*_conn is None``, all open their own
+        # real connection, and race to assign the cache slot — leaving the
+        # losers orphaned (no ``close()`` ever called on their transports,
+        # ``ResourceWarning`` on GC). Same double-checked-locking shape as
+        # ``SessionManager._ensure_session``.
+        self._ssh_lock = asyncio.Lock()
+        self._sftp_lock = asyncio.Lock()
+        self._ftp_lock = asyncio.Lock()
+        self._telnet_lock = asyncio.Lock()
+
     @property
     def telnet_options(self) -> TelnetOptions:
         """Expose the stored ``TelnetOptions`` so callers that build their
@@ -204,53 +215,68 @@ class ConnectionManager:
 
     async def ssh(self) -> SSHClientConnection:
         """Return the live SSH connection, opening it if needed."""
-        if self._ssh_conn is None:
+        if self._ssh_conn is not None:
+            return self._ssh_conn
+        async with self._ssh_lock:
+            if self._ssh_conn is not None:
+                return self._ssh_conn
             user, password = self.credentials
             logger.debug(f"Connecting to {self._name} via SSH")
             tunnel = None
             if self._hop is not None:
                 tunnel = await self._ensure_tunnel()
-            self._ssh_conn = await ssh_connect(
+            conn = await ssh_connect(
                 self._ip,
                 username=user,
                 password=password,
                 tunnel=tunnel,
                 **self._ssh_options._kwargs(),
             )
-            await self._ssh_options._apply_post_connect(self._ssh_conn)
+            await self._ssh_options._apply_post_connect(conn)
+            self._ssh_conn = conn
             logger.debug(f"Connected to {self._name} via SSH")
-        return self._ssh_conn
+            return conn
 
     async def sftp(self) -> SFTPClient:
         """Return the live SFTP client, opening it (and SSH if needed) first."""
-        if self._sftp_conn is None:
+        if self._sftp_conn is not None:
+            return self._sftp_conn
+        async with self._sftp_lock:
+            if self._sftp_conn is not None:
+                return self._sftp_conn
             conn = await self.ssh()
             logger.debug(f"Starting SFTP client for {self._name}")
-            self._sftp_conn = await conn.start_sftp_client(**self._sftp_options._kwargs())
+            sftp = await conn.start_sftp_client(**self._sftp_options._kwargs())
+            self._sftp_conn = sftp
             logger.debug(f"SFTP client connected for {self._name}")
-        return self._sftp_conn
+            return sftp
 
     async def ftp(self) -> aioftp.Client:
         """Return the live FTP client, opening it if needed."""
-        if self._ftp_conn is None:
+        if self._ftp_conn is not None:
+            return self._ftp_conn
+        async with self._ftp_lock:
+            if self._ftp_conn is not None:
+                return self._ftp_conn
             user, password = self.credentials
             ftp_port = self._ftp_options.port
             client_kwargs = self._ftp_options._client_kwargs()
             if self._hop is not None:
                 local_port = await self._forward_port(ftp_port)
-                self._ftp_conn = TunneledFtpClient(
+                client: aioftp.Client = TunneledFtpClient(
                     hop=self._hop, dest_host=self._ip,
                     **client_kwargs,
                 )
                 logger.debug(f"Connecting to {self._name} via FTP (tunneled)")
-                await self._ftp_conn.connect('localhost', local_port)
+                await client.connect('localhost', local_port)
             else:
-                self._ftp_conn = aioftp.Client(**client_kwargs)
+                client = aioftp.Client(**client_kwargs)
                 logger.debug(f"Connecting to {self._name} via FTP")
-                await self._ftp_conn.connect(self._ip, ftp_port)
-            await self._ftp_conn.login(user, password)
+                await client.connect(self._ip, ftp_port)
+            await client.login(user, password)
+            self._ftp_conn = client
             logger.debug(f"FTP connected to {self._name}")
-        return self._ftp_conn
+            return client
 
     async def telnet(self) -> TelnetClient:
         """Return the live TelnetClient, opening it if needed.
@@ -261,16 +287,21 @@ class ConnectionManager:
         cached client becomes stale. Rechecking ``alive`` here catches that
         case and reconnects, rather than handing back a dead client.
         """
-        if self._telnet_conn is not None and not self._telnet_conn.alive:
-            # Best-effort cleanup of the stale client; close() is idempotent
-            # and clears the writer/reader so a partial-close doesn't linger.
-            try:
-                await self._telnet_conn.close()
-            except Exception:
-                pass
-            self._telnet_conn = None
+        if self._telnet_conn is not None and self._telnet_conn.alive:
+            return self._telnet_conn
+        async with self._telnet_lock:
+            if self._telnet_conn is not None and not self._telnet_conn.alive:
+                # Best-effort cleanup of the stale client; close() is idempotent
+                # and clears the writer/reader so a partial-close doesn't linger.
+                try:
+                    await self._telnet_conn.close()
+                except Exception:
+                    pass
+                self._telnet_conn = None
 
-        if self._telnet_conn is None:
+            if self._telnet_conn is not None:
+                return self._telnet_conn
+
             user, password = self.credentials
             remote_port = self._telnet_options.port
             if self._hop is not None:
@@ -306,7 +337,7 @@ class ConnectionManager:
                 raise
             self._telnet_conn = client
             logger.debug(f"Connected to {self._name} via telnet")
-        return self._telnet_conn
+            return client
 
     async def forward_port(self, dest_port: int) -> int:
         """Forward a local ephemeral port to ``self._ip:dest_port`` through the tunnel.
