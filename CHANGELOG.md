@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.3] - 2026-05-15
+
+### Added
+
+- bound nc listener wait to prevent infinite transfer hangs
+
+
+### Fixed
+
+- serialize ConnectionManager lazy-init to stop transport leaks
+- clean up half-built telnet connections on cancellation
+- recheck cached TelnetClient liveness in ConnectionManager
+- serialize FTP transfers on the shared aioftp client
+- recover ShellSession after external cancellation
+- serialize SessionManager get-or-create paths
+
+
+### Maintenance
+
+- add migration plan
+- Updated todo list
+- Cleanup up Makefile help strings
+
+
 ## [0.3.1] - 2026-05-09
 
 ### Added
@@ -101,7 +125,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/ludachrish3/otto-sh/compare/v0.3.2...v0.3.3
 [0.3.1]: https://github.com/ludachrish3/otto-sh/compare/v0.2.1...v0.3.1
 [0.2.1]: https://github.com/ludachrish3/otto-sh/compare/v0.1.0...v0.2.1
 [0.1.0]: https://github.com/ludachrish3/otto-sh/compare/v0.0.2...v0.1.0
