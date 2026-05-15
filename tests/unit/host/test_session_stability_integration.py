@@ -42,15 +42,28 @@ _SSH_AND_TELNET = pytest.mark.parametrize("host1", ["ssh", "telnet"], indirect=T
 _SSH_ONLY = pytest.mark.parametrize("host1", ["ssh"], indirect=True)
 _TELNET_ONLY = pytest.mark.parametrize("host1", ["telnet"], indirect=True)
 
+# All nc-telnet cases transfer to the same VM (carrot) and allocate remote
+# listener ports from the same base (9000+). `_find_free_port` serializes
+# allocation *within* a RemoteHost, but two xdist workers each build their own
+# RemoteHost: their `ss` scans race in the TOCTOU window before either `nc -l`
+# binds, both pick the same port, and the senders cross-wire (wrong file
+# contents, or an orphaned listener that hangs `await listen_task`). Pin every
+# nc-telnet instance to one xdist group so `--dist loadgroup` runs them
+# serially on a single worker — no cross-process port-space contention.
+_NC_CARROT_GROUP = pytest.mark.xdist_group("nc-carrot")
+
 _TRANSFERS = pytest.mark.parametrize(
     "transfer_host",
-    ["scp", "sftp", "ftp", pytest.param(("nc", "telnet"), id="nc-telnet")],
+    [
+        "scp", "sftp", "ftp",
+        pytest.param(("nc", "telnet"), id="nc-telnet", marks=_NC_CARROT_GROUP),
+    ],
     indirect=True,
 )
 
 _NC_TELNET = pytest.mark.parametrize(
     "transfer_host",
-    [pytest.param(("nc", "telnet"), id="nc-telnet")],
+    [pytest.param(("nc", "telnet"), id="nc-telnet", marks=_NC_CARROT_GROUP)],
     indirect=True,
 )
 
