@@ -412,3 +412,12 @@ class NcOptions:
     listener_cmd: str | None = None
     """Shell command (using ``{port}`` as placeholder) that exits 0 when
     a port is listening. Only used when ``listener_check == 'custom'``."""
+
+    listener_timeout: float = 30.0
+    """Seconds a remote ``nc -l`` listener may wait for a client before it
+    self-terminates (passed as ``nc -w``), and the ceiling on the post-transfer
+    wait for that listener to exit. Bounds the orphaned-listener hang: if a
+    concurrent process wins a port-collision race, our sender's bytes land in
+    *its* listener and ours never gets a client — without this it would block
+    forever. A transfer whose connection is established stays unaffected; this
+    only caps the wait for a client that never arrives."""

@@ -78,6 +78,7 @@ def _make_ft(
     has_tunnel: bool = False,
     term: str = 'ssh',
     open_session: AsyncMock | None = None,
+    listener_timeout: float = 30.0,
 ) -> FileTransfer:
     mock_connections = MagicMock(spec=ConnectionManager)
     mock_connections.has_tunnel = has_tunnel
@@ -94,6 +95,7 @@ def _make_ft(
             port_cmd=None,
             listener_check='ss',
             listener_cmd=None,
+            listener_timeout=listener_timeout,
         ),
         scp_options=ScpOptions(),
         get_local_ip=lambda: '127.0.0.1',
@@ -360,3 +362,69 @@ class TestNcPutPortRace:
         assert port_a != port_b, (
             f"concurrent port allocation collided: both returned {port_a}"
         )
+
+
+class TestNcPutOrphanedListener:
+    """An orphaned ``nc -l`` (no client ever connects) must not hang forever.
+
+    If a concurrent process wins a port-collision race, our sender's bytes go
+    to *its* listener and ours never gets a connection — leaving ``listen_task``
+    waiting on an ``nc -l`` that never exits. The bounded ``await`` must convert
+    that into a ``Status.Error`` so ``_put_one``'s retry can take a fresh port.
+    """
+
+    @pytest.mark.asyncio
+    async def test_put_errors_when_listener_never_exits(self, tmp_path: Path):
+        src = tmp_path / 'payload.bin'
+        src.write_bytes(b'x' * 32)
+
+        async def exec_side(cmd: str, *a, **kw):
+            if 'nc -l' in cmd:
+                # Orphaned listener: nc never sees a client, never exits.
+                await asyncio.Event().wait()
+            return _ok('9000\n')
+
+        async def fake_connect(host: str, port: int, timeout: float = 2.0):
+            return None, _FakeWriter()
+
+        exec_cmd = AsyncMock(side_effect=exec_side)
+        ft = _make_ft(exec_cmd, listener_timeout=0.1)
+
+        with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
+             patch.object(FileTransfer, '_wait_for_remote_listener',
+                          new=AsyncMock(return_value=None)), \
+             patch.object(FileTransfer, '_verify_nc_dest_size',
+                          new=AsyncMock(return_value=None)):
+            status, msg = await asyncio.wait_for(
+                ft._put_files_nc([src], tmp_path / 'dst'), timeout=5.0,
+            )
+
+        assert status == Status.Error, msg
+        assert 'orphaned listener' in msg
+
+    @pytest.mark.asyncio
+    async def test_listener_command_carries_idle_timeout(self, tmp_path: Path):
+        """The remote ``nc -l`` invocation must include ``-w`` so the listener
+        self-terminates rather than leaking when no client connects."""
+        src = tmp_path / 'payload.bin'
+        src.write_bytes(b'x' * 16)
+
+        async def fake_connect(host: str, port: int, timeout: float = 2.0):
+            return None, _FakeWriter()
+
+        exec_cmd = AsyncMock(return_value=_ok('9000\n'))
+        ft = _make_ft(exec_cmd, listener_timeout=30.0)
+
+        with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
+             patch.object(FileTransfer, '_wait_for_remote_listener',
+                          new=AsyncMock(return_value=None)), \
+             patch.object(FileTransfer, '_verify_nc_dest_size',
+                          new=AsyncMock(return_value=None)):
+            await ft._put_files_nc([src], tmp_path / 'dst')
+
+        listen_cmds = [
+            c.args[0] for c in exec_cmd.await_args_list
+            if c.args and 'nc -l' in c.args[0]
+        ]
+        assert listen_cmds, "expected an `nc -l` listener invocation"
+        assert all('-w 30' in cmd for cmd in listen_cmds), listen_cmds

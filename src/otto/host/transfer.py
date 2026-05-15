@@ -384,6 +384,11 @@ class FileTransfer:
     def _nc_listener_cmd(self) -> str | None:
         return self._nc_options.listener_cmd
 
+    @property
+    def _nc_listener_timeout(self) -> int:
+        """`nc -w` value — whole seconds, since nc takes an integer timeout."""
+        return max(1, int(self._nc_options.listener_timeout))
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -1068,10 +1073,14 @@ class FileTransfer:
 
             port = await self._find_free_port()
             try:
-                # Remote listener sends file data to the first connecting client.
+                # Remote listener sends file data to the first connecting
+                # client. `-w` bounds the wait for that client so an orphaned
+                # listener (lost a port-collision race) self-terminates rather
+                # than leaking and hanging the `await listen_task` below.
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
-                        f'{self._nc_exec} -Nl {port} < {src} 2>/dev/null',
+                        f'{self._nc_exec} -Nl -w {self._nc_listener_timeout} '
+                        f'{port} < {src} 2>/dev/null',
                         timeout=None,
                     )
                 )
@@ -1109,7 +1118,21 @@ class FileTransfer:
                     writer.close()
                     await writer.wait_closed()
 
-                await listen_task
+                # Reader drained the socket to EOF; the remote nc should exit
+                # now. Bound the wait so an orphaned listener can't hang us —
+                # `-w` caps it remote-side, this is the asyncio backstop.
+                try:
+                    await asyncio.wait_for(
+                        listen_task, timeout=self._nc_options.listener_timeout,
+                    )
+                except (asyncio.TimeoutError, TimeoutError):
+                    listen_task.cancel()
+                    await asyncio.gather(listen_task, return_exceptions=True)
+                    return Status.Error, (
+                        f"nc listener on port {port} did not exit within "
+                        f"{self._nc_options.listener_timeout}s of transfer end "
+                        f"(orphaned listener — likely a remote port collision)"
+                    )
                 return Status.Success, ''
             finally:
                 self._release_port(port)
@@ -1137,9 +1160,14 @@ class FileTransfer:
             # lock so concurrent callers can't both reserve the same port.
             port = await self._find_free_port()
             try:
+                # `-w` bounds how long this listener waits for a client. If a
+                # racing process bound the same port first, our sender's bytes
+                # go to *its* listener and ours never gets a connection — `-w`
+                # makes it self-terminate instead of leaking and hanging us.
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
-                        f'{self._nc_exec} -l {port} < /dev/null > {dst} 2>/dev/null',
+                        f'{self._nc_exec} -l -w {self._nc_listener_timeout} {port} '
+                        f'< /dev/null > {dst} 2>/dev/null',
                         timeout=None,
                     )
                 )
@@ -1203,7 +1231,26 @@ class FileTransfer:
                     writer.close()
                     await writer.wait_closed()
 
-                await listen_task
+                # The sender has pushed every byte and closed the socket, so
+                # the remote nc should see EOF and exit immediately. If it
+                # doesn't, this listener is orphaned (a racing process won the
+                # port and took our connection); bound the wait so a never-
+                # exiting nc — or a wedged control channel — can't hang the
+                # transfer. `-w` already caps it remote-side; this is the
+                # asyncio-level backstop. On timeout, surface an error and let
+                # `_put_one`'s retry take another port.
+                try:
+                    await asyncio.wait_for(
+                        listen_task, timeout=self._nc_options.listener_timeout,
+                    )
+                except (asyncio.TimeoutError, TimeoutError):
+                    listen_task.cancel()
+                    await asyncio.gather(listen_task, return_exceptions=True)
+                    return Status.Error, (
+                        f"nc listener on port {port} did not exit within "
+                        f"{self._nc_options.listener_timeout}s of transfer end "
+                        f"(orphaned listener — likely a remote port collision)"
+                    )
 
                 # `_wait_for_remote_listener` only checks socket LISTEN state,
                 # not whether nc has entered its accept loop. Under load the
