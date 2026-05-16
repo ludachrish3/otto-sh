@@ -257,9 +257,20 @@ def test_e2e_multi_repo_only_active_lab_runs(teardown_after, tmp_path):
     )
     assert "not in lab" not in (up.stdout + up.stderr), \
         "repo2 (fruits-lab host) must be filtered, not raise"
-    # repo1's stack came up; repo2's didn't.
+    # repo1's stack came up.
     assert "pepper_seed.repo1.api" in up.stdout
-    assert "grape_seed.repo2.worker" not in up.stdout
+    # repo2 must be skipped *entirely* — not just deployed to a different
+    # host. `_up` prints "<repo> (<project>): N container(s) registered"
+    # for every composed repo, so any mention of "repo2" means it was
+    # composed. Asserting against the `grape_seed.…` host id alone would
+    # miss a regression where `--on pepper_seed` wrongly overrode repo2's
+    # lab filter and composed it on pepper as `pepper_seed.repo2.worker`
+    # — the pre-b466020 bug that leaked an otto-repo2 network every run
+    # until docker's address pool was exhausted.
+    assert "repo2" not in up.stdout, (
+        "repo2 targets the fruits lab and must be skipped under "
+        f"--lab veggies — it was composed instead:\n{up.stdout}"
+    )
 
 
 def test_e2e_multi_repo_down_no_traceback(tmp_path):
@@ -292,22 +303,24 @@ def test_e2e_list_hosts_includes_declared_container(tmp_path):
     assert "pepper_seed.repo1.api" in output, output
 
 
-def test_e2e_run_against_unstarted_container_fails_gracefully(tmp_path):
-    """Operating on a placeholder must produce a clear `run otto docker up`
-    message rather than a generic not-found error or a traceback.
+def test_e2e_run_against_unstarted_container_auto_starts(teardown_after, tmp_path):
+    """Accessing a declared container whose stack isn't running must
+    auto-start the stack (feature de361cc) rather than erroring.
 
-    Use a unique compose suffix so we don't accidentally hit a stack left
-    running by another test in this file.
+    The command then succeeds against the freshly-started container — no
+    ``otto docker up`` step required of the caller. ``teardown_after``
+    reaps the auto-started stack so it can't leak.
     """
-    suffix = "noexist-" + uuid.uuid4().hex[:8]
+    suffix = teardown_after
     result = _run_otto(
         "host", "pepper_seed.repo1.api", "run", "true",
         xdir=tmp_path, compose_suffix=suffix,
     )
     output = result.stdout + result.stderr
-    assert result.returncode != 0
-    assert "not running" in output or "otto docker up" in output, (
-        f"expected guidance to run `otto docker up`, got:\n{output}"
+    assert result.returncode == 0, output
+    # The api container was brought up on demand before the command ran.
+    assert "Started" in output or "Running" in output, (
+        f"expected the stack to be auto-started, got:\n{output}"
     )
 
 
