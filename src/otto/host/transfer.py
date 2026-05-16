@@ -980,11 +980,16 @@ class FileTransfer:
         # for reuse across multiple get() calls and is cleaned up by host.close().
         monitor = await self._open_session('_nc_monitor')
 
-        # Pre-fetch remote file sizes sequentially via the persistent session.
+        # Pre-fetch remote file sizes under `_nc_monitor_lock`. The monitor
+        # session is shared across every transfer on this host; without the
+        # lock, concurrent get() calls issue overlapping `monitor.run` reads
+        # on the single telnet session and trip telnetlib3's "readuntil_pattern()
+        # called while another coroutine is already waiting" guard.
         sizes: dict[Path, int] = {}
-        for src in srcFiles:
-            stat_result = (await monitor.run(f'stat -c %s {src}')).only
-            sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
+        async with self._nc_monitor_lock:
+            for src in srcFiles:
+                stat_result = (await monitor.run(f'stat -c %s {src}')).only
+                sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
 
         async def _get_one(src: Path) -> tuple[Status, str]:
             dst = destDir / src.name
@@ -1058,12 +1063,15 @@ class FileTransfer:
         reads the data — same tunnel mechanics as PUT, reversed data flow.
         """
         await self._warmup_for_transfer(len(srcFiles))
-        # Pre-fetch remote file sizes via persistent monitor session.
+        # Pre-fetch remote file sizes via the persistent monitor session,
+        # holding `_nc_monitor_lock` — see `_get_files_nc` for why the
+        # serialization matters under concurrent get() calls.
         monitor = await self._open_session('_nc_monitor')
         sizes: dict[Path, int] = {}
-        for src in srcFiles:
-            stat_result = (await monitor.run(f'stat -c %s {src}')).only
-            sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
+        async with self._nc_monitor_lock:
+            for src in srcFiles:
+                stat_result = (await monitor.run(f'stat -c %s {src}')).only
+                sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
 
         async def _get_one(src: Path) -> tuple[Status, str]:
             dst = destDir / src.name
