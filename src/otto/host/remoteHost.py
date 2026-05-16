@@ -319,6 +319,8 @@ class RemoteHost(BaseHost):
         from .transport import SshHopTransport
 
         hop_id = self.hop
+        if hop_id is None:
+            raise ValueError(f"_build_hop_transport called on host {self.name!r} with no hop configured")
         host_name = self.name
 
         # The outer SshHopTransport — its ``_parent`` is set lazily on the
