@@ -199,30 +199,100 @@ async def test_session_factory_resolves_container_id_lazily():
 
 
 # ---------------------------------------------------------------------------
-# Placeholder (container_id == "") guards
+# Placeholder (container_id == "") — auto-up behavior
 # ---------------------------------------------------------------------------
 
+def _mock_config(repo_name: str | None = "repo1"):
+    """A fake ConfigModule whose repos optionally include *repo_name*."""
+    cfg = MagicMock()
+    if repo_name:
+        repo = MagicMock()
+        repo.name = repo_name
+        cfg.repos = [repo]
+    else:
+        cfg.repos = []
+    cfg.lab = MagicMock()
+    return cfg
+
+
 @pytest.mark.asyncio
-async def test_oneshot_placeholder_raises():
+async def test_placeholder_auto_ups_stack(monkeypatch):
+    """Accessing a declared-but-down container auto-starts its stack."""
+    parent = _mock_parent()  # docker ps returns empty out -> not running
+    h = _make_container(parent, container_id="")
+
+    started = _make_container(parent, container_id="freshcid")
+    compose_up = AsyncMock(return_value={"api": started})
+    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+    monkeypatch.setattr("otto.configmodule.getConfigModule", lambda: _mock_config())
+
+    result = await h.oneshot("echo hi")
+
+    compose_up.assert_awaited_once()
+    assert compose_up.call_args.kwargs["build"] is False
+    assert compose_up.call_args.kwargs["project_name"] == "otto-repo1-vagrant"
+    assert h.container_id == "freshcid"
+    assert result.status == Status.Success
+
+
+@pytest.mark.asyncio
+async def test_placeholder_no_repo_raises(monkeypatch):
+    """No configured repo to auto-start -> clear 'not running' error."""
     h = _make_container(container_id="")
+    monkeypatch.setattr(
+        "otto.configmodule.getConfigModule", lambda: _mock_config(repo_name=None)
+    )
     with pytest.raises(RuntimeError, match="not running"):
         await h.oneshot("echo hi")
 
 
 @pytest.mark.asyncio
-async def test_put_placeholder_raises(tmp_path):
+async def test_placeholder_auto_up_failure_raises(monkeypatch):
+    """A compose_up failure surfaces as a 'not running' RuntimeError."""
     h = _make_container(container_id="")
-    f = tmp_path / "x"
-    f.write_text("x")
+    compose_up = AsyncMock(side_effect=RuntimeError("compose boom"))
+    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+    monkeypatch.setattr("otto.configmodule.getConfigModule", lambda: _mock_config())
     with pytest.raises(RuntimeError, match="not running"):
-        await h.put([f], Path("/tmp"))
+        await h.oneshot("echo hi")
 
 
 @pytest.mark.asyncio
-async def test_get_placeholder_raises():
-    h = _make_container(container_id="")
-    with pytest.raises(RuntimeError, match="not running"):
-        await h.get(Path("/etc/os-release"), Path("./"))
+async def test_concurrent_access_triggers_single_auto_up(monkeypatch):
+    """Two concurrent calls against a down container auto-up exactly once."""
+    import asyncio
+
+    parent = _mock_parent()
+    h = _make_container(parent, container_id="")
+
+    started = _make_container(parent, container_id="freshcid")
+    compose_up = AsyncMock(return_value={"api": started})
+    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+    monkeypatch.setattr("otto.configmodule.getConfigModule", lambda: _mock_config())
+
+    await asyncio.gather(h.oneshot("echo a"), h.oneshot("echo b"))
+
+    compose_up.assert_awaited_once()
+    assert h.container_id == "freshcid"
+
+
+@pytest.mark.asyncio
+async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
+    """File transfer against a down container also auto-starts the stack."""
+    parent = _mock_parent()
+    h = _make_container(parent, container_id="")
+    f = tmp_path / "x"
+    f.write_text("x")
+
+    started = _make_container(parent, container_id="freshcid")
+    compose_up = AsyncMock(return_value={"api": started})
+    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+    monkeypatch.setattr("otto.configmodule.getConfigModule", lambda: _mock_config())
+
+    status, _ = await h.put([f], Path("/tmp"))
+
+    compose_up.assert_awaited_once()
+    assert status == Status.Success
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ the per-call ``oneshot`` path still works against any parent.
 
 from __future__ import annotations
 
+import asyncio
 import shlex
 from dataclasses import (
     dataclass,
@@ -107,12 +108,17 @@ class DockerContainerHost(BaseHost):
     parent's SSH connection; opening is lazy and gated on the parent being
     an SSH-based :class:`RemoteHost`."""
 
+    _ensure_lock: asyncio.Lock = field(init=False, repr=False)
+    """Serializes :meth:`_ensure_running` so concurrent accesses to a
+    down container trigger at most one auto-up."""
+
     def __post_init__(self) -> None:
         parent_id = getattr(self.parent, 'id', getattr(self.parent, 'name', 'localhost'))
         self.id = f"{parent_id}.{self.project}.{self.service}".lower()
         self.name = f"{parent_id}:{self.service}"
         self._repeater = RepeatRunner(run_cmds=self.run)
         self._session_mgr = self._build_session_mgr()
+        self._ensure_lock = asyncio.Lock()
 
     def _build_session_mgr(self) -> SessionManager:
         """Build a fresh SessionManager wired to this host. Called from
@@ -159,24 +165,79 @@ class DockerContainerHost(BaseHost):
         Resolve lazily: ask the parent for any container labeled with
         ``com.docker.compose.project={self.compose_project}`` and
         ``com.docker.compose.service={self.service}``. If found, cache the
-        id on ``self``. If not, raise a clear "run `otto docker up`" error.
+        id on ``self``. If not, auto-start the stack via :func:`compose_up`
+        and re-resolve. ``compose_up`` is reached only on real-access paths
+        — every dry-run path short-circuits on :func:`isDryRun` before
+        calling this method.
         """
         if self.container_id:
             return
 
+        async with self._ensure_lock:
+            # Double-checked: another waiter may have resolved it while we
+            # were blocked on the lock.
+            if self.container_id:
+                return
+
+            cid = await self._resolve_container_id()
+            if not cid:
+                cid = await self._auto_up()
+            self.container_id = cid
+
+    async def _resolve_container_id(self) -> str:
+        """Return the running container id for this service, or ``""``."""
         result = await self.parent.oneshot(
             f"docker ps -q "
             f"--filter label=com.docker.compose.project={shlex.quote(self.compose_project)} "
             f"--filter label=com.docker.compose.service={shlex.quote(self.service)}"
         )
-        cid = result.output.strip().splitlines()[0] if result.status.is_ok and result.output.strip() else ""
-        if not cid:
+        if result.status.is_ok and result.output.strip():
+            return result.output.strip().splitlines()[0]
+        return ""
+
+    async def _auto_up(self) -> str:
+        """Bring the owning stack up and return this service's container id.
+
+        Called when the container is declared but not running. Uses
+        :func:`compose_up` with ``build=False`` so access never triggers an
+        image rebuild — a missing image fails fast with an actionable error.
+        """
+        from ..configmodule import getConfigModule
+        from ..docker.compose import compose_up
+
+        logger.info(
+            f"[docker] container {self.id!r} not running; "
+            f"auto-starting stack {self.compose_project!r}"
+        )
+        cfg = getConfigModule()
+        repo = next((r for r in cfg.repos if r.name == self.project), None)
+        if repo is None:
+            raise RuntimeError(
+                f"Container {self.id!r} is declared but not running, and no "
+                f"repo named {self.project!r} is configured to auto-start it. "
+                f"Run `otto docker up` for project {self.project!r} first."
+            )
+
+        try:
+            hosts = await compose_up(
+                repo, cfg.lab, project_name=self.compose_project, build=False
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"Container {self.id!r} is declared but not running, and "
+                f"auto-start failed: {e}. Run `otto docker up` for project "
+                f"{self.project!r} first."
+            ) from e
+
+        host = hosts.get(self.service)
+        if host is None or not host.container_id:
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running. "
-                f"Run `otto docker up` (or call compose_up()) for project "
-                f"{self.project!r} first."
+                f"Auto-start of stack {self.compose_project!r} did not produce "
+                f"a container for service {self.service!r}. Run `otto docker up` "
+                f"for project {self.project!r} first."
             )
-        self.container_id = cid
+        return host.container_id
 
     async def _docker_exec(self, cmd: str, *, interactive: bool = False) -> str:
         """Build the ``docker exec`` invocation that runs *cmd* inside the container."""
