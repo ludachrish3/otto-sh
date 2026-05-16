@@ -14,9 +14,17 @@ from rich.console import (
 )
 from rich.text import Text
 
-_console = Console(highlight=False)
+from ..console import CONSOLE
+
+_console = Console(highlight=False, width=CONSOLE.width)
 """Dedicated capture-only console for rendering Rich markup to a string.
-Must remain separate from the display console (otto.console.CONSOLE)."""
+
+Must remain a separate object from the display console (otto.console.CONSOLE),
+but takes its width so log lines wrap in the file exactly as on screen.
+Without a fixed width Rich re-probes fds 0/1/2 on every render, and otto's
+in-process pytest run leaves those non-tty — collapsing the width to 80 and
+wrapping the log file narrower than the terminal. CONSOLE is already pinned
+to the launch-time terminal width in otto.console."""
 
 _ANSI = re.compile(
     r'\x1b'                 # ESC

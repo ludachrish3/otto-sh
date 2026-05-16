@@ -113,6 +113,42 @@ class OttoPlugin:
         config.option.asyncio_mode = "auto"
         config.stash[otto_cov_key] = self._cov
 
+    def pytest_sessionstart(self, session: pytest.Session) -> None:
+        """Quiet down pytest's terminal reporter output.
+
+        Two adjustments, both because otto streams its own Rich log output
+        and pytest's terse terminal chatter just collides with it. Done here
+        rather than in ``pytest_configure`` because the terminalreporter
+        isn't registered yet at configure time.
+
+        ``showfspath = False``: in non-verbose mode pytest writes the test
+        file path with no trailing newline (``write_fspath_result``),
+        expecting per-test progress letters to follow. otto suppresses those
+        letters (see :meth:`pytest_report_teststatus`), so the bare path
+        would collide with the first log line. otto's ``_otto_log_test_start``
+        fixture already logs each test start, making the header redundant.
+
+        ``report_collect``: the "collected N items" line has no granular
+        suppression flag — only quiet mode (``verbose < 0``) hides it, which
+        would strip other output too. The ``pytest_collection`` hook writes a
+        bare, un-terminated ``collecting ...`` prefix that ``report_collect``
+        normally rewrites in place into ``collected N items\\n``; simply
+        no-oping it would leave that prefix dangling. Instead override it to
+        erase the line on the final call and park the cursor at column 0 for
+        the next writer. Collection counts are tracked separately and stay
+        intact.
+        """
+        tr = session.config.pluginmanager.get_plugin("terminalreporter")
+        if tr is not None:
+            tr.showfspath = False
+
+            def _erase_collect_line(final: bool = False) -> None:
+                if final and tr.isatty():
+                    tr.rewrite("", erase=True)
+                    tr.write("\r")
+
+            tr.report_collect = _erase_collect_line
+
     def pytest_ignore_collect(
         self,
         collection_path: Path,
