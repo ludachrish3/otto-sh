@@ -580,10 +580,9 @@ async def _run_coverage(
         return
 
     # Coverage collection targets RemoteHosts that compile the SUT and emit
-    # .gcda files. Container hosts piggyback on a parent and don't have
-    # toolchains of their own, so exclude them.
-    from ..host.dockerHost import DockerContainerHost
-    hosts = [h for h in all_hosts() if not isinstance(h, DockerContainerHost)]
+    # .gcda files. all_hosts() already excludes container hosts, which
+    # piggyback on a parent and have no toolchain of their own.
+    hosts = list(all_hosts())
     if not hosts:
         logger.warning('No hosts available for coverage collection')
         return

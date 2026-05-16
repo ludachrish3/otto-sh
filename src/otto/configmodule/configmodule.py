@@ -185,6 +185,7 @@ def getHost(
 def all_hosts(
     pattern: re.Pattern[str] | None = None,
     *,
+    include_containers: bool = False,
     ssh_options: 'SshOptions | None' = None,
     telnet_options: 'TelnetOptions | None' = None,
     sftp_options: 'SftpOptions | None' = None,
@@ -192,12 +193,22 @@ def all_hosts(
     ftp_options: 'FtpOptions | None' = None,
     nc_options: 'NcOptions | None' = None,
 ) -> Generator['RemoteHost', Any, Any]:
-    """Yield every host in the active lab, optionally filtered by regex.
+    """Yield the active lab's real remote hosts, optionally filtered by regex.
+
+    This is the *fleet* generator: by default it yields only real
+    :class:`RemoteHost` instances and skips :class:`DockerContainerHost`
+    entries, since containers aren't operated on as part of the host
+    fleet (e.g. ``otto monitor``, coverage collection). Containers remain
+    reachable for targeted use via tab completion and ``get_host`` —
+    neither of which goes through this generator. Pass
+    ``include_containers=True`` to yield container hosts as well.
 
     Args:
         pattern: Compiled regex matched against each host's ``id`` via
             ``pattern.search()``.  When *None* (the default), all hosts
             are yielded.
+        include_containers: When ``True``, also yield
+            :class:`DockerContainerHost` entries. Defaults to ``False``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides. When
             supplied, each yielded host is a fresh
@@ -219,9 +230,13 @@ def all_hosts(
         >>> # assuming hosts: carrot_seed, tomato_seed, pepper_seed
         >>> seeds = list(all_hosts(re.compile(r"tomato")))  # doctest: +SKIP
     """
+    from ..host.dockerHost import DockerContainerHost
+
     configModule = getConfigModule()
     for host in configModule.lab.hosts.values():
         if pattern is not None and not pattern.search(host.id):
+            continue
+        if not include_containers and isinstance(host, DockerContainerHost):
             continue
         yield _apply_option_overrides(
             host,
@@ -238,6 +253,7 @@ async def do_for_all_hosts(
     *args: Any,
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,
+    include_containers: bool = False,
     ssh_options: 'SshOptions | None' = None,
     telnet_options: 'TelnetOptions | None' = None,
     sftp_options: 'SftpOptions | None' = None,
@@ -255,6 +271,8 @@ async def do_for_all_hosts(
         concurrent: When ``True`` (default), run all calls via
             ``asyncio.gather`` with ``return_exceptions=True``.
             When ``False``, execute serially.
+        include_containers: Forwarded to :func:`all_hosts`. When
+            ``False`` (default), container hosts are excluded.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides
             forwarded to :func:`all_hosts`. See its docstring for
@@ -275,6 +293,7 @@ async def do_for_all_hosts(
     """
     hosts = list(all_hosts(
         pattern=pattern,
+        include_containers=include_containers,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
         sftp_options=sftp_options,
@@ -305,6 +324,7 @@ async def run_on_all_hosts(
     concurrent: bool = True,
     timeout: float | None = None,
     *,
+    include_containers: bool = False,
     ssh_options: 'SshOptions | None' = None,
     telnet_options: 'TelnetOptions | None' = None,
     sftp_options: 'SftpOptions | None' = None,
@@ -323,6 +343,8 @@ async def run_on_all_hosts(
         concurrent: When ``True`` (default), run all calls via
             ``asyncio.gather``.  When ``False``, execute serially.
         timeout: Per-host timeout forwarded to ``run``.
+        include_containers: Forwarded to :func:`do_for_all_hosts`. When
+            ``False`` (default), container hosts are excluded.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides
             forwarded to :func:`do_for_all_hosts`.
@@ -347,6 +369,7 @@ async def run_on_all_hosts(
         _run_list,
         pattern=pattern,
         concurrent=concurrent,
+        include_containers=include_containers,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
         sftp_options=sftp_options,

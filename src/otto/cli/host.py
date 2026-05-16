@@ -58,7 +58,7 @@ def _resolve_host(host_id: str):
     except KeyError:
         rprint(f"[red]Error:[/red] No host with ID '{host_id}'.")
         rprint("Available hosts:")
-        for h in all_hosts():
+        for h in all_hosts(include_containers=True):
             rprint(f"  - {h.id}")
         raise typer.Exit(1)
 
