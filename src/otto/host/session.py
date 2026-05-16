@@ -747,7 +747,14 @@ class SessionManager:
         # observe a dead/missing session, all close it, and all create
         # replacements that clobber each other (each clobber leaks the prior).
         self._ensure_session_lock = asyncio.Lock()
-        self._named_session_lock = asyncio.Lock()
+        # One lock *per session name* rather than a single shared lock.  The
+        # get-or-create path only needs to dedupe callers requesting the *same*
+        # name; a shared lock additionally serializes the (slow, ~1-2 s telnet)
+        # connect of callers requesting *different* names — which collapses the
+        # oneshot pool's concurrency back to serial.  Keyed locks let distinct
+        # names (notably the unique `__oneshot_pool_N__` names) connect in
+        # parallel while same-name callers still resolve to one session.
+        self._named_session_locks: dict[str, asyncio.Lock] = {}
 
     @property
     def has_live_sessions(self) -> bool:
@@ -885,10 +892,11 @@ class SessionManager:
     async def open_session(self, name: str) -> 'HostSession':
         """Open or reuse a named persistent shell session.
 
-        Serialized via ``_named_session_lock`` with a double-checked-locking
+        Serialized via a per-name lock with a double-checked-locking
         pattern: concurrent callers requesting the same name resolve to a
         single underlying session rather than each creating their own and
-        clobbering the dict.
+        clobbering the dict.  Callers requesting *different* names take
+        different locks and so connect concurrently.
 
         Eagerly runs ``_ensure_initialized`` inside the lock so the stored
         ``HostSession.alive`` is True on return — this prevents follow-on
@@ -899,7 +907,10 @@ class SessionManager:
         if existing and existing.alive:
             return existing
 
-        async with self._named_session_lock:
+        # ``setdefault`` is atomic here — no ``await`` between lookup and use —
+        # so concurrent callers for the same name share one lock instance.
+        lock = self._named_session_locks.setdefault(name, asyncio.Lock())
+        async with lock:
             existing = self._named_sessions.get(name)
             if existing and existing.alive:
                 return existing
@@ -992,3 +1003,9 @@ class SessionManager:
                 return_exceptions=True,
             )
             self._named_sessions.clear()
+
+        # Drop the per-name locks too. close_all() is a teardown point with
+        # no concurrent open_session() in flight, so clearing here is race-free
+        # (unlike per-session reclamation) and caps lock-dict growth at the set
+        # of names seen since the last close_all rather than process lifetime.
+        self._named_session_locks.clear()

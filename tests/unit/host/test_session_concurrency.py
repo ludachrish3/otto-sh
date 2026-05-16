@@ -94,7 +94,70 @@ def _make_mgr(factory: _Factory, term: str = 'telnet') -> SessionManager:
     )
 
 
+class _SlowConnectFakeSession(_StabilityFakeSession):
+    """Fake session with a configurable, non-trivial ``_open()`` delay.
+
+    Real telnet ``oneshot()`` pool sessions spend ~1-2 s in the connect
+    handshake.  A fake that connects instantly can't tell a manager that
+    connects pool sessions *concurrently* from one that connects them
+    *serially* — both finish in ~0 s.  This fake makes that distinction
+    observable by sleeping for ``connect_delay`` inside ``_open()``.
+    """
+
+    connect_delay: float = 0.1
+
+    async def _open(self) -> None:
+        await asyncio.sleep(self.connect_delay)
+
+
+class _SlowConnectFactory(_Factory):
+    """``_Factory`` variant that hands out :class:`_SlowConnectFakeSession`."""
+
+    def __call__(self) -> _StabilityFakeSession:
+        session = _SlowConnectFakeSession(instance_id=len(self.created) + 1)
+        self.created.append(session)
+        return session
+
+
 # ── Targeted concurrency tests ────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(10)
+async def test_oneshot_pool_connects_concurrently() -> None:
+    """Concurrent ``oneshot()`` calls must connect their pool sessions in parallel.
+
+    Regression for the telnet pool serialization bug: every concurrent
+    ``oneshot()`` acquires a *uniquely named* ``__oneshot_pool_N__`` session
+    via ``open_session()``.  When ``open_session()`` guarded the whole
+    get-or-create body (including the slow connect) with a single shared
+    lock, those N connects ran one after another — N short oneshots took
+    ``N × connect_delay`` instead of ~one ``connect_delay``.  On real telnet
+    hosts that turned 10 parallel oneshots into a ~16 s serial chain and
+    blew the 15 s budget in ``test_real_long_telnet_oneshot_vs_concurrent``.
+
+    With per-name locks, distinct names connect concurrently.
+    """
+    factory = _SlowConnectFactory()
+    mgr = _make_mgr(factory)
+
+    N = 10
+    delay = _SlowConnectFakeSession.connect_delay
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    results = await asyncio.gather(*(mgr.oneshot(f'echo {i}') for i in range(N)))
+    elapsed = loop.time() - start
+
+    assert all(r.status.is_ok for r in results), "some oneshots returned non-ok status"
+    # Serial connects would take >= N * delay.  Parallel connects take ~delay;
+    # allow generous slack for scheduling/event-loop overhead but stay well
+    # below the serial figure.
+    assert elapsed < (N * delay) / 2, (
+        f"{N} concurrent oneshots took {elapsed:.2f}s with a {delay:.2f}s "
+        f"per-connect delay — pool connects serialized instead of running "
+        f"in parallel (serial would be ~{N * delay:.2f}s)"
+    )
+
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(10)
