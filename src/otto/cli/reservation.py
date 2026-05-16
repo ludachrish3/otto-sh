@@ -13,11 +13,14 @@ import typer
 from rich import print as rprint
 
 from ..configmodule import getConfigModule
+from ..logger import getOttoLogger
 from ..reservations import (
     MissingReservationError,
     check_reservations,
     required_resources,
 )
+
+logger = getOttoLogger()
 
 reservation_app = typer.Typer(
     name='reservation',
@@ -27,6 +30,13 @@ reservation_app = typer.Typer(
         'help_option_names': ['-h', '--help'],
     },
 )
+
+
+@reservation_app.callback()
+def reservation_callback() -> None:
+    """Inspect and verify lab reservations."""
+    if logger.keep_seconds is not None:
+        logger.removeOldLogs(logger.keep_seconds)
 
 
 @reservation_app.command()

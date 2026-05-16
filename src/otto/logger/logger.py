@@ -50,6 +50,8 @@ class OttoLogger(Logger):
         self._output_dir: Path
         self._rich_logging: bool = False
         self._listener: Optional[QueueListener] = None
+        self._keep_seconds: Optional[float] = None
+        self._output_dir_atexit_registered: bool = False
 
     @property
     def xdir(self):
@@ -65,6 +67,15 @@ class OttoLogger(Logger):
     def output_dir(self):
         """Base directory in which logs and other artifacts are stored for an invocation."""
         return self._output_dir
+
+    @property
+    def keep_seconds(self) -> Optional[float]:
+        """Log retention period in seconds, set from --log-days during initialization."""
+        return self._keep_seconds
+
+    @keep_seconds.setter
+    def keep_seconds(self, value: float) -> None:
+        self._keep_seconds = value
 
     def _commandToDirName(self,
         command: str,
@@ -102,6 +113,17 @@ class OttoLogger(Logger):
 
         # Create the output directory and save its path
         self._output_dir.mkdir(parents=True)
+
+        # Register once so the final output dir is always printed last, after all
+        # log listeners have been stopped (atexit is LIFO; subsequent listener.stop
+        # registrations will run before this one).
+        if not self._output_dir_atexit_registered:
+            atexit.register(lambda: CONSOLE.print(f"\nOutput directory: {self._output_dir}", highlight=False))
+            self._output_dir_atexit_registered = True
+
+        if self._keep_seconds is not None:
+            self.removeOldLogs(self._keep_seconds)
+
         self._addLogHandlers()
 
     def _addLogHandlers(self):
@@ -215,8 +237,9 @@ def initOttoLogger(
     # Set the rich log file status now in case a log file is eventually created
     logger.rich_logging = rich_log_file
 
-    # Remove any expired logs and artifacts
-    logger.removeOldLogs(seconds=keep_days * 24 * 60 * 60)
+    # Store retention period so subcommand callbacks can trigger cleanup when
+    # a real command runs (not when help is displayed).
+    logger.keep_seconds = keep_days * 24 * 60 * 60
 
     return logger
 

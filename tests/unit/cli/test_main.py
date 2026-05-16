@@ -189,15 +189,11 @@ class TestLoggerArguments:
 
     def test_log_days_default(self, real_main_mocks):
         _invoke([])
-        real_main_mocks['removeOldLogs'].assert_called_once_with(
-            seconds=30 * 24 * 60 * 60,
-        )
+        assert getOttoLogger().keep_seconds == 30 * 24 * 60 * 60
 
     def test_log_days_custom(self, real_main_mocks):
         _invoke(['--log-days', '14'])
-        real_main_mocks['removeOldLogs'].assert_called_once_with(
-            seconds=14 * 24 * 60 * 60,
-        )
+        assert getOttoLogger().keep_seconds == 14 * 24 * 60 * 60
 
     def test_xdir_default_is_empty_path(self, real_main_mocks):
         _invoke([])

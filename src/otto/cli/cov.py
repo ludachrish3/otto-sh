@@ -69,6 +69,8 @@ cov_app = typer.Typer(
 @cov_app.callback()
 def cov_callback() -> None:
     """Generate coverage reports from otto test --cov output."""
+    if logger.keep_seconds is not None:
+        logger.removeOldLogs(logger.keep_seconds)
 
 
 def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:

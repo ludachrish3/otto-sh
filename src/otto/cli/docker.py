@@ -43,6 +43,13 @@ docker_app = typer.Typer(
 )
 
 
+@docker_app.callback()
+def docker_callback() -> None:
+    """Build images and orchestrate compose stacks on docker-capable lab hosts."""
+    if logger.keep_seconds is not None:
+        logger.removeOldLogs(logger.keep_seconds)
+
+
 def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     """Shell-completion source for ``--on``. Limits suggestions to
     docker-capable hosts so users don't tab into a parent that can't run
