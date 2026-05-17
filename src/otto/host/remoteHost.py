@@ -235,7 +235,6 @@ class RemoteHost(BaseHost):
             nc_options=self.nc_options,
             scp_options=self.scp_options,
             get_local_ip=lambda: self._get_local_ip(),
-            open_session=lambda name: self.open_session(name),
             exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
         )
 
@@ -288,7 +287,6 @@ class RemoteHost(BaseHost):
             nc_options=self.nc_options,
             scp_options=self.scp_options,
             get_local_ip=lambda: self._get_local_ip(),
-            open_session=lambda name: self.open_session(name),
             exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
         )
 

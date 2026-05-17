@@ -357,23 +357,18 @@ class TestNetcatGetThroughHop:
         mock_connections._name = 'test'
         mock_connections.forward_port = AsyncMock(return_value=44444)
 
-        # Monitor session returns file size via run.
-        mock_session = AsyncMock()
-        from otto.host import RunResult
-        mock_session.run = AsyncMock(return_value=RunResult(
-            status=Status.Success,
-            statuses=[CommandStatus(
-                command='stat -c %s /remote/a.txt', output='9\n',
-                status=Status.Success, retcode=0,
-            )],
-        ))
+        # exec_cmd handles every control + transfer command: file-size stat,
+        # port-find, and the nc listener.
+        async def mock_exec(cmd: str, *a, **kw) -> CommandStatus:
+            if cmd.startswith('stat -c %s'):
+                output = '9\n'
+            elif 'nc ' in cmd:
+                output = ''
+            else:  # port-find
+                output = '55555\n'
+            return CommandStatus(command=cmd, output=output, status=Status.Success, retcode=0)
 
-        mock_exec = AsyncMock(side_effect=[
-            # _find_free_port
-            CommandStatus(command='python3 ...', output='55555\n', status=Status.Success, retcode=0),
-            # nc -l listen command (sends file data)
-            CommandStatus(command='nc -l ...', output='', status=Status.Success, retcode=0),
-        ])
+        mock_exec = AsyncMock(side_effect=mock_exec)
 
         ft = FileTransfer(
             connections=mock_connections,
@@ -389,7 +384,6 @@ class TestNetcatGetThroughHop:
             ),
             scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
-            open_session=AsyncMock(return_value=mock_session),
             exec_cmd=mock_exec,
         )
 
@@ -433,21 +427,12 @@ class TestNetcatGetThroughHop:
         mock_connections.term = 'ssh'
         mock_connections._name = 'test'
 
-        # Monitor session returns file size.
-        mock_session = AsyncMock()
-        from otto.host import RunResult
-        mock_session.run = AsyncMock(return_value=RunResult(
-            status=Status.Success,
-            statuses=[CommandStatus(
-                command='stat -c %s /remote/a.txt', output='9\n',
-                status=Status.Success, retcode=0,
-            )],
-        ))
+        # exec_cmd handles the file-size stat and the nc -N send command.
+        async def mock_exec(cmd: str, *a, **kw) -> CommandStatus:
+            output = '9\n' if cmd.startswith('stat -c %s') else ''
+            return CommandStatus(command=cmd, output=output, status=Status.Success, retcode=0)
 
-        # exec_cmd handles the nc -N send command.
-        mock_exec = AsyncMock(return_value=CommandStatus(
-            command='nc -N ...', output='', status=Status.Success, retcode=0,
-        ))
+        mock_exec = AsyncMock(side_effect=mock_exec)
 
         ft = FileTransfer(
             connections=mock_connections,
@@ -463,7 +448,6 @@ class TestNetcatGetThroughHop:
             ),
             scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
-            open_session=AsyncMock(return_value=mock_session),
             exec_cmd=mock_exec,
         )
 
@@ -540,7 +524,6 @@ class TestNetcatPutThroughHop:
             ),
             scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
-            open_session=AsyncMock(),
             exec_cmd=mock_exec,
         )
 
@@ -606,7 +589,6 @@ class TestNetcatPutThroughHop:
             ),
             scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
-            open_session=AsyncMock(),
             exec_cmd=mock_exec,
         )
 

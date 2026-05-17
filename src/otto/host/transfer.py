@@ -26,7 +26,6 @@ from ..utils import CommandStatus, Status
 if TYPE_CHECKING:
     from .connections import ConnectionManager
     from .options import NcOptions, ScpOptions
-    from .session import HostSession
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -183,7 +182,7 @@ _logger = getOttoLogger()
 
 # Port scripts run inside `( ... )` so their `exit 0` / `exit 1` only
 # terminates the subshell. Without the subshell wrap, a failure-path `exit`
-# kills the whole telnet monitor session, forcing a 1–2 s reopen on every
+# kills the whole telnet control session, forcing a 1–2 s reopen on every
 # subsequent call.
 _SS_PORT_SCRIPT = (
     '( used=$(ss -tln | grep -oE ":[0-9]+ " | tr -d ": " | sort -un); '
@@ -323,7 +322,6 @@ class FileTransfer:
         nc_options: 'NcOptions',
         scp_options: 'ScpOptions',
         get_local_ip: Callable[[], str],
-        open_session: Callable[[str], Coroutine[Any, Any, 'HostSession']],
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
     ) -> None:
         self._connections = connections
@@ -332,21 +330,17 @@ class FileTransfer:
         self._nc_options = nc_options
         self._scp_options = scp_options
         self._get_local_ip = get_local_ip
-        self._open_session = open_session
         self._exec_cmd = exec_cmd
         self._resolved_port_strategy: NcPortStrategy | None = None
         self._resolved_listener_check: NcListenerCheck | None = None
         self._reserved_ports: set[int] = set()
-        # Long-lived shell session for all nc control-plane ops (port-find,
-        # listener probe). On telnet, opening a fresh session costs ~1-2 s per
-        # call, so we pay that handshake ONCE per host and reuse the warm
-        # session for every subsequent probe. None until first lazy open, and
-        # when the connection drops, `alive` becomes False and we reopen.
-        self._nc_monitor: 'HostSession | None' = None
-        # Serializes run access to _nc_monitor — telnet sessions corrupt
-        # under concurrent use (shared stdin/stdout), so every control-plane
-        # call grabs this lock for its duration.
-        self._nc_monitor_lock = asyncio.Lock()
+        # Serializes nc control-plane ops (port-find, listener probe, strategy
+        # probe, file-size stats). Not a correctness guard — `_exec_cmd`'s
+        # telnet pool already hands concurrent callers distinct sessions — but
+        # an economy one: serializing control ops makes them reuse a single
+        # warm pooled session instead of fanning out and each paying a cold
+        # auth handshake. Telnet only; SSH exec channels are already cheap.
+        self._control_lock = asyncio.Lock()
         # Serializes port allocation so two concurrent `_find_free_port` calls
         # can't both return the same "free" port from parallel ss scans.
         self._port_lock = asyncio.Lock()
@@ -644,11 +638,10 @@ class FileTransfer:
     async def prepare(self) -> None:
         """Resolve port + listener strategies in a single round-trip.
 
-        Runs the shared `_STRATEGY_PROBE` script through `_control_run` so on
-        telnet the monitor session handshake is paid once here (and shared
-        with subsequent control ops) instead of lazily at first-transfer
-        time. Idempotent — a second call with both strategies already cached
-        is a no-op.
+        Runs the shared `_STRATEGY_PROBE` script through `_control_run` so the
+        port and listener strategies are resolved up front rather than lazily
+        at first-transfer time. Idempotent — a second call with both
+        strategies already cached is a no-op.
 
         Callers use `_warmup_for_transfer` to run this concurrently with
         exec-pool warming; direct callers can invoke `prepare()` alone.
@@ -700,13 +693,13 @@ class FileTransfer:
                 )
 
     async def _warmup_for_transfer(self, file_count: int) -> None:
-        """Open the monitor session, probe strategies, and pre-open exec
-        sessions for the upcoming nc listeners — all concurrently.
+        """Probe strategies and pre-open exec sessions for the upcoming nc
+        listeners — all concurrently.
 
         Without this, the first transfer on a cold telnet host pays its
-        handshakes serially: monitor-open → strategy-probe → (per-file)
-        exec-session-open. By firing them together we collapse wall-clock
-        cost from ~N handshakes to ~max(handshakes).
+        handshakes serially: strategy-probe → (per-file) exec-session-open.
+        By firing them together we collapse wall-clock cost from ~N
+        handshakes to ~max(handshakes).
 
         `file_count` sessions are pre-opened on telnet so each concurrent
         `nc -l` can pull a warm session from the pool. On SSH the exec path
@@ -725,21 +718,23 @@ class FileTransfer:
     async def _control_run(self, cmd: str) -> CommandStatus:
         """Run an nc control-plane command on the warmest available runner.
 
-        On telnet, every fresh shell session costs a 1–2 s auth handshake, so
-        we route port-finding and listener-probing through a single long-lived
-        ``_nc_monitor`` session — one handshake per host, amortized over every
-        subsequent call.  The lock serializes concurrent callers (telnet
-        sessions corrupt under shared stdin/stdout) but each call is brief.
+        All control-plane work (port-finding, listener probes, the strategy
+        probe, remote file-size stats) goes through ``_exec_cmd`` — the same
+        oneshot exec path the ``nc -l`` listeners use.
 
-        On SSH, exec channels over the existing connection are cheap, so we
-        just use ``_exec_cmd`` directly — no monitor session needed.
+        On telnet, ``_control_lock`` serializes these calls so they reuse a
+        single warm pooled session rather than fanning out and each paying a
+        cold auth handshake. It is an economy measure, not a correctness one:
+        the telnet oneshot pool already hands *concurrent* callers distinct
+        sessions, so there is no shared-stdin corruption to guard against.
+
+        On SSH, exec channels over the existing connection are cheap, so the
+        calls run directly with no serialization.
         """
         if self._connections.term == 'ssh':
             return await self._exec_cmd(cmd)
-        async with self._nc_monitor_lock:
-            if self._nc_monitor is None or not self._nc_monitor.alive:
-                self._nc_monitor = await self._open_session('_nc_monitor')
-            return (await self._nc_monitor.run(cmd)).only
+        async with self._control_lock:
+            return await self._exec_cmd(cmd)
 
     async def _find_free_port(self) -> int:
         """Find a free port on the remote host using the configured strategy.
@@ -873,8 +868,8 @@ class FileTransfer:
         once and caches the result.
 
         Every probe runs through ``_control_run``, which on telnet hosts
-        reuses a single warm monitor session instead of paying a fresh auth
-        handshake per call.
+        serializes control ops onto a single warm pooled session instead of
+        paying a fresh auth handshake per call.
 
         The poll interval starts at 0.05 s for the first handful of
         iterations (when nc usually becomes ready on a warm session) and
@@ -976,20 +971,14 @@ class FileTransfer:
             return await self._get_files_nc_tunneled(srcFiles, destDir, progress_factory)
         await self._warmup_for_transfer(len(srcFiles))
         local_ip = self._get_local_ip()
-        # NOTE: monitor session intentionally NOT closed after each transfer — it persists
-        # for reuse across multiple get() calls and is cleaned up by host.close().
-        monitor = await self._open_session('_nc_monitor')
 
-        # Pre-fetch remote file sizes under `_nc_monitor_lock`. The monitor
-        # session is shared across every transfer on this host; without the
-        # lock, concurrent get() calls issue overlapping `monitor.run` reads
-        # on the single telnet session and trip telnetlib3's "readuntil_pattern()
-        # called while another coroutine is already waiting" guard.
+        # Pre-fetch remote file sizes through `_control_run` — same control-
+        # plane path as the port/listener probes (telnet: serialized onto a
+        # warm pooled session; ssh: direct exec).
         sizes: dict[Path, int] = {}
-        async with self._nc_monitor_lock:
-            for src in srcFiles:
-                stat_result = (await monitor.run(f'stat -c %s {src}')).only
-                sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
+        for src in srcFiles:
+            stat_result = await self._control_run(f'stat -c %s {src}')
+            sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
 
         async def _get_one(src: Path) -> tuple[Status, str]:
             dst = destDir / src.name
@@ -1063,15 +1052,12 @@ class FileTransfer:
         reads the data — same tunnel mechanics as PUT, reversed data flow.
         """
         await self._warmup_for_transfer(len(srcFiles))
-        # Pre-fetch remote file sizes via the persistent monitor session,
-        # holding `_nc_monitor_lock` — see `_get_files_nc` for why the
-        # serialization matters under concurrent get() calls.
-        monitor = await self._open_session('_nc_monitor')
+        # Pre-fetch remote file sizes through `_control_run` — see
+        # `_get_files_nc` for the rationale.
         sizes: dict[Path, int] = {}
-        async with self._nc_monitor_lock:
-            for src in srcFiles:
-                stat_result = (await monitor.run(f'stat -c %s {src}')).only
-                sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
+        for src in srcFiles:
+            stat_result = await self._control_run(f'stat -c %s {src}')
+            sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
 
         async def _get_one(src: Path) -> tuple[Status, str]:
             dst = destDir / src.name
@@ -1188,9 +1174,9 @@ class FileTransfer:
         destDir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
-        # Fire monitor-open + strategy-probe + pool-warming concurrently so
-        # the first-transfer handshakes don't stack up serially on the
-        # critical path. On a warm host this is a no-op.
+        # Fire strategy-probe + pool-warming concurrently so the
+        # first-transfer handshakes don't stack up serially on the critical
+        # path. On a warm host this is a no-op.
         await self._warmup_for_transfer(len(srcFiles))
 
         async def _attempt(src: Path, dst: Path) -> tuple[Status, str]:
@@ -1218,8 +1204,8 @@ class FileTransfer:
                 # paths the local asyncssh listener accepts immediately
                 # regardless, hiding the not-yet-listening remote entirely.
                 # `_wait_for_remote_listener` routes through `_control_run`,
-                # which on telnet hosts reuses one warm monitor session
-                # instead of paying a fresh auth handshake per probe.
+                # which on telnet hosts serializes probes onto one warm
+                # pooled session instead of paying a fresh handshake each.
                 await self._wait_for_remote_listener(port)
                 if self._connections.has_tunnel:
                     local_port = await self._connections.forward_port(port)

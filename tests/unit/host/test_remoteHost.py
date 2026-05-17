@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncssh
 import pytest
 
-from otto.host import HostSession, RemoteHost, RunResult
+from otto.host import HostSession, RemoteHost
 from otto.host.session import ShellSession
 from otto.utils import CommandStatus, Status
 from tests.unit.conftest import host_data, make_host
@@ -495,12 +495,12 @@ class TestNotConnectedFileTransfer:
     async def test_nc_get_raises(self):
         h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='nc', log=False)
-        stat_cs = CommandStatus('stat -c %s /remote/file.txt', '0', Status.Success, 0)
-        mock_monitor = MagicMock()
-        mock_monitor.run = AsyncMock(
-            return_value=RunResult(status=Status.Success, statuses=[stat_cs])
-        )
-        mock_monitor.close = AsyncMock()
+        # The file-size stat succeeds; the nc send oneshot fails (not
+        # connected) — get must surface that as an error, not raise.
+        async def mock_oneshot(cmd: str, **kw) -> CommandStatus:
+            if cmd.startswith('stat -c %s'):
+                return CommandStatus(cmd, '0', Status.Success, 0)
+            raise RuntimeError("not connected")
 
         async def fake_start_server(cb, host, port):
             mock_server = AsyncMock()
@@ -510,13 +510,12 @@ class TestNotConnectedFileTransfer:
             mock_server.sockets[0].getsockname.return_value = ('0.0.0.0', 9999)
             return mock_server
 
-        with patch.object(h, 'open_session', AsyncMock(return_value=mock_monitor)):
-            with patch.object(h, '_get_local_ip', return_value='127.0.0.1'):
-                with patch.object(h, 'oneshot', new_callable=AsyncMock,
-                                  side_effect=RuntimeError("not connected")):
-                    with patch('otto.host.transfer.asyncio.start_server',
-                               side_effect=fake_start_server):
-                        status, _ = await h.get([Path('/remote/file.txt')], Path('/tmp'))
+        with patch.object(h, '_get_local_ip', return_value='127.0.0.1'):
+            with patch.object(h, 'oneshot', new_callable=AsyncMock,
+                              side_effect=mock_oneshot):
+                with patch('otto.host.transfer.asyncio.start_server',
+                           side_effect=fake_start_server):
+                    status, _ = await h.get([Path('/remote/file.txt')], Path('/tmp'))
         assert status == Status.Error
         await h.close()
 
@@ -634,14 +633,14 @@ class TestNcFileTransfer:
         h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='nc', log=False)
 
-        stat_cs = CommandStatus('stat -c %s /remote/file.txt', '1024', Status.Success, 0)
         send_cs = CommandStatus('nc ...', '', Status.Success, 0)
 
-        mock_monitor = MagicMock()
-        mock_monitor.run = AsyncMock(
-            return_value=RunResult(status=Status.Success, statuses=[stat_cs])
-        )
-        mock_monitor.close = AsyncMock()
+        # Control-plane ops (the file-size stat) and the nc send all route
+        # through `oneshot` now — no dedicated monitor session.
+        async def mock_oneshot(cmd: str, **kw) -> CommandStatus:
+            if cmd.startswith('stat -c %s'):
+                return CommandStatus(cmd, '1024', Status.Success, 0)
+            return send_cs
 
         dest = tmp_path / 'out'
         dest.mkdir()
@@ -665,20 +664,22 @@ class TestNcFileTransfer:
             )
             return mock_server
 
-        with patch.object(h, 'open_session', AsyncMock(return_value=mock_monitor)):
-            with patch.object(h, 'oneshot', AsyncMock(return_value=send_cs)):
-                with patch.object(h, '_get_local_ip', return_value='127.0.0.1'):
-                    with patch('otto.host.transfer.asyncio.start_server',
-                               side_effect=fake_start_server):
-                        status, msg = await h.get(
-                            [Path('/remote/file.txt')], dest, show_progress=False
-                        )
+        with patch.object(h, 'oneshot', AsyncMock(side_effect=mock_oneshot)) as mock_os:
+            with patch.object(h, '_get_local_ip', return_value='127.0.0.1'):
+                with patch('otto.host.transfer.asyncio.start_server',
+                           side_effect=fake_start_server):
+                    status, msg = await h.get(
+                        [Path('/remote/file.txt')], dest, show_progress=False
+                    )
 
         assert status == Status.Success
         assert msg == ''
         assert (dest / 'file.txt').read_bytes() == file_data
-        mock_monitor.run.assert_called_once_with('stat -c %s /remote/file.txt')
-        mock_monitor.close.assert_not_called()  # session persists for reuse; closed by host.close()
+        # The file-size stat ran as a control-plane oneshot.
+        assert any(
+            c.args and c.args[0] == 'stat -c %s /remote/file.txt'
+            for c in mock_os.await_args_list
+        )
         await h.close()
 
     @pytest.mark.asyncio
@@ -773,23 +774,14 @@ class TestNcFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_get_suppresses_host_logging_during_transfer(self, tmp_path: Path):
-        """Symmetric check for get — the monitor's stat call and the
-        send oneshot must both run with host.log == False."""
+        """Symmetric check for get — the file-size stat and the send oneshot
+        must both run with host.log == False."""
         h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='nc', log=True)
 
-        stat_cs = CommandStatus('stat -c %s /remote/file.txt', '11', Status.Success, 0)
         send_cs = CommandStatus('nc ...', '', Status.Success, 0)
 
         log_states: list[bool] = []
-
-        async def monitor_run(*_a, **_kw) -> RunResult:
-            log_states.append(h.log)
-            return RunResult(status=Status.Success, statuses=[stat_cs])
-
-        mock_monitor = MagicMock()
-        mock_monitor.run = AsyncMock(side_effect=monitor_run)
-        mock_monitor.close = AsyncMock()
 
         dest = tmp_path / 'out'
         dest.mkdir()
@@ -809,19 +801,20 @@ class TestNcFileTransfer:
             )
             return mock_server
 
-        async def oneshot_capturing_log(*_a, **_kw) -> CommandStatus:
+        async def oneshot_capturing_log(cmd: str, *_a, **_kw) -> CommandStatus:
             log_states.append(h.log)
+            if cmd.startswith('stat -c %s'):
+                return CommandStatus(cmd, '11', Status.Success, 0)
             return send_cs
 
         assert h.log is True
-        with patch.object(h, 'open_session', AsyncMock(return_value=mock_monitor)):
-            with patch.object(h, 'oneshot', AsyncMock(side_effect=oneshot_capturing_log)):
-                with patch.object(h, '_get_local_ip', return_value='127.0.0.1'):
-                    with patch('otto.host.transfer.asyncio.start_server',
-                               side_effect=fake_start_server):
-                        status, _ = await h.get(
-                            [Path('/remote/file.txt')], dest, show_progress=False
-                        )
+        with patch.object(h, 'oneshot', AsyncMock(side_effect=oneshot_capturing_log)):
+            with patch.object(h, '_get_local_ip', return_value='127.0.0.1'):
+                with patch('otto.host.transfer.asyncio.start_server',
+                           side_effect=fake_start_server):
+                    status, _ = await h.get(
+                        [Path('/remote/file.txt')], dest, show_progress=False
+                    )
 
         assert status == Status.Success
         assert log_states and all(state is False for state in log_states)

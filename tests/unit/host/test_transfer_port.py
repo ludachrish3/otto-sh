@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from otto.host import RunResult
 from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions, ScpOptions
 from otto.host.transfer import FileTransfer
@@ -20,12 +19,13 @@ def make_ft(
     nc_listener_cmd: str | None = None,
     nc_port: int = 9000,
     exec_cmd: AsyncMock | None = None,
+    term: str = 'ssh',
 ) -> FileTransfer:
     """Build a FileTransfer with mocked dependencies for strategy tests."""
     mock_connections = MagicMock(spec=ConnectionManager)
     mock_connections.has_tunnel = False
     mock_connections.ip = '10.0.0.1'
-    mock_connections.term = 'ssh'
+    mock_connections.term = term
     return FileTransfer(
         connections=mock_connections,
         name='test',
@@ -40,7 +40,6 @@ def make_ft(
         ),
         scp_options=ScpOptions(),
         get_local_ip=lambda: '127.0.0.1',
-        open_session=AsyncMock(),
         exec_cmd=exec_cmd or AsyncMock(),
     )
 
@@ -496,12 +495,6 @@ class TestWarmupForTransfer:
         mock_connections.has_tunnel = False
         mock_connections.ip = '10.0.0.1'
         mock_connections.term = 'telnet'
-        # On telnet, prepare() goes through _control_run → opens the monitor
-        # session. Give it a working fake monitor so the probe can run.
-        monitor_session = MagicMock()
-        monitor_session.alive = True
-        monitor_session.run = AsyncMock(side_effect=mock_exec)
-        monitor_session.close = AsyncMock()
 
         ft = FileTransfer(
             connections=mock_connections,
@@ -517,13 +510,12 @@ class TestWarmupForTransfer:
             ),
             scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
-            open_session=AsyncMock(return_value=monitor_session),
             exec_cmd=AsyncMock(side_effect=mock_exec),
         )
 
         await ft._warmup_for_transfer(file_count=2)
 
-        # 1 probe via monitor + 2 `true` calls via exec pool = 3 invocations.
+        # 1 probe + 2 `true` calls, all via the exec pool = 3 invocations.
         total = len(order) // 2  # each cmd has a start + end event
         assert total == 3, f"expected 3 invocations, saw {total}: {order}"
 
@@ -549,11 +541,6 @@ class TestWarmupForTransfer:
         mock_connections.has_tunnel = False
         mock_connections.ip = '10.0.0.1'
         mock_connections.term = 'telnet'
-        monitor_session = MagicMock()
-        monitor_session.alive = True
-        monitor_session.run = AsyncMock(
-            return_value=RunResult(status=Status.Success, statuses=[_ok('ss ss\n')])
-        )
 
         ft = FileTransfer(
             connections=mock_connections,
@@ -569,7 +556,6 @@ class TestWarmupForTransfer:
             ),
             scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
-            open_session=AsyncMock(return_value=monitor_session),
             exec_cmd=AsyncMock(side_effect=mock_exec),
         )
 

@@ -28,7 +28,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import otto.host.transfer as transfer_mod
-from otto.host import RunResult
 from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions, ScpOptions
 from otto.host.transfer import FileTransfer
@@ -37,11 +36,6 @@ from otto.utils import CommandStatus, Status
 
 def _ok(output: str = '') -> CommandStatus:
     return CommandStatus(command='', output=output, status=Status.Success, retcode=0)
-
-
-def _ok_result(output: str = '') -> RunResult:
-    """Wrap ``_ok`` in a RunResult — for mocks of ``HostSession.run``."""
-    return RunResult(status=Status.Success, statuses=[_ok(output)])
 
 
 class _FakeWriter:
@@ -77,7 +71,6 @@ def _make_ft(
     *,
     has_tunnel: bool = False,
     term: str = 'ssh',
-    open_session: AsyncMock | None = None,
     listener_timeout: float = 30.0,
 ) -> FileTransfer:
     mock_connections = MagicMock(spec=ConnectionManager)
@@ -99,7 +92,6 @@ def _make_ft(
         ),
         scp_options=ScpOptions(),
         get_local_ip=lambda: '127.0.0.1',
-        open_session=open_session or AsyncMock(),
         exec_cmd=exec_cmd,
     )
 
@@ -228,66 +220,58 @@ class TestNcPutListenerWait:
         )
 
     @pytest.mark.asyncio
-    async def test_telnet_reuses_one_monitor_session_across_files(self, tmp_path: Path):
-        """Gate assertion: telnet opens ONE warm monitor session and reuses it.
+    async def test_telnet_control_run_serializes_onto_pool(self):
+        """On telnet, concurrent control-plane ops must not overlap.
 
-        The earlier "poll session per file" design paid a telnet auth handshake
-        (~1–2 s) before each file, defeating the optimization.  The fix is a
-        single long-lived ``_nc_monitor`` session shared by every nc
-        control-plane call (port-find, listener probe) on this host.
-
-        Pairs two assertions so a future refactor can't widen the scope (open
-        a monitor on SSH where exec channels are already cheap) or narrow it
-        (reopen per-file on telnet, re-introducing the pause).
+        ``_control_run`` routes every control op (port-find, listener probe,
+        strategy probe, file-size stats) through ``_exec_cmd`` — the same
+        oneshot exec path the listeners use. ``_control_lock`` serializes
+        them so they reuse one warm pooled session instead of fanning out
+        and each paying a cold telnet auth handshake.
         """
-        files = [tmp_path / f'f{i}.bin' for i in range(3)]
-        for f in files:
-            f.write_bytes(b'hello')
+        in_flight = 0
+        max_in_flight = 0
 
-        async def fake_connect(host: str, port: int, timeout: float = 2.0):
-            return None, _FakeWriter()
+        async def tracking_exec(cmd: str, *args, **kwargs) -> CommandStatus:
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0)  # yield so any overlap would be observed
+            in_flight -= 1
+            return _ok()
 
-        # --- telnet: open ONE '_nc_monitor', reuse across all files ---
-        # On telnet, both port-find and listener-probe route through the
-        # monitor's run. Port-find wants a number; listener-probe wants
-        # retcode=0. _ok('9000\n') satisfies both.
-        monitor_run = AsyncMock(return_value=_ok_result('9000\n'))
-        monitor_session = MagicMock()
-        monitor_session.alive = True
-        monitor_session.run = monitor_run
-        monitor_session.close = AsyncMock()
-        telnet_open = AsyncMock(return_value=monitor_session)
-        # With the new design, _exec_cmd is used only for the long-running
-        # `nc -l` listener, not control-plane ops.
-        exec_cmd = AsyncMock(return_value=_ok())
-        ft_telnet = _make_ft(exec_cmd, term='telnet', open_session=telnet_open)
+        exec_cmd = AsyncMock(side_effect=tracking_exec)
+        ft = _make_ft(exec_cmd, term='telnet')
 
-        with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(FileTransfer, '_verify_nc_dest_size',
-                          new=AsyncMock(return_value=None)):
-            status, msg = await ft_telnet._put_files_nc(files, tmp_path / 'dst')
-        assert status == Status.Success, msg
-        # Exactly one session opened, regardless of file count.
-        assert telnet_open.await_count == 1, (
-            f"telnet should reuse one monitor session, got {telnet_open.await_count} opens"
+        await asyncio.gather(*(ft._control_run('probe') for _ in range(5)))
+
+        assert exec_cmd.await_count == 5, "every control op must route through _exec_cmd"
+        assert max_in_flight == 1, (
+            f"telnet control ops must be serialized, saw {max_in_flight} in flight"
         )
-        assert telnet_open.await_args.args[0] == '_nc_monitor'
-        # Monitor persists across transfers — NOT closed in _put_files_nc.
-        monitor_session.close.assert_not_called()
-        # Control-plane probes routed through the monitor.
-        assert monitor_run.await_count >= 1
 
-        # --- ssh: must NOT open any control-plane session ---
-        ssh_open = AsyncMock()
-        exec_cmd_ssh = AsyncMock(return_value=_ok('9000\n'))
-        ft_ssh = _make_ft(exec_cmd_ssh, term='ssh', open_session=ssh_open)
+    @pytest.mark.asyncio
+    async def test_ssh_control_run_does_not_serialize(self):
+        """On SSH, control ops run directly with no lock — exec channels over
+        the live connection are cheap and concurrency-safe."""
+        in_flight = 0
+        max_in_flight = 0
 
-        with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(FileTransfer, '_verify_nc_dest_size',
-                          new=AsyncMock(return_value=None)):
-            status, msg = await ft_ssh._put_files_nc(files, tmp_path / 'dst')
-        assert status == Status.Success, msg
-        ssh_open.assert_not_called()
+        async def tracking_exec(cmd: str, *args, **kwargs) -> CommandStatus:
+            nonlocal in_flight, max_in_flight
+            in_flight += 1
+            max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0)
+            in_flight -= 1
+            return _ok()
+
+        exec_cmd = AsyncMock(side_effect=tracking_exec)
+        ft = _make_ft(exec_cmd, term='ssh')
+
+        await asyncio.gather(*(ft._control_run('probe') for _ in range(5)))
+
+        assert exec_cmd.await_count == 5
+        assert max_in_flight > 1, "SSH control ops should not be serialized"
 
     @pytest.mark.asyncio
     async def test_non_tunnel_survives_slow_listener_startup(self, tmp_path: Path):
