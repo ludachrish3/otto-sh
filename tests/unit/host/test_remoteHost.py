@@ -12,6 +12,7 @@ Skip integration tests:
 """
 
 import asyncio
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -927,6 +928,41 @@ class TestIntegration:
             assert second_user in result.output
         finally:
             await host.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_telnet_bad_credentials_fails_fast(monkeypatch):
+    """A telnet login with a wrong password must raise a clear error
+    promptly — not hang.
+
+    Telnet ``login()`` no longer drains to silence; the bounded marker
+    handshake in ``_ensure_initialized`` is what catches a failed login
+    (the device stays in its login-prompt loop, so the READY marker can
+    never appear). The timeout is shrunk here so the test stays fast.
+    """
+    monkeypatch.setattr(ShellSession, "_init_timeout", 3.0)
+
+    data = host_data("carrot")
+    user = list(data["creds"].keys())[0]
+    host = RemoteHost(
+        ip=data["ip"],
+        user=user,
+        ne=data["ne"],
+        creds={user: "definitely-the-wrong-password"},
+        board=data.get("board"),
+        term="telnet",
+        transfer="ftp",
+    )
+    try:
+        start = time.monotonic()
+        with pytest.raises(Exception):
+            await host.run("echo hello")
+        elapsed = time.monotonic() - start
+        # Bounded by the shrunk handshake timeout — proves it did not hang.
+        assert elapsed < 15
+    finally:
+        await host.close()
 
 
 @_ALL_TERMS

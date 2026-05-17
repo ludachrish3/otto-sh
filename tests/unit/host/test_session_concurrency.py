@@ -347,3 +347,54 @@ async def _exec_ops(ops: list[str]) -> None:
 async def test_session_manager_property(ops: list[str]) -> None:
     """Random sequences of operations must preserve manager invariants."""
     await _exec_ops(ops)
+
+
+# ── Cancellation during the readiness handshake ───────────────────────────────
+
+class _NeverReadyFakeSession(_StabilityFakeSession):
+    """Fake whose marker handshake never completes.
+
+    Swallows the readiness probe instead of echoing the marker, so
+    ``_ensure_initialized`` blocks until cancelled — letting a test land a
+    cancellation *inside* the handshake. Records whether ``close()`` ran.
+    """
+
+    def __init__(self, instance_id: int) -> None:
+        super().__init__(instance_id)
+        self.closed = False
+
+    async def _write(self, data: str) -> None:
+        # Never enqueue the READY marker — the handshake stalls.
+        pass
+
+    async def close(self) -> None:
+        self.closed = True
+        await super().close()
+
+
+@pytest.mark.asyncio
+async def test_open_session_closes_session_when_init_cancelled() -> None:
+    """A cancellation inside ``_ensure_initialized`` must not orphan the
+    half-built session.
+
+    Regression: with telnet's login drain removed, the ~1 s readiness
+    handshake moved out of the cleanup-guarded ``connect()`` window. A
+    caller-side ``wait_for`` cancellation landing in the handshake left the
+    session — and, for telnet, its owned client socket — unclosed.
+    """
+    created: list[_NeverReadyFakeSession] = []
+
+    def factory() -> _NeverReadyFakeSession:
+        session = _NeverReadyFakeSession(instance_id=len(created) + 1)
+        created.append(session)
+        return session
+
+    mgr = SessionManager(
+        connections=cast(ConnectionManager, SimpleNamespace(term='telnet')),
+        session_factory=factory,
+    )
+    with pytest.raises((asyncio.TimeoutError, asyncio.CancelledError)):
+        await asyncio.wait_for(mgr.open_session('x'), timeout=0.05)
+
+    assert len(created) == 1
+    assert created[0].closed, "open_session leaked the session on cancellation"

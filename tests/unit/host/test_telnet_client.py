@@ -8,6 +8,7 @@ controls whether ``DONT ECHO`` is negotiated.
 
 from __future__ import annotations
 
+import asyncio
 import struct
 from unittest.mock import MagicMock
 
@@ -100,3 +101,48 @@ class TestSendNaws:
         frame = client.writer.send_iac.call_args.args[0]
         payload = frame[3:-2]
         assert payload == b'\x00\x00\x00\x00'
+
+
+class TestLogin:
+    """``login()`` no longer drains to silence.
+
+    The fixed ~1 s silence-drain was removed: when no ``prompt`` is
+    configured, ``login()`` returns as soon as the password is written and
+    the session's marker handshake becomes the readiness check. A configured
+    ``prompt`` remains an opt-in fast path that ``login()`` waits for.
+    """
+
+    @staticmethod
+    def _login_client(prompt: str | None = None) -> TelnetClient:
+        c = TelnetClient(host='10.0.0.1', user='u', password='p', prompt=prompt)
+        c.reader = asyncio.StreamReader()
+        c.writer = MagicMock()
+        return c
+
+    @pytest.mark.asyncio
+    async def test_no_prompt_returns_without_fixed_wait(self):
+        """With ``prompt=None``, login returns right after the password —
+        no silence-drain, so a tight timeout must not trip."""
+        c = self._login_client(prompt=None)
+        # login: prompt, then password: prompt — both end in the ':' delimiter.
+        c.reader.feed_data(b'login:Password:')
+
+        await asyncio.wait_for(c.login(), timeout=0.5)
+
+        writes = b''.join(call.args[0] for call in c.writer.write.call_args_list)
+        assert b'u\r\n' in writes
+        assert b'p\r\n' in writes
+
+    @pytest.mark.asyncio
+    async def test_prompt_fast_path_waits_for_prompt(self):
+        """With ``prompt`` set, login blocks until the prompt string appears."""
+        c = self._login_client(prompt='ready> ')
+        c.reader.feed_data(b'login:Password:')
+
+        login_task = asyncio.create_task(c.login())
+        # Not done yet — the prompt hasn't arrived.
+        await asyncio.sleep(0.05)
+        assert not login_task.done()
+
+        c.reader.feed_data(b'banner text\nready> ')
+        await asyncio.wait_for(login_task, timeout=0.5)

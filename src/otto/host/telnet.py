@@ -164,7 +164,16 @@ class TelnetClient():
             logger.debug(f"NAWS write failed for {self.host}: {exc}")
 
     async def login(self) -> None:
-        """Send credentials through an established telnet stream."""
+        """Send credentials through an established telnet stream.
+
+        Readiness after the password is *not* confirmed here. When no
+        ``prompt`` is configured, ``login()`` returns as soon as the password
+        is written and the session's marker handshake
+        (:meth:`otto.host.session.ShellSession._ensure_initialized`, which
+        runs immediately after) is the deterministic readiness check — it
+        reads through any banner/MOTD to a unique sentinel and is bounded by
+        a timeout that surfaces a bad-credential login as a clear error.
+        """
 
         prompt_delim = self.options.login_prompt
         # Wait for the login prompt ("login:", "Username:", etc.) — any line ending in the delimiter.
@@ -176,17 +185,9 @@ class TelnetClient():
         self.writer.write(self.password.encode() + b'\r\n')
 
         if self.prompt is not None:
-            # Wait for the user-supplied prompt to confirm login succeeded.
+            # Opt-in fast path: a caller with a stable prompt can have login
+            # confirmed here directly. Otherwise the marker handshake does it.
             await self.reader.readuntil(self.prompt.encode())
-        else:
-            # Drain any remaining login output (banners, MOTD, last-login lines) by
-            # reading until the stream goes quiet for 1 second. We can't wait for a
-            # specific string here because we don't yet know what the prompt looks like.
-            while True:
-                try:
-                    await asyncio.wait_for(self.reader.read(4096), timeout=1.0)
-                except asyncio.TimeoutError:
-                    break  # silence means the shell is ready
 
     @property
     def alive(self) -> bool:

@@ -726,3 +726,47 @@ class TestCommandLogging:
 
         assert result.output == "file.txt"
         assert logged == ["file.txt"]
+
+
+# ---------------------------------------------------------------------------
+# Marker handshake timeout (_ensure_initialized)
+# ---------------------------------------------------------------------------
+
+class TestEnsureInitializedTimeout:
+    """The post-open marker handshake must be bounded.
+
+    A failed telnet login leaves the device in its login-prompt loop — no
+    shell spawns, so the READY marker never appears. Without a bound the
+    handshake hangs forever; with one it must surface a clear error.
+    """
+
+    @pytest.mark.asyncio
+    async def test_missing_marker_raises_clear_error(self):
+        """Marker never arrives -> ConnectionError, not an indefinite hang."""
+        s = MockSession()
+        s._init_timeout = 0.05  # shrink so the test is fast
+        await s._open()
+        # Never feed the READY marker — simulates a stuck login prompt.
+
+        with pytest.raises(ConnectionError, match="never became ready"):
+            await s._ensure_initialized()
+
+        assert s.alive is False
+        assert s._initialized is False
+
+    @pytest.mark.asyncio
+    async def test_eof_during_handshake_raises_clear_error(self):
+        """Peer EOF mid-handshake also surfaces as a clear error."""
+        s = MockSession()
+        s._init_timeout = 5.0  # EOF fires first; timeout shouldn't be reached
+        await s._open()
+
+        async def drop():
+            await asyncio.sleep(0.01)
+            s.feed_eof()
+
+        asyncio.create_task(drop())
+        with pytest.raises(ConnectionError, match="never became ready"):
+            await s._ensure_initialized()
+
+        assert s.alive is False

@@ -2,22 +2,16 @@
 
 ## General
 
-- Make sure that the list of dependencies and their versions are accurate in getting_started.html
-- Running just `otto` clears old logs and then displays the help menu. Old logs should NOT be deleted in this case. Just the help menu should be displayed and then otto should exit.
 - Have one of the projects define a custom stat collector beyond the default definitions. This helps prove out the workflow for defining custom parsers and graphs.
 - Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name
 - Add a `--list-markers` option to the test subcommand
 - Make --show-hosts display a Rich.Tree of hosts within an NE. Group by NE in panels and order by slot number.
-- Look into using `typer`'s documentation style. It looks so much nicer, and astral uses it. It seems like the new bleeding edge doc format.
-  - Terminal examples use `termynal/termynal.py` within typer. It can be integrated into sphinx docs directly in the markdown files. See <https://claude.ai/share/51ce70f6-c618-4499-898b-fad78d68123e> for more.
-  - They use MkDocs, not sphinx, so there's a large transition cost.
-  - This plugin will ease the transition somewhat because it shows docstrings in code (<https://mkdocstrings.github.io/>)
+- Terminal examples use `termynal/termynal.py` within typer. It can be integrated into sphinx docs directly in the markdown files. See <https://claude.ai/share/51ce70f6-c618-4499-898b-fad78d68123e> for more.
 - Graphical representation of a lab's hosts.
   - Plan available in the topology_plan.md file
 - otto cov report --report should be changed to --dir and be a dir, just like the --cov-dir option
 - Further nc transfer startup optimizations deferred to dedicated todos:
   - [nc_monitor_retirement.md](nc_monitor_retirement.md) — replace `_nc_monitor` session with a lock around the exec pool.
-  - [telnet_login_drain.md](telnet_login_drain.md) — remove the 1 s silence-drain in telnet login via sentinel-driven readiness.
   - [hop_nc_transfer_flake.md](hop_nc_transfer_flake.md) — root-cause the nc-through-hop transfer hang (currently band-aided with `@pytest.mark.retry(3)`).
 - Maybe hosts can have their own list of all supported protocols? This would allow for sane flexibility when choosing a host's term or transfer type, but the host might be limited.
 - Move coverage collection to be a subpage of the test command

@@ -1,16 +1,17 @@
 # NC Monitor Session Retirement
 
 ## Status
+
 Deferred optimization. Picked up only if further nc-transfer startup shaving is needed after the warm-up and strategy-resolution work in `plans/` lands.
 
 ## Motivation
 
 `FileTransfer._nc_monitor` (see [src/otto/host/transfer.py](../src/otto/host/transfer.py) — introduced in commit 072d843) is a dedicated shell session used to serialize nc control-plane ops (port scans, listener probes) so that concurrent callers share one handshake. It solves two real problems:
 
-1. Concurrent control callers would otherwise each open a fresh exec-pool session (1–2 s telnet handshake each).
+1. Concurrent control callers would otherwise each open a fresh exec-pool session (~1 s telnet handshake each).
 2. Control calls need a session that isn't tied up by a long-lived `nc -l` listener.
 
-The cost: one extra telnet session handshake per host, on the critical path of the very first transfer (~1.5–2 s on telnet).
+The cost: one extra telnet session handshake per host, on the critical path of the very first transfer (~1 s on telnet).
 
 ## Proposal
 
@@ -42,4 +43,4 @@ The warm-up plan opens the monitor and `N` pool sessions concurrently, which alr
 ## Verification
 
 - `tests/unit` must stay green; the ghosting-bursting and sequential-transfer regression tests are the correctness bar.
-- Benchmark first-transfer startup before/after on a representative telnet host: expect -1.5 s on the critical path when warm-up is already in place and monitor is then removed.
+- Benchmark first-transfer startup before/after on a representative telnet host: expect -1 s on the critical path when warm-up is already in place and monitor is then removed.

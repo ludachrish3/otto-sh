@@ -42,6 +42,12 @@ _MAX_SEPARATOR_LEN = 256
 # Timeout for session recovery after Ctrl+C
 _RECOVERY_TIMEOUT = 5.0
 
+# Ceiling on the post-open marker handshake (_ensure_initialized). Generous
+# enough for slow MOTD generation on real hardware, but bounded so a failed
+# telnet login — where the READY marker can never appear — surfaces as a clear
+# error instead of hanging indefinitely.
+_INIT_TIMEOUT = 3.0
+
 
 class ShellSession(ABC):
     """Abstract base for persistent shell sessions.
@@ -50,6 +56,15 @@ class ShellSession(ABC):
     The base class provides shared logic for sentinel-wrapped command execution,
     expect handling, and timeout recovery.
     """
+
+    # Ceiling on the marker handshake in _ensure_initialized. Class-level so
+    # tests can shrink it without patching the module constant.
+    _init_timeout: float = _INIT_TIMEOUT
+
+    # How long to wait for one readiness probe before resending it. Bounds the
+    # cost of the telnet login-flush race (a probe lost before the shell is
+    # reading) to roughly one interval.
+    _init_probe_interval: float = 0.5
 
     def __init__(self) -> None:
         self._session_id = uuid.uuid4().hex[:12]
@@ -108,18 +123,75 @@ class ShellSession(ABC):
             await self._recover_session()
 
     async def _ensure_initialized(self) -> None:
-        """Open the transport and initialize the session. Idempotent."""
+        """Open the transport and initialize the session. Idempotent.
+
+        After the transport opens, a marker handshake confirms the shell is
+        live: write ``stty -echo; echo <READY marker>`` and read until that
+        marker comes back. This is the deterministic readiness check that
+        replaced telnet login's silence-drain — prompt-independent and
+        content-independent.
+
+        The probe is *retried* on a fixed interval rather than written once.
+        This matters for telnet: ``login(1)`` typically flushes pending
+        terminal input before it exec's the shell, so a probe written in the
+        window between the password and the shell starting is silently
+        discarded. Resending until one lands closes that race. SSH and local
+        shells are ready immediately and answer the first probe, so they
+        never actually retry.
+
+        Bounded by ``_init_timeout``: a failed login (no shell ever spawns,
+        so no probe can echo back) surfaces as a clear ``ConnectionError``
+        instead of hanging until some far-outer timeout.
+        """
         if self._initialized:
             return
         await self._open()
-        # Disable input echo and verify the shell is responsive
-        await self._write(f"stty -echo 2>/dev/null; echo {self._ready_marker}\n")
-        # Anchor with \n so we only match the marker as actual command output.
-        # Without it, the pattern also matches inside the shell's echo of the sent
-        # command ("… echo __OTTO_…_READY__"), causing premature return.
-        await self._read_until_pattern(re.compile(re.escape(self._ready_marker)))
+
+        # Anchor the marker to line-start (or buffer-start, for pipe-backed
+        # shells whose output has no preceding echo). Without the anchor the
+        # pattern also matches the marker *inside the echoed probe command*
+        # ("... echo __OTTO_..._READY__") — which is fatal on a failed telnet
+        # login, where the device loops back to "login:" and echoes our probe
+        # as a username, making a rejected login look successful.
+        marker = re.compile(r'(?:^|\r|\n)' + re.escape(self._ready_marker))
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self._init_timeout
+        while True:
+            await self._write(f"stty -echo 2>/dev/null; echo {self._ready_marker}\n")
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                await self._fail_init()
+            try:
+                await asyncio.wait_for(
+                    self._read_until_pattern(marker),
+                    timeout=min(self._init_probe_interval, remaining),
+                )
+                break
+            except asyncio.TimeoutError:
+                # No response to this probe — the shell may not be reading
+                # input yet. Resend, unless we've run out the clock.
+                if loop.time() >= deadline:
+                    await self._fail_init()
+                continue
+            except asyncio.IncompleteReadError:
+                # Peer EOF mid-handshake — the connection is gone; retrying
+                # cannot help.
+                await self._fail_init()
+
         self._initialized = True
         self._alive = True
+
+    async def _fail_init(self) -> None:
+        """Tear down a session whose readiness handshake never completed."""
+        self._alive = False
+        try:
+            await self.close()
+        except Exception:  # pragma: no cover - best-effort cleanup
+            pass
+        raise ConnectionError(
+            "shell never became ready after open — the device is "
+            "unresponsive or login failed (e.g. bad credentials)"
+        )
 
     # --- Public API ---
 
@@ -811,7 +883,19 @@ class SessionManager:
                         raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
 
             new_session._on_output = self._log_output
-            await new_session._ensure_initialized()
+            # The marker handshake can take ~1 s on a cold telnet open. A
+            # caller-side ``wait_for`` cancellation (or a failed login)
+            # landing here would otherwise drop the just-built session — and
+            # its open transport FD — on the floor. Close it before the
+            # exception propagates.
+            try:
+                await new_session._ensure_initialized()
+            except BaseException:
+                try:
+                    await new_session.close()
+                except Exception:  # pragma: no cover - best-effort cleanup
+                    pass
+                raise
             self._session = new_session
 
     async def run_cmd(
@@ -939,12 +1023,13 @@ class SessionManager:
                             password=password,
                             options=self._connections.telnet_options,
                         )
-                        # ``connect()`` runs login (~1 s on real hardware); a
-                        # caller-side ``wait_for`` cancellation lands inside
-                        # that handshake and drops ``client`` on the floor with
-                        # its socket still open. Tear down on any exception
-                        # (including CancelledError) so the FD is released
-                        # before control returns to the caller.
+                        # A caller-side ``wait_for`` cancellation can land
+                        # anywhere in ``connect()`` (TCP, ECHO negotiation,
+                        # credential exchange) and would otherwise drop
+                        # ``client`` on the floor with its socket still open.
+                        # Tear down on any exception (including CancelledError)
+                        # so the FD is released. The marker handshake that
+                        # follows is guarded separately, below.
                         try:
                             await client.connect()
                         except BaseException:
@@ -962,7 +1047,19 @@ class SessionManager:
                         raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
 
             shell_session._on_output = self._log_output
-            await shell_session._ensure_initialized()
+            # The marker handshake can take ~1 s on a cold telnet open (the
+            # slow window that used to live inside ``connect()``'s login
+            # drain). A cancellation or failed login landing here must not
+            # orphan the just-built session — for telnet that would leak the
+            # owned client's socket and skip the session's cleanup duties.
+            try:
+                await shell_session._ensure_initialized()
+            except BaseException:
+                try:
+                    await shell_session.close()
+                except Exception:  # pragma: no cover - best-effort cleanup
+                    pass
+                raise
 
             host_session = HostSession(
                 name=name,
