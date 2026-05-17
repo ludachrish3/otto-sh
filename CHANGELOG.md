@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.4] - 2026-05-17
+
+### Added
+
+- auto-start container stack on access when not running
+- exclude Docker containers from the fleet host generator
+- print output dir on exit; clean logs only on subcommands
+
+
+### Dependencies
+
+- bump ruff from 0.15.12 to 0.15.13 (#31)
+- bump uvicorn from 0.46.0 to 0.47.0 (#26)
+- bump hypothesis from 6.152.4 to 6.152.7 (#27)
+- bump nox-uv from 0.7.1 to 0.8.0 (#28)
+- bump sse-starlette from 3.4.2 to 3.4.4 (#30)
+- bump ty from 0.0.34 to 0.0.37 (#29)
+
+
+### Documentation
+
+- true up CLI/API docs and add a dependency-table sync check
+
+
+### Fixed
+
+- serialize nc-get size prefetch on the monitor session
+- connect oneshot pool sessions concurrently, not serially
+- raise on undefined hop host ID
+- render console output at the true terminal width
+
+
 ## [0.3.3] - 2026-05-15
 
 ### Added
@@ -125,7 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/ludachrish3/otto-sh/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/ludachrish3/otto-sh/compare/v0.3.2...v0.3.3
 [0.3.1]: https://github.com/ludachrish3/otto-sh/compare/v0.2.1...v0.3.1
 [0.2.1]: https://github.com/ludachrish3/otto-sh/compare/v0.1.0...v0.2.1
