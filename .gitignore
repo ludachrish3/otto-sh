@@ -12,9 +12,8 @@ wheels/
 # Dummy files
 tests/repo1/product/product
 
-# Coverage files
-.coverage*
-coverage_report
+# Test artifacts (coverage data + HTML, JUnit XML)
+reports/
 *.gcno
 *.gcda
 

@@ -20,6 +20,12 @@ CI_COVERAGE_THRESHOLD := 80
 #   make repeat COUNT=50
 COUNT ?= 10
 
+# Iteration count for `make nox` / `make nox-all`. The shared COUNT default
+# (10) is wrong for nox, so honor COUNT only when set explicitly on the
+# command line; otherwise run the matrix once.
+#   make nox-all COUNT=5
+NOX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
+
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
 # Docker integration tests are pinned to one xdist worker (xdist_group)
@@ -72,11 +78,11 @@ publish: ## Manual fallback: upload dist/ to PyPI — permanent (prefer pushing 
 	uv publish \
 		--check-url https://pypi.org/simple/
 
-nox: ## Run the default nox session matrix (unit tests across all supported Pythons + typecheck + docs)
-	uv run nox
+nox: ## Run the default nox session matrix (unit tests across all supported Pythons + typecheck + docs). Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/.
+	uv run nox -- --count=$(NOX_COUNT) --repeat-scope=session
 
-nox-all: ## Run the FULL test suite across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI.
-	uv run nox -s tests_all
+nox-all: ## Run the FULL test suite across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/.
+	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 
 validate: ## Run validation (clean-dist, typecheck, coverage, docs) without building dist
 	@$(MAKE) clean-dist \
@@ -164,7 +170,7 @@ doctest: ## Run Sphinx doctests
 
 clean: ## Remove all generated artifacts
 	@rm -rf dist
-	@rm -rf coverage_report .coverage .coverage.*
+	@rm -rf reports
 	@rm -rf docs/_build
 
 help: ## Show this help message

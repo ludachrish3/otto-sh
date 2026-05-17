@@ -12,6 +12,7 @@ Tests verify:
   - ``expect()`` records non-fatal failures without stopping execution
 """
 
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -51,17 +52,35 @@ class TestSanitizeNodeName:
 
 def _run_inner_pytest(test_file: Path, tmp_path: Path,
                       options: object | None = None) -> int:
-    """Run an inner pytest session with OttoPlugin + OttoOptionsPlugin."""
+    """Run an inner pytest session with OttoPlugin + OttoOptionsPlugin.
+
+    The inner session runs in-process via ``pytest.main()``, so it shares the
+    interpreter (and ``sys.modules``) with the outer run. The callers all
+    generate their test files under fixed basenames (``test_pass.py``,
+    ``test_reset.py``, ...) imported as top-level modules keyed by stem. Once
+    the same outer test runs more than once in a process -- e.g. under
+    ``pytest --count`` on a shared xdist worker -- the second run hits the
+    cached module: pytest either raises "import file mismatch" or, worse,
+    silently reuses it so the stale module-level ``CAPTURE`` constant still
+    points at the first run's tmp dir.
+
+    Evicting the module (and any cached bytecode) after the session keeps the
+    filename intact -- some tests assert on it -- while ensuring the next
+    invocation imports a genuinely fresh module.
+    """
     mock_logger = MagicMock()
     mock_logger.output_dir = tmp_path
 
     with patch.object(suite_module, "logger", mock_logger):
-        exit_code = pytest.main(
-            [str(test_file), "-o", "asyncio_mode=auto",
-             "-o", "asyncio_default_fixture_loop_scope=function",
-             "--no-cov", "--override-ini", "addopts=", "-x"],
-            plugins=[OttoPlugin(), OttoOptionsPlugin(options)],
-        )
+        try:
+            exit_code = pytest.main(
+                [str(test_file), "-o", "asyncio_mode=auto",
+                 "-o", "asyncio_default_fixture_loop_scope=function",
+                 "--no-cov", "--override-ini", "addopts=", "-x"],
+                plugins=[OttoPlugin(), OttoOptionsPlugin(options)],
+            )
+        finally:
+            sys.modules.pop(test_file.stem, None)
     return exit_code
 
 

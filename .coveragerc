@@ -1,0 +1,32 @@
+; Coverage config used by both the parent pytest-cov run and by
+; subprocesses bootstrapped via tests/_coverage_bootstrap/sitecustomize.py
+; (which calls coverage.process_startup() and looks at COVERAGE_PROCESS_START).
+;
+; ``parallel = true`` makes each subprocess write its data to a unique
+; ``.coverage.<host>.<pid>.<rand>`` file. pytest-cov's session teardown
+; runs ``coverage combine`` to merge them with the parent's data, so the
+; otto code paths exercised only via ``subprocess.run([otto, ...])``
+; (test_docker_e2e_cli.py, test_coverage_e2e.py, test_completion_cache.py)
+; show up in the final report.
+
+[run]
+source = otto
+parallel = true
+relative_files = true
+sigterm = true
+; Keep the data file (and the per-worker/subprocess .coverage.* files
+; parallel mode writes alongside it) under reports/, next to the HTML
+; report and JUnit XML. This path is relative; every coverage-writing
+; subprocess is spawned with cwd=PROJECT_ROOT, so it resolves consistently
+; and ``coverage combine`` still finds all the fragments.
+data_file = reports/coverage/.coverage
+
+[html]
+directory = reports/coverage/html
+
+[paths]
+; Map both the editable-install src layout and any installed-site-packages
+; copy back to the same logical paths so combine merges them correctly.
+otto =
+    src/otto
+    */site-packages/otto

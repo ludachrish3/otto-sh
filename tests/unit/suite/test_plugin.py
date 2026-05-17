@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -395,14 +396,21 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
     with patch('otto.configmodule.all_hosts', return_value=iter([fake_host])), \
          patch('otto.monitor.factory.build_monitor_collector',
                return_value=real_collector):
-        exit_code = _pytest.main(
-            ['-s', '-p', 'no:cacheprovider',
-             '--override-ini', 'addopts=',
-             '-o', 'asyncio_mode=auto',
-             '-o', 'asyncio_default_fixture_loop_scope=function',
-             str(suite_path)],
-            plugins=[plugin],
-        )
+        try:
+            exit_code = _pytest.main(
+                ['-s', '-p', 'no:cacheprovider',
+                 '--override-ini', 'addopts=',
+                 '-o', 'asyncio_mode=auto',
+                 '-o', 'asyncio_default_fixture_loop_scope=function',
+                 str(suite_path)],
+                plugins=[plugin],
+            )
+        finally:
+            # This in-process pytest.main() imports the generated suite as a
+            # top-level module keyed by stem. Evict it so a second run of this
+            # test in the same process (e.g. under `pytest --count`) imports a
+            # fresh module instead of hitting "import file mismatch".
+            sys.modules.pop(suite_path.stem, None)
 
     assert exit_code == 0, f'embedded pytest run failed: {exit_code}'
     assert out_path.exists(), 'monitor.json was not written'

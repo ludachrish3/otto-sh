@@ -253,12 +253,20 @@ class TestCapture(OttoSuite):
         mock_logger.output_dir = tmp_path
 
         with patch.object(suite_module, "logger", mock_logger):
-            exit_code = pytest.main(
-                [str(test_file), "-o", "asyncio_mode=auto",
-                 "-o", "asyncio_default_fixture_loop_scope=function",
-                 "--no-cov", "--override-ini", "addopts="],
-                plugins=[OttoPlugin(), OttoOptionsPlugin(opts)],
-            )
+            try:
+                exit_code = pytest.main(
+                    [str(test_file), "-o", "asyncio_mode=auto",
+                     "-o", "asyncio_default_fixture_loop_scope=function",
+                     "--no-cov", "--override-ini", "addopts="],
+                    plugins=[OttoPlugin(), OttoOptionsPlugin(opts)],
+                )
+            finally:
+                # Evict the generated module (keyed by stem) so a second run
+                # of this test in the same process -- e.g. under
+                # `pytest --count` -- re-imports it instead of hitting
+                # "import file mismatch". clean_registry only sweeps
+                # `_otto_suite_*` keys, not this one.
+                sys.modules.pop(test_file.stem, None)
 
         assert capture_file.exists(), "test_capture_suite_options never ran"
         assert capture_file.read_text() == "switch"

@@ -243,7 +243,7 @@ make coverage
 
 ```bash
 uv run coverage run --source=otto --context=manual -m otto <subcommand> [args]
-uv run coverage html -d coverage_report
+uv run coverage html  # writes to reports/coverage/html (see .coveragerc)
 ```
 
 ## Type checking

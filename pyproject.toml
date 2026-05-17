@@ -144,6 +144,10 @@ markers = [
     "retry(n): retry the test up to n times on failure before reporting it as failed",
 ]
 
+# NB: coverage.py config lives in .coveragerc, not here — that file is shared
+# with the subprocess-coverage bootstrap and takes precedence over any
+# [tool.coverage.*] table in this file.
+
 [tool.bumpversion]
 current_version = "0.3.4"
 commit = true

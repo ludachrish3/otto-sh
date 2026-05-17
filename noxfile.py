@@ -12,10 +12,24 @@ List available sessions:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import nox
 import nox_uv
 
 PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
+
+# Each Python version is a separate pytest process, so JUnit XML is written
+# per session (e.g. reports/junit/tests-3.12.xml) to avoid clobbering. With
+# `--count=N` the repeats land in the same file, so a multi-run stability
+# pass collects every failure for a given Python in one place.
+JUNIT_DIR = Path("reports/junit")
+
+
+def _junitxml(session: nox.Session) -> str:
+    """Return a `--junitxml=` arg with a per-session report path."""
+    JUNIT_DIR.mkdir(parents=True, exist_ok=True)
+    return f"--junitxml={JUNIT_DIR / f'{session.name}.xml'}"
 
 nox.options.default_venv_backend = "uv"
 # `lint` is intentionally opt-in (`nox -s lint`) until the existing ruff
@@ -34,7 +48,7 @@ UNIT_TEST_ARGS = (
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
 def tests(session: nox.Session) -> None:
     """Run unit tests (no Vagrant VMs) under each supported Python."""
-    session.run("pytest", *UNIT_TEST_ARGS, *session.posargs)
+    session.run("pytest", *UNIT_TEST_ARGS, _junitxml(session), *session.posargs)
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
@@ -46,7 +60,7 @@ def tests_all(session: nox.Session) -> None:
     tree, so no marker filter is passed here. Coverage threshold matches
     ``make coverage`` (85%).
     """
-    session.run("pytest", "--cov-fail-under=85", *session.posargs)
+    session.run("pytest", "--cov-fail-under=85", _junitxml(session), *session.posargs)
 
 
 @nox_uv.session(uv_groups=["dev"])
