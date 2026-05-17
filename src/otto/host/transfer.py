@@ -12,7 +12,7 @@ can forward it directly without any adaptation layer.
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -1151,6 +1151,37 @@ class FileTransfer:
         )
         return _first_error(results)
 
+    async def _reap_nc_listener(self, port: int) -> None:
+        """Best-effort: make a lingering remote ``nc -l`` exit immediately.
+
+        ``nc -l ... < /dev/null`` exits as soon as a TCP peer connects and
+        then disconnects. When a transfer is cancelled before its real
+        sender ever connects, the listener would otherwise linger until its
+        ``-w`` timeout. A throwaway connect-and-close reaps it now.
+
+        Fully best-effort: a cancellation can land while the listener is
+        still launching, so ``_connect_with_retry`` is given a short budget
+        to catch a not-yet-bound port; if it never appears we simply give up
+        (there was nothing to reap).
+        """
+        if self._connections.has_tunnel:
+            try:
+                host = 'localhost'
+                target_port = await self._connections.forward_port(port)
+            except Exception:
+                return
+        else:
+            host = self._connections.ip
+            target_port = port
+
+        try:
+            _, writer = await _connect_with_retry(host, target_port, timeout=2.0)
+        except (ConnectionError, OSError):
+            return  # listener never came up — nothing to reap
+        writer.close()
+        with suppress(asyncio.TimeoutError, OSError):
+            await asyncio.wait_for(writer.wait_closed(), timeout=1.0)
+
     async def _put_files_nc(
         self,
         srcFiles: list[Path],
@@ -1167,6 +1198,7 @@ class FileTransfer:
             # targeting the same IP don't collide.  `_find_free_port` holds a
             # lock so concurrent callers can't both reserve the same port.
             port = await self._find_free_port()
+            listen_task: asyncio.Task[CommandStatus] | None = None
             try:
                 # `-w` bounds how long this listener waits for a client. If a
                 # racing process bound the same port first, our sender's bytes
@@ -1272,6 +1304,22 @@ class FileTransfer:
                 if verify_error is not None:
                     return verify_error
                 return Status.Success, ''
+            except asyncio.CancelledError:
+                # External cancellation mid-transfer skips listen_task's
+                # normal join points (the success / ConnectionError / timeout
+                # branches below the create_task). Cancel it and reap the
+                # remote `nc -l` so it doesn't linger until its `-w` timeout.
+                # A writer opened in the send loop is already closed by that
+                # loop's own `finally` — which makes nc exit on its own — so
+                # this matters mainly for a cancel landing before the sender
+                # ever connects.
+                if listen_task is not None and not listen_task.done():
+                    listen_task.cancel()
+                    with suppress(BaseException):
+                        await asyncio.gather(listen_task, return_exceptions=True)
+                    with suppress(BaseException):
+                        await self._reap_nc_listener(port)
+                raise
             finally:
                 self._release_port(port)
 

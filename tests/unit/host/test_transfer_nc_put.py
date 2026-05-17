@@ -428,3 +428,55 @@ class TestNcPutOrphanedListener:
         ]
         assert listen_cmds, "expected an `nc -l` listener invocation"
         assert all('-w 30' in cmd for cmd in listen_cmds), listen_cmds
+
+
+class TestNcPutCancellation:
+    """External cancellation mid-transfer must reap the remote ``nc -l``.
+
+    ``_attempt`` spawns the listener as an ``asyncio.Task`` and only joins it
+    on its normal success / error branches. A caller-side cancellation skips
+    those, so ``_attempt`` must cancel the task and reap the remote listener
+    itself — otherwise the ``nc -l`` lingers until its ``-w`` timeout.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancellation_reaps_listener(self, tmp_path: Path):
+        src = tmp_path / 'payload.bin'
+        src.write_bytes(b'x' * 1024)
+
+        listener_started = asyncio.Event()
+
+        async def exec_side_effect(cmd: str, *args, **kwargs) -> CommandStatus:
+            if 'nc -l' in cmd:
+                # The listener "runs" until its task is cancelled.
+                listener_started.set()
+                await asyncio.Event().wait()
+            return _ok('9000\n')
+
+        exec_cmd = AsyncMock(side_effect=exec_side_effect)
+        ft = _make_ft(exec_cmd)
+
+        reap_calls: list[int] = []
+
+        async def fake_reap(port: int) -> None:
+            reap_calls.append(port)
+
+        async def block_forever(*args, **kwargs) -> None:
+            await asyncio.Event().wait()
+
+        # _wait_for_remote_listener blocks forever, so the cancellation lands
+        # after listen_task is spawned but before any sender connects — the
+        # window the fix targets.
+        with patch.object(ft, '_reap_nc_listener', new=fake_reap), \
+             patch.object(FileTransfer, '_wait_for_remote_listener',
+                          new=AsyncMock(side_effect=block_forever)):
+            task = asyncio.create_task(ft._put_files_nc([src], tmp_path / 'dst'))
+            await asyncio.wait_for(listener_started.wait(), timeout=2.0)
+            await asyncio.sleep(0)  # let _attempt reach _wait_for_remote_listener
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert reap_calls == [9000], (
+            f"cancellation must reap the remote nc listener, got {reap_calls}"
+        )
