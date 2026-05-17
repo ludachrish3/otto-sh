@@ -165,7 +165,10 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `aiosqlite` | 0.21.0 | Async SQLite for persisting monitor metrics |
 | `asyncssh` | 2.22.0 | SSH connections to remote hosts |
 | `fastapi` | 0.135.1 | Monitor dashboard web server |
-| `rich` | 14.3.3 | Terminal formatting, panels, and tables |
+| `jinja2` | 3.1.0 | HTML templating for coverage reports |
+| `pytest` | 9.0.1 | Test runner; otto imports user test files at runtime |
+| `pytest-asyncio` | 1.3.0 | Async test support for pytest |
+| `rich` | 15.0.0 | Terminal formatting, panels, and tables |
 | `sse-starlette` | 3.3.3 | Server-sent events for live dashboard updates |
 | `telnetlib3` | 4.0.1 | Async Telnet client for telnet-based hosts |
 | `tomli` | 2.4.0 | TOML parser for `.otto/settings.toml` |

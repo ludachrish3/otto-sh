@@ -5,7 +5,9 @@ CPU, memory, disk, and network metrics from remote hosts in real time.
 
 ## Live mode
 
-By default, `otto monitor` polls all hosts in the lab:
+By default, `otto monitor` polls every real host in the lab. Docker
+container hosts are excluded — they aren't operated on as part of the
+host fleet:
 
 ```bash
 otto --lab my_lab monitor
@@ -21,7 +23,8 @@ otto --lab my_lab monitor --hosts 'router|switch'
 otto --lab my_lab monitor --hosts router1
 ```
 
-Omit the option to monitor every host in the lab.
+Omit the option to monitor every real host in the lab (Docker containers
+excluded).
 
 ### Collection interval
 

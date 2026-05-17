@@ -73,9 +73,12 @@ otto host pepper_seed.repo1.api get /etc/os-release ./
 ```
 
 Container ids are also synthesized at lab-load time **before** any
-`otto docker up` so tab completion works immediately. Operations against
-a not-yet-running container produce a clear "run `otto docker up` first"
-error.
+`otto docker up` so tab completion works immediately. Accessing a
+declared-but-stopped container (`otto host <id>`, oneshot, run, or file
+transfer) auto-starts its compose stack on demand via `compose_up`
+(`build=False`, so access never triggers an image rebuild). If the stack
+can't be started — for example its image hasn't been built — the command
+fails fast with a clear "run `otto docker up` first" error.
 
 ## Library API (instructions and suites)
 

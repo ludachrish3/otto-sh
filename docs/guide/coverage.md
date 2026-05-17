@@ -149,7 +149,7 @@ otto cov report run1_output/ run2_output/ run3_output/ --report ./combined_repor
 | Option                    | Description                                                          | Default             |
 |---------------------------|----------------------------------------------------------------------|---------------------|
 | `OUTPUT_DIRS`             | One or more `otto test` output dirs with `cov/`                      | Required            |
-| `--report PATH`           | Where to place the HTML report                                       | `./cov_report`      |
+| `--report, -r PATH`       | Where to place the HTML report                                       | `./cov_report`      |
 | `--project-name STR`      | Title shown in the report header                                     | `Coverage Report`   |
 | `--tier NAME[=PATH]`      | Add a coverage tier (repeatable; order = precedence, first highest)  | `--tier system`     |
 
