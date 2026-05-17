@@ -133,6 +133,13 @@ Vagrant.configure("2") do |config|
     # Run common test VM provisioning steps
     def provision_test_vm(vm, name)
         set_hostname(vm, name)
+
+        # The test VMs idle well under 2 GB, so reduce the amount per VM
+        # to ease memory pressure on the host.
+        vm.vm.provider "virtualbox" do |vb|
+            vb.memory = 1552
+        end
+
         vm.vm.provision "shell", name: "common test", keep_color: true, inline: <<-SHELL
 
             # install SSH and Telnet server
