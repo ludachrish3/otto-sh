@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-local repeat
+.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-all repeat
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -111,7 +111,7 @@ stability: ## Run targeted SessionManager concurrency tests under pytest-repeat 
 	    --count=$(or $(COUNT),50) \
 	    -p no:cacheprovider
 
-stability-local: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if unit-level tests are RED. Override iterations with COUNT=N (default 10).
+stability-all: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if unit-level tests are RED. Override iterations with COUNT=N (default 10).
 	@echo "── Tier 1 (unit-level concurrency) ──"
 	-@$(MAKE) stability COUNT=$(or $(COUNT),50)
 	@echo
