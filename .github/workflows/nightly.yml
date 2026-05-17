@@ -51,3 +51,32 @@ jobs:
 
       - name: Run stability tests
         run: make stability COUNT=${{ inputs.count || '500' }}
+
+  # If any matrix cell fails, open (or update) a tracking issue so a flaky
+  # nightly surfaces without anyone having to watch the Actions tab.
+  report-failure:
+    name: Open issue on failure
+    needs: tests
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Write issue body
+        run: |
+          {
+            echo "The nightly stability run failed."
+            echo
+            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "- Commit: ${{ github.sha }}"
+            echo
+            echo "Check the matrix logs for the failing Python version and the"
+            echo "pytest-repeat iteration that tripped a SessionManager race."
+          } > issue-body.md
+
+      - name: Create issue from file
+        uses: peter-evans/create-issue-from-file@v5
+        with:
+          title: "Nightly stability run failed"
+          content-filepath: issue-body.md
+          labels: stability, ci

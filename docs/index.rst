@@ -9,4 +9,5 @@ otto
    guide/index
    cookbook/index
    contributing
+   release_process
    api/index

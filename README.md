@@ -21,6 +21,18 @@ data.
 - **API builders** — import otto's Python packages to build higher-level
   automation on top of hosts, suites, and the monitor.
 
+## Installation
+
+Otto requires **Python 3.10** or later. Install the latest release from PyPI:
+
+```bash
+pip install otto-sh
+```
+
+The distribution is named `otto-sh`; the CLI command it installs is `otto`.
+For development installs, building from a wheel, GitHub-release artifacts, and
+air-gapped installation, see [docs/getting-started.md](docs/getting-started.md).
+
 ## Key concepts
 
 ### Hosts

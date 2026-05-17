@@ -7,6 +7,17 @@ and running your first command.
 
 Otto requires **Python 3.10** or later.
 
+### From PyPI
+
+For most users this is all you need — install the latest release from PyPI:
+
+```bash
+pip install otto-sh
+```
+
+The distribution is named `otto-sh`; the command it installs is `otto`. To
+install an exact version, pin it: `pip install otto-sh==0.3.4`.
+
 ### From source (development)
 
 If you have a clone of the otto repository and an internet connection, use
