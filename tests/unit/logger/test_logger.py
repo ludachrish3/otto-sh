@@ -1,8 +1,9 @@
+import os
+import time
 from os import (
     listdir,
 )
-from pathlib import Path, PosixPath
-from time import sleep
+from pathlib import Path
 
 import pytest as pytest
 
@@ -13,16 +14,6 @@ from otto.logger.logger import (
 
 logger = getOttoLogger()
 
-# TODO: This needs to conditionally define MockPath to be a WindowsPath
-class MockPath(PosixPath):
-
-    mtimeAdj: int
-    '''Number of seconds to add to the file's mtime stat field.'''
-
-    def stat(self, *args, **kwargs):
-        stat = super().stat()
-        stat.st_mtime += self.mtimeAdj
-        return stat
 
 @pytest.fixture(autouse=True, scope='function')
 def create_logger(tmpdir):
@@ -31,10 +22,18 @@ def create_logger(tmpdir):
     initOttoLogger(xdir=tmpdir, log_level='INFO', keep_days=7)
     logger.create_output_dir(command='pytest', subcommand='logger_test')
 
+def _backdate(directory: Path, seconds: float) -> None:
+    """Set ``directory``'s mtime ``seconds`` into the past.
+
+    ``removeOldLogs`` keys off ``st_mtime``; backdating explicitly makes the
+    age cutoff deterministic instead of racing a sub-second wall-clock window.
+    """
+    past = time.time() - seconds
+    os.utime(directory, (past, past))
+
+
 @pytest.mark.integration
 def test_removeOldLogs_old_logs_exist_same_command(caplog):
-
-    sleep(0.02)
 
     logger.create_output_dir(command='pytest', subcommand='thing1')
     logger.create_output_dir(command='pytest', subcommand='thing2')
@@ -44,7 +43,13 @@ def test_removeOldLogs_old_logs_exist_same_command(caplog):
     # Make sure there are 3 output dirs to start (1 from the standard fixture, then the above 2)
     assert len(listdir(pytest_dir)) == 3
 
-    logger.removeOldLogs(seconds=0.01)
+    # Backdate the fixture's logger_test dir an hour into the past; thing1 and
+    # thing2 keep their real (current) mtime, so the result no longer depends
+    # on how fast the machine reaches removeOldLogs.
+    (old_dir,) = (d for d in pytest_dir.iterdir() if d.name.endswith('_logger_test'))
+    _backdate(old_dir, seconds=3600)
+
+    logger.removeOldLogs(seconds=60)
     assert len(listdir(pytest_dir)) == 2
 
     assert len(caplog.records) == 1
@@ -57,20 +62,23 @@ def test_removeOldLogs_old_logs_exist_different_command(caplog):
     pytest_dir = logger.xdir / 'pytest'
     not_pytest_dir = logger.xdir / 'not_pytest'
 
-    # Create another log_dir around the same time as the first,
-    # but with a different command
+    # Create an old log_dir under each command, then a fresh one under each.
     logger.create_output_dir(command='not_pytest', subcommand='thing1')
-
-    sleep(0.02)
-
     logger.create_output_dir(command='pytest', subcommand='thing1')
     logger.create_output_dir(command='not_pytest', subcommand='thing2')
 
     assert len(listdir(pytest_dir)) == 2
     assert len(listdir(not_pytest_dir)) == 2
-    logger.removeOldLogs(seconds=0.02)
+
+    # Backdate the older dirs an hour into the past; the rest keep their real
+    # (current) mtime, so removeOldLogs deletes exactly the backdated ones
+    # regardless of timing.
+    _backdate(next(d for d in not_pytest_dir.iterdir() if d.name.endswith('_thing1')), seconds=3600)
+    _backdate(next(d for d in pytest_dir.iterdir() if d.name.endswith('_logger_test')), seconds=3600)
+
+    logger.removeOldLogs(seconds=60)
     assert len(listdir(pytest_dir)) == 1
-    assert len(listdir(pytest_dir)) == 1
+    assert len(listdir(not_pytest_dir)) == 1
 
     assert len(caplog.records) == 1
     logrecord = caplog.records[0]

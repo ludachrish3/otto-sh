@@ -91,6 +91,13 @@ def login_session(request, tmp_path_factory):
             f"[otto] interactive session with {HOST_NAME} ({term}). Press Ctrl+] to disconnect.".encode(),
             timeout=30,
         )
+        # otto prints the banner the moment it starts bridging, but the
+        # remote login shell is still initializing (MOTD, profile scripts,
+        # tcsetattr). Input typed into that window is flushed by the shell's
+        # tcsetattr and lost, so the round-trip echo never comes back. Wait
+        # for the shell prompt — it only appears once the remote shell has
+        # finished its terminal setup and is reading stdin.
+        sess.expect(re.compile(rb":~[$#] "), timeout=20)
         sess.sendline(f"echo {ROUND_TRIP_TOKEN}")
         # First match: the remote PTY echoing the command line we typed.
         # Second match: the shell's response. Waiting for both guarantees
