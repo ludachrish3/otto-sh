@@ -143,6 +143,43 @@ class TestClose:
         mock_conn.wait_closed.assert_called_once()
         assert h._connections._ssh_conn is None
 
+    @pytest.mark.asyncio
+    async def test_close_does_not_run_process_wide_gc(self):
+        """close() must not trigger a process-wide gc.collect().
+
+        A process-wide collection sweeps up objects leaked by *other* tests
+        and fires their ``__del__``; pytest's ``[unraisable]`` plugin then
+        escalates those ResourceWarnings into a flake on whichever test
+        happened to call ``close()``.
+        """
+        import gc
+
+        collected: list[bool] = []
+
+        class _LeakSentinel:
+            def __del__(self):
+                collected.append(True)
+
+        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
+
+        # Disable automatic generational gc *before* building the cycle, so
+        # only an explicit gc.collect() — not incidental allocation pressure —
+        # can reclaim the sentinel.
+        gc.disable()
+        try:
+            # Unreachable reference cycle holding the sentinel; reclaimable
+            # only by gc.collect(), not by refcounting.
+            cycle: dict = {}
+            cycle['self'] = cycle
+            cycle['sentinel'] = _LeakSentinel()
+            del cycle
+
+            await h.close()
+            assert not collected, "close() ran a process-wide gc.collect()"
+        finally:
+            gc.enable()
+            gc.collect()  # clean up our own cycle
+
 
 # ---------------------------------------------------------------------------
 # run() — list form

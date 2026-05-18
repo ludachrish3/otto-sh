@@ -389,16 +389,11 @@ class ConnectionManager:
         if self._hop is not None:
             await self._hop.close()
 
-        # asyncssh's ``wait_closed()`` returns once the SSH session is gone,
-        # but the underlying ``_SelectorSocketTransport`` is left with
-        # ``_sock`` still pointing at a (now-detached, fd=-1) socket object
-        # — its own ``close()`` was never invoked, only the inner socket's,
-        # so ``transport._closing`` is still False. When that transport gets
-        # GC'd later (often on a closed loop, as the test's loop has been
-        # torn down by then), its ``__del__`` fires ``ResourceWarning`` for
-        # the still-"open" transport, which pytest's ``[unraisable]`` plugin
-        # then escalates into a flake on the *next* test. Force GC now,
-        # while our loop is still alive, so the ``__del__`` either runs
-        # cleanly or finds nothing to complain about.
-        import gc
-        gc.collect()
+        # NOTE: the asyncssh zombie ``_SelectorSocketTransport`` is handled
+        # precisely above by closing ``asyncio_transport`` explicitly, which
+        # sets ``_closing=True`` so its ``__del__`` is a no-op. We deliberately
+        # do *not* call ``gc.collect()`` here: a process-wide collection sweeps
+        # up every leaked object in the interpreter — including sockets/loops
+        # leaked by unrelated tests — firing their ``__del__`` and letting
+        # pytest's ``[unraisable]`` plugin escalate those warnings into a flake
+        # on whatever test happens to be calling ``close()``.
