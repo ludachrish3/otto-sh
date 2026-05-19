@@ -13,6 +13,7 @@ Tests verify:
 """
 
 import asyncio
+import gc
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -51,14 +52,18 @@ class TestSanitizeNodeName:
 
 # ── Inner pytest session helpers ─────────────────────────────────────────────
 
-def _policy_loop() -> 'asyncio.AbstractEventLoop | None':
-    """Return the event loop currently installed on the asyncio policy.
+def _open_event_loops() -> 'set[asyncio.AbstractEventLoop]':
+    """Return every event loop object that currently exists and is not closed.
 
-    Reads it without going through ``get_event_loop()``, which would create
-    (and warn about) a fresh loop when none is installed.
+    Found by scanning the garbage collector rather than the asyncio event-loop
+    policy: Python 3.14 deprecates ``asyncio.get_event_loop_policy`` (removal
+    slated for 3.16), and ``filterwarnings = ["error"]`` would turn that
+    warning into a failure. The gc scan needs no deprecated API, works
+    identically back to Python 3.10, and sees *every* leaked loop instead of
+    only the one the policy happens to point at.
     """
-    policy = asyncio.get_event_loop_policy()
-    return getattr(getattr(policy, '_local', None), '_loop', None)
+    return {obj for obj in gc.get_objects()
+            if isinstance(obj, asyncio.AbstractEventLoop) and not obj.is_closed()}
 
 
 def _run_inner_pytest(test_file: Path, tmp_path: Path,
@@ -79,20 +84,20 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path,
     filename intact -- some tests assert on it -- while ensuring the next
     invocation imports a genuinely fresh module.
 
-    The inner session runs async tests, so pytest-asyncio creates an event
-    loop and installs it on the asyncio policy -- but never closes it when the
-    session ends. Left orphaned, that loop is garbage-collected at some later,
-    unpredictable point; its ``ResourceWarning`` (the unclosed loop plus its
-    self-pipe socketpair) trips ``filterwarnings = ["error"]`` and surfaces,
-    via pytest's ``unraisableexception`` plugin, as a flaky ``ExceptionGroup``
-    failure. We snapshot the policy loop before the session and, if the inner
-    run swapped in a new one, close it and restore the prior loop -- never
-    touching a loop the outer run still owns.
+    The inner session runs async tests, so pytest-asyncio creates one or more
+    event loops -- but never closes them when the session ends. Left orphaned,
+    such a loop is garbage-collected at some later, unpredictable point; its
+    ``ResourceWarning`` (the unclosed loop plus its self-pipe socketpair) trips
+    ``filterwarnings = ["error"]`` and surfaces, via pytest's
+    ``unraisableexception`` plugin, as a flaky ``ExceptionGroup`` failure. We
+    snapshot the set of live loops before the session and close any that the
+    inner run leaves open afterward -- never touching a loop the outer run
+    already owned.
     """
     mock_logger = MagicMock()
     mock_logger.output_dir = tmp_path
 
-    prior_loop = _policy_loop()
+    loops_before = _open_event_loops()
     with patch.object(suite_module, "logger", mock_logger):
         try:
             exit_code = pytest.main(
@@ -103,11 +108,8 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path,
             )
         finally:
             sys.modules.pop(test_file.stem, None)
-            leaked = _policy_loop()
-            if leaked is not None and leaked is not prior_loop:
-                if not leaked.is_closed():
-                    leaked.close()
-                asyncio.get_event_loop_policy().set_event_loop(prior_loop)
+            for leaked in _open_event_loops() - loops_before:
+                leaked.close()
     return exit_code
 
 
