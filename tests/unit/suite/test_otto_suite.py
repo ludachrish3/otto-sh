@@ -12,6 +12,7 @@ Tests verify:
   - ``expect()`` records non-fatal failures without stopping execution
 """
 
+import asyncio
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,16 @@ class TestSanitizeNodeName:
 
 # ── Inner pytest session helpers ─────────────────────────────────────────────
 
+def _policy_loop() -> 'asyncio.AbstractEventLoop | None':
+    """Return the event loop currently installed on the asyncio policy.
+
+    Reads it without going through ``get_event_loop()``, which would create
+    (and warn about) a fresh loop when none is installed.
+    """
+    policy = asyncio.get_event_loop_policy()
+    return getattr(getattr(policy, '_local', None), '_loop', None)
+
+
 def _run_inner_pytest(test_file: Path, tmp_path: Path,
                       options: object | None = None) -> int:
     """Run an inner pytest session with OttoPlugin + OttoOptionsPlugin.
@@ -67,10 +78,21 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path,
     Evicting the module (and any cached bytecode) after the session keeps the
     filename intact -- some tests assert on it -- while ensuring the next
     invocation imports a genuinely fresh module.
+
+    The inner session runs async tests, so pytest-asyncio creates an event
+    loop and installs it on the asyncio policy -- but never closes it when the
+    session ends. Left orphaned, that loop is garbage-collected at some later,
+    unpredictable point; its ``ResourceWarning`` (the unclosed loop plus its
+    self-pipe socketpair) trips ``filterwarnings = ["error"]`` and surfaces,
+    via pytest's ``unraisableexception`` plugin, as a flaky ``ExceptionGroup``
+    failure. We snapshot the policy loop before the session and, if the inner
+    run swapped in a new one, close it and restore the prior loop -- never
+    touching a loop the outer run still owns.
     """
     mock_logger = MagicMock()
     mock_logger.output_dir = tmp_path
 
+    prior_loop = _policy_loop()
     with patch.object(suite_module, "logger", mock_logger):
         try:
             exit_code = pytest.main(
@@ -81,6 +103,11 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path,
             )
         finally:
             sys.modules.pop(test_file.stem, None)
+            leaked = _policy_loop()
+            if leaked is not None and leaked is not prior_loop:
+                if not leaked.is_closed():
+                    leaked.close()
+                asyncio.get_event_loop_policy().set_event_loop(prior_loop)
     return exit_code
 
 
