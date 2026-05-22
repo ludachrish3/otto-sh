@@ -226,7 +226,8 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     ------
     ValueError
         If ``osType`` is invalid, a required field is missing, a field has the
-        wrong type, or an embedded host declares ``docker_capable``.
+        wrong type, an embedded host declares ``docker_capable``, or an
+        embedded host's ``transfer`` value is not ``console`` or ``tftp``.
     """
     os_type = host_data.get('osType', 'unix')
     if os_type not in ('unix', 'embedded'):
@@ -252,3 +253,10 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
             f"docker_capable is not supported on embedded hosts "
             f"(host {host_data['ne']!r})"
         )
+
+    if os_type == 'embedded' and 'transfer' in host_data:
+        if host_data['transfer'] not in ('console', 'tftp'):
+            raise ValueError(
+                f"Field 'transfer' must be 'console' or 'tftp' for embedded "
+                f"hosts, got {host_data['transfer']!r}"
+            )

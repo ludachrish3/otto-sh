@@ -381,6 +381,22 @@ class TestOsTypeDispatch:
             })
         assert 'docker_capable' in str(exc_info.value)
 
+    def test_embedded_transfer_backend_honored(self):
+        """An embedded host's ``transfer`` value flows through the factory."""
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'transfer': 'tftp',
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.transfer == 'tftp'
+
+    def test_embedded_transfer_defaults_to_console(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.transfer == 'console'
+
 
 class TestValidateOsType:
     """Tests for ``osType`` handling in ``validate_host_dict``."""
@@ -417,3 +433,18 @@ class TestValidateOsType:
                 'docker_capable': True,
             })
         assert 'docker_capable' in str(exc_info.value)
+
+    def test_validate_embedded_transfer_accepts_known_backends(self):
+        for backend in ('console', 'tftp'):
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'transfer': backend,
+            })
+
+    def test_validate_embedded_invalid_transfer_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'transfer': 'scp',
+            })
+        assert 'transfer' in str(exc_info.value)

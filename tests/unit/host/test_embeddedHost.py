@@ -1,9 +1,10 @@
 """
 Tests for EmbeddedHost (Phase 3 skeleton).
 
-These cover construction, the OS-family schema fields, host naming, and the
-not-yet-implemented surfaces (file transfer, interactive sessions). Zephyr
-command framing is exercised separately once ``ZephyrSession`` lands.
+These cover construction, the OS-family schema fields, host naming, file
+transfer wiring, and the not-yet-implemented interactive bridge. Zephyr command
+framing is exercised in ``test_zephyr.py``; the console transfer backend in
+``test_embedded_transfer.py``.
 """
 
 from unittest.mock import AsyncMock
@@ -139,19 +140,44 @@ class TestDryRun:
 class TestNotImplemented:
 
     @pytest.mark.asyncio
-    async def test_get_raises(self, host: EmbeddedHost, tmp_path):
-        with pytest.raises(NotImplementedError):
-            await host.get(tmp_path / 'f', tmp_path)
-
-    @pytest.mark.asyncio
-    async def test_put_raises(self, host: EmbeddedHost, tmp_path):
-        with pytest.raises(NotImplementedError):
-            await host.put(tmp_path / 'f', tmp_path)
-
-    @pytest.mark.asyncio
     async def test_interact_raises(self, host: EmbeddedHost):
         with pytest.raises(NotImplementedError):
             await host.interact()
+
+
+# ---------------------------------------------------------------------------
+# File transfer
+# ---------------------------------------------------------------------------
+
+class TestFileTransfer:
+
+    def test_console_backend_by_default(self, host: EmbeddedHost):
+        assert host.transfer == 'console'
+        assert host._file_transfer.transfer == 'console'
+
+    def test_transfer_backend_is_configurable(self):
+        host = EmbeddedHost(ip='192.0.2.1', ne='sprout', log=False, transfer='tftp')
+        host._connections = None  # type: ignore[assignment]  # avoid __del__ churn
+        assert host.transfer == 'tftp'
+        assert host._file_transfer.transfer == 'tftp'
+
+    @pytest.mark.asyncio
+    async def test_get_dry_run_skips(self, host: EmbeddedHost, tmp_path):
+        setDryRun(True)
+        try:
+            status, _ = await host.get(tmp_path / 'f', tmp_path)
+        finally:
+            setDryRun(False)
+        assert status == Status.Skipped
+
+    @pytest.mark.asyncio
+    async def test_put_dry_run_skips(self, host: EmbeddedHost, tmp_path):
+        setDryRun(True)
+        try:
+            status, _ = await host.put(tmp_path / 'f', tmp_path)
+        finally:
+            setDryRun(False)
+        assert status == Status.Skipped
 
 
 # ---------------------------------------------------------------------------

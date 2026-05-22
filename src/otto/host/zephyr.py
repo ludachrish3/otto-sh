@@ -34,7 +34,7 @@ after ``retval`` is harmless (already captured), but a marker placed *between*
 immediately after ``<cmd>``.
 
 What the live shell actually does (verified 2026-05-22 on Zephyr 3.7.2)
-----------------------------------------------------------------------
+-----------------------------------------------------------------------
 - **Input is not echoed.** Only the *results* of the four framed lines come
   back — there is no echoed copy of the command text.
 - **A prompt follows every executed line.** Each of the four framed lines

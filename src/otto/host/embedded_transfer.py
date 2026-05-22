@@ -1,0 +1,277 @@
+"""
+Console file transfer for embedded hosts.
+
+:class:`~otto.host.unixHost.UnixHost`'s :class:`~otto.host.transfer.FileTransfer`
+dispatches ``scp``/``sftp``/``ftp``/``netcat`` — none of which exist on a
+bare-metal/RTOS target. :class:`EmbeddedFileTransfer` is the embedded analogue:
+it speaks only the device's own shell, and an :class:`~otto.host.embeddedHost.
+EmbeddedHost` delegates ``get``/``put`` to it exactly as ``UnixHost`` delegates
+to ``FileTransfer``.
+
+Backends
+--------
+The backend is a *typed, declared-per-host* choice (the host's ``transfer``
+field), never a fixed mechanism: embedded systems share no universal file
+transfer protocol, so otto standardizes on a pluggable backend instead. Adding
+a future backend (YMODEM, MCUmgr, a vendor mechanism) is then additive.
+
+- ``console`` (default) — the Zephyr ``fs`` shell. ``get`` runs ``fs read`` and
+  decodes the hexdump; ``put`` runs chunked ``fs write`` calls. Requires the
+  target firmware to enable ``CONFIG_FILE_SYSTEM_SHELL`` over a mounted
+  filesystem. If it does not, ``get``/``put`` fail with a clear error
+  (:data:`_FS_ABSENT_MSG`) rather than hanging or writing garbage.
+- ``tftp`` — reserved (see :class:`~otto.host.options.TftpOptions`); the body
+  raises :class:`NotImplementedError` (deferred).
+
+Why console transfer is slow
+----------------------------
+Every byte crosses the shell as ~3 characters of hex text (``fs write``) or is
+read back inside a hexdump (``fs read``), one bounded command at a time. That
+is fine for test artifacts and configuration files — kilobytes — but it is not
+a path for firmware images; use TFTP (once implemented) for bulk data.
+
+``show_progress`` is accepted for signature parity with ``FileTransfer`` but
+Phase 5 does not render a progress bar — a known, documented gap.
+"""
+
+import re
+from collections.abc import Callable, Coroutine
+from pathlib import Path
+from typing import Any, Literal
+
+from ..logger import getOttoLogger
+from ..utils import CommandStatus, Status
+
+logger = getOttoLogger()
+
+EmbeddedTransferType = Literal['console', 'tftp']
+"""File-transfer backend for an embedded host. ``console`` uses the device
+shell's ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
+
+# Bytes per `fs write` invocation. Each byte costs three characters of hex
+# ("XX ") on the command line, so the chunk size must stay within the target's
+# `CONFIG_SHELL_CMD_BUFF_SIZE` and `CONFIG_SHELL_ARGC_MAX`. 32 is comfortably
+# inside the values otto-overlay.conf sets (512-byte buffer, 64 args).
+_WRITE_CHUNK = 32
+
+# `fs read` emits 16 bytes per hexdump line.
+_HEXDUMP_COLS = 16
+
+# A hexdump line: an 8-hex-digit offset, then the hex/ascii columns.
+_HEX_LINE_RE = re.compile(r'^\s*([0-9A-Fa-f]{8})\s\s(.*)$')
+
+# The shell rejects an absent `fs` command as `fs: command not found` (the
+# ZephyrSession unknown-command behavior). Distinguishes "no fs shell" from an
+# ordinary file-level failure (a bad path, a full disk).
+_FS_ABSENT_RE = re.compile(r'\bfs:\s*command not found', re.IGNORECASE)
+
+_FS_ABSENT_MSG = (
+    "console file transfer requires the Zephyr fs shell "
+    "(CONFIG_FILE_SYSTEM_SHELL) over a mounted filesystem; the target's "
+    "shell has no 'fs' command"
+)
+
+# Generous ceiling for `fs read` of a whole file (a large hexdump is slow to
+# stream); tight ceilings for the small, bounded write/remove commands.
+_READ_TIMEOUT = 60.0
+_WRITE_TIMEOUT = 15.0
+_RM_TIMEOUT = 10.0
+
+
+class EmbeddedFileTransfer:
+    """File transfer for an embedded host, over the device shell only.
+
+    Mirrors :class:`~otto.host.transfer.FileTransfer`'s public surface
+    (``get_files``/``put_files``) so :class:`~otto.host.embeddedHost.
+    EmbeddedHost` can delegate to it the way ``UnixHost`` delegates to
+    ``FileTransfer``. The shell command runner is injected as ``exec_cmd`` so
+    the class is testable against a fake shell with no real connection.
+    """
+
+    def __init__(
+        self,
+        transfer: EmbeddedTransferType,
+        name: str,
+        exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
+    ) -> None:
+        self.transfer = transfer
+        self._name = name
+        self._exec_cmd = exec_cmd
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def get_files(
+        self,
+        srcFiles: list[Path],
+        destDir: Path,
+        show_progress: bool = True,
+    ) -> tuple[Status, str]:
+        """Transfer files off the embedded target to ``destDir`` locally.
+
+        Files are transferred **sequentially** — an embedded target has a
+        single console, so there is no concurrency to exploit.
+        """
+        if self.transfer == 'tftp':
+            raise NotImplementedError(
+                "TFTP transfer for embedded hosts is not yet implemented"
+            ) from None
+        for src in srcFiles:
+            status, err = await self._console_get_one(src, destDir)
+            if not status.is_ok:
+                return status, err
+        return Status.Success, ''
+
+    async def put_files(
+        self,
+        srcFiles: list[Path],
+        destDir: Path,
+        show_progress: bool = True,
+    ) -> tuple[Status, str]:
+        """Transfer local files onto the embedded target under ``destDir``.
+
+        Files are transferred **sequentially** (single console).
+        """
+        if self.transfer == 'tftp':
+            raise NotImplementedError(
+                "TFTP transfer for embedded hosts is not yet implemented"
+            ) from None
+        for src in srcFiles:
+            status, err = await self._console_put_one(src, destDir)
+            if not status.is_ok:
+                return status, err
+        return Status.Success, ''
+
+    # ------------------------------------------------------------------
+    # console backend — get
+    # ------------------------------------------------------------------
+
+    async def _console_get_one(
+        self, src: Path, destDir: Path,
+    ) -> tuple[Status, str]:
+        """Read one file off the target via ``fs read`` and write it locally."""
+        src_path = src.as_posix()
+        logger.debug(f"{self._name}: fs read {src_path} -> {destDir}")
+        result = await self._exec_cmd(f'fs read {src_path}', timeout=_READ_TIMEOUT)
+
+        if self._fs_unavailable(result):
+            return Status.Error, _FS_ABSENT_MSG
+        if not result.status.is_ok:
+            return Status.Error, (
+                f"fs read {src_path} failed (retcode={result.retcode}): "
+                f"{result.output.strip()}"
+            )
+
+        try:
+            data = self._decode_hexdump(result.output)
+        except ValueError as e:
+            return Status.Error, f"fs read {src_path}: {e}"
+
+        dest = destDir / src.name
+        dest.write_bytes(data)
+        return Status.Success, ''
+
+    # ------------------------------------------------------------------
+    # console backend — put
+    # ------------------------------------------------------------------
+
+    async def _console_put_one(
+        self, src: Path, destDir: Path,
+    ) -> tuple[Status, str]:
+        """Write one local file onto the target via chunked ``fs write``."""
+        data = src.read_bytes()
+        dest_path = (destDir / src.name).as_posix()
+        logger.debug(
+            f"{self._name}: fs write {src} -> {dest_path} ({len(data)} bytes)"
+        )
+
+        # `fs write` seeks to an offset but never truncates, so a shorter new
+        # file would leave a stale tail behind. Remove the destination first;
+        # a "not found" failure here is expected and ignored.
+        await self._exec_cmd(f'fs rm {dest_path}', timeout=_RM_TIMEOUT)
+
+        # An empty file: a single zero-byte `fs write` still creates it.
+        if not data:
+            result = await self._exec_cmd(
+                f'fs write {dest_path} 0', timeout=_WRITE_TIMEOUT,
+            )
+            return self._check_write(result, dest_path, 0)
+
+        for offset in range(0, len(data), _WRITE_CHUNK):
+            chunk = data[offset:offset + _WRITE_CHUNK]
+            hexbytes = ' '.join(f'{b:02x}' for b in chunk)
+            result = await self._exec_cmd(
+                f'fs write {dest_path} {offset} {hexbytes}',
+                timeout=_WRITE_TIMEOUT,
+            )
+            status, err = self._check_write(result, dest_path, offset)
+            if not status.is_ok:
+                return status, err
+        return Status.Success, ''
+
+    def _check_write(
+        self, result: CommandStatus, dest_path: str, offset: int,
+    ) -> tuple[Status, str]:
+        """Classify an ``fs write`` result into a transfer status."""
+        if self._fs_unavailable(result):
+            return Status.Error, _FS_ABSENT_MSG
+        if not result.status.is_ok:
+            return Status.Error, (
+                f"fs write {dest_path} at offset {offset} failed "
+                f"(retcode={result.retcode}): {result.output.strip()}"
+            )
+        return Status.Success, ''
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _fs_unavailable(result: CommandStatus) -> bool:
+        """True when the target's shell has no ``fs`` command at all.
+
+        Keyed on the shell's unknown-command echo, so it is distinct from an
+        ordinary file-level failure (a missing path, a full filesystem).
+        """
+        return bool(_FS_ABSENT_RE.search(result.output))
+
+    @staticmethod
+    def _decode_hexdump(output: str) -> bytes:
+        """Decode a Zephyr ``fs read`` hexdump back into bytes.
+
+        Each line is ``<8-hex offset>  <space-separated hex bytes>\\t<ascii>``,
+        16 bytes per line. The **offset is authoritative**: bytes are placed at
+        it and the lines are reassembled in offset order, so a dropped or
+        duplicated line is caught (raising :class:`ValueError`) rather than
+        silently corrupting the result. The ASCII gutter — separated by a tab,
+        or by a fixed-width column when no tab is present — is never read.
+        """
+        chunks: dict[int, bytes] = {}
+        for raw in output.splitlines():
+            m = _HEX_LINE_RE.match(raw.rstrip())
+            if not m:
+                continue
+            offset = int(m.group(1), 16)
+            rest = m.group(2)
+            # The shell separates the hex column from the ASCII gutter with a
+            # tab; fall back to the fixed hex-field width if a tab is absent.
+            if '\t' in rest:
+                hex_field = rest.split('\t', 1)[0]
+            else:
+                hex_field = rest[:_HEXDUMP_COLS * 3]
+            tokens = hex_field.split()
+            try:
+                chunks[offset] = bytes(int(t, 16) for t in tokens)
+            except ValueError:
+                continue
+
+        out = bytearray()
+        for offset in sorted(chunks):
+            if offset != len(out):
+                raise ValueError(
+                    f"hexdump has a gap or overlap — expected the next line "
+                    f"at offset {len(out)}, got {offset}"
+                )
+            out.extend(chunks[offset])
+        return bytes(out)

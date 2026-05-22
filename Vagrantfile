@@ -258,12 +258,16 @@ Vagrant.configure("2") do |config|
             # the target must have for otto to talk to it, not otto code
             # running on the target. /vagrant is the synced share of the
             # otto-sh checkout on the host.
+            # app.overlay adds a RAM-backed disk to the devicetree so the FAT
+            # filesystem the Kconfig overlay enables has a storage medium —
+            # still no firmware code, just board configuration.
             cd ~/zephyrproject
             source zephyr/zephyr-env.sh
             west build -p auto -b qemu_x86 \
                 zephyr/samples/subsys/shell/shell_module \
                 -d /home/vagrant/build/test_app \
-                -- -DEXTRA_CONF_FILE=/vagrant/tests/firmware/zephyr/otto-overlay.conf
+                -- -DEXTRA_CONF_FILE=/vagrant/tests/firmware/zephyr/otto-overlay.conf \
+                   -DEXTRA_DTC_OVERLAY_FILE=/vagrant/tests/firmware/zephyr/app.overlay
         SHELL
 
         # systemd unit that brings up zeth and runs the Zephyr image in QEMU.

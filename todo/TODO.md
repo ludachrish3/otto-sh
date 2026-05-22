@@ -2,6 +2,9 @@
 
 ## General
 
+- Add other Zephyr configs and versions so that the embedded OS support is hardened.
+  - Different kinds of file systems
+  - Add debug logs in key areas to help debug telnet option and output regex matching issues (the format of embedded command execution and their retcode format is variable)
 - Add REPL sessions that can live within an active shell session and has a special prompt. The session can be recognized as ending when a REPL end sentinel is seen maybe?
 - Have one of the projects define a custom stat collector beyond the default definitions. This helps prove out the workflow for defining custom parsers and graphs.
 - Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name

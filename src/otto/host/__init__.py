@@ -20,6 +20,8 @@ from .session import SessionManager as SessionManager
 from .session import ShellSession as ShellSession
 from .session import TelnetSession as TelnetSession
 from .zephyr import ZephyrSession as ZephyrSession
+from .embedded_transfer import EmbeddedFileTransfer as EmbeddedFileTransfer
+from .embedded_transfer import EmbeddedTransferType as EmbeddedTransferType
 from .transfer import NcListenerCheck as NcListenerCheck
 from .transfer import NcPortStrategy as NcPortStrategy
 from .transfer import TransferProgressHandler as TransferProgressHandler

@@ -21,21 +21,24 @@ What makes an embedded target different from a Unix host:
 
 Command execution speaks the Zephyr shell: the :class:`SessionManager` is
 wired with :class:`~otto.host.zephyr.ZephyrSession`, which frames each command
-for the RTOS shell (see that module). Console file transfer (``get``/``put``)
-lands in a later phase and currently raises :class:`NotImplementedError`, as
-does the interactive bridge (``_interact``).
+for the RTOS shell (see that module). File transfer (``get``/``put``) is
+delegated to :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`, which
+speaks the device shell only (the ``console`` backend uses Zephyr's ``fs``
+commands). The interactive bridge (``_interact``) currently raises
+:class:`NotImplementedError`.
 """
 
 import asyncio
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
 from ..logger import getOttoLogger
 from ..utils import CommandStatus, Status
 from .connections import ConnectionManager
-from .host import isDryRun
+from .embedded_transfer import EmbeddedFileTransfer, EmbeddedTransferType
+from .host import Host, SuppressCommandOutput, isDryRun
 from .options import TelnetOptions
 from .remoteHost import OsType, RemoteHost
 from .repeat import RepeatRunner
@@ -90,6 +93,10 @@ class EmbeddedHost(RemoteHost):
     is_virtual: bool = False
     """Determines whether a host is a VM/emulator (e.g. QEMU) or not."""
 
+    transfer: EmbeddedTransferType = 'console'
+    """File-transfer backend. ``console`` (default) drives the device shell's
+    ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
+
     telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
     """Connection options for the telnet shell (port, cols/rows, etc.)."""
 
@@ -120,6 +127,9 @@ class EmbeddedHost(RemoteHost):
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages the persistent shell session for this host."""
 
+    _file_transfer: EmbeddedFileTransfer = field(init=False, repr=False)
+    """Handles ``get``/``put`` over the device shell for this host."""
+
     def __post_init__(self) -> None:
 
         self.id = self._generateId()
@@ -148,6 +158,11 @@ class EmbeddedHost(RemoteHost):
             log_command=self._log_command,
             log_output=self._log_output,
             telnet_session_cls=ZephyrSession,
+        )
+        self._file_transfer = EmbeddedFileTransfer(
+            transfer=self.transfer,
+            name=self.name,
+            exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),
         )
 
     @property
@@ -282,12 +297,17 @@ class EmbeddedHost(RemoteHost):
     ) -> tuple[Status, str]:
         """Transfer files from the embedded host to the local machine.
 
-        Not yet implemented — console-based file transfer over the RTOS shell
-        lands in a later phase.
+        Delegates to :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`,
+        which speaks the device shell (the ``console`` backend uses Zephyr's
+        ``fs`` commands). Transfers are sequential — an embedded target has a
+        single console.
         """
-        raise NotImplementedError(
-            "File transfer for embedded hosts is not yet implemented"
-        ) from None
+        if not isinstance(src_files, list):
+            src_files = [src_files]
+        if isDryRun():
+            return self._dry_run_transfer("GET", src_files, dest_dir)
+        with SuppressCommandOutput(host=cast(Host, self)):
+            return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
 
     async def put(
         self,
@@ -297,9 +317,13 @@ class EmbeddedHost(RemoteHost):
     ) -> tuple[Status, str]:
         """Transfer files from the local machine to the embedded host.
 
-        Not yet implemented — console-based file transfer over the RTOS shell
-        lands in a later phase.
+        Delegates to :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`
+        (the ``console`` backend writes via Zephyr's chunked ``fs write``).
+        Transfers are sequential — an embedded target has a single console.
         """
-        raise NotImplementedError(
-            "File transfer for embedded hosts is not yet implemented"
-        ) from None
+        if not isinstance(src_files, list):
+            src_files = [src_files]
+        if isDryRun():
+            return self._dry_run_transfer("PUT", src_files, dest_dir)
+        with SuppressCommandOutput(host=cast(Host, self)):
+            return await self._file_transfer.put_files(src_files, dest_dir, show_progress)

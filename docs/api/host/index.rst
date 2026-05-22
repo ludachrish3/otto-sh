@@ -12,6 +12,7 @@ local and remote machines.
    embeddedhost
    localhost
    transfer
+   embedded_transfer
    session
    zephyr
    connections

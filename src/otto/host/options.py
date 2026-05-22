@@ -427,3 +427,36 @@ class NcOptions:
     *its* listener and ours never gets a client — without this it would block
     forever. A transfer whose connection is established stays unaffected; this
     only caps the wait for a client that never arrives."""
+
+
+# ---------------------------------------------------------------------------
+# TFTP
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class TftpOptions:
+    """Connection options for TFTP file transfer to an embedded host.
+
+    **Reserved.** TFTP is the deferred ``tftp`` embedded-transfer backend — a
+    faster alternative to console ``fs`` transfer for targets whose firmware
+    has a TFTP client. The backend itself is not yet implemented
+    (:class:`~otto.host.embedded_transfer.EmbeddedFileTransfer` raises
+    :class:`NotImplementedError` for ``tftp``); this dataclass exists so lab
+    data and the host API can name the option table now, without a later
+    breaking change when the backend lands.
+    """
+
+    port: int = 69
+    """UDP port of the TFTP server."""
+
+    server_ip: str | None = None
+    """IP address otto's TFTP server binds to and the target transfers
+    against. ``None`` auto-detects the local IP, as the netcat path does."""
+
+    block_size: int = 512
+    """TFTP block size (RFC 2348 ``blksize`` option). 512 is the protocol
+    default; larger blocks reduce round-trips on a reliable link."""
+
+    timeout: float = 5.0
+    """Per-block retransmit timeout, in seconds."""
