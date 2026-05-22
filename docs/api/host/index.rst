@@ -7,10 +7,13 @@ local and remote machines.
 .. toctree::
 
    host
+   remotehost
    unixhost
+   embeddedhost
    localhost
    transfer
    session
+   zephyr
    connections
    transport
    repeat

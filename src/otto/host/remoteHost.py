@@ -13,25 +13,217 @@ The split makes the OS family of a host explicit (lab data carries an
 ``osType`` field) and gives embedded targets a place to live alongside Unix
 ones without lying about their shape.
 
-Phase 2 of the embedded-host feature introduces the split with the abstract
-class kept intentionally thin — it only marks the category. As subsequent
-phases land, network identity (``ip``, ``ne``, ``hop``, naming) and the
-``SshHopTransport`` machinery currently in :class:`UnixHost` will be lifted
-up here so :class:`EmbeddedHost` can share them without duplication.
+``RemoteHost`` is intentionally **not** a dataclass. The concrete subclasses
+are ``@dataclass(slots=True)`` and the field-ordering rules of dataclass
+inheritance (no non-default field after a default one) make a shared dataclass
+base awkward. Instead this base owns the *behavior* shared by every remote
+host — host naming and the ``SshHopTransport`` machinery — and declares, as
+bare annotations, the instance attributes those shared methods rely on. Each
+concrete subclass supplies the real ``@dataclass`` fields.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal, Optional
+
+from ..logger import getOttoLogger
 from .host import BaseHost
+
+if TYPE_CHECKING:
+    from asyncssh import SSHClientConnection
+
+logger = getOttoLogger()
+
+OsType = Literal['unix', 'embedded']
+"""OS family of a host.
+
+``unix`` — a POSIX system with a bash shell (:class:`UnixHost`).
+``embedded`` — a bare-metal/RTOS target with a constrained shell
+(:class:`EmbeddedHost`; Zephyr is the first concrete example).
+"""
 
 
 class RemoteHost(BaseHost):
     """Abstract base class for any host reached over a network.
 
     Concrete subclasses (:class:`UnixHost`, :class:`EmbeddedHost`) supply the
-    transport-specific session/transfer machinery. Do not instantiate this
-    class directly.
+    transport-specific session/transfer machinery as ``@dataclass`` fields.
+    Do not instantiate this class directly.
+
+    The bare annotations below are the instance-attribute *contract* every
+    concrete subclass must satisfy. They carry no values, so they create no
+    slots and do not participate in the subclasses' ``@dataclass`` field
+    collection — they exist purely so the shared methods here (and callers
+    holding a ``RemoteHost``-typed reference) type-check.
     """
 
     # Keep slots harmony with the concrete dataclass subclasses, whose
     # ``@dataclass(slots=True)`` would otherwise produce instances that mix
     # ``__slots__`` with the inherited ``__dict__`` from this base.
     __slots__ = ()
+
+    # --- Shared instance-attribute contract ------------------------------
+    ip: str
+    """IP address of the host."""
+
+    ne: str
+    """Network element to which this host belongs."""
+
+    id: str
+    """Unique identifier for this host."""
+
+    name: str
+    """Human-readable name; auto-generated from ``ne``/``board`` if not given."""
+
+    creds: dict[str, str]
+    """Users and their respective passwords for this host."""
+
+    resources: set[str]
+    """Names of resources required to use this host."""
+
+    log: bool
+    """Whether this host logs its output to stdout and log files."""
+
+    user: Optional[str]
+    """User with which to log in, or None to use the first entry in ``creds``."""
+
+    neId: Optional[int]
+    """Network element identifier, or None when no disambiguation is needed."""
+
+    board: Optional[str]
+    """Board type name, or None."""
+
+    slot: Optional[int]
+    """Physical slot number of the board, or None."""
+
+    hop: Optional[str]
+    """Host ID of the intermediate hop used to reach this host, or None."""
+
+    osType: OsType
+    """OS family of this host (``unix`` or ``embedded``)."""
+
+    osName: Optional[str]
+    """Kernel/OS name (e.g. ``Linux``, ``Zephyr``)."""
+
+    osVersion: Optional[str]
+    """OS/kernel version string, or None if unspecified."""
+
+    ####################
+    #  Naming
+    ####################
+
+    def _generateName(self) -> str:
+
+        if not self.board:
+            return f"{self.ne}{self._neIdStr}"
+
+        return f"{self.ne}{self._neIdStr} {self.board}{self._slotStr}"
+
+    def _generateId(self) -> str:
+
+        neStr = f"{self.ne.lower()}{self._neIdStr}"
+
+        if self.board is None:
+            return neStr
+
+        return f"{neStr}_{self.board.lower()}{self._slotStr}"
+
+    @property
+    def _neIdStr(self) -> str:
+
+        if self.neId is None:
+            return ''
+
+        return f"{self.ne}"
+
+    @property
+    def _slotStr(self) -> str:
+
+        if self.slot is None:
+            return ''
+
+        return f"{self.slot}"
+
+    ####################
+    #  Hop transport
+    ####################
+
+    def _build_hop_transport(self):
+        """Build an ``SshHopTransport`` for reaching this host through its hop.
+
+        The transport wraps a factory coroutine that lazily resolves the hop
+        host ID via the config module and opens a dedicated SSH connection to
+        it. Each target host gets its own tunnel connection (not shared with
+        the hop's own connections).
+
+        For multi-hop chains the transport holds a reference to its parent
+        :class:`SshHopTransport`, so ``close()`` cascades down the entire
+        chain — every intermediate SSH connection (and its underlying
+        asyncio transport) gets closed explicitly. Without that linkage,
+        the outermost SSH connection (e.g. carrot in an
+        otto→carrot→tomato→pepper chain) is owned only by asyncssh's
+        tunnel mechanism, never has ``close()`` called on its asyncio
+        transport, and leaves a zombie ``_SelectorSocketTransport`` that
+        fires ``ResourceWarning`` from ``__del__`` after the test's loop
+        closes — which pytest's ``[unraisable]`` plugin then escalates
+        into a flake on the next test.
+
+        Cycle detection prevents infinite loops (e.g. A hops through B, B hops through A).
+        """
+        from ..configmodule import get_host
+        from asyncssh import connect as _ssh_connect
+        from .transport import SshHopTransport
+
+        hop_id = self.hop
+        if hop_id is None:
+            raise ValueError(f"_build_hop_transport called on host {self.name!r} with no hop configured")
+        host_name = self.name
+
+        # The outer SshHopTransport — its ``_parent`` is set lazily on the
+        # first call to ``_create_tunnel`` (when the configmodule is
+        # available and we can resolve the hop chain). Linking ``_parent``
+        # makes ``close()`` walk the chain so every intermediate SSH
+        # connection's asyncio transport gets explicitly closed.
+        # placeholder factory is replaced below; needed to satisfy the
+        # constructor without doing anything that requires the configmodule.
+        async def _placeholder(*args, **kwargs):
+            raise RuntimeError("SshHopTransport factory not initialized")
+        outer = SshHopTransport(_placeholder)
+
+        async def _create_tunnel(
+            _visited: set[str] | None = None,
+        ) -> 'SSHClientConnection':
+            visited = _visited or set()
+            if hop_id in visited:
+                raise ValueError(f"Circular hop detected: {hop_id!r} already in chain {visited}")
+            visited.add(hop_id)
+
+            hop_host = get_host(hop_id)
+
+            parent_tunnel = None
+            if hop_host.hop:
+                # Build the parent SshHopTransport lazily on first use and
+                # cache it on ``outer._parent`` so close() can walk it.
+                # Reusing the cached connection avoids re-tunneling on
+                # subsequent calls and gives close() a single object to
+                # tear down.  ``get_tunnel`` holds the parent's
+                # ``_conn_lock``, which is what prevents concurrent callers
+                # of the outer factory from each opening their own parent
+                # connection and leaking the race losers.
+                if outer._parent is None:
+                    outer._parent = hop_host._build_hop_transport()
+                parent_tunnel = await outer._parent.get_tunnel(_visited=visited)
+
+            user, password = next(iter(hop_host.creds.items())) if hop_host.user is None else (hop_host.user, hop_host.creds[hop_host.user])
+            logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
+            conn = await _ssh_connect(
+                hop_host.ip,
+                username=user,
+                password=password,
+                known_hosts=None,
+                tunnel=parent_tunnel,
+            )
+            return conn
+
+        outer._factory = _create_tunnel
+        return outer

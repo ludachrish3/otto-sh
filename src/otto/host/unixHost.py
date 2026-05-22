@@ -48,16 +48,11 @@ from dataclasses import (
 )
 from pathlib import Path
 from typing import (
-    TYPE_CHECKING,
     Any,
     Optional,
     cast,
 )
 
-if TYPE_CHECKING:
-    from asyncssh import SSHClientConnection
-
-from ..logger import getOttoLogger
 from ..utils import (
     CommandStatus,
     Status,
@@ -73,7 +68,7 @@ from .host import (
     isDryRun,
 )
 from .interact import run_ssh_login, run_telnet_login
-from .remoteHost import RemoteHost
+from .remoteHost import OsType, RemoteHost
 from .telnet import TelnetClient
 from .options import (
     FtpOptions,
@@ -95,8 +90,6 @@ from .transfer import (
     FileTransferType,
 )
 
-logger = getOttoLogger()
-
 
 @dataclass(slots=True)
 class UnixHost(RemoteHost):
@@ -112,6 +105,15 @@ class UnixHost(RemoteHost):
 
     ne: str = field(repr=False)
     """Network element to which this host belongs."""
+
+    osType: OsType = 'unix'
+    """OS family of this host. Always ``unix`` for a :class:`UnixHost`."""
+
+    osName: Optional[str] = 'Linux'
+    """Kernel/OS name. Defaults to ``Linux`` (the concrete Unix kernel today)."""
+
+    osVersion: Optional[str] = None
+    """OS/kernel version string, or None if unspecified."""
 
     name: str = None # type: ignore
     """Human readable name to represent the host. Automatically generated if not provided."""
@@ -296,86 +298,6 @@ class UnixHost(RemoteHost):
             get_local_ip=lambda: self._get_local_ip(),
             exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
         )
-
-    def _build_hop_transport(self):
-        """Build an ``SshHopTransport`` for reaching this host through its hop.
-
-        The transport wraps a factory coroutine that lazily resolves the hop
-        host ID via the config module and opens a dedicated SSH connection to
-        it. Each target host gets its own tunnel connection (not shared with
-        the hop's own connections).
-
-        For multi-hop chains the transport holds a reference to its parent
-        :class:`SshHopTransport`, so ``close()`` cascades down the entire
-        chain — every intermediate SSH connection (and its underlying
-        asyncio transport) gets closed explicitly. Without that linkage,
-        the outermost SSH connection (e.g. carrot in an
-        otto→carrot→tomato→pepper chain) is owned only by asyncssh's
-        tunnel mechanism, never has ``close()`` called on its asyncio
-        transport, and leaves a zombie ``_SelectorSocketTransport`` that
-        fires ``ResourceWarning`` from ``__del__`` after the test's loop
-        closes — which pytest's ``[unraisable]`` plugin then escalates
-        into a flake on the next test.
-
-        Cycle detection prevents infinite loops (e.g. A hops through B, B hops through A).
-        """
-        from ..configmodule import get_host
-        from asyncssh import connect as _ssh_connect
-        from .transport import SshHopTransport
-
-        hop_id = self.hop
-        if hop_id is None:
-            raise ValueError(f"_build_hop_transport called on host {self.name!r} with no hop configured")
-        host_name = self.name
-
-        # The outer SshHopTransport — its ``_parent`` is set lazily on the
-        # first call to ``_create_tunnel`` (when the configmodule is
-        # available and we can resolve the hop chain). Linking ``_parent``
-        # makes ``close()`` walk the chain so every intermediate SSH
-        # connection's asyncio transport gets explicitly closed.
-        # placeholder factory is replaced below; needed to satisfy the
-        # constructor without doing anything that requires the configmodule.
-        async def _placeholder(*args, **kwargs):
-            raise RuntimeError("SshHopTransport factory not initialized")
-        outer = SshHopTransport(_placeholder)
-
-        async def _create_tunnel(
-            _visited: set[str] | None = None,
-        ) -> 'SSHClientConnection':
-            visited = _visited or set()
-            if hop_id in visited:
-                raise ValueError(f"Circular hop detected: {hop_id!r} already in chain {visited}")
-            visited.add(hop_id)
-
-            hop_host = get_host(hop_id)
-
-            parent_tunnel = None
-            if hop_host.hop:
-                # Build the parent SshHopTransport lazily on first use and
-                # cache it on ``outer._parent`` so close() can walk it.
-                # Reusing the cached connection avoids re-tunneling on
-                # subsequent calls and gives close() a single object to
-                # tear down.  ``get_tunnel`` holds the parent's
-                # ``_conn_lock``, which is what prevents concurrent callers
-                # of the outer factory from each opening their own parent
-                # connection and leaking the race losers.
-                if outer._parent is None:
-                    outer._parent = hop_host._build_hop_transport()
-                parent_tunnel = await outer._parent.get_tunnel(_visited=visited)
-
-            user, password = next(iter(hop_host.creds.items())) if hop_host.user is None else (hop_host.user, hop_host.creds[hop_host.user])
-            logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
-            conn = await _ssh_connect(
-                hop_host.ip,
-                username=user,
-                password=password,
-                known_hosts=None,
-                tunnel=parent_tunnel,
-            )
-            return conn
-
-        outer._factory = _create_tunnel
-        return outer
 
     def set_term_type(self,
         term: Any,
@@ -678,39 +600,3 @@ class UnixHost(RemoteHost):
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
-
-    ####################
-    #  Naming
-    ####################
-
-    def _generateName(self):
-
-        if not self.board:
-            return f"{self.ne}{self._neIdStr}"
-
-        return f"{self.ne}{self._neIdStr} {self.board}{self._slotStr}"
-
-    def _generateId(self):
-
-        neStr = f"{self.ne.lower()}{self._neIdStr}"
-
-        if self.board is None:
-            return neStr
-
-        return f"{neStr}_{self.board.lower()}{self._slotStr}"
-
-    @property
-    def _neIdStr(self):
-
-        if self.neId is None:
-            return ''
-
-        return f"{self.ne}"
-
-    @property
-    def _slotStr(self):
-
-        if self.slot is None:
-            return ''
-
-        return f"{self.slot}"

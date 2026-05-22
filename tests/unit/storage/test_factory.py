@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.host.embeddedHost import EmbeddedHost
 from otto.host.unixHost import UnixHost
 from otto.host.toolchain import Toolchain
 from otto.storage.factory import (
@@ -297,3 +298,122 @@ class TestRepoLevelOptionDefaults:
         after = create_host_from_dict(self._base_host(), defaults={})
         assert before.ssh_options == after.ssh_options
         assert before.telnet_options == after.telnet_options
+
+
+class TestOsTypeDispatch:
+    """Tests for ``osType``-based dispatch in ``create_host_from_dict``."""
+
+    def test_absent_ostype_defaults_to_unix(self):
+        """A host dict without ``osType`` builds a UnixHost (backward compatible)."""
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+        })
+        assert isinstance(host, UnixHost)
+        assert host.osType == 'unix'
+
+    def test_explicit_unix_ostype(self):
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'osType': 'unix',
+        })
+        assert isinstance(host, UnixHost)
+
+    def test_embedded_ostype_builds_embedded_host(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.osType == 'embedded'
+        assert host.ip == '192.0.2.1'
+        assert host.ne == 'sprout'
+
+    def test_embedded_creds_are_optional(self):
+        """An embedded host needs no ``creds`` — the RTOS shell has no login."""
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+        assert host.creds == {}
+
+    def test_embedded_osname_and_version(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'osName': 'Zephyr', 'osVersion': '3.7.0',
+        })
+        assert host.osName == 'Zephyr'
+        assert host.osVersion == '3.7.0'
+
+    def test_embedded_resources_converted_to_set(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'resources': ['sprout', 'mote'],
+        })
+        assert host.resources == {'sprout', 'mote'}
+
+    def test_embedded_hop_is_honored(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'hop': 'basil_seed',
+        })
+        assert host.hop == 'basil_seed'
+
+    def test_embedded_telnet_options_deserialized(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'telnet_options': {'port': 2323},
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.telnet_options.port == 2323
+
+    def test_unknown_ostype_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            create_host_from_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'windows',
+            })
+        assert 'osType' in str(exc_info.value)
+        assert 'windows' in str(exc_info.value)
+
+    def test_embedded_docker_capable_rejected(self):
+        """A bare-metal target cannot run Docker — reject the flag outright."""
+        with pytest.raises(ValueError) as exc_info:
+            create_host_from_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'docker_capable': True,
+            })
+        assert 'docker_capable' in str(exc_info.value)
+
+
+class TestValidateOsType:
+    """Tests for ``osType`` handling in ``validate_host_dict``."""
+
+    def test_validate_embedded_minimal(self):
+        """Embedded host needs only ip + ne (no creds)."""
+        validate_host_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+
+    def test_validate_embedded_missing_ne(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({'ip': '192.0.2.1', 'osType': 'embedded'})
+        assert 'ne' in str(exc_info.value)
+
+    def test_validate_unix_still_requires_creds(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '10.10.200.11', 'ne': 'orange', 'osType': 'unix',
+            })
+        assert 'creds' in str(exc_info.value)
+
+    def test_validate_invalid_ostype_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'windows',
+            })
+        assert 'osType' in str(exc_info.value)
+
+    def test_validate_embedded_docker_capable_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'docker_capable': True,
+            })
+        assert 'docker_capable' in str(exc_info.value)

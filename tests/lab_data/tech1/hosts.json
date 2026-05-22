@@ -2,6 +2,7 @@
     {
         "ip": "10.10.200.11",
         "ne": "carrot",
+        "osType": "unix",
         "board": "seed",
         "term": "ssh",
         "transfer": "scp",
@@ -20,6 +21,7 @@
     {
         "ip": "10.10.200.12",
         "ne": "tomato",
+        "osType": "unix",
         "board": "seed",
         "term": "telnet",
         "transfer": "nc",
@@ -38,6 +40,7 @@
     {
         "ip": "10.10.200.13",
         "ne": "pepper",
+        "osType": "unix",
         "board": "seed",
         "term": "ssh",
         "transfer": "scp",
@@ -58,6 +61,7 @@
     {
         "ip": "10.10.200.14",
         "ne": "basil",
+        "osType": "unix",
         "board": "seed",
         "term": "ssh",
         "transfer": "scp",
@@ -68,6 +72,20 @@
         },
         "resources": [
             "basil"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.1",
+        "ne": "sprout",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "is_virtual": true,
+        "hop": "basil_seed",
+        "resources": [
+            "sprout"
         ],
         "labs": [
             "embedded"

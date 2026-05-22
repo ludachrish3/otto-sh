@@ -12,6 +12,8 @@ from ..host.options import (
     SshOptions,
     TelnetOptions,
 )
+from ..host.embeddedHost import EmbeddedHost
+from ..host.remoteHost import RemoteHost
 from ..host.unixHost import UnixHost
 from ..host.toolchain import Toolchain
 
@@ -91,52 +93,59 @@ repo-level ``[host_defaults.<key>]`` tables."""
 def create_host_from_dict(
     host_data: dict[str, Any],
     defaults: dict[str, dict[str, Any]] | None = None,
-) -> UnixHost:
+) -> RemoteHost:
     """
-    Create appropriate Host subclass from dictionary.
+    Create the appropriate :class:`RemoteHost` subclass from a host dict.
+
+    Dispatches on the ``osType`` field:
+
+    - ``unix`` (the default when ``osType`` is absent) → :class:`UnixHost`
+    - ``embedded`` → :class:`EmbeddedHost`
 
     Parameters
     ----------
     host_data : dict[str, Any]
-        Dictionary containing host configuration with keys:
-        - ip (required): str
-        - creds (required): dict[str, str]
-        - ne (required): str
-        - user (optional): str
-        - board (optional): str
-        - slot (optional): int
-        - neId (optional): int
-        - resources (optional): list[str] or set[str]
-        - hop (optional): str (host ID of an intermediate hop)
-        - docker_capable (optional): bool (host can run docker containers)
-        - log (optional): bool
-        - log_stdout (optional): bool
-        - name (optional): str
-        - toolchain (optional): dict with sysroot, lcov, gcov paths
-        - ssh_options (optional): dict mapped onto ``SshOptions`` fields
-        - telnet_options (optional): dict mapped onto ``TelnetOptions`` fields
-        - sftp_options (optional): dict mapped onto ``SftpOptions`` fields
-        - scp_options (optional): dict mapped onto ``ScpOptions`` fields
-        - ftp_options (optional): dict mapped onto ``FtpOptions`` fields
-        - nc_options (optional): dict mapped onto ``NcOptions`` fields
+        Dictionary containing host configuration. The accepted keys depend on
+        ``osType``; see :func:`validate_host_dict` for the required set. Common
+        keys: ``ip``, ``ne``, ``creds``, ``user``, ``board``, ``slot``,
+        ``neId``, ``resources``, ``hop``, ``log``, ``log_stdout``, ``name``,
+        ``osType``, ``osName``, ``osVersion``. Unix hosts additionally accept
+        ``docker_capable``, ``toolchain``, and the ``*_options`` tables;
+        embedded hosts accept ``telnet_options`` only.
     defaults : dict[str, dict[str, Any]] | None
         Optional repo-level option defaults, keyed by ``*_options`` table
         name. When supplied, each table is merged per-key beneath the
         host's own ``*_options`` (host keys win). ``None`` (the default)
-        reproduces today's behavior bit-for-bit.
+        applies no defaults.
 
     Returns
     -------
-    Host
-        UnixHost using dict of host options
+    RemoteHost
+        A :class:`UnixHost` or :class:`EmbeddedHost`, selected by ``osType``.
 
     Raises
     ------
     ValueError
-        If required fields are missing or invalid
+        If ``osType`` is present but is neither ``unix`` nor ``embedded``, or
+        if an embedded host declares ``docker_capable``.
     TypeError
-        If field types are incorrect
+        If required fields are missing or field types are incorrect.
     """
+    os_type = host_data.get('osType', 'unix')
+    if os_type == 'unix':
+        return _create_unix_host(host_data, defaults)
+    if os_type == 'embedded':
+        return _create_embedded_host(host_data, defaults)
+    raise ValueError(
+        f"Unknown osType {os_type!r}; expected 'unix' or 'embedded'"
+    )
+
+
+def _create_unix_host(
+    host_data: dict[str, Any],
+    defaults: dict[str, dict[str, Any]] | None = None,
+) -> UnixHost:
+    """Build a :class:`UnixHost` (SSH/Telnet, bash shell) from a host dict."""
 
     # Only keep fields that are relevant to UnixHost init
     kwargs = { k: v for k, v in host_data.items() if k in UnixHost.__slots__ }
@@ -159,13 +168,54 @@ def create_host_from_dict(
         if default_table or host_table:
             kwargs[opt_key] = builder({**default_table, **host_table})
 
-    # Determine which Host subclass to instantiate
     return UnixHost(**kwargs)
+
+
+def _create_embedded_host(
+    host_data: dict[str, Any],
+    defaults: dict[str, dict[str, Any]] | None = None,
+) -> EmbeddedHost:
+    """Build an :class:`EmbeddedHost` (telnet RTOS shell) from a host dict.
+
+    Embedded hosts speak telnet only, so ``telnet_options`` is the single
+    per-protocol option table honored. A bare-metal/RTOS target cannot run
+    Docker containers — a ``docker_capable: true`` entry is rejected outright.
+    """
+    if host_data.get('docker_capable'):
+        raise ValueError(
+            f"docker_capable is not supported on embedded hosts "
+            f"(host {host_data.get('ne', '?')!r}) — a bare-metal/RTOS "
+            f"target cannot run Docker containers"
+        )
+
+    # Only keep fields that are relevant to EmbeddedHost init
+    kwargs = { k: v for k, v in host_data.items() if k in EmbeddedHost.__slots__ }
+
+    # Ensure resources is a set
+    resources = kwargs.get('resources', [])
+    kwargs['resources'] = set(resources)
+
+    # telnet_options is the only per-protocol option table an embedded host
+    # uses; merge repo-level defaults beneath the host's own values per-key.
+    defaults = defaults or {}
+    raw_host = kwargs.get('telnet_options')
+    host_table: dict[str, Any] = raw_host if isinstance(raw_host, dict) else {}
+    default_table: dict[str, Any] = defaults.get('telnet_options', {})
+    if default_table or host_table:
+        kwargs['telnet_options'] = _build_telnet_options({**default_table, **host_table})
+
+    return EmbeddedHost(**kwargs)
 
 
 def validate_host_dict(host_data: dict[str, Any]) -> None:
     """
     Validate host dictionary structure without creating a Host object.
+
+    The required-field set depends on ``osType``:
+
+    - ``unix`` (the default when ``osType`` is absent): ``ip``, ``creds``, ``ne``
+    - ``embedded``: ``ip``, ``ne`` — ``creds`` is optional, since the RTOS
+      telnet shell typically has no login step
 
     Parameters
     ----------
@@ -175,9 +225,16 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     Raises
     ------
     ValueError
-        If validation fails
+        If ``osType`` is invalid, a required field is missing, a field has the
+        wrong type, or an embedded host declares ``docker_capable``.
     """
-    required_fields = ['ip', 'creds', 'ne']
+    os_type = host_data.get('osType', 'unix')
+    if os_type not in ('unix', 'embedded'):
+        raise ValueError(
+            f"Field 'osType' must be 'unix' or 'embedded', got {os_type!r}"
+        )
+
+    required_fields = ['ip', 'ne'] if os_type == 'embedded' else ['ip', 'creds', 'ne']
     missing = [f for f in required_fields if f not in host_data]
     if missing:
         raise ValueError(f"Missing required host fields: {missing}")
@@ -185,7 +242,13 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     # Type validation
     if not isinstance(host_data['ip'], str):
         raise ValueError(f"Field 'ip' must be str, got {type(host_data['ip']).__name__}")
-    if not isinstance(host_data['creds'], dict):
-        raise ValueError(f"Field 'creds' must be dict, got {type(host_data['creds']).__name__}")
     if not isinstance(host_data['ne'], str):
         raise ValueError(f"Field 'ne' must be str, got {type(host_data['ne']).__name__}")
+    if 'creds' in host_data and not isinstance(host_data['creds'], dict):
+        raise ValueError(f"Field 'creds' must be dict, got {type(host_data['creds']).__name__}")
+
+    if os_type == 'embedded' and host_data.get('docker_capable'):
+        raise ValueError(
+            f"docker_capable is not supported on embedded hosts "
+            f"(host {host_data['ne']!r})"
+        )
