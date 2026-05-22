@@ -64,7 +64,7 @@ class LocalHost(BaseHost):
         """Execute a command via the persistent local shell session.
 
         Shell state (working directory, environment variables) persists between
-        calls, matching RemoteHost behavior.
+        calls, matching UnixHost behavior.
         """
         if isDryRun():
             return self._dry_run_result(cmd)

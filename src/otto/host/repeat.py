@@ -1,5 +1,5 @@
 """
-Periodic background task runner for RemoteHost.
+Periodic background task runner for UnixHost.
 
 RepeatRunner owns the repeat-task lifecycle: starting named periodic coroutines,
 storing their results in a bounded deque, and cancelling them cleanly.

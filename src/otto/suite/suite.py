@@ -11,7 +11,7 @@ import pytest
 from otto.logger.logger import OttoLogger
 
 if TYPE_CHECKING:
-    from otto.host.remoteHost import RemoteHost
+    from otto.host.unixHost import UnixHost
     from otto.monitor.collector import MetricCollector, MonitorTarget
     from otto.monitor.events import MonitorEvent
     from otto.monitor.parsers import MetricParser
@@ -321,7 +321,7 @@ class OttoSuite(Generic[TOptions]):
 
     async def startMonitor(
         self,
-        hosts: 'list[RemoteHost] | None' = None,
+        hosts: 'list[UnixHost] | None' = None,
         interval: 'timedelta | float' = timedelta(seconds=5),
         parsers: 'list[MetricParser] | None' = None,
         port: int = 0,
@@ -340,7 +340,7 @@ class OttoSuite(Generic[TOptions]):
         Series keys in results are ``"hostname/metric_label"``.
 
         Args:
-            hosts: The RemoteHosts to monitor. Ignored when *targets* is provided.
+            hosts: The UnixHosts to monitor. Ignored when *targets* is provided.
             interval: How often to poll the hosts. timedelta or float (seconds).
             parsers: Custom metric parsers applied to all hosts. Ignored when *targets* is provided.
             port: TCP port for the dashboard web server (0 = auto-assign).

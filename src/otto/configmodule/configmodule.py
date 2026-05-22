@@ -18,7 +18,7 @@ from .lab import Lab
 from .repo import Repo
 
 if TYPE_CHECKING:
-    from ..host import RemoteHost, RunResult
+    from ..host import UnixHost, RunResult
     from ..host.options import (
         FtpOptions,
         NcOptions,
@@ -127,7 +127,7 @@ def setConfigModule(
     _manager.configModule = configModule
 
 def _apply_option_overrides(
-    host: 'RemoteHost',
+    host: 'UnixHost',
     *,
     ssh_options: 'SshOptions | None' = None,
     telnet_options: 'TelnetOptions | None' = None,
@@ -135,7 +135,7 @@ def _apply_option_overrides(
     scp_options: 'ScpOptions | None' = None,
     ftp_options: 'FtpOptions | None' = None,
     nc_options: 'NcOptions | None' = None,
-) -> 'RemoteHost':
+) -> 'UnixHost':
     """Return a copy of *host* with the given ``*_options`` fields replaced.
 
     Each non-``None`` argument **replaces** the corresponding field on the
@@ -143,7 +143,7 @@ def _apply_option_overrides(
     the full options instance they want.
 
     The copy is built via :func:`dataclasses.replace`, which re-runs
-    :meth:`RemoteHost.__post_init__` and therefore constructs a *fresh*
+    :meth:`UnixHost.__post_init__` and therefore constructs a *fresh*
     :class:`ConnectionManager` with the override options wired in from
     the start. This is required because protocol options shape the
     connection itself (key algorithms, hop wiring, etc.) and cannot be
@@ -174,7 +174,7 @@ def _apply_option_overrides(
 
 def getHost(
     name: str,
-) -> 'RemoteHost':
+) -> 'UnixHost':
 
     configModule = getConfigModule()
     hosts = configModule.lab.hosts
@@ -192,11 +192,11 @@ def all_hosts(
     scp_options: 'ScpOptions | None' = None,
     ftp_options: 'FtpOptions | None' = None,
     nc_options: 'NcOptions | None' = None,
-) -> Generator['RemoteHost', Any, Any]:
+) -> Generator['UnixHost', Any, Any]:
     """Yield the active lab's real remote hosts, optionally filtered by regex.
 
     This is the *fleet* generator: by default it yields only real
-    :class:`RemoteHost` instances and skips :class:`DockerContainerHost`
+    :class:`UnixHost` instances and skips :class:`DockerContainerHost`
     entries, since containers aren't operated on as part of the host
     fleet (e.g. ``otto monitor``, coverage collection). Containers remain
     reachable for targeted use via tab completion and ``get_host`` —
@@ -223,7 +223,7 @@ def all_hosts(
             resolution is internal and is *not* affected by overrides.
 
     Yields:
-        RemoteHost: Each matching host from the lab configuration.
+        UnixHost: Each matching host from the lab configuration.
 
     Examples:
         >>> import re
@@ -265,7 +265,7 @@ async def do_for_all_hosts(
     """Call an async host method on every matching host.
 
     Args:
-        method: Unbound async method (e.g. ``RemoteHost.oneshot``).
+        method: Unbound async method (e.g. ``UnixHost.oneshot``).
         *args: Positional arguments forwarded to *method* after the host.
         pattern: Compiled regex filter passed to :func:`all_hosts`.
         concurrent: When ``True`` (default), run all calls via
@@ -285,9 +285,9 @@ async def do_for_all_hosts(
 
     Examples:
         >>> import re
-        >>> from otto.host import RemoteHost
+        >>> from otto.host import UnixHost
         >>> results = await do_for_all_hosts(  # doctest: +SKIP
-        ...     RemoteHost.oneshot, "uname -a",
+        ...     UnixHost.oneshot, "uname -a",
         ...     pattern=re.compile(r"router"),
         ... )
     """
@@ -332,7 +332,7 @@ async def run_on_all_hosts(
     ftp_options: 'FtpOptions | None' = None,
     nc_options: 'NcOptions | None' = None,
 ) -> 'dict[str, RunResult | BaseException]':
-    """Run commands on every matching host via :meth:`RemoteHost.run`.
+    """Run commands on every matching host via :meth:`UnixHost.run`.
 
     Convenience wrapper around :func:`do_for_all_hosts` for the most
     common use case.
@@ -356,12 +356,12 @@ async def run_on_all_hosts(
     Examples:
         >>> results = await run_on_all_hosts("uname -a")  # doctest: +SKIP
     """
-    from ..host import RemoteHost
+    from ..host import UnixHost
 
     cmd_list: list[str] = [cmds] if isinstance(cmds, str) else cmds
 
     async def _run_list(
-        host: 'RemoteHost',
+        host: 'UnixHost',
     ) -> 'RunResult':
         return await host.run(cmd_list, timeout=timeout)
 
@@ -388,11 +388,11 @@ def get_host(
     scp_options: 'ScpOptions | None' = None,
     ftp_options: 'FtpOptions | None' = None,
     nc_options: 'NcOptions | None' = None,
-) -> 'RemoteHost':
+) -> 'UnixHost':
     """Return the host registered under *host_id* in the active lab.
 
     Args:
-        host_id: Unique host id (as produced by ``RemoteHost.id``).
+        host_id: Unique host id (as produced by ``UnixHost.id``).
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides.
             Each non-``None`` argument **replaces** the corresponding

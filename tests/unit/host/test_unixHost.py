@@ -1,5 +1,5 @@
 """
-Tests for RemoteHost.
+Tests for UnixHost.
 
 Integration tests require the Vagrant VMs to be running:
     vagrant up test1 test2
@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncssh
 import pytest
 
-from otto.host import HostSession, RemoteHost
+from otto.host import HostSession, UnixHost
 from otto.host.session import ShellSession
 from otto.utils import CommandStatus, Status
 from tests.unit.conftest import host_data, make_host
@@ -27,9 +27,9 @@ from tests.unit.host._transfer_retry import transfer_with_retry
 
 
 @pytest.fixture
-def host() -> RemoteHost:
-    """Bare RemoteHost, no connections established."""
-    return RemoteHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+def host() -> UnixHost:
+    """Bare UnixHost, no connections established."""
+    return UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +38,7 @@ def host() -> RemoteHost:
 
 class TestInit:
 
-    def test_default_values(self, host: RemoteHost):
+    def test_default_values(self, host: UnixHost):
         assert host.ip == '10.0.0.1'
         assert host.ne == 'box'
         assert host.creds == {'user': 'pass'}
@@ -64,37 +64,37 @@ class TestIdAndNameGeneration:
 
     @pytest.mark.asyncio
     async def test_id_no_board(self):
-        h = RemoteHost(ip='10.0.0.1', ne='Orange', creds={'u': 'p'}, log=False)
+        h = UnixHost(ip='10.0.0.1', ne='Orange', creds={'u': 'p'}, log=False)
         assert h.id == 'orange'
         await h.close()
 
     @pytest.mark.asyncio
     async def test_id_with_board(self):
-        h = RemoteHost(ip='10.0.0.1', ne='Orange', board='Seed', creds={'u': 'p'}, log=False)
+        h = UnixHost(ip='10.0.0.1', ne='Orange', board='Seed', creds={'u': 'p'}, log=False)
         assert h.id == 'orange_seed'
         await h.close()
 
     @pytest.mark.asyncio
     async def test_id_with_board_and_slot(self):
-        h = RemoteHost(ip='10.0.0.1', ne='Orange', board='Seed', slot=0, creds={'u': 'p'}, log=False)
+        h = UnixHost(ip='10.0.0.1', ne='Orange', board='Seed', slot=0, creds={'u': 'p'}, log=False)
         assert h.id == 'orange_seed0'
         await h.close()
 
     @pytest.mark.asyncio
     async def test_name_no_board(self):
-        h = RemoteHost(ip='10.0.0.1', ne='orange', creds={'u': 'p'}, log=False)
+        h = UnixHost(ip='10.0.0.1', ne='orange', creds={'u': 'p'}, log=False)
         assert h.name == 'orange'
         await h.close()
 
     @pytest.mark.asyncio
     async def test_name_with_board(self):
-        h = RemoteHost(ip='10.0.0.1', ne='orange', board='seed', creds={'u': 'p'}, log=False)
+        h = UnixHost(ip='10.0.0.1', ne='orange', board='seed', creds={'u': 'p'}, log=False)
         assert h.name == 'orange seed'
         await h.close()
 
     @pytest.mark.asyncio
     async def test_name_override(self):
-        h = RemoteHost(ip='10.0.0.1', ne='orange', creds={'u': 'p'}, name='custom', log=False)
+        h = UnixHost(ip='10.0.0.1', ne='orange', creds={'u': 'p'}, name='custom', log=False)
         assert h.name == 'custom'
         await h.close()
 
@@ -105,14 +105,14 @@ class TestIdAndNameGeneration:
 
 class TestCreds:
 
-    def test_returns_first_pair(self, host: RemoteHost):
+    def test_returns_first_pair(self, host: UnixHost):
         user, password = host._creds
         assert user == 'user'
         assert password == 'pass'
 
     @pytest.mark.asyncio
     async def test_returns_first_pair_from_multiple_creds(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box',
+        h = UnixHost(ip='10.0.0.1', ne='box',
                        creds={'vagrant': 'vagrant', 'test': 'Password1'},
                        log=False)
         user, password = h._creds
@@ -129,12 +129,12 @@ class TestClose:
 
     @pytest.mark.asyncio
     async def test_close_when_not_connected_is_safe(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
         await h.close()
 
     @pytest.mark.asyncio
     async def test_close_disconnects_ssh(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
         mock_conn = MagicMock()
         mock_conn.wait_closed = AsyncMock()
         h._connections._ssh_conn = mock_conn
@@ -160,7 +160,7 @@ class TestClose:
             def __del__(self):
                 collected.append(True)
 
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
 
         # Disable automatic generational gc *before* building the cycle, so
         # only an explicit gc.collect() — not incidental allocation pressure —
@@ -188,7 +188,7 @@ class TestClose:
 class TestRunList:
 
     @pytest.mark.asyncio
-    async def test_single_element_list(self, host: RemoteHost):
+    async def test_single_element_list(self, host: UnixHost):
         ok = CommandStatus('echo hi', 'hi', Status.Success, 0)
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok):
             result = await host.run(['echo hi'])
@@ -197,7 +197,7 @@ class TestRunList:
         assert result.status == Status.Success
 
     @pytest.mark.asyncio
-    async def test_accepts_list_of_commands(self, host: RemoteHost):
+    async def test_accepts_list_of_commands(self, host: UnixHost):
         r1 = CommandStatus('ls', '', Status.Success, 0)
         r2 = CommandStatus('pwd', '/home', Status.Success, 0)
         with patch.object(host, '_run_one', new_callable=AsyncMock, side_effect=[r1, r2]):
@@ -205,7 +205,7 @@ class TestRunList:
         assert len(result.statuses) == 2
 
     @pytest.mark.asyncio
-    async def test_overall_success_when_all_pass(self, host: RemoteHost):
+    async def test_overall_success_when_all_pass(self, host: UnixHost):
         r1 = CommandStatus('ls', '', Status.Success, 0)
         r2 = CommandStatus('pwd', '', Status.Success, 0)
         with patch.object(host, '_run_one', new_callable=AsyncMock, side_effect=[r1, r2]):
@@ -213,7 +213,7 @@ class TestRunList:
         assert result.status == Status.Success
 
     @pytest.mark.asyncio
-    async def test_overall_failed_when_any_fails(self, host: RemoteHost):
+    async def test_overall_failed_when_any_fails(self, host: UnixHost):
         r1 = CommandStatus('ls', '', Status.Success, 0)
         r2 = CommandStatus('badcmd', '', Status.Failed, 127)
         with patch.object(host, '_run_one', new_callable=AsyncMock, side_effect=[r1, r2]):
@@ -236,7 +236,7 @@ class TestCommandExecution:
         return session
 
     @pytest.mark.asyncio
-    async def test_success(self, host: RemoteHost):
+    async def test_success(self, host: UnixHost):
         ok = CommandStatus('echo hello', 'hello', Status.Success, 0)
         host._session_mgr._session = self._mock_session(ok)
         result = (await host.run('echo hello')).only
@@ -245,7 +245,7 @@ class TestCommandExecution:
         assert result.output == 'hello'
 
     @pytest.mark.asyncio
-    async def test_failure(self, host: RemoteHost):
+    async def test_failure(self, host: UnixHost):
         fail = CommandStatus('badcmd', 'command not found', Status.Failed, 127)
         host._session_mgr._session = self._mock_session(fail)
         result = (await host.run('badcmd')).only
@@ -253,21 +253,21 @@ class TestCommandExecution:
         assert result.retcode == 127
 
     @pytest.mark.asyncio
-    async def test_connection_failure_propagates(self, host: RemoteHost):
+    async def test_connection_failure_propagates(self, host: UnixHost):
         with patch.object(host._connections, 'ssh', new_callable=AsyncMock,
                           side_effect=ConnectionError("refused")):
             with pytest.raises(ConnectionError):
                 await host.run('echo hi')
 
     @pytest.mark.asyncio
-    async def test_command_recorded(self, host: RemoteHost):
+    async def test_command_recorded(self, host: UnixHost):
         ok = CommandStatus('echo out', 'out', Status.Success, 0)
         host._session_mgr._session = self._mock_session(ok)
         result = (await host.run('echo out')).only
         assert result.command == 'echo out'
 
     @pytest.mark.asyncio
-    async def test_expects_forwarded_to_session(self, host: RemoteHost):
+    async def test_expects_forwarded_to_session(self, host: UnixHost):
         ok = CommandStatus('sudo ls', '', Status.Success, 0)
         host._session_mgr._session = self._mock_session(ok)
         expects = [(r"Password:", "secret\n")]
@@ -277,7 +277,7 @@ class TestCommandExecution:
         )
 
     @pytest.mark.asyncio
-    async def test_timeout_forwarded_to_session(self, host: RemoteHost):
+    async def test_timeout_forwarded_to_session(self, host: UnixHost):
         ok = CommandStatus('sleep 1', '', Status.Success, 0)
         host._session_mgr._session = self._mock_session(ok)
         await host.run('sleep 1', timeout=30.0)
@@ -287,7 +287,7 @@ class TestCommandExecution:
 
     @pytest.mark.asyncio
     async def test_telnet_connection_failure_propagates(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        term='telnet', log=False)
         with patch.object(h._connections, 'telnet', new_callable=AsyncMock,
                           side_effect=ConnectionError("refused")):
@@ -332,7 +332,7 @@ class TestOneshot:
         return process
 
     @pytest.mark.asyncio
-    async def test_oneshot_ssh_success(self, host: RemoteHost):
+    async def test_oneshot_ssh_success(self, host: UnixHost):
         process = self._mock_ssh_process(['hello\n'])
         host._connections._ssh_conn = self._mock_ssh_conn()
         host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
@@ -344,7 +344,7 @@ class TestOneshot:
         assert result.output == 'hello'
 
     @pytest.mark.asyncio
-    async def test_oneshot_ssh_nonzero_exit(self, host: RemoteHost):
+    async def test_oneshot_ssh_nonzero_exit(self, host: UnixHost):
         process = self._mock_ssh_process(['not found\n'], exit_status=1)
         host._connections._ssh_conn = self._mock_ssh_conn()
         host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
@@ -356,7 +356,7 @@ class TestOneshot:
 
     @pytest.mark.asyncio
     async def test_oneshot_telnet_success(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        term='telnet', log=False)
         expected = CommandStatus('echo hello', 'hello', Status.Success, 0)
 
@@ -398,7 +398,7 @@ class TestOneshot:
         caller side then times out with "Remote nc listener on <ip>:<port>
         not ready".
         """
-        h = RemoteHost(ip='10.0.0.1', ne='tomato_seed', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='tomato_seed', creds={'u': 'p'},
                        term='telnet', log=False)
 
         listener_running = asyncio.Event()
@@ -458,7 +458,7 @@ class TestOneshot:
         await h.close()
 
     @pytest.mark.asyncio
-    async def test_oneshot_timeout_forwarded(self, host: RemoteHost):
+    async def test_oneshot_timeout_forwarded(self, host: UnixHost):
         process = self._mock_ssh_process([])
         host._connections._ssh_conn = self._mock_ssh_conn()
         host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
@@ -475,14 +475,14 @@ class TestOneshot:
 class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
-    async def test_scp_get_raises(self, host: RemoteHost):
+    async def test_scp_get_raises(self, host: UnixHost):
         with patch.object(host._connections, 'ssh', new_callable=AsyncMock,
                           side_effect=RuntimeError("not connected")):
             with pytest.raises(RuntimeError, match="not connected"):
                 await host.get([Path('/remote/file.txt')], Path('/tmp'))
 
     @pytest.mark.asyncio
-    async def test_scp_put_raises(self, host: RemoteHost):
+    async def test_scp_put_raises(self, host: UnixHost):
         with patch.object(host._connections, 'ssh', new_callable=AsyncMock,
                           side_effect=RuntimeError("not connected")):
             with pytest.raises(RuntimeError, match="not connected"):
@@ -490,7 +490,7 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_sftp_get_raises(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='sftp', log=False)
         with patch.object(h._connections, 'ssh', new_callable=AsyncMock,
                           side_effect=RuntimeError("not connected")):
@@ -500,7 +500,7 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_sftp_put_raises(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='sftp', log=False)
         with patch.object(h._connections, 'ssh', new_callable=AsyncMock,
                           side_effect=RuntimeError("not connected")):
@@ -510,7 +510,7 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_ftp_get_raises(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='ftp', log=False)
         with patch.object(h._connections, 'ftp', new_callable=AsyncMock,
                           side_effect=RuntimeError("not connected")):
@@ -520,7 +520,7 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_ftp_put_raises(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='ftp', log=False)
         with patch.object(h._connections, 'ftp', new_callable=AsyncMock,
                           side_effect=RuntimeError("not connected")):
@@ -530,7 +530,7 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_get_raises(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='nc', log=False)
         # The file-size stat succeeds; the nc send oneshot fails (not
         # connected) — get must surface that as an error, not raise.
@@ -558,7 +558,7 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_put_raises(self, tmp_path: Path):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='nc', log=False)
         src = tmp_path / 'file.txt'
         src.write_bytes(b'data')
@@ -583,7 +583,7 @@ class TestSshFileTransfer:
         return conn
 
     @pytest.mark.asyncio
-    async def test_scp_get_success(self, host: RemoteHost):
+    async def test_scp_get_success(self, host: UnixHost):
         host._connections._ssh_conn = self._mock_ssh_conn()
         with patch('otto.host.transfer.asyncssh.scp', new_callable=AsyncMock) as mock_scp:
             status, msg = await host.get([Path('/etc/hostname')], Path('/tmp'), show_progress=False)
@@ -592,7 +592,7 @@ class TestSshFileTransfer:
         mock_scp.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_scp_put_success(self, host: RemoteHost, tmp_path: Path):
+    async def test_scp_put_success(self, host: UnixHost, tmp_path: Path):
         src = tmp_path / 'upload.txt'
         src.write_text('hello')
         host._connections._ssh_conn = self._mock_ssh_conn()
@@ -603,7 +603,7 @@ class TestSshFileTransfer:
 
     @pytest.mark.asyncio
     async def test_sftp_get_success(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='sftp', log=False)
         mock_sftp = MagicMock()
         mock_sftp.get = AsyncMock()
@@ -616,7 +616,7 @@ class TestSshFileTransfer:
 
     @pytest.mark.asyncio
     async def test_sftp_put_success(self, tmp_path: Path):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='sftp', log=False)
         src = tmp_path / 'upload.txt'
         src.write_text('hello')
@@ -631,7 +631,7 @@ class TestSshFileTransfer:
 
     @pytest.mark.asyncio
     async def test_ftp_get_success(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='ftp', log=False)
         mock_ftp = MagicMock()
         mock_ftp.download = AsyncMock()
@@ -645,7 +645,7 @@ class TestSshFileTransfer:
 
     @pytest.mark.asyncio
     async def test_ftp_put_success(self, tmp_path: Path):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='ftp', log=False)
         src = tmp_path / 'upload.txt'
         src.write_text('hello')
@@ -667,7 +667,7 @@ class TestNcFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_get_success(self, tmp_path: Path):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='nc', log=False)
 
         send_cs = CommandStatus('nc ...', '', Status.Success, 0)
@@ -721,7 +721,7 @@ class TestNcFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_put_success(self, tmp_path: Path):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='nc', log=False)
 
         src = tmp_path / 'upload.txt'
@@ -768,7 +768,7 @@ class TestNcFileTransfer:
         """During put, host.log must be False so per-host records are
         dropped by HostFilter; it must be restored to its prior value after
         the transfer completes."""
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='nc', log=True)
 
         src = tmp_path / 'upload.txt'
@@ -813,7 +813,7 @@ class TestNcFileTransfer:
     async def test_nc_get_suppresses_host_logging_during_transfer(self, tmp_path: Path):
         """Symmetric check for get — the file-size stat and the send oneshot
         must both run with host.log == False."""
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'},
                        transfer='nc', log=True)
 
         send_cs = CommandStatus('nc ...', '', Status.Success, 0)
@@ -872,14 +872,14 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_connect_and_run_echo(self, host1: RemoteHost):
+    async def test_connect_and_run_echo(self, host1: UnixHost):
         result = (await host1.run('echo hello')).only
         assert result.status == Status.Success
         assert 'hello' in result.output
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_multiple_commands_run_in_order(self, host1: RemoteHost):
+    async def test_multiple_commands_run_in_order(self, host1: UnixHost):
         result = await host1.run(['echo first', 'echo second'])
         assert result.status == Status.Success
         assert len(result.statuses) == 2
@@ -888,14 +888,14 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_uname_returns_linux(self, host1: RemoteHost):
+    async def test_uname_returns_linux(self, host1: UnixHost):
         result = (await host1.run('uname -s')).only
         assert result.status == Status.Success
         assert 'Linux' in result.output
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_both_hosts_reachable(self, host1: RemoteHost):
+    async def test_both_hosts_reachable(self, host1: UnixHost):
         kwargs: dict[str, str] = {"term": host1.term}
         if host1.term == "telnet":
             kwargs["transfer"] = "ftp"
@@ -910,7 +910,7 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_multiline_output(self, host1: RemoteHost):
+    async def test_multiline_output(self, host1: UnixHost):
         result = (await host1.run("echo -e 'line1\\nline2\\nline3'")).only
         assert result.status == Status.Success
         lines = result.output.strip().splitlines()
@@ -918,21 +918,21 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_failing_command_returns_failed_status(self, host1: RemoteHost):
+    async def test_failing_command_returns_failed_status(self, host1: UnixHost):
         result = (await host1.run('ls /nonexistent_dir_otto_test')).only
         assert result.status == Status.Failed
         assert result.retcode == 2
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_unexpected_eof_returns_error(self, host1: RemoteHost):
+    async def test_unexpected_eof_returns_error(self, host1: UnixHost):
         result = (await host1.run('exit 42')).only
         assert result.status == Status.Error
         assert result.retcode == -1
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_overall_status_reflects_failure(self, host1: RemoteHost):
+    async def test_overall_status_reflects_failure(self, host1: UnixHost):
         result = await host1.run(['echo ok', 'ls /nonexistent_dir_otto_test'])
         assert result.status == Status.Failed
         assert result.statuses[0].status == Status.Success
@@ -940,12 +940,12 @@ class TestIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_second_credential_works(self, host1: RemoteHost):
+    async def test_second_credential_works(self, host1: UnixHost):
         """Verify the non-default (test) user can log in and run commands."""
 
         data = host_data("tomato")
         second_user, second_password = list(data["creds"].items())[1]
-        host = RemoteHost(
+        host = UnixHost(
             ip=data["ip"],
             user=second_user,
             ne=data["ne"],
@@ -975,7 +975,7 @@ async def test_telnet_bad_credentials_fails_fast(monkeypatch):
 
     data = host_data("carrot")
     user = list(data["creds"].keys())[0]
-    host = RemoteHost(
+    host = UnixHost(
         ip=data["ip"],
         user=user,
         ne=data["ne"],
@@ -1000,7 +1000,7 @@ class TestStatePersistence:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_cd_persists_between_commands(self, host1: RemoteHost):
+    async def test_cd_persists_between_commands(self, host1: UnixHost):
         try:
             await host1.run("cd /")
             await host1.run("cd tmp")
@@ -1012,7 +1012,7 @@ class TestStatePersistence:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_env_var_persists(self, host1: RemoteHost):
+    async def test_env_var_persists(self, host1: UnixHost):
         try:
             await host1.run("export OTTO_TEST_VAR=hello123")
             result = (await host1.run("echo $OTTO_TEST_VAR")).only
@@ -1027,7 +1027,7 @@ class TestTimeout:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_timeout_returns_error(self, host1: RemoteHost):
+    async def test_timeout_returns_error(self, host1: UnixHost):
         try:
             result = (await host1.run("sleep 999", timeout=0.1)).only
             assert result.status == Status.Error
@@ -1039,7 +1039,7 @@ class TestTimeout:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_session_recovers_after_timeout(self, host1: RemoteHost):
+    async def test_session_recovers_after_timeout(self, host1: UnixHost):
         try:
             await host1.run("sleep 999", timeout=0.1)
             result = (await host1.run("echo recovered")).only
@@ -1054,7 +1054,7 @@ class TestSendExpect:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_python_repl(self, host1: RemoteHost):
+    async def test_python_repl(self, host1: UnixHost):
         try:
             await host1.send("python3\n")
             await host1.expect(r">>> ", timeout=5.0)
@@ -1089,7 +1089,7 @@ class TestFileTransfer:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_get_file(self, transfer_host: RemoteHost, tmp_path: Path):
+    async def test_get_file(self, transfer_host: UnixHost, tmp_path: Path):
         """Download /etc/hostname and verify it matches the hostname command."""
 
         result = (await transfer_host.run('hostname')).only
@@ -1105,7 +1105,7 @@ class TestFileTransfer:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_put_file(self, transfer_host: RemoteHost, tmp_path: Path):
+    async def test_put_file(self, transfer_host: UnixHost, tmp_path: Path):
         """Upload a file, verify it arrived, clean up."""
 
         content = 'file transfer test'
@@ -1129,7 +1129,7 @@ class TestFileTransfer:
 # ---------------------------------------------------------------------------
 
 class TestOpenSession:
-    """Unit tests for RemoteHost.open_session() — session creation and registration."""
+    """Unit tests for UnixHost.open_session() — session creation and registration."""
 
     def _mock_shell_session(self, alive: bool = True) -> MagicMock:
         ok = CommandStatus('echo hi', 'hi', Status.Success, 0)
@@ -1152,7 +1152,7 @@ class TestOpenSession:
     # --- SSH ---
 
     @pytest.mark.asyncio
-    async def test_ssh_returns_remote_session(self, host: RemoteHost):
+    async def test_ssh_returns_remote_session(self, host: UnixHost):
         mock_shell = self._mock_shell_session()
         host._connections._ssh_conn = MagicMock()
         with patch('otto.host.session.SshSession', return_value=mock_shell):
@@ -1161,7 +1161,7 @@ class TestOpenSession:
         assert result.alive is True
 
     @pytest.mark.asyncio
-    async def test_ssh_session_registered_in_host(self, host: RemoteHost):
+    async def test_ssh_session_registered_in_host(self, host: UnixHost):
         mock_shell = self._mock_shell_session()
         host._connections._ssh_conn = MagicMock()
         with patch('otto.host.session.SshSession', return_value=mock_shell):
@@ -1169,7 +1169,7 @@ class TestOpenSession:
         assert host._session_mgr._named_sessions['monitor'] is result
 
     @pytest.mark.asyncio
-    async def test_ssh_session_uses_existing_conn(self, host: RemoteHost):
+    async def test_ssh_session_uses_existing_conn(self, host: UnixHost):
         mock_conn = MagicMock()
         mock_conn.wait_closed = AsyncMock()
         host._connections._ssh_conn = mock_conn
@@ -1182,7 +1182,7 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_telnet_returns_remote_session(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
         mock_shell = self._mock_shell_session()
         with patch('otto.host.session.TelnetClient', return_value=self._mock_telnet_client()):
             with patch('otto.host.session.TelnetSession', return_value=mock_shell):
@@ -1193,7 +1193,7 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_telnet_connects_new_client(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
         mock_client = self._mock_telnet_client()
         with patch('otto.host.session.TelnetClient', return_value=mock_client):
             with patch('otto.host.session.TelnetSession', return_value=self._mock_shell_session()):
@@ -1203,7 +1203,7 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_telnet_session_owns_its_client(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
         mock_client = self._mock_telnet_client()
         with patch('otto.host.session.TelnetClient', return_value=mock_client):
             with patch('otto.host.session.TelnetSession', return_value=self._mock_shell_session()) as MockTelnetSession:
@@ -1218,7 +1218,7 @@ class TestOpenSession:
     # --- Multiple SSH sessions ---
 
     @pytest.mark.asyncio
-    async def test_multiple_ssh_sessions_are_distinct_objects(self, host: RemoteHost):
+    async def test_multiple_ssh_sessions_are_distinct_objects(self, host: UnixHost):
         shell_a = self._mock_shell_session()
         shell_b = self._mock_shell_session()
         host._connections._ssh_conn = MagicMock()
@@ -1230,7 +1230,7 @@ class TestOpenSession:
         assert host._session_mgr._named_sessions['beta'] is session_b
 
     @pytest.mark.asyncio
-    async def test_multiple_ssh_sessions_both_alive(self, host: RemoteHost):
+    async def test_multiple_ssh_sessions_both_alive(self, host: UnixHost):
         host._connections._ssh_conn = MagicMock()
         with patch('otto.host.session.SshSession', side_effect=[
             self._mock_shell_session(), self._mock_shell_session(),
@@ -1244,7 +1244,7 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_multiple_telnet_sessions_each_create_own_client(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
         client_a = self._mock_telnet_client()
         client_b = self._mock_telnet_client()
         with patch('otto.host.session.TelnetClient', side_effect=[client_a, client_b]):
@@ -1259,7 +1259,7 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_multiple_telnet_sessions_each_own_separate_client(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, term='telnet', log=False)
         client_a = self._mock_telnet_client()
         client_b = self._mock_telnet_client()
         with patch('otto.host.session.TelnetClient', side_effect=[client_a, client_b]):
@@ -1278,8 +1278,8 @@ class TestOpenSession:
     @pytest.mark.asyncio
     async def test_ssh_host_and_telnet_host_each_hold_own_sessions(self):
         """An SSH host and a Telnet host can hold independent named sessions simultaneously."""
-        ssh_host = RemoteHost(ip='10.0.0.1', ne='ssh-box', creds={'u': 'p'}, term='ssh', log=False)
-        telnet_host = RemoteHost(ip='10.0.0.2', ne='tel-box', creds={'u': 'p'}, term='telnet', log=False)
+        ssh_host = UnixHost(ip='10.0.0.1', ne='ssh-box', creds={'u': 'p'}, term='ssh', log=False)
+        telnet_host = UnixHost(ip='10.0.0.2', ne='tel-box', creds={'u': 'p'}, term='telnet', log=False)
 
         ssh_shell = self._mock_shell_session()
         telnet_shell = self._mock_shell_session()
@@ -1303,7 +1303,7 @@ class TestOpenSession:
     # --- Reuse and replacement ---
 
     @pytest.mark.asyncio
-    async def test_reuse_live_session_returns_same_object(self, host: RemoteHost):
+    async def test_reuse_live_session_returns_same_object(self, host: UnixHost):
         mock_shell = self._mock_shell_session(alive=True)
         host._connections._ssh_conn = MagicMock()
         with patch('otto.host.session.SshSession', return_value=mock_shell):
@@ -1312,7 +1312,7 @@ class TestOpenSession:
         assert first is second
 
     @pytest.mark.asyncio
-    async def test_dead_session_is_replaced(self, host: RemoteHost):
+    async def test_dead_session_is_replaced(self, host: UnixHost):
         shell_old = self._mock_shell_session(alive=True)
         shell_new = self._mock_shell_session(alive=True)
         host._connections._ssh_conn = MagicMock()
@@ -1327,7 +1327,7 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_unknown_term_raises_value_error(self):
-        h = RemoteHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
         h.term = 'foobar'  # type: ignore
         h._connections.term = 'foobar'  # type: ignore
         with pytest.raises(ValueError, match='foobar'):
@@ -1343,7 +1343,7 @@ class TestHostSessionProxy:
 
     def _make_remote_session(
         self,
-        host: RemoteHost,
+        host: UnixHost,
         name: str = 'monitor',
         alive: bool = True,
     ) -> tuple[HostSession, MagicMock]:
@@ -1365,7 +1365,7 @@ class TestHostSessionProxy:
         return remote, shell
 
     @pytest.mark.asyncio
-    async def test_run_returns_command_status(self, host: RemoteHost):
+    async def test_run_returns_command_status(self, host: UnixHost):
         session, _ = self._make_remote_session(host)
         result = (await session.run('echo hi')).only
         assert isinstance(result, CommandStatus)
@@ -1373,80 +1373,80 @@ class TestHostSessionProxy:
         assert result.output == 'hi'
 
     @pytest.mark.asyncio
-    async def test_run_delegates_cmd_to_shell_session(self, host: RemoteHost):
+    async def test_run_delegates_cmd_to_shell_session(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.run('ls /tmp')
         shell.run_cmd.assert_called_once_with('ls /tmp', expects=None, timeout=10.0)
 
     @pytest.mark.asyncio
-    async def test_run_forwards_expects(self, host: RemoteHost):
+    async def test_run_forwards_expects(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         expects = [(r'Password:', 'secret\n')]
         await session.run('sudo ls', expects=expects)  # type: ignore[arg-type]
         shell.run_cmd.assert_called_once_with('sudo ls', expects=expects, timeout=10.0)
 
     @pytest.mark.asyncio
-    async def test_run_forwards_timeout(self, host: RemoteHost):
+    async def test_run_forwards_timeout(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.run('sleep 5', timeout=60.0)
         shell.run_cmd.assert_called_once_with('sleep 5', expects=None, timeout=60.0)
 
     @pytest.mark.asyncio
-    async def test_send_delegates(self, host: RemoteHost):
+    async def test_send_delegates(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.send('hello\n')
         shell.send.assert_called_once_with('hello\n')
 
     @pytest.mark.asyncio
-    async def test_expect_delegates_and_returns_output(self, host: RemoteHost):
+    async def test_expect_delegates_and_returns_output(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         result = await session.expect(r'\$')
         shell.expect.assert_called_once_with(r'\$', 10.0)
         assert result == 'some output'
 
     @pytest.mark.asyncio
-    async def test_expect_forwards_timeout(self, host: RemoteHost):
+    async def test_expect_forwards_timeout(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.expect(r'\$', timeout=5.0)
         shell.expect.assert_called_once_with(r'\$', 5.0)
 
-    def test_alive_true_when_session_alive(self, host: RemoteHost):
+    def test_alive_true_when_session_alive(self, host: UnixHost):
         session, _ = self._make_remote_session(host, alive=True)
         assert session.alive is True
 
-    def test_alive_false_when_session_dead(self, host: RemoteHost):
+    def test_alive_false_when_session_dead(self, host: UnixHost):
         session, _ = self._make_remote_session(host, alive=False)
         assert session.alive is False
 
     @pytest.mark.asyncio
-    async def test_close_calls_underlying_session_close(self, host: RemoteHost):
+    async def test_close_calls_underlying_session_close(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.close()
         shell.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_close_removes_from_host_registry(self, host: RemoteHost):
+    async def test_close_removes_from_host_registry(self, host: UnixHost):
         session, _ = self._make_remote_session(host, name='monitor')
         assert 'monitor' in host._session_mgr._named_sessions
         await session.close()
         assert 'monitor' not in host._session_mgr._named_sessions
 
     @pytest.mark.asyncio
-    async def test_context_manager_closes_on_exit(self, host: RemoteHost):
+    async def test_context_manager_closes_on_exit(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         async with session:
             shell.close.assert_not_called()
         shell.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_context_manager_removes_from_registry_on_exit(self, host: RemoteHost):
+    async def test_context_manager_removes_from_registry_on_exit(self, host: UnixHost):
         session, _ = self._make_remote_session(host, name='monitor')
         async with session:
             assert 'monitor' in host._session_mgr._named_sessions
         assert 'monitor' not in host._session_mgr._named_sessions
 
     @pytest.mark.asyncio
-    async def test_context_manager_yields_self(self, host: RemoteHost):
+    async def test_context_manager_yields_self(self, host: UnixHost):
         session, _ = self._make_remote_session(host)
         async with session as ctx:
             assert ctx is session
@@ -1459,7 +1459,7 @@ class TestHostSessionProxy:
 class TestOpenSessionCleanup:
     """Unit tests for host.close() and _connected interactions with named sessions."""
 
-    def _add_mock_session(self, host: RemoteHost, name: str, alive: bool = True) -> MagicMock:
+    def _add_mock_session(self, host: UnixHost, name: str, alive: bool = True) -> MagicMock:
         """Register a HostSession backed by a mock ShellSession and return the shell mock."""
         shell = MagicMock(spec=ShellSession)
         shell.alive = alive
@@ -1474,7 +1474,7 @@ class TestOpenSessionCleanup:
         return shell
 
     @pytest.mark.asyncio
-    async def test_host_close_closes_all_named_sessions(self, host: RemoteHost):
+    async def test_host_close_closes_all_named_sessions(self, host: UnixHost):
         shell_a = self._add_mock_session(host, 'a')
         shell_b = self._add_mock_session(host, 'b')
         await host.close()
@@ -1482,23 +1482,23 @@ class TestOpenSessionCleanup:
         shell_b.close.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_host_close_clears_registry(self, host: RemoteHost):
+    async def test_host_close_clears_registry(self, host: UnixHost):
         self._add_mock_session(host, 'monitor')
         await host.close()
         assert host._session_mgr._named_sessions == {}
 
-    def test_connected_true_with_live_named_session(self, host: RemoteHost):
+    def test_connected_true_with_live_named_session(self, host: UnixHost):
         self._add_mock_session(host, 'monitor', alive=True)
         assert host._connected is True
 
-    def test_connected_false_when_named_session_dead(self, host: RemoteHost):
+    def test_connected_false_when_named_session_dead(self, host: UnixHost):
         self._add_mock_session(host, 'monitor', alive=False)
         assert host._connected is False
 
-    def test_connected_false_with_no_sessions(self, host: RemoteHost):
+    def test_connected_false_with_no_sessions(self, host: UnixHost):
         assert host._connected is False
 
-    def test_connected_true_with_multiple_sessions_one_alive(self, host: RemoteHost):
+    def test_connected_true_with_multiple_sessions_one_alive(self, host: UnixHost):
         self._add_mock_session(host, 'dead', alive=False)
         self._add_mock_session(host, 'live', alive=True)
         assert host._connected is True
@@ -1513,7 +1513,7 @@ class TestNamedSessionIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_named_session_runs_command(self, host1: RemoteHost):
+    async def test_named_session_runs_command(self, host1: UnixHost):
         try:
             mon = await host1.open_session('monitor')
             result = (await mon.run('echo hello')).only
@@ -1524,7 +1524,7 @@ class TestNamedSessionIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_two_sessions_have_independent_state(self, host1: RemoteHost):
+    async def test_two_sessions_have_independent_state(self, host1: UnixHost):
         """cd in one named session does not affect the other."""
         try:
             s1 = await host1.open_session('s1')
@@ -1540,7 +1540,7 @@ class TestNamedSessionIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_context_manager_removes_session_from_registry(self, host1: RemoteHost):
+    async def test_context_manager_removes_session_from_registry(self, host1: UnixHost):
         try:
             async with (await host1.open_session('monitor')) as mon:
                 assert 'monitor' in host1._session_mgr._named_sessions
@@ -1552,7 +1552,7 @@ class TestNamedSessionIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_host_close_closes_all_named_sessions(self, host1: RemoteHost):
+    async def test_host_close_closes_all_named_sessions(self, host1: UnixHost):
         s1 = await host1.open_session('s1')
         s2 = await host1.open_session('s2')
         # Sessions initialize lazily on first I/O — run a command to make them alive

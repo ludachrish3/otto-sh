@@ -26,7 +26,7 @@ from ..configmodule.lab import Lab
 from ..configmodule.repo import DockerCompose, Repo
 from ..host.dockerHost import DockerContainerHost
 from ..host.host import Host
-from ..host.remoteHost import RemoteHost
+from ..host.unixHost import UnixHost
 from ..logger import getOttoLogger
 from ..utils import Status
 
@@ -51,7 +51,7 @@ def _safe_username() -> str:
         return "anon"
 
 
-def _resolve_parent(repo: Repo, lab: Lab, on: Optional[str], composes: list[DockerCompose]) -> RemoteHost:
+def _resolve_parent(repo: Repo, lab: Lab, on: Optional[str], composes: list[DockerCompose]) -> UnixHost:
     """Pick a parent host for *repo*'s compose stack.
 
     Order: explicit *on* > the first compose entry's ``default_host`` > error.
@@ -75,9 +75,9 @@ def _resolve_parent(repo: Repo, lab: Lab, on: Optional[str], composes: list[Dock
             f"Available hosts: {sorted(lab.hosts)}"
         )
     host = lab.hosts[candidate]
-    if not isinstance(host, RemoteHost):
+    if not isinstance(host, UnixHost):
         raise TypeError(
-            f"Docker host {candidate!r} must be a RemoteHost; got {type(host).__name__}"
+            f"Docker host {candidate!r} must be a UnixHost; got {type(host).__name__}"
         )
     if not host.docker_capable:
         raise ValueError(
@@ -349,9 +349,9 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
         if not settings.composes:
             continue
         # Build a map of docker-capable parents in the lab, by id.
-        capable: list[RemoteHost] = [
+        capable: list[UnixHost] = [
             h for h in lab.hosts.values()
-            if isinstance(h, RemoteHost) and h.docker_capable
+            if isinstance(h, UnixHost) and h.docker_capable
         ]
         if not capable:
             continue

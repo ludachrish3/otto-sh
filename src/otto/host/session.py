@@ -752,7 +752,7 @@ class HostSession:
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
     async def send(self, text: str) -> None:
-        """Send raw text to this session's stdin. See :meth:`RemoteHost.send`."""
+        """Send raw text to this session's stdin. See :meth:`UnixHost.send`."""
         self._log_command(text.rstrip())
         await self._session.send(text)
 
@@ -761,7 +761,7 @@ class HostSession:
         pattern: str | re.Pattern[str],
         timeout: float = 10.0,
     ) -> str:
-        """Wait for a pattern in this session's output. See :meth:`RemoteHost.expect`."""
+        """Wait for a pattern in this session's output. See :meth:`UnixHost.expect`."""
         result = await self._session.expect(pattern, timeout)
         self._log_output(result)
         return result

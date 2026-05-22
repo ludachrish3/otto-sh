@@ -11,10 +11,10 @@ existing SSH connection.
 ``run`` (and ``open_session`` / ``send`` / ``expect``) use a persistent
 ``docker exec -it <ctr> sh`` session multiplexed on the parent's SSH
 connection — shell state (``cd``, env vars, shell vars) persists across
-calls, matching :class:`LocalHost` and :class:`RemoteHost`. ``oneshot``
+calls, matching :class:`LocalHost` and :class:`UnixHost`. ``oneshot``
 stays stateless and concurrent-safe.
 
-Persistent-shell support requires an SSH-based :class:`RemoteHost` parent.
+Persistent-shell support requires an SSH-based :class:`UnixHost` parent.
 Local-host parents and telnet parents are rejected at session-open time —
 the per-call ``oneshot`` path still works against any parent.
 """
@@ -57,7 +57,7 @@ class DockerContainerHost(BaseHost):
     the SSH connection used to reach the daemon. Typed as
     :class:`Host` (the protocol) so the type-system surface stays narrow,
     but ``run`` / ``open_session`` / ``send`` / ``expect`` / ``interact``
-    additionally require an SSH-based :class:`RemoteHost` at runtime —
+    additionally require an SSH-based :class:`UnixHost` at runtime —
     they open a persistent ``docker exec`` channel on the parent's
     asyncssh connection. ``oneshot`` and file transfer work against any
     parent."""
@@ -96,7 +96,7 @@ class DockerContainerHost(BaseHost):
 
     resources: set[str] = field(default_factory=set[str])
     """Reservation tags. Containers participate in the same reservation
-    system as RemoteHosts; the compose module typically copies the parent's
+    system as UnixHosts; the compose module typically copies the parent's
     tags so concurrent test runs serialize through reservations."""
 
     _repeater: RepeatRunner = field(init=False, repr=False)
@@ -106,7 +106,7 @@ class DockerContainerHost(BaseHost):
     """Manages the persistent shell session(s) inside the container. The
     underlying transport is a ``docker exec -it`` channel multiplexed on the
     parent's SSH connection; opening is lazy and gated on the parent being
-    an SSH-based :class:`RemoteHost`."""
+    an SSH-based :class:`UnixHost`."""
 
     _ensure_lock: asyncio.Lock = field(init=False, repr=False)
     """Serializes :meth:`_ensure_running` so concurrent accesses to a
@@ -125,12 +125,12 @@ class DockerContainerHost(BaseHost):
         :meth:`__post_init__` and :meth:`rebuild_connections`."""
 
         def _make_session() -> ShellSession:
-            from .remoteHost import RemoteHost
-            if not (isinstance(self.parent, RemoteHost) and self.parent.term == 'ssh'):
+            from .unixHost import UnixHost
+            if not (isinstance(self.parent, UnixHost) and self.parent.term == 'ssh'):
                 term = getattr(self.parent, 'term', None)
                 raise NotImplementedError(
                     f"DockerContainerHost persistent shell requires an SSH-based "
-                    f"RemoteHost parent; got {type(self.parent).__name__}"
+                    f"UnixHost parent; got {type(self.parent).__name__}"
                     + (f" with term={term!r}" if term is not None else "")
                     + ". Use oneshot() with chained `&&` commands instead, or "
                     "configure an SSH-based parent."
@@ -286,8 +286,8 @@ class DockerContainerHost(BaseHost):
         """Execute one command on the persistent in-container shell.
 
         Shell state (``cd``, env vars, shell vars) persists across calls,
-        matching :class:`LocalHost` and :class:`RemoteHost`. Requires an
-        SSH-based :class:`RemoteHost` parent.
+        matching :class:`LocalHost` and :class:`UnixHost`. Requires an
+        SSH-based :class:`UnixHost` parent.
         """
         if isDryRun():
             return self._dry_run_result(cmd)
@@ -329,9 +329,9 @@ class DockerContainerHost(BaseHost):
         """Open an interactive shell inside the container via the parent's SSH conn."""
         # Importing here to keep this module importable without asyncssh.
         from .interact import run_ssh_login
-        from .remoteHost import RemoteHost
+        from .unixHost import UnixHost
 
-        if not isinstance(self.parent, RemoteHost):
+        if not isinstance(self.parent, UnixHost):
             raise NotImplementedError(
                 f"DockerContainerHost.interact() requires an SSH-based parent host; "
                 f"got parent of type {type(self.parent).__name__}."
@@ -437,7 +437,7 @@ class DockerContainerHost(BaseHost):
     def rebuild_connections(self) -> None:
         """Drop any persistent session so the next call reopens it.
 
-        Mirrors :meth:`RemoteHost.rebuild_connections` for the
+        Mirrors :meth:`UnixHost.rebuild_connections` for the
         ``all_hosts() → host.rebuild_connections()`` pattern that ``otto
         test --cov`` uses to refresh hosts after pytest installs a new
         event loop. The container host doesn't own any raw transport

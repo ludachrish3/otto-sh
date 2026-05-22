@@ -1,10 +1,10 @@
 """
-MetricCollector — collects metrics from multiple RemoteHosts via asyncio.gather().
+MetricCollector — collects metrics from multiple UnixHosts via asyncio.gather().
 
 On each tick all hosts are polled simultaneously so results share one timestamp.
 
 Supports three data sources:
-  1. Live collection from multiple RemoteHosts (asyncio.gather() per tick)
+  1. Live collection from multiple UnixHosts (asyncio.gather() per tick)
   2. Historical JSON files
   3. Historical SQLite databases (written by a previous live collection)
 """
@@ -29,7 +29,7 @@ from .parsers import DEFAULT_PARSERS, MetricParser
 from ..host.host import RunResult
 
 if TYPE_CHECKING:
-    from ..host.remoteHost import RemoteHost
+    from ..host.unixHost import UnixHost
     from ..utils import CommandStatus, Status
 
 logger = logging.getLogger('otto')
@@ -37,7 +37,7 @@ logger = logging.getLogger('otto')
 
 @dataclass
 class MonitorTarget:
-    """Pairs a RemoteHost with the parser dict to use when collecting from it.
+    """Pairs a UnixHost with the parser dict to use when collecting from it.
 
     By default all hosts use DEFAULT_PARSERS.  Pass a custom dict to add new
     metrics or override built-in commands for a specific host::
@@ -55,7 +55,7 @@ class MonitorTarget:
     let the CLI build targets automatically.
     """
 
-    host:       'RemoteHost'
+    host:       'UnixHost'
     parsers:    dict[str, MetricParser] = field(default_factory=lambda: copy.deepcopy(DEFAULT_PARSERS))
     core_count: int = field(default=1)
 
@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS events (
 
 class MetricCollector:
     """
-    Collects numeric metrics from multiple RemoteHosts and stores time-series data.
+    Collects numeric metrics from multiple UnixHosts and stores time-series data.
 
     On each tick, all hosts are polled simultaneously via asyncio.gather() so that
     results from every host share the same timestamp.
@@ -97,7 +97,7 @@ class MetricCollector:
 
     def __init__(
         self,
-        hosts: 'list[RemoteHost] | None' = None,
+        hosts: 'list[UnixHost] | None' = None,
         parsers: list[MetricParser] | None = None,
         db_path: str | None = None,
         targets: 'list[MonitorTarget] | None' = None,

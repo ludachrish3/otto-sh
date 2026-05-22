@@ -220,7 +220,7 @@ to most specific:
 
 Merging is **per key** between layers.  A host that sets only `port`
 still inherits `connect_timeout` from the repo default, and so on.  The
-fully resolved options are baked into the `RemoteHost` at construction
+fully resolved options are baked into the `UnixHost` at construction
 time.
 
 For one-off tuning at the call site (e.g. a single test wants a
@@ -426,8 +426,8 @@ from the CLI can also be done inside instructions and test suites:
 ```
 
 File transfers work the same way -- `put` and `get` map to
-{meth}`~otto.host.remoteHost.RemoteHost.put` and
-{meth}`~otto.host.remoteHost.RemoteHost.get`:
+{meth}`~otto.host.unixHost.UnixHost.put` and
+{meth}`~otto.host.unixHost.UnixHost.get`:
 
 ```python
 from pathlib import Path
@@ -447,7 +447,7 @@ status, msg = await host.get(
 
 ```{note}
 File transfer methods are only available on
-{class}`~otto.host.remoteHost.RemoteHost` instances, not
+{class}`~otto.host.unixHost.UnixHost` instances, not
 {class}`~otto.host.localHost.LocalHost`.  The doctest above uses
 `run` which is available on all host types.
 ```

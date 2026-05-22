@@ -7,7 +7,7 @@ orphan: true
 ## Why parent-delegation
 
 Otto already has a mature host abstraction: `BaseHost` ABC, `Host`
-Protocol, `RemoteHost` (SSH/telnet), `LocalHost`. Adding Docker
+Protocol, `UnixHost` (SSH/telnet), `LocalHost`. Adding Docker
 containers as a new top-level host class — with their own connection
 manager, transport, file-transfer module, and hop chain — would
 duplicate all of that and force `ConnectionManager`/`FileTransfer` to
@@ -16,7 +16,7 @@ port to forward, no FTP, no NetCat). Container "transport" is just
 `docker exec` against a daemon, plus `docker cp` for files.
 
 Instead, `DockerContainerHost` holds a reference to a *parent*
-`RemoteHost` (SSH-based) and implements every method by delegating to
+`UnixHost` (SSH-based) and implements every method by delegating to
 that parent with a `docker exec` / `docker cp` wrapper. The parent
 owns:
 
@@ -47,7 +47,7 @@ hopped and direct parents identically.
 
 Container host id = `<parent_id>.<project>.<service>`, lowercased.
 
-- **Parent id** is whatever `RemoteHost._generateId()` produces (e.g.
+- **Parent id** is whatever `UnixHost._generateId()` produces (e.g.
   `pepper_seed`, `pepper_seed_1` if the lab encodes board+slot).
 - **Project** is `Repo.name` (the per-repo `name` in
   `.otto/settings.toml`).
@@ -110,7 +110,7 @@ purity into the parent's transport — the same shape that `_interact`
 already takes when it grabs `parent._connections.ssh()` for a
 PTY-backed login. The trade-off is small: in exchange for one extra
 SSH channel per active container, `run()` becomes consistent with
-`LocalHost` and `RemoteHost` (state persists across calls; no `&&`
+`LocalHost` and `UnixHost` (state persists across calls; no `&&`
 chains required) and the session protocol's expect/send primitives
 become available inside containers.
 

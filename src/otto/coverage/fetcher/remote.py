@@ -1,6 +1,6 @@
 """Fetch ``.gcda`` files from remote hosts using otto's file transfer.
 
-Uses :meth:`RemoteHost.get() <otto.host.remoteHost.RemoteHost.get>`
+Uses :meth:`UnixHost.get() <otto.host.unixHost.UnixHost.get>`
 which supports SCP, SFTP, FTP, and netcat with progress tracking and
 multi-hop SSH chains.
 """
@@ -15,13 +15,13 @@ from ...configmodule.configmodule import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
-    from ...host.remoteHost import RemoteHost
+    from ...host.unixHost import UnixHost
 
 logger = logging.getLogger(__name__)
 
 
 async def _clean_one_host(
-    host: RemoteHost,
+    host: UnixHost,
     gcda_remote_dir: str,
 ) -> None:
     """Delete .gcda files on a single host, logging the outcome."""
@@ -39,7 +39,7 @@ async def _clean_one_host(
 
 
 async def _fetch_one_host(
-    host: RemoteHost,
+    host: UnixHost,
     gcda_remote_dir: str,
     staging_root: Path,
 ) -> Path | None:

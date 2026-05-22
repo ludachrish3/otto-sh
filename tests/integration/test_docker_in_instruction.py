@@ -15,7 +15,7 @@ import pytest_asyncio
 from otto.configmodule.lab import Lab
 from otto.configmodule.repo import Repo
 from otto.docker import build_images, composed
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.utils import Status
 
 REPO1_DIR = Path(__file__).parent.parent / "repo1"
@@ -28,7 +28,7 @@ pytestmark = pytest.mark.xdist_group("docker_e2e")
 
 @pytest_asyncio.fixture
 async def parent_lab():
-    parent = RemoteHost(
+    parent = UnixHost(
         ip="10.10.200.13",
         ne="pepper",
         creds={"vagrant": "vagrant"},

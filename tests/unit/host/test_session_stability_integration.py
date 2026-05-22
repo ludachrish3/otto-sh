@@ -19,7 +19,7 @@ from typing import cast
 
 import pytest
 
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.utils import CommandStatus, Status
 
 from tests.unit.host._transfer_retry import transfer_with_retry
@@ -44,8 +44,8 @@ _TELNET_ONLY = pytest.mark.parametrize("host1", ["telnet"], indirect=True)
 
 # All nc-telnet cases transfer to the same VM (carrot) and allocate remote
 # listener ports from the same base (9000+). `_find_free_port` serializes
-# allocation *within* a RemoteHost, but two xdist workers each build their own
-# RemoteHost: their `ss` scans race in the TOCTOU window before either `nc -l`
+# allocation *within* a UnixHost, but two xdist workers each build their own
+# UnixHost: their `ss` scans race in the TOCTOU window before either `nc -l`
 # binds, both pick the same port, and the senders cross-wire (wrong file
 # contents, or an orphaned listener that hangs `await listen_task`). Pin every
 # nc-telnet instance to one xdist group so `--dist loadgroup` runs them
@@ -73,7 +73,7 @@ _NC_TELNET = pytest.mark.parametrize(
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_real_oneshot_pool_high_fanout(host1: RemoteHost) -> None:
+async def test_real_oneshot_pool_high_fanout(host1: UnixHost) -> None:
     """8 concurrent oneshots over real transport must complete with intact output.
 
     Mangled output (call ``i``'s marker showing up in call ``j``'s result)
@@ -109,7 +109,7 @@ async def test_real_oneshot_pool_high_fanout(host1: RemoteHost) -> None:
 @_SSH_ONLY
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_real_named_session_resurrect(host1: RemoteHost) -> None:
+async def test_real_named_session_resurrect(host1: UnixHost) -> None:
     """``open_session(name)`` must return a fresh live session after transport death."""
     s1 = await host1.open_session('resurrect_test')
     initial_id = id(s1._session)
@@ -137,7 +137,7 @@ async def test_real_named_session_resurrect(host1: RemoteHost) -> None:
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_real_default_session_recreate_under_load(host1: RemoteHost) -> None:
+async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None:
     """Default-session recreation under concurrent ``_ensure_session`` is robust.
 
     Probes the recreate path directly (rather than via concurrent ``run()``,
@@ -185,10 +185,10 @@ async def test_real_default_session_recreate_under_load(host1: RemoteHost) -> No
 @_TELNET_ONLY
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_real_long_telnet_oneshot_vs_concurrent(host1: RemoteHost) -> None:
+async def test_real_long_telnet_oneshot_vs_concurrent(host1: UnixHost) -> None:
     """Real-transport version of the test_oneshot_telnet_concurrent regression.
 
-    The mocked counterpart in ``test_remoteHost.py`` proves the manager's
+    The mocked counterpart in ``test_unixHost.py`` proves the manager's
     pool dispatch is sane; this version proves the *actual* telnetlib3
     reader/writer state holds up under the same workload.
     """
@@ -222,7 +222,7 @@ async def test_real_long_telnet_oneshot_vs_concurrent(host1: RemoteHost) -> None
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_real_concurrent_transfers(
-    transfer_host: RemoteHost, tmp_path: Path,
+    transfer_host: UnixHost, tmp_path: Path,
 ) -> None:
     """5 concurrent ``put`` calls over each transfer protocol must all complete.
 
@@ -269,7 +269,7 @@ async def test_real_concurrent_transfers(
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_real_cancel_mid_run_recovers(host1: RemoteHost) -> None:
+async def test_real_cancel_mid_run_recovers(host1: UnixHost) -> None:
     """Session must recover from external ``wait_for`` cancellation.
 
     ``host.run(timeout=…)`` has a built-in recovery path; this exercises the
@@ -301,7 +301,7 @@ async def test_real_cancel_mid_run_recovers(host1: RemoteHost) -> None:
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_real_nc_concurrent_gets(
-    transfer_host: RemoteHost, tmp_path: Path,
+    transfer_host: UnixHost, tmp_path: Path,
 ) -> None:
     """5 concurrent nc gets must all complete with intact content.
 
@@ -363,7 +363,7 @@ async def test_real_nc_concurrent_gets(
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_real_nc_high_fanout_put(
-    transfer_host: RemoteHost, tmp_path: Path,
+    transfer_host: UnixHost, tmp_path: Path,
 ) -> None:
     """20 concurrent nc puts stress port allocation + listener cleanup.
 
@@ -418,7 +418,7 @@ async def test_real_nc_high_fanout_put(
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_real_nc_cancel_cleans_up_listener(
-    transfer_host: RemoteHost, tmp_path: Path,
+    transfer_host: UnixHost, tmp_path: Path,
 ) -> None:
     """External cancellation mid-transfer must reap the spawned ``nc -l``.
 

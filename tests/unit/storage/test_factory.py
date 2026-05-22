@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.host.toolchain import Toolchain
 from otto.storage.factory import (
     create_host_from_dict,
@@ -14,7 +14,7 @@ class TestCreateHostFromDict:
     """Tests for create_host_from_dict function."""
 
     def test_create_remotehost_with_complete_data(self):
-        """Test creating RemoteHost with all fields."""
+        """Test creating UnixHost with all fields."""
         host_data = {
             'ip': '10.10.200.11',
             'ne': 'orange',
@@ -24,7 +24,7 @@ class TestCreateHostFromDict:
         }
         host = create_host_from_dict(host_data)
 
-        assert isinstance(host, RemoteHost)
+        assert isinstance(host, UnixHost)
         assert host.ip == '10.10.200.11'
         assert host.ne == 'orange'
         assert host.board == 'seed'

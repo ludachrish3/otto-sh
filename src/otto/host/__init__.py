@@ -9,6 +9,7 @@ from .host import setDryRun as setDryRun
 from .dockerHost import DockerContainerHost as DockerContainerHost
 from .localHost import LocalHost as LocalHost
 from .remoteHost import RemoteHost as RemoteHost
+from .unixHost import UnixHost as UnixHost
 from .toolchain import Toolchain as Toolchain
 from .session import Expect as Expect
 from .session import HostSession as HostSession

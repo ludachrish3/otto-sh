@@ -27,7 +27,7 @@ from otto.docker.compose import (
     register_declared_container_hosts,
 )
 from otto.host.dockerHost import DockerContainerHost
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.utils import CommandStatus, Status
 
 
@@ -65,8 +65,8 @@ def _make_repo(tmp: Path, *, name: str = "repo1", services: tuple = ("api",), de
     return Repo(sutDir=sut)
 
 
-def _capable_host(host_id: str = "pepper_seed", ne: str = "pepper") -> RemoteHost:
-    return RemoteHost(
+def _capable_host(host_id: str = "pepper_seed", ne: str = "pepper") -> UnixHost:
+    return UnixHost(
         ip="10.10.200.13",
         ne=ne,
         creds={"vagrant": "vagrant"},
@@ -75,7 +75,7 @@ def _capable_host(host_id: str = "pepper_seed", ne: str = "pepper") -> RemoteHos
     )
 
 
-def _wire_parent_mock(host: RemoteHost) -> RemoteHost:
+def _wire_parent_mock(host: UnixHost) -> UnixHost:
     """Replace the host's network methods with AsyncMocks so we never connect."""
     host.oneshot = AsyncMock(return_value=_ok())  # type: ignore[method-assign]
     host.put = AsyncMock(return_value=(Status.Success, ""))  # type: ignore[method-assign]
@@ -127,7 +127,7 @@ def test_resolve_parent_rejects_non_capable(tmp_path):
     repo = _make_repo(tmp_path, default_host="other_seed")
     lab = _make_lab()
     # Add a host that is NOT docker_capable.
-    other = _wire_parent_mock(RemoteHost(
+    other = _wire_parent_mock(UnixHost(
         ip="1.2.3.4", ne="other", creds={"u": "p"}, board="seed", docker_capable=False,
     ))
     lab.hosts[other.id] = other

@@ -1,7 +1,7 @@
 """
 Interactive shell bridging for remote hosts.
 
-``RemoteHost._interact()`` uses this module to run ``otto host <id> login``:
+``UnixHost._interact()`` uses this module to run ``otto host <id> login``:
 an interactive SSH or telnet shell whose stdin/stdout are bridged to the
 user's terminal and whose output is also recorded to ``otto.log`` in the
 active output directory.

@@ -27,7 +27,7 @@ from ..docker import (
     compose_up,
     get_user_compose_project,
 )
-from ..host.remoteHost import RemoteHost
+from ..host.unixHost import UnixHost
 from ..logger import getOttoLogger
 from ..utils import Status, async_typer_command
 
@@ -127,7 +127,7 @@ def _select_repos(repo_name: Optional[str], on: Optional[str] = None):
     return applicable
 
 
-def _resolve_parent_for_repo(repo, lab, on: Optional[str]) -> RemoteHost:
+def _resolve_parent_for_repo(repo, lab, on: Optional[str]) -> UnixHost:
     """Reuse compose._resolve_parent — public via private import to avoid duplicate logic."""
     from ..docker.compose import _resolve_parent
     return _resolve_parent(repo, lab, on, list(repo.docker_settings.composes))
@@ -211,17 +211,17 @@ async def _ps(
 ) -> None:
     """List running containers on docker-capable lab hosts."""
     cfg = getConfigModule()
-    parents: list[RemoteHost] = []
+    parents: list[UnixHost] = []
     if on:
         host = cfg.lab.hosts.get(on)
-        if not isinstance(host, RemoteHost) or not host.docker_capable:
+        if not isinstance(host, UnixHost) or not host.docker_capable:
             rprint(f"[red]{on!r} is not a docker-capable lab host.")
             raise typer.Exit(1)
         parents = [host]
     else:
         parents = [
             h for h in cfg.lab.hosts.values()
-            if isinstance(h, RemoteHost) and h.docker_capable
+            if isinstance(h, UnixHost) and h.docker_capable
         ]
 
     table = Table('host', 'container_id', 'image', 'status', 'names')

@@ -7,7 +7,7 @@ local and remote machines.
 .. toctree::
 
    host
-   remotehost
+   unixhost
    localhost
    transfer
    session

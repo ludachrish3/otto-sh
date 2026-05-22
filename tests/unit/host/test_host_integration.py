@@ -3,7 +3,7 @@ Shared integration tests that run against all host backends (SSH, Telnet, Local)
 
 These test session-level behavior that is common across all host types.
 Remote-only tests (file transfer protocols, multi-host, credentials) stay
-in test_remoteHost.py.
+in test_unixHost.py.
 """
 
 import logging

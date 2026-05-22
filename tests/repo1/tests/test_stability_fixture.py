@@ -25,7 +25,7 @@ from _pytest.fixtures import SubRequest
 from repo1_common.options import RepoOptions
 
 from otto.configmodule import all_hosts
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.logger import getOttoLogger
 from otto.suite import OttoSuite, register_suite
 from otto.utils import Status
@@ -42,7 +42,7 @@ class _Options(RepoOptions):
 class TestStabilityFixture(OttoSuite[_Options]):
     """Verify SSH connections survive across stability iterations."""
 
-    _host: ClassVar[RemoteHost]
+    _host: ClassVar[UnixHost]
     Options = _Options
 
     @pytest_asyncio.fixture(autouse=True, scope="class", loop_scope="class")

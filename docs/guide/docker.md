@@ -117,7 +117,7 @@ match short-circuits the build; `--rebuild` forces it.
 - Cross-host networking between containers on different parents is not
   managed.
 - `run()`, `open_session()`, `send()`, and `expect()` require an
-  SSH-based `RemoteHost` parent — they open a persistent
+  SSH-based `UnixHost` parent — they open a persistent
   `docker exec -it` channel multiplexed on the parent's SSH
   connection. Telnet parents and `LocalHost` parents are rejected with
   `NotImplementedError`. `oneshot()` (and `get` / `put`) still work
@@ -130,7 +130,7 @@ match short-circuits the build; `--rebuild` forces it.
 ## Persistent shell state
 
 `run()` preserves shell state (`cd`, environment variables, shell
-variables) across separate calls — same as `LocalHost` and `RemoteHost`:
+variables) across separate calls — same as `LocalHost` and `UnixHost`:
 
 ```python
 await api.run(["cd /tmp", "pwd"])         # prints /tmp

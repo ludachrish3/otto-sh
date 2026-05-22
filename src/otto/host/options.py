@@ -12,7 +12,7 @@ plus a ``post_connect`` hook together forward the full power of asyncssh
 
 Example::
 
-    host = RemoteHost(
+    host = UnixHost(
         ip='10.0.0.1',
         creds={'admin': 'secret'},
         ne='lab',
@@ -384,7 +384,7 @@ class FtpOptions:
 class NcOptions:
     """Connection options for netcat-based file transfers.
 
-    Bundles all nc-specific knobs that previously lived on ``RemoteHost``
+    Bundles all nc-specific knobs that previously lived on ``UnixHost``
     into a single object so that ``NcOptions()`` (with defaults) produces
     the same behavior as the old individual fields.
     """

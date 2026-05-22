@@ -12,7 +12,7 @@ from ..host.options import (
     SshOptions,
     TelnetOptions,
 )
-from ..host.remoteHost import RemoteHost
+from ..host.unixHost import UnixHost
 from ..host.toolchain import Toolchain
 
 
@@ -91,7 +91,7 @@ repo-level ``[host_defaults.<key>]`` tables."""
 def create_host_from_dict(
     host_data: dict[str, Any],
     defaults: dict[str, dict[str, Any]] | None = None,
-) -> RemoteHost:
+) -> UnixHost:
     """
     Create appropriate Host subclass from dictionary.
 
@@ -128,7 +128,7 @@ def create_host_from_dict(
     Returns
     -------
     Host
-        RemoteHost using dict of host options
+        UnixHost using dict of host options
 
     Raises
     ------
@@ -138,8 +138,8 @@ def create_host_from_dict(
         If field types are incorrect
     """
 
-    # Only keep fields that are relevant to RemoteHost init
-    kwargs = { k: v for k, v in host_data.items() if k in RemoteHost.__slots__ }
+    # Only keep fields that are relevant to UnixHost init
+    kwargs = { k: v for k, v in host_data.items() if k in UnixHost.__slots__ }
 
     # Ensure resources is a set
     resources = kwargs.get('resources', [])
@@ -160,7 +160,7 @@ def create_host_from_dict(
             kwargs[opt_key] = builder({**default_table, **host_table})
 
     # Determine which Host subclass to instantiate
-    return RemoteHost(**kwargs)
+    return UnixHost(**kwargs)
 
 
 def validate_host_dict(host_data: dict[str, Any]) -> None:

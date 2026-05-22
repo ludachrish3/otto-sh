@@ -47,13 +47,13 @@ def _make_container(parent=None, container_id: str = "abc123def456") -> DockerCo
 
 
 def _build_fake_ssh_remote_host():
-    """Construct a real RemoteHost with an injected fake ConnectionManager.
+    """Construct a real UnixHost with an injected fake ConnectionManager.
 
-    Real RemoteHost is needed so `isinstance(parent, RemoteHost)` passes in
+    Real UnixHost is needed so `isinstance(parent, UnixHost)` passes in
     `_make_session`; the fake ConnectionManager keeps the test offline.
     """
     from otto.host.connections import ConnectionManager
-    from otto.host.remoteHost import RemoteHost
+    from otto.host.unixHost import UnixHost
 
     class FakeConnections(ConnectionManager):
         def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
@@ -68,7 +68,7 @@ def _build_fake_ssh_remote_host():
         async def ssh(self):
             return self._ssh_conn
 
-    return RemoteHost(
+    return UnixHost(
         ip="10.0.0.1",
         creds={"root": "x"},
         ne="fake_ne",
@@ -142,16 +142,16 @@ async def test_oneshot_quotes_dangerous_chars():
 
 @pytest.mark.asyncio
 async def test_run_rejects_non_ssh_remote_parent():
-    """run() requires an SSH-based RemoteHost parent (telnet → NotImplementedError)."""
+    """run() requires an SSH-based UnixHost parent (telnet → NotImplementedError)."""
     parent = _mock_parent(term="telnet")
     h = _make_container(parent)
-    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
+    with pytest.raises(NotImplementedError, match="SSH-based UnixHost parent"):
         await h.run("pwd")
 
 
 @pytest.mark.asyncio
 async def test_run_rejects_localhost_parent():
-    """run() requires a RemoteHost parent — LocalHost is rejected."""
+    """run() requires a UnixHost parent — LocalHost is rejected."""
     from otto.host.localHost import LocalHost
     h = DockerContainerHost(
         parent=LocalHost(),
@@ -160,13 +160,13 @@ async def test_run_rejects_localhost_parent():
         service="api",
         compose_project="otto-repo1-vagrant",
     )
-    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
+    with pytest.raises(NotImplementedError, match="SSH-based UnixHost parent"):
         await h.run("pwd")
 
 
 @pytest.mark.asyncio
 async def test_run_with_ssh_parent_uses_docker_session():
-    """run() against an SSH-based RemoteHost parent opens a _DockerSshSession."""
+    """run() against an SSH-based UnixHost parent opens a _DockerSshSession."""
     from otto.host.session import _DockerSshSession
     parent = _build_fake_ssh_remote_host()
     h = _make_container(parent)
@@ -296,27 +296,27 @@ async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Sessions / send / expect — gated on SSH-based RemoteHost parent
+# Sessions / send / expect — gated on SSH-based UnixHost parent
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_open_session_rejects_non_remote_parent():
     h = _make_container()  # MagicMock parent
-    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
+    with pytest.raises(NotImplementedError, match="SSH-based UnixHost parent"):
         await h.open_session("foo")
 
 
 @pytest.mark.asyncio
 async def test_send_rejects_non_remote_parent():
     h = _make_container()
-    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
+    with pytest.raises(NotImplementedError, match="SSH-based UnixHost parent"):
         await h.send("hi")
 
 
 @pytest.mark.asyncio
 async def test_expect_rejects_non_remote_parent():
     h = _make_container()
-    with pytest.raises(NotImplementedError, match="SSH-based RemoteHost parent"):
+    with pytest.raises(NotImplementedError, match="SSH-based UnixHost parent"):
         await h.expect("prompt> ")
 
 
@@ -384,7 +384,7 @@ async def test_get_two_step_via_parent():
 
 @pytest.mark.asyncio
 async def test_interact_requires_remote_ssh_parent():
-    # Parent is a MagicMock, NOT a RemoteHost — the isinstance check should reject it.
+    # Parent is a MagicMock, NOT a UnixHost — the isinstance check should reject it.
     h = _make_container()
     with pytest.raises(NotImplementedError, match="SSH-based parent"):
         await h._interact()

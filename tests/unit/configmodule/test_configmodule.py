@@ -151,7 +151,7 @@ class TestRunOnAllHosts:
         """run_on_all_hosts delegates to run and returns status tuples."""
         expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
         with patch(
-            "otto.host.remoteHost.RemoteHost.run",
+            "otto.host.unixHost.UnixHost.run",
             new_callable=AsyncMock,
             return_value=expected,
         ):
@@ -166,7 +166,7 @@ class TestRunOnAllHosts:
         """run_on_all_hosts works in concurrent mode."""
         expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
         with patch(
-            "otto.host.remoteHost.RemoteHost.run",
+            "otto.host.unixHost.UnixHost.run",
             new_callable=AsyncMock,
             return_value=expected,
         ):
@@ -181,7 +181,7 @@ class TestRunOnAllHosts:
         """run_on_all_hosts respects the pattern filter."""
         expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
         with patch(
-            "otto.host.remoteHost.RemoteHost.run",
+            "otto.host.unixHost.UnixHost.run",
             new_callable=AsyncMock,
             return_value=expected,
         ):
@@ -195,7 +195,7 @@ class TestRunOnAllHosts:
 class TestPerCallOptionOverrides:
     """Tests for the per-call ``*_options=`` kwargs on get_host / all_hosts.
 
-    The override path must produce a *fresh* RemoteHost via
+    The override path must produce a *fresh* UnixHost via
     ``dataclasses.replace`` so ``__post_init__`` re-runs and the new
     ConnectionManager is constructed with the override options. Stored
     hosts must be untouched, and identity must be preserved when no
@@ -210,7 +210,7 @@ class TestPerCallOptionOverrides:
         assert a is three_hosts["carrot_seed"]
 
     def test_get_host_with_override_returns_copy(self, three_hosts):
-        """With an override, get_host returns a fresh RemoteHost copy."""
+        """With an override, get_host returns a fresh UnixHost copy."""
         original = three_hosts["carrot_seed"]
         override = SshOptions(port=9999, connect_timeout=5.0)
         host = get_host("carrot_seed", ssh_options=override)

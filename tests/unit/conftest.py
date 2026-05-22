@@ -15,7 +15,7 @@ import pytest_asyncio
 
 from otto.host.host import setDryRun
 from otto.host.localHost import LocalHost
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 
 
 @pytest.fixture(autouse=True)
@@ -41,10 +41,10 @@ def host_data(ne: str) -> dict[str, str]:
     raise KeyError(f"NE {ne!r} not found in {_LAB_DATA}")
 
 
-def make_host(ne: str, **kwargs: Any) -> RemoteHost:
-    """Build a RemoteHost from lab data with optional field overrides."""
+def make_host(ne: str, **kwargs: Any) -> UnixHost:
+    """Build a UnixHost from lab data with optional field overrides."""
     data = host_data(ne)
-    return RemoteHost(
+    return UnixHost(
         ip=data["ip"],
         ne=data["ne"],
         creds=data["creds"],
@@ -112,7 +112,7 @@ async def hop_host(request):
     target_data = host_data(ne)
     hop_data = host_data(hop_ne)
     hop_id = f"{hop_data['ne']}_{hop_data.get('board', 'seed')}"
-    h = RemoteHost(
+    h = UnixHost(
         ip=target_data["ip"],
         ne=target_data["ne"],
         creds=target_data["creds"],

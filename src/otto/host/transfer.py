@@ -1,5 +1,5 @@
 """
-File transfer utilities for RemoteHost.
+File transfer utilities for UnixHost.
 
 Defines the canonical TransferProgressHandler callback type used across all
 transfer protocols (SCP, SFTP, FTP, netcat).  Rich (or any other progress
@@ -308,7 +308,7 @@ def _make_sftp_progress(
 
 
 class FileTransfer:
-    """Handles all file-transfer protocols (SCP, SFTP, FTP, netcat) for a RemoteHost.
+    """Handles all file-transfer protocols (SCP, SFTP, FTP, netcat) for a UnixHost.
 
     Receives injectable callables for open_session and oneshot so it can be tested
     without real connections.

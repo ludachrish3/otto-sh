@@ -26,7 +26,7 @@ from tests.unit.conftest import make_host
 def configured_hosts(*hosts):
     """Temporarily install a ConfigModule exposing the given hosts via all_hosts().
 
-    Used by integration tests that construct RemoteHost instances directly
+    Used by integration tests that construct UnixHost instances directly
     (bypassing the lab loader) but need the new GcdaFetcher to see them.
     """
     lab = Lab(name="pipeline_test")
@@ -42,7 +42,7 @@ def configured_hosts(*hosts):
 
 @pytest_asyncio.fixture
 async def carrot():
-    """RemoteHost for test1 (carrot) via SSH."""
+    """UnixHost for test1 (carrot) via SSH."""
     h = make_host("carrot", term="ssh", transfer="scp")
     yield h
     await h.close()
@@ -50,7 +50,7 @@ async def carrot():
 
 @pytest_asyncio.fixture
 async def tomato():
-    """RemoteHost for test2 (tomato) via SSH."""
+    """UnixHost for test2 (tomato) via SSH."""
     h = make_host("tomato", term="ssh", transfer="scp")
     yield h
     await h.close()

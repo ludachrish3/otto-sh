@@ -11,11 +11,11 @@ from typing import Optional
 
 from .collector import MetricCollector, MonitorTarget
 from .parsers import get_host_parsers
-from ..host.remoteHost import RemoteHost
+from ..host.unixHost import UnixHost
 
 
 def build_monitor_collector(
-    hosts: list[RemoteHost],
+    hosts: list[UnixHost],
     db_path: Optional[Path] = None,
 ) -> MetricCollector:
     """Build a :class:`MetricCollector` over *hosts* with per-host parsers.

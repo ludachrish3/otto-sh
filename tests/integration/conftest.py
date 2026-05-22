@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 
 _LAB_DATA = Path(__file__).parent.parent / "lab_data" / "tech1" / "hosts.json"
 
@@ -39,7 +39,7 @@ _ORPHAN_PROJECT_FRAGMENTS = ("-e2e-", "-noexist-")
 async def _reap_orphan_docker_stacks() -> None:
     """Remove leaked ``otto-*-{e2e,noexist}-*`` containers and networks on the
     docker host so address-pool exhaustion can't accumulate across runs."""
-    host = RemoteHost(
+    host = UnixHost(
         ip=_DOCKER_HOST_IP,
         ne="pepper",
         creds={"vagrant": "vagrant"},
@@ -94,9 +94,9 @@ def _host_data(ne: str) -> dict[str, Any]:
 
 @pytest_asyncio.fixture
 async def carrot():
-    """RemoteHost for test1 (carrot) via SSH."""
+    """UnixHost for test1 (carrot) via SSH."""
     data = _host_data("carrot")
-    h = RemoteHost(
+    h = UnixHost(
         ip=data["ip"],
         ne=data["ne"],
         creds=data["creds"],
@@ -111,9 +111,9 @@ async def carrot():
 
 @pytest_asyncio.fixture
 async def tomato():
-    """RemoteHost for test2 (tomato) via SSH."""
+    """UnixHost for test2 (tomato) via SSH."""
     data = _host_data("tomato")
-    h = RemoteHost(
+    h = UnixHost(
         ip=data["ip"],
         ne=data["ne"],
         creds=data["creds"],

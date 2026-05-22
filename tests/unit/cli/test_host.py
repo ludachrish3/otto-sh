@@ -20,7 +20,7 @@ from typer.testing import CliRunner
 
 from otto.cli import host as host_module
 from otto.cli.host import _host_id_completer, _resolve_host, host_app
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.host.session import SessionManager, ShellSession
 from otto.utils import Status
 
@@ -29,9 +29,9 @@ runner = CliRunner()
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
-def _make_host(name: str = 'router1') -> RemoteHost:
-    """Return a real RemoteHost (no connection is made on construction)."""
-    return RemoteHost(ip='10.0.0.1', ne=name, creds={'admin': 'secret'}, log=True)
+def _make_host(name: str = 'router1') -> UnixHost:
+    """Return a real UnixHost (no connection is made on construction)."""
+    return UnixHost(ip='10.0.0.1', ne=name, creds={'admin': 'secret'}, log=True)
 
 
 class FakeSession(ShellSession):
@@ -81,15 +81,15 @@ class FakeSession(ShellSession):
 def _make_host_with_session(
     responses: list[tuple[str, int]],
     name: str = 'router1',
-) -> RemoteHost:
-    """Build a RemoteHost whose SessionManager uses a FakeSession.
+) -> UnixHost:
+    """Build a UnixHost whose SessionManager uses a FakeSession.
 
     The full chain ``run -> _run_one -> SessionManager.run_cmd ->
     ShellSession.run_cmd`` runs for real; only the transport is faked.
     Logging callbacks are suppressed to avoid interfering with CliRunner's
     stdout capture.
     """
-    host = RemoteHost(ip='10.0.0.1', ne=name, creds={'admin': 'secret'}, log=True)
+    host = UnixHost(ip='10.0.0.1', ne=name, creds={'admin': 'secret'}, log=True)
     fake = FakeSession(responses)
     host._session_mgr = SessionManager(
         session_factory=lambda: fake,
