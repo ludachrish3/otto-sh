@@ -54,5 +54,23 @@
         "labs": [
             "veggies"
         ]
+    },
+    {
+        "ip": "10.10.200.14",
+        "ne": "basil",
+        "board": "seed",
+        "term": "ssh",
+        "transfer": "scp",
+        "is_virtual": true,
+        "creds": {
+            "vagrant": "vagrant",
+            "test": "Password1"
+        },
+        "resources": [
+            "basil"
+        ],
+        "labs": [
+            "embedded"
+        ]
     }
 ]

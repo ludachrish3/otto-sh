@@ -3,16 +3,58 @@
 ## Development environment
 
 Vagrant can be used to develop and test changes to `otto`. After
-[installing Vagrant](https://developer.hashicorp.com/vagrant/install), run:
+[installing Vagrant](https://developer.hashicorp.com/vagrant/install), run
+`vagrant up` from the repository root.
+
+### The VMs
+
+The `Vagrantfile` defines five machines on a private `10.10.200.0/24`
+network:
+
+| VM       | IP              | `autostart` | Purpose                                              |
+|----------|-----------------|-------------|------------------------------------------------------|
+| `dev`    | `10.10.200.100` | yes         | Development VM - develop and run the test suite here |
+| `test1`  | `10.10.200.11`  | no          | SSH + SCP test host                                  |
+| `test2`  | `10.10.200.12`  | no          | Telnet + netcat test host                            |
+| `test3`  | `10.10.200.13`  | no          | Docker-capable test host                             |
+| `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (QEMU) + SSH hop to it          |
+
+Only `dev` starts on a bare `vagrant up` (the rest are `autostart: false`).
+Bring the others up explicitly when you need them:
 
 ```bash
-vagrant up            # start the dev VM and three test VMs
-vagrant ssh           # connect to the `dev` VM (the default)
+vagrant up                              # dev VM only
+vagrant up test1 test2 test3 zephyr     # the test hosts
+vagrant ssh                             # connect to dev (the default)
 ```
 
-The `dev` VM is privately networked with three test VMs (`test`, `test2`,
-`test3`). Develop and test from the `dev` VM — unit, integration, and
-end-to-end tests assume connectivity to the test VMs.
+Develop and test from the `dev` VM — integration and end-to-end tests
+assume connectivity to the test hosts.
+
+### Files required at provision time
+
+Most provisioning is self-contained (inline shell in the `Vagrantfile`),
+but the `zephyr` VM's build step reads files from the repository checkout
+through the `/vagrant` synced folder. These **must be present in your local
+checkout before `vagrant up zephyr`** (a fresh `git clone` has them all —
+this matters mainly if you sync the tree by hand rather than cloning):
+
+| File                                       | Used for                                                        |
+|--------------------------------------------|-----------------------------------------------------------------|
+| `Vagrantfile`                              | The provisioning definition itself                              |
+| `tests/firmware/zephyr/otto-overlay.conf`  | Kconfig overlay layered onto the stock Zephyr shell sample build |
+
+The `zephyr` VM builds an **unmodified** Zephyr shell sample
+(`samples/subsys/shell/shell_module`) and applies `otto-overlay.conf` via
+`-DEXTRA_CONF_FILE=`. otto ships no firmware code — the overlay only flips
+standard Zephyr Kconfig options (telnet shell backend, networking, runtime
+stats), the same way a Unix host needs an `sshd_config`. If
+`otto-overlay.conf` is missing, the `west build` provisioning step fails
+with a missing-file error.
+
+The lab definition `tests/lab_data/tech1/hosts.json` is read by otto at
+**runtime** (not provision time); it must be present to target the test
+hosts but is not needed for `vagrant up` itself.
 
 ## Development setup
 
