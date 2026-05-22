@@ -153,11 +153,20 @@ class ShellSession(ABC):
         # ("... echo __OTTO_..._READY__") — which is fatal on a failed telnet
         # login, where the device loops back to "login:" and echoes our probe
         # as a username, making a rejected login look successful.
-        marker = re.compile(r'(?:^|\r|\n)' + re.escape(self._ready_marker))
+        #
+        # ``(?:\x1b\[[0-9;]*m)*`` after the anchor absorbs any ANSI colour
+        # codes a shell emits between the line start and the marker — the
+        # Zephyr RTOS shell colours its ``command not found`` line, so the
+        # rejected marker arrives as ``\n\x1b[1;31m__OTTO_..._READY__``.
+        # The group matches zero times for a plain bash shell, so this is a
+        # no-op there.
+        marker = re.compile(
+            r'(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*' + re.escape(self._ready_marker)
+        )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._init_timeout
         while True:
-            await self._write(f"stty -echo 2>/dev/null; echo {self._ready_marker}\n")
+            await self._write(self._handshake_command())
             remaining = deadline - loop.time()
             if remaining <= 0:
                 await self._fail_init()
@@ -192,6 +201,60 @@ class ShellSession(ABC):
             "shell never became ready after open — the device is "
             "unresponsive or login failed (e.g. bad credentials)"
         )
+
+    # --- Framing seam (overridable by subclasses) ---
+    #
+    # These hooks isolate everything specific to the *kind* of shell on the
+    # other end. The defaults target a POSIX bash shell; ``ZephyrSession``
+    # overrides them for the Zephyr RTOS shell, which has no bash, no ``$?``,
+    # and no generic ``echo``. Everything else — the readiness handshake, the
+    # read loop, expect handling, recovery — is shared.
+
+    def _handshake_command(self) -> str:
+        """Return the readiness-probe payload written by ``_ensure_initialized``.
+
+        The bash form silences echo and prints the READY marker.
+        """
+        return f"stty -echo 2>/dev/null; echo {self._ready_marker}\n"
+
+    def _frame_command(self, cmd: str) -> str:
+        """Return the full write payload that runs ``cmd`` framed by sentinels.
+
+        The bash form brackets the command with ``echo`` calls; the END
+        sentinel embeds ``$?`` so the exit code travels back inside the marker.
+        """
+        return (
+            f'echo "{self._begin_marker}"; '
+            f'{cmd}; '
+            f'echo "{self._end_marker_prefix}$?__"\n'
+        )
+
+    def _recover_command(self) -> str:
+        """Return the re-synchronization payload written by ``_recover_session``."""
+        return f"echo {self._recover_marker}\n"
+
+    def _extract_retcode(self, buffer: str) -> int:
+        """Extract the command's exit code from the accumulated output buffer.
+
+        The bash form reads the digits the END sentinel pattern captured.
+        Returns ``-1`` when no code can be recovered.
+        """
+        match = self._end_pattern.search(buffer)
+        if match and match.groups():
+            return int(match.group(1))
+        return -1
+
+    def _marks_begin(self, data: str) -> bool:
+        """Return True if ``data`` is the line carrying the BEGIN sentinel.
+
+        The bash form emits the marker as a line of its own, so equality (or
+        suffix, for a marker printed after same-line text) is the right test —
+        and it avoids a false hit on an echoed wrapped command. ``ZephyrSession``
+        overrides this: the RTOS shell prints the marker as
+        ``<token>: command not found``, so the token is a *substring*.
+        """
+        stripped = data.rstrip('\r\n')
+        return stripped == self._begin_marker or stripped.endswith(self._begin_marker)
 
     # --- Public API ---
 
@@ -303,13 +366,10 @@ class ShellSession(ABC):
         command text stripped) is streamed to ``self._on_output`` as it arrives.
         """
 
-        # Wrap the command with BEGIN/END sentinels. $? captures the exit code.
-        wrapped = (
-            f'echo "{self._begin_marker}"; '
-            f'{cmd}; '
-            f'echo "{self._end_marker_prefix}$?__"'
-        )
-        await self._write(wrapped + "\n")
+        # Write the framed command. The framing — BEGIN/END sentinels and how
+        # the exit code is captured — is supplied by _frame_command so that
+        # subclasses can diverge from the bash form (see ZephyrSession).
+        await self._write(self._frame_command(cmd))
 
         # Build regex that matches any expect pattern OR the end sentinel OR
         # a newline.  The newline alternative causes _read_until_pattern to
@@ -332,7 +392,6 @@ class ShellSession(ABC):
                     pre = data[:end_match.start()].replace('\r', '').strip()
                     if pre:
                         self._on_output(pre)
-                retcode = int(end_match.group(1))
                 break
 
             # An expect pattern matched — find which one and send its response
@@ -351,15 +410,15 @@ class ShellSession(ABC):
             # (which embeds the marker inside quotes on the same line).
             if not expect_matched:
                 if not seen_begin:
-                    stripped = data.rstrip('\r\n')
-                    if stripped == self._begin_marker or stripped.endswith(self._begin_marker):
+                    if self._marks_begin(data):
                         seen_begin = True
                 else:
                     line = data.rstrip('\r\n').replace('\r', '')
                     if line:
                         self._on_output(line)
 
-        output = self._parse_output(buffer)
+        output = self._parse_output(buffer, cmd)
+        retcode = self._extract_retcode(buffer)
         status = Status.Success if retcode == 0 else Status.Failed
         return CommandStatus(command=cmd, output=output, status=status, retcode=retcode)
 
@@ -383,8 +442,13 @@ class ShellSession(ABC):
         parts.append(r"(?P<newline>\n)")
         return re.compile("|".join(parts))
 
-    def _parse_output(self, buffer: str) -> str:
-        """Extract command output from between BEGIN and END sentinel markers."""
+    def _parse_output(self, buffer: str, cmd: str) -> str:
+        """Extract command output from between BEGIN and END sentinel markers.
+
+        ``cmd`` is unused by the bash form (echo is silenced so the command
+        text never appears in the buffer) but is part of the seam —
+        ``ZephyrSession`` needs it to strip the shell's echoed input line.
+        """
 
         # Find the LAST BEGIN marker — if the shell echoes the wrapped command,
         # the marker appears twice: once in the echoed command text and once as
@@ -419,7 +483,7 @@ class ShellSession(ABC):
             await asyncio.sleep(0.1)
 
             # Send recovery sentinel to re-synchronize
-            await self._write(f"echo {self._recover_marker}\n")
+            await self._write(self._recover_command())
             data = await asyncio.wait_for(
                 self._read_until_pattern(re.compile(re.escape(self._recover_marker))),
                 timeout=_RECOVERY_TIMEOUT,
@@ -787,7 +851,9 @@ class SessionManager:
     Session creation is pluggable: provide a ``session_factory`` callable to
     control how sessions are created (e.g. ``LocalSession`` for local hosts),
     or pass a ``ConnectionManager`` to use the default SSH/Telnet dispatch.
-    Similarly, ``oneshot_factory`` controls stateless command execution.
+    Similarly, ``oneshot_factory`` controls stateless command execution. On the
+    telnet dispatch path, ``telnet_session_cls`` selects the session class
+    (default :class:`TelnetSession`; an embedded host passes ``ZephyrSession``).
     """
 
     def __init__(
@@ -798,6 +864,7 @@ class SessionManager:
         log_output: Callable[[str], None] = lambda _: None,
         session_factory: 'Callable[[], ShellSession] | None' = None,
         oneshot_factory: 'Callable[[str, float | None], Awaitable[CommandStatus]] | None' = None,
+        telnet_session_cls: 'type[TelnetSession] | None' = None,
     ) -> None:
         self._connections = connections
         self._name = name
@@ -805,6 +872,14 @@ class SessionManager:
         self._log_output = log_output
         self._session_factory = session_factory
         self._oneshot_factory = oneshot_factory
+        # Class used to wrap a telnet connection on the ConnectionManager
+        # dispatch path. ``None`` resolves to the bash-framed TelnetSession at
+        # use time (resolving lazily, rather than binding it as a default
+        # argument, keeps test patches of the module global effective); an
+        # embedded host passes ZephyrSession so its sessions speak the RTOS
+        # shell's framing instead. Substitutable because ZephyrSession shares
+        # TelnetSession's (reader, writer, _owned_client) constructor.
+        self._telnet_session_cls = telnet_session_cls
         self._session: ShellSession | None = None
         self._named_sessions: dict[str, HostSession] = {}
         # Free-list of idle shell sessions used by `oneshot()` for terminals
@@ -875,7 +950,8 @@ class SessionManager:
                         new_session = SshSession(ssh_conn)
                     case 'telnet':
                         telnet_conn = await self._connections.telnet()
-                        new_session = TelnetSession(
+                        telnet_cls = self._telnet_session_cls or TelnetSession
+                        new_session = telnet_cls(
                             telnet_conn.reader,
                             telnet_conn.writer,
                         )
@@ -1038,7 +1114,8 @@ class SessionManager:
                             except Exception:
                                 pass
                             raise
-                        shell_session = TelnetSession(
+                        telnet_cls = self._telnet_session_cls or TelnetSession
+                        shell_session = telnet_cls(
                             client.reader,
                             client.writer,
                             _owned_client=client,

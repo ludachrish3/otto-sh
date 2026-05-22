@@ -163,8 +163,15 @@ class ConnectionManager:
 
     @property
     def credentials(self) -> tuple[str, str]:
-        """Return the active (username, password) pair."""
+        """Return the active (username, password) pair.
+
+        Returns ``('', '')`` when no credentials are configured — valid for a
+        loginless shell (e.g. an RTOS telnet shell reached with
+        ``TelnetOptions.login = False``), where the empty pair is never used.
+        """
         if self._user is None:
+            if not self._creds_dict:
+                return ('', '')
             return next(iter(self._creds_dict.items()))
         return self._user, self._creds_dict[self._user]
 

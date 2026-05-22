@@ -219,6 +219,12 @@ class TelnetOptions:
     """Byte delimiter that terminates the login/password prompts. Anything
     ending in a colon matches ``login:``, ``Username:``, ``Password:``, etc."""
 
+    login: bool = True
+    """Whether ``connect()`` performs a telnet login (waits for the
+    login/password prompts and sends credentials). Set ``False`` for a shell
+    with no login step — e.g. a bare-metal/RTOS telnet shell — where waiting
+    for a ``login:`` prompt that never arrives would hang the connection."""
+
     auto_window_resize: bool = False
     """When True and stdin is a TTY, install a SIGWINCH handler that sends
     a NAWS update on every resize so remote TUIs reflow. Off by default;

@@ -128,7 +128,10 @@ class TelnetClient():
                 )
             except asyncio.TimeoutError:
                 logger.debug("ECHO negotiation timed out — proceeding anyway")
-        await self.login()
+        if self.options.login:
+            await self.login()
+        else:
+            logger.debug(f"Skipping telnet login for {self.host} (options.login=False)")
 
         # Hook up NAWS after login so banners/MOTD don't get mixed with
         # subnegotiation bytes on the wire.
