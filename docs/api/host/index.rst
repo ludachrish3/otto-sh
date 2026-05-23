@@ -19,3 +19,4 @@ local and remote machines.
    transport
    repeat
    telnet
+   adding_an_embedded_os

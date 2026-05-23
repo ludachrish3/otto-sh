@@ -88,6 +88,16 @@ class ShellSession(ABC):
         """Whether the session is initialized and responsive."""
         return self._alive
 
+    @property
+    def _log_tag(self) -> str:
+        """Stable tag for debug log lines: ``<class>@<session_id>``.
+
+        Identifies which subclass and which session a log line came from when
+        multiple are running concurrently — useful when bringing up a new
+        embedded OS subclass alongside the existing Zephyr/Unix ones.
+        """
+        return f"{type(self).__name__}@{self._session_id}"
+
     # --- Abstract I/O primitives (implemented by subclasses) ---
 
     @abstractmethod
@@ -165,33 +175,62 @@ class ShellSession(ABC):
         )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._init_timeout
+        handshake_cmd = self._handshake_command()
+        logger.debug(
+            f"{self._log_tag}: handshake start "
+            f"cmd={handshake_cmd!r} marker={self._ready_marker!r} "
+            f"timeout={self._init_timeout}s"
+        )
+        start = loop.time()
+        attempt = 0
         while True:
-            await self._write(self._handshake_command())
+            attempt += 1
+            await self._write(handshake_cmd)
             remaining = deadline - loop.time()
             if remaining <= 0:
-                await self._fail_init()
+                await self._fail_init(attempt=attempt)
             try:
-                await asyncio.wait_for(
+                data = await asyncio.wait_for(
                     self._read_until_pattern(marker),
                     timeout=min(self._init_probe_interval, remaining),
+                )
+                elapsed = loop.time() - start
+                # Truncate the matched data so a noisy banner doesn't flood
+                # the log; the tail (where the marker landed) is the part
+                # that matters for diagnosing a future bring-up.
+                shown = data if len(data) <= 512 else f"...{data[-512:]}"
+                logger.debug(
+                    f"{self._log_tag}: handshake matched in {elapsed:.2f}s "
+                    f"(attempts={attempt}, {len(data)} bytes): {shown!r}"
                 )
                 break
             except asyncio.TimeoutError:
                 # No response to this probe — the shell may not be reading
                 # input yet. Resend, unless we've run out the clock.
+                logger.debug(
+                    f"{self._log_tag}: handshake probe #{attempt} timed out, "
+                    f"resending (deadline in {deadline - loop.time():.2f}s)"
+                )
                 if loop.time() >= deadline:
-                    await self._fail_init()
+                    await self._fail_init(attempt=attempt)
                 continue
             except asyncio.IncompleteReadError:
                 # Peer EOF mid-handshake — the connection is gone; retrying
                 # cannot help.
-                await self._fail_init()
+                logger.debug(
+                    f"{self._log_tag}: handshake hit EOF on attempt #{attempt}"
+                )
+                await self._fail_init(attempt=attempt)
 
         self._initialized = True
         self._alive = True
 
-    async def _fail_init(self) -> None:
+    async def _fail_init(self, attempt: int = 0) -> None:
         """Tear down a session whose readiness handshake never completed."""
+        logger.debug(
+            f"{self._log_tag}: handshake FAILED after {attempt} attempt(s); "
+            f"marking session dead and closing"
+        )
         self._alive = False
         try:
             await self.close()
@@ -369,7 +408,14 @@ class ShellSession(ABC):
         # Write the framed command. The framing — BEGIN/END sentinels and how
         # the exit code is captured — is supplied by _frame_command so that
         # subclasses can diverge from the bash form (see ZephyrSession).
-        await self._write(self._frame_command(cmd))
+        framed = self._frame_command(cmd)
+        # Truncate for the log so a multi-line script doesn't dominate the
+        # output. The hooks (`_frame_command` and the rest of the seam) are
+        # the natural call sites to instrument once — every embedded subclass
+        # then inherits the visibility for free.
+        shown = framed if len(framed) <= 256 else f"{framed[:256]}...({len(framed)} bytes total)"
+        logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
+        await self._write(framed)
 
         # Build regex that matches any expect pattern OR the end sentinel OR
         # a newline.  The newline alternative causes _read_until_pattern to
@@ -401,6 +447,11 @@ class ShellSession(ABC):
                     pat = re.compile(pat_str) if isinstance(pat_str, str) else pat_str
                     if pat.search(data):
                         await self._write(response)
+                        logger.debug(
+                            f"{self._log_tag}: expect matched "
+                            f"pattern={getattr(pat, 'pattern', pat)!r} "
+                            f"response={response!r}"
+                        )
                         expect_matched = True
                         break
 
@@ -411,6 +462,9 @@ class ShellSession(ABC):
             if not expect_matched:
                 if not seen_begin:
                     if self._marks_begin(data):
+                        logger.debug(
+                            f"{self._log_tag}: begin marker matched on chunk={data!r}"
+                        )
                         seen_begin = True
                 else:
                     line = data.rstrip('\r\n').replace('\r', '')
@@ -420,6 +474,14 @@ class ShellSession(ABC):
         output = self._parse_output(buffer, cmd)
         retcode = self._extract_retcode(buffer)
         status = Status.Success if retcode == 0 else Status.Failed
+        # Log a per-command summary at the seam. The full buffer is dumped at
+        # DEBUG so a future-embedded-OS bring-up can see exactly what
+        # `_extract_retcode` / `_parse_output` had to work with.
+        buffer_preview = buffer if len(buffer) <= 1024 else f"{buffer[:512]}...({len(buffer)}b)...{buffer[-512:]}"
+        logger.debug(
+            f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
+            f"output_len={len(output)} buffer={buffer_preview!r}"
+        )
         return CommandStatus(command=cmd, output=output, status=status, retcode=retcode)
 
     def _build_combined_pattern(
@@ -477,22 +539,35 @@ class ShellSession(ABC):
         Returns any partial output captured during recovery.
         Sets self._alive = False if recovery fails.
         """
+        recover_cmd = self._recover_command()
+        logger.debug(
+            f"{self._log_tag}: recover_session entry "
+            f"marker={self._recover_marker!r} cmd={recover_cmd!r}"
+        )
         try:
             # Send Ctrl+C (SIGINT) to interrupt the hung foreground process
             await self._write("\x03")
             await asyncio.sleep(0.1)
 
             # Send recovery sentinel to re-synchronize
-            await self._write(self._recover_command())
+            await self._write(recover_cmd)
             data = await asyncio.wait_for(
                 self._read_until_pattern(re.compile(re.escape(self._recover_marker))),
                 timeout=_RECOVERY_TIMEOUT,
             )
             # Session is recovered and usable for the next command
-            return data.split(self._recover_marker)[0].strip()
+            partial = data.split(self._recover_marker)[0].strip()
+            logger.debug(
+                f"{self._log_tag}: recover_session ok partial_len={len(partial)}"
+            )
+            return partial
 
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError):
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
             # Shell itself is unresponsive — mark session as dead
+            logger.debug(
+                f"{self._log_tag}: recover_session failed ({type(exc).__name__}); "
+                f"session marked dead"
+            )
             self._alive = False
             return ""
 
@@ -951,6 +1026,10 @@ class SessionManager:
                     case 'telnet':
                         telnet_conn = await self._connections.telnet()
                         telnet_cls = self._telnet_session_cls or TelnetSession
+                        logger.debug(
+                            f"SessionManager[{self._name}]: building telnet "
+                            f"session as {telnet_cls.__name__}"
+                        )
                         new_session = telnet_cls(
                             telnet_conn.reader,
                             telnet_conn.writer,

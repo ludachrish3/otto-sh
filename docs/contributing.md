@@ -29,8 +29,8 @@ QEMU-internal `192.0.2.0/24` net:
 | `sprout_lfs`    | `192.0.2.3` | LittleFS on the flash simulator | `zephyr-qemu-v3_7_lfs.service`       |
 | `sprout_no_fs`  | `192.0.2.5` | (none — no `fs` shell)          | `zephyr-qemu-v3_7_no_fs.service`     |
 
-See [tests/firmware/zephyr/README.md](../tests/firmware/zephyr/README.md) for
-the per-config overlay layout.
+See `tests/firmware/zephyr/README.md` in the repo for the per-config
+overlay layout.
 
 Only `dev` starts on a bare `vagrant up` (the rest are `autostart: false`).
 Bring the others up explicitly when you need them:

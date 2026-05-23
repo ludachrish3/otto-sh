@@ -108,7 +108,16 @@ class TelnetClient():
         """
 
         port = self.connect_port if self.connect_port is not None else self.options.port
-        logger.debug(f"Connecting to {self.host} via telnet on port {port}")
+        # Detailed entry log so a future-embedded-OS bring-up has the
+        # parameters that drove the connect right next to whatever went wrong.
+        logger.debug(
+            f"TelnetClient.connect host={self.host}:{port} "
+            f"user={self.user!r} login={self.options.login} "
+            f"login_prompt={self.options.login_prompt!r} "
+            f"interactive={interactive}"
+        )
+
+        start = asyncio.get_event_loop().time()
 
         open_kwargs = self.options._open_kwargs()
         open_kwargs['port'] = port  # override for tunneled case
@@ -129,6 +138,7 @@ class TelnetClient():
             except asyncio.TimeoutError:
                 logger.debug("ECHO negotiation timed out — proceeding anyway")
         if self.options.login:
+            logger.debug(f"Performing telnet login for {self.host}")
             await self.login()
         else:
             logger.debug(f"Skipping telnet login for {self.host} (options.login=False)")
@@ -141,7 +151,8 @@ class TelnetClient():
             _naws_subscribers.add(self)
             _install_sigwinch_handler()
 
-        logger.debug(f"Telnet connected to {self.host}")
+        elapsed = asyncio.get_event_loop().time() - start
+        logger.debug(f"Telnet connected to {self.host}:{port} in {elapsed:.2f}s")
 
     def _send_naws(self, cols: int, rows: int) -> None:
         """Transmit a NAWS subnegotiation with the given terminal size.
