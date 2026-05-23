@@ -1,0 +1,35 @@
+/*
+ * otto Zephyr test-bed devicetree overlay — LittleFS on flash simulator.
+ *
+ * The stock qemu_x86 board already defines a flash simulator (`flash_sim@0`)
+ * with a labeled `storage_partition` carved out of it — Zephyr does this
+ * specifically so user code can mount a filesystem on qemu_x86 without
+ * touching real flash. We don't need to define our own; we just need to
+ * tell the filesystem layer how to mount it.
+ *
+ * (An earlier draft of this overlay defined a parallel `sim_flash` node with
+ * its own `storage_partition` label and `chosen { zephyr,flash-controller }`,
+ * which collides with the board's pre-existing definition — the DT compiler
+ * errored with "Label 'storage_partition' appears on
+ * /sim_flash/flash_sim@0/... and on /sim_flash@8000000/...". The board-level
+ * partition is the right one to use.)
+ *
+ * This is board configuration, not firmware code. otto still ships no main.c.
+ */
+
+/ {
+	fstab {
+		compatible = "zephyr,fstab";
+		lfs_storage: lfs1 {
+			compatible = "zephyr,fstab,littlefs";
+			mount-point = "/lfs";
+			partition = <&storage_partition>;
+			automount;
+			read-size = <16>;
+			prog-size = <16>;
+			cache-size = <64>;
+			lookahead-size = <32>;
+			block-cycles = <512>;
+		};
+	};
+};

@@ -249,85 +249,139 @@ Vagrant.configure("2") do |config|
                 git clone --depth 1 https://github.com/zephyrproject-rtos/net-tools.git ~/net-tools
             fi
 
-            # Build a STOCK Zephyr shell sample with otto's Kconfig overlay
-            # layered on. otto ships no firmware code — not even an empty
-            # main.c — so the source tree built here is unmodified Zephyr;
-            # our only contribution is the EXTRA_CONF_FILE that flips standard
+            # Build a STOCK Zephyr shell sample with otto's Kconfig + DT
+            # overlays layered on, once per filesystem config. otto ships no
+            # firmware code — not even an empty main.c — so each build is
+            # unmodified Zephyr; the only otto contribution is the
+            # EXTRA_CONF_FILE / EXTRA_DTC_OVERLAY_FILE that flip standard
             # Kconfig options (telnet shell backend, networking, runtime
-            # stats, ...). Same shape as `sshd_config` on a Unix host: config
-            # the target must have for otto to talk to it, not otto code
-            # running on the target. /vagrant is the synced share of the
-            # otto-sh checkout on the host.
-            # app.overlay adds a RAM-backed disk to the devicetree so the FAT
-            # filesystem the Kconfig overlay enables has a storage medium —
-            # still no firmware code, just board configuration.
+            # stats, filesystem). Same shape as `sshd_config` on a Unix host.
+            # /vagrant is the synced share of the otto-sh checkout on the host.
+            #
+            # Three configs build into three independent dirs under ~/build/.
+            # `west build -p auto` is incremental within each dir — first
+            # provision builds clean, subsequent provisions only rebuild what
+            # the overlays changed. The `no_fs` config is the only one without
+            # a DT overlay (it has no filesystem at all).
             cd ~/zephyrproject
             source zephyr/zephyr-env.sh
-            west build -p auto -b qemu_x86 \
-                zephyr/samples/subsys/shell/shell_module \
-                -d /home/vagrant/build/test_app \
-                -- -DEXTRA_CONF_FILE=/vagrant/tests/firmware/zephyr/otto-overlay.conf \
-                   -DEXTRA_DTC_OVERLAY_FILE=/vagrant/tests/firmware/zephyr/app.overlay
+            for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs; do
+                dt_flag=""
+                if [ -f /vagrant/tests/firmware/zephyr/configs/$cfg/app.overlay ]; then
+                    dt_flag="-DEXTRA_DTC_OVERLAY_FILE=/vagrant/tests/firmware/zephyr/configs/$cfg/app.overlay"
+                fi
+                echo "=== building zephyr config: $cfg ==="
+                west build -p auto -b qemu_x86 \
+                    zephyr/samples/subsys/shell/shell_module \
+                    -d /home/vagrant/build/$cfg \
+                    -- -DEXTRA_CONF_FILE="/vagrant/tests/firmware/zephyr/common/otto-overlay.conf;/vagrant/tests/firmware/zephyr/configs/$cfg/overlay.conf" \
+                       $dt_flag
+            done
         SHELL
 
-        # systemd unit that brings up zeth and runs the Zephyr image in QEMU.
+        # Per-config systemd units running each Zephyr image under QEMU.
         #
-        # QEMU is launched through Zephyr's own `west build -t run` target, NOT
-        # a hand-written qemu command line. Zephyr's build knows the
-        # qemu_x86-correct invocation — notably `-cpu qemu32,+nx,+pae`; without
-        # PAE the guest triple-faults before the kernel ever runs — and,
-        # because otto-overlay.conf sets CONFIG_NET_QEMU_ETHERNET, it also
-        # attaches the e1000 NIC to the `zeth` TAP for us. Hand-maintaining
-        # those flags here was the source of an instant-exit boot failure;
-        # delegating to the build removes that whole class of bug.
+        # Why hand-rolled QEMU (vs `west build -t run`): running multiple
+        # Zephyr instances concurrently requires each to attach to a distinct
+        # TAP. Zephyr's qemu_x86 board.cmake hard-codes the TAP name (`zeth`)
+        # in its QEMU args, with no Kconfig knob to override it. So otto
+        # invokes qemu-system-i386 directly, parametrizing the TAP name and
+        # the build directory per config. The flags below are the qemu_x86
+        # invocation Zephyr 3.7 LTS uses: `-cpu qemu32,+nx,+pae` is
+        # load-bearing (without PAE the guest triple-faults before the kernel
+        # runs); `q35` is the PCIe-capable machine the e1000 NIC requires.
+        # **Build-verify these flags on first provision** — the exact set
+        # may differ slightly from what `west build -t run` would produce.
         #
-        # A wrapper script supplies the venv + ZEPHYR_BASE that `west` needs.
-        # ExecStartPre/ExecStopPost are `+`-prefixed so they run as root (the
-        # TAP needs root); QEMU itself runs as the unprivileged vagrant user,
-        # mirroring the known-good manual `west build -t run` invocation.
+        # Each instance gets its own TAP (`zeth-<id>`) created in-band by an
+        # `ExecStartPre=ip tuntap add ...` (more compact and easier to
+        # parametrize than net-tools' `zeth.conf`), its own host-side IP on
+        # 192.0.2.0/24 (.2, .4, .6) matching the Zephyr-side IP set in its
+        # config's overlay.conf (.1, .3, .5), and its own systemd unit
+        # (`zephyr-qemu-<id>.service`) so any one can be restarted
+        # independently — useful when iterating on a single config's overlays.
         zephyr.vm.provision "shell", name: "zephyr-qemu", keep_color: true, inline: <<-SHELL
 
-            cat > /home/vagrant/run-zephyr-qemu.sh <<'EOF'
-#!/usr/bin/env bash
-# Launch the Zephyr test-bed image under QEMU via Zephyr's run target, so the
-# qemu_x86-correct QEMU flags and the e1000<->zeth networking come from the
-# build instead of being maintained by hand. Blocks while QEMU runs.
-set -euo pipefail
-source /home/vagrant/zephyr-venv/bin/activate
-source /home/vagrant/zephyrproject/zephyr/zephyr-env.sh
-cd /home/vagrant/zephyrproject
-exec west build -t run -d /home/vagrant/build/test_app
-EOF
-            chown vagrant:vagrant /home/vagrant/run-zephyr-qemu.sh
-            chmod +x /home/vagrant/run-zephyr-qemu.sh
+            # `cfg:short:host_ip` per entry. The `short` is a TAP-friendly id
+            # (Linux IFNAMSIZ caps interface names at 15 chars, so the long
+            # cfg ids like `v3_7_fat_ram` overflow `zeth-${cfg}` — confirmed
+            # by `Error: argument "zeth-v3_7_fat_ram" is wrong: "name" not a
+            # valid ifname`). Build dirs and systemd unit names use the long
+            # cfg id; only the kernel-visible TAP name uses the short.
+            for cfg_entry in "v3_7_fat_ram:fat:192.0.2.2" \
+                             "v3_7_lfs:lfs:192.0.2.4" \
+                             "v3_7_no_fs:nofs:192.0.2.6"; do
+                cfg=$(echo "$cfg_entry" | cut -d: -f1)
+                short=$(echo "$cfg_entry" | cut -d: -f2)
+                host_ip=$(echo "$cfg_entry" | cut -d: -f3)
+                tap_name="zeth-${short}"
 
-            cat > /etc/systemd/system/zephyr-qemu.service <<EOF
+                cat > /home/vagrant/run-zephyr-qemu-${cfg}.sh <<EOF
+#!/usr/bin/env bash
+# Launch the ${cfg} Zephyr image under QEMU on TAP ${tap_name}. Hand-rolled
+# QEMU invocation (vs west build -t run) so each instance can take a
+# distinct TAP; see the Vagrantfile comment for the rationale.
+set -euo pipefail
+exec qemu-system-i386 \\
+    -m 9 \\
+    -cpu qemu32,+nx,+pae \\
+    -machine q35 \\
+    -device isa-debug-exit,iobase=0xf4,iosize=0x04 \\
+    -no-reboot \\
+    -nographic \\
+    -serial mon:stdio \\
+    -nic tap,ifname=${tap_name},script=no,downscript=no,id=net0,model=e1000 \\
+    -kernel /home/vagrant/build/${cfg}/zephyr/zephyr.elf
+EOF
+                chown vagrant:vagrant /home/vagrant/run-zephyr-qemu-${cfg}.sh
+                chmod +x /home/vagrant/run-zephyr-qemu-${cfg}.sh
+
+                cat > /etc/systemd/system/zephyr-qemu-${cfg}.service <<EOF
 [Unit]
-Description=Zephyr shell sample under QEMU (otto test bed)
+Description=Zephyr shell sample (${cfg}) under QEMU on ${tap_name}
 After=network.target
 
 [Service]
 Type=simple
 User=vagrant
-ExecStartPre=+/home/vagrant/net-tools/net-setup.sh --config /home/vagrant/net-tools/zeth.conf start
-ExecStart=/home/vagrant/run-zephyr-qemu.sh
-ExecStopPost=+/home/vagrant/net-tools/net-setup.sh --config /home/vagrant/net-tools/zeth.conf stop
+ExecStartPre=+/bin/sh -c 'ip link del ${tap_name} 2>/dev/null; ip tuntap add ${tap_name} mode tap user vagrant && ip link set ${tap_name} up && ip addr add ${host_ip}/24 dev ${tap_name}'
+ExecStart=/home/vagrant/run-zephyr-qemu-${cfg}.sh
+ExecStopPost=+/bin/sh -c 'ip link set ${tap_name} down 2>/dev/null; ip tuntap del ${tap_name} mode tap 2>/dev/null; true'
 Restart=on-failure
 RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 EOF
+            done
 
             systemctl daemon-reload
-            systemctl enable --now zephyr-qemu.service
+
+            # Clean up the legacy single-instance unit from a prior provision
+            # (it was named `zephyr-qemu.service` before the multi-config
+            # refactor). Safe to run when it doesn't exist.
+            systemctl stop zephyr-qemu.service 2>/dev/null || true
+            systemctl disable zephyr-qemu.service 2>/dev/null || true
+            rm -f /etc/systemd/system/zephyr-qemu.service /home/vagrant/run-zephyr-qemu.sh
+
+            # And its TAP. The legacy unit's ExecStopPost did not always run
+            # cleanly on transitions — if `zeth` lingers with 192.0.2.2/24,
+            # the new FAT instance's ExecStartPre fails to add the same /24
+            # to `zeth-v3_7_fat_ram` (the kernel rejects duplicate addrs).
+            ip link del zeth 2>/dev/null || true
+
+            for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs; do
+                systemctl enable --now zephyr-qemu-${cfg}.service
+            done
         SHELL
 
         # Optional TFTP path — deferred per the embedded plan but provisioned
-        # for future use. Bound to zeth's host side (192.0.2.2) only, so it is
-        # reachable from the Zephyr instance but not exposed on the private
-        # network. Ordered After=/Requires= zephyr-qemu.service so tftpd binds
-        # after zeth exists.
+        # for future use. Bound to zeth-v3_7_fat_ram's host side (192.0.2.2)
+        # only, so it is reachable from the FAT Zephyr instance but not
+        # exposed on the private network. Ordered After=/Requires= the FAT
+        # service so tftpd binds after that TAP exists. (Future: a parallel
+        # set of unit drop-ins per Zephyr instance, if TFTP becomes the
+        # default transfer for any of them.)
         zephyr.vm.provision "shell", name: "zephyr-tftp", keep_color: true, inline: <<-SHELL
 
             apt -y install tftpd-hpa
@@ -345,8 +399,8 @@ EOF
             mkdir -p /etc/systemd/system/tftpd-hpa.service.d
             cat > /etc/systemd/system/tftpd-hpa.service.d/override.conf <<EOF
 [Unit]
-After=zephyr-qemu.service
-Requires=zephyr-qemu.service
+After=zephyr-qemu-v3_7_fat_ram.service
+Requires=zephyr-qemu-v3_7_fat_ram.service
 EOF
 
             systemctl daemon-reload

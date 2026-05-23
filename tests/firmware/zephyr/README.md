@@ -1,75 +1,100 @@
 # otto Zephyr test-bed configuration
 
-A stock Zephyr shell sample (`samples/subsys/shell/shell_module`) built for
-`qemu_x86`, with `otto-overlay.conf` layered on as an `EXTRA_CONF_FILE`. Used
-to validate otto's `EmbeddedHost` support against a real RTOS target.
+Stock Zephyr shell sample (`samples/subsys/shell/shell_module`) built for
+`qemu_x86`, with otto's Kconfig + devicetree overlays layered on. Used to
+validate otto's `EmbeddedHost` support against real RTOS targets.
 
-**There is no otto-authored firmware here** — not even an empty `main.c`. This
-directory ships only two configuration files:
+**There is no otto-authored firmware here** — not even an empty `main.c`. The
+only thing this directory ships is configuration that has to be in place for
+otto to talk to the target, not code we inject into it. Any sentinel/marker
+behavior otto relies on comes from what the stock Zephyr shell already does.
 
-- `otto-overlay.conf` — a Kconfig overlay enabling the standard Zephyr options
-  otto needs: the telnet shell backend, networking with a static IPv4,
-  per-thread runtime stats, and a FAT filesystem with the `fs` shell.
-- `app.overlay` — a devicetree overlay adding a RAM-backed disk for that
-  filesystem to live on (`qemu_x86` ships none).
+## Layout
 
-The shape of the dependency is the same as `sshd_config` on a Unix host:
-configuration that has to be in place for otto to talk to the target, not code
-we inject into it. Any sentinel/marker behavior otto relies on comes from what
-the stock Zephyr shell already does.
+```text
+common/
+    otto-overlay.conf       # always-on bits: shell, networking, runtime stats
+configs/
+    v3_7_fat_ram/           # FAT on a RAM disk (the default for transfer tests)
+        overlay.conf
+        app.overlay
+    v3_7_lfs/               # LittleFS on the flash simulator
+        overlay.conf
+        app.overlay
+    v3_7_no_fs/             # no filesystem at all — graceful-degradation target
+        overlay.conf
+        (no app.overlay needed)
+```
+
+`common/otto-overlay.conf` is the shared Kconfig overlay applied to every
+config. Per-filesystem deltas live in `configs/<id>/overlay.conf` (FS Kconfig,
+per-instance IP) and `configs/<id>/app.overlay` (devicetree, when needed).
+Builds layer the two via Zephyr's `-DEXTRA_CONF_FILE="a;b"` semicolon list.
+
+## The configs and what they exercise
+
+| id             | IP          | Filesystem                      | Why it exists                                                                                       |
+|----------------|-------------|---------------------------------|-----------------------------------------------------------------------------------------------------|
+| `v3_7_fat_ram` | `192.0.2.1` | FAT on a 128 KiB RAM disk       | Default target for `EmbeddedFileTransfer`'s console `put`/`get` round-trip                          |
+| `v3_7_lfs`     | `192.0.2.3` | LittleFS on the flash simulator | Proves the console backend is FS-agnostic; LittleFS has different mount cost / on-disk semantics    |
+| `v3_7_no_fs`   | `192.0.2.5` | (none — no `fs` shell)          | Exercises `EmbeddedFileTransfer`'s graceful-degradation path against a real target, not just a mock |
+
+All three live under `qemu_x86` in the same `zephyr` Vagrant VM, each as its
+own systemd-managed QEMU instance on its own `zeth-<id>` TAP. Memory ≈ 3 ×
+32 MB inside the 4 GB zephyr VM.
 
 ## How it fits
 
-The `zephyr` Vagrant VM (see the project `Vagrantfile`) builds the stock
-sample under QEMU, attaches it to a TAP interface `zeth` (host side
-`192.0.2.2`, Zephyr side `192.0.2.1`), and runs it as the `zephyr-qemu`
-systemd service. otto reaches the telnet shell at `192.0.2.1:23` by
-SSH-hopping through the Ubuntu zephyr VM.
+The `zephyr` Vagrant VM (see the project `Vagrantfile`) builds each config
+under QEMU, attaches each to its own TAP (host side `192.0.2.{2,4,6}`,
+Zephyr side `192.0.2.{1,3,5}`), and runs each as a `zephyr-qemu-<id>.service`
+systemd unit. otto reaches each telnet shell at `192.0.2.<n>:23` by
+SSH-hopping through the Ubuntu `zephyr` VM (`10.10.200.14`).
 
-## Building (manual, for the spike)
+## Building (manual, one config at a time)
 
 Inside the `zephyr` VM:
 
 ```bash
 source ~/zephyr-venv/bin/activate
 cd ~/zephyrproject && source zephyr/zephyr-env.sh
+
+# Pick a config:
+CFG=v3_7_fat_ram   # or v3_7_lfs, v3_7_no_fs
+
+# Build it. `no_fs` is the one config that does not need a DT overlay.
+DT_FLAG=""
+if [ -f /vagrant/tests/firmware/zephyr/configs/$CFG/app.overlay ]; then
+    DT_FLAG="-DEXTRA_DTC_OVERLAY_FILE=/vagrant/tests/firmware/zephyr/configs/$CFG/app.overlay"
+fi
 west build -p auto -b qemu_x86 zephyr/samples/subsys/shell/shell_module \
-    -d ~/build/test_app \
-    -- -DEXTRA_CONF_FILE=/vagrant/tests/firmware/zephyr/otto-overlay.conf \
-       -DEXTRA_DTC_OVERLAY_FILE=/vagrant/tests/firmware/zephyr/app.overlay
+    -d ~/build/$CFG \
+    -- -DEXTRA_CONF_FILE="/vagrant/tests/firmware/zephyr/common/otto-overlay.conf;/vagrant/tests/firmware/zephyr/configs/$CFG/overlay.conf" \
+       $DT_FLAG
 ```
 
-The provisioning step does this once on first `vagrant up`; rebuild manually
-after editing `otto-overlay.conf` or `app.overlay`.
+`vagrant provision zephyr` does this for all three configs automatically;
+rebuild manually after editing overlays. Each config's build dir is
+independent, so rebuilding one does not touch the others.
 
-## Phase 5 — console file transfer
+## Filesystem mount notes
 
-otto's `console` transfer backend drives the stock `fs` shell. The Kconfig +
-devicetree overlays enable a FAT filesystem on a 128 KiB RAM disk for it to
-target.
+- **`v3_7_fat_ram`**: a fresh RAM disk is unformatted; `CONFIG_*_MKFS`
+  formats it on first mount. Mount once per boot before transferring with
+  `fs mount fat /RAM:`, then `fs read` / `fs write` (and otto's `get` /
+  `put`) operate under `/RAM:`.
 
-> **Build-verify needed.** The `fs`/FAT/RAM-disk Kconfig symbols and the
-> `zephyr,ram-disk` devicetree binding are the *expected* form for the pinned
-> Zephyr 3.7 LTS but have not been confirmed against a real `west build`.
-> Adjust if the build reports unknown symbols or binding errors.
+- **`v3_7_lfs`**: the `zephyr,fstab` node in `app.overlay` has `automount;` so
+  the FS is mounted at `/lfs` by the time the shell is up. No manual mount.
 
-The RAM disk is not persistent and is not pre-formatted: `CONFIG_*_MKFS`
-formats it on first mount. Mount it once per boot before transferring —
+- **`v3_7_no_fs`**: no `fs` shell command exists at all. otto's console
+  backend detects this and returns a clear error rather than hanging.
 
-```bash
-fs mount fat /RAM:
-```
+## Build verification status (as of 2026-05-23)
 
-— then `fs read` / `fs write` (and otto's `get` / `put`) operate under `/RAM:`.
-
-## Phase 1 spike
-
-With the service running, from the Ubuntu side:
-
-```bash
-telnet 192.0.2.1 23
-```
-
-Confirm: (1) an unknown command (e.g. `__OTTO_test_BEGIN__`) produces a line
-echoing the token; (2) input echo behavior; (3) `kernel threads` /
-`kernel stacks` output formats (Phase 6 parsers).
+The Kconfig and devicetree symbols used in `configs/v3_7_lfs/` and the
+`zephyr,ram-disk` binding in `configs/v3_7_fat_ram/app.overlay` are the
+expected set for Zephyr 3.7 LTS but **have not been build-verified end to
+end**. If `west build` complains about an unknown symbol or binding, the fix
+is local to the affected `overlay.conf` / `app.overlay` — none of the other
+configs are affected.

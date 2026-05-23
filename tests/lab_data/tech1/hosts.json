@@ -82,10 +82,44 @@
         "ne": "sprout",
         "osType": "embedded",
         "osName": "Zephyr",
+        "osVersion": "3.7",
+        "transfer": "console",
         "is_virtual": true,
         "hop": "basil_seed",
         "resources": [
             "sprout"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.3",
+        "ne": "sprout_lfs",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "3.7",
+        "transfer": "console",
+        "is_virtual": true,
+        "hop": "basil_seed",
+        "resources": [
+            "sprout_lfs"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.5",
+        "ne": "sprout_no_fs",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "3.7",
+        "transfer": "console",
+        "is_virtual": true,
+        "hop": "basil_seed",
+        "resources": [
+            "sprout_no_fs"
         ],
         "labs": [
             "embedded"

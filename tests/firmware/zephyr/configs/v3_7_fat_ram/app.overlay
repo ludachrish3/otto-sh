@@ -1,17 +1,17 @@
 /*
- * otto Zephyr test-bed devicetree overlay.
+ * otto Zephyr test-bed devicetree overlay — FAT on RAM disk.
  *
- * Adds a RAM-backed disk so the FAT filesystem enabled in otto-overlay.conf
- * has a storage medium under QEMU — with no flash partition to carve up. The
- * stock qemu_x86 board ships no ram-disk node, so otto supplies one here.
+ * Adds a RAM-backed disk so the FAT filesystem enabled in overlay.conf has a
+ * storage medium under QEMU — with no flash partition to carve up. The stock
+ * qemu_x86 board ships no ram-disk node, so otto supplies one here.
  *
  * This is board configuration, not firmware code: the same shape as the
  * Kconfig overlay. otto still ships no main.c.
  *
  * NOTE: the binding name ("zephyr,ram-disk") and its properties are the
  * expected form for Zephyr 3.7 LTS but have NOT been build-verified — confirm
- * with a real `west build` (see README.md). The resulting disk is mounted as
- * FAT via the `fs` shell: `fs mount fat /RAM:`.
+ * with a real `west build` (see ../../README.md). The resulting disk is
+ * mounted as FAT via the `fs` shell: `fs mount fat /RAM:`.
  */
 
 / {

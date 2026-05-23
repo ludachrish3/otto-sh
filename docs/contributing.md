@@ -11,13 +11,26 @@ Vagrant can be used to develop and test changes to `otto`. After
 The `Vagrantfile` defines five machines on a private `10.10.200.0/24`
 network:
 
-| VM       | IP              | `autostart` | Purpose                                              |
-|----------|-----------------|-------------|------------------------------------------------------|
-| `dev`    | `10.10.200.100` | yes         | Development VM - develop and run the test suite here |
-| `test1`  | `10.10.200.11`  | no          | SSH + SCP test host                                  |
-| `test2`  | `10.10.200.12`  | no          | Telnet + netcat test host                            |
-| `test3`  | `10.10.200.13`  | no          | Docker-capable test host                             |
-| `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (QEMU) + SSH hop to it          |
+| VM       | IP              | `autostart` | Purpose                                                   |
+|----------|-----------------|-------------|-----------------------------------------------------------|
+| `dev`    | `10.10.200.100` | yes         | Development VM - develop and run the test suite here      |
+| `test1`  | `10.10.200.11`  | no          | SSH + SCP test host                                       |
+| `test2`  | `10.10.200.12`  | no          | Telnet + netcat test host                                 |
+| `test3`  | `10.10.200.13`  | no          | Docker-capable test host                                  |
+| `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (3 QEMU instances) + SSH hop to them |
+
+The `zephyr` VM hosts **three** Zephyr QEMU instances concurrently, one per
+filesystem config. They share the SSH hop (`10.10.200.14`) but live on the
+QEMU-internal `192.0.2.0/24` net:
+
+| Zephyr instance | IP          | Filesystem                      | systemd unit                         |
+|-----------------|-------------|---------------------------------|--------------------------------------|
+| `sprout`        | `192.0.2.1` | FAT on a RAM disk               | `zephyr-qemu-v3_7_fat_ram.service`   |
+| `sprout_lfs`    | `192.0.2.3` | LittleFS on the flash simulator | `zephyr-qemu-v3_7_lfs.service`       |
+| `sprout_no_fs`  | `192.0.2.5` | (none — no `fs` shell)          | `zephyr-qemu-v3_7_no_fs.service`     |
+
+See [tests/firmware/zephyr/README.md](../tests/firmware/zephyr/README.md) for
+the per-config overlay layout.
 
 Only `dev` starts on a bare `vagrant up` (the rest are `autostart: false`).
 Bring the others up explicitly when you need them:
@@ -37,24 +50,73 @@ Most provisioning is self-contained (inline shell in the `Vagrantfile`),
 but the `zephyr` VM's build step reads files from the repository checkout
 through the `/vagrant` synced folder. These **must be present in your local
 checkout before `vagrant up zephyr`** (a fresh `git clone` has them all —
-this matters mainly if you sync the tree by hand rather than cloning):
+this matters mainly if you iterate on overlays from outside the host
+checkout; see the next subsection):
 
-| File                                       | Used for                                                        |
-|--------------------------------------------|-----------------------------------------------------------------|
-| `Vagrantfile`                              | The provisioning definition itself                              |
-| `tests/firmware/zephyr/otto-overlay.conf`  | Kconfig overlay layered onto the stock Zephyr shell sample build |
+| File                                                                | Used for                                                          |
+|---------------------------------------------------------------------|-------------------------------------------------------------------|
+| `Vagrantfile`                                                       | The provisioning definition itself                                |
+| `tests/firmware/zephyr/common/otto-overlay.conf`                    | Shared Kconfig overlay (shell, networking, runtime stats)         |
+| `tests/firmware/zephyr/configs/v3_7_fat_ram/overlay.conf`           | FAT-on-RAM-disk Kconfig delta                                     |
+| `tests/firmware/zephyr/configs/v3_7_fat_ram/app.overlay`            | FAT-on-RAM-disk devicetree (RAM disk node)                        |
+| `tests/firmware/zephyr/configs/v3_7_lfs/overlay.conf`               | LittleFS Kconfig delta                                            |
+| `tests/firmware/zephyr/configs/v3_7_lfs/app.overlay`                | LittleFS devicetree (flash simulator + fstab automount)           |
+| `tests/firmware/zephyr/configs/v3_7_no_fs/overlay.conf`             | no-filesystem Kconfig delta (graceful-degradation target)         |
 
 The `zephyr` VM builds an **unmodified** Zephyr shell sample
-(`samples/subsys/shell/shell_module`) and applies `otto-overlay.conf` via
-`-DEXTRA_CONF_FILE=`. otto ships no firmware code — the overlay only flips
-standard Zephyr Kconfig options (telnet shell backend, networking, runtime
-stats), the same way a Unix host needs an `sshd_config`. If
-`otto-overlay.conf` is missing, the `west build` provisioning step fails
-with a missing-file error.
+(`samples/subsys/shell/shell_module`) three times — once per filesystem
+config — layering `common/otto-overlay.conf` plus the per-config
+`overlay.conf` via `-DEXTRA_CONF_FILE="a;b"`, with the matching
+`app.overlay` via `-DEXTRA_DTC_OVERLAY_FILE=` (the `no_fs` config omits
+the DT overlay). otto ships no firmware code — the overlays only flip
+standard Zephyr Kconfig options (telnet shell backend, networking,
+runtime stats, filesystem), the same way a Unix host needs an
+`sshd_config`. If any overlay is missing, the `west build` provisioning
+step fails with a missing-file error.
 
 The lab definition `tests/lab_data/tech1/hosts.json` is read by otto at
 **runtime** (not provision time); it must be present to target the test
 hosts but is not needed for `vagrant up` itself.
+
+### Iterating on overlays from outside the host checkout
+
+`vagrant up zephyr` (and `vagrant provision zephyr`) run on your **host**
+machine, and the `zephyr` VM's `/vagrant` synced folder maps to the
+**host's** otto-sh checkout. If you edit firmware overlays from anywhere
+other than the host checkout — for example, from inside the `dev` VM —
+those edits do **not** reach the `zephyr` VM until they land in the host
+checkout.
+
+The sync mechanism is whatever your workflow already uses for source
+control. With a shared remote: commit + push from where you edited and
+pull on the host. Without one: any file-copy mechanism (`scp`, `rsync`,
+manual copy) that puts the changed `tests/firmware/zephyr/...` and
+`Vagrantfile` files into the host checkout will do. Either way:
+
+```bash
+# on the host, in the otto-sh checkout
+vagrant provision zephyr                                # rebuild all 3 Zephyr images
+vagrant ssh zephyr -c 'sudo systemctl restart zephyr-qemu-v3_7_fat_ram.service'
+vagrant ssh zephyr -c 'sudo systemctl restart zephyr-qemu-v3_7_lfs.service'
+vagrant ssh zephyr -c 'sudo systemctl restart zephyr-qemu-v3_7_no_fs.service'
+```
+
+`west build` is incremental within each per-config build dir, so
+re-provision after an overlay edit is fast on the second run.
+
+For a tighter iteration loop on a single config from the host:
+
+```bash
+vagrant ssh zephyr
+source ~/zephyr-venv/bin/activate
+source ~/zephyrproject/zephyr/zephyr-env.sh
+west build -d ~/build/v3_7_lfs     # incremental rebuild of just that config
+sudo systemctl restart zephyr-qemu-v3_7_lfs.service
+```
+
+A fresh `git clone` on the host has all the files above by default — this
+workflow only matters when you are iterating on overlays from a different
+checkout.
 
 ## Development setup
 
