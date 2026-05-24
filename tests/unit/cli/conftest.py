@@ -96,12 +96,22 @@ def real_main_mocks(tmp_path):
     sut_dir, lab_data_dir = _make_lab_fs(tmp_path)
     repo = Repo(sutDir=sut_dir)
 
+    # Strip the user's OTTO_* env so test outcomes don't drift with the shell;
+    # supply OTTO_XDIR pointing at tmp_path so the now-required --xdir option
+    # is satisfied (and so initOttoLogger never writes to the project root).
     clean_env = {k: v for k, v in os.environ.items()
                  if not k.startswith('OTTO_')}
+    clean_env['OTTO_XDIR'] = str(tmp_path)
 
     logger = getOttoLogger()
     original_level = logger.level
     original_handlers = list(logger.handlers)
+    # Snapshot singleton state that initOttoLogger mutates so a later test on
+    # this xdist worker can't inherit a stale xdir/keep_seconds. (The
+    # test_cov.py flake came from this exact leak: a polluted xdir landed at
+    # the project root and cov_callback's removeOldLogs walked .git/.)
+    original_xdir = getattr(logger, '_xdir', None)
+    original_keep_seconds = logger._keep_seconds
 
     with (
         patch.dict(os.environ, clean_env, clear=True),
@@ -137,3 +147,11 @@ def real_main_mocks(tmp_path):
     for handler in original_handlers:
         logger.addHandler(handler)
     logger.setLevel(original_level)
+    if original_xdir is None:
+        try:
+            del logger._xdir
+        except AttributeError:
+            pass
+    else:
+        logger._xdir = original_xdir
+    logger._keep_seconds = original_keep_seconds

@@ -26,7 +26,7 @@ runner = CliRunner()
 # ── Shared fixtures ───────────────────────────────────────────────────────────
 
 @pytest.fixture
-def main_mocks():
+def main_mocks(tmp_path):
     """
     Create main parser mocks
 
@@ -39,8 +39,10 @@ def main_mocks():
     mock_config.lab = mock_lab
 
     # Clear OTTO_* env vars so Typer envvar= defaults aren't overridden
-    # by the user's shell environment.
+    # by the user's shell environment; supply OTTO_XDIR so the now-required
+    # --xdir option is satisfied without each test having to thread it.
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith('OTTO_')}
+    clean_env['OTTO_XDIR'] = str(tmp_path)
 
     with (
         patch.dict(os.environ, clean_env, clear=True),
@@ -195,15 +197,29 @@ class TestLoggerArguments:
         _invoke(['--log-days', '14'])
         assert getOttoLogger().keep_seconds == 14 * 24 * 60 * 60
 
-    def test_xdir_default_is_empty_path(self, real_main_mocks):
+    def test_xdir_from_env(self, real_main_mocks):
+        # real_main_mocks pre-sets OTTO_XDIR to tmp_path; the callback should
+        # pick that up without an explicit --xdir on the command line.
         _invoke([])
-        assert getOttoLogger().xdir == Path()
+        assert getOttoLogger().xdir == real_main_mocks['tmp_path']
 
     def test_xdir_custom_path(self, real_main_mocks, tmp_path):
         custom_xdir = tmp_path / 'custom_xdir'
         custom_xdir.mkdir()
         _invoke(['--xdir', str(custom_xdir)])
         assert getOttoLogger().xdir == custom_xdir
+
+    def test_xdir_required_when_neither_flag_nor_env(self):
+        """--xdir (or OTTO_XDIR) must be supplied; otherwise the CLI exits non-zero.
+
+        Defaulting xdir to ``Path()`` (== CWD) was a footgun: combined with
+        --log-days, removeOldLogs walked the project tree at startup.
+        """
+        clean_env = {k: v for k, v in os.environ.items()
+                     if not k.startswith('OTTO_')}
+        with patch.dict(os.environ, clean_env, clear=True):
+            result = runner.invoke(app, ['--lab', 'test_lab'])
+        assert result.exit_code != 0
 
 
 # ── Lab loading ───────────────────────────────────────────────────────────────

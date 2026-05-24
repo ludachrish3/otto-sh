@@ -1,6 +1,7 @@
 """Docstring for otto.logger.logger"""
 
 import atexit
+import re
 from datetime import datetime, timedelta
 from logging import (
     FileHandler,
@@ -25,6 +26,14 @@ from .formatters import (
     RichFormatter,
     format_log_time,
 )
+
+
+# Matches the timestamp directory names that ``create_output_dir`` writes:
+# ``YYYYMMDD_HHMMSS_mmm`` optionally followed by ``_<subcommand>``. Used by
+# ``removeOldLogs`` as a fail-safe so that a misconfigured ``xdir`` (e.g.
+# accidentally pointing at a project root) can't lead to rmtree'ing
+# unrelated subdirectories — only otto-created log dirs are candidates.
+_LOG_DIR_NAME_RE = re.compile(r'^\d{8}_\d{6}_\d{3}(_.+)?$')
 
 
 class OttoLogger(Logger):
@@ -175,6 +184,15 @@ class OttoLogger(Logger):
                 continue
             for log_dir_name in listdir(cmd_dir):
                 output_dir = cmd_dir / log_dir_name
+                # Fail-safe: only rmtree entries that match the timestamped
+                # log-dir naming pattern ``create_output_dir`` writes. Without
+                # this, a misconfigured xdir (the original test_cov.py flake
+                # left it pointing at the project root) would walk arbitrary
+                # subtrees and rmtree any old-enough directory.
+                if not _LOG_DIR_NAME_RE.match(log_dir_name):
+                    continue
+                if not output_dir.is_dir():
+                    continue
                 if output_dir.stat().st_mtime < oldest:
 
                     # Only log the fact that logs are being deleted once when the first old directory is found
