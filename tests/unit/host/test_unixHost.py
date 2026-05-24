@@ -22,7 +22,7 @@ import pytest
 from otto.host import HostSession, UnixHost
 from otto.host.session import ShellSession
 from otto.utils import CommandStatus, Status
-from tests.unit.conftest import host_data, make_host
+from tests.conftest import host_data, make_host
 from tests.unit.host._transfer_retry import transfer_with_retry
 
 

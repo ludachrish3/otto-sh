@@ -33,11 +33,16 @@ Builds layer the two via Zephyr's `-DEXTRA_CONF_FILE="a;b"` semicolon list.
 
 ## The configs and what they exercise
 
-| id             | IP          | Filesystem                      | Why it exists                                                                                       |
-|----------------|-------------|---------------------------------|-----------------------------------------------------------------------------------------------------|
-| `v3_7_fat_ram` | `192.0.2.1` | FAT on a 128 KiB RAM disk       | Default target for `EmbeddedFileTransfer`'s console `put`/`get` round-trip                          |
-| `v3_7_lfs`     | `192.0.2.3` | LittleFS on the flash simulator | Proves the console backend is FS-agnostic; LittleFS has different mount cost / on-disk semantics    |
-| `v3_7_no_fs`   | `192.0.2.5` | (none — no `fs` shell)          | Exercises `EmbeddedFileTransfer`'s graceful-degradation path against a real target, not just a mock |
+| id             | IP          | /30 subnet     | Filesystem                      | Why it exists                                                                                       |
+|----------------|-------------|----------------|---------------------------------|-----------------------------------------------------------------------------------------------------|
+| `v3_7_fat_ram` | `192.0.2.1` | `192.0.2.0/30` | FAT on a 128 KiB RAM disk       | Default target for `EmbeddedFileTransfer`'s console `put`/`get` round-trip                          |
+| `v3_7_lfs`     | `192.0.2.5` | `192.0.2.4/30` | LittleFS on the flash simulator | Proves the console backend is FS-agnostic; LittleFS has different mount cost / on-disk semantics    |
+| `v3_7_no_fs`   | `192.0.2.9` | `192.0.2.8/30` | (none — no `fs` shell)          | Exercises `EmbeddedFileTransfer`'s graceful-degradation path against a real target, not just a mock |
+
+Each instance is on its own /30 so the host VM's routing table holds a
+distinct route per TAP. A shared `192.0.2.0/24` produced overlapping routes
+and the kernel picked one, making the other two instances unreachable from
+the host.
 
 All three live under `qemu_x86` in the same `zephyr` Vagrant VM, each as its
 own systemd-managed QEMU instance on its own `zeth-<id>` TAP. Memory ≈ 3 ×

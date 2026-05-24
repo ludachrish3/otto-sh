@@ -259,10 +259,19 @@ Vagrant.configure("2") do |config|
             # /vagrant is the synced share of the otto-sh checkout on the host.
             #
             # Three configs build into three independent dirs under ~/build/.
-            # `west build -p auto` is incremental within each dir — first
-            # provision builds clean, subsequent provisions only rebuild what
-            # the overlays changed. The `no_fs` config is the only one without
-            # a DT overlay (it has no filesystem at all).
+            # The `no_fs` config is the only one without a DT overlay (it has
+            # no filesystem at all).
+            #
+            # `-p always` (pristine rebuild every provision), not `-p auto`,
+            # because `auto` compares the cmake configure-time *arguments*
+            # — the overlay file paths — not the file *contents*. An overlay
+            # edit changes the bytes inside `overlay.conf` but the cmake args
+            # stay the same, so `-p auto` reports "no work to do" and the
+            # binary is stale (Phase 5.5 found this the hard way: IP
+            # assignments moved in the overlays but the running QEMU kept
+            # the old IPs). `-p always` is slower but correct. The toolchain
+            # and west-managed source caches persist across runs, so the
+            # rebuild is ~30 s per config on a warm VM.
             cd ~/zephyrproject
             source zephyr/zephyr-env.sh
             for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs; do
@@ -271,7 +280,7 @@ Vagrant.configure("2") do |config|
                     dt_flag="-DEXTRA_DTC_OVERLAY_FILE=/vagrant/tests/firmware/zephyr/configs/$cfg/app.overlay"
                 fi
                 echo "=== building zephyr config: $cfg ==="
-                west build -p auto -b qemu_x86 \
+                west build -p always -b qemu_x86 \
                     zephyr/samples/subsys/shell/shell_module \
                     -d /home/vagrant/build/$cfg \
                     -- -DEXTRA_CONF_FILE="/vagrant/tests/firmware/zephyr/common/otto-overlay.conf;/vagrant/tests/firmware/zephyr/configs/$cfg/overlay.conf" \
@@ -308,9 +317,31 @@ Vagrant.configure("2") do |config|
             # by `Error: argument "zeth-v3_7_fat_ram" is wrong: "name" not a
             # valid ifname`). Build dirs and systemd unit names use the long
             # cfg id; only the kernel-visible TAP name uses the short.
+            #
+            # Each instance gets its own /30 subnet so the host's routing
+            # table has a distinct route per TAP — three instances on a
+            # shared /24 produced overlapping routes, the kernel picked one,
+            # and the other two were unreachable. /30 layout:
+            #   FAT:    Zephyr 192.0.2.1, host 192.0.2.2  (192.0.2.0/30)
+            #   LFS:    Zephyr 192.0.2.5, host 192.0.2.6  (192.0.2.4/30)
+            #   no_fs:  Zephyr 192.0.2.9, host 192.0.2.10 (192.0.2.8/30)
+            # Resolve the Zephyr-SDK qemu binary ONCE here and bake the
+            # absolute path into each wrapper script below. An earlier draft
+            # tried to defer this to wrapper-run time (``SDK_QEMU=\$(ls
+            # ...)`` inside the heredoc), but Ruby's <<-SHELL heredoc strips
+            # the backslash from ``\$`` before bash ever sees it — the ``ls``
+            # then ran at provision time anyway *and* the ``\$SDK_QEMU``
+            # expansion in ``exec`` became ``$SDK_QEMU`` (empty), yielding
+            # ``exec ""`` in the wrapper.
+            SDK_QEMU=$(ls /home/vagrant/zephyr-sdk-*/sysroots/*/usr/bin/qemu-system-i386 | head -1)
+            if [ -z "$SDK_QEMU" ]; then
+                echo "ERROR: zephyr-sdk qemu-system-i386 not found under /home/vagrant/zephyr-sdk-*/" >&2
+                exit 1
+            fi
+
             for cfg_entry in "v3_7_fat_ram:fat:192.0.2.2" \
-                             "v3_7_lfs:lfs:192.0.2.4" \
-                             "v3_7_no_fs:nofs:192.0.2.6"; do
+                             "v3_7_lfs:lfs:192.0.2.6" \
+                             "v3_7_no_fs:nofs:192.0.2.10"; do
                 cfg=$(echo "$cfg_entry" | cut -d: -f1)
                 short=$(echo "$cfg_entry" | cut -d: -f2)
                 host_ip=$(echo "$cfg_entry" | cut -d: -f3)
@@ -320,17 +351,37 @@ Vagrant.configure("2") do |config|
 #!/usr/bin/env bash
 # Launch the ${cfg} Zephyr image under QEMU on TAP ${tap_name}. Hand-rolled
 # QEMU invocation (vs west build -t run) so each instance can take a
-# distinct TAP; see the Vagrantfile comment for the rationale.
+# distinct TAP — Zephyr's run target hard-codes ifname=zeth.
+#
+# Uses the Zephyr-SDK-bundled qemu-system-i386 (v7.0.0), not the
+# apt-installed system one (v8.2.2). Something in e1000 emulation
+# changed between those versions that breaks Zephyr 3.7's e1000 driver:
+# the guest boots and shell_telnet inits, but ARP replies never make it
+# back through to the host (TX increments, RX never moves). The SDK
+# binary is what \`west build -t run\` uses, and is the known-good one.
+#
+# The SDK qemu path is resolved at provision time (above) and baked in
+# here so we never have to wrangle backslash escaping across Ruby /
+# bash / heredoc layers.
+#
+# Flags mirror Zephyr's own qemu_x86 build verbatim, with only the TAP
+# ifname diverging:
+#   -m 32              network stack + shell + FS need >9 MB.
+#   -machine acpi=off  Zephyr's qemu_x86 expects q35 without ACPI.
+#   -chardev/-serial/-mon  Zephyr's preferred serial+monitor multiplex
+#                      on stdio.
 set -euo pipefail
-exec qemu-system-i386 \\
-    -m 9 \\
+exec ${SDK_QEMU} \\
+    -m 32 \\
     -cpu qemu32,+nx,+pae \\
-    -machine q35 \\
+    -machine q35,acpi=off \\
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \\
     -no-reboot \\
     -nographic \\
-    -serial mon:stdio \\
-    -nic tap,ifname=${tap_name},script=no,downscript=no,id=net0,model=e1000 \\
+    -chardev stdio,id=con,mux=on \\
+    -serial chardev:con \\
+    -mon chardev=con,mode=readline \\
+    -nic tap,model=e1000,script=no,downscript=no,ifname=${tap_name} \\
     -kernel /home/vagrant/build/${cfg}/zephyr/zephyr.elf
 EOF
                 chown vagrant:vagrant /home/vagrant/run-zephyr-qemu-${cfg}.sh
@@ -344,7 +395,7 @@ After=network.target
 [Service]
 Type=simple
 User=vagrant
-ExecStartPre=+/bin/sh -c 'ip link del ${tap_name} 2>/dev/null; ip tuntap add ${tap_name} mode tap user vagrant && ip link set ${tap_name} up && ip addr add ${host_ip}/24 dev ${tap_name}'
+ExecStartPre=+/bin/sh -c 'ip link del ${tap_name} 2>/dev/null; ip tuntap add ${tap_name} mode tap user vagrant && ip link set ${tap_name} up && ip addr add ${host_ip}/30 dev ${tap_name}'
 ExecStart=/home/vagrant/run-zephyr-qemu-${cfg}.sh
 ExecStopPost=+/bin/sh -c 'ip link set ${tap_name} down 2>/dev/null; ip tuntap del ${tap_name} mode tap 2>/dev/null; true'
 Restart=on-failure
@@ -364,14 +415,22 @@ EOF
             systemctl disable zephyr-qemu.service 2>/dev/null || true
             rm -f /etc/systemd/system/zephyr-qemu.service /home/vagrant/run-zephyr-qemu.sh
 
-            # And its TAP. The legacy unit's ExecStopPost did not always run
-            # cleanly on transitions — if `zeth` lingers with 192.0.2.2/24,
-            # the new FAT instance's ExecStartPre fails to add the same /24
-            # to `zeth-v3_7_fat_ram` (the kernel rejects duplicate addrs).
-            ip link del zeth 2>/dev/null || true
+            # Stale TAPs from prior provisions — both the legacy single-
+            # instance `zeth` and the pre-shortening long names from before
+            # the IFNAMSIZ fix. Each `ip link del` is a no-op if absent.
+            # Without this, a previously-running service holds the OLD TAP
+            # name (since `systemctl enable --now` does not restart already-
+            # running units to pick up an updated unit file).
+            for iface in zeth zeth-v3_7_fat_ram zeth-v3_7_lfs zeth-v3_7_no_fs zeth-fat zeth-lfs zeth-nofs; do
+                ip link del "$iface" 2>/dev/null || true
+            done
 
+            # `restart` (not just `enable --now`) so already-running services
+            # actually pick up the regenerated unit file, wrapper script, and
+            # — critically — the fresh TAPs the new ExecStartPre creates.
             for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs; do
-                systemctl enable --now zephyr-qemu-${cfg}.service
+                systemctl enable zephyr-qemu-${cfg}.service
+                systemctl restart zephyr-qemu-${cfg}.service
             done
         SHELL
 

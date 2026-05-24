@@ -19,7 +19,7 @@ import pytest_asyncio
 
 from otto.configmodule.configmodule import ConfigModule, ConfigModuleManager
 from otto.configmodule.lab import Lab
-from tests.unit.conftest import make_host
+from tests.conftest import make_host
 
 
 @contextmanager

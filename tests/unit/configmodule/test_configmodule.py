@@ -17,7 +17,7 @@ from otto.configmodule.lab import Lab
 from otto.host.options import SshOptions, TelnetOptions
 from otto.utils import CommandStatus, Status
 
-from tests.unit.conftest import make_host
+from tests.conftest import make_host
 
 
 @pytest.fixture()

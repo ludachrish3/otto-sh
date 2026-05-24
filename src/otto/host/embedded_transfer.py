@@ -93,10 +93,20 @@ class EmbeddedFileTransfer:
         transfer: EmbeddedTransferType,
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
+        mount_cmd: str | None = None,
     ) -> None:
         self.transfer = transfer
         self._name = name
         self._exec_cmd = exec_cmd
+        # `mount_cmd`: an optional ``fs mount …`` command to run once before
+        # the first transfer. Needed for filesystems Zephyr cannot auto-mount
+        # via ``zephyr,fstab`` (notably FAT — fstab only supports LittleFS in
+        # 3.7 LTS). ``None`` for auto-mounting or no-FS targets.
+        # ``_mount_done`` makes the call idempotent within a host's lifetime;
+        # a "already mounted" error from a real ``fs mount`` is silently
+        # accepted by ``_ensure_mounted``.
+        self._mount_cmd = mount_cmd
+        self._mount_done = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -117,6 +127,7 @@ class EmbeddedFileTransfer:
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
             ) from None
+        await self._ensure_mounted()
         for src in srcFiles:
             status, err = await self._console_get_one(src, destDir)
             if not status.is_ok:
@@ -137,6 +148,7 @@ class EmbeddedFileTransfer:
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
             ) from None
+        await self._ensure_mounted()
         for src in srcFiles:
             status, err = await self._console_put_one(src, destDir)
             if not status.is_ok:
@@ -191,10 +203,19 @@ class EmbeddedFileTransfer:
         # a "not found" failure here is expected and ignored.
         await self._exec_cmd(f'fs rm {dest_path}', timeout=_RM_TIMEOUT)
 
-        # An empty file: a single zero-byte `fs write` still creates it.
+        # Zephyr 3.7's `fs write` takes `<path> [-o <offset>] <byte>...`. The
+        # `-o <offset>` flag is **required** — without it every positional
+        # argument after the path (including any bare integer we intended as
+        # the offset) is interpreted as a literal byte, so `fs write foo 0
+        # 41 42` writes the four bytes 00, 41, 42, ... rather than starting
+        # at offset 0 with bytes 41, 42, ... Live-verified against Zephyr
+        # 3.7.2 on qemu_x86.
+
+        # An empty file: a single zero-byte `fs write -o 0` still creates it
+        # via the underlying `fs_open(... O_CREAT | O_WRITE)`.
         if not data:
             result = await self._exec_cmd(
-                f'fs write {dest_path} 0', timeout=_WRITE_TIMEOUT,
+                f'fs write {dest_path} -o 0', timeout=_WRITE_TIMEOUT,
             )
             return self._check_write(result, dest_path, 0)
 
@@ -202,7 +223,7 @@ class EmbeddedFileTransfer:
             chunk = data[offset:offset + _WRITE_CHUNK]
             hexbytes = ' '.join(f'{b:02x}' for b in chunk)
             result = await self._exec_cmd(
-                f'fs write {dest_path} {offset} {hexbytes}',
+                f'fs write {dest_path} -o {offset} {hexbytes}',
                 timeout=_WRITE_TIMEOUT,
             )
             status, err = self._check_write(result, dest_path, offset)
@@ -226,6 +247,24 @@ class EmbeddedFileTransfer:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    async def _ensure_mounted(self) -> None:
+        """Run the optional ``mount_cmd`` once per host lifetime.
+
+        Filesystems Zephyr cannot auto-mount via ``zephyr,fstab`` (FAT, in
+        3.7 LTS) need otto to issue ``fs mount fat <path>`` before any
+        ``fs read/write``. A re-mount on an already-mounted filesystem is
+        an expected error (e.g. ``-EBUSY``) and is silently accepted —
+        the goal is "the FS is mounted by the time we return", not "we
+        just mounted it now".
+        """
+        if self._mount_cmd is None or self._mount_done:
+            return
+        # Whether the command succeeds (first mount) or fails (already
+        # mounted), the post-condition is the same. Errors from a missing
+        # `fs` command surface naturally on the next `fs read`/`fs write`.
+        await self._exec_cmd(self._mount_cmd, timeout=_WRITE_TIMEOUT)
+        self._mount_done = True
 
     @staticmethod
     def _fs_unavailable(result: CommandStatus) -> bool:

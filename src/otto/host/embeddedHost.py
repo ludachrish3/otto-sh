@@ -97,6 +97,15 @@ class EmbeddedHost(RemoteHost):
     """File-transfer backend. ``console`` (default) drives the device shell's
     ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
 
+    mount_cmd: Optional[str] = None
+    """Optional ``fs mount …`` command issued once before the first transfer.
+
+    Needed for filesystems Zephyr cannot auto-mount via ``zephyr,fstab`` —
+    notably FAT, where the binding does not exist in 3.7 LTS. Example for
+    a FAT-on-RAM-disk target: ``"fs mount fat /RAM:"``. Leave ``None`` for
+    LittleFS (auto-mounted) or no-FS targets.
+    """
+
     telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
     """Connection options for the telnet shell (port, cols/rows, etc.)."""
 
@@ -163,6 +172,7 @@ class EmbeddedHost(RemoteHost):
             transfer=self.transfer,
             name=self.name,
             exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),
+            mount_cmd=self.mount_cmd,
         )
 
     @property

@@ -30,7 +30,7 @@ from otto.configmodule import setConfigModule
 from otto.configmodule.lab import Lab
 from otto.host import UnixHost
 from otto.utils import Status
-from tests.unit.conftest import host_data
+from tests.conftest import host_data
 from tests.unit.host._transfer_retry import transfer_with_retry
 
 pytestmark = pytest.mark.timeout(30)

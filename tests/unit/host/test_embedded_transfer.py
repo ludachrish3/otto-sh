@@ -68,9 +68,21 @@ class FakeZephyrFs:
             return CommandStatus(cmd, _hexdump(bytes(self.store[path])), Status.Success, 0)
 
         if sub == 'write':
+            # Zephyr 3.7's fs write syntax: `fs write <path> [-o <offset>] <byte>...`
+            # otto always passes `-o <offset>` (the bare-integer form is
+            # interpreted as a literal byte by Zephyr, which we found the
+            # hard way against the live target).
             path = parts[2]
-            offset = int(parts[3])
-            data = bytes(int(t, 16) for t in parts[4:])
+            if len(parts) >= 5 and parts[3] == '-o':
+                offset = int(parts[4])
+                hex_bytes = parts[5:]
+            else:
+                # Legacy form (no `-o`): all args after path are bytes,
+                # implicit offset 0. Kept for completeness with the real
+                # Zephyr shell's behavior, though otto no longer emits this.
+                offset = 0
+                hex_bytes = parts[3:]
+            data = bytes(int(t, 16) for t in hex_bytes)
             buf = self.store.setdefault(path, bytearray())
             if offset + len(data) > len(buf):
                 buf.extend(b'\x00' * (offset + len(data) - len(buf)))

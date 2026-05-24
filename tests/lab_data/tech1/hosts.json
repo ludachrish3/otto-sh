@@ -84,6 +84,7 @@
         "osName": "Zephyr",
         "osVersion": "3.7",
         "transfer": "console",
+        "mount_cmd": "fs mount fat /RAM:",
         "is_virtual": true,
         "hop": "basil_seed",
         "resources": [
@@ -94,7 +95,7 @@
         ]
     },
     {
-        "ip": "192.0.2.3",
+        "ip": "192.0.2.5",
         "ne": "sprout_lfs",
         "osType": "embedded",
         "osName": "Zephyr",
@@ -110,7 +111,7 @@
         ]
     },
     {
-        "ip": "192.0.2.5",
+        "ip": "192.0.2.9",
         "ne": "sprout_no_fs",
         "osType": "embedded",
         "osName": "Zephyr",

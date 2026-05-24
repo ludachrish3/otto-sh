@@ -20,14 +20,16 @@ network:
 | `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (3 QEMU instances) + SSH hop to them |
 
 The `zephyr` VM hosts **three** Zephyr QEMU instances concurrently, one per
-filesystem config. They share the SSH hop (`10.10.200.14`) but live on the
-QEMU-internal `192.0.2.0/24` net:
+filesystem config. They share the SSH hop (`10.10.200.14`) but each lives on
+its own QEMU-internal `/30` so the host VM's routing table holds a distinct
+route per TAP (a shared `/24` overlaps and the kernel picks one TAP for
+all of them, making the other two unreachable):
 
-| Zephyr instance | IP          | Filesystem                      | systemd unit                         |
-|-----------------|-------------|---------------------------------|--------------------------------------|
-| `sprout`        | `192.0.2.1` | FAT on a RAM disk               | `zephyr-qemu-v3_7_fat_ram.service`   |
-| `sprout_lfs`    | `192.0.2.3` | LittleFS on the flash simulator | `zephyr-qemu-v3_7_lfs.service`       |
-| `sprout_no_fs`  | `192.0.2.5` | (none — no `fs` shell)          | `zephyr-qemu-v3_7_no_fs.service`     |
+| Zephyr instance | IP          | /30 subnet     | Filesystem                      | systemd unit                         |
+|-----------------|-------------|----------------|---------------------------------|--------------------------------------|
+| `sprout`        | `192.0.2.1` | `192.0.2.0/30` | FAT on a RAM disk               | `zephyr-qemu-v3_7_fat_ram.service`   |
+| `sprout_lfs`    | `192.0.2.5` | `192.0.2.4/30` | LittleFS on the flash simulator | `zephyr-qemu-v3_7_lfs.service`       |
+| `sprout_no_fs`  | `192.0.2.9` | `192.0.2.8/30` | (none — no `fs` shell)          | `zephyr-qemu-v3_7_no_fs.service`     |
 
 See `tests/firmware/zephyr/README.md` in the repo for the per-config
 overlay layout.

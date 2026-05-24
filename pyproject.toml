@@ -140,6 +140,7 @@ filterwarnings = [
 markers = [
     "integration: requires running Vagrant VMs (deselect with -m 'not integration')",
     "hops: multi-hop integration tests requiring 3 Vagrant VMs (deselect with -m 'not hops')",
+    "embedded: requires Zephyr QEMU under the zephyr Vagrant VM (deselect with -m 'not embedded')",
     "timeout(seconds): fail the test if it exceeds the given number of seconds",
     "retry(n): retry the test up to n times on failure before reporting it as failed",
 ]
