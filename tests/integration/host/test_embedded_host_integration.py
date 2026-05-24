@@ -21,6 +21,7 @@ Parametrized over the three Zephyr backends (``zephyr_fat`` /
 ``embedded`` markers so it is opted into via ``pytest -m embedded``.
 """
 
+import asyncio
 import re
 
 import pytest
@@ -120,4 +121,77 @@ class TestStockBuiltins:
         first_line = result.output.splitlines()[0] if result.output else ""
         assert re.search(r"\d+", first_line), (
             f"kernel uptime first line had no integer: {first_line!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Single-console caveat
+# ---------------------------------------------------------------------------
+
+@_ALL_ZEPHYR
+class TestSingleConsole:
+    """An embedded target exposes a single shell console.
+    :meth:`EmbeddedHost.open_session` documents that opening a second named
+    session is not concurrency-safe — the Zephyr telnet backend
+    (``CONFIG_SHELL_BACKEND_TELNET``) accepts only one client at a time.
+    These tests pin down the observed behavior so a silent regression — a
+    second connection being accepted and working, or worse, succeeding but
+    quietly clobbering the first — is caught."""
+
+    @pytest.mark.asyncio
+    async def test_second_concurrent_session_is_not_silent(self, host1):
+        """Opening a second named session while the default session is live
+        must not silently succeed.
+
+        **Observed behavior (Zephyr 3.7.2, qemu_x86 telnet shell):**
+        :class:`ConnectionManager` caches the underlying ``TelnetClient`` and
+        returns the same one to the second ``open_session``. The new
+        :class:`ZephyrSession`'s readiness handshake then writes its READY
+        marker onto the shared byte stream — which the first session is also
+        reading — and waits for an echo it never gets. The result is a
+        hang, which our bounded ``wait_for`` surfaces as a cancellation.
+
+        This test pins down that "not silent" property as a regression
+        guard. If a future change opens a *second* TCP connection (which
+        the device would close immediately, per raw-telnet testing), the
+        failure mode would shift to ``ConnectionError`` /
+        ``IncompleteReadError`` — both equally acceptable. What is NOT
+        acceptable is the second ``open_session`` returning a working
+        session that quietly shares state with the first."""
+        # Warm the default session so it holds the device's one telnet slot.
+        warmup = (await host1.run("kernel version")).only
+        assert warmup.status == Status.Success
+
+        # Bounded wait_for so a "hangs forever" regression fails the test
+        # rather than the CI job. 5 s is comfortably longer than a real
+        # connection-failure path (~ms) and short enough to keep the
+        # suite fast.
+        with pytest.raises((
+            asyncio.TimeoutError,
+            asyncio.CancelledError,
+            ConnectionError,
+            asyncio.IncompleteReadError,
+        )):
+            await asyncio.wait_for(host1.open_session("aux"), timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_default_session_survives_second_open_attempt(self, host1):
+        """The critical safety property: after a rejected/hung second-
+        session attempt, the **default** session must still be usable.
+        Otherwise a user catching the second-open exception would be left
+        with a host they can't drive any further."""
+        # Establish the default session.
+        before = (await host1.run("kernel version")).only
+        assert before.status == Status.Success
+
+        # Best-effort second open — we expect failure (see above test for
+        # the exhaustive list of acceptable failure modes); the assertion
+        # is on what comes after, not on the exception type.
+        with pytest.raises(BaseException):
+            await asyncio.wait_for(host1.open_session("aux"), timeout=5.0)
+
+        # Default session must still work.
+        after = (await host1.run("kernel uptime")).only
+        assert after.status == Status.Success, (
+            f"default session broke after second-open attempt: {after.output!r}"
         )

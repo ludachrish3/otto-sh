@@ -27,12 +27,8 @@ import pytest
 from otto.utils import Status
 
 
-# Backend ids that need a live VM (everything except `local`, which runs
-# inside the dev VM itself).
-_VM_BACKENDS = {"ssh", "telnet", "zephyr_fat", "zephyr_lfs", "zephyr_no_fs"}
-
-# Backend ids that need the zephyr QEMU instances specifically (carry both
-# the `integration` and `embedded` markers via pytest.param below).
+# Backend ids that carry the `embedded` marker (the three Zephyr QEMU
+# instances on the `zephyr` Vagrant VM).
 _EMBEDDED_BACKENDS = {"zephyr_fat", "zephyr_lfs", "zephyr_no_fs"}
 
 
@@ -40,14 +36,19 @@ def _backend_param(backend_id: str) -> pytest.param:
     """Wrap a backend id with the right markers.
 
     Two indirect fixtures (``host1`` + ``host1_kit``) get the same id, so the
-    parametrize value is a 2-tuple. Marks are derived from the id:
+    parametrize value is a 2-tuple.
 
-    - VM-requiring backends carry ``integration``.
-    - Zephyr backends additionally carry ``embedded``.
+    Every backend carries ``integration`` — including ``local``. The
+    local-backend contract cases need otto's process-spawn machinery and a
+    real filesystem (the round-trip uses ``tmp_path``); the original "no VM
+    needed" objection that left ``local`` unmarked also had the unwanted
+    side effect of deselecting it from every marker-filtered run. Pinning
+    ``local`` under ``integration`` makes ``pytest -m "integration and not
+    embedded"`` cover ssh + telnet + local — the full Unix matrix.
+
+    Zephyr backends additionally carry ``embedded``.
     """
-    marks = []
-    if backend_id in _VM_BACKENDS:
-        marks.append(pytest.mark.integration)
+    marks = [pytest.mark.integration]
     if backend_id in _EMBEDDED_BACKENDS:
         marks.append(pytest.mark.embedded)
     return pytest.param(backend_id, backend_id, marks=marks)
@@ -106,6 +107,16 @@ class TestRunContract:
         result = await host1.oneshot(host1_kit.successful_cmd)
         assert result.status == Status.Success
         assert result.retcode == 0
+
+    @pytest.mark.asyncio
+    async def test_send_expect_drives_raw_output(self, host1, host1_kit):
+        """``send`` writes a raw command to the shell's stdin; ``expect``
+        waits for a substring of the response. The contract is on otto's
+        I/O surface — *what* is sent and *what fragment* to look for in
+        the echo come from the kit so the test stays OS-agnostic."""
+        await host1.send(host1_kit.successful_cmd + host1_kit.send_line_ending)
+        matched = await host1.expect(host1_kit.expect_in_output, timeout=10.0)
+        assert host1_kit.expect_in_output in matched
 
 
 # ---------------------------------------------------------------------------

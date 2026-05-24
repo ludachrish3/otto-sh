@@ -317,35 +317,46 @@ class HostKit:
     """Writable directory on the target for get/put round-trips, or None
     when the target has no filesystem (graceful-degradation case)."""
 
+    send_line_ending: str
+    """Line ending the backend's shell accepts to commit a sent command.
+
+    The Zephyr telnet shell takes ``\\r`` (the framing seam writes ``\\r``-
+    separated lines); bash shells (Unix, local) take ``\\n``.
+    """
+
+    expect_in_output: str
+    """A stable substring of ``successful_cmd``'s output that
+    :meth:`Host.expect` can match against. Used by the send/expect
+    contract case so the test stays OS-agnostic — the kit provides both
+    the command and what to look for in its echo."""
+
 
 _UNIX_KIT = HostKit(
     successful_cmd="echo hello",
     failing_cmd="ls /this_path_does_not_exist_otto_contract",
     temp_remote_dir="/tmp",
+    send_line_ending="\n",
+    expect_in_output="hello",
 )
+
+# Zephyr has no echo builtin — pick a stock command that prints non-empty
+# output and exits 0. `version` is universally available on the Zephyr
+# shell and prints "Zephyr version X.Y.Z" — both the command name and
+# "Zephyr" appear in the output, so either is a fine expect-fragment.
+_ZEPHYR_COMMON = {
+    "successful_cmd": "version",
+    "failing_cmd": "bogus_otto_contract_cmd",
+    "send_line_ending": "\r",
+    "expect_in_output": "Zephyr",
+}
 
 _KITS: dict[str, HostKit] = {
     "ssh": _UNIX_KIT,
     "telnet": _UNIX_KIT,
     "local": _UNIX_KIT,
-    # Zephyr has no echo builtin — pick a stock command that prints
-    # non-empty output and exits 0. `version` is universally available
-    # on the Zephyr shell.
-    "zephyr_fat": HostKit(
-        successful_cmd="version",
-        failing_cmd="bogus_otto_contract_cmd",
-        temp_remote_dir="/RAM:",
-    ),
-    "zephyr_lfs": HostKit(
-        successful_cmd="version",
-        failing_cmd="bogus_otto_contract_cmd",
-        temp_remote_dir="/lfs",
-    ),
-    "zephyr_no_fs": HostKit(
-        successful_cmd="version",
-        failing_cmd="bogus_otto_contract_cmd",
-        temp_remote_dir=None,
-    ),
+    "zephyr_fat": HostKit(temp_remote_dir="/RAM:", **_ZEPHYR_COMMON),
+    "zephyr_lfs": HostKit(temp_remote_dir="/lfs", **_ZEPHYR_COMMON),
+    "zephyr_no_fs": HostKit(temp_remote_dir=None, **_ZEPHYR_COMMON),
 }
 
 
