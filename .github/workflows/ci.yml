@@ -63,3 +63,33 @@ jobs:
           enable-cache: true
       - run: uv python install 3.10
       - run: uv run nox -s docs
+
+  # If any job above fails on a push to main, open (or update) a tracking
+  # issue so a broken main surfaces without anyone having to watch the
+  # Actions tab. Skipped for pull_request — PR failures are already visible
+  # to the PR author in the checks UI.
+  report-failure:
+    name: Open issue on failure
+    needs: [tests, typecheck, docs]
+    if: failure() && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Write issue body
+        run: |
+          {
+            echo "A CI run on \`main\` failed."
+            echo
+            echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            echo "- Commit: ${{ github.sha }}"
+            echo
+            echo "Check the job logs to see which of tests / typecheck / docs failed."
+          } > issue-body.md
+
+      - name: Create issue from file
+        uses: peter-evans/create-issue-from-file@v6
+        with:
+          title: "CI failed on main"
+          content-filepath: issue-body.md
+          labels: ci
