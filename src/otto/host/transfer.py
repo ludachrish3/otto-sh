@@ -133,6 +133,39 @@ async def _acquire_shared_progress() -> AsyncIterator[Progress]:
 
 FileTransferType = Literal['scp', 'sftp', 'ftp', 'nc']
 
+
+def validate_filename_lengths(
+    files: list[Path], limit: int, host_name: str,
+) -> tuple[Status, str]:
+    """Reject files whose basename exceeds the host's filesystem cap.
+
+    Shared by :class:`FileTransfer` (Unix) and :class:`~otto.host.
+    embedded_transfer.EmbeddedFileTransfer` (embedded) so every backend
+    surfaces the same self-explaining error. Without this guard the
+    failure modes are:
+
+    - Unix SCP/SFTP/FTP: server returns ``File name too long`` (errno 36),
+      mid-transfer, after the local file is already read.
+    - Embedded FAT (8.3, no LFN) or LittleFS over ``NAME_MAX``: device
+      fails ``fs_open`` with ``-ENOENT``, giving no hint that the *name*
+      was the problem.
+
+    Returns ``(Status.Success, '')`` when every basename fits.
+    """
+    for path in files:
+        name = path.name
+        if len(name) > limit:
+            return Status.Error, (
+                f"filename {name!r} ({len(name)} chars) exceeds the "
+                f"{limit}-character basename limit for host "
+                f"{host_name!r}. The target filesystem cannot open longer "
+                f"names — rename the file or raise the firmware/filesystem "
+                f"limit (``CONFIG_FS_FATFS_MAX_LFN`` for FAT, "
+                f"``CONFIG_FS_LITTLEFS_NAME_MAX`` for LittleFS; ``NAME_MAX`` "
+                f"on POSIX)."
+            )
+    return Status.Success, ''
+
 NcPortStrategy = Literal['auto', 'ss', 'netstat', 'python', 'proc', 'custom']
 """Strategy for finding free ports on the remote host for netcat transfers.
 
@@ -323,6 +356,7 @@ class FileTransfer:
         scp_options: 'ScpOptions',
         get_local_ip: Callable[[], str],
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
+        max_filename_len: int = 255,
     ) -> None:
         self._connections = connections
         self._name = name
@@ -331,6 +365,7 @@ class FileTransfer:
         self._scp_options = scp_options
         self._get_local_ip = get_local_ip
         self._exec_cmd = exec_cmd
+        self._max_filename_len = max_filename_len
         self._resolved_port_strategy: NcPortStrategy | None = None
         self._resolved_listener_check: NcListenerCheck | None = None
         self._reserved_ports: set[int] = set()
@@ -393,6 +428,11 @@ class FileTransfer:
         destDir: Path,
         show_progress: bool = True,
     ) -> tuple[Status, str]:
+        status, err = validate_filename_lengths(
+            srcFiles, self._max_filename_len, self._name,
+        )
+        if not status.is_ok:
+            return status, err
         if not show_progress:
             return await self._get_files(srcFiles, destDir, None)
         async with _acquire_shared_progress() as progress:
@@ -406,6 +446,11 @@ class FileTransfer:
         destDir: Path,
         show_progress: bool = True,
     ) -> tuple[Status, str]:
+        status, err = validate_filename_lengths(
+            srcFiles, self._max_filename_len, self._name,
+        )
+        if not status.is_ok:
+            return status, err
         if not show_progress:
             return await self._put_files(srcFiles, destDir, None)
         async with _acquire_shared_progress() as progress:

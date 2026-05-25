@@ -151,6 +151,23 @@ class UnixHost(RemoteHost):
     transfer: FileTransferType = 'scp'
     """Protocol used to transfer files."""
 
+    default_dest_dir: Path = field(default_factory=Path)
+    """Default landing directory for ``put`` / ``get`` when the caller
+    supplies an empty or relative ``dest_dir``. Defaults to ``Path()``,
+    which preserves the existing behavior — SCP/SFTP resolve a relative
+    destination against the SSH user's home directory. Override per-host
+    to land transfers in a fixed location regardless of the caller's
+    argument. See :attr:`RemoteHost.default_dest_dir`."""
+
+    max_filename_len: int = 255
+    """Upper bound on the basename length (including extension) accepted by
+    the target's filesystem. Defaults to ``255`` — the Linux ``NAME_MAX``,
+    also the cap for ext4 / XFS / Btrfs / NTFS. Lower it for hosts on a
+    tighter filesystem; see :attr:`RemoteHost.max_filename_len` for details.
+    Over-limit names are rejected by :meth:`put` / :meth:`get` with a
+    self-explaining error instead of an opaque ``File name too long``
+    midway through the transfer."""
+
     ssh_options: SshOptions = field(default_factory=SshOptions, repr=False)
     """Connection options for SSH sessions (port, timeout, known_hosts,
     port-forwarding rules, etc.)."""
@@ -215,6 +232,11 @@ class UnixHost(RemoteHost):
         if self.name is None:
             self.name = self._generateName()
 
+        # Lab JSON serializes ``default_dest_dir`` as a string; coerce so
+        # ``_resolve_dest`` can use Path arithmetic uniformly.
+        if not isinstance(self.default_dest_dir, Path):
+            self.default_dest_dir = Path(self.default_dest_dir)
+
         hop_transport = self._build_hop_transport() if self.hop else None
 
         factory = self._connection_factory or ConnectionManager
@@ -245,6 +267,7 @@ class UnixHost(RemoteHost):
             scp_options=self.scp_options,
             get_local_ip=lambda: self._get_local_ip(),
             exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
+            max_filename_len=self.max_filename_len,
         )
 
     @property
@@ -297,6 +320,7 @@ class UnixHost(RemoteHost):
             scp_options=self.scp_options,
             get_local_ip=lambda: self._get_local_ip(),
             exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
+            max_filename_len=self.max_filename_len,
         )
 
     def set_term_type(self,
@@ -596,6 +620,7 @@ class UnixHost(RemoteHost):
         """Transfer files from local machine to remote host."""
         if not isinstance(src_files, list):
             src_files = [src_files]
+        dest_dir = self._resolve_dest(dest_dir)
         if isDryRun():
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):

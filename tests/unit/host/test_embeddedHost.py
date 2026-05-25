@@ -7,6 +7,7 @@ framing is exercised in ``test_zephyr.py``; the console transfer backend in
 ``test_embedded_transfer.py``.
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
@@ -178,6 +179,77 @@ class TestFileTransfer:
         finally:
             setDryRun(False)
         assert status == Status.Skipped
+
+
+# ---------------------------------------------------------------------------
+# default_dest_dir resolution
+# ---------------------------------------------------------------------------
+
+class TestDefaultDestDir:
+    """``default_dest_dir`` lets a fan-out caller pass a generic
+    ``Path()`` and still have each host land transfers on its own mounted
+    filesystem — the fix for ``otto -l embedded run test-instruction``
+    failing on Zephyr targets where the bare ``/`` has no FS."""
+
+    def test_default_is_empty_path(self, host: EmbeddedHost):
+        """When unset, ``default_dest_dir`` is ``Path()`` — preserves the
+        ``put(..., dest_dir=Path())`` semantics for hosts whose firmware
+        accepts relative paths natively (none in practice for Zephyr, but
+        the contract is symmetric)."""
+        assert host.default_dest_dir == Path()
+
+    def test_string_in_lab_data_is_coerced_to_path(self):
+        """Lab JSON stores ``default_dest_dir`` as a string; ``__post_init__``
+        must coerce it so ``_resolve_dest`` can use Path arithmetic."""
+        h = EmbeddedHost(
+            ip='192.0.2.1', ne='sprout', log=False,
+            default_dest_dir='/RAM:',  # type: ignore[arg-type]
+        )
+        h._connections = None  # type: ignore[assignment]  # avoid __del__ churn
+        assert h.default_dest_dir == Path('/RAM:')
+
+    def test_resolve_empty_returns_default(self):
+        h = EmbeddedHost(
+            ip='192.0.2.1', ne='sprout', log=False,
+            default_dest_dir=Path('/RAM:'),
+        )
+        h._connections = None  # type: ignore[assignment]
+        assert h._resolve_dest(Path()) == Path('/RAM:')
+
+    def test_resolve_absolute_passes_through(self):
+        h = EmbeddedHost(
+            ip='192.0.2.1', ne='sprout', log=False,
+            default_dest_dir=Path('/RAM:'),
+        )
+        h._connections = None  # type: ignore[assignment]
+        # Explicit absolute path overrides the default — caller knows where
+        # they want it.
+        assert h._resolve_dest(Path('/lfs/elsewhere')) == Path('/lfs/elsewhere')
+
+    def test_resolve_relative_joins_under_default(self):
+        h = EmbeddedHost(
+            ip='192.0.2.1', ne='sprout', log=False,
+            default_dest_dir=Path('/RAM:'),
+        )
+        h._connections = None  # type: ignore[assignment]
+        assert h._resolve_dest(Path('subdir')) == Path('/RAM:/subdir')
+
+    @pytest.mark.asyncio
+    async def test_put_resolves_empty_dest_before_delegating(
+        self, host: EmbeddedHost, tmp_path,
+    ):
+        """End-to-end: ``put(..., dest_dir=Path())`` on a host configured
+        with ``default_dest_dir=/RAM:`` must hand ``Path('/RAM:')`` to the
+        file-transfer layer, not ``Path()``. This is the failing case from
+        ``otto -l embedded run test-instruction``."""
+        host.default_dest_dir = Path('/RAM:')
+        host._file_transfer = AsyncMock()
+        host._file_transfer.put_files.return_value = (Status.Success, '')
+        src = tmp_path / 'output1.bin'
+        src.write_bytes(b'x')
+        await host.put(src, Path())
+        passed_dest = host._file_transfer.put_files.call_args.args[1]
+        assert passed_dest == Path('/RAM:')
 
 
 # ---------------------------------------------------------------------------

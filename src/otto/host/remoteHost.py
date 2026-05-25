@@ -24,6 +24,7 @@ concrete subclass supplies the real ``@dataclass`` fields.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Optional
 
 from ..logger import getOttoLogger
@@ -107,6 +108,49 @@ class RemoteHost(BaseHost):
 
     osVersion: Optional[str]
     """OS/kernel version string, or None if unspecified."""
+
+    default_dest_dir: Path
+    """Per-host default directory that :meth:`put` / :meth:`get` resolve a
+    relative or empty ``dest_dir`` against. Lets a fan-out helper like
+    :func:`do_for_all_hosts` pass one generic destination (``Path()``) and
+    have each host land the files where its filesystem actually lives —
+    e.g. ``/RAM:`` on a Zephyr FAT target, ``/lfs`` on a Zephyr LittleFS
+    target. Defaults to ``Path()`` on Unix, which preserves the existing
+    "relative path lands in the SSH user's home" behavior."""
+
+    max_filename_len: int
+    """Upper bound on the basename length (including extension) accepted by
+    the target's filesystem. Defaults to ``255`` on every concrete subclass
+    — the Linux ``NAME_MAX``, also the cap for ext4 / XFS / Btrfs / NTFS
+    and the typical LittleFS ceiling. Override per-host when the firmware
+    enforces a tighter limit (e.g. ``32`` for a Zephyr build that sets
+    ``CONFIG_FS_FATFS_MAX_LFN=32``, or ``12`` for a stock FAT 8.3 build
+    without LFN support). ``put`` / ``get`` reject over-limit names up
+    front with a clear message instead of letting the device produce an
+    opaque error like ``-ENOENT`` or ``File name too long``."""
+
+    ####################
+    #  Dest dir resolution
+    ####################
+
+    def _resolve_dest(self, dest_dir: Path) -> Path:
+        """Resolve a caller-supplied destination against ``default_dest_dir``.
+
+        - Absolute paths are returned unchanged (the caller asked for that
+          exact location).
+        - Empty / ``Path()`` / ``Path('.')`` resolves to ``default_dest_dir``.
+        - Any other relative path is joined onto ``default_dest_dir`` so
+          ``put(..., dest_dir=Path('subdir'))`` lands under the host's
+          natural root.
+
+        Unix hosts whose default is the empty ``Path()`` get the original
+        behavior (an empty caller dest stays empty → SCP/SFTP resolve to the
+        SSH user's home directory)."""
+        if dest_dir.is_absolute():
+            return dest_dir
+        if str(dest_dir) in ('', '.'):
+            return self.default_dest_dir
+        return self.default_dest_dir / dest_dir
 
     ####################
     #  Naming

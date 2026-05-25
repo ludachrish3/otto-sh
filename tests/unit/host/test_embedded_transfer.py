@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.host.transfer import validate_filename_lengths
 from otto.host.embedded_transfer import (
     _FS_ABSENT_MSG,
     _WRITE_CHUNK,
@@ -281,6 +282,52 @@ class TestFsAbsent:
 
 
 # ---------------------------------------------------------------------------
+# Shared validator (used by FileTransfer and EmbeddedFileTransfer alike)
+# ---------------------------------------------------------------------------
+
+class TestValidateFilenameLengths:
+    """Direct coverage for the shared helper — both Unix and embedded
+    transfer paths call it, so the contract is unit-pinned here once and
+    every backend inherits the same error shape."""
+
+    def test_under_limit_returns_success(self):
+        status, err = validate_filename_lengths(
+            [Path('/a/short.bin')], limit=255, host_name='h',
+        )
+        assert status == Status.Success
+        assert err == ''
+
+    def test_at_limit_is_accepted(self):
+        name = 'x' * 255  # exactly at the limit
+        status, err = validate_filename_lengths(
+            [Path('/a') / name], limit=255, host_name='h',
+        )
+        assert status == Status.Success, err
+
+    def test_over_limit_reports_offending_name_and_host(self):
+        name = 'x' * 256
+        status, err = validate_filename_lengths(
+            [Path('/a') / name], limit=255, host_name='myhost',
+        )
+        assert status == Status.Error
+        assert name in err
+        assert '255-character' in err
+        assert 'myhost' in err
+
+    def test_first_offender_short_circuits(self):
+        """The first over-limit file in the list is what gets reported; the
+        helper does not enumerate every offender (the user fixes one, retries,
+        sees the next). This keeps the message focused."""
+        ok = Path('/a/ok.bin')
+        bad = Path('/a') / ('x' * 100)
+        status, err = validate_filename_lengths(
+            [ok, bad], limit=50, host_name='h',
+        )
+        assert status == Status.Error
+        assert 'x' * 100 in err
+
+
+# ---------------------------------------------------------------------------
 # Per-host filename length limit
 # ---------------------------------------------------------------------------
 
@@ -335,17 +382,31 @@ class TestMaxFilenameLen:
         assert status == Status.Success, err
 
     @pytest.mark.asyncio
-    async def test_limit_unset_accepts_long_names(self, tmp_path):
-        """Default (no limit) preserves existing behavior — long names are
-        forwarded to the device, which decides for itself. Backends like
-        LittleFS that accept 255-char names should not pay a synthetic
-        toll just because FAT happens to be picky."""
+    async def test_default_limit_accepts_typical_filenames(self, tmp_path):
+        """Default limit (255 — Linux ``NAME_MAX``) accommodates any name a
+        normal filesystem will accept, so the default is essentially a
+        runaway-guard rather than a real constraint for realistic workloads."""
         fake = FakeZephyrFs()
-        xfer = _console_transfer(fake)  # no max_filename_len
+        xfer = _console_transfer(fake)  # default max_filename_len=255
         src = tmp_path / 'some_quite_long_filename.bin'
         src.write_bytes(b'ok')
         status, err = await xfer.put_files([src], RAM)
         assert status == Status.Success, err
+
+    @pytest.mark.asyncio
+    async def test_default_limit_rejects_runaway_filename(self):
+        """A pathologically long name (over 255 chars) is rejected even with
+        no per-host override — the default catches obvious bugs everywhere.
+
+        The check inspects ``path.name`` only and never touches the host
+        filesystem, so the source Path doesn't need a real file behind it
+        (which is good — the host's own filesystem also caps at 255)."""
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake)  # default max_filename_len=255
+        runaway = Path('/nowhere') / ('x' * 260 + '.bin')
+        status, err = await xfer.put_files([runaway], RAM)
+        assert status == Status.Error
+        assert '255-character' in err
 
 
 # ---------------------------------------------------------------------------

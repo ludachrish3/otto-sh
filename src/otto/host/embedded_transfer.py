@@ -41,6 +41,7 @@ from typing import Any, Literal
 
 from ..logger import getOttoLogger
 from ..utils import CommandStatus, Status
+from .transfer import validate_filename_lengths
 
 logger = getOttoLogger()
 
@@ -94,7 +95,7 @@ class EmbeddedFileTransfer:
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
         mount_cmd: str | None = None,
-        max_filename_len: int | None = None,
+        max_filename_len: int = 255,
     ) -> None:
         self.transfer = transfer
         self._name = name
@@ -108,14 +109,9 @@ class EmbeddedFileTransfer:
         # accepted by ``_ensure_mounted``.
         self._mount_cmd = mount_cmd
         self._mount_done = False
-        # ``max_filename_len``: optional per-host upper bound on the basename
-        # length (no path, including the extension). Zephyr's FAT-on-RAM build
-        # without ``CONFIG_FS_FATFS_LFN`` enforces FAT 8.3 — any filename
-        # longer than 12 characters fails ``fs_open`` with ``-ENOENT``,
-        # surfacing to a user as a baffling "Failed to open … (-2)" rather
-        # than a filename-length problem. When this limit is set, get/put
-        # validate up front and return ``Status.Error`` with a self-explaining
-        # message instead of letting the device produce the opaque error.
+        # ``max_filename_len``: see :attr:`EmbeddedHost.max_filename_len`.
+        # Default mirrors POSIX ``NAME_MAX``; tighten per host when the
+        # firmware enforces a smaller cap.
         self._max_filename_len = max_filename_len
 
     # ------------------------------------------------------------------
@@ -137,7 +133,9 @@ class EmbeddedFileTransfer:
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
             ) from None
-        status, err = self._check_filename_lengths(srcFiles)
+        status, err = validate_filename_lengths(
+            srcFiles, self._max_filename_len, self._name,
+        )
         if not status.is_ok:
             return status, err
         await self._ensure_mounted()
@@ -161,7 +159,9 @@ class EmbeddedFileTransfer:
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
             ) from None
-        status, err = self._check_filename_lengths(srcFiles)
+        status, err = validate_filename_lengths(
+            srcFiles, self._max_filename_len, self._name,
+        )
         if not status.is_ok:
             return status, err
         await self._ensure_mounted()
@@ -171,35 +171,7 @@ class EmbeddedFileTransfer:
                 return status, err
         return Status.Success, ''
 
-    def _check_filename_lengths(
-        self, files: list[Path],
-    ) -> tuple[Status, str]:
-        """Enforce the per-host basename length limit.
-
-        Returns ``Status.Error`` with a clear, self-explaining message when
-        any file's basename exceeds ``max_filename_len``. The device-side
-        symptom of an over-limit FAT 8.3 name is ``Failed to open … (-2)``,
-        which gives no hint that the issue is the *name* — this check turns
-        that into a directly actionable error before any shell command is
-        issued.
-        """
-        limit = self._max_filename_len
-        if limit is None:
-            return Status.Success, ''
-        for path in files:
-            name = path.name
-            if len(name) > limit:
-                return Status.Error, (
-                    f"filename {name!r} ({len(name)} chars) exceeds the "
-                    f"{limit}-character basename limit for host "
-                    f"{self._name!r}. The target filesystem (likely FAT 8.3 "
-                    f"without CONFIG_FS_FATFS_LFN) cannot open longer "
-                    f"names — rename the file or enable long filenames in "
-                    f"the firmware build."
-                )
-        return Status.Success, ''
-
-    # ------------------------------------------------------------------
+# ------------------------------------------------------------------
     # console backend — get
     # ------------------------------------------------------------------
 

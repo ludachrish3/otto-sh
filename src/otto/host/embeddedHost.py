@@ -97,6 +97,13 @@ class EmbeddedHost(RemoteHost):
     """File-transfer backend. ``console`` (default) drives the device shell's
     ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
 
+    default_dest_dir: Path = field(default_factory=Path)
+    """Default landing directory for ``put`` / ``get`` when the caller
+    supplies an empty or relative ``dest_dir``. Set to the host's mounted
+    filesystem root (e.g. ``/RAM:`` for FAT-on-RAM, ``/lfs`` for LittleFS)
+    so generic fan-out callers like :func:`do_for_all_hosts` don't have to
+    branch on host type. See :attr:`RemoteHost.default_dest_dir`."""
+
     mount_cmd: Optional[str] = None
     """Optional ``fs mount …`` command issued once before the first transfer.
 
@@ -106,13 +113,14 @@ class EmbeddedHost(RemoteHost):
     LittleFS (auto-mounted) or no-FS targets.
     """
 
-    max_filename_len: Optional[int] = None
-    """Optional upper bound on the basename length accepted by the target's
-    filesystem (no path, including extension). Set to ``12`` for FAT 8.3
-    (Zephyr builds without ``CONFIG_FS_FATFS_LFN``); leave ``None`` for
-    filesystems with the typical 255-byte limit (LittleFS, ext4). When set,
-    :meth:`put` / :meth:`get` reject over-limit names up front with a clear
-    message instead of letting the device produce an opaque ``-ENOENT``."""
+    max_filename_len: int = 255
+    """Upper bound on the basename length (including extension) accepted by
+    the target's filesystem. Defaults to ``255`` — the Linux ``NAME_MAX``,
+    also the typical LittleFS ceiling. Override per-host when the firmware
+    enforces a tighter limit (e.g. ``32`` for a Zephyr build that sets
+    ``CONFIG_FS_FATFS_MAX_LFN=32`` / ``CONFIG_FS_LITTLEFS_NAME_MAX=32``,
+    or ``12`` for a stock FAT 8.3 build without LFN support). See
+    :attr:`RemoteHost.max_filename_len`."""
 
     telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
     """Connection options for the telnet shell (port, cols/rows, etc.)."""
@@ -152,6 +160,11 @@ class EmbeddedHost(RemoteHost):
         self.id = self._generateId()
         if self.name is None:
             self.name = self._generateName()
+
+        # Lab JSON serializes ``default_dest_dir`` as a string; coerce so
+        # callers can use Path arithmetic uniformly.
+        if not isinstance(self.default_dest_dir, Path):
+            self.default_dest_dir = Path(self.default_dest_dir)
 
         hop_transport = self._build_hop_transport() if self.hop else None
 
@@ -339,9 +352,16 @@ class EmbeddedHost(RemoteHost):
         Delegates to :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`
         (the ``console`` backend writes via Zephyr's chunked ``fs write``).
         Transfers are sequential — an embedded target has a single console.
+
+        ``dest_dir`` is resolved against :attr:`default_dest_dir` so a
+        generic ``Path()`` from a fan-out caller lands on the host's
+        mounted filesystem (e.g. ``/RAM:`` on a FAT target) rather than on
+        Zephyr's bare ``/``, which has no FS and rejects opens with
+        ``-ENOENT``.
         """
         if not isinstance(src_files, list):
             src_files = [src_files]
+        dest_dir = self._resolve_dest(dest_dir)
         if isDryRun():
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
