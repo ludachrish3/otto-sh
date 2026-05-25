@@ -1,21 +1,64 @@
 /*
  * otto Zephyr test-bed devicetree overlay — LittleFS on flash simulator.
  *
- * The stock qemu_x86 board already defines a flash simulator (`flash_sim@0`)
- * with a labeled `storage_partition` carved out of it — Zephyr does this
- * specifically so user code can mount a filesystem on qemu_x86 without
- * touching real flash. We don't need to define our own; we just need to
- * tell the filesystem layer how to mount it.
+ * The stock qemu_x86 board defines a 1 MiB flash simulator (`flash_sim@0`)
+ * with a labeled `storage_partition` (64 KiB) carved out of it. We override
+ * both — growing the flash sim itself to ~101 MiB and the storage partition
+ * to 100 MiB — so LittleFS has real headroom for test artifacts. The flash
+ * sim is RAM-backed, so the budget comes out of QEMU's `-m 256` allocation
+ * (see Vagrantfile).
  *
- * (An earlier draft of this overlay defined a parallel `sim_flash` node with
- * its own `storage_partition` label and `chosen { zephyr,flash-controller }`,
- * which collides with the board's pre-existing definition — the DT compiler
- * errored with "Label 'storage_partition' appears on
- * /sim_flash/flash_sim@0/... and on /sim_flash@8000000/...". The board-level
- * partition is the right one to use.)
+ * The board's other partitions (slot0/slot1/eepromemu at offsets
+ * 0x11000/0x21000/0x31000) get bumped past the expanded storage_partition
+ * — they can't be deleted because the qemu_x86 `chosen` node references
+ * `slot0_partition` by label (zephyr,code-partition). Their sizes are
+ * kept at 64 KiB each; only the offsets shift.
+ *
+ * (An earlier draft of this overlay defined a parallel `sim_flash` node
+ * with its own `storage_partition` label, which collided with the board's
+ * pre-existing definition — the DT compiler errored on duplicate labels.
+ * Property-overrides on the existing nodes, as below, avoid that.)
  *
  * This is board configuration, not firmware code. otto still ships no main.c.
  */
+
+/*
+ * The qemu_x86 board's stock ``dram0`` (linker RAM region) is 32 MiB.
+ * The flash simulator is RAM-backed, so a 100 MiB partition needs the
+ * linker region grown — otherwise the BSS-allocated simulator buffer
+ * fails with "region RAM overflowed". 128 MiB leaves headroom for the
+ * partition plus kernel/heap/stacks. QEMU's ``-m 256`` (Vagrantfile)
+ * supplies the physical RAM.
+ */
+&dram0 {
+	reg = <0x00000000 0x08000000>;   /* 128 MiB */
+};
+
+&flash_sim0 {
+	reg = <0x00000000 0x06500000>;   /* 101 MiB total — fits 100 MiB
+					  * storage_partition + 3 × 64 KiB
+					  * board partitions bumped past it. */
+};
+
+&storage_partition {
+	reg = <0x00001000 0x06400000>;   /* 100 MiB at offset 4 KiB. */
+};
+
+/*
+ * Bump the board's other three partitions past the expanded
+ * storage_partition (ends at 0x06401000). Their labels are still
+ * referenced by qemu_x86's chosen node, so we can't drop them — just
+ * relocate. Each stays at the stock 64 KiB.
+ */
+&slot0_partition {
+	reg = <0x06401000 0x10000>;
+};
+&slot1_partition {
+	reg = <0x06411000 0x10000>;
+};
+&eepromemu_partition {
+	reg = <0x06421000 0x10000>;
+};
 
 / {
 	fstab {

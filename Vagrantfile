@@ -366,13 +366,19 @@ Vagrant.configure("2") do |config|
 #
 # Flags mirror Zephyr's own qemu_x86 build verbatim, with only the TAP
 # ifname diverging:
-#   -m 32              network stack + shell + FS need >9 MB.
+#   -m 256             Zephyr kernel + network stack + shell need ~10 MB;
+#                      the rest is headroom for the FAT/RAM and LittleFS
+#                      flash-sim partitions, which are both RAM-backed
+#                      and sized at 100 MiB (see configs/v3_7_fat_ram/
+#                      app.overlay and configs/v3_7_lfs/app.overlay).
+#                      qemu_x86 is 32-bit (4 GiB max); 256 MiB is well
+#                      under that and leaves room for future growth.
 #   -machine acpi=off  Zephyr's qemu_x86 expects q35 without ACPI.
 #   -chardev/-serial/-mon  Zephyr's preferred serial+monitor multiplex
 #                      on stdio.
 set -euo pipefail
 exec ${SDK_QEMU} \\
-    -m 32 \\
+    -m 256 \\
     -cpu qemu32,+nx,+pae \\
     -machine q35,acpi=off \\
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \\

@@ -34,6 +34,8 @@ a path for firmware images; use TFTP (once implemented) for bulk data.
 Phase 5 does not render a progress bar — a known, documented gap.
 """
 
+import errno
+import os
 import re
 from collections.abc import Callable, Coroutine
 from pathlib import Path
@@ -46,6 +48,25 @@ from .transfer import (
     TransferProgressFactory,
     TransferProgressHandler,
 )
+
+
+def _label_errno(retcode: int) -> str:
+    """Render a signed-errno retcode as ``-N (-NAME, description)``.
+
+    Zephyr's errnos are POSIX-aligned (its ``errno.h`` is BSD-derived,
+    same numeric values as Linux), so Python's stdlib :mod:`errno` and
+    :func:`os.strerror` are an authoritative source for the symbolic
+    name and human-readable description. Positive retcodes are rendered
+    unchanged (no errno mapping applies). Unknown negative codes fall
+    back to ``-N`` so the message stays readable on an unrecognized
+    value rather than throwing."""
+    if retcode >= 0:
+        return str(retcode)
+    code = -retcode
+    name = errno.errorcode.get(code)
+    if name is None:
+        return str(retcode)
+    return f"{retcode} (-{name}, {os.strerror(code)})"
 
 logger = getOttoLogger()
 
@@ -188,7 +209,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
             return Status.Error, _FS_ABSENT_MSG
         if not result.status.is_ok:
             return Status.Error, (
-                f"fs read {src_path} failed (retcode={result.retcode}): "
+                f"fs read {src_path} failed (retcode={_label_errno(result.retcode)}): "
                 f"{result.output.strip()}"
             )
 
@@ -258,10 +279,29 @@ class EmbeddedFileTransfer(BaseFileTransfer):
             )
             status, err = self._check_write(result, dest_path, offset)
             if not status.is_ok:
+                # Partial file left on the device blocks any retry on a
+                # capacity-bound filesystem (the half-written bytes still
+                # consume space). Best-effort `fs rm` so the next attempt
+                # starts from a clean slate; a failure here is logged but
+                # not propagated — the caller already has the real error.
+                await self._cleanup_partial(dest_path)
                 return status, err
             if progress_handler is not None:
                 progress_handler(src_str, dest_path, offset + len(chunk), total)
         return Status.Success, ''
+
+    async def _cleanup_partial(self, dest_path: str) -> None:
+        """Best-effort removal of a half-written destination file after a
+        mid-transfer failure. Errors are swallowed: the caller is already
+        returning the real put failure, and the cleanup is purely an
+        attempt to leave the device's filesystem recoverable for retry."""
+        try:
+            await self._exec_cmd(f'fs rm {dest_path}', timeout=_RM_TIMEOUT)
+        except Exception as exc:
+            logger.debug(
+                f"{self._name}: cleanup `fs rm {dest_path}` failed "
+                f"after a transfer error: {exc!r}"
+            )
 
     def _check_write(
         self, result: CommandStatus, dest_path: str, offset: int,
@@ -272,7 +312,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         if not result.status.is_ok:
             return Status.Error, (
                 f"fs write {dest_path} at offset {offset} failed "
-                f"(retcode={result.retcode}): {result.output.strip()}"
+                f"(retcode={_label_errno(result.retcode)}): "
+                f"{result.output.strip()}"
             )
         return Status.Success, ''
 

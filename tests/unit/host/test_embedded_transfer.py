@@ -17,6 +17,7 @@ from otto.host.embedded_transfer import (
     _FS_ABSENT_MSG,
     _WRITE_CHUNK,
     EmbeddedFileTransfer,
+    _label_errno,
 )
 from otto.utils import CommandStatus, Status
 
@@ -387,6 +388,157 @@ class TestFsAbsent:
         status, err = await xfer.put_files([src], RAM)
         assert status == Status.Error
         assert err == _FS_ABSENT_MSG
+
+
+# ---------------------------------------------------------------------------
+# Errno translation — symbolic name + description on signed retcodes
+# ---------------------------------------------------------------------------
+
+class TestLabelErrno:
+    """Zephyr's errnos are POSIX-aligned, so Python's stdlib ``errno`` is an
+    authoritative source for symbol + description. ``_label_errno`` renders
+    a signed retcode as ``-N (-NAME, description)`` so users don't have to
+    grep ``errno.h`` to interpret ``(-22)`` vs ``(-28)``."""
+
+    def test_negative_known_errno_labeled(self):
+        # -22 = -EINVAL (the "Failed to seek" case from the user's report).
+        assert _label_errno(-22) == "-22 (-EINVAL, Invalid argument)"
+
+    def test_no_space_labeled(self):
+        # -28 = -ENOSPC (the LittleFS out-of-space case).
+        assert _label_errno(-28) == "-28 (-ENOSPC, No space left on device)"
+
+    def test_negative_unknown_falls_back(self):
+        # Sentinel that's deliberately outside any POSIX errno table.
+        result = _label_errno(-9999)
+        assert result == "-9999"  # no parens, no fabricated symbol
+
+    def test_positive_passthrough(self):
+        # Positive values aren't errnos — render as plain integer.
+        assert _label_errno(0) == "0"
+        assert _label_errno(127) == "127"
+
+    @pytest.mark.asyncio
+    async def test_write_error_message_includes_symbolic_errno(self, tmp_path):
+        """End-to-end: a Zephyr ``fs write`` failure surfaces ``-N (-NAME, …)``
+        in the user-facing error string instead of bare ``-N``."""
+
+        class FailingFs(FakeZephyrFs):
+            async def exec_cmd(self, cmd, timeout=None):
+                if cmd.startswith('fs write'):
+                    return CommandStatus(
+                        cmd, 'Failed to seek /RAM:/f (-22)', Status.Failed, -8,
+                    )
+                return await super().exec_cmd(cmd, timeout)
+
+        # Note: Zephyr returns -8 (-ENOEXEC) from the shell when a builtin
+        # itself fails — the actual filesystem errno (-22) is in the
+        # output text. _label_errno labels whatever it gets; verify it
+        # decorates the shell retcode in the same message shape.
+        fake = FailingFs()
+        xfer = _console_transfer(fake)
+        src = tmp_path / 'f.bin'
+        src.write_bytes(b'x' * 64)
+        status, err = await xfer.put_files([src], RAM)
+        assert status == Status.Error
+        assert '-ENOEXEC' in err
+        assert 'Exec format error' in err
+
+
+# ---------------------------------------------------------------------------
+# Cleanup hook — partial dest file is removed on mid-transfer failure
+# ---------------------------------------------------------------------------
+
+class TestCleanupOnFailure:
+    """A failed ``fs write`` mid-loop leaves a partial file on the device.
+    On a capacity-bound filesystem (FAT/RAM, LittleFS) those leftover bytes
+    block any retry — the next put tries to write the same file, gets the
+    same -ENOSPC because the previous attempt's bytes are still there.
+    The cleanup hook issues a best-effort ``fs rm <dest>`` so the next
+    attempt starts from a clean slate."""
+
+    class _FailAfterNWrites(FakeZephyrFs):
+        """Fake whose Nth ``fs write`` returns -ENOSPC; earlier writes
+        succeed normally. Models the "ran out of space mid-transfer"
+        case from the user's report."""
+
+        def __init__(self, fail_after: int) -> None:
+            super().__init__()
+            self.fail_after = fail_after
+            self.write_count = 0
+
+        async def exec_cmd(self, cmd, timeout=None):
+            if cmd.startswith('fs write'):
+                self.write_count += 1
+                if self.write_count > self.fail_after:
+                    self.calls.append(cmd)
+                    return CommandStatus(
+                        cmd, 'Failed to write /RAM:/f (-28)', Status.Failed, -8,
+                    )
+            return await super().exec_cmd(cmd, timeout)
+
+    @pytest.mark.asyncio
+    async def test_partial_write_triggers_cleanup_rm(self, tmp_path):
+        """When ``fs write`` fails mid-loop, ``_console_put_one`` issues a
+        final ``fs rm <dest>`` before returning the error."""
+        fake = self._FailAfterNWrites(fail_after=2)  # 3rd write fails
+        xfer = _console_transfer(fake)
+        # 4 chunks worth of data (32 * 4 = 128 bytes) — the 3rd chunk write
+        # triggers the simulated -ENOSPC, leaving 64 bytes already on the FS.
+        src = tmp_path / 'f.bin'
+        src.write_bytes(b'x' * 128)
+
+        status, err = await xfer.put_files([src], RAM)
+        assert status == Status.Error
+        # The PRE-write rm at the top of _console_put_one is the first
+        # rm; the cleanup rm after the failure is the second. Two `fs rm`
+        # calls against the same dest path is the signal we want.
+        rm_calls = [c for c in fake.calls if c == 'fs rm /RAM:/f.bin']
+        assert len(rm_calls) == 2, (
+            f"expected pre-write rm + post-failure cleanup rm, got: {fake.calls}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_failure_does_not_mask_real_error(self, tmp_path):
+        """If the cleanup ``fs rm`` itself errors (e.g. session dead), the
+        original transfer error must still propagate — cleanup is
+        best-effort, not a precondition for reporting failure."""
+
+        class FlakyCleanupFs(self._FailAfterNWrites):
+            async def exec_cmd(self, cmd, timeout=None):
+                # Let the first rm (pre-write) succeed; raise on the
+                # cleanup rm (the second one).
+                if cmd.startswith('fs rm') and 'cleanup' not in cmd:
+                    self.rm_seen = getattr(self, 'rm_seen', 0) + 1
+                    if self.rm_seen == 2:
+                        raise RuntimeError("device went away")
+                return await super().exec_cmd(cmd, timeout)
+
+        fake = FlakyCleanupFs(fail_after=1)
+        xfer = _console_transfer(fake)
+        src = tmp_path / 'f.bin'
+        src.write_bytes(b'x' * 64)
+
+        status, err = await xfer.put_files([src], RAM)
+        # The original -ENOSPC error wins; the cleanup exception is logged
+        # and swallowed.
+        assert status == Status.Error
+        assert 'Failed to write' in err or '-ENOSPC' in err
+
+    @pytest.mark.asyncio
+    async def test_successful_write_does_not_cleanup(self, tmp_path):
+        """No spurious cleanup when the write succeeds — the pre-write
+        ``fs rm`` is the only one we expect on the happy path."""
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake)
+        src = tmp_path / 'f.bin'
+        src.write_bytes(b'x' * 50)
+        status, err = await xfer.put_files([src], RAM)
+        assert status == Status.Success, err
+        rm_calls = [c for c in fake.calls if c.startswith('fs rm')]
+        assert len(rm_calls) == 1, (
+            f"happy path should issue only the pre-write rm; got: {rm_calls}"
+        )
 
 
 # ---------------------------------------------------------------------------

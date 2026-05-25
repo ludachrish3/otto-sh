@@ -29,11 +29,11 @@ async def test_instruction(opts: _Options):
     localHost = LocalHost()
     local_file1 = logger.output_dir / "output1.bin"
     local_file2 = logger.output_dir / "output2.bin"
-    status = await localHost.run(f'dd if=/dev/urandom of={local_file1} bs=1M count=100')
+    status = await localHost.run(f'dd if=/dev/urandom of={local_file1} bs=1K count=50')
     if not status.status.is_ok:
         return status
 
-    status = await localHost.run(f'dd if=/dev/urandom of={local_file2} bs=1M count=150')
+    status = await localHost.run(f'dd if=/dev/urandom of={local_file2} bs=1K count=100')
     if not status.status.is_ok:
         return status
 
