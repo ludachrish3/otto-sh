@@ -327,11 +327,14 @@ class OttoPlugin:
             return
 
         from ..configmodule import all_hosts
+        from ..host import UnixHost
         from ..monitor.factory import build_monitor_collector
         from .suite import OttoSuite
 
         pattern = re.compile(self._monitor_hosts) if self._monitor_hosts else None
-        hosts = list(all_hosts(pattern=pattern))
+        # build_monitor_collector only handles UnixHost; embedded RTOS
+        # targets don't expose the metric-collection commands it issues.
+        hosts = [h for h in all_hosts(pattern=pattern) if isinstance(h, UnixHost)]
         if not hosts:
             label = f'matching "{self._monitor_hosts}"' if self._monitor_hosts else ''
             logger.warning(f'--monitor: no hosts {label} — collection disabled.')

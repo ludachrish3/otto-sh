@@ -49,11 +49,13 @@ async def _fetch_one_host(
     no files were found or the transfer failed.
     """
     # DockerContainerHost piggybacks on a parent and doesn't compile the
-    # SUT, so it never has its own .gcda files. Skip without creating an
-    # empty dest dir that would trip up downstream tools (e.g. lcov's
-    # ``geninfo`` errors out on empty dirs).
+    # SUT, so it never has its own .gcda files. EmbeddedHost (RTOS targets)
+    # likewise carries no toolchain. Skip without creating an empty dest
+    # dir that would trip up downstream tools (e.g. lcov's ``geninfo``
+    # errors out on empty dirs).
     from ...host.dockerHost import DockerContainerHost
-    if isinstance(host, DockerContainerHost):
+    from ...host.embeddedHost import EmbeddedHost
+    if isinstance(host, (DockerContainerHost, EmbeddedHost)):
         return None
 
     label = host.id

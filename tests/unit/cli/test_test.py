@@ -649,9 +649,11 @@ class TestRunCoverageDestination:
         fetcher_instance.fetch_all = AsyncMock(return_value={})
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
+        from otto.host import UnixHost
         with patch('otto.cli.test._get_cov_config',
                    return_value={'gcda_remote_dir': '/remote'}), \
-             patch('otto.configmodule.all_hosts', return_value=[MagicMock()]), \
+             patch('otto.configmodule.all_hosts',
+                   return_value=[MagicMock(spec=UnixHost)]), \
              patch('otto.coverage.fetcher.remote.GcdaFetcher',
                    return_value=fetcher_instance) as fetcher_cls:
             asyncio.run(_run_coverage([repo], log_dir, override))

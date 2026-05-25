@@ -80,8 +80,10 @@ def monitor(
     from ..reservations import gate
     gate(tryGetConfigModule())
 
+    from ..host import UnixHost
     pattern = re.compile(hosts) if hosts else None
-    selected = list(all_hosts(pattern=pattern))
+    # build_monitor_collector only handles UnixHost; skip embedded hosts.
+    selected = [h for h in all_hosts(pattern=pattern) if isinstance(h, UnixHost)]
     if not selected:
         msg = (
             f'No hosts match regex "{hosts}".'

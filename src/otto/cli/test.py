@@ -205,9 +205,13 @@ def run_suite(
     if cov and cov_clean:
         asyncio.run(_cov_clean_remotes(repos))
         # Rebuild host connections so pytest gets fresh ones on its own loop.
+        # rebuild_connections() only exists on UnixHost; embedded targets
+        # don't carry the same connection lifecycle so skip them.
         from ..configmodule import all_hosts
+        from ..host import UnixHost
         for host in all_hosts():
-            host.rebuild_connections()
+            if isinstance(host, UnixHost):
+                host.rebuild_connections()
 
     base_args: list[str] = [
         suite_file,
@@ -580,9 +584,10 @@ async def _run_coverage(
         return
 
     # Coverage collection targets UnixHosts that compile the SUT and emit
-    # .gcda files. all_hosts() already excludes container hosts, which
-    # piggyback on a parent and have no toolchain of their own.
-    hosts = list(all_hosts())
+    # .gcda files. all_hosts() now yields EmbeddedHost (RTOS targets) too,
+    # which have no toolchain; filter them out here alongside containers.
+    from ..host import UnixHost
+    hosts = [h for h in all_hosts() if isinstance(h, UnixHost)]
     if not hosts:
         logger.warning('No hosts available for coverage collection')
         return
