@@ -224,8 +224,116 @@ class TestPut:
 
 
 # ---------------------------------------------------------------------------
-# get — failure modes
+# Progress emission (PUT per-chunk, GET single-completion)
 # ---------------------------------------------------------------------------
+
+def _spy_handler():
+    """Return ``(handler, calls)`` where calls captures (src, dst, done, total) tuples."""
+    calls: list[tuple[str, str, int, int]] = []
+
+    def handler(src, dst, done, total):
+        calls.append((src, dst, done, total))
+
+    return handler, calls
+
+
+def _spy_factory(calls):
+    """Return a TransferProgressFactory whose handlers all append to ``calls``.
+    Mirrors the per-file factory pattern: each `factory()` call returns a
+    fresh handler with its own (src, dst, done, total) appended events."""
+    def factory():
+        h, _ = _spy_handler()
+        # rewrap so all handlers feed the same `calls` list — sufficient for
+        # these tests since they only assert on per-file completion events.
+        def shared(src, dst, done, total):
+            calls.append((src, dst, done, total))
+        return shared
+    return factory
+
+
+class TestPutProgress:
+    """``EmbeddedFileTransfer`` emits per-32-byte-chunk progress events
+    through the factory provided by ``BaseFileTransfer.put_files``."""
+
+    @pytest.mark.asyncio
+    async def test_per_chunk_emission_count_matches_ceiling(self, tmp_path):
+        """A 100-byte file = ceil(100 / 32) = 4 chunks = 4 progress events."""
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake)
+        src = tmp_path / 'f.bin'
+        src.write_bytes(b'x' * 100)
+
+        calls: list = []
+        status, err = await xfer._run_put([src], RAM, _spy_factory(calls))
+        assert status == Status.Success, err
+        assert len(calls) == 4
+        # Bytes-done monotonically increases up to bytes-total.
+        bytes_done = [done for _src, _dst, done, _total in calls]
+        assert bytes_done == [32, 64, 96, 100]
+        assert all(total == 100 for *_, total in calls)
+
+    @pytest.mark.asyncio
+    async def test_final_emission_is_at_completion(self, tmp_path):
+        """Last progress event has bytes_done == bytes_total — the
+        BaseFileTransfer contract that lets every file reach 100%."""
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake)
+        src = tmp_path / 'f.bin'
+        src.write_bytes(b'y' * 50)
+
+        calls: list = []
+        await xfer._run_put([src], RAM, _spy_factory(calls))
+        assert calls[-1][2] == calls[-1][3] == 50
+
+    @pytest.mark.asyncio
+    async def test_empty_file_emits_one_zero_event(self, tmp_path):
+        """An empty file is a single ``fs write -o 0`` — emit one (0, 0)
+        event so the progress bar still appears and completes."""
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake)
+        src = tmp_path / 'empty.bin'
+        src.write_bytes(b'')
+
+        calls: list = []
+        status, err = await xfer._run_put([src], RAM, _spy_factory(calls))
+        assert status == Status.Success, err
+        assert calls == [(str(src), '/RAM:/empty.bin', 0, 0)]
+
+    @pytest.mark.asyncio
+    async def test_show_progress_false_runs_without_factory(self, tmp_path):
+        """The public ``put_files(show_progress=False)`` path: BaseFileTransfer
+        passes ``None``, ``_console_put_one`` short-circuits its handler
+        check, no progress events fire — but the transfer still succeeds."""
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake)
+        src = tmp_path / 'f.bin'
+        src.write_bytes(b'data')
+
+        status, err = await xfer.put_files([src], RAM, show_progress=False)
+        assert status == Status.Success, err
+        # The factory was never built, so we can't directly capture "no events";
+        # the success of put with no handler param is the contract.
+
+
+class TestGetProgress:
+    """GET is one monolithic ``fs read`` — single completion event per file."""
+
+    @pytest.mark.asyncio
+    async def test_single_completion_event_per_file(self, tmp_path):
+        fake = FakeZephyrFs()
+        fake.store['/RAM:/a.bin'] = bytearray(b'aaaa')
+        fake.store['/RAM:/b.bin'] = bytearray(b'bbbbbb')
+        xfer = _console_transfer(fake)
+
+        calls: list = []
+        status, err = await xfer._run_get(
+            [RAM / 'a.bin', RAM / 'b.bin'], tmp_path, _spy_factory(calls),
+        )
+        assert status == Status.Success, err
+        assert len(calls) == 2
+        # Each event reports bytes_done == bytes_total (file-complete signal).
+        for _src, _dst, done, total in calls:
+            assert done == total > 0
 
 class TestGet:
 

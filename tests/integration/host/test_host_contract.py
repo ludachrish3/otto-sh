@@ -21,9 +21,11 @@ caveat) live in :mod:`test_embedded_host_integration`.
 """
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+import otto.host.transfer as transfer_mod
 from otto.utils import Status
 
 
@@ -222,4 +224,107 @@ class TestTransferContract:
         assert status != Status.Success, (
             f"no-FS backend reported Success for put — expected an error "
             f"(err={err!r})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Progress contract: every backend must emit at least one completion event
+# per src file. Enforced first at the type-system level (BaseFileTransfer's
+# ``_run_put`` / ``_run_get`` are abstract — see
+# tests/unit/host/test_transfer_progress.py) and again here at runtime so a
+# backend that accepts the factory but forgets to invoke it still fails.
+# ---------------------------------------------------------------------------
+
+@_ALL_BACKENDS
+class TestTransferProgressContract:
+
+    @pytest.mark.asyncio
+    async def test_put_emits_completion_event(
+        self, host1, host1_kit, tmp_path: Path,
+    ):
+        """Backend-agnostic contract: ``host.put(...)`` must invoke the
+        per-file progress handler at least once with ``bytes_done ==
+        bytes_total > 0``, signalling file completion. We patch
+        :func:`make_rich_progress_factory` so the factory the backend
+        consumes returns a spy handler — the handler's invocation history
+        is what we assert on."""
+        if host1_kit.temp_remote_dir is None:
+            pytest.skip("backend has no filesystem — no progress to report")
+
+        payload = b"otto progress contract\n\x00\x01\x02"
+        local_src = tmp_path / "prog.bin"
+        local_src.write_bytes(payload)
+
+        # Every factory() call returns a fresh handler that appends into
+        # the shared `events` list. Mirrors the per-file factory pattern
+        # used by make_rich_progress_factory.
+        events: list[tuple[str, str, int, int]] = []
+
+        def spy_factory(progress, host_name):
+            def factory():
+                def handler(src, dst, done, total):
+                    events.append((src, dst, done, total))
+                return handler
+            return factory
+
+        with patch.object(
+            transfer_mod, 'make_rich_progress_factory', new=spy_factory,
+        ):
+            status, err = await host1.put(
+                [local_src], Path(host1_kit.temp_remote_dir),
+            )
+        assert status == Status.Success, f"put failed: {err}"
+        assert events, (
+            f"backend produced no progress events — "
+            f"`_run_put` ignored the progress_factory parameter"
+        )
+        # At least one event marks file completion (done == total > 0).
+        completions = [(d, t) for _, _, d, t in events if d == t > 0]
+        assert completions, (
+            f"backend never emitted a completion event (done == total > 0). "
+            f"Events: {events}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_emits_completion_event(
+        self, host1, host1_kit, tmp_path: Path,
+    ):
+        """Symmetric to the put case: ``get`` must report file completion
+        through the progress handler. Round-trips via put so the source
+        file exists on the remote side."""
+        if host1_kit.temp_remote_dir is None:
+            pytest.skip("backend has no filesystem — no progress to report")
+
+        payload = b"otto progress contract get\n\x03\x04"
+        local_src = tmp_path / "progget.bin"
+        local_src.write_bytes(payload)
+        remote_dir = Path(host1_kit.temp_remote_dir)
+        put_status, put_err = await host1.put([local_src], remote_dir)
+        assert put_status == Status.Success, f"setup put failed: {put_err}"
+
+        landing = tmp_path / "got"
+        landing.mkdir()
+        events: list[tuple[str, str, int, int]] = []
+
+        def spy_factory(progress, host_name):
+            def factory():
+                def handler(src, dst, done, total):
+                    events.append((src, dst, done, total))
+                return handler
+            return factory
+
+        with patch.object(
+            transfer_mod, 'make_rich_progress_factory', new=spy_factory,
+        ):
+            status, err = await host1.get(
+                [remote_dir / "progget.bin"], landing,
+            )
+        assert status == Status.Success, f"get failed: {err}"
+        assert events, (
+            f"backend produced no progress events on get — "
+            f"`_run_get` ignored the progress_factory parameter"
+        )
+        completions = [(d, t) for _, _, d, t in events if d == t > 0]
+        assert completions, (
+            f"backend never emitted a get completion event. Events: {events}"
         )

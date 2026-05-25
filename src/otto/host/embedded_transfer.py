@@ -41,7 +41,11 @@ from typing import Any, Literal
 
 from ..logger import getOttoLogger
 from ..utils import CommandStatus, Status
-from .transfer import validate_filename_lengths
+from .transfer import (
+    BaseFileTransfer,
+    TransferProgressFactory,
+    TransferProgressHandler,
+)
 
 logger = getOttoLogger()
 
@@ -79,14 +83,15 @@ _WRITE_TIMEOUT = 15.0
 _RM_TIMEOUT = 10.0
 
 
-class EmbeddedFileTransfer:
+class EmbeddedFileTransfer(BaseFileTransfer):
     """File transfer for an embedded host, over the device shell only.
 
-    Mirrors :class:`~otto.host.transfer.FileTransfer`'s public surface
-    (``get_files``/``put_files``) so :class:`~otto.host.embeddedHost.
-    EmbeddedHost` can delegate to it the way ``UnixHost`` delegates to
-    ``FileTransfer``. The shell command runner is injected as ``exec_cmd`` so
-    the class is testable against a fake shell with no real connection.
+    Subclasses :class:`~otto.host.transfer.BaseFileTransfer`, inheriting
+    its ``put_files`` / ``get_files`` API (filename-length validation,
+    shared Rich progress acquisition). Implements the abstract
+    ``_run_put`` / ``_run_get`` against the device's ``fs`` shell. The
+    shell command runner is injected as ``exec_cmd`` so the class is
+    testable against a fake shell with no real connection.
     """
 
     def __init__(
@@ -97,8 +102,8 @@ class EmbeddedFileTransfer:
         mount_cmd: str | None = None,
         max_filename_len: int = 255,
     ) -> None:
+        super().__init__(name=name, max_filename_len=max_filename_len)
         self.transfer = transfer
-        self._name = name
         self._exec_cmd = exec_cmd
         # `mount_cmd`: an optional ``fs mount …`` command to run once before
         # the first transfer. Needed for filesystems Zephyr cannot auto-mount
@@ -109,64 +114,54 @@ class EmbeddedFileTransfer:
         # accepted by ``_ensure_mounted``.
         self._mount_cmd = mount_cmd
         self._mount_done = False
-        # ``max_filename_len``: see :attr:`EmbeddedHost.max_filename_len`.
-        # Default mirrors POSIX ``NAME_MAX``; tighten per host when the
-        # firmware enforces a smaller cap.
-        self._max_filename_len = max_filename_len
 
     # ------------------------------------------------------------------
-    # Public API
+    # BaseFileTransfer hooks
     # ------------------------------------------------------------------
 
-    async def get_files(
+    async def _run_get(
         self,
         srcFiles: list[Path],
         destDir: Path,
-        show_progress: bool = True,
+        progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
-        """Transfer files off the embedded target to ``destDir`` locally.
+        """Transfer files off the embedded target — sequential (single console).
 
-        Files are transferred **sequentially** — an embedded target has a
-        single console, so there is no concurrency to exploit.
-        """
+        ``_console_get_one`` reads the file in a single ``fs read`` command,
+        so per-byte progress isn't feasible; the handler is invoked once at
+        completion to satisfy the "files complete to 100%" contract."""
         if self.transfer == 'tftp':
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
             ) from None
-        status, err = validate_filename_lengths(
-            srcFiles, self._max_filename_len, self._name,
-        )
-        if not status.is_ok:
-            return status, err
         await self._ensure_mounted()
         for src in srcFiles:
-            status, err = await self._console_get_one(src, destDir)
+            handler = progress_factory() if progress_factory is not None else None
+            status, err = await self._console_get_one(src, destDir, handler)
             if not status.is_ok:
                 return status, err
         return Status.Success, ''
 
-    async def put_files(
+    async def _run_put(
         self,
         srcFiles: list[Path],
         destDir: Path,
-        show_progress: bool = True,
+        progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
-        """Transfer local files onto the embedded target under ``destDir``.
+        """Transfer local files onto the embedded target — sequential.
 
-        Files are transferred **sequentially** (single console).
-        """
+        ``_console_put_one`` writes in 32-byte chunks (``_WRITE_CHUNK``), so
+        the handler is invoked after each chunk for genuine per-byte
+        progress — much finer than asyncssh's 256 KB SCP block, fitting the
+        slowness of console transfer."""
         if self.transfer == 'tftp':
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
             ) from None
-        status, err = validate_filename_lengths(
-            srcFiles, self._max_filename_len, self._name,
-        )
-        if not status.is_ok:
-            return status, err
         await self._ensure_mounted()
         for src in srcFiles:
-            status, err = await self._console_put_one(src, destDir)
+            handler = progress_factory() if progress_factory is not None else None
+            status, err = await self._console_put_one(src, destDir, handler)
             if not status.is_ok:
                 return status, err
         return Status.Success, ''
@@ -177,8 +172,14 @@ class EmbeddedFileTransfer:
 
     async def _console_get_one(
         self, src: Path, destDir: Path,
+        progress_handler: TransferProgressHandler | None = None,
     ) -> tuple[Status, str]:
-        """Read one file off the target via ``fs read`` and write it locally."""
+        """Read one file off the target via ``fs read`` and write it locally.
+
+        ``fs read`` is a single monolithic command — no chunk loop — so the
+        progress handler is invoked exactly once at completion (signalling
+        file done at 100%). Per-byte progress for GET would require chunked
+        ``fs read <path> <offset> <length>``; deferred."""
         src_path = src.as_posix()
         logger.debug(f"{self._name}: fs read {src_path} -> {destDir}")
         result = await self._exec_cmd(f'fs read {src_path}', timeout=_READ_TIMEOUT)
@@ -198,6 +199,8 @@ class EmbeddedFileTransfer:
 
         dest = destDir / src.name
         dest.write_bytes(data)
+        if progress_handler is not None:
+            progress_handler(src_path, dest.as_posix(), len(data), len(data))
         return Status.Success, ''
 
     # ------------------------------------------------------------------
@@ -206,12 +209,20 @@ class EmbeddedFileTransfer:
 
     async def _console_put_one(
         self, src: Path, destDir: Path,
+        progress_handler: TransferProgressHandler | None = None,
     ) -> tuple[Status, str]:
-        """Write one local file onto the target via chunked ``fs write``."""
+        """Write one local file onto the target via chunked ``fs write``.
+
+        Emits a progress event after each successful 32-byte chunk write,
+        plus a final event at file completion (``bytes_done == bytes_total``).
+        Empty files emit a single ``(0, 0)`` event so the bar appears and
+        immediately completes."""
         data = src.read_bytes()
         dest_path = (destDir / src.name).as_posix()
+        src_str = str(src)
+        total = len(data)
         logger.debug(
-            f"{self._name}: fs write {src} -> {dest_path} ({len(data)} bytes)"
+            f"{self._name}: fs write {src} -> {dest_path} ({total} bytes)"
         )
 
         # `fs write` seeks to an offset but never truncates, so a shorter new
@@ -233,9 +244,12 @@ class EmbeddedFileTransfer:
             result = await self._exec_cmd(
                 f'fs write {dest_path} -o 0', timeout=_WRITE_TIMEOUT,
             )
-            return self._check_write(result, dest_path, 0)
+            status, err = self._check_write(result, dest_path, 0)
+            if status.is_ok and progress_handler is not None:
+                progress_handler(src_str, dest_path, 0, 0)
+            return status, err
 
-        for offset in range(0, len(data), _WRITE_CHUNK):
+        for offset in range(0, total, _WRITE_CHUNK):
             chunk = data[offset:offset + _WRITE_CHUNK]
             hexbytes = ' '.join(f'{b:02x}' for b in chunk)
             result = await self._exec_cmd(
@@ -245,6 +259,8 @@ class EmbeddedFileTransfer:
             status, err = self._check_write(result, dest_path, offset)
             if not status.is_ok:
                 return status, err
+            if progress_handler is not None:
+                progress_handler(src_str, dest_path, offset + len(chunk), total)
         return Status.Success, ''
 
     def _check_write(

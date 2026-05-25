@@ -21,6 +21,45 @@ from .session import (
     LocalSession,
     SessionManager,
 )
+from .transfer import BaseFileTransfer, TransferProgressFactory
+
+
+class LocalFileTransfer(BaseFileTransfer):
+    """File transfer for :class:`LocalHost` — a local copy via
+    :func:`shutil.copy2`.
+
+    Concrete :class:`~otto.host.transfer.BaseFileTransfer` so the ABC's
+    progress contract holds uniformly across every backend in the host
+    fleet (Unix's :class:`~otto.host.transfer.FileTransfer`, embedded's
+    :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`, and this
+    one). Per-file completion is the granularity — ``shutil.copy2`` is a
+    single blocking C call with no progress hook, the analogue of an
+    embedded ``fs read``.
+    """
+
+    async def _do_copy(
+        self,
+        srcFiles: list[Path],
+        destDir: Path,
+        progress_factory: TransferProgressFactory | None,
+    ) -> tuple[Status, str]:
+        try:
+            destDir.mkdir(parents=True, exist_ok=True)
+            for src in srcFiles:
+                dest = destDir / src.name
+                await asyncio.to_thread(shutil.copy2, src, dest)
+                if progress_factory is not None:
+                    size = dest.stat().st_size
+                    progress_factory()(str(src), str(dest), size, size)
+            return Status.Success, ''
+        except Exception as e:
+            return Status.Error, str(e)
+
+    async def _run_put(self, srcFiles, destDir, progress_factory):
+        return await self._do_copy(srcFiles, destDir, progress_factory)
+
+    async def _run_get(self, srcFiles, destDir, progress_factory):
+        return await self._do_copy(srcFiles, destDir, progress_factory)
 
 logger = getOttoLogger()
 
@@ -41,6 +80,10 @@ class LocalHost(BaseHost):
     _repeater: RepeatRunner = field(init=False, repr=False)
     """Manages periodic background command tasks for this host."""
 
+    _file_transfer: LocalFileTransfer = field(init=False, repr=False)
+    """Local copy via shutil, routed through BaseFileTransfer so progress
+    reporting works uniformly across every host backend."""
+
     def __post_init__(self) -> None:
         self._session_mgr = SessionManager(
             name=self.name,
@@ -50,6 +93,7 @@ class LocalHost(BaseHost):
             oneshot_factory=self._exec_subprocess,
         )
         self._repeater = RepeatRunner(run_cmds=self.run)
+        self._file_transfer = LocalFileTransfer(name=self.name)
 
     ####################
     #  Command execution
@@ -166,37 +210,37 @@ class LocalHost(BaseHost):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        show_progress: bool = True,
     ) -> tuple[Status, str]:
-        """Copy files to dest_dir on the local filesystem."""
+        """Copy files to dest_dir on the local filesystem.
+
+        Delegates to :class:`LocalFileTransfer` so progress reporting
+        flows through the same :class:`~otto.host.transfer.BaseFileTransfer`
+        machinery as Unix and embedded backends."""
         if not isinstance(src_files, list):
             src_files = [src_files]
         if isDryRun():
             return self._dry_run_transfer("GET", src_files, dest_dir)
-        try:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            for src in src_files:
-                await asyncio.to_thread(shutil.copy2, src, dest_dir / src.name)
-            return Status.Success, ""
-        except Exception as e:
-            return Status.Error, str(e)
+        return await self._file_transfer.get_files(
+            src_files, dest_dir, show_progress,
+        )
 
     async def put(
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
+        show_progress: bool = True,
     ) -> tuple[Status, str]:
-        """Copy files to dest_dir on the local filesystem."""
+        """Copy files to dest_dir on the local filesystem.
+
+        Delegates to :class:`LocalFileTransfer`; see :meth:`get`."""
         if not isinstance(src_files, list):
             src_files = [src_files]
         if isDryRun():
             return self._dry_run_transfer("PUT", src_files, dest_dir)
-        try:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            for src in src_files:
-                await asyncio.to_thread(shutil.copy2, src, dest_dir / src.name)
-            return Status.Success, ""
-        except Exception as e:
-            return Status.Error, str(e)
+        return await self._file_transfer.put_files(
+            src_files, dest_dir, show_progress,
+        )
 
     ####################
     #  Cleanup
