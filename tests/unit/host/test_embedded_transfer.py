@@ -281,6 +281,74 @@ class TestFsAbsent:
 
 
 # ---------------------------------------------------------------------------
+# Per-host filename length limit
+# ---------------------------------------------------------------------------
+
+class TestMaxFilenameLen:
+    """``max_filename_len`` exists so a target that rejects long names (FAT
+    8.3 without ``CONFIG_FS_FATFS_LFN``) surfaces a clear, actionable error
+    instead of the device's opaque ``Failed to open … (-2)``."""
+
+    @pytest.mark.asyncio
+    async def test_put_rejects_over_limit_basename_with_clear_message(
+        self, tmp_path,
+    ):
+        fake = FakeZephyrFs()
+        xfer = EmbeddedFileTransfer(
+            transfer='console', name='sprout',
+            exec_cmd=fake.exec_cmd, max_filename_len=12,
+        )
+        # 14 chars > 12: should be rejected before any fs command runs.
+        src = tmp_path / 'concurrent.bin'
+        src.write_bytes(b'x')
+        status, err = await xfer.put_files([src], RAM)
+        assert status == Status.Error
+        assert 'concurrent.bin' in err
+        assert '12-character' in err
+        assert 'sprout' in err
+        # The fake's store stays empty — the check fires before fs_write.
+        assert fake.store == {}
+
+    @pytest.mark.asyncio
+    async def test_get_rejects_over_limit_basename(self, tmp_path):
+        fake = FakeZephyrFs()
+        xfer = EmbeddedFileTransfer(
+            transfer='console', name='sprout',
+            exec_cmd=fake.exec_cmd, max_filename_len=12,
+        )
+        status, err = await xfer.get_files([RAM / 'concurrent.bin'], tmp_path)
+        assert status == Status.Error
+        assert 'concurrent.bin' in err
+
+    @pytest.mark.asyncio
+    async def test_at_limit_basename_is_accepted(self, tmp_path):
+        """A name exactly at the limit must be accepted — off-by-one matters
+        because the existing contract test uses ``contract.bin`` (12 chars)."""
+        fake = FakeZephyrFs()
+        xfer = EmbeddedFileTransfer(
+            transfer='console', name='sprout',
+            exec_cmd=fake.exec_cmd, max_filename_len=12,
+        )
+        src = tmp_path / 'contract.bin'  # 12 chars exactly
+        src.write_bytes(b'ok')
+        status, err = await xfer.put_files([src], RAM)
+        assert status == Status.Success, err
+
+    @pytest.mark.asyncio
+    async def test_limit_unset_accepts_long_names(self, tmp_path):
+        """Default (no limit) preserves existing behavior — long names are
+        forwarded to the device, which decides for itself. Backends like
+        LittleFS that accept 255-char names should not pay a synthetic
+        toll just because FAT happens to be picky."""
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake)  # no max_filename_len
+        src = tmp_path / 'some_quite_long_filename.bin'
+        src.write_bytes(b'ok')
+        status, err = await xfer.put_files([src], RAM)
+        assert status == Status.Success, err
+
+
+# ---------------------------------------------------------------------------
 # tftp — reserved, not implemented
 # ---------------------------------------------------------------------------
 

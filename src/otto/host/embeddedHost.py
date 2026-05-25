@@ -106,6 +106,14 @@ class EmbeddedHost(RemoteHost):
     LittleFS (auto-mounted) or no-FS targets.
     """
 
+    max_filename_len: Optional[int] = None
+    """Optional upper bound on the basename length accepted by the target's
+    filesystem (no path, including extension). Set to ``12`` for FAT 8.3
+    (Zephyr builds without ``CONFIG_FS_FATFS_LFN``); leave ``None`` for
+    filesystems with the typical 255-byte limit (LittleFS, ext4). When set,
+    :meth:`put` / :meth:`get` reject over-limit names up front with a clear
+    message instead of letting the device produce an opaque ``-ENOENT``."""
+
     telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
     """Connection options for the telnet shell (port, cols/rows, etc.)."""
 
@@ -173,6 +181,7 @@ class EmbeddedHost(RemoteHost):
             name=self.name,
             exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),
             mount_cmd=self.mount_cmd,
+            max_filename_len=self.max_filename_len,
         )
 
     @property

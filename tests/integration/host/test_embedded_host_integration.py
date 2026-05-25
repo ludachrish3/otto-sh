@@ -23,10 +23,16 @@ Parametrized over the three Zephyr backends (``zephyr_fat`` /
 
 import asyncio
 import re
+from pathlib import Path
 
 import pytest
 
+from otto.host.embeddedHost import EmbeddedHost
+from otto.host.unixHost import UnixHost
+from otto.storage.factory import create_host_from_dict
 from otto.utils import Status
+
+from tests.conftest import host_data, make_host
 
 
 _ALL_ZEPHYR = pytest.mark.parametrize(
@@ -195,3 +201,203 @@ class TestSingleConsole:
         assert after.status == Status.Success, (
             f"default session broke after second-open attempt: {after.output!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Concurrent multi-target file transfer (regression guard for the
+# `otto -l embedded run test-instruction` failure: every Zephyr target's
+# put() collapsed with `IncompleteReadError` on the readiness handshake
+# while basil's concurrent SCP transfer ran over the shared `basil_seed`
+# hop. The contract suite only exercises put/get per-backend in isolation,
+# so the multi-target fan-out path that `do_for_all_hosts` takes had no
+# coverage. These tests reproduce the fan-out semantics directly via
+# `asyncio.gather` — that is what `do_for_all_hosts` does internally —
+# without relying on the lab/configmodule layer.
+# ---------------------------------------------------------------------------
+
+# Per-target writable filesystem mount. Mirrors the kit definitions in
+# `tests/conftest.py`; `sprout_no_fs` has no filesystem and is expected to
+# surface a graceful Status.Error rather than succeed.
+_ZEPHYR_DEST: dict[str, str | None] = {
+    "sprout": "/RAM:",
+    "sprout_lfs": "/lfs",
+    "sprout_no_fs": None,
+}
+
+
+@pytest.mark.integration
+@pytest.mark.embedded
+@pytest.mark.xdist_group("zephyr_fanout")
+class TestConcurrentEmbeddedTransfer:
+    """Fan-out file transfer across multiple Zephyr targets sharing one
+    SSH hop. Reproduces the failure mode hit by ``test_instruction`` in
+    ``tests/repo1/pylib/repo1_instructions/install.py``: every Zephyr
+    host's session handshake collapsed with ``IncompleteReadError(0 bytes)``
+    when the puts were launched concurrently, leaving every embedded
+    transfer dead while basil's SCP put succeeded.
+
+    The bug is a session-init race, not a payload-size issue, so these
+    tests use a small payload to keep the suite fast.
+    """
+
+    _PAYLOAD = b"otto concurrent transfer test\n\x00\x01\x02\x03"
+    # Payload filename must fit FAT 8.3 — the Zephyr v3.7 FAT-on-RAM build
+    # under test (``v3_7_fat_ram``) does not enable ``CONFIG_FS_FATFS_LFN``,
+    # so any name longer than 8.3 (e.g. "concurrent.bin") opens with -ENOENT.
+    _PAYLOAD_NAME = "fanout.bin"
+
+    @staticmethod
+    def _build_zephyr_hosts() -> list[EmbeddedHost]:
+        """Fresh EmbeddedHost per Zephyr target, built the same way the
+        production factory does (``create_host_from_dict``). Each test gets
+        its own instances so a previous test's session state cannot leak."""
+        return [
+            create_host_from_dict(host_data(ne)) for ne in _ZEPHYR_DEST
+        ]
+
+    @staticmethod
+    def _check_put_result(host_id: str, result) -> None:
+        """Assert a single per-host put() result matches the contract:
+        success for fs-capable Zephyr targets, graceful Status.Error for
+        ``sprout_no_fs``. A raised exception is a regression — this is the
+        exact shape that the test_instruction failure produced."""
+        assert not isinstance(result, BaseException), (
+            f"{host_id}: put raised — concurrent session init regressed. "
+            f"Exception: {result!r}"
+        )
+        status, err = result
+        if host_id == "sprout_no_fs":
+            assert status != Status.Success, (
+                f"{host_id}: no-FS target reported Success — expected a "
+                f"graceful error (err={err!r})"
+            )
+        else:
+            assert status == Status.Success, (
+                f"{host_id}: put failed: {err!r}"
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(120)
+    async def test_concurrent_puts_across_zephyr_targets(
+        self, tmp_path: Path,
+    ):
+        """All three Zephyr targets receive a put() concurrently. They share
+        ``hop=basil_seed`` — three telnet-over-SSH legs open into basil at
+        the same instant. This is the minimum reproducer for the
+        readiness-handshake collapse."""
+        src = tmp_path / "fanout.bin"
+        src.write_bytes(self._PAYLOAD)
+
+        hosts = self._build_zephyr_hosts()
+        try:
+            results = await asyncio.gather(
+                *(
+                    h.put([src], Path(_ZEPHYR_DEST[h.ne] or "/"))
+                    for h in hosts
+                ),
+                return_exceptions=True,
+            )
+            for h, result in zip(hosts, results):
+                self._check_put_result(h.ne, result)
+        finally:
+            await asyncio.gather(
+                *(h.close() for h in hosts), return_exceptions=True,
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(180)
+    async def test_concurrent_puts_with_unix_scp_on_shared_hop(
+        self, tmp_path: Path,
+    ):
+        """The exact fan-out shape that ``test_instruction`` triggers: a
+        Unix host (``basil``) and the three Zephyr targets receive a put
+        concurrently. basil's SCP transfer flows over the same VM that
+        proxies the Zephyr telnet legs, exercising the hop under load while
+        the Zephyr sessions are still mid-handshake."""
+        src = tmp_path / "fanout.bin"
+        src.write_bytes(self._PAYLOAD)
+
+        basil = make_host("basil", term="ssh", transfer="scp")
+        zephyrs = self._build_zephyr_hosts()
+        try:
+            results = await asyncio.gather(
+                basil.put([src], Path("/tmp")),
+                *(
+                    h.put([src], Path(_ZEPHYR_DEST[h.ne] or "/"))
+                    for h in zephyrs
+                ),
+                return_exceptions=True,
+            )
+            basil_result, *zephyr_results = results
+
+            assert not isinstance(basil_result, BaseException), (
+                f"basil: SCP put raised: {basil_result!r}"
+            )
+            basil_status, basil_err = basil_result
+            assert basil_status == Status.Success, (
+                f"basil: SCP put failed: {basil_err!r}"
+            )
+
+            for h, result in zip(zephyrs, zephyr_results):
+                self._check_put_result(h.ne, result)
+        finally:
+            await asyncio.gather(
+                basil.close(),
+                *(h.close() for h in zephyrs),
+                return_exceptions=True,
+            )
+
+    @pytest.mark.asyncio
+    @pytest.mark.timeout(180)
+    async def test_concurrent_gets_across_zephyr_targets(
+        self, tmp_path: Path,
+    ):
+        """Symmetric fan-out for get(): pre-stage the payload sequentially
+        on each fs-capable target, then drive a concurrent get(). The
+        sequential put phase intentionally avoids the fan-out race so a
+        get-side regression is not masked by a put-side failure."""
+        src = tmp_path / "fanout.bin"
+        src.write_bytes(self._PAYLOAD)
+
+        hosts = self._build_zephyr_hosts()
+        try:
+            # Sequential pre-stage on the two fs-capable backends.
+            for h in hosts:
+                dest = _ZEPHYR_DEST[h.ne]
+                if dest is None:
+                    continue
+                status, err = await h.put([src], Path(dest))
+                assert status == Status.Success, (
+                    f"{h.ne}: pre-stage put failed: {err!r}"
+                )
+
+            # Per-host local landing dir so concurrent gets don't collide
+            # on the same destination file.
+            fs_hosts = [h for h in hosts if _ZEPHYR_DEST[h.ne] is not None]
+            for h in fs_hosts:
+                (tmp_path / f"got_{h.ne}").mkdir()
+            results = await asyncio.gather(
+                *(
+                    h.get(
+                        [Path(_ZEPHYR_DEST[h.ne]) / "fanout.bin"],
+                        tmp_path / f"got_{h.ne}",
+                    )
+                    for h in fs_hosts
+                ),
+                return_exceptions=True,
+            )
+
+            for h, result in zip(fs_hosts, results):
+                landing = tmp_path / f"got_{h.ne}"
+                assert not isinstance(result, BaseException), (
+                    f"{h.ne}: get raised: {result!r}"
+                )
+                status, err = result
+                assert status == Status.Success, (
+                    f"{h.ne}: get failed: {err!r}"
+                )
+                assert (landing / "fanout.bin").read_bytes() == self._PAYLOAD
+        finally:
+            await asyncio.gather(
+                *(h.close() for h in hosts), return_exceptions=True,
+            )

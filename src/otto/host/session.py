@@ -999,6 +999,21 @@ class SessionManager:
         prevents a follow-on caller from observing the just-created session
         as ``alive=False`` (because the handshake hasn't run yet) and falling
         through to recreate.
+
+        A failed readiness handshake (``ConnectionError`` from ``_fail_init``)
+        is retried **once** with a brief backoff. The failure mode this
+        addresses: concurrent fan-out across multiple embedded targets
+        sharing a single SSH hop (e.g. ``do_for_all_hosts(EmbeddedHost.put,
+        …)`` to several Zephyr boards over one ``basil_seed`` hop) can land
+        a fresh telnet socket on a device whose console isn't quite ready —
+        the peer accepts the TCP connection then closes it before the
+        marker probe lands, producing ``IncompleteReadError(0 bytes)`` →
+        ``ConnectionError``. Rebuilding the transport (the closed session's
+        teardown drops the stale ``TelnetClient``; ``connections.telnet()``
+        re-opens cleanly) and retrying once recovers from the race without
+        masking a genuine misconfiguration: a real "device unresponsive /
+        bad credentials" failure will fail the same way on the second
+        attempt and propagate.
         """
         if self._session and self._session.alive:
             return
@@ -1015,43 +1030,79 @@ class SessionManager:
             if self._session is not None:
                 await self._session.close()
 
-            if self._session_factory is not None:
-                new_session: ShellSession = self._session_factory()
-            else:
-                assert self._connections is not None
-                match self._connections.term:
-                    case 'ssh':
-                        ssh_conn = await self._connections.ssh()
-                        new_session = SshSession(ssh_conn)
-                    case 'telnet':
-                        telnet_conn = await self._connections.telnet()
-                        telnet_cls = self._telnet_session_cls or TelnetSession
-                        logger.debug(
-                            f"SessionManager[{self._name}]: building telnet "
-                            f"session as {telnet_cls.__name__}"
-                        )
-                        new_session = telnet_cls(
-                            telnet_conn.reader,
-                            telnet_conn.writer,
-                        )
-                    case _:
-                        raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
-
-            new_session._on_output = self._log_output
-            # The marker handshake can take ~1 s on a cold telnet open. A
-            # caller-side ``wait_for`` cancellation (or a failed login)
-            # landing here would otherwise drop the just-built session — and
-            # its open transport FD — on the floor. Close it before the
-            # exception propagates.
-            try:
-                await new_session._ensure_initialized()
-            except BaseException:
+            last_exc: ConnectionError | None = None
+            for attempt in range(2):
+                new_session = await self._build_session()
+                new_session._on_output = self._log_output
+                # The marker handshake can take ~1 s on a cold telnet open. A
+                # caller-side ``wait_for`` cancellation (or a failed login)
+                # landing here would otherwise drop the just-built session — and
+                # its open transport FD — on the floor. Close it before the
+                # exception propagates.
                 try:
-                    await new_session.close()
-                except Exception:  # pragma: no cover - best-effort cleanup
-                    pass
-                raise
-            self._session = new_session
+                    await new_session._ensure_initialized()
+                except ConnectionError as exc:
+                    try:
+                        await new_session.close()
+                    except Exception:  # pragma: no cover - best-effort cleanup
+                        pass
+                    last_exc = exc
+                    if attempt == 0:
+                        logger.debug(
+                            f"SessionManager[{self._name}]: handshake failed "
+                            f"on first attempt ({exc!r}); rebuilding transport "
+                            f"and retrying once"
+                        )
+                        # Backoff lets the peer fully release any half-open
+                        # slot before the next telnet() rebuilds the TCP
+                        # connection. 2 s is calibrated to single-client
+                        # RTOS telnet servers (Zephyr's
+                        # ``CONFIG_SHELL_BACKEND_TELNET``) which do not
+                        # always free the slot the instant the FIN lands —
+                        # observed on live QEMU runs to take well over
+                        # 500 ms after the close.
+                        await asyncio.sleep(2.0)
+                        continue
+                    raise
+                except BaseException:
+                    try:
+                        await new_session.close()
+                    except Exception:  # pragma: no cover - best-effort cleanup
+                        pass
+                    raise
+                self._session = new_session
+                break
+            else:  # pragma: no cover - the loop always breaks or raises
+                assert last_exc is not None
+                raise last_exc
+
+    async def _build_session(self) -> 'ShellSession':
+        """Construct a fresh ShellSession from the configured factory or
+        connection manager. Split out from ``_ensure_session`` so the retry
+        path can rebuild the transport cleanly."""
+        if self._session_factory is not None:
+            return self._session_factory()
+        assert self._connections is not None
+        match self._connections.term:
+            case 'ssh':
+                ssh_conn = await self._connections.ssh()
+                return SshSession(ssh_conn)
+            case 'telnet':
+                telnet_conn = await self._connections.telnet()
+                telnet_cls = self._telnet_session_cls or TelnetSession
+                logger.debug(
+                    f"SessionManager[{self._name}]: building telnet "
+                    f"session as {telnet_cls.__name__}"
+                )
+                return telnet_cls(
+                    telnet_conn.reader,
+                    telnet_conn.writer,
+                )
+            case _:
+                raise ValueError(
+                    f'{self._name}: unsupported terminal type '
+                    f'"{self._connections.term}"'
+                )
 
     async def run_cmd(
         self,

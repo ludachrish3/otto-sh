@@ -85,6 +85,7 @@
         "osVersion": "3.7",
         "transfer": "console",
         "mount_cmd": "fs mount fat /RAM:",
+        "max_filename_len": 12,
         "is_virtual": true,
         "hop": "basil_seed",
         "resources": [

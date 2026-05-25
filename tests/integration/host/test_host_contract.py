@@ -154,6 +154,51 @@ class TestTransferContract:
         assert (get_dir / "contract.bin").read_bytes() == payload
 
     @pytest.mark.asyncio
+    async def test_put_get_roundtrip_survives_back_to_back_calls(
+        self, host1, host1_kit, tmp_path: Path,
+    ):
+        """A second ``put → get`` against the same host must succeed. The
+        first round-trip warms whatever per-host state exists (the
+        embedded ``_ensure_mounted`` latch, the SSH multiplexer, the
+        Zephyr telnet session); the second exercises the "hot host"
+        branch of ``_ensure_session`` / ``_ensure_mounted``. Cross-backend
+        coverage catches regressions where a hot host's second transfer
+        regresses on one backend without affecting the others."""
+        if host1_kit.temp_remote_dir is None:
+            pytest.skip("backend has no filesystem — see no-FS error test")
+
+        payload_a = b"otto contract test payload A\n\x00\x01"
+        payload_b = b"otto contract test payload B\n\x02\x03"
+        local_a = tmp_path / "a.bin"
+        local_a.write_bytes(payload_a)
+        local_b = tmp_path / "b.bin"
+        local_b.write_bytes(payload_b)
+
+        remote_dir = Path(host1_kit.temp_remote_dir)
+        landing = tmp_path / "received"
+        landing.mkdir()
+
+        put_a_status, put_a_err = await host1.put([local_a], remote_dir)
+        assert put_a_status == Status.Success, f"first put failed: {put_a_err}"
+        get_a_status, get_a_err = await host1.get(
+            [remote_dir / "a.bin"], landing,
+        )
+        assert get_a_status == Status.Success, f"first get failed: {get_a_err}"
+        assert (landing / "a.bin").read_bytes() == payload_a
+
+        put_b_status, put_b_err = await host1.put([local_b], remote_dir)
+        assert put_b_status == Status.Success, (
+            f"second put on hot host failed: {put_b_err}"
+        )
+        get_b_status, get_b_err = await host1.get(
+            [remote_dir / "b.bin"], landing,
+        )
+        assert get_b_status == Status.Success, (
+            f"second get on hot host failed: {get_b_err}"
+        )
+        assert (landing / "b.bin").read_bytes() == payload_b
+
+    @pytest.mark.asyncio
     async def test_no_filesystem_backend_surfaces_clear_error(
         self, host1, host1_kit, tmp_path: Path,
     ):
