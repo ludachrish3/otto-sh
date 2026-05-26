@@ -187,6 +187,33 @@ _ZEPHYR_BACKEND_NE: dict[str, str] = {
 }
 
 
+def embedded_param_id(backend_id: str) -> str:
+    """Descriptive test id for an embedded backend, derived from lab data.
+
+    Returns ``"{osName}-{osVersion}-{fs}"`` so a new entry in
+    ``lab_data/tech1/hosts.json`` (e.g. a future Zephyr 4.x or a different
+    RTOS) surfaces its identity in test output without test-code edits.
+    Non-embedded backend ids pass through unchanged so the same helper can
+    be used by parametrize callers that mix unix and embedded backends.
+    """
+    if backend_id not in _ZEPHYR_BACKEND_NE:
+        return backend_id
+    data = host_data(_ZEPHYR_BACKEND_NE[backend_id])
+    osname = str(data.get("osName", "embedded"))
+    osver = str(data.get("osVersion", ""))
+    dest = data.get("default_dest_dir")
+    if dest == "/RAM:":
+        fs = "fat"
+    elif dest == "/lfs":
+        fs = "lfs"
+    elif dest is None:
+        fs = "nofs"
+    else:
+        fs = str(dest).strip("/").replace(":", "") or "fs"
+    parts = [p for p in (osname, osver, fs) if p]
+    return "-".join(parts).lower().replace(" ", "")
+
+
 @pytest_asyncio.fixture
 async def host1(request):
     """Integration host parameterized by backend id.
@@ -330,6 +357,23 @@ class HostKit:
     contract case so the test stays OS-agnostic — the kit provides both
     the command and what to look for in its echo."""
 
+    stability_iterations: int = 20
+    """Number of sequential ``run`` iterations the cross-OS stability
+    contract performs. Embedded backends keep this modest because the
+    Zephyr telnet console is slow; unix backends can comfortably run
+    higher counts."""
+
+    stability_cycle_count: int = 10
+    """Number of sequential put/get/verify/delete cycles. Set to ``0`` for
+    backends without a filesystem so the cycle test self-skips."""
+
+    stability_large_size: int = 0
+    """Size in bytes for the large-file stability transfer. Embedded
+    backends keep this orders of magnitude smaller than unix because the
+    console transfer encodes 32 hex chars per shell invoke
+    (see :mod:`otto.host.embedded_transfer`). Set to ``0`` to skip the
+    large-file test on backends without a filesystem."""
+
 
 _UNIX_KIT = HostKit(
     successful_cmd="echo hello",
@@ -337,6 +381,9 @@ _UNIX_KIT = HostKit(
     temp_remote_dir="/tmp",
     send_line_ending="\n",
     expect_in_output="hello",
+    stability_iterations=50,
+    stability_cycle_count=20,
+    stability_large_size=5 * 1024 * 1024,
 )
 
 # Zephyr has no echo builtin — pick a stock command that prints non-empty
@@ -350,13 +397,31 @@ _ZEPHYR_COMMON = {
     "expect_in_output": "Zephyr",
 }
 
+# Embedded backends share these stability numbers — the slow per-invoke
+# console encoding dominates wall time, so we keep iteration counts modest
+# and large transfers in the tens of KiB rather than MiB.
+_ZEPHYR_STABILITY = {
+    "stability_iterations": 20,
+    "stability_cycle_count": 10,
+    "stability_large_size": 32 * 1024,
+}
+
 _KITS: dict[str, HostKit] = {
     "ssh": _UNIX_KIT,
     "telnet": _UNIX_KIT,
     "local": _UNIX_KIT,
-    "zephyr_fat": HostKit(temp_remote_dir="/RAM:", **_ZEPHYR_COMMON),
-    "zephyr_lfs": HostKit(temp_remote_dir="/lfs", **_ZEPHYR_COMMON),
-    "zephyr_no_fs": HostKit(temp_remote_dir=None, **_ZEPHYR_COMMON),
+    "zephyr_fat": HostKit(
+        temp_remote_dir="/RAM:", **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY,
+    ),
+    "zephyr_lfs": HostKit(
+        temp_remote_dir="/lfs", **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY,
+    ),
+    "zephyr_no_fs": HostKit(
+        temp_remote_dir=None, **_ZEPHYR_COMMON,
+        stability_iterations=20,
+        stability_cycle_count=0,
+        stability_large_size=0,
+    ),
 }
 
 

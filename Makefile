@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-all repeat
+.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-all stability-embedded repeat
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -144,6 +144,18 @@ stability-all: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if u
 	    --count=$(or $(COUNT),10) \
 	    -p no:cacheprovider \
 	    -n0
+	@echo
+	@echo "── Tier 3 (cross-OS stability contract — includes embedded) ──"
+	@$(MAKE) stability-embedded
+
+stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (unix + Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/.
+	@mkdir -p reports/junit
+	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	    tests/integration/host/test_host_stability_contract.py \
+	    -m integration \
+	    -p no:cacheprovider \
+	    -n0 \
+	    --junitxml=reports/junit/stability-embedded.xml
 
 repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. Override COUNT=N (default 10).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest tests/unit \
