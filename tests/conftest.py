@@ -19,6 +19,11 @@ from typing import Any  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 
+from otto.host.embedded_filesystem import (  # noqa: E402
+    FatRamFileSystem,
+    LittleFsFileSystem,
+    NoFileSystem,
+)
 from otto.host.host import setDryRun  # noqa: E402
 from otto.host.localHost import LocalHost  # noqa: E402
 from otto.host.unixHost import UnixHost  # noqa: E402
@@ -410,14 +415,17 @@ _KITS: dict[str, HostKit] = {
     "ssh": _UNIX_KIT,
     "telnet": _UNIX_KIT,
     "local": _UNIX_KIT,
+    # ``temp_remote_dir`` is derived from the EmbeddedFileSystem class's
+    # mount path — one source of truth for "where does this FS live on the
+    # device". If the FS class moves its mount, the kit follows automatically.
     "zephyr_fat": HostKit(
-        temp_remote_dir="/RAM:", **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY,
+        temp_remote_dir=FatRamFileSystem.mount, **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY,
     ),
     "zephyr_lfs": HostKit(
-        temp_remote_dir="/lfs", **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY,
+        temp_remote_dir=LittleFsFileSystem.mount, **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY,
     ),
     "zephyr_no_fs": HostKit(
-        temp_remote_dir=None, **_ZEPHYR_COMMON,
+        temp_remote_dir=NoFileSystem.mount, **_ZEPHYR_COMMON,
         stability_iterations=20,
         stability_cycle_count=0,
         stability_large_size=0,

@@ -18,8 +18,10 @@ a future backend (YMODEM, MCUmgr, a vendor mechanism) is then additive.
 - ``console`` (default) — the Zephyr ``fs`` shell. ``get`` runs ``fs read`` and
   decodes the hexdump; ``put`` runs chunked ``fs write`` calls. Requires the
   target firmware to enable ``CONFIG_FILE_SYSTEM_SHELL`` over a mounted
-  filesystem. If it does not, ``get``/``put`` fail with a clear error
-  (:data:`_FS_ABSENT_MSG`) rather than hanging or writing garbage.
+  filesystem, and the host's ``filesystem`` field in lab data to declare a
+  real FS (not :class:`~otto.host.embedded_filesystem.NoFileSystem`). When the
+  declaration is ``none``, ``get``/``put`` short-circuit with a clear error
+  (:data:`_NO_FILESYSTEM_MSG`) before any shell command runs.
 - ``tftp`` — reserved (see :class:`~otto.host.options.TftpOptions`); the body
   raises :class:`NotImplementedError` (deferred).
 
@@ -43,6 +45,7 @@ from typing import Any, Literal
 
 from ..logger import getOttoLogger
 from ..utils import CommandStatus, Status
+from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .transfer import (
     BaseFileTransfer,
     TransferProgressFactory,
@@ -86,15 +89,11 @@ _HEXDUMP_COLS = 16
 # A hexdump line: an 8-hex-digit offset, then the hex/ascii columns.
 _HEX_LINE_RE = re.compile(r'^\s*([0-9A-Fa-f]{8})\s\s(.*)$')
 
-# The shell rejects an absent `fs` command as `fs: command not found` (the
-# ZephyrSession unknown-command behavior). Distinguishes "no fs shell" from an
-# ordinary file-level failure (a bad path, a full disk).
-_FS_ABSENT_RE = re.compile(r'\bfs:\s*command not found', re.IGNORECASE)
-
-_FS_ABSENT_MSG = (
-    "console file transfer requires the Zephyr fs shell "
-    "(CONFIG_FILE_SYSTEM_SHELL) over a mounted filesystem; the target's "
-    "shell has no 'fs' command"
+_NO_FILESYSTEM_MSG = (
+    "console file transfer requires an on-device filesystem; this host's "
+    "lab-data 'filesystem' is 'none' (NoFileSystem). Declare a real "
+    "filesystem (e.g. 'fat-ram', 'littlefs') in lab data, or register a "
+    "custom EmbeddedFileSystem subclass via register_filesystem()."
 )
 
 # Generous ceiling for `fs read` of a whole file (a large hexdump is slow to
@@ -120,20 +119,22 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         transfer: EmbeddedTransferType,
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
-        mount_cmd: str | None = None,
+        filesystem: EmbeddedFileSystem | None = None,
         max_filename_len: int = 255,
     ) -> None:
         super().__init__(name=name, max_filename_len=max_filename_len)
         self.transfer = transfer
         self._exec_cmd = exec_cmd
-        # `mount_cmd`: an optional ``fs mount …`` command to run once before
-        # the first transfer. Needed for filesystems Zephyr cannot auto-mount
-        # via ``zephyr,fstab`` (notably FAT — fstab only supports LittleFS in
-        # 3.7 LTS). ``None`` for auto-mounting or no-FS targets.
-        # ``_mount_done`` makes the call idempotent within a host's lifetime;
-        # a "already mounted" error from a real ``fs mount`` is silently
-        # accepted by ``_ensure_mounted``.
-        self._mount_cmd = mount_cmd
+        # The host's on-device filesystem variant. Source of truth for the
+        # mount command, the no-FS short-circuit (``supports_transfer``),
+        # and the command-formation hooks (``read_command`` etc.) that this
+        # class drives. ``None`` is accepted for backward compatibility with
+        # callers that pre-date the EmbeddedFileSystem refactor and is
+        # treated as :class:`NoFileSystem`.
+        self._filesystem: EmbeddedFileSystem = filesystem or NoFileSystem()
+        # ``_mount_done`` makes ``_ensure_mounted`` idempotent within a host's
+        # lifetime; a "already mounted" error from the real ``fs mount`` is
+        # silently accepted by ``_ensure_mounted``.
         self._mount_done = False
 
     # ------------------------------------------------------------------
@@ -155,6 +156,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
             ) from None
+        if not self._filesystem.supports_transfer:
+            return Status.Error, _NO_FILESYSTEM_MSG
         await self._ensure_mounted()
         for src in srcFiles:
             handler = progress_factory() if progress_factory is not None else None
@@ -179,6 +182,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
             ) from None
+        if not self._filesystem.supports_transfer:
+            return Status.Error, _NO_FILESYSTEM_MSG
         await self._ensure_mounted()
         for src in srcFiles:
             handler = progress_factory() if progress_factory is not None else None
@@ -202,21 +207,20 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         file done at 100%). Per-byte progress for GET would require chunked
         ``fs read <path> <offset> <length>``; deferred."""
         src_path = src.as_posix()
-        logger.debug(f"{self._name}: fs read {src_path} -> {destDir}")
-        result = await self._exec_cmd(f'fs read {src_path}', timeout=_READ_TIMEOUT)
+        read_cmd = self._filesystem.read_command(src_path)
+        logger.debug(f"{self._name}: {read_cmd} -> {destDir}")
+        result = await self._exec_cmd(read_cmd, timeout=_READ_TIMEOUT)
 
-        if self._fs_unavailable(result):
-            return Status.Error, _FS_ABSENT_MSG
         if not result.status.is_ok:
             return Status.Error, (
-                f"fs read {src_path} failed (retcode={_label_errno(result.retcode)}): "
+                f"{read_cmd} failed (retcode={_label_errno(result.retcode)}): "
                 f"{result.output.strip()}"
             )
 
         try:
             data = self._decode_hexdump(result.output)
         except ValueError as e:
-            return Status.Error, f"fs read {src_path}: {e}"
+            return Status.Error, f"{read_cmd}: {e}"
 
         dest = destDir / src.name
         dest.write_bytes(data)
@@ -249,7 +253,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         # `fs write` seeks to an offset but never truncates, so a shorter new
         # file would leave a stale tail behind. Remove the destination first;
         # a "not found" failure here is expected and ignored.
-        await self._exec_cmd(f'fs rm {dest_path}', timeout=_RM_TIMEOUT)
+        await self._exec_cmd(self._filesystem.rm_command(dest_path), timeout=_RM_TIMEOUT)
 
         # Zephyr 3.7's `fs write` takes `<path> [-o <offset>] <byte>...`. The
         # `-o <offset>` flag is **required** — without it every positional
@@ -263,7 +267,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         # via the underlying `fs_open(... O_CREAT | O_WRITE)`.
         if not data:
             result = await self._exec_cmd(
-                f'fs write {dest_path} -o 0', timeout=_WRITE_TIMEOUT,
+                self._filesystem.write_command(dest_path, 0, ''),
+                timeout=_WRITE_TIMEOUT,
             )
             status, err = self._check_write(result, dest_path, 0)
             if status.is_ok and progress_handler is not None:
@@ -274,7 +279,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
             chunk = data[offset:offset + _WRITE_CHUNK]
             hexbytes = ' '.join(f'{b:02x}' for b in chunk)
             result = await self._exec_cmd(
-                f'fs write {dest_path} -o {offset} {hexbytes}',
+                self._filesystem.write_command(dest_path, offset, hexbytes),
                 timeout=_WRITE_TIMEOUT,
             )
             status, err = self._check_write(result, dest_path, offset)
@@ -296,7 +301,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         returning the real put failure, and the cleanup is purely an
         attempt to leave the device's filesystem recoverable for retry."""
         try:
-            await self._exec_cmd(f'fs rm {dest_path}', timeout=_RM_TIMEOUT)
+            await self._exec_cmd(self._filesystem.rm_command(dest_path), timeout=_RM_TIMEOUT)
         except Exception as exc:
             logger.debug(
                 f"{self._name}: cleanup `fs rm {dest_path}` failed "
@@ -307,8 +312,6 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         self, result: CommandStatus, dest_path: str, offset: int,
     ) -> tuple[Status, str]:
         """Classify an ``fs write`` result into a transfer status."""
-        if self._fs_unavailable(result):
-            return Status.Error, _FS_ABSENT_MSG
         if not result.status.is_ok:
             return Status.Error, (
                 f"fs write {dest_path} at offset {offset} failed "
@@ -322,7 +325,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
     # ------------------------------------------------------------------
 
     async def _ensure_mounted(self) -> None:
-        """Run the optional ``mount_cmd`` once per host lifetime.
+        """Run the filesystem's optional ``mount_cmd`` once per host lifetime.
 
         Filesystems Zephyr cannot auto-mount via ``zephyr,fstab`` (FAT, in
         3.7 LTS) need otto to issue ``fs mount fat <path>`` before any
@@ -331,22 +334,14 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         the goal is "the FS is mounted by the time we return", not "we
         just mounted it now".
         """
-        if self._mount_cmd is None or self._mount_done:
+        mount_cmd = self._filesystem.mount_cmd
+        if mount_cmd is None or self._mount_done:
             return
         # Whether the command succeeds (first mount) or fails (already
         # mounted), the post-condition is the same. Errors from a missing
         # `fs` command surface naturally on the next `fs read`/`fs write`.
-        await self._exec_cmd(self._mount_cmd, timeout=_WRITE_TIMEOUT)
+        await self._exec_cmd(mount_cmd, timeout=_WRITE_TIMEOUT)
         self._mount_done = True
-
-    @staticmethod
-    def _fs_unavailable(result: CommandStatus) -> bool:
-        """True when the target's shell has no ``fs`` command at all.
-
-        Keyed on the shell's unknown-command echo, so it is distinct from an
-        ordinary file-level failure (a missing path, a full filesystem).
-        """
-        return bool(_FS_ABSENT_RE.search(result.output))
 
     @staticmethod
     def _decode_hexdump(output: str) -> bytes:

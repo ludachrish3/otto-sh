@@ -13,8 +13,13 @@ from pathlib import Path
 import pytest
 
 from otto.host.transfer import validate_filename_lengths
+from otto.host.embedded_filesystem import (
+    EmbeddedFileSystem,
+    FatRamFileSystem,
+    NoFileSystem,
+)
 from otto.host.embedded_transfer import (
-    _FS_ABSENT_MSG,
+    _NO_FILESYSTEM_MSG,
     _WRITE_CHUNK,
     EmbeddedFileTransfer,
     _label_errno,
@@ -46,19 +51,18 @@ class FakeZephyrFs:
     """In-memory stand-in for a Zephyr target's ``fs`` shell.
 
     Models just enough of ``fs read``/``fs write``/``fs rm`` to round-trip
-    files. ``fs_available=False`` simulates a target whose firmware has no
-    ``fs`` shell command at all.
+    files. There is no "fs shell missing" mode — that case is now declared
+    statically via the host's ``filesystem`` field
+    (:class:`~otto.host.embedded_filesystem.NoFileSystem`), and the transfer
+    short-circuits before ever reaching this fake.
     """
 
-    def __init__(self, fs_available: bool = True) -> None:
+    def __init__(self) -> None:
         self.store: dict[str, bytearray] = {}
-        self.fs_available = fs_available
         self.calls: list[str] = []
 
     async def exec_cmd(self, cmd: str, timeout: float | None = None) -> CommandStatus:
         self.calls.append(cmd)
-        if not self.fs_available:
-            return CommandStatus(cmd, 'fs: command not found', Status.Failed, -8)
 
         parts = cmd.split()
         sub = parts[1]
@@ -101,8 +105,16 @@ class FakeZephyrFs:
         return CommandStatus(cmd, f'{sub}: unknown subcommand', Status.Failed, -22)
 
 
-def _console_transfer(fake: FakeZephyrFs) -> EmbeddedFileTransfer:
-    return EmbeddedFileTransfer(transfer='console', name='sprout', exec_cmd=fake.exec_cmd)
+def _console_transfer(
+    fake: FakeZephyrFs,
+    filesystem: EmbeddedFileSystem | None = None,
+) -> EmbeddedFileTransfer:
+    return EmbeddedFileTransfer(
+        transfer='console',
+        name='sprout',
+        exec_cmd=fake.exec_cmd,
+        filesystem=filesystem or FatRamFileSystem(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -340,12 +352,13 @@ class TestGet:
 
     @pytest.mark.asyncio
     async def test_missing_file_is_a_file_error(self, tmp_path):
-        """A missing file fails — but not with the fs-absent message."""
+        """A missing file fails with the file-level error from the shell —
+        distinct from the FS-misconfigured short-circuit."""
         fake = FakeZephyrFs()
         xfer = _console_transfer(fake)
         status, err = await xfer.get_files([RAM / 'nope.txt'], tmp_path)
         assert status == Status.Error
-        assert err != _FS_ABSENT_MSG
+        assert err != _NO_FILESYSTEM_MSG
         assert 'fs read' in err
 
     @pytest.mark.asyncio
@@ -359,35 +372,44 @@ class TestGet:
             )
             return CommandStatus(cmd, dump, Status.Success, 0)
 
-        xfer = EmbeddedFileTransfer(transfer='console', name='sprout', exec_cmd=gappy_exec)
+        xfer = EmbeddedFileTransfer(
+            transfer='console', name='sprout',
+            exec_cmd=gappy_exec, filesystem=FatRamFileSystem(),
+        )
         status, err = await xfer.get_files([RAM / 'x.bin'], tmp_path)
         assert status == Status.Error
         assert 'gap or overlap' in err
 
 
 # ---------------------------------------------------------------------------
-# fs shell absent
+# NoFileSystem host — transfer short-circuits before any shell command
 # ---------------------------------------------------------------------------
 
-class TestFsAbsent:
+class TestNoFileSystem:
+    """A host whose lab-data ``filesystem`` is ``"none"`` (``NoFileSystem``)
+    must surface a clear, actionable error before any ``fs`` command runs —
+    not hang, not write garbage, not fall through to a confusing retcode."""
 
     @pytest.mark.asyncio
-    async def test_get_reports_clear_error(self, tmp_path):
-        fake = FakeZephyrFs(fs_available=False)
-        xfer = _console_transfer(fake)
+    async def test_get_reports_no_filesystem_error(self, tmp_path):
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake, filesystem=NoFileSystem())
         status, err = await xfer.get_files([RAM / 'f'], tmp_path)
         assert status == Status.Error
-        assert err == _FS_ABSENT_MSG
+        assert err == _NO_FILESYSTEM_MSG
+        # The short-circuit fires before any shell call.
+        assert fake.calls == []
 
     @pytest.mark.asyncio
-    async def test_put_reports_clear_error(self, tmp_path):
-        fake = FakeZephyrFs(fs_available=False)
-        xfer = _console_transfer(fake)
+    async def test_put_reports_no_filesystem_error(self, tmp_path):
+        fake = FakeZephyrFs()
+        xfer = _console_transfer(fake, filesystem=NoFileSystem())
         src = tmp_path / 'f'
         src.write_bytes(b'data')
         status, err = await xfer.put_files([src], RAM)
         assert status == Status.Error
-        assert err == _FS_ABSENT_MSG
+        assert err == _NO_FILESYSTEM_MSG
+        assert fake.calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -603,7 +625,8 @@ class TestMaxFilenameLen:
         fake = FakeZephyrFs()
         xfer = EmbeddedFileTransfer(
             transfer='console', name='sprout',
-            exec_cmd=fake.exec_cmd, max_filename_len=12,
+            exec_cmd=fake.exec_cmd, filesystem=FatRamFileSystem(),
+            max_filename_len=12,
         )
         # 14 chars > 12: should be rejected before any fs command runs.
         src = tmp_path / 'concurrent.bin'
@@ -621,7 +644,8 @@ class TestMaxFilenameLen:
         fake = FakeZephyrFs()
         xfer = EmbeddedFileTransfer(
             transfer='console', name='sprout',
-            exec_cmd=fake.exec_cmd, max_filename_len=12,
+            exec_cmd=fake.exec_cmd, filesystem=FatRamFileSystem(),
+            max_filename_len=12,
         )
         status, err = await xfer.get_files([RAM / 'concurrent.bin'], tmp_path)
         assert status == Status.Error
@@ -634,7 +658,8 @@ class TestMaxFilenameLen:
         fake = FakeZephyrFs()
         xfer = EmbeddedFileTransfer(
             transfer='console', name='sprout',
-            exec_cmd=fake.exec_cmd, max_filename_len=12,
+            exec_cmd=fake.exec_cmd, filesystem=FatRamFileSystem(),
+            max_filename_len=12,
         )
         src = tmp_path / 'contract.bin'  # 12 chars exactly
         src.write_bytes(b'ok')

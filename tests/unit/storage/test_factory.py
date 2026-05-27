@@ -448,3 +448,59 @@ class TestValidateOsType:
                 'transfer': 'scp',
             })
         assert 'transfer' in str(exc_info.value)
+
+
+class TestEmbeddedFilesystem:
+    """Lab data's ``filesystem`` field resolves to a typed
+    :class:`~otto.host.embedded_filesystem.EmbeddedFileSystem` instance on
+    the built host; validation rejects unknown variants up-front so a typo
+    is caught before the host is constructed."""
+
+    def test_filesystem_defaults_to_no_filesystem(self):
+        """No ``filesystem`` key in lab data means the host has no FS — the
+        runtime transfer short-circuits with a clear error."""
+        from otto.host.embedded_filesystem import NoFileSystem
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+        assert isinstance(host.filesystem, NoFileSystem)
+
+    def test_filesystem_fat_ram_string_resolves_to_class(self):
+        from otto.host.embedded_filesystem import FatRamFileSystem
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'filesystem': 'fat-ram',
+        })
+        assert isinstance(host.filesystem, FatRamFileSystem)
+        # `default_dest_dir` falls back to the FS mount when not explicitly set.
+        assert str(host.default_dest_dir) == '/RAM:'
+
+    def test_filesystem_littlefs_string_resolves_to_class(self):
+        from otto.host.embedded_filesystem import LittleFsFileSystem
+        host = create_host_from_dict({
+            'ip': '192.0.2.5', 'ne': 'sprout_lfs', 'osType': 'embedded',
+            'filesystem': 'littlefs',
+        })
+        assert isinstance(host.filesystem, LittleFsFileSystem)
+        assert str(host.default_dest_dir) == '/lfs'
+
+    def test_validate_unknown_filesystem_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'filesystem': 'btrfs',  # not a registered embedded FS
+            })
+        assert 'filesystem' in str(exc_info.value)
+        assert 'btrfs' in str(exc_info.value)
+        # The error names the registered types so the typo is diagnosable.
+        assert 'fat-ram' in str(exc_info.value)
+
+    def test_explicit_default_dest_dir_overrides_filesystem_mount(self):
+        """A host with a real FS but a non-default ``default_dest_dir`` (e.g.
+        a sub-directory under the mount) should keep its lab-data value."""
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'filesystem': 'fat-ram',
+            'default_dest_dir': '/RAM:/uploads',
+        })
+        assert str(host.default_dest_dir) == '/RAM:/uploads'

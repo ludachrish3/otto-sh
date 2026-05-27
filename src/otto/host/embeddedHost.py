@@ -37,6 +37,7 @@ from typing import Optional, cast
 from ..logger import getOttoLogger
 from ..utils import CommandStatus, Status
 from .connections import ConnectionManager
+from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .embedded_transfer import EmbeddedFileTransfer, EmbeddedTransferType
 from .host import Host, SuppressCommandOutput, isDryRun
 from .options import TelnetOptions
@@ -97,21 +98,26 @@ class EmbeddedHost(RemoteHost):
     """File-transfer backend. ``console`` (default) drives the device shell's
     ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
 
+    filesystem: EmbeddedFileSystem = field(default_factory=NoFileSystem)
+    """On-device filesystem variant — e.g. :class:`FatRamFileSystem`,
+    :class:`LittleFsFileSystem`, or :class:`NoFileSystem` (the default).
+    Carries the mount path, the optional ``fs mount`` command, and the
+    command-formation hooks the transfer code and the embedded monitor's
+    disk parser drive. See :mod:`otto.host.embedded_filesystem`.
+
+    Lab data declares the variant by string in the ``filesystem`` field;
+    the storage factory resolves the string to a class. Projects can
+    register custom variants via
+    :func:`otto.host.embedded_filesystem.register_filesystem`."""
+
     default_dest_dir: Path = field(default_factory=Path)
     """Default landing directory for ``put`` / ``get`` when the caller
-    supplies an empty or relative ``dest_dir``. Set to the host's mounted
-    filesystem root (e.g. ``/RAM:`` for FAT-on-RAM, ``/lfs`` for LittleFS)
-    so generic fan-out callers like :func:`do_for_all_hosts` don't have to
-    branch on host type. See :attr:`RemoteHost.default_dest_dir`."""
-
-    mount_cmd: Optional[str] = None
-    """Optional ``fs mount …`` command issued once before the first transfer.
-
-    Needed for filesystems Zephyr cannot auto-mount via ``zephyr,fstab`` —
-    notably FAT, where the binding does not exist in 3.7 LTS. Example for
-    a FAT-on-RAM-disk target: ``"fs mount fat /RAM:"``. Leave ``None`` for
-    LittleFS (auto-mounted) or no-FS targets.
-    """
+    supplies an empty or relative ``dest_dir``. When left at the default
+    (an empty ``Path()``), ``__post_init__`` resolves it to
+    ``filesystem.mount`` so generic fan-out callers like
+    :func:`do_for_all_hosts` don't have to branch on host type. Override
+    in lab data to land transfers somewhere other than the FS root. See
+    :attr:`RemoteHost.default_dest_dir`."""
 
     max_filename_len: int = 255
     """Upper bound on the basename length (including extension) accepted by
@@ -161,10 +167,21 @@ class EmbeddedHost(RemoteHost):
         if self.name is None:
             self.name = self._generateName()
 
+        # Lab JSON serializes ``filesystem`` as a string; the storage factory
+        # resolves it to a class instance for declared hosts, but a directly-
+        # constructed EmbeddedHost may still pass a string here. Coerce.
+        if isinstance(self.filesystem, str):
+            from .embedded_filesystem import build_filesystem
+            self.filesystem = build_filesystem(self.filesystem)
+
         # Lab JSON serializes ``default_dest_dir`` as a string; coerce so
-        # callers can use Path arithmetic uniformly.
+        # callers can use Path arithmetic uniformly. When the field was left
+        # at its empty default and the filesystem declares a mount, fall back
+        # to that mount so fan-out callers land on the FS root automatically.
         if not isinstance(self.default_dest_dir, Path):
             self.default_dest_dir = Path(self.default_dest_dir)
+        if self.default_dest_dir == Path() and self.filesystem.mount is not None:
+            self.default_dest_dir = Path(self.filesystem.mount)
 
         hop_transport = self._build_hop_transport() if self.hop else None
 
@@ -193,7 +210,7 @@ class EmbeddedHost(RemoteHost):
             transfer=self.transfer,
             name=self.name,
             exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),
-            mount_cmd=self.mount_cmd,
+            filesystem=self.filesystem,
             max_filename_len=self.max_filename_len,
         )
 

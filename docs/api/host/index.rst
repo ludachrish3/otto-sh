@@ -13,6 +13,7 @@ local and remote machines.
    localhost
    transfer
    embedded_transfer
+   embedded_filesystem
    session
    zephyr
    connections
@@ -20,3 +21,4 @@ local and remote machines.
    repeat
    telnet
    adding_an_embedded_os
+   adding_an_embedded_filesystem

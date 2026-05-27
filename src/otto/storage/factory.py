@@ -12,6 +12,7 @@ from ..host.options import (
     SshOptions,
     TelnetOptions,
 )
+from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
 from ..host.embeddedHost import EmbeddedHost
 from ..host.remoteHost import RemoteHost
 from ..host.unixHost import UnixHost
@@ -195,6 +196,12 @@ def _create_embedded_host(
     resources = kwargs.get('resources', [])
     kwargs['resources'] = set(resources)
 
+    # Resolve the lab-data ``filesystem`` string to a typed instance. Absent
+    # field defaults to NoFileSystem via the EmbeddedHost field default — no
+    # action needed here.
+    if 'filesystem' in kwargs and isinstance(kwargs['filesystem'], str):
+        kwargs['filesystem'] = build_filesystem(kwargs['filesystem'])
+
     # telnet_options is the only per-protocol option table an embedded host
     # uses; merge repo-level defaults beneath the host's own values per-key.
     defaults = defaults or {}
@@ -259,4 +266,13 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
             raise ValueError(
                 f"Field 'transfer' must be 'console' or 'tftp' for embedded "
                 f"hosts, got {host_data['transfer']!r}"
+            )
+
+    if os_type == 'embedded' and 'filesystem' in host_data:
+        fs = host_data['filesystem']
+        if not isinstance(fs, str) or fs not in _FILESYSTEM_CLASSES:
+            known = ', '.join(sorted(_FILESYSTEM_CLASSES))
+            raise ValueError(
+                f"Field 'filesystem' must be one of: {known} "
+                f"(host {host_data['ne']!r} declared {fs!r})"
             )

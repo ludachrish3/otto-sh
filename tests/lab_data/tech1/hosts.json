@@ -84,9 +84,8 @@
         "osName": "Zephyr",
         "osVersion": "3.7",
         "transfer": "console",
-        "mount_cmd": "fs mount fat /RAM:",
+        "filesystem": "fat-ram",
         "max_filename_len": 32,
-        "default_dest_dir": "/RAM:",
         "is_virtual": true,
         "hop": "basil_seed",
         "resources": [
@@ -103,8 +102,8 @@
         "osName": "Zephyr",
         "osVersion": "3.7",
         "transfer": "console",
+        "filesystem": "littlefs",
         "max_filename_len": 32,
-        "default_dest_dir": "/lfs",
         "is_virtual": true,
         "hop": "basil_seed",
         "resources": [
@@ -121,6 +120,7 @@
         "osName": "Zephyr",
         "osVersion": "3.7",
         "transfer": "console",
+        "filesystem": "none",
         "max_filename_len": 32,
         "is_virtual": true,
         "hop": "basil_seed",

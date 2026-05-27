@@ -2,36 +2,8 @@
 
 ## General
 
-- Do more stability testing with file transfers
-  - Got these errors when doing a 100 KB file transfer:
-
-  ```text
-  INFO     @sprout_lfs > | Failed to write /lfs/output2.bin (-28)
-  INFO     @sprout_lfs > | ~$
-  INFO     @sprout_lfs > | -8
-  INFO     @sprout_lfs > | ~$
-  INFO     @sprout_lfs > |
-  basil seed output1.bin ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 51.2/51.2 kB   8.1 MB/s    0:00:00
-  basil seed output2.bin ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 102.4/102.4 kB 21.2 MB/s   0:00:00
-  sprout_lfs output1.bin ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 51.2/51.2 kB   665 bytes/s 0:01:16
-  sprout output1.bin     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 51.2/51.2 kB   667 bytes/s 0:01:16
-  sprout output2.bin     ━━━━━━━━━━━━━━━━━━━━━╸━━━━━━━━━━━━━━━━━━ 55.8/102.4 kB  637 bytes/s 0:01:14
-  sprout_lfs output2.bin ━━━╸━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.2/102.4 kB  680 bytes/s 0:02:16
-  INFO     @sprout > | Failed to seek /RAM:/output2.bin (-22)
-  INFO     @sprout > | ~$
-  INFO     @sprout > | -8
-  INFO     @sprout > | ~$
-  INFO     @sprout > |
-  ERROR    Failed to transfer a file to sprout: transfer_status=<Status.Error: 2> fs write /RAM:/output2.bin at offset 55840 failed (retcode=-8): Failed to
-          seek /RAM:/output2.bin (-22)
-  ERROR    Failed to transfer a file to sprout_lfs: transfer_status=<Status.Error: 2> fs write /lfs/output2.bin at offset 10208 failed (retcode=-8): Failed to
-          write /lfs/output2.bin (-28)
-  ERROR    Failed to transfer a file to sprout_no_fs: transfer_status=<Status.Error: 2> console file transfer requires the Zephyr fs shell
-          (CONFIG_FILE_SYSTEM_SHELL) over a mounted filesystem; the target's shell has no 'fs' command
-  INFO     Done
-  ```
-
-
+- Embedded hosts log the prompts and the retval in command output. I know we don't want to lean to much on prompt learning, but it be nice to at least strip out the return value and let it be a more silent aspect that's gathered for otto's API purposes. This mirrors the Unix API more closely - `$?` is issued, but never seen in the logs
+- Empty lines in embedded command output have no logger preamble. Running `help` on zehphyr hosts reveals this.
 - Add TFTP to one of the zephyr hosts
 - Add other Zephyr configs and versions so that the embedded OS support is hardened.
 - Add REPL sessions that can live within an active shell session and has a special prompt. The session can be recognized as ending when a REPL end sentinel is seen maybe?
