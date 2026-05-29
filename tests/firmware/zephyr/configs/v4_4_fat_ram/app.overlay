@@ -1,0 +1,39 @@
+/*
+ * otto Zephyr test-bed devicetree overlay — FAT on RAM disk.
+ *
+ * Adds a RAM-backed disk so the FAT filesystem enabled in overlay.conf has a
+ * storage medium under QEMU — with no flash partition to carve up. The stock
+ * qemu_x86 board ships no ram-disk node, so otto supplies one here.
+ *
+ * This is board configuration, not firmware code: the same shape as the
+ * Kconfig overlay. otto still ships no main.c.
+ *
+ * NOTE: the binding name ("zephyr,ram-disk") and its properties are the
+ * expected form for Zephyr 3.7 LTS but have NOT been build-verified — confirm
+ * with a real `west build` (see ../../README.md). The resulting disk is
+ * mounted as FAT via the `fs` shell: `fs mount fat /RAM:`.
+ */
+
+/*
+ * The qemu_x86 board's stock ``dram0`` (linker RAM region) is 32 MiB
+ * (``DT_DRAM_SIZE = DT_SIZE_M(32)`` in qemu_x86.dts). The RAM disk lives
+ * in BSS, so the linker tries to allocate the full 100 MiB inside that
+ * 32 MiB region and fails with "region RAM overflowed". Grow ``dram0``
+ * to 128 MiB so there's room for the disk plus kernel/heap/stacks. The
+ * actual RAM comes from QEMU's ``-m 256`` (Vagrantfile).
+ */
+&dram0 {
+	reg = <0x00000000 0x08000000>;   /* 128 MiB */
+};
+
+/ {
+	ramdisk0 {
+		compatible = "zephyr,ram-disk";
+		disk-name = "RAM";
+		sector-size = <512>;
+		sector-count = <204800>;   /* 204800 * 512 = 100 MiB. Lives in
+					    * dram0 (above); FatFs auto-selects
+					    * FAT32 above ~32 MB so the full
+					    * volume is addressable. */
+	};
+};

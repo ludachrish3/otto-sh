@@ -139,11 +139,17 @@ Vagrant.configure("2") do |config|
         provision_test_vm(zephyr, "zephyr")
 
         # Override the 1552 MB default — Zephyr SDK install and `west build`
-        # need more headroom. Specified AFTER provision_test_vm so the later
-        # provider block wins.
+        # need more headroom, and one QEMU process runs per built config.
+        # Sized for the multi-LTS matrix: three workspaces (2.7 / 3.7 / 4.4)
+        # across two SDKs (0.16.8 for 2.7+3.7, 1.0.1 for 4.4; ~1 GB each on
+        # disk, ~1.5 GB resident peak during `west build`), and 9 concurrent
+        # QEMU instances (3 LTSes x 3 configs) at 256 MB apiece. 8 GB / 4 vCPU
+        # gives comfortable headroom and keeps the build phase parallelizable.
+        # Specified AFTER provision_test_vm so
+        # the later provider block wins.
         zephyr.vm.provider "virtualbox" do |vb|
-            vb.memory = 4096
-            vb.cpus = 2
+            vb.memory = 8192
+            vb.cpus = 4
         end
 
         # QEMU + Zephyr build dependencies. Package list mirrors the Zephyr
@@ -180,112 +186,270 @@ Vagrant.configure("2") do |config|
                             python3-wheel
         SHELL
 
-        # Bootstrap the Zephyr workspace as the unprivileged `vagrant` user —
-        # west and the SDK should not be owned by root. Pinned to the v3.7
-        # LTS branch; bump these versions to track newer LTS as needed.
+        # Bootstrap the Zephyr workspace(s) as the unprivileged `vagrant`
+        # user — west and the SDK should not be owned by root.
+        #
+        # Multi-LTS layout: one independent (venv, west workspace, SDK) tuple
+        # per Zephyr version, driven by the ZEPHYR_VERSIONS table below.
+        # Older LTSes pin different west / Python-tooling versions, so each
+        # gets its own venv to avoid cross-version dependency conflicts; the
+        # SDK is per-version because the contemporary SDK shipped with each
+        # LTS is the known-good one for that branch's compiler flags and
+        # toolchain expectations.
+        #
+        # Adding a new Zephyr LTS = one row in ZEPHYR_VERSIONS plus a matching
+        # set of overlay configs under tests/firmware/zephyr/configs/. No
+        # structural changes to this provisioner.
         zephyr.vm.provision "shell", name: "zephyr-workspace", privileged: false, keep_color: true, inline: <<-SHELL
             set -e
 
-            ZEPHYR_BRANCH="v3.7-branch"
-            ZEPHYR_SDK_VERSION="0.16.8"
+            # Per-version table — heredoc-fed at the bottom of the version
+            # loop. Fields, pipe-separated:
+            #
+            #   version_id | git branch | SDK version | configs (space-sep)
+            #
+            # version_id  drives the workspace dir (~/zephyrproject-${ver}) and
+            #             the venv dir (~/zephyr-venv-${ver}). Use an
+            #             underscore-only id so it composes safely into systemd
+            #             unit names downstream.
+            # SDK version pins the Zephyr-SDK release used for that branch.
+            #             2.7 and 3.7 share 0.16.8 — the SDK is just an
+            #             x86_64-zephyr-elf cross-toolchain that's forward-
+            #             compatible across those branches for `qemu_x86`, and
+            #             the contemporary SDK for 2.7 (0.13.x) doesn't ship the
+            #             aarch64 `_minimal.tar.xz` format this loop downloads.
+            #             4.4 pins 1.0.1: it declares SDK_VERSION 1.0.1 and
+            #             won't accept 0.16.x. Per-version SDKs coexist (install
+            #             dirs are version-named); bump here if a build surfaces
+            #             a real version-incompatibility.
+            #
+            #             (1.14 was evaluated and dropped: its shell/fs/kernel
+            #             command interface is byte-identical to 2.7 from
+            #             otto's side, so it added no test coverage, and the
+            #             2019-era kernel miscompiles under the SDK's gcc 12 —
+            #             the era gcc 8 has no aarch64 build. See git history.)
+            # configs     names the build-config directories under
+            #             tests/firmware/zephyr/configs/ to build for that
+            #             version. Each builds into /home/vagrant/build/${cfg}/.
+            #
+            # The while loop reads from a heredoc *redirected* into the loop
+            # rather than from a pipe (`echo … | while read`). The redirected
+            # form runs the loop body in the current shell, so `set -e` and
+            # any variables set inside persist — the piped form spawns a
+            # subshell that silently drops both.
 
-            # Isolate west and Zephyr's Python tooling from system Python.
-            if [ ! -d ~/zephyr-venv ]; then
-                python3 -m venv ~/zephyr-venv
+            # One-time migration from the single-version layout that predates
+            # the ZEPHYR_VERSIONS table (~/zephyrproject and ~/zephyr-venv were
+            # 3.7-only). Renames in place to the per-version paths so the
+            # 10-min `west init`+`west update` doesn't re-run on the first
+            # multi-LTS provision. Safe no-op once the new paths exist.
+            if [ -d ~/zephyrproject ] && [ ! -d ~/zephyrproject-v3_7 ]; then
+                echo "=== migrating ~/zephyrproject -> ~/zephyrproject-v3_7 ==="
+                mv ~/zephyrproject ~/zephyrproject-v3_7
             fi
-            source ~/zephyr-venv/bin/activate
-            pip install --quiet --upgrade pip
-            pip install --quiet west
-
-            # Initialize the Zephyr workspace pinned to the LTS branch via
-            # the shallow + narrow fast path. Default `west init`/`west update`
-            # clones Zephyr's full history plus every module in the manifest
-            # (every vendor HAL — atmel, espressif, nordic, st, xtensa, ...)
-            # at full depth, which can take 10+ minutes. The pattern below is
-            # what Zephyr's own CI uses and is roughly an order of magnitude
-            # faster:
-            #   1. shallow-clone Zephyr itself at the LTS branch tip,
-            #   2. `west init -l` to register that local clone as the
-            #      workspace's manifest source,
-            #   3. `west update --narrow -o=--depth=1` to fetch each module
-            #      as a shallow clone of just the manifest-pinned commit
-            #      (--narrow skips other branches/tags).
-            # `.west` presence keeps the step idempotent across re-provisions.
-            if [ ! -d ~/zephyrproject/.west ]; then
-                mkdir -p ~/zephyrproject
-                git clone --depth 1 --branch "${ZEPHYR_BRANCH}" \
-                    https://github.com/zephyrproject-rtos/zephyr.git \
-                    ~/zephyrproject/zephyr
-                west init -l ~/zephyrproject/zephyr
+            if [ -d ~/zephyr-venv ] && [ ! -d ~/zephyr-venv-v3_7 ]; then
+                echo "=== migrating ~/zephyr-venv -> ~/zephyr-venv-v3_7 ==="
+                mv ~/zephyr-venv ~/zephyr-venv-v3_7
             fi
-            cd ~/zephyrproject
-            west update --narrow -o=--depth=1
-            west zephyr-export
-            pip install --quiet -r zephyr/scripts/requirements.txt
 
-            # Install the Zephyr SDK — minimal tarball plus just the
-            # x86_64-zephyr-elf toolchain (all we need for qemu_x86). The
-            # SDK ships per-host-arch tarballs; pick by `uname -m`.
+            # net-tools provides net-setup.sh (creates the host-side zeth TAP)
+            # and the loop-* helper scripts. Shared across all Zephyr versions
+            # — shallow clone, we only need the tip.
+            if [ ! -d ~/net-tools ]; then
+                git clone --depth 1 https://github.com/zephyrproject-rtos/net-tools.git ~/net-tools
+            fi
+
+            # SDK tarballs are per-host-arch; resolve once for the loop.
             SDK_HOST_ARCH="$(uname -m)"
             case "${SDK_HOST_ARCH}" in
                 x86_64)  SDK_HOST="linux-x86_64"  ;;
                 aarch64) SDK_HOST="linux-aarch64" ;;
                 *) echo "Unsupported host arch: ${SDK_HOST_ARCH}" >&2; exit 1 ;;
             esac
-            SDK_TARBALL="zephyr-sdk-${ZEPHYR_SDK_VERSION}_${SDK_HOST}_minimal.tar.xz"
-            cd ~
-            if [ ! -d zephyr-sdk-${ZEPHYR_SDK_VERSION} ]; then
-                wget -q "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZEPHYR_SDK_VERSION}/${SDK_TARBALL}"
-                tar xf "${SDK_TARBALL}"
-                rm "${SDK_TARBALL}"
-                cd zephyr-sdk-${ZEPHYR_SDK_VERSION}
-                ./setup.sh -t x86_64-zephyr-elf -h -c
-            fi
 
-            # net-tools provides net-setup.sh (creates the host-side zeth TAP)
-            # and the loop-* helper scripts. Shallow clone — we only need
-            # the tip.
-            if [ ! -d ~/net-tools ]; then
-                git clone --depth 1 https://github.com/zephyrproject-rtos/net-tools.git ~/net-tools
-            fi
+            while IFS='|' read -r ZVER ZBRANCH ZSDK ZCFGS; do
+                ZWORKSPACE="${HOME}/zephyrproject-${ZVER}"
+                ZVENV="${HOME}/zephyr-venv-${ZVER}"
+                echo ""
+                echo "############################################################"
+                echo "### Zephyr ${ZVER} (${ZBRANCH}, SDK ${ZSDK})"
+                echo "############################################################"
 
-            # Build a STOCK Zephyr shell sample with otto's Kconfig + DT
-            # overlays layered on, once per filesystem config. otto ships no
-            # firmware code — not even an empty main.c — so each build is
-            # unmodified Zephyr; the only otto contribution is the
-            # EXTRA_CONF_FILE / EXTRA_DTC_OVERLAY_FILE that flip standard
-            # Kconfig options (telnet shell backend, networking, runtime
-            # stats, filesystem). Same shape as `sshd_config` on a Unix host.
-            # /vagrant is the synced share of the otto-sh checkout on the host.
-            #
-            # Three configs build into three independent dirs under ~/build/.
-            # The `no_fs` config is the only one without a DT overlay (it has
-            # no filesystem at all).
-            #
-            # `-p always` (pristine rebuild every provision), not `-p auto`,
-            # because `auto` compares the cmake configure-time *arguments*
-            # — the overlay file paths — not the file *contents*. An overlay
-            # edit changes the bytes inside `overlay.conf` but the cmake args
-            # stay the same, so `-p auto` reports "no work to do" and the
-            # binary is stale (Phase 5.5 found this the hard way: IP
-            # assignments moved in the overlays but the running QEMU kept
-            # the old IPs). `-p always` is slower but correct. The toolchain
-            # and west-managed source caches persist across runs, so the
-            # rebuild is ~30 s per config on a warm VM.
-            cd ~/zephyrproject
-            source zephyr/zephyr-env.sh
-            for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs; do
-                dt_flag=""
-                if [ -f /vagrant/tests/firmware/zephyr/configs/$cfg/app.overlay ]; then
-                    dt_flag="-DEXTRA_DTC_OVERLAY_FILE=/vagrant/tests/firmware/zephyr/configs/$cfg/app.overlay"
+                # Reset to neutral ground before any west command. `west
+                # init` aborts with "already initialized in <dir>" if the
+                # *current directory* is inside an existing workspace — and
+                # the prior iteration ends with cwd inside that version's
+                # workspace (the build step cd's there). west also honors
+                # ZEPHYR_BASE for workspace discovery, which the prior
+                # iteration's `source zephyr-env.sh` sets. Clear both so each
+                # version initializes against its own workspace only.
+                cd "${HOME}"
+                unset ZEPHYR_BASE
+
+                # Per-version venv keeps west / Zephyr Python deps isolated.
+                # Older LTSes pin older west releases with their own dep trees;
+                # sharing one venv would force every version onto whichever
+                # west happened to be installed last.
+                if [ ! -d "${ZVENV}" ]; then
+                    python3 -m venv "${ZVENV}"
                 fi
-                echo "=== building zephyr config: $cfg ==="
-                west build -p always -b qemu_x86 \
-                    zephyr/samples/subsys/shell/shell_module \
-                    -d /home/vagrant/build/$cfg \
-                    -- -DEXTRA_CONF_FILE="/vagrant/tests/firmware/zephyr/common/otto-overlay.conf;/vagrant/tests/firmware/zephyr/configs/$cfg/overlay.conf" \
-                       $dt_flag
-            done
+                # shellcheck disable=SC1091
+                source "${ZVENV}/bin/activate"
+                pip install --quiet --upgrade pip
+                # setuptools is required for its vendored `distutils` shim:
+                # Python 3.12 (Ubuntu 24.04) removed distutils from the
+                # stdlib (PEP 632), and a fresh 3.12 venv no longer bundles
+                # setuptools. Older Zephyr build scripts still
+                # `from distutils.version import LooseVersion`
+                # (e.g. 2.7's scripts/gen_kobject_list.py), which fails with
+                # ModuleNotFoundError unless setuptools provides the shim.
+                # Harmless for 3.7, whose scripts no longer use distutils.
+                pip install --quiet setuptools west
+
+                # Initialize the Zephyr workspace via the shallow + narrow
+                # fast path. Default `west init`/`west update` clones Zephyr's
+                # full history plus every module in the manifest (every vendor
+                # HAL — atmel, espressif, nordic, st, xtensa, ...) at full
+                # depth, which can take 10+ minutes. The pattern below is what
+                # Zephyr's own CI uses and is roughly an order of magnitude
+                # faster:
+                #   1. shallow-clone Zephyr itself at the LTS branch tip,
+                #   2. `west init -l` to register that local clone as the
+                #      workspace's manifest source,
+                #   3. `west update --narrow -o=--depth=1` to fetch each
+                #      module as a shallow clone of just the manifest-pinned
+                #      commit (--narrow skips other branches/tags).
+                # `.west` presence keeps the step idempotent across re-provisions.
+                if [ ! -d "${ZWORKSPACE}/.west" ]; then
+                    # The guard keys on .west, which `west init` only creates
+                    # on success. A prior provision that died between
+                    # `git clone` and `west init` (e.g. the cwd/ZEPHYR_BASE
+                    # bug) leaves a populated zephyr/ checkout but no .west —
+                    # the clone below would then fail with "destination path
+                    # already exists and is not an empty directory". Wipe the
+                    # partial checkout first so re-provisioning self-heals.
+                    # Only the re-fetchable git clone is removed; this branch
+                    # never runs against a healthy workspace (.west present).
+                    rm -rf "${ZWORKSPACE}/zephyr"
+                    mkdir -p "${ZWORKSPACE}"
+                    git clone --depth 1 --branch "${ZBRANCH}" \
+                        https://github.com/zephyrproject-rtos/zephyr.git \
+                        "${ZWORKSPACE}/zephyr"
+                    west init -l "${ZWORKSPACE}/zephyr"
+                fi
+                cd "${ZWORKSPACE}"
+                west update --narrow -o=--depth=1
+                # `west zephyr-export` writes the Zephyr CMake package to
+                # ~/.cmake/packages/Zephyr so find_package(Zephyr) resolves
+                # without ZEPHYR_BASE. It's a Zephyr *extension* command from
+                # the 2.x CMake-package era; both LTSes built here register it.
+                # Guarded on the workspace's command registry so that adding a
+                # future pre-2.0 LTS row (which lacks the command and instead
+                # resolves Zephyr via the ZEPHYR_BASE that zephyr-env.sh sets in
+                # the build step below) self-heals rather than aborting with
+                # "unknown command zephyr-export".
+                if grep -q 'zephyr-export' zephyr/scripts/west-commands.yml 2>/dev/null; then
+                    west zephyr-export
+                fi
+                pip install --quiet -r zephyr/scripts/requirements.txt
+
+                # Install the Zephyr SDK — minimal tarball plus just the
+                # x86_64-zephyr-elf toolchain (all we need for qemu_x86).
+                # SDK install dirs are version-named, so multiple SDKs
+                # coexist without aliasing.
+                SDK_TARBALL="zephyr-sdk-${ZSDK}_${SDK_HOST}_minimal.tar.xz"
+                if [ ! -d "${HOME}/zephyr-sdk-${ZSDK}" ]; then
+                    cd "${HOME}"
+                    wget -q "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZSDK}/${SDK_TARBALL}"
+                    tar xf "${SDK_TARBALL}"
+                    rm "${SDK_TARBALL}"
+                    cd "zephyr-sdk-${ZSDK}"
+                    ./setup.sh -t x86_64-zephyr-elf -h -c
+                fi
+
+                # Build a STOCK Zephyr shell sample with otto's Kconfig + DT
+                # overlays layered on, once per filesystem config. otto ships
+                # no firmware code — not even an empty main.c — so each build
+                # is unmodified Zephyr; the only otto contribution is the
+                # EXTRA_CONF_FILE / EXTRA_DTC_OVERLAY_FILE that flip standard
+                # Kconfig options (telnet shell backend, networking, runtime
+                # stats, filesystem). Same shape as `sshd_config` on a Unix
+                # host. /vagrant is the synced share of the otto-sh checkout
+                # on the host.
+                #
+                # Each config builds into its own dir under ~/build/. The
+                # `no_fs` configs are the only ones without a DT overlay
+                # (they have no filesystem at all).
+                #
+                # `-p always` (pristine rebuild every provision), not
+                # `-p auto`, because `auto` compares the cmake configure-time
+                # *arguments* — the overlay file paths — not the file
+                # *contents*. An overlay edit changes the bytes inside
+                # `overlay.conf` but the cmake args stay the same, so
+                # `-p auto` reports "no work to do" and the binary is stale
+                # (Phase 5.5 found this the hard way: IP assignments moved in
+                # the overlays but the running QEMU kept the old IPs).
+                # `-p always` is slower but correct. The toolchain and
+                # west-managed source caches persist across runs, so the
+                # rebuild is ~30 s per config on a warm VM.
+                cd "${ZWORKSPACE}"
+                # shellcheck disable=SC1091
+                source zephyr/zephyr-env.sh
+
+                # The CMake vars that *append* otto's Kconfig + DT overlays to
+                # the sample's own prj.conf/board overlay were renamed in
+                # Zephyr 3.4: EXTRA_CONF_FILE / EXTRA_DTC_OVERLAY_FILE replaced
+                # the older OVERLAY_CONFIG / DTC_OVERLAY_FILE. 3.7 takes the new
+                # names; 2.7 predates them. Critically, the old CMake
+                # *silently ignores* an unknown -D var — the build still
+                # succeeds but with NONE of otto's overlays applied (no telnet
+                # backend, no networking), so the QEMU instance boots a stock
+                # serial shell otto can't reach. Pick the names the workspace's
+                # CMake actually honors. Both varieties accept the same
+                # "a;b" semicolon list, so only the var name changes.
+                # (OVERLAY_CONFIG layers on top of CONF_FILE just like
+                # EXTRA_CONF_FILE; the shell_module sample ships no auto-applied
+                # board overlay on qemu_x86, so setting DTC_OVERLAY_FILE
+                # outright is equivalent to the additive EXTRA_ form here.)
+                if grep -rq "EXTRA_CONF_FILE" zephyr/cmake; then
+                    conf_var="EXTRA_CONF_FILE"
+                    dtc_var="EXTRA_DTC_OVERLAY_FILE"
+                else
+                    conf_var="OVERLAY_CONFIG"
+                    dtc_var="DTC_OVERLAY_FILE"
+                fi
+
+                # Optional per-version supplement layered between the shared
+                # overlay and the per-config overlay. Holds symbols that exist
+                # on this LTS but not the oldest in the matrix (e.g. the
+                # SCHED_THREAD_USAGE* CPU-stat detail and the ETH_DRIVER gate on
+                # 3.7/4.x). Keeps common/otto-overlay.conf a true cross-version
+                # intersection so 2.7 doesn't abort on undefined symbols. Absent
+                # for a version => no supplement (that's the intended 2.7 case).
+                ver_overlay=""
+                if [ -f /vagrant/tests/firmware/zephyr/common/otto-overlay-${ZVER}.conf ]; then
+                    ver_overlay="/vagrant/tests/firmware/zephyr/common/otto-overlay-${ZVER}.conf;"
+                fi
+
+                for cfg in ${ZCFGS}; do
+                    dt_flag=""
+                    if [ -f /vagrant/tests/firmware/zephyr/configs/$cfg/app.overlay ]; then
+                        dt_flag="-D${dtc_var}=/vagrant/tests/firmware/zephyr/configs/$cfg/app.overlay"
+                    fi
+                    echo "=== building zephyr config: $cfg ==="
+                    west build -p always -b qemu_x86 \
+                        zephyr/samples/subsys/shell/shell_module \
+                        -d /home/vagrant/build/$cfg \
+                        -- -D${conf_var}="/vagrant/tests/firmware/zephyr/common/otto-overlay.conf;${ver_overlay}/vagrant/tests/firmware/zephyr/configs/$cfg/overlay.conf" \
+                           $dt_flag
+                done
+
+                deactivate
+            done <<EOF
+v3_7|v3.7-branch|0.16.8|v3_7_fat_ram v3_7_lfs v3_7_no_fs
+v2_7|v2.7-branch|0.16.8|v2_7_fat_ram v2_7_lfs v2_7_no_fs
+v4_4|v4.4-branch|1.0.1|v4_4_fat_ram v4_4_lfs v4_4_no_fs
+EOF
         SHELL
 
         # Per-config systemd units running each Zephyr image under QEMU.
@@ -319,12 +483,18 @@ Vagrant.configure("2") do |config|
             # cfg id; only the kernel-visible TAP name uses the short.
             #
             # Each instance gets its own /30 subnet so the host's routing
-            # table has a distinct route per TAP — three instances on a
-            # shared /24 produced overlapping routes, the kernel picked one,
-            # and the other two were unreachable. /30 layout:
-            #   FAT:    Zephyr 192.0.2.1, host 192.0.2.2  (192.0.2.0/30)
-            #   LFS:    Zephyr 192.0.2.5, host 192.0.2.6  (192.0.2.4/30)
-            #   no_fs:  Zephyr 192.0.2.9, host 192.0.2.10 (192.0.2.8/30)
+            # table has a distinct route per TAP — instances on a shared
+            # /24 produce overlapping routes, the kernel picks one, and the
+            # others are unreachable. Multi-LTS /30 layout (Zephyr/host):
+            #   3.7  FAT:    .1/.2    (192.0.2.0/30)
+            #   3.7  LFS:    .5/.6    (192.0.2.4/30)
+            #   3.7  no_fs:  .9/.10   (192.0.2.8/30)
+            #   2.7  FAT:    .13/.14  (192.0.2.12/30)
+            #   2.7  LFS:    .17/.18  (192.0.2.16/30)
+            #   2.7  no_fs:  .21/.22  (192.0.2.20/30)
+            #   4.4  FAT:    .25/.26  (192.0.2.24/30)
+            #   4.4  LFS:    .29/.30  (192.0.2.28/30)
+            #   4.4  no_fs:  .33/.34  (192.0.2.32/30)
             # Resolve the Zephyr-SDK qemu binary ONCE here and bake the
             # absolute path into each wrapper script below. An earlier draft
             # tried to defer this to wrapper-run time (``SDK_QEMU=\$(ls
@@ -339,9 +509,15 @@ Vagrant.configure("2") do |config|
                 exit 1
             fi
 
-            for cfg_entry in "v3_7_fat_ram:fat:192.0.2.2" \
-                             "v3_7_lfs:lfs:192.0.2.6" \
-                             "v3_7_no_fs:nofs:192.0.2.10"; do
+            for cfg_entry in "v3_7_fat_ram:fat:192.0.2.2"      \
+                             "v3_7_lfs:lfs:192.0.2.6"          \
+                             "v3_7_no_fs:nofs:192.0.2.10"      \
+                             "v2_7_fat_ram:27fat:192.0.2.14"   \
+                             "v2_7_lfs:27lfs:192.0.2.18"       \
+                             "v2_7_no_fs:27nofs:192.0.2.22"    \
+                             "v4_4_fat_ram:44fat:192.0.2.26"   \
+                             "v4_4_lfs:44lfs:192.0.2.30"       \
+                             "v4_4_no_fs:44nofs:192.0.2.34"; do
                 cfg=$(echo "$cfg_entry" | cut -d: -f1)
                 short=$(echo "$cfg_entry" | cut -d: -f2)
                 host_ip=$(echo "$cfg_entry" | cut -d: -f3)
@@ -427,14 +603,20 @@ EOF
             # Without this, a previously-running service holds the OLD TAP
             # name (since `systemctl enable --now` does not restart already-
             # running units to pick up an updated unit file).
-            for iface in zeth zeth-v3_7_fat_ram zeth-v3_7_lfs zeth-v3_7_no_fs zeth-fat zeth-lfs zeth-nofs; do
+            for iface in zeth                                                       \
+                         zeth-v3_7_fat_ram zeth-v3_7_lfs zeth-v3_7_no_fs            \
+                         zeth-fat zeth-lfs zeth-nofs                                \
+                         zeth-27fat zeth-27lfs zeth-27nofs                          \
+                         zeth-44fat zeth-44lfs zeth-44nofs; do
                 ip link del "$iface" 2>/dev/null || true
             done
 
             # `restart` (not just `enable --now`) so already-running services
             # actually pick up the regenerated unit file, wrapper script, and
             # — critically — the fresh TAPs the new ExecStartPre creates.
-            for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs; do
+            for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs   \
+                       v2_7_fat_ram v2_7_lfs v2_7_no_fs   \
+                       v4_4_fat_ram v4_4_lfs v4_4_no_fs; do
                 systemctl enable zephyr-qemu-${cfg}.service
                 systemctl restart zephyr-qemu-${cfg}.service
             done

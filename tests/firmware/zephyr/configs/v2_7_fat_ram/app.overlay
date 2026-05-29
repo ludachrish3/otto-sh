@@ -1,0 +1,22 @@
+/*
+ * otto Zephyr test-bed devicetree overlay — FAT on RAM disk (Zephyr 2.7).
+ *
+ * Identical in shape to v3_7_fat_ram/app.overlay; the `zephyr,ram-disk`
+ * binding name and the `dram0` size override apply unchanged in 2.7.
+ *
+ * NOTE: binding parity with 3.7 is the expectation, not a proof — confirm
+ * with a real `west build` on first provision.
+ */
+
+&dram0 {
+	reg = <0x00000000 0x08000000>;   /* 128 MiB */
+};
+
+/ {
+	ramdisk0 {
+		compatible = "zephyr,ram-disk";
+		disk-name = "RAM";
+		sector-size = <512>;
+		sector-count = <204800>;   /* 204800 * 512 = 100 MiB. */
+	};
+};
