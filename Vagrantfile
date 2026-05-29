@@ -523,6 +523,20 @@ EOF
                 host_ip=$(echo "$cfg_entry" | cut -d: -f3)
                 tap_name="zeth-${short}"
 
+                # qemu_x86's emulated machine model differs by Zephyr era: the
+                # board moved from i440FX (qemu's default `pc` machine) to `q35`
+                # in Zephyr 3.0. 2.7 page-faults in early boot if launched on
+                # q35 (its kernel/page-tables assume i440FX), so it must use the
+                # default machine + `-no-acpi`; 3.7 and 4.4 use `q35,acpi=off`.
+                # These mirror each version's own `west build -t run` flags —
+                # hardcoding q35 for all silently crash-loops 2.7 at boot. (The
+                # version is the `cfg` prefix; see the wiki principle
+                # "delegate to the build system's run target".)
+                case "$cfg" in
+                    v2_7_*) machine_flags="-no-acpi" ;;
+                    *)      machine_flags="-machine q35,acpi=off" ;;
+                esac
+
                 cat > /home/vagrant/run-zephyr-qemu-${cfg}.sh <<EOF
 #!/usr/bin/env bash
 # Launch the ${cfg} Zephyr image under QEMU on TAP ${tap_name}. Hand-rolled
@@ -549,14 +563,16 @@ EOF
 #                      app.overlay and configs/v3_7_lfs/app.overlay).
 #                      qemu_x86 is 32-bit (4 GiB max); 256 MiB is well
 #                      under that and leaves room for future growth.
-#   -machine acpi=off  Zephyr's qemu_x86 expects q35 without ACPI.
+#   machine model    Per-version (baked in above): 3.x+ qemu_x86 is q35
+#                      without ACPI; 2.7 is i440FX (qemu's default `pc`
+#                      machine) and faults on q35, so it gets -no-acpi only.
 #   -chardev/-serial/-mon  Zephyr's preferred serial+monitor multiplex
 #                      on stdio.
 set -euo pipefail
 exec ${SDK_QEMU} \\
     -m 256 \\
     -cpu qemu32,+nx,+pae \\
-    -machine q35,acpi=off \\
+    ${machine_flags} \\
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \\
     -no-reboot \\
     -nographic \\
