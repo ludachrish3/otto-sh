@@ -396,6 +396,17 @@ Vagrant.configure("2") do |config|
                 # shellcheck disable=SC1091
                 source zephyr/zephyr-env.sh
 
+                # Pin the toolchain to THIS version's declared SDK. Multiple
+                # SDKs coexist (2.7/3.7 on 0.16.8, 4.4 on 1.0.1), and Zephyr's
+                # auto-detection otherwise picks the *highest* installed SDK
+                # meeting the board minimum. On a first provision that happens
+                # to be correct only by install order (1.0.1 isn't present yet
+                # when 2.7/3.7 build); on a re-provision (all SDKs already
+                # installed) 2.7/3.7 would silently build against 1.0.1 — a far
+                # newer gcc than those vintages expect. Pinning makes every
+                # build deterministic and matches the ZSDK column above.
+                export ZEPHYR_SDK_INSTALL_DIR="${HOME}/zephyr-sdk-${ZSDK}"
+
                 # The CMake vars that *append* otto's Kconfig + DT overlays to
                 # the sample's own prj.conf/board overlay were renamed in
                 # Zephyr 3.4: EXTRA_CONF_FILE / EXTRA_DTC_OVERLAY_FILE replaced
