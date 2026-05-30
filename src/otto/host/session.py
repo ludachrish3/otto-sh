@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import asyncssh
 from asyncssh import SSHClientConnection
 
+from .command_frame import BashFrame, CommandFrame, SessionMarkers
 from .telnet import TelnetClient
 
 if TYPE_CHECKING:
@@ -52,13 +53,21 @@ _INIT_TIMEOUT = 3.0
 class ShellSession(ABC):
     """Abstract base for persistent shell sessions.
 
-    Subclasses implement the I/O primitives (_write, _read_until_pattern, _open, close).
-    The base class provides shared logic for sentinel-wrapped command execution,
-    expect handling, and timeout recovery.
+    A session is **transport + dialect**. Subclasses implement the I/O
+    primitives (_write, _read_until_pattern, _open, close) — that is the
+    transport (SSH, telnet, local subprocess). The *dialect* — how a command is
+    wrapped in sentinels and how output/retcode are parsed back — is composed
+    in as a :class:`~otto.host.command_frame.CommandFrame` (default
+    :class:`~otto.host.command_frame.BashFrame`), not inherited. The base class
+    provides the shared engine: sentinel-wrapped command execution, expect
+    handling, and timeout recovery, all delegating the dialect to the frame.
     """
 
     # Ceiling on the marker handshake in _ensure_initialized. Class-level so
-    # tests can shrink it without patching the module constant.
+    # tests can shrink it without patching the module constant. A session built
+    # against a slow-to-start shell (e.g. a Zephyr QEMU telnet console) gets a
+    # more generous value via the ``init_timeout`` constructor argument, which
+    # shadows this with an instance attribute.
     _init_timeout: float = _INIT_TIMEOUT
 
     # How long to wait for one readiness probe before resending it. Bounds the
@@ -66,13 +75,31 @@ class ShellSession(ABC):
     # reading) to roughly one interval.
     _init_probe_interval: float = 0.5
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        command_frame: CommandFrame | None = None,
+        init_timeout: float | None = None,
+    ) -> None:
         self._session_id = uuid.uuid4().hex[:12]
-        self._begin_marker = f"__OTTO_{self._session_id}_BEGIN__"
-        self._end_marker_prefix = f"__OTTO_{self._session_id}_END__"
-        self._end_pattern = re.compile(rf"__OTTO_{self._session_id}_END__(\d+)__")
-        self._ready_marker = f"__OTTO_{self._session_id}_READY__"
-        self._recover_marker = f"__OTTO_{self._session_id}_RECOVER__"
+        # The dialect: how commands are framed and parsed. Defaults to bash; an
+        # embedded host injects a ZephyrFrame (or a project-registered frame).
+        self._frame: CommandFrame = command_frame or BashFrame()
+        # Unique per-session sentinels, handed to the frame for every
+        # render/parse call. Aliased as individual attributes too because the
+        # session orchestration (and its tests) reference them directly.
+        self._markers = SessionMarkers.for_session(self._session_id)
+        self._begin_marker = self._markers.begin
+        self._end_marker_prefix = self._markers.end_prefix
+        self._ready_marker = self._markers.ready
+        self._recover_marker = self._markers.recover
+        # The frame owns the end-of-output pattern (bash bakes the retcode into
+        # it; Zephyr's is the bare token). Compiled once per session.
+        self._end_pattern = self._frame.end_pattern(self._markers)
+        # A non-default readiness ceiling (slow embedded shells) is set as an
+        # instance attribute so it shadows the monkeypatchable class default
+        # only for the sessions that need it.
+        if init_timeout is not None:
+            self._init_timeout = init_timeout
         self._initialized = False
         self._alive = False
         # Set when an in-flight operation (run_cmd / expect) is externally
@@ -175,7 +202,7 @@ class ShellSession(ABC):
         )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._init_timeout
-        handshake_cmd = self._handshake_command()
+        handshake_cmd = self._frame.handshake(self._markers)
         logger.debug(
             f"{self._log_tag}: handshake start "
             f"cmd={handshake_cmd!r} marker={self._ready_marker!r} "
@@ -240,60 +267,6 @@ class ShellSession(ABC):
             "shell never became ready after open — the device is "
             "unresponsive or login failed (e.g. bad credentials)"
         )
-
-    # --- Framing seam (overridable by subclasses) ---
-    #
-    # These hooks isolate everything specific to the *kind* of shell on the
-    # other end. The defaults target a POSIX bash shell; ``ZephyrSession``
-    # overrides them for the Zephyr RTOS shell, which has no bash, no ``$?``,
-    # and no generic ``echo``. Everything else — the readiness handshake, the
-    # read loop, expect handling, recovery — is shared.
-
-    def _handshake_command(self) -> str:
-        """Return the readiness-probe payload written by ``_ensure_initialized``.
-
-        The bash form silences echo and prints the READY marker.
-        """
-        return f"stty -echo 2>/dev/null; echo {self._ready_marker}\n"
-
-    def _frame_command(self, cmd: str) -> str:
-        """Return the full write payload that runs ``cmd`` framed by sentinels.
-
-        The bash form brackets the command with ``echo`` calls; the END
-        sentinel embeds ``$?`` so the exit code travels back inside the marker.
-        """
-        return (
-            f'echo "{self._begin_marker}"; '
-            f'{cmd}; '
-            f'echo "{self._end_marker_prefix}$?__"\n'
-        )
-
-    def _recover_command(self) -> str:
-        """Return the re-synchronization payload written by ``_recover_session``."""
-        return f"echo {self._recover_marker}\n"
-
-    def _extract_retcode(self, buffer: str) -> int:
-        """Extract the command's exit code from the accumulated output buffer.
-
-        The bash form reads the digits the END sentinel pattern captured.
-        Returns ``-1`` when no code can be recovered.
-        """
-        match = self._end_pattern.search(buffer)
-        if match and match.groups():
-            return int(match.group(1))
-        return -1
-
-    def _marks_begin(self, data: str) -> bool:
-        """Return True if ``data`` is the line carrying the BEGIN sentinel.
-
-        The bash form emits the marker as a line of its own, so equality (or
-        suffix, for a marker printed after same-line text) is the right test —
-        and it avoids a false hit on an echoed wrapped command. ``ZephyrSession``
-        overrides this: the RTOS shell prints the marker as
-        ``<token>: command not found``, so the token is a *substring*.
-        """
-        stripped = data.rstrip('\r\n')
-        return stripped == self._begin_marker or stripped.endswith(self._begin_marker)
 
     # --- Public API ---
 
@@ -406,13 +379,12 @@ class ShellSession(ABC):
         """
 
         # Write the framed command. The framing — BEGIN/END sentinels and how
-        # the exit code is captured — is supplied by _frame_command so that
-        # subclasses can diverge from the bash form (see ZephyrSession).
-        framed = self._frame_command(cmd)
+        # the exit code is captured — is supplied by the session's CommandFrame
+        # so that a target can diverge from the bash form (see ZephyrFrame).
+        framed = self._frame.frame(cmd, self._markers)
         # Truncate for the log so a multi-line script doesn't dominate the
-        # output. The hooks (`_frame_command` and the rest of the seam) are
-        # the natural call sites to instrument once — every embedded subclass
-        # then inherits the visibility for free.
+        # output. The frame seam is the natural call site to instrument once —
+        # every dialect then gets the visibility for free.
         shown = framed if len(framed) <= 256 else f"{framed[:256]}...({len(framed)} bytes total)"
         logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
         await self._write(framed)
@@ -461,7 +433,7 @@ class ShellSession(ABC):
             # (which embeds the marker inside quotes on the same line).
             if not expect_matched:
                 if not seen_begin:
-                    if self._marks_begin(data):
+                    if self._frame.marks_begin(data, self._markers):
                         logger.debug(
                             f"{self._log_tag}: begin marker matched on chunk={data!r}"
                         )
@@ -471,12 +443,12 @@ class ShellSession(ABC):
                     if line:
                         self._on_output(line)
 
-        output = self._parse_output(buffer, cmd)
-        retcode = self._extract_retcode(buffer)
+        output = self._frame.parse_output(buffer, cmd, self._markers)
+        retcode = self._frame.extract_retcode(buffer, self._markers)
         status = Status.Success if retcode == 0 else Status.Failed
         # Log a per-command summary at the seam. The full buffer is dumped at
-        # DEBUG so a future-embedded-OS bring-up can see exactly what
-        # `_extract_retcode` / `_parse_output` had to work with.
+        # DEBUG so a future-dialect bring-up can see exactly what the frame's
+        # extract_retcode / parse_output had to work with.
         buffer_preview = buffer if len(buffer) <= 1024 else f"{buffer[:512]}...({len(buffer)}b)...{buffer[-512:]}"
         logger.debug(
             f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
@@ -504,42 +476,13 @@ class ShellSession(ABC):
         parts.append(r"(?P<newline>\n)")
         return re.compile("|".join(parts))
 
-    def _parse_output(self, buffer: str, cmd: str) -> str:
-        """Extract command output from between BEGIN and END sentinel markers.
-
-        ``cmd`` is unused by the bash form (echo is silenced so the command
-        text never appears in the buffer) but is part of the seam —
-        ``ZephyrSession`` needs it to strip the shell's echoed input line.
-        """
-
-        # Find the LAST BEGIN marker — if the shell echoes the wrapped command,
-        # the marker appears twice: once in the echoed command text and once as
-        # actual output.  Using rfind ensures we skip the echoed copy.
-        begin_idx = buffer.rfind(self._begin_marker)
-        if begin_idx != -1:
-            start = begin_idx + len(self._begin_marker)
-            # Skip trailing newline(s) after the marker
-            while start < len(buffer) and buffer[start] in ('\r', '\n'):
-                start += 1
-        else:
-            start = 0
-
-        # Find END marker — output ends before it
-        end_match = self._end_pattern.search(buffer, start)
-        end = end_match.start() if end_match else len(buffer)
-
-        output = buffer[start:end].rstrip('\r\n')
-        # Strip carriage returns left over from PTY \r\n line endings
-        output = output.replace('\r', '')
-        return output
-
     async def _recover_session(self) -> str:
         """Attempt session recovery after timeout: Ctrl+C, then recovery sentinel.
 
         Returns any partial output captured during recovery.
         Sets self._alive = False if recovery fails.
         """
-        recover_cmd = self._recover_command()
+        recover_cmd = self._frame.recover(self._markers)
         logger.debug(
             f"{self._log_tag}: recover_session entry "
             f"marker={self._recover_marker!r} cmd={recover_cmd!r}"
@@ -575,8 +518,13 @@ class ShellSession(ABC):
 class SshSession(ShellSession):
     """SSH persistent shell session via asyncssh create_process()."""
 
-    def __init__(self, conn: SSHClientConnection | None) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        conn: SSHClientConnection | None,
+        command_frame: CommandFrame | None = None,
+        init_timeout: float | None = None,
+    ) -> None:
+        super().__init__(command_frame=command_frame, init_timeout=init_timeout)
         self._conn = conn
         self._process: Any = None
         # When set by a subclass, _open passes this as the command to
@@ -621,8 +569,10 @@ class TelnetSession(ShellSession):
         reader: Any,
         writer: Any,
         _owned_client: 'TelnetClient | None' = None,
+        command_frame: CommandFrame | None = None,
+        init_timeout: float | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(command_frame=command_frame, init_timeout=init_timeout)
         self._reader = reader
         self._writer = writer
         self._owned_client = _owned_client
@@ -926,9 +876,11 @@ class SessionManager:
     Session creation is pluggable: provide a ``session_factory`` callable to
     control how sessions are created (e.g. ``LocalSession`` for local hosts),
     or pass a ``ConnectionManager`` to use the default SSH/Telnet dispatch.
-    Similarly, ``oneshot_factory`` controls stateless command execution. On the
-    telnet dispatch path, ``telnet_session_cls`` selects the session class
-    (default :class:`TelnetSession`; an embedded host passes ``ZephyrSession``).
+    Similarly, ``oneshot_factory`` controls stateless command execution. The
+    shell *dialect* is selected by ``command_frame`` (default bash; an embedded
+    host passes a :class:`~otto.host.command_frame.ZephyrFrame`) — it is handed
+    to every session this manager builds, independent of the transport. A slow
+    target's readiness ceiling is raised via ``init_timeout``.
     """
 
     def __init__(
@@ -939,7 +891,8 @@ class SessionManager:
         log_output: Callable[[str], None] = lambda _: None,
         session_factory: 'Callable[[], ShellSession] | None' = None,
         oneshot_factory: 'Callable[[str, float | None], Awaitable[CommandStatus]] | None' = None,
-        telnet_session_cls: 'type[TelnetSession] | None' = None,
+        command_frame: CommandFrame | None = None,
+        init_timeout: float | None = None,
     ) -> None:
         self._connections = connections
         self._name = name
@@ -947,14 +900,15 @@ class SessionManager:
         self._log_output = log_output
         self._session_factory = session_factory
         self._oneshot_factory = oneshot_factory
-        # Class used to wrap a telnet connection on the ConnectionManager
-        # dispatch path. ``None`` resolves to the bash-framed TelnetSession at
-        # use time (resolving lazily, rather than binding it as a default
-        # argument, keeps test patches of the module global effective); an
-        # embedded host passes ZephyrSession so its sessions speak the RTOS
-        # shell's framing instead. Substitutable because ZephyrSession shares
-        # TelnetSession's (reader, writer, _owned_client) constructor.
-        self._telnet_session_cls = telnet_session_cls
+        # Shell dialect handed to every session built on the ConnectionManager
+        # dispatch path (SSH or telnet alike). ``None`` resolves to bash inside
+        # ``ShellSession``; an embedded host passes a ZephyrFrame so its
+        # sessions speak the RTOS shell's framing. Decoupled from the transport,
+        # so e.g. Zephyr-framing-over-SSH needs no new session class.
+        self._command_frame = command_frame
+        # Optional readiness-handshake ceiling for slow shells (e.g. a Zephyr
+        # QEMU telnet console); ``None`` keeps the session's class default.
+        self._init_timeout = init_timeout
         self._session: ShellSession | None = None
         self._named_sessions: dict[str, HostSession] = {}
         # Free-list of idle shell sessions used by `oneshot()` for terminals
@@ -1086,17 +1040,22 @@ class SessionManager:
         match self._connections.term:
             case 'ssh':
                 ssh_conn = await self._connections.ssh()
-                return SshSession(ssh_conn)
+                return SshSession(
+                    ssh_conn,
+                    command_frame=self._command_frame,
+                    init_timeout=self._init_timeout,
+                )
             case 'telnet':
                 telnet_conn = await self._connections.telnet()
-                telnet_cls = self._telnet_session_cls or TelnetSession
                 logger.debug(
-                    f"SessionManager[{self._name}]: building telnet "
-                    f"session as {telnet_cls.__name__}"
+                    f"SessionManager[{self._name}]: building telnet session "
+                    f"with frame={type(self._command_frame).__name__}"
                 )
-                return telnet_cls(
+                return TelnetSession(
                     telnet_conn.reader,
                     telnet_conn.writer,
+                    command_frame=self._command_frame,
+                    init_timeout=self._init_timeout,
                 )
             case _:
                 raise ValueError(
@@ -1220,7 +1179,11 @@ class SessionManager:
                 match self._connections.term:
                     case 'ssh':
                         ssh_conn = await self._connections.ssh()
-                        shell_session = SshSession(ssh_conn)
+                        shell_session = SshSession(
+                            ssh_conn,
+                            command_frame=self._command_frame,
+                            init_timeout=self._init_timeout,
+                        )
                     case 'telnet':
                         user, password = self._connections.credentials
                         client = TelnetClient(
@@ -1244,11 +1207,12 @@ class SessionManager:
                             except Exception:
                                 pass
                             raise
-                        telnet_cls = self._telnet_session_cls or TelnetSession
-                        shell_session = telnet_cls(
+                        shell_session = TelnetSession(
                             client.reader,
                             client.writer,
                             _owned_client=client,
+                            command_frame=self._command_frame,
+                            init_timeout=self._init_timeout,
                         )
                     case _:
                         raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')

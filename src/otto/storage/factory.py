@@ -12,6 +12,7 @@ from ..host.options import (
     SshOptions,
     TelnetOptions,
 )
+from ..host.command_frame import build_command_frame
 from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
 from ..host.embeddedHost import EmbeddedHost
 from ..host.remoteHost import RemoteHost
@@ -201,6 +202,12 @@ def _create_embedded_host(
     # action needed here.
     if 'filesystem' in kwargs and isinstance(kwargs['filesystem'], str):
         kwargs['filesystem'] = build_filesystem(kwargs['filesystem'])
+
+    # Resolve the lab-data ``command_frame`` string to a typed instance.
+    # Absent field defaults to ZephyrFrame via the EmbeddedHost field default
+    # (the stock Zephyr 3.7/4.4 shell) — no action needed here.
+    if 'command_frame' in kwargs and isinstance(kwargs['command_frame'], str):
+        kwargs['command_frame'] = build_command_frame(kwargs['command_frame'])
 
     # telnet_options is the only per-protocol option table an embedded host
     # uses; merge repo-level defaults beneath the host's own values per-key.

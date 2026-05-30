@@ -1176,7 +1176,9 @@ class TestOpenSession:
         mock_shell = self._mock_shell_session()
         with patch('otto.host.session.SshSession', return_value=mock_shell) as MockSshSession:
             await host.open_session('monitor')
-        MockSshSession.assert_called_once_with(mock_conn)
+        MockSshSession.assert_called_once_with(
+            mock_conn, command_frame=None, init_timeout=None,
+        )
 
     # --- Telnet ---
 
@@ -1212,6 +1214,8 @@ class TestOpenSession:
             mock_client.reader,
             mock_client.writer,
             _owned_client=mock_client,
+            command_frame=None,
+            init_timeout=None,
         )
         await h.close()
 

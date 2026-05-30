@@ -19,7 +19,12 @@ from .session import LocalSession as LocalSession
 from .session import SessionManager as SessionManager
 from .session import ShellSession as ShellSession
 from .session import TelnetSession as TelnetSession
-from .zephyr import ZephyrSession as ZephyrSession
+from .command_frame import BashFrame as BashFrame
+from .command_frame import CommandFrame as CommandFrame
+from .command_frame import SessionMarkers as SessionMarkers
+from .command_frame import ZephyrFrame as ZephyrFrame
+from .command_frame import build_command_frame as build_command_frame
+from .command_frame import register_command_frame as register_command_frame
 from .embedded_transfer import EmbeddedFileTransfer as EmbeddedFileTransfer
 from .embedded_transfer import EmbeddedTransferType as EmbeddedTransferType
 from .transfer import NcListenerCheck as NcListenerCheck

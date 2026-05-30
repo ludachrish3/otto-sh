@@ -20,8 +20,9 @@ What makes an embedded target different from a Unix host:
   hop), never SSH directly.
 
 Command execution speaks the Zephyr shell: the :class:`SessionManager` is
-wired with :class:`~otto.host.zephyr.ZephyrSession`, which frames each command
-for the RTOS shell (see that module). File transfer (``get``/``put``) is
+handed a :class:`~otto.host.command_frame.ZephyrFrame` (the default
+``command_frame``), which frames each command for the RTOS shell over a plain
+telnet transport (see that module). File transfer (``get``/``put``) is
 delegated to :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`, which
 speaks the device shell only (the ``console`` backend uses Zephyr's ``fs``
 commands). The interactive bridge (``_interact``) currently raises
@@ -36,6 +37,7 @@ from typing import Optional, cast
 
 from ..logger import getOttoLogger
 from ..utils import CommandStatus, Status
+from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .embedded_transfer import EmbeddedFileTransfer, EmbeddedTransferType
@@ -48,9 +50,14 @@ from .session import (
     HostSession,
     SessionManager,
 )
-from .zephyr import ZephyrSession
 
 logger = getOttoLogger()
+
+# Readiness-handshake ceiling for an embedded telnet console. The Zephyr shell
+# under QEMU can take a few seconds after the TCP connection opens before it
+# starts reading input, so the marker handshake needs a more generous ceiling
+# than the bash default (3 s). Passed to the SessionManager as ``init_timeout``.
+_EMBEDDED_INIT_TIMEOUT = 15.0
 
 
 @dataclass(slots=True)
@@ -109,6 +116,20 @@ class EmbeddedHost(RemoteHost):
     the storage factory resolves the string to a class. Projects can
     register custom variants via
     :func:`otto.host.embedded_filesystem.register_filesystem`."""
+
+    command_frame: CommandFrame = field(default_factory=ZephyrFrame)
+    """Shell-framing *dialect* for this target's console — how a command is
+    wrapped in sentinels and how output/retcode are parsed back. Defaults to
+    the stock Zephyr ``retval`` shell
+    (:class:`~otto.host.command_frame.ZephyrFrame`, 3.7 / 4.4 LTS).
+
+    Lab data declares the dialect by string in the ``command_frame`` field
+    (e.g. a Zephyr 2.7 build that reports its retcode inline would name a
+    project-registered frame); the storage factory resolves the string to an
+    instance. Projects can register custom dialects via
+    :func:`otto.host.command_frame.register_command_frame`. The dialect is
+    independent of the transport, so it is handed straight to the
+    :class:`~otto.host.session.SessionManager`."""
 
     default_dest_dir: Path = field(default_factory=Path)
     """Default landing directory for ``put`` / ``get`` when the caller
@@ -174,6 +195,11 @@ class EmbeddedHost(RemoteHost):
             from .embedded_filesystem import build_filesystem
             self.filesystem = build_filesystem(self.filesystem)
 
+        # Same for ``command_frame`` — lab JSON declares the dialect by name.
+        if isinstance(self.command_frame, str):
+            from .command_frame import build_command_frame
+            self.command_frame = build_command_frame(self.command_frame)
+
         # Lab JSON serializes ``default_dest_dir`` as a string; coerce so
         # callers can use Path arithmetic uniformly. When the field was left
         # at its empty default and the filesystem declares a mount, fall back
@@ -204,7 +230,8 @@ class EmbeddedHost(RemoteHost):
             name=self.name,
             log_command=self._log_command,
             log_output=self._log_output,
-            telnet_session_cls=ZephyrSession,
+            command_frame=self.command_frame,
+            init_timeout=_EMBEDDED_INIT_TIMEOUT,
         )
         self._file_transfer = EmbeddedFileTransfer(
             transfer=self.transfer,

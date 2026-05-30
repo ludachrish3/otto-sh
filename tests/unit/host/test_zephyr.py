@@ -1,10 +1,16 @@
 """
-Unit tests for ZephyrSession — the Zephyr RTOS shell framing seam.
+Unit tests for the Zephyr RTOS shell dialect.
 
-These use a MockZephyrSession backed by in-memory streams (mirroring the
-MockSession double in test_session.py). The simulated shell output models the
-*real* Zephyr telnet shell, verified live on Zephyr 3.7.2: input is **not**
-echoed, and the shell prints its prompt after every executed line.
+Framing/parsing is now a :class:`~otto.host.command_frame.ZephyrFrame` value
+object composed into a plain :class:`~otto.host.session.TelnetSession`; this
+file exercises both the frame in isolation (``TestFraming``) and end-to-end
+through a session driving it (``TestRunCmd`` / ``TestExpect``).
+
+The end-to-end tests use a MockZephyrSession backed by in-memory streams
+(mirroring the MockSession double in test_session.py). The simulated shell
+output models the *real* Zephyr telnet shell, verified live on Zephyr 3.7.2:
+input is **not** echoed, and the shell prints its prompt after every executed
+line.
 """
 
 import asyncio
@@ -13,19 +19,30 @@ import re
 import pytest
 import pytest_asyncio
 
-from otto.host.zephyr import ZephyrSession
+from otto.host.command_frame import SessionMarkers, ZephyrFrame
+from otto.host.session import TelnetSession
 from otto.utils import Status
 
+# Readiness ceiling EmbeddedHost passes for its slow QEMU telnet console; the
+# mock mirrors it so the session's behaviour matches production.
+_EMBEDDED_INIT_TIMEOUT = 15.0
 
-class MockZephyrSession(ZephyrSession):
-    """ZephyrSession backed by in-memory asyncio streams for testing.
 
-    Keeps ZephyrSession's framing/parsing seam; only the I/O primitives are
-    swapped for in-memory equivalents.
+class MockZephyrSession(TelnetSession):
+    """A telnet session speaking the Zephyr dialect, backed by in-memory
+    asyncio streams for testing.
+
+    Composes a real :class:`ZephyrFrame` (the production dialect); only the
+    I/O primitives are swapped for in-memory equivalents.
     """
 
     def __init__(self) -> None:
-        super().__init__(reader=None, writer=None)
+        super().__init__(
+            reader=None,
+            writer=None,
+            command_frame=ZephyrFrame(),
+            init_timeout=_EMBEDDED_INIT_TIMEOUT,
+        )
         self._out_reader: asyncio.StreamReader | None = None
         self.written: list[str] = []
 
@@ -101,39 +118,43 @@ async def session() -> MockZephyrSession:
 # ---------------------------------------------------------------------------
 
 class TestFraming:
+    """The :class:`ZephyrFrame` value object — render + parse — in isolation,
+    without a session. Markers are a fixed :class:`SessionMarkers` so the
+    expected strings are concrete.
+    """
+
+    M = SessionMarkers.for_session("deadbeef")
 
     def test_frame_command_is_four_cr_separated_lines(self):
-        s = MockZephyrSession()
-        framed = s._frame_command('kernel version')
+        framed = ZephyrFrame().frame('kernel version', self.M)
         assert framed == (
-            f"{s._begin_marker}\r"
+            f"{self.M.begin}\r"
             f"kernel version\r"
             f"retval\r"
-            f"{s._end_marker_prefix}\r"
+            f"{self.M.end_prefix}\r"
         )
 
     def test_handshake_command_is_bare_marker(self):
-        s = MockZephyrSession()
-        assert s._handshake_command() == f"{s._ready_marker}\n"
+        assert ZephyrFrame().handshake(self.M) == f"{self.M.ready}\n"
 
     def test_recover_command_is_bare_marker(self):
-        s = MockZephyrSession()
-        assert s._recover_command() == f"{s._recover_marker}\n"
+        assert ZephyrFrame().recover(self.M) == f"{self.M.recover}\n"
 
     def test_end_pattern_has_no_retcode_group(self):
         """The Zephyr END marker carries no exit code (retval reports it)."""
-        s = MockZephyrSession()
-        assert s._end_pattern.pattern == rf"__OTTO_{s._session_id}_END__"
+        assert ZephyrFrame().end_pattern(self.M).pattern == re.escape(self.M.end_prefix)
 
     def test_marks_begin_matches_command_not_found_line(self):
         """Zephyr rejects BEGIN as `<token>: command not found` — substring."""
-        s = MockZephyrSession()
-        assert s._marks_begin(f"{s._begin_marker}: command not found\r\n")
-        assert not s._marks_begin("some other line\r\n")
+        frame = ZephyrFrame()
+        assert frame.marks_begin(f"{self.M.begin}: command not found\r\n", self.M)
+        assert not frame.marks_begin("some other line\r\n", self.M)
 
-    def test_init_timeout_is_generous(self):
-        """The QEMU telnet shell needs warm-up; the handshake ceiling is raised."""
-        assert MockZephyrSession._init_timeout >= 10.0
+    def test_session_init_timeout_is_generous(self):
+        """The QEMU telnet shell needs warm-up; the embedded session's
+        handshake ceiling is raised above the bash default.
+        """
+        assert MockZephyrSession()._init_timeout >= 10.0
 
     @pytest.mark.asyncio
     async def test_run_cmd_writes_framed_command(self, session: MockZephyrSession):
@@ -143,7 +164,7 @@ class TestFraming:
 
         asyncio.create_task(simulate())
         await session.run_cmd('kernel version')
-        assert session.written[0] == session._frame_command('kernel version')
+        assert session.written[0] == ZephyrFrame().frame('kernel version', session._markers)
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +256,8 @@ class TestRunCmd:
     @pytest.mark.asyncio
     async def test_custom_prompt_handled_positionally(self, session: MockZephyrSession):
         """A non-default prompt is stripped just the same — parsing is positional,
-        it never reads the prompt text."""
+        it never reads the prompt text.
+        """
         async def simulate():
             await asyncio.sleep(0.01)
             session.feed(session.shell_response(
@@ -250,7 +272,8 @@ class TestRunCmd:
     @pytest.mark.asyncio
     async def test_ansi_colour_codes_are_stripped(self, session: MockZephyrSession):
         """The Zephyr shell colours its prompt; ANSI escapes must not leak into
-        the parsed output."""
+        the parsed output.
+        """
         async def simulate():
             await asyncio.sleep(0.01)
             session.feed(session.shell_response(
