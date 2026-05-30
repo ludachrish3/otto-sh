@@ -353,6 +353,34 @@ Vagrant.configure("2") do |config|
                 fi
                 pip install --quiet -r zephyr/scripts/requirements.txt
 
+                # Apply any per-version source patches before building. otto's
+                # default is STOCK Zephyr (overlays only, no firmware code — see
+                # the build comment below), and 3.7 / 4.4 carry no patches. The
+                # one deliberate exception is Zephyr 2.7: its shell predates the
+                # `retval` command (and the shell core doesn't even track a last
+                # return value), so otto cannot read exit codes the way it does
+                # on 3.x. `v2_7-shell-retcode.patch` adds a single line to the
+                # shell's command-dispatch path to print `retCode = <n>` after
+                # every command; otto's ZephyrInlineRetcodeFrame parses that in
+                # place of `retval`. The glob is version-gated, so only the 2.7
+                # iteration finds a patch.
+                #
+                # Idempotent: `git apply --reverse --check` succeeds only when
+                # the patch is ALREADY applied, so a re-provision against the
+                # persisted source tree skips it rather than failing "reversed".
+                # A newly-added patch still lands because the reverse-check
+                # fails on an unpatched tree. `-p always` below recompiles the
+                # patched source.
+                for patch in /vagrant/tests/firmware/zephyr/patches/${ZVER}-*.patch; do
+                    [ -f "${patch}" ] || continue
+                    if git -C zephyr apply --reverse --check "${patch}" 2>/dev/null; then
+                        echo "=== patch already applied: $(basename "${patch}") ==="
+                    else
+                        echo "=== applying patch: $(basename "${patch}") ==="
+                        git -C zephyr apply "${patch}"
+                    fi
+                done
+
                 # Install the Zephyr SDK — minimal tarball plus just the
                 # x86_64-zephyr-elf toolchain (all we need for qemu_x86).
                 # SDK install dirs are version-named, so multiple SDKs
@@ -376,6 +404,11 @@ Vagrant.configure("2") do |config|
                 # stats, filesystem). Same shape as `sshd_config` on a Unix
                 # host. /vagrant is the synced share of the otto-sh checkout
                 # on the host.
+                #
+                # The lone exception is the 2.7 source patch applied above
+                # (`retCode` shell line) — a deliberate, single-line deviation
+                # because 2.7's shell has no exit-code mechanism for otto to
+                # read at all. 3.7 / 4.4 remain fully stock.
                 #
                 # Each config builds into its own dir under ~/build/. The
                 # `no_fs` configs are the only ones without a DT overlay
