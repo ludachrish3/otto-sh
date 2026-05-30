@@ -5,6 +5,7 @@
 - Embedded hosts log the prompts and the retval in command output. I know we don't want to lean to much on prompt learning, but it be nice to at least strip out the return value and let it be a more silent aspect that's gathered for otto's API purposes. This mirrors the Unix API more closely - `$?` is issued, but never seen in the logs
 - Empty lines in embedded command output have no logger preamble. Running `help` on zehphyr hosts reveals this.
 - Add TFTP to one of the zephyr hosts
+- Consider <https://pypi.org/project/pyftpdlib/> to replace aioftp. It's much faster in all benchmarks.
 - Add other Zephyr configs and versions so that the embedded OS support is hardened.
 - Add REPL sessions that can live within an active shell session and has a special prompt. The session can be recognized as ending when a REPL end sentinel is seen maybe?
 - Have one of the projects define a custom stat collector beyond the default definitions. This helps prove out the workflow for defining custom parsers and graphs.
