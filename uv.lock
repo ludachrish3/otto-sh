@@ -1872,15 +1872,15 @@ wheels = [
 
 [[package]]
 name = "telnetlib3"
-version = "4.0.3"
+version = "4.0.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "blessed", marker = "sys_platform == 'win32'" },
     { name = "wcwidth" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/18/72/3fe2fda37dc85f36b3963cb57e392d1614d16651528a7f06942f257ea66b/telnetlib3-4.0.3.tar.gz", hash = "sha256:e1f205e2d0d6804dd1ae1d7392aa45843958e648f16f6c331b0c241305bc9adc", size = 349745, upload-time = "2026-05-20T15:46:20.137Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9e/a6/87fae7b6e1e602d4ff0f239a96d7b58b9a6b4a0ae59546790f99830673e3/telnetlib3-4.0.4.tar.gz", hash = "sha256:6ab9ce0b9e8663b002d7e10513deb0c17bddb982d520681e0788511d99695a7a", size = 352646, upload-time = "2026-05-23T20:24:37.614Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/59/b66e768fd98a3e331264e1440c736d406f4b9dc417b6068df7ef9fd0fb55/telnetlib3-4.0.3-py3-none-any.whl", hash = "sha256:2c1721b69ae0fd65d511d26733233d5757bef7dbc2ed268bd293c452cc81e898", size = 356483, upload-time = "2026-05-20T15:46:18.552Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/99/b3352fc3708d101c77948df010d942be2770cdf7e5918f87ac0c1a4eca0d/telnetlib3-4.0.4-py3-none-any.whl", hash = "sha256:41fc6860faeba0f4b02a839f6c0e1a7cfb5ca5be17f2dda2be2f4377d1999aba", size = 359378, upload-time = "2026-05-23T20:24:36.233Z" },
 ]
 
 [[package]]
