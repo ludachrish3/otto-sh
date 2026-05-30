@@ -2,7 +2,7 @@
 
 ## General
 
-- Embedded hosts log the prompts and the retval in command output. I know we don't want to lean to much on prompt learning, but it be nice to at least strip out the return value and let it be a more silent aspect that's gathered for otto's API purposes. This mirrors the Unix API more closely - `$?` is issued, but never seen in the logs
+- Make it so that hosts can define their own custom osType. Unix and Embedded are the current ones, but there could be other custom OSes provided by repos or third party libraries. Currently, it appears that `'unix'` and `'embedded'` are the only options and those have many options that result in a Linux or Zephyr host. I'd like it to be a little more high level, but still allow for the lower level tweaking to allow flexibility for a variety of hosts and OSes.
 - Empty lines in embedded command output have no logger preamble. Running `help` on zehphyr hosts reveals this.
 - Add TFTP to one of the zephyr hosts
 - Consider <https://pypi.org/project/pyftpdlib/> to replace aioftp. It's much faster in all benchmarks.
