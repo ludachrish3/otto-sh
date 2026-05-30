@@ -19,11 +19,6 @@ from typing import Any  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 
-from otto.host.embedded_filesystem import (  # noqa: E402
-    FatRamFileSystem,
-    LittleFsFileSystem,
-    NoFileSystem,
-)
 from otto.host.host import setDryRun  # noqa: E402
 from otto.host.localHost import LocalHost  # noqa: E402
 from otto.host.unixHost import UnixHost  # noqa: E402
@@ -185,11 +180,33 @@ def make_host(ne: str, **kwargs: Any) -> UnixHost:
 # Mapping from `host1` parametrize value -> the embedded host's lab `ne` name.
 # Lets host1 construct an EmbeddedHost directly via the factory without
 # special-casing each Zephyr config in the fixture body.
+#
+# The matrix is Zephyr {2.7, 3.7, 4.4} LTS x {FAT-on-RAM, LittleFS, no-FS} —
+# nine QEMU instances on the `zephyr` Vagrant VM. The 3.7 ids are unversioned
+# for backwards compatibility (they predate the multi-version matrix and are
+# referenced by name in the unit tree); 2.7 and 4.4 carry an explicit version
+# token. This dict is the single source of truth for the embedded backend
+# list — the integration test files import :data:`EMBEDDED_BACKENDS` rather
+# than re-listing the ids, so a new row here flows into every parametrized
+# contract suite without touching the test files.
 _ZEPHYR_BACKEND_NE: dict[str, str] = {
+    # Zephyr 3.7 LTS (the original three; ids kept unversioned).
     "zephyr_fat": "sprout",
     "zephyr_lfs": "sprout_lfs",
     "zephyr_no_fs": "sprout_no_fs",
+    # Zephyr 2.7 LTS.
+    "zephyr_27_fat": "sprout27",
+    "zephyr_27_lfs": "sprout27_lfs",
+    "zephyr_27_no_fs": "sprout27_no_fs",
+    # Zephyr 4.4 LTS.
+    "zephyr_44_fat": "sprout44",
+    "zephyr_44_lfs": "sprout44_lfs",
+    "zephyr_44_no_fs": "sprout44_no_fs",
 }
+
+# Ordered list of embedded backend ids — imported by the integration contract
+# suites so the parametrize lists stay in lockstep with the lab matrix.
+EMBEDDED_BACKENDS: list[str] = list(_ZEPHYR_BACKEND_NE)
 
 
 def embedded_param_id(backend_id: str) -> str:
@@ -206,15 +223,14 @@ def embedded_param_id(backend_id: str) -> str:
     data = host_data(_ZEPHYR_BACKEND_NE[backend_id])
     osname = str(data.get("osName", "embedded"))
     osver = str(data.get("osVersion", ""))
-    dest = data.get("default_dest_dir")
-    if dest == "/RAM:":
-        fs = "fat"
-    elif dest == "/lfs":
-        fs = "lfs"
-    elif dest is None:
-        fs = "nofs"
-    else:
-        fs = str(dest).strip("/").replace(":", "") or "fs"
+    # Filesystem token from the declared `filesystem` variant — the source of
+    # truth in lab data (``default_dest_dir`` is usually unset, defaulting to
+    # the FS mount at construction time). Maps the lab string to a short tag.
+    fs = {
+        "fat-ram": "fat",
+        "littlefs": "lfs",
+        "none": "nofs",
+    }.get(str(data.get("filesystem", "none")), str(data.get("filesystem")))
     parts = [p for p in (osname, osver, fs) if p]
     return "-".join(parts).lower().replace(" ", "")
 
@@ -227,9 +243,10 @@ async def host1(request):
 
     - ``"ssh"`` / ``"telnet"`` -> UnixHost on `carrot`, with the matching term.
     - ``"local"``              -> LocalHost.
-    - ``"zephyr_fat"``         -> EmbeddedHost on `sprout`     (FAT on RAM disk).
-    - ``"zephyr_lfs"``         -> EmbeddedHost on `sprout_lfs` (LittleFS).
-    - ``"zephyr_no_fs"``       -> EmbeddedHost on `sprout_no_fs` (no filesystem).
+    - any id in :data:`EMBEDDED_BACKENDS` -> EmbeddedHost on the matching
+      Zephyr QEMU target, built via the storage factory from its lab-data
+      entry. The matrix is Zephyr {2.7, 3.7, 4.4} x {FAT-on-RAM, LittleFS,
+      no-FS}; see :data:`_ZEPHYR_BACKEND_NE` for the id -> `ne` mapping.
     """
     backend = request.param
     if backend == "local":
@@ -411,25 +428,38 @@ _ZEPHYR_STABILITY = {
     "stability_large_size": 32 * 1024,
 }
 
+def _zephyr_kit(backend_id: str) -> HostKit:
+    """Build the contract kit for a Zephyr backend from its lab data.
+
+    ``temp_remote_dir`` is the on-device mount path, resolved from the host's
+    declared ``filesystem`` variant via :func:`build_filesystem` — one source
+    of truth for "where does this FS live on the device", shared with the
+    production factory. A no-filesystem target (mount ``None``) self-skips the
+    file-transfer stability cycles by zeroing their counts.
+
+    Deriving the kit from lab data (rather than a hand-written table per
+    backend) means a new Zephyr version added to :data:`_ZEPHYR_BACKEND_NE`
+    and ``hosts.json`` gets a correct kit for free.
+    """
+    from otto.host.embedded_filesystem import build_filesystem
+
+    data = host_data(_ZEPHYR_BACKEND_NE[backend_id])
+    fs = build_filesystem(data.get("filesystem", "none"))
+    if fs.mount is None:
+        return HostKit(
+            temp_remote_dir=None, **_ZEPHYR_COMMON,
+            stability_iterations=20,
+            stability_cycle_count=0,
+            stability_large_size=0,
+        )
+    return HostKit(temp_remote_dir=fs.mount, **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY)
+
+
 _KITS: dict[str, HostKit] = {
     "ssh": _UNIX_KIT,
     "telnet": _UNIX_KIT,
     "local": _UNIX_KIT,
-    # ``temp_remote_dir`` is derived from the EmbeddedFileSystem class's
-    # mount path — one source of truth for "where does this FS live on the
-    # device". If the FS class moves its mount, the kit follows automatically.
-    "zephyr_fat": HostKit(
-        temp_remote_dir=FatRamFileSystem.mount, **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY,
-    ),
-    "zephyr_lfs": HostKit(
-        temp_remote_dir=LittleFsFileSystem.mount, **_ZEPHYR_COMMON, **_ZEPHYR_STABILITY,
-    ),
-    "zephyr_no_fs": HostKit(
-        temp_remote_dir=NoFileSystem.mount, **_ZEPHYR_COMMON,
-        stability_iterations=20,
-        stability_cycle_count=0,
-        stability_large_size=0,
-    ),
+    **{b: _zephyr_kit(b) for b in EMBEDDED_BACKENDS},
 }
 
 

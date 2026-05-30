@@ -32,24 +32,24 @@ from otto.host.unixHost import UnixHost
 from otto.storage.factory import create_host_from_dict
 from otto.utils import Status
 
-from tests.conftest import host_data, make_host
+from tests.conftest import (
+    EMBEDDED_BACKENDS,
+    _ZEPHYR_BACKEND_NE as _BACKEND_NE,
+    embedded_param_id,
+    host_data,
+    make_host,
+)
 
 
 _ALL_ZEPHYR = pytest.mark.parametrize(
     "host1",
     [
         pytest.param(
-            "zephyr_fat",
+            backend,
             marks=[pytest.mark.integration, pytest.mark.embedded],
-        ),
-        pytest.param(
-            "zephyr_lfs",
-            marks=[pytest.mark.integration, pytest.mark.embedded],
-        ),
-        pytest.param(
-            "zephyr_no_fs",
-            marks=[pytest.mark.integration, pytest.mark.embedded],
-        ),
+            id=embedded_param_id(backend),
+        )
+        for backend in EMBEDDED_BACKENDS
     ],
     indirect=True,
 )
@@ -79,19 +79,26 @@ class TestSignedRetcode:
 
 
 # ---------------------------------------------------------------------------
-# Multi-line output stays clean through ZephyrSession's positional parser
+# Multi-line output stays clean through the Zephyr frame's positional parser
 # ---------------------------------------------------------------------------
 
 @_ALL_ZEPHYR
 class TestMultilineOutputClean:
 
     @pytest.mark.asyncio
-    async def test_kernel_threads_output_has_no_marker_or_prompt_noise(self, host1):
-        """``kernel threads`` produces several lines on the Zephyr shell.
+    async def test_multiline_output_has_no_marker_or_prompt_noise(self, host1):
+        """A command with several lines of output must parse cleanly.
+
+        ``help`` is used because it is a stock shell builtin that produces
+        multi-line output and exits 0 on **every** Zephyr LTS — unlike
+        ``kernel threads``, whose subcommand name changed across versions
+        (3.7 has ``threads``; 4.4 renamed the group to ``thread``), which
+        would conflate a command-vocabulary difference with a parser bug.
+
         The positional parser must drop the bracketing prompt lines without
         leaking the BEGIN marker, the ``retval`` line, or any ANSI escapes
         into the captured output."""
-        result = (await host1.run("kernel threads")).only
+        result = (await host1.run("help")).only
         assert result.status == Status.Success
         # No otto sentinels leaked into the output.
         assert "__OTTO_" not in result.output
@@ -215,14 +222,22 @@ class TestSingleConsole:
 # without relying on the lab/configmodule layer.
 # ---------------------------------------------------------------------------
 
-# Per-target writable filesystem mount. Mirrors the kit definitions in
-# `tests/conftest.py`; `sprout_no_fs` has no filesystem and is expected to
-# surface a graceful Status.Error rather than succeed.
-_ZEPHYR_DEST: dict[str, str | None] = {
-    "sprout": "/RAM:",
-    "sprout_lfs": "/lfs",
-    "sprout_no_fs": None,
-}
+# Per-target writable filesystem mount, keyed by lab `ne` name and derived
+# from each host's declared `filesystem` variant (the FS class's mount path,
+# the same source of truth the kits use). Covers the full Zephyr matrix in
+# `tests.conftest.EMBEDDED_BACKENDS`; the no-FS targets map to `None` and are
+# expected to surface a graceful Status.Error rather than succeed.
+def _zephyr_dest_map() -> dict[str, str | None]:
+    from otto.host.embedded_filesystem import build_filesystem
+
+    dest: dict[str, str | None] = {}
+    for backend in EMBEDDED_BACKENDS:
+        data = host_data(_BACKEND_NE[backend])
+        dest[data["ne"]] = build_filesystem(data.get("filesystem", "none")).mount
+    return dest
+
+
+_ZEPHYR_DEST: dict[str, str | None] = _zephyr_dest_map()
 
 
 @pytest.mark.integration

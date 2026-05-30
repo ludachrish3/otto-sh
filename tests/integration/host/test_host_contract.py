@@ -8,11 +8,12 @@ run (Zephyr has no ``echo`` builtin), so each backend's kit (``host1_kit``,
 defined in :mod:`tests.conftest`) supplies backend-appropriate command
 strings. The test treats those strings as opaque.
 
-Parametrized over all six backends:
+Parametrized over all backends:
 
 - ``ssh`` / ``telnet`` / ``local`` — :class:`UnixHost` / :class:`LocalHost`.
-- ``zephyr_fat`` / ``zephyr_lfs`` / ``zephyr_no_fs`` — :class:`EmbeddedHost`
-  against the three QEMU instances on the ``zephyr`` Vagrant VM.
+- the Zephyr matrix in :data:`tests.conftest.EMBEDDED_BACKENDS` —
+  :class:`EmbeddedHost` against the QEMU instances on the ``zephyr`` Vagrant
+  VM ({2.7, 3.7, 4.4} x {FAT-on-RAM, LittleFS, no-FS}).
 
 Unix-specific bash-isms (``cd`` / ``export`` / ``uname``) and the SSH
 transfer-protocol matrix stay in :mod:`test_unix_host_integration`. The
@@ -28,10 +29,13 @@ import pytest
 import otto.host.transfer as transfer_mod
 from otto.utils import Status
 
+from tests.conftest import EMBEDDED_BACKENDS
 
-# Backend ids that carry the `embedded` marker (the three Zephyr QEMU
-# instances on the `zephyr` Vagrant VM).
-_EMBEDDED_BACKENDS = {"zephyr_fat", "zephyr_lfs", "zephyr_no_fs"}
+
+# Backend ids that carry the `embedded` marker (the Zephyr QEMU instances on
+# the `zephyr` Vagrant VM). Single-sourced from :data:`tests.conftest` so the
+# Zephyr version x filesystem matrix is defined in exactly one place.
+_EMBEDDED_BACKENDS = set(EMBEDDED_BACKENDS)
 
 
 def _backend_param(backend_id: str) -> pytest.param:
@@ -58,14 +62,7 @@ def _backend_param(backend_id: str) -> pytest.param:
 
 _ALL_BACKENDS = pytest.mark.parametrize(
     "host1, host1_kit",
-    [
-        _backend_param("ssh"),
-        _backend_param("telnet"),
-        _backend_param("local"),
-        _backend_param("zephyr_fat"),
-        _backend_param("zephyr_lfs"),
-        _backend_param("zephyr_no_fs"),
-    ],
+    [_backend_param(b) for b in ("ssh", "telnet", "local", *EMBEDDED_BACKENDS)],
     indirect=True,
 )
 
