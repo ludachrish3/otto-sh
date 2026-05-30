@@ -16,9 +16,10 @@ not assert on:
   integer of microseconds — a sanity check that builtins not exercised by
   the contract suite still work.
 
-Parametrized over the three Zephyr backends (``zephyr_fat`` /
-``zephyr_lfs`` / ``zephyr_no_fs``). Carries both ``integration`` and
-``embedded`` markers so it is opted into via ``pytest -m embedded``.
+Parametrized over the full Zephyr matrix in
+:data:`tests.conftest.EMBEDDED_BACKENDS` ({2.7, 3.7, 4.4} x {FAT-on-RAM,
+LittleFS, no-FS}). Carries both ``integration`` and ``embedded`` markers so it
+is opted into via ``pytest -m embedded``.
 """
 
 import asyncio
@@ -31,15 +32,15 @@ from otto.host.embeddedHost import EmbeddedHost
 from otto.host.unixHost import UnixHost
 from otto.storage.factory import create_host_from_dict
 from otto.utils import Status
-
+from tests.conftest import (
+    _ZEPHYR_BACKEND_NE as _BACKEND_NE,
+)
 from tests.conftest import (
     EMBEDDED_BACKENDS,
-    _ZEPHYR_BACKEND_NE as _BACKEND_NE,
     embedded_param_id,
     host_data,
     make_host,
 )
-
 
 _ALL_ZEPHYR = pytest.mark.parametrize(
     "host1",
@@ -69,7 +70,8 @@ class TestSignedRetcode:
     async def test_unknown_command_returns_negative_enoexec(self, host1):
         """The Zephyr shell sets ``retval`` to ``-8`` (``-ENOEXEC``) after an
         unknown command — the signed errno convention. Unix bash would use
-        ``127`` here, so this distinguishes the framing path."""
+        ``127`` here, so this distinguishes the framing path.
+        """
         result = (await host1.run("definitely_not_a_zephyr_command")).only
         assert result.status == Status.Failed
         assert result.retcode == -8, (
@@ -97,7 +99,8 @@ class TestMultilineOutputClean:
 
         The positional parser must drop the bracketing prompt lines without
         leaking the BEGIN marker, the ``retval`` line, or any ANSI escapes
-        into the captured output."""
+        into the captured output.
+        """
         result = (await host1.run("help")).only
         assert result.status == Status.Success
         # No otto sentinels leaked into the output.
@@ -126,7 +129,8 @@ class TestStockBuiltins:
         """``kernel uptime`` prints a single bare integer (microseconds since
         boot) on Zephyr 3.7. A clean parse of that integer is a small
         sanity check that ``_parse_output`` and the framing seam agree on
-        what counts as "the command's output" for a one-line command."""
+        what counts as "the command's output" for a one-line command.
+        """
         result = (await host1.run("kernel uptime")).only
         assert result.status == Status.Success
         # The output may include a unit-suffix label depending on the build;
@@ -149,7 +153,8 @@ class TestSingleConsole:
     (``CONFIG_SHELL_BACKEND_TELNET``) accepts only one client at a time.
     These tests pin down the observed behavior so a silent regression — a
     second connection being accepted and working, or worse, succeeding but
-    quietly clobbering the first — is caught."""
+    quietly clobbering the first — is caught.
+    """
 
     @pytest.mark.asyncio
     async def test_second_concurrent_session_is_not_silent(self, host1):
@@ -170,7 +175,8 @@ class TestSingleConsole:
         failure mode would shift to ``ConnectionError`` /
         ``IncompleteReadError`` — both equally acceptable. What is NOT
         acceptable is the second ``open_session`` returning a working
-        session that quietly shares state with the first."""
+        session that quietly shares state with the first.
+        """
         # Warm the default session so it holds the device's one telnet slot.
         warmup = (await host1.run("kernel version")).only
         assert warmup.status == Status.Success
@@ -192,7 +198,8 @@ class TestSingleConsole:
         """The critical safety property: after a rejected/hung second-
         session attempt, the **default** session must still be usable.
         Otherwise a user catching the second-open exception would be left
-        with a host they can't drive any further."""
+        with a host they can't drive any further.
+        """
         # Establish the default session.
         before = (await host1.run("kernel version")).only
         assert before.status == Status.Success
@@ -265,7 +272,8 @@ class TestConcurrentEmbeddedTransfer:
     def _build_zephyr_hosts() -> list[EmbeddedHost]:
         """Fresh EmbeddedHost per Zephyr target, built the same way the
         production factory does (``create_host_from_dict``). Each test gets
-        its own instances so a previous test's session state cannot leak."""
+        its own instances so a previous test's session state cannot leak.
+        """
         return [
             create_host_from_dict(host_data(ne)) for ne in _ZEPHYR_DEST
         ]
@@ -274,14 +282,20 @@ class TestConcurrentEmbeddedTransfer:
     def _check_put_result(host_id: str, result) -> None:
         """Assert a single per-host put() result matches the contract:
         success for fs-capable Zephyr targets, graceful Status.Error for
-        ``sprout_no_fs``. A raised exception is a regression — this is the
-        exact shape that the test_instruction failure produced."""
+        no-filesystem targets. A raised exception is a regression — this is
+        the exact shape that the test_instruction failure produced.
+
+        The fs-vs-no-fs distinction is derived from ``_ZEPHYR_DEST`` (mount is
+        ``None`` for a no-FS target), so every no-FS backend in the matrix —
+        ``sprout_no_fs`` / ``sprout27_no_fs`` / ``sprout44_no_fs`` — is checked
+        the same way without hard-coding ne names.
+        """
         assert not isinstance(result, BaseException), (
             f"{host_id}: put raised — concurrent session init regressed. "
             f"Exception: {result!r}"
         )
         status, err = result
-        if host_id == "sprout_no_fs":
+        if _ZEPHYR_DEST[host_id] is None:
             assert status != Status.Success, (
                 f"{host_id}: no-FS target reported Success — expected a "
                 f"graceful error (err={err!r})"
@@ -296,10 +310,12 @@ class TestConcurrentEmbeddedTransfer:
     async def test_concurrent_puts_across_zephyr_targets(
         self, tmp_path: Path,
     ):
-        """All three Zephyr targets receive a put() concurrently. They share
-        ``hop=basil_seed`` — three telnet-over-SSH legs open into basil at
-        the same instant. This is the minimum reproducer for the
-        readiness-handshake collapse."""
+        """Every Zephyr target in the matrix receives a put() concurrently.
+        They share ``hop=basil_seed`` — all the telnet-over-SSH legs open into
+        basil at the same instant. This is the reproducer for the
+        readiness-handshake collapse, now stressed across the full 2.7/3.7/4.4
+        matrix rather than a single LTS.
+        """
         src = tmp_path / "fanout.bin"
         src.write_bytes(self._PAYLOAD)
 
@@ -325,10 +341,11 @@ class TestConcurrentEmbeddedTransfer:
         self, tmp_path: Path,
     ):
         """The exact fan-out shape that ``test_instruction`` triggers: a
-        Unix host (``basil``) and the three Zephyr targets receive a put
+        Unix host (``basil``) and every Zephyr target receive a put
         concurrently. basil's SCP transfer flows over the same VM that
         proxies the Zephyr telnet legs, exercising the hop under load while
-        the Zephyr sessions are still mid-handshake."""
+        the Zephyr sessions are still mid-handshake.
+        """
         src = tmp_path / "fanout.bin"
         src.write_bytes(self._PAYLOAD)
 
@@ -370,7 +387,8 @@ class TestConcurrentEmbeddedTransfer:
         """Symmetric fan-out for get(): pre-stage the payload sequentially
         on each fs-capable target, then drive a concurrent get(). The
         sequential put phase intentionally avoids the fan-out race so a
-        get-side regression is not masked by a put-side failure."""
+        get-side regression is not masked by a put-side failure.
+        """
         src = tmp_path / "fanout.bin"
         src.write_bytes(self._PAYLOAD)
 

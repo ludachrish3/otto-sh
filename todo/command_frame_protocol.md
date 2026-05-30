@@ -129,18 +129,46 @@ was switched to the version-stable `help`; this was a test-vocabulary bug
 surfaced by the 4.4 host, not a framing regression: the frame parsed 4.4's
 output cleanly with the correct retcode.) 2.7 deliberately excluded.
 
-### Step 2 — the 2.7 inline-retcode frame (the differentiation experiment)
+### Step 2 — the 2.7 inline-retcode frame (the differentiation experiment) — DONE + live-verified
 
-1. Firmware (2.7-only, deliberate deviation): patch `state_collect()` to stop
-   discarding `execute()`'s return value and print `retCode = %d` instead.
-   Delivered as `tests/firmware/zephyr/patches/v2_7-shell-retcode.patch`,
-   applied in the Vagrantfile per-version workspace loop.
-2. otto: `ZephyrInlineRetcodeFrame` (subclass of `ZephyrFrame`) — frame
-   `BEGIN / cmd / END` (no `retval` line), parse `retCode = (-?\d+)`. Define it
-   in the **test lab repo** and register it via that repo's init module, so the
-   2.7 work doubles as proof of the project-defined extension path.
-3. hosts.json: 2.7 entries set `"command_frame": "zephyr-inline"`.
-4. Verify the full 9-backend matrix (2.7 included) green.
+1. **Firmware (2.7-only, deliberate deviation) — DONE.** `state_collect()` stops
+   discarding `execute()`'s return value and prints `retCode = %d` instead
+   (validated: the inject point is line 990, `execute()` already returns the
+   real int incl. `-ENOEXEC` = -8 for unknown commands). Delivered as
+   `tests/firmware/zephyr/patches/v2_7-shell-retcode.patch` (validated with
+   `git apply --check` against the pristine v2.7-branch source), applied
+   idempotently in the Vagrantfile per-version workspace loop, gated by the
+   `${ZVER}-*.patch` glob (only 2.7 has one). The build comment's "stock
+   Zephyr" claim was updated to note the lone 2.7 exception.
+2. **otto frame — DONE.** `ZephyrInlineRetcodeFrame(ZephyrFrame)` in the **lab
+   repo** (`tests/repo1/pylib/repo1_common/zephyr_inline.py`): frames
+   `BEGIN / cmd / END` (no `retval`), reads the last `retCode = (-?\d+)` before
+   END, parses output between the BEGIN and command retCode lines. Registered
+   by repo1's init module (`repo1_instructions/__init__.py`) for the config-load
+   path, and by `tests/integration/host/conftest.py` for the raw-factory test
+   path — proving the project-defined extension path end to end.
+3. **hosts.json — DONE.** The three 2.7 entries set
+   `"command_frame": "zephyr-inline"`.
+4. **Unit tests — DONE.** `test_zephyr_inline_frame.py` (14 cases) models the
+   patched shell stream and validates frame/retcode/output parsing; both
+   registration paths verified.
+5. **Live verification — DONE.** Patched 2.7 source on the zephyr VM, rebuilt
+   all three 2.7 configs, restarted their QEMU services, and ran the live
+   matrix. The full 9-backend embedded suite is green (**111 passed, 18
+   skipped, 0 failures**); 1386 unit tests green. Two things the offline model
+   missed, both caught live and fixed:
+   - **2.7's telnet shell echoes input** (3.7/4.4 don't), so the echoed END
+     marker desynced every command by one. Fix: the inline frame's handshake
+     disables echo up front via the stock `shell echo off` builtin.
+   - **Handshake residue** (the rejected ready marker's `retCode = -8` tail)
+     lands ahead of the first command's BEGIN marker. Fix: anchor parsing on
+     the BEGIN marker (last occurrence), not the first `retCode` line — same as
+     the stock frame.
+   Also fixed a test-logic bug the data-driven 9-way fan-out exposed
+   (`_check_put_result` hard-coded `sprout_no_fs`; now derives no-FS from the
+   dest map). The canonical deployment remains `vagrant provision zephyr` from
+   the host — the Vagrantfile patch-apply step reproduces this state
+   idempotently.
 
 ## Notes / open questions
 
