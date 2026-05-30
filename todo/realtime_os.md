@@ -64,7 +64,7 @@ Retrieving code coverage data from an embedded program is tablestakes for this i
 
 ## Monitor
 
-What are some standard ways to monitor CPU and memory usage on a Zephyr host? I'm guessing it's **quite** different than Unix, so it makes a lot of sense for the two class types to have a different set of default monitoring commands.
+What are some standard ways to monitor CPU and memory usage on a Zephyr host? I'm guessing it's **quite** different than Unix, so it makes a lot of sense for the two class types to have a different set of default monitoring commands. Maybe SNMP will need to be enabled?
 
 ## CLI
 

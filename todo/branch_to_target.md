@@ -48,8 +48,7 @@ GCC emits two companion files per translation unit:
 ### Proposed pipeline
 
 1. **Collection**: extend `otto test --cov` to also fetch `.gcno` files
-   from remote hosts (they sit next to `.gcda` files, and unlike `.gcda`
-   they don't change between runs so they could be cached).
+   from the dev repo (they appear in the source tree)
 2. **Parsing**: implement a `.gcno` reader in
    `src/otto/coverage/correlator/gcno_parser.py`. Start by porting the
    minimum subset of gcovr's parser needed for blocks + edges + line
@@ -90,15 +89,11 @@ GCC emits two companion files per translation unit:
   need to either match gcovr's version matrix or pin a minimum GCC.
 - **Clang `.gcno` compatibility.** Clang writes gcov-compatible files
   but historically with subtle format differences. May need separate
-  handling or explicit "not supported on Clang builds" messaging.
-- **Coverage from stripped binaries.** Release builds may not carry
-  DWARF info; the `.gcno`-only path needs to be usable by itself.
+  handling.
 - **Cross-host path resolution.** `.gcno` files hold build-host paths;
   they'd flow through the same `PathCorrelator` used for `.info` files.
 - **Scale.** Parsing `.gcno` for every translation unit in a large C++
   project may be slow. Profile before optimizing.
-- **Fetch overhead.** `.gcno` files are typically larger than `.gcda`
-  files but change only on rebuild. Cache them by (host, build id).
 
 ## Suggested phased implementation
 
