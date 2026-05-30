@@ -25,6 +25,10 @@ from .command_frame import SessionMarkers as SessionMarkers
 from .command_frame import ZephyrFrame as ZephyrFrame
 from .command_frame import build_command_frame as build_command_frame
 from .command_frame import register_command_frame as register_command_frame
+from .os_profile import OsProfile as OsProfile
+from .os_profile import build_os_profile as build_os_profile
+from .os_profile import get_os_profile as get_os_profile
+from .os_profile import register_os_profile as register_os_profile
 from .embedded_transfer import EmbeddedFileTransfer as EmbeddedFileTransfer
 from .embedded_transfer import EmbeddedTransferType as EmbeddedTransferType
 from .transfer import NcListenerCheck as NcListenerCheck

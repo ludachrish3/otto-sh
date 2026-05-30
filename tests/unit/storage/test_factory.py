@@ -2,13 +2,28 @@ from pathlib import Path
 
 import pytest
 
+from otto.host import os_profile
+from otto.host.command_frame import ZephyrFrame
+from otto.host.embedded_filesystem import FatRamFileSystem
 from otto.host.embeddedHost import EmbeddedHost
+from otto.host.os_profile import register_os_profile
 from otto.host.unixHost import UnixHost
 from otto.host.toolchain import Toolchain
 from otto.storage.factory import (
     create_host_from_dict,
     validate_host_dict,
 )
+
+
+@pytest.fixture
+def restore_profiles():
+    """Snapshot/restore the global os-profile registry around a test."""
+    saved = dict(os_profile._OS_PROFILES)
+    try:
+        yield
+    finally:
+        os_profile._OS_PROFILES.clear()
+        os_profile._OS_PROFILES.update(saved)
 
 
 class TestCreateHostFromDict:
@@ -396,6 +411,79 @@ class TestOsTypeDispatch:
         })
         assert isinstance(host, EmbeddedHost)
         assert host.transfer == 'console'
+
+
+class TestOsProfileDispatch:
+    """Tests for custom ``osType`` profiles in ``create_host_from_dict``."""
+
+    def test_unix_profile_applies_defaults(self, restore_profiles):
+        register_os_profile('custom-nix', base='unix',
+                            defaults={'osName': 'CustomNix', 'term': 'telnet'})
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'osType': 'custom-nix',
+        })
+        assert isinstance(host, UnixHost)
+        assert host.osName == 'CustomNix'
+        assert host.term == 'telnet'
+
+    def test_host_field_overrides_profile_default(self, restore_profiles):
+        register_os_profile('custom-nix', base='unix', defaults={'osName': 'CustomNix'})
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'osType': 'custom-nix', 'osName': 'HostWins',
+        })
+        assert host.osName == 'HostWins'
+
+    def test_stored_ostype_is_base_family_not_profile_name(self, restore_profiles):
+        register_os_profile('custom-nix', base='unix')
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'osType': 'custom-nix',
+        })
+        # The OsType-typed field keeps a valid family value; the profile name
+        # is only the selector, it must not leak into the field.
+        assert host.osType == 'unix'
+
+    def test_options_three_layer_precedence(self, restore_profiles):
+        """Per-key: host > profile > repo-default for an ``*_options`` table."""
+        register_os_profile('nix-ssh', base='unix', defaults={
+            'ssh_options': {'connect_timeout': 50.0, 'port': 3333},
+        })
+        host = create_host_from_dict(
+            {
+                'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+                'osType': 'nix-ssh', 'ssh_options': {'port': 9000},
+            },
+            defaults={'ssh_options': {'connect_timeout': 99.0, 'keepalive_interval': 42.0}},
+        )
+        assert host.ssh_options.port == 9000               # host wins
+        assert host.ssh_options.connect_timeout == 50.0    # profile beats repo-default
+        assert host.ssh_options.keepalive_interval == 42.0  # repo-default fills the gap
+
+    def test_embedded_profile_coerces_frame_and_filesystem_strings(self, restore_profiles):
+        register_os_profile('zephyr-fat', base='embedded', defaults={
+            'osName': 'Zephyr', 'osVersion': '3.7', 'command_frame': 'zephyr',
+            'filesystem': 'fat-ram', 'transfer': 'console', 'max_filename_len': 32,
+        })
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr-fat',
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.osType == 'embedded'
+        assert host.osVersion == '3.7'
+        assert host.max_filename_len == 32
+        assert isinstance(host.command_frame, ZephyrFrame)
+        assert isinstance(host.filesystem, FatRamFileSystem)
+
+    def test_embedded_profile_with_docker_capable_host_rejected(self, restore_profiles):
+        register_os_profile('zephyr-fat', base='embedded', defaults={'osName': 'Zephyr'})
+        with pytest.raises(ValueError) as exc_info:
+            create_host_from_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr-fat',
+                'docker_capable': True,
+            })
+        assert 'docker_capable' in str(exc_info.value)
 
 
 class TestValidateOsType:

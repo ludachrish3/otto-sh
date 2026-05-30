@@ -2,7 +2,7 @@
 
 ## General
 
-- Make it so that hosts can define their own custom osType. Unix and Embedded are the current ones, but there could be other custom OSes provided by repos or third party libraries. Currently, it appears that `'unix'` and `'embedded'` are the only options and those have many options that result in a Linux or Zephyr host. I'd like it to be a little more high level, but still allow for the lower level tweaking to allow flexibility for a variety of hosts and OSes.
+- Neutralize `EmbeddedHost`'s class-level Zephyr defaults. The OS-profile layer (`osType` → registered `OsProfile`, see `src/otto/host/os_profile.py`) now lets a profile bundle OS-specific defaults, and a built-in `zephyr` profile carries the Zephyr bundle. As a follow-up, once lab data has migrated to a `zephyr`/versioned profile, make the `EmbeddedHost` class defaults generic — drop the implicit `command_frame=ZephyrFrame` / `osName='Zephyr'` so a bare `embedded` base carries no OS-specific assumptions and a misconfigured non-Zephyr host fails loudly rather than silently inheriting Zephyr framing. Breaking change for directly-constructed `EmbeddedHost(...)` and any `osType:"embedded"` data relying on the implicit default, so it was deferred from the initial profile work.
 - Empty lines in embedded command output have no logger preamble. Running `help` on zehphyr hosts reveals this.
 - Add TFTP to one of the zephyr hosts
 - Consider <https://pypi.org/project/pyftpdlib/> to replace aioftp. It's much faster in all benchmarks.

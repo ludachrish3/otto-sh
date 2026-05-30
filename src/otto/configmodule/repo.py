@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from rich.panel import Panel
     from rich.text import Text
 
+    from ..host.os_profile import OsProfile
+
 logger = getOttoLogger()
 
 SETTINGS_FILENAME  = 'settings.toml'
@@ -163,6 +165,15 @@ class Repo():
     repo's labs. Keys are ``*_options`` table names (``ssh_options``,
     ``telnet_options``, etc.); values are dicts whose keys correspond to
     fields on the matching options dataclass."""
+
+    os_profiles: dict[str, 'OsProfile'] = field(
+        default_factory=dict,
+        init=False,
+    )
+    """Named OS profiles declared by this repo's ``[os_profiles]`` settings,
+    keyed by profile name. Each is also registered into the global os-profile
+    registry at parse time so lab-data entries can select it by name in the
+    ``osType`` field. See :func:`otto.host.os_profile.register_os_profile`."""
 
     settings: dict[str, Any] = field(default_factory=dict[str, Any])
     """Repo settings dict as parsed from the `settings.toml` file"""
@@ -399,6 +410,8 @@ class Repo():
 
         self.host_defaults = self._parseHostDefaults(self.settings.get('host_defaults', {}))
 
+        self.os_profiles = self._parseOsProfiles(self.settings.get('os_profiles', {}))
+
         self.docker_settings = self._parseDockerSettings(self.settings.get('docker', {}))
 
         try:
@@ -445,6 +458,59 @@ class Repo():
                     f"table, got {type(table).__name__}"
                 )
             result[opt_key] = self._expandRecursive(table)
+        return result
+
+    def _parseOsProfiles(self,
+        raw: dict[str, Any],
+    ) -> dict[str, 'OsProfile']:
+        """Validate, expand, and register the ``[os_profiles]`` TOML table.
+
+        Each ``[os_profiles.<name>]`` sub-table needs a ``base`` key
+        (``'unix'`` or ``'embedded'``) selecting the host class to build; the
+        remaining keys are default field values bundled with the profile (with
+        ``${sutDir}`` expanded). Every profile is registered into the global
+        os-profile registry so lab-data entries can select it by name in the
+        ``osType`` field.
+
+        This runs at settings-parse time, *before* init modules are imported,
+        so a code ``register_os_profile`` call in an ``init`` module (imported
+        later) overrides a data table of the same name — last writer wins.
+
+        Unknown ``base`` values and unknown default field names raise
+        ``ValueError`` so typos don't silently no-op.
+        """
+        from ..host.os_profile import build_os_profile, register_os_profile
+
+        if not raw:
+            return {}
+
+        if not isinstance(raw, dict):
+            raise ValueError(
+                f"{TOML_SETTINGS_PATH}: [os_profiles] must be a table, "
+                f"got {type(raw).__name__}"
+            )
+
+        result: dict[str, OsProfile] = {}
+        for name, table in raw.items():
+            if not isinstance(table, dict):
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [os_profiles.{name}] must be a "
+                    f"table, got {type(table).__name__}"
+                )
+            if 'base' not in table:
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [os_profiles.{name}] is missing the "
+                    f"required 'base' key ('unix' or 'embedded')"
+                )
+            expanded = self._expandRecursive(table)
+            base = expanded.pop('base')
+            try:
+                register_os_profile(name, base, expanded)
+            except ValueError as e:
+                raise ValueError(
+                    f"{TOML_SETTINGS_PATH}: [os_profiles.{name}]: {e}"
+                ) from e
+            result[name] = build_os_profile(name)
         return result
 
     def _parseDockerSettings(self,
