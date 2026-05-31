@@ -6,33 +6,53 @@ both call sites consistent — same parser-registry lookup, same per-host log
 silencing, same target construction.
 """
 
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional
+from typing import Optional, cast
 
+from ..host.remoteHost import RemoteHost
 from .collector import MetricCollector, MonitorTarget
 from .parsers import get_host_parsers
-from ..host.unixHost import UnixHost
+from .snmp import SnmpClient, SnmpSource, SnmpVersion
 
 
 def build_monitor_collector(
-    hosts: list[UnixHost],
+    hosts: Sequence[RemoteHost],
     db_path: Optional[Path] = None,
 ) -> MetricCollector:
-    """Build a :class:`MetricCollector` over *hosts* with per-host parsers.
+    """Build a :class:`MetricCollector` over *hosts*, one :class:`MonitorTarget` each.
 
-    Silences host logging (collection is chatty), resolves each host's parser
-    set via :func:`get_host_parsers` so per-host customisations registered
-    by init modules are honoured, and pairs them up as
-    :class:`MonitorTarget` objects.
+    Silences host logging (collection is chatty) and chooses each host's
+    collection mode:
+
+    - a host with an ``snmp`` block is polled over SNMP — its
+      :class:`~otto.host.options.SnmpOptions` becomes a live
+      :class:`~otto.monitor.snmp.SnmpClient` (address defaulting to the host's
+      own ``ip``) plus the OID list to GET;
+    - otherwise it is polled by running shell commands, with its parser set
+      resolved via :func:`get_host_parsers` so per-host customisations
+      registered by init modules are honoured.
 
     Args:
         hosts: Hosts to sample on each tick.
         db_path: Optional SQLite file for persistence; ``None`` means in-memory.
     """
+    targets: list[MonitorTarget] = []
     for host in hosts:
         host.log = False
-
-    targets = [MonitorTarget(host=h, parsers=get_host_parsers(h.id)) for h in hosts]
+        snmp = host.snmp
+        if snmp is not None:
+            client = SnmpClient(
+                address=snmp.address or host.ip,
+                port=snmp.port,
+                community=snmp.community,
+                version=cast(SnmpVersion, snmp.version),
+            )
+            targets.append(MonitorTarget(
+                host=host, parsers={}, snmp=SnmpSource(client=client, oids=list(snmp.oids)),
+            ))
+        else:
+            targets.append(MonitorTarget(host=host, parsers=get_host_parsers(host.id)))
 
     return MetricCollector(
         targets=targets,

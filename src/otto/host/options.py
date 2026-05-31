@@ -359,7 +359,8 @@ class FtpOptions:
 
     def _client_kwargs(self) -> dict[str, Any]:
         """Build the kwargs dict passed to ``aioftp.Client()``. Only
-        includes fields the caller explicitly set so aioftp's defaults apply."""
+        includes fields the caller explicitly set so aioftp's defaults apply.
+        """
         kw: dict[str, Any] = {}
         if self.socket_timeout is not None:
             kw['socket_timeout'] = self.socket_timeout
@@ -460,3 +461,38 @@ class TftpOptions:
 
     timeout: float = 5.0
     """Per-block retransmit timeout, in seconds."""
+
+
+@dataclass(slots=True)
+class SnmpOptions:
+    """Per-host SNMP polling config — the acquisition half of SNMP monitoring.
+
+    Declared in lab data as a host's ``snmp`` block; carries only *what to poll*
+    and *how to reach the agent*. Presentation for each OID (chart/unit/scale)
+    lives in the monitor module's descriptor registry, never here. The monitor
+    factory turns this into a live
+    :class:`~otto.monitor.snmp.SnmpClient` + :class:`~otto.monitor.snmp.SnmpSource`.
+
+    A host carrying an ``snmp`` block is monitored over SNMP instead of by
+    running shell commands — the way otto reaches an embedded target's metrics
+    without contending for its single shell session. It is not embedded-only; a
+    Unix host may declare one too.
+    """
+
+    oids: tuple[str, ...] = ()
+    """OIDs to GET each tick (e.g. ``("1.3.6.1.2.1.1.3.0", ...)``)."""
+
+    community: str = 'public'
+    """SNMP v2c community string."""
+
+    port: int = 161
+    """UDP port of the agent (or of a relay standing in for it)."""
+
+    version: str = '2c'
+    """SNMP version — ``"2c"`` (default) or ``"1"``."""
+
+    address: str | None = None
+    """Address otto sends SNMP to. ``None`` (the default) means use the host's
+    own ``ip``; set it when the agent is reached at a different address than the
+    host's primary interface — e.g. a relay endpoint, or (future) a named
+    interface from a per-host interface map. See ``todo/multi_interface_hosts.md``."""

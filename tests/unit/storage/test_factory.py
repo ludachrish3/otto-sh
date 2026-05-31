@@ -6,9 +6,10 @@ from otto.host import os_profile
 from otto.host.command_frame import ZephyrFrame
 from otto.host.embedded_filesystem import FatRamFileSystem
 from otto.host.embeddedHost import EmbeddedHost
+from otto.host.options import SnmpOptions
 from otto.host.os_profile import register_os_profile
-from otto.host.unixHost import UnixHost
 from otto.host.toolchain import Toolchain
+from otto.host.unixHost import UnixHost
 from otto.storage.factory import (
     create_host_from_dict,
     validate_host_dict,
@@ -542,11 +543,13 @@ class TestEmbeddedFilesystem:
     """Lab data's ``filesystem`` field resolves to a typed
     :class:`~otto.host.embedded_filesystem.EmbeddedFileSystem` instance on
     the built host; validation rejects unknown variants up-front so a typo
-    is caught before the host is constructed."""
+    is caught before the host is constructed.
+    """
 
     def test_filesystem_defaults_to_no_filesystem(self):
         """No ``filesystem`` key in lab data means the host has no FS — the
-        runtime transfer short-circuits with a clear error."""
+        runtime transfer short-circuits with a clear error.
+        """
         from otto.host.embedded_filesystem import NoFileSystem
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
@@ -585,10 +588,49 @@ class TestEmbeddedFilesystem:
 
     def test_explicit_default_dest_dir_overrides_filesystem_mount(self):
         """A host with a real FS but a non-default ``default_dest_dir`` (e.g.
-        a sub-directory under the mount) should keep its lab-data value."""
+        a sub-directory under the mount) should keep its lab-data value.
+        """
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
             'filesystem': 'fat-ram',
             'default_dest_dir': '/RAM:/uploads',
         })
         assert str(host.default_dest_dir) == '/RAM:/uploads'
+
+
+class TestSnmpBlock:
+    """The lab ``snmp`` block deserializes to SnmpOptions on both bases."""
+
+    def test_absent_snmp_is_none(self):
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+        })
+        assert host.snmp is None
+
+    def test_embedded_snmp_block_parsed(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'snmp': {
+                'address': '10.10.200.14', 'port': 16101, 'community': 'public',
+                'oids': ['1.3.6.1.2.1.1.3.0', '1.3.6.1.4.1.63245.1.1.0'],
+            },
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert isinstance(host.snmp, SnmpOptions)
+        assert host.snmp.address == '10.10.200.14'
+        assert host.snmp.port == 16101
+        # JSON list coerced to tuple (frozen-friendly field type)
+        assert host.snmp.oids == ('1.3.6.1.2.1.1.3.0', '1.3.6.1.4.1.63245.1.1.0')
+
+    def test_unix_snmp_block_parsed(self):
+        """SNMP is not embedded-only — a Unix host may declare one."""
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'snmp': {'oids': ['1.3.6.1.2.1.1.3.0']},
+        })
+        assert isinstance(host, UnixHost)
+        assert isinstance(host.snmp, SnmpOptions)
+        # address omitted -> None (the monitor factory defaults it to host.ip)
+        assert host.snmp.address is None
+        assert host.snmp.community == 'public'  # field default
+        assert host.snmp.version == '2c'        # field default

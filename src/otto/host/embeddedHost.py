@@ -42,7 +42,7 @@ from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .embedded_transfer import EmbeddedFileTransfer, EmbeddedTransferType
 from .host import Host, SuppressCommandOutput, isDryRun
-from .options import TelnetOptions
+from .options import SnmpOptions, TelnetOptions
 from .remoteHost import OsType, RemoteHost
 from .repeat import RepeatRunner
 from .session import (
@@ -151,6 +151,12 @@ class EmbeddedHost(RemoteHost):
 
     telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
     """Connection options for the telnet shell (port, cols/rows, etc.)."""
+
+    snmp: Optional[SnmpOptions] = field(default=None, repr=False)
+    """Optional SNMP polling config (lab ``snmp`` block). When set, otto's
+    monitor collects this host's metrics over SNMP — a separate channel from
+    the single telnet console — instead of running shell commands. See
+    :class:`~otto.host.options.SnmpOptions`."""
 
     hop: Optional[str] = None
     """Host ID of the intermediate SSH hop used to reach this host, or None."""

@@ -1,0 +1,12 @@
+# otto out-of-tree Zephyr module: a minimal SNMP v2c agent for the test bed.
+#
+# Pulled into the stock `shell_module` build via
+#   -DEXTRA_ZEPHYR_MODULES=/vagrant/tests/firmware/zephyr/snmp_agent
+# (see the `west build` line in the repo Vagrantfile). The module contributes
+# its own Kconfig (the CONFIG_OTTO_SNMP_AGENT gate) and CMake sources; nothing
+# is compiled unless that symbol is set, so listing the module is harmless on
+# configs that leave it off.
+name: otto_snmp_agent
+build:
+  cmake: .
+  kconfig: Kconfig

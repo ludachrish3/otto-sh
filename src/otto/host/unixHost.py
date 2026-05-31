@@ -68,22 +68,23 @@ from .host import (
     isDryRun,
 )
 from .interact import run_ssh_login, run_telnet_login
-from .remoteHost import OsType, RemoteHost
-from .telnet import TelnetClient
 from .options import (
     FtpOptions,
     NcOptions,
     ScpOptions,
     SftpOptions,
+    SnmpOptions,
     SshOptions,
     TelnetOptions,
 )
+from .remoteHost import OsType, RemoteHost
 from .repeat import RepeatRunner
 from .session import (
     Expect,
     HostSession,
     SessionManager,
 )
+from .telnet import TelnetClient
 from .toolchain import Toolchain
 from .transfer import (
     FileTransfer,
@@ -187,6 +188,12 @@ class UnixHost(RemoteHost):
     nc_options: NcOptions = field(default_factory=NcOptions, repr=False)
     """Connection options for netcat file transfers (nc executable, port
     strategy, listener check, etc.)."""
+
+    snmp: Optional[SnmpOptions] = field(default=None, repr=False)
+    """Optional SNMP polling config (lab ``snmp`` block). When set, otto's
+    monitor collects this host's metrics over SNMP instead of running shell
+    commands. SNMP monitoring is not embedded-only — a Unix host may use it to
+    poll a real SNMP agent. See :class:`~otto.host.options.SnmpOptions`."""
 
     hop: Optional[str] = None
     """Host ID of the intermediate hop used to reach this host, or None for direct connection."""

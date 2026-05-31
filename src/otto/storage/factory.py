@@ -1,6 +1,9 @@
 from pathlib import Path
 from typing import Any, cast
 
+from ..host.command_frame import build_command_frame
+from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
+from ..host.embeddedHost import EmbeddedHost
 from ..host.options import (
     FtpOptions,
     LocalPortForward,
@@ -8,17 +11,15 @@ from ..host.options import (
     RemotePortForward,
     ScpOptions,
     SftpOptions,
+    SnmpOptions,
     SocksForward,
     SshOptions,
     TelnetOptions,
 )
-from ..host.command_frame import build_command_frame
-from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
-from ..host.embeddedHost import EmbeddedHost
 from ..host.os_profile import OsProfile, build_os_profile, get_os_profile, registered_profile_names
 from ..host.remoteHost import RemoteHost
-from ..host.unixHost import UnixHost
 from ..host.toolchain import Toolchain
+from ..host.unixHost import UnixHost
 
 
 def _build_toolchain(raw: dict[str, Any]) -> Toolchain:
@@ -77,6 +78,18 @@ def _build_ftp_options(raw: dict[str, Any]) -> FtpOptions:
 
 def _build_nc_options(raw: dict[str, Any]) -> NcOptions:
     return NcOptions(**raw)
+
+
+def _build_snmp_options(raw: dict[str, Any]) -> SnmpOptions:
+    """Build an :class:`SnmpOptions` from a host's ``snmp`` block.
+
+    JSON has no tuples, so the ``oids`` list is converted to a tuple to match
+    the frozen-friendly field type.
+    """
+    kwargs = dict(raw)
+    if isinstance(kwargs.get('oids'), list):
+        kwargs['oids'] = tuple(kwargs['oids'])
+    return SnmpOptions(**kwargs)
 
 
 _OPTIONS_BUILDERS: dict[str, Any] = {
@@ -179,6 +192,10 @@ def _create_unix_host(
     if 'toolchain' in kwargs and isinstance(kwargs['toolchain'], dict):
         kwargs['toolchain'] = _build_toolchain(kwargs['toolchain'])
 
+    # Convert the lab ``snmp`` block to SnmpOptions (monitor over SNMP).
+    if isinstance(kwargs.get('snmp'), dict):
+        kwargs['snmp'] = _build_snmp_options(kwargs['snmp'])
+
     # Convert each *_options dict to its dataclass instance, merging per-key:
     # repo defaults (lowest) < profile defaults < host's own values (highest).
     defaults = defaults or {}
@@ -241,6 +258,10 @@ def _create_embedded_host(
     # (the stock Zephyr 3.7/4.4 shell) — no action needed here.
     if 'command_frame' in kwargs and isinstance(kwargs['command_frame'], str):
         kwargs['command_frame'] = build_command_frame(kwargs['command_frame'])
+
+    # Convert the lab ``snmp`` block to SnmpOptions (monitor over SNMP).
+    if isinstance(kwargs.get('snmp'), dict):
+        kwargs['snmp'] = _build_snmp_options(kwargs['snmp'])
 
     # telnet_options is the only per-protocol option table an embedded host
     # uses; merge per-key: repo defaults < profile defaults < host's own values.

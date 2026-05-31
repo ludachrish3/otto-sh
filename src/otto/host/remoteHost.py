@@ -33,6 +33,8 @@ from .host import BaseHost
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
+    from .options import SnmpOptions
+
 logger = getOttoLogger()
 
 OsType = Literal['unix', 'embedded']
@@ -118,6 +120,12 @@ class RemoteHost(BaseHost):
     target. Defaults to ``Path()`` on Unix, which preserves the existing
     "relative path lands in the SSH user's home" behavior."""
 
+    snmp: Optional[SnmpOptions]
+    """Optional per-host SNMP polling config (lab ``snmp`` block), or None. When
+    set, otto's monitor collects this host over SNMP instead of by running shell
+    commands. Declared on both concrete subclasses; see
+    :class:`~otto.host.options.SnmpOptions`."""
+
     max_filename_len: int
     """Upper bound on the basename length (including extension) accepted by
     the target's filesystem. Defaults to ``255`` on every concrete subclass
@@ -145,7 +153,8 @@ class RemoteHost(BaseHost):
 
         Unix hosts whose default is the empty ``Path()`` get the original
         behavior (an empty caller dest stays empty → SCP/SFTP resolve to the
-        SSH user's home directory)."""
+        SSH user's home directory).
+        """
         if dest_dir.is_absolute():
             return dest_dir
         if str(dest_dir) in ('', '.'):
@@ -214,8 +223,9 @@ class RemoteHost(BaseHost):
 
         Cycle detection prevents infinite loops (e.g. A hops through B, B hops through A).
         """
-        from ..configmodule import get_host
         from asyncssh import connect as _ssh_connect
+
+        from ..configmodule import get_host
         from .transport import SshHopTransport
 
         hop_id = self.hop

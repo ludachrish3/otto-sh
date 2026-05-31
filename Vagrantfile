@@ -463,6 +463,20 @@ Vagrant.configure("2") do |config|
                     dtc_var="DTC_OVERLAY_FILE"
                 fi
 
+                # The "extra modules" CMake var — which pulls in otto's SNMP-agent
+                # module — was renamed across the matrix, exactly like the conf var
+                # above: 2.7 only knows ZEPHYR_EXTRA_MODULES; 3.x+ added the
+                # reordered EXTRA_ZEPHYR_MODULES. An unknown -D is silently ignored,
+                # so passing the wrong one leaves the module unregistered — its
+                # OTTO_SNMP_AGENT symbol then stays *undefined*, and the overlay
+                # that assigns it aborts the build with "undefined symbol". Pick the
+                # name this workspace's CMake actually honors.
+                if grep -rq "EXTRA_ZEPHYR_MODULES" zephyr/cmake; then
+                    mod_var="EXTRA_ZEPHYR_MODULES"
+                else
+                    mod_var="ZEPHYR_EXTRA_MODULES"
+                fi
+
                 # Optional per-version supplement layered between the shared
                 # overlay and the per-config overlay. Holds symbols that exist
                 # on this LTS but not the oldest in the matrix (e.g. the
@@ -481,17 +495,28 @@ Vagrant.configure("2") do |config|
                         dt_flag="-D${dtc_var}=/vagrant/tests/firmware/zephyr/configs/$cfg/app.overlay"
                     fi
                     echo "=== building zephyr config: $cfg ==="
+                    # ${mod_var} pulls in otto's out-of-tree SNMP-agent module (a
+                    # separate, non-contending monitoring channel — the Zephyr telnet
+                    # shell allows only one session, so metrics can't ride the same
+                    # console as command execution). Registering the module defines
+                    # its CONFIG_OTTO_SNMP_AGENT symbol on every version; the agent is
+                    # only *built* where an overlay sets it =y, which the per-version
+                    # supplements do for 3.7/4.x. 2.7 leaves it off — the agent C
+                    # targets the 3.0+ `zephyr/`-prefixed includes and the newer
+                    # SYS_INIT signature — so there the module registers but compiles
+                    # nothing.
                     west build -p always -b qemu_x86 \
                         zephyr/samples/subsys/shell/shell_module \
                         -d /home/vagrant/build/$cfg \
                         -- -D${conf_var}="/vagrant/tests/firmware/zephyr/common/otto-overlay.conf;${ver_overlay}/vagrant/tests/firmware/zephyr/configs/$cfg/overlay.conf" \
+                           -D${mod_var}=/vagrant/tests/firmware/zephyr/snmp_agent \
                            $dt_flag
                 done
 
                 deactivate
             done <<EOF
-v3_7|v3.7-branch|0.16.8|v3_7_fat_ram v3_7_lfs v3_7_no_fs
 v2_7|v2.7-branch|0.16.8|v2_7_fat_ram v2_7_lfs v2_7_no_fs
+v3_7|v3.7-branch|0.16.8|v3_7_fat_ram v3_7_lfs v3_7_no_fs
 v4_4|v4.4-branch|1.0.1|v4_4_fat_ram v4_4_lfs v4_4_no_fs
 EOF
         SHELL
@@ -679,6 +704,67 @@ EOF
                        v4_4_fat_ram v4_4_lfs v4_4_no_fs; do
                 systemctl enable zephyr-qemu-${cfg}.service
                 systemctl restart zephyr-qemu-${cfg}.service
+            done
+        SHELL
+
+        # SNMP UDP relay — bridges otto's SNMP manager to each Zephyr
+        # instance's agent (UDP/161) over a channel that does NOT contend with
+        # the single telnet shell session.
+        #
+        # Topology note: the dev VM (10.10.200.100) and this zephyr VM
+        # (10.10.200.14) share the private /24, but the Zephyr instances live
+        # on TAP-side /30s (192.0.2.x) that are reachable ONLY from inside this
+        # VM. So a socat relay bound to this VM's private-network address lets
+        # otto's pysnmp reach each agent directly over 10.10.200.0/24 — no
+        # SSH-UDP tunnelling (SSH forwards TCP only). Each instance gets a
+        # distinct relay port on 10.10.200.14; the host's lab data points its
+        # `snmp` block at 10.10.200.14:<port>. (A general "UDP over an SSH hop"
+        # otto feature — for real targets genuinely behind an SSH-only hop — is
+        # tracked in todo/udp_hop_forwarding.md and would retire this relay.)
+        #
+        # `cfg:zephyr_ip:relay_port` — zephyr_ip is the device side of each
+        # /30 (host_ip - 1; see the zephyr-qemu /30 table above).
+        zephyr.vm.provision "shell", name: "zephyr-snmp-relay", keep_color: true, inline: <<-SHELL
+            for relay_entry in "v3_7_fat_ram:192.0.2.1:16101"   \
+                               "v3_7_lfs:192.0.2.5:16102"        \
+                               "v3_7_no_fs:192.0.2.9:16103"      \
+                               "v2_7_fat_ram:192.0.2.13:16104"   \
+                               "v2_7_lfs:192.0.2.17:16105"       \
+                               "v2_7_no_fs:192.0.2.21:16106"     \
+                               "v4_4_fat_ram:192.0.2.25:16107"   \
+                               "v4_4_lfs:192.0.2.29:16108"       \
+                               "v4_4_no_fs:192.0.2.33:16109"; do
+                cfg=$(echo "$relay_entry" | cut -d: -f1)
+                zephyr_ip=$(echo "$relay_entry" | cut -d: -f2)
+                relay_port=$(echo "$relay_entry" | cut -d: -f3)
+
+                cat > /etc/systemd/system/zephyr-snmp-relay-${cfg}.service <<EOF
+[Unit]
+Description=SNMP UDP relay for Zephyr ${cfg} (10.10.200.14:${relay_port} -> ${zephyr_ip}:161)
+# The relay only makes sense while the instance is up; pull it along with the
+# QEMU unit so a restart of the instance re-establishes the relay's peer.
+After=zephyr-qemu-${cfg}.service
+Requires=zephyr-qemu-${cfg}.service
+
+[Service]
+Type=simple
+# UDP4-LISTEN,fork spawns a child per client so concurrent pollers don't
+# serialize; -T15 reaps idle children. reuseaddr survives quick restarts.
+ExecStart=/usr/bin/socat -T15 UDP4-LISTEN:${relay_port},bind=10.10.200.14,fork,reuseaddr UDP4:${zephyr_ip}:161
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+            done
+
+            systemctl daemon-reload
+            for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs   \
+                       v2_7_fat_ram v2_7_lfs v2_7_no_fs   \
+                       v4_4_fat_ram v4_4_lfs v4_4_no_fs; do
+                systemctl enable zephyr-snmp-relay-${cfg}.service
+                systemctl restart zephyr-snmp-relay-${cfg}.service
             done
         SHELL
 

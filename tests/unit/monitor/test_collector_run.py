@@ -16,7 +16,8 @@ import pytest
 
 from otto.host import RunResult
 from otto.monitor.collector import MetricCollector, MonitorTarget
-from otto.monitor.parsers import MetricParser, MetricDataPoint
+from otto.monitor.parsers import MetricDataPoint, MetricParser
+from otto.monitor.snmp import OID_SYS_UPTIME, SnmpSource
 from otto.utils import CommandStatus, Status
 
 
@@ -205,3 +206,66 @@ class TestCollectorRun:
         assert elapsed < 2.0, (
             f'Run took {elapsed:.2f}s — slow host may be blocking fast host'
         )
+
+
+class _FakeSnmpClient:
+    """Duck-typed SnmpClient: returns canned varbind values, records calls."""
+
+    def __init__(self, values: dict[str, float | None]) -> None:
+        self._values = values
+        self.calls = 0
+
+    async def get(self, oids: list[str]) -> dict[str, float | None]:
+        self.calls += 1
+        return {oid: self._values.get(oid) for oid in oids}
+
+
+class TestSnmpCollection:
+    """An SNMP target collects via its client, not the host shell."""
+
+    def _make_snmp_target(self, name: str, client: _FakeSnmpClient) -> tuple[MagicMock, MonitorTarget]:
+        host = MagicMock()
+        host.name = name
+        host.log = False
+        host.run = AsyncMock()  # must NOT be called for an SNMP target
+        target = MonitorTarget(
+            host=host,
+            parsers={},
+            snmp=SnmpSource(client=client, oids=[OID_SYS_UPTIME]),  # type: ignore[arg-type]
+        )
+        return host, target
+
+    @pytest.mark.asyncio
+    async def test_snmp_target_populates_series_from_oids(self):
+        client = _FakeSnmpClient({OID_SYS_UPTIME: 12345})
+        host, target = self._make_snmp_target('sprout', client)
+        collector = MetricCollector(targets=[target])
+
+        await collector.run(
+            interval=timedelta(milliseconds=100),
+            duration=timedelta(milliseconds=350),
+        )
+
+        series = collector.get_series()
+        # sysUpTime (1/100 s) scaled to seconds by the descriptor: 12345 -> 123.45
+        assert 'sprout/Uptime' in series, f'series: {list(series)}'
+        assert series['sprout/Uptime'][0][1] == 123.45
+        assert client.calls >= 2          # initial + at least one loop tick
+        host.run.assert_not_called()      # no shell, no core-count probe
+
+    @pytest.mark.asyncio
+    async def test_snmp_and_shell_targets_coexist(self):
+        client = _FakeSnmpClient({OID_SYS_UPTIME: 100})
+        _, snmp_target = self._make_snmp_target('sprout', client)
+        shell_host = _make_mock_host('carrot')
+        shell_target = MonitorTarget(host=shell_host, parsers={StubParser.command: StubParser()})
+        collector = MetricCollector(targets=[snmp_target, shell_target])
+
+        await collector.run(
+            interval=timedelta(milliseconds=100),
+            duration=timedelta(milliseconds=350),
+        )
+
+        series = collector.get_series()
+        assert 'sprout/Uptime' in series   # SNMP path
+        assert 'carrot/value' in series    # shell path, unaffected
