@@ -286,9 +286,8 @@ class TestConcurrentEmbeddedTransfer:
         the exact shape that the test_instruction failure produced.
 
         The fs-vs-no-fs distinction is derived from ``_ZEPHYR_DEST`` (mount is
-        ``None`` for a no-FS target), so every no-FS backend in the matrix —
-        ``sprout_no_fs`` / ``sprout27_no_fs`` / ``sprout44_no_fs`` — is checked
-        the same way without hard-coding ne names.
+        ``None`` for a no-FS target), so the no-FS backend in the matrix —
+        ``sprout_no_fs`` — is checked the same way without hard-coding ne names.
         """
         assert not isinstance(result, BaseException), (
             f"{host_id}: put raised — concurrent session init regressed. "

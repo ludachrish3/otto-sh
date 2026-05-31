@@ -515,9 +515,9 @@ Vagrant.configure("2") do |config|
 
                 deactivate
             done <<EOF
-v2_7|v2.7-branch|0.16.8|v2_7_fat_ram v2_7_lfs v2_7_no_fs
+v2_7|v2.7-branch|0.16.8|v2_7_fat_ram
 v3_7|v3.7-branch|0.16.8|v3_7_fat_ram v3_7_lfs v3_7_no_fs
-v4_4|v4.4-branch|1.0.1|v4_4_fat_ram v4_4_lfs v4_4_no_fs
+v4_4|v4.4-branch|1.0.1|v4_4_lfs
 EOF
         SHELL
 
@@ -559,11 +559,7 @@ EOF
             #   3.7  LFS:    .5/.6    (192.0.2.4/30)
             #   3.7  no_fs:  .9/.10   (192.0.2.8/30)
             #   2.7  FAT:    .13/.14  (192.0.2.12/30)
-            #   2.7  LFS:    .17/.18  (192.0.2.16/30)
-            #   2.7  no_fs:  .21/.22  (192.0.2.20/30)
-            #   4.4  FAT:    .25/.26  (192.0.2.24/30)
             #   4.4  LFS:    .29/.30  (192.0.2.28/30)
-            #   4.4  no_fs:  .33/.34  (192.0.2.32/30)
             # Resolve the Zephyr-SDK qemu binary ONCE here and bake the
             # absolute path into each wrapper script below. An earlier draft
             # tried to defer this to wrapper-run time (``SDK_QEMU=\$(ls
@@ -582,11 +578,7 @@ EOF
                              "v3_7_lfs:lfs:192.0.2.6"          \
                              "v3_7_no_fs:nofs:192.0.2.10"      \
                              "v2_7_fat_ram:27fat:192.0.2.14"   \
-                             "v2_7_lfs:27lfs:192.0.2.18"       \
-                             "v2_7_no_fs:27nofs:192.0.2.22"    \
-                             "v4_4_fat_ram:44fat:192.0.2.26"   \
-                             "v4_4_lfs:44lfs:192.0.2.30"       \
-                             "v4_4_no_fs:44nofs:192.0.2.34"; do
+                             "v4_4_lfs:44lfs:192.0.2.30"; do
                 cfg=$(echo "$cfg_entry" | cut -d: -f1)
                 short=$(echo "$cfg_entry" | cut -d: -f2)
                 host_ip=$(echo "$cfg_entry" | cut -d: -f3)
@@ -700,8 +692,8 @@ EOF
             # actually pick up the regenerated unit file, wrapper script, and
             # — critically — the fresh TAPs the new ExecStartPre creates.
             for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs   \
-                       v2_7_fat_ram v2_7_lfs v2_7_no_fs   \
-                       v4_4_fat_ram v4_4_lfs v4_4_no_fs; do
+                       v2_7_fat_ram                        \
+                       v4_4_lfs; do
                 systemctl enable zephyr-qemu-${cfg}.service
                 systemctl restart zephyr-qemu-${cfg}.service
             done
@@ -729,11 +721,7 @@ EOF
                                "v3_7_lfs:192.0.2.5:16102"        \
                                "v3_7_no_fs:192.0.2.9:16103"      \
                                "v2_7_fat_ram:192.0.2.13:16104"   \
-                               "v2_7_lfs:192.0.2.17:16105"       \
-                               "v2_7_no_fs:192.0.2.21:16106"     \
-                               "v4_4_fat_ram:192.0.2.25:16107"   \
-                               "v4_4_lfs:192.0.2.29:16108"       \
-                               "v4_4_no_fs:192.0.2.33:16109"; do
+                               "v4_4_lfs:192.0.2.29:16108"; do
                 cfg=$(echo "$relay_entry" | cut -d: -f1)
                 zephyr_ip=$(echo "$relay_entry" | cut -d: -f2)
                 relay_port=$(echo "$relay_entry" | cut -d: -f3)
@@ -761,8 +749,8 @@ EOF
 
             systemctl daemon-reload
             for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs   \
-                       v2_7_fat_ram v2_7_lfs v2_7_no_fs   \
-                       v4_4_fat_ram v4_4_lfs v4_4_no_fs; do
+                       v2_7_fat_ram                        \
+                       v4_4_lfs; do
                 systemctl enable zephyr-snmp-relay-${cfg}.service
                 systemctl restart zephyr-snmp-relay-${cfg}.service
             done

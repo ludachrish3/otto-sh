@@ -181,27 +181,35 @@ def make_host(ne: str, **kwargs: Any) -> UnixHost:
 # Lets host1 construct an EmbeddedHost directly via the factory without
 # special-casing each Zephyr config in the fixture body.
 #
-# The matrix is Zephyr {2.7, 3.7, 4.4} LTS x {FAT-on-RAM, LittleFS, no-FS} —
-# nine QEMU instances on the `zephyr` Vagrant VM. The 3.7 ids are unversioned
-# for backwards compatibility (they predate the multi-version matrix and are
-# referenced by name in the unit tree); 2.7 and 4.4 carry an explicit version
-# token. This dict is the single source of truth for the embedded backend
-# list — the integration test files import :data:`EMBEDDED_BACKENDS` rather
-# than re-listing the ids, so a new row here flows into every parametrized
-# contract suite without touching the test files.
+# The matrix is anchored on Zephyr 3.7 LTS, which carries the full
+# {FAT-on-RAM, LittleFS, no-FS} set; 2.7 and 4.4 each contribute a single fs
+# cell — five QEMU instances on the `zephyr` Vagrant VM. The trim is
+# deliberate: otto's exercised device surface is only `fs read` / `fs write` /
+# `fs rm` plus the command-frame retcode parse (perf/disk metrics ride SNMP,
+# not the shell), and none of the per-version `fs` divergences (cp/mv, the
+# `ls` size column, the `kernel thread` rename) are touched. So fat-vs-lfs is
+# a version-independent EmbeddedFileSystem distinction fully covered once on
+# 3.7, and a second fs cell on another version would only re-smoke that
+# firmware's identical fs surface. 2.7 stays because its command frame is
+# genuinely different (ZephyrInlineRetcodeFrame, inline retcode); 4.4 stays as
+# a newest-LTS firmware-drift sentinel; no-FS likewise needs only one backend
+# (the transfer gate short-circuits before any frame). The 3.7 ids are
+# unversioned for backwards compatibility (they predate the multi-version
+# matrix and are referenced by name in the unit tree); 2.7 and 4.4 carry an
+# explicit version token. This dict is the single source of truth for the
+# embedded backend list — the integration test files import
+# :data:`EMBEDDED_BACKENDS` rather than re-listing the ids, so a new row here
+# flows into every parametrized contract suite without touching the test files.
 _ZEPHYR_BACKEND_NE: dict[str, str] = {
-    # Zephyr 3.7 LTS (the original three; ids kept unversioned).
+    # Zephyr 3.7 LTS — primary version: full {FAT, LittleFS, no-FS}. ids kept
+    # unversioned (predate the matrix; referenced by name in the unit tree).
     "zephyr_fat": "sprout",
     "zephyr_lfs": "sprout_lfs",
     "zephyr_no_fs": "sprout_no_fs",
-    # Zephyr 2.7 LTS.
+    # Zephyr 2.7 LTS — distinct command frame (inline retcode); one fs cell.
     "zephyr_27_fat": "sprout27",
-    "zephyr_27_lfs": "sprout27_lfs",
-    "zephyr_27_no_fs": "sprout27_no_fs",
-    # Zephyr 4.4 LTS.
-    "zephyr_44_fat": "sprout44",
+    # Zephyr 4.4 LTS — newest-LTS firmware-drift sentinel; one fs cell.
     "zephyr_44_lfs": "sprout44_lfs",
-    "zephyr_44_no_fs": "sprout44_no_fs",
 }
 
 # Ordered list of embedded backend ids — imported by the integration contract
@@ -245,8 +253,9 @@ async def host1(request):
     - ``"local"``              -> LocalHost.
     - any id in :data:`EMBEDDED_BACKENDS` -> EmbeddedHost on the matching
       Zephyr QEMU target, built via the storage factory from its lab-data
-      entry. The matrix is Zephyr {2.7, 3.7, 4.4} x {FAT-on-RAM, LittleFS,
-      no-FS}; see :data:`_ZEPHYR_BACKEND_NE` for the id -> `ne` mapping.
+      entry. The matrix anchors the full {FAT-on-RAM, LittleFS, no-FS} set on
+      3.7, with a single fs cell on 2.7 and 4.4; see :data:`_ZEPHYR_BACKEND_NE`
+      for the id -> `ne` mapping and the trim rationale.
     """
     backend = request.param
     if backend == "local":
