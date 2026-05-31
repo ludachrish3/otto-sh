@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-all stability-embedded repeat
+.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-all stability-embedded repeat vm-health qemu-restart
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -28,12 +28,16 @@ NOX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
 
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
-# Docker integration tests are pinned to one xdist worker (xdist_group)
-# because they share /tmp/otto-docker/repo1/ on the parent and can't safely
-# parallelize compose_up's `rm -rf` of the staging dir. That serialization
-# is what dominates wall time; 4 min leaves headroom for slower runners.
+# Two things dominate wall time: Docker integration tests are pinned to one
+# xdist worker (xdist_group) because they share /tmp/otto-docker/repo1/ on the
+# parent and can't safely parallelize compose_up's `rm -rf` of the staging
+# dir; and the embedded Zephyr tests are serialized per-device (one telnet
+# client per console — see tests/integration/host/conftest.py). The heavy
+# stability/soak tests are excluded from `coverage` (the `stability` marker)
+# and run only via `make stability-all` / `stability-embedded`, so 6 min
+# leaves comfortable headroom for slower runners.
 # --kill-after escalates SIGTERM → SIGKILL if xdist workers don't drain.
-PYTEST_TIMEOUT := 240s
+PYTEST_TIMEOUT := 360s
 TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 
 all: ## Run full pipeline against the dev VM (includes integration tests)
@@ -104,8 +108,8 @@ build: ## Build the project with uv
 test: ## Run tests (use TESTS= to filter)
 	uv run pytest -k '$(TESTS)'
 
-coverage: ## Run tests and enforce coverage threshold
-	$(TIMEOUT_CMD) uv run pytest --cov-fail-under=$(COVERAGE_THRESHOLD)
+coverage: ## Run tests and enforce coverage threshold (excludes heavy `stability` tests — those run via `make stability-all`)
+	$(TIMEOUT_CMD) uv run pytest -m "not stability" --cov-fail-under=$(COVERAGE_THRESHOLD)
 
 coverage-unit: ## Run unit tests only (no Vagrant VMs needed) and enforce CI threshold
 	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not integration and not hops" --cov-fail-under=$(CI_COVERAGE_THRESHOLD)
@@ -161,6 +165,12 @@ repeat: ## Run the full unit suite (including integration) under pytest-repeat. 
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest tests/unit \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider
+
+vm-health: ## Probe every lab VM + Zephyr QEMU instance; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
+	uv run python scripts/lab_health.py
+
+qemu-restart: ## Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded bed.
+	uv run python scripts/lab_health.py --restart-qemu
 
 typecheck: ## Run ty type checker (advisory during trial; not wired into `all`)
 	uv run ty check

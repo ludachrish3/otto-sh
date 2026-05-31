@@ -217,6 +217,80 @@ class TestSingleConsole:
         )
 
 
+@pytest.mark.integration
+@pytest.mark.embedded
+@pytest.mark.asyncio
+@pytest.mark.xdist_group("zephyr_fat")
+async def test_concurrent_clients_to_one_console_contend_and_recover():
+    """Two *separate* telnet clients to one device contend cleanly and the
+    console recovers — regression guard for the single-telnet-client wedge.
+
+    Unlike :meth:`TestSingleConsole.test_second_concurrent_session_is_not_silent`
+    (which opens a second *named session* on one host — that reuses the cached
+    ``TelnetClient``), this opens two independent ``EmbeddedHost``s to the same
+    backend, i.e. two real telnet connections. That is what two xdist workers —
+    or a fan-out test overlapping a per-backend test — produced before the
+    ``zephyr_bed`` serialization (see the conftest): the Zephyr
+    ``shell_telnet`` backend serves one client at a time, logs ``Telnet client
+    already connected`` for the second, and the loser's readiness handshake
+    gets no shell → ``shell never became ready``. The bug was that this could
+    cascade and leave the console wedged for later connects.
+
+    This reproduces the contention *within a single test* (so it is immune to
+    the cross-worker serialization that prevents it in the suite at large) and
+    pins the safe invariants:
+
+    1. **At most one client wins** — the second never silently shares the one
+       console (the dangerous regression).
+    2. **The loser fails bounded**, not hung — a bare ``ConnectionError`` /
+       ``TimeoutError`` from the init ceiling; the module ``timeout(30)`` marker
+       fails the test if a regression turns it into an unbounded stall.
+    3. **The console recovers** — a fresh connection works once the contention
+       clears, so the single client slot is released, not left wedged.
+
+    One representative backend (3.7 FAT) suffices: the single-client constraint
+    lives in ``CONFIG_SHELL_BACKEND_TELNET`` and is identical across the matrix,
+    so this keeps the cost to a single ~15s loser timeout rather than one per
+    backend.
+    """
+    data = host_data(_BACKEND_NE["zephyr_fat"])
+    host_a = create_host_from_dict(data)
+    host_b = create_host_from_dict(data)
+    try:
+        results = await asyncio.gather(
+            host_a.oneshot("kernel uptime"),
+            host_b.oneshot("kernel uptime"),
+            return_exceptions=True,
+        )
+    finally:
+        await asyncio.gather(host_a.close(), host_b.close(), return_exceptions=True)
+
+    winners = [r for r in results if not isinstance(r, BaseException)]
+    losers = [r for r in results if isinstance(r, BaseException)]
+
+    # (1) The single console must never serve two clients at once.
+    assert len(winners) <= 1, (
+        f"both telnet clients won against a single-console device: {results!r}"
+    )
+    # (2) Any loser failed within the bounded init ceiling (a true hang would
+    #     trip the module-level timeout(30) marker before reaching here).
+    for loser in losers:
+        assert isinstance(loser, (ConnectionError, asyncio.TimeoutError)), (
+            f"unexpected loser exception type: {loser!r}"
+        )
+
+    # (3) The console is usable again once the contention clears — the slot was
+    #     released, not left wedged.
+    host_c = create_host_from_dict(data)
+    try:
+        recovered = (await host_c.oneshot("kernel uptime"))
+    finally:
+        await host_c.close()
+    assert recovered.status == Status.Success, (
+        f"console left wedged after contention: {recovered.output!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Concurrent multi-target file transfer (regression guard for the
 # `otto -l embedded run test-instruction` failure: every Zephyr target's
@@ -251,6 +325,13 @@ _ZEPHYR_DEST: dict[str, str | None] = _zephyr_dest_map()
 @pytest.mark.embedded
 @pytest.mark.xdist_group("zephyr_fanout")
 class TestConcurrentEmbeddedTransfer:
+    # This fan-out class opens one telnet client per device across *all*
+    # devices at once, so its tests must run together on a single worker —
+    # hence the explicit ``zephyr_fanout`` group (the conftest leaves it as-is
+    # rather than reassigning a per-backend group). Residual known gap: this
+    # group can still land on a different worker than the per-backend device
+    # groups, so a fan-out test may briefly overlap a per-backend test on the
+    # same device's single console. See the conftest grouping note.
     """Fan-out file transfer across multiple Zephyr targets sharing one
     SSH hop. Reproduces the failure mode hit by ``test_instruction`` in
     ``tests/repo1/pylib/repo1_instructions/install.py``: every Zephyr

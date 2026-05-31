@@ -76,7 +76,10 @@ _ALL_BACKENDS = pytest.mark.parametrize(
 
 # Embedded transfers via the console are slow — give the suite room to
 # breathe. Unix iterations finish well inside this ceiling.
-pytestmark = pytest.mark.timeout(600)
+#
+# `stability` keeps these heavy soak tests out of `make coverage` (which runs
+# `-m "not stability"`); they run via `make stability-embedded` / `stability-all`.
+pytestmark = [pytest.mark.timeout(600), pytest.mark.stability]
 
 
 @_ALL_BACKENDS

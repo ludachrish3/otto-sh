@@ -35,6 +35,9 @@ from tests.unit.host._transfer_retry import transfer_with_retry
 # suite loudly if it ever comes back — no warning filter here.
 pytestmark = [
     pytest.mark.timeout(60),
+    # `stability` keeps these soak tests out of `make coverage` (`-m "not
+    # stability"`); they run via `make stability-all` (tier 2).
+    pytest.mark.stability,
 ]
 
 
