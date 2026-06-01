@@ -12,6 +12,8 @@ multi-hop UnixHost tests; both follow the pattern documented in
 :func:`otto.configmodule.setConfigModule`.
 """
 
+import fcntl
+import os
 import sys
 from pathlib import Path
 
@@ -185,6 +187,67 @@ def _referenced_backends(item: pytest.Item) -> list[str]:
         if isinstance(v, str) and v in _ZEPHYR_BACKEND_NE
     }
     return sorted(seen)
+
+
+# ---------------------------------------------------------------------------
+# Fan-out vs per-device console serialization (cross-worker reader/writer lock)
+#
+# The grouping above pins each *device's* tests to one worker, so two clients
+# never hit one console from the per-backend suites. The fan-out tests
+# (``TestConcurrentEmbeddedTransfer``) are the residual gap called out in the
+# grouping note: they open *every* device at once and live in their own
+# ``zephyr_fanout`` group, so under ``-n auto --dist loadgroup`` they can land
+# on a different worker than a per-device group and race it for a single
+# console — the loser's readiness handshake gets no shell and fails with the
+# ``shell never became ready`` signature (an ``IncompleteReadError(0 bytes)``
+# on the telnet stream). Reproduced reliably; a serial (``-n0``) run is clean.
+#
+# A cross-worker reader/writer lock closes the gap without serializing the
+# whole bed (the conftest grouping note measured full one-group serialization
+# at >450s, over the Makefile's 240s cap). Per-device tests take a SHARED lock
+# — different devices still parallelize across workers, preserving the run time
+# the per-device grouping buys — while a fan-out test takes an EXCLUSIVE lock,
+# so it waits for all in-flight per-device tests to drain and blocks new ones
+# for the brief window it holds every console.
+#
+# flock is reader-preferring on Linux, so a continuously-busy reader set could
+# in theory starve the exclusive waiter; in practice the per-device tests are
+# short and finite, the gap between a reader releasing and the next acquiring
+# lets the waiter in within a few cycles, and the fan-out's own
+# ``@pytest.mark.timeout`` bounds the worst case. Readers never wait on the
+# writer, so the lock cannot deadlock.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _console_access_lock(request: pytest.FixtureRequest, tmp_path_factory):
+    """Serialize the fan-out console tests against the per-device tests.
+
+    Autouse + function-scoped, and (having no dependency on ``host1``) set up
+    before it, so the lock is held across the whole window ``host1`` keeps a
+    console open — its setup through its ``close()`` in teardown — not just the
+    test body. Non-embedded tests in this tree are a no-op.
+    """
+    if "embedded" not in request.node.keywords:
+        yield
+        return
+    # ``getbasetemp().parent`` is common to every xdist worker (each worker's
+    # basetemp is a child of it) and to a plain ``-n0`` run — the documented
+    # pytest-xdist pattern for a cross-worker shared path. O_CREAT is safe under
+    # the concurrent first-touch: the file is created once and reused.
+    lock_path = tmp_path_factory.getbasetemp().parent / "zephyr_console.lock"
+    # A fan-out test references no single backend (it opens all of them); a
+    # per-device test names exactly one — the same signal the wedge gate uses.
+    exclusive = not _referenced_backends(request.node)
+    mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, mode)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
