@@ -29,7 +29,7 @@ import pytest
 import otto.host.transfer as transfer_mod
 from otto.utils import Status
 
-from tests.conftest import EMBEDDED_BACKENDS
+from tests.conftest import EMBEDDED_BACKENDS, remote_name
 
 
 # Backend ids that carry the `embedded` marker (the Zephyr QEMU instances on
@@ -127,7 +127,7 @@ class TestTransferContract:
 
     @pytest.mark.asyncio
     async def test_put_get_roundtrip_byte_identical(
-        self, host1, host1_kit, tmp_path: Path,
+        self, host1, host1_kit, worker_id, tmp_path: Path,
     ):
         """``put`` then ``get`` must round-trip a small binary file
         byte-identically. Skipped for backends with no filesystem — they
@@ -136,7 +136,8 @@ class TestTransferContract:
             pytest.skip("backend has no filesystem — see no-FS error test")
 
         payload = b"otto contract test payload\n\x00\x01\x02"
-        local_src = tmp_path / "contract.bin"
+        name = remote_name(worker_id, "contract.bin")
+        local_src = tmp_path / name
         local_src.write_bytes(payload)
 
         put_status, put_err = await host1.put(
@@ -146,15 +147,15 @@ class TestTransferContract:
 
         get_dir = tmp_path / "received"
         get_dir.mkdir()
-        remote_path = Path(host1_kit.temp_remote_dir) / "contract.bin"
+        remote_path = Path(host1_kit.temp_remote_dir) / name
         get_status, get_err = await host1.get([remote_path], get_dir)
         assert get_status == Status.Success, f"get failed: {get_err}"
 
-        assert (get_dir / "contract.bin").read_bytes() == payload
+        assert (get_dir / name).read_bytes() == payload
 
     @pytest.mark.asyncio
     async def test_put_get_roundtrip_survives_back_to_back_calls(
-        self, host1, host1_kit, tmp_path: Path,
+        self, host1, host1_kit, worker_id, tmp_path: Path,
     ):
         """A second ``put → get`` against the same host must succeed. The
         first round-trip warms whatever per-host state exists (the
@@ -168,9 +169,11 @@ class TestTransferContract:
 
         payload_a = b"otto contract test payload A\n\x00\x01"
         payload_b = b"otto contract test payload B\n\x02\x03"
-        local_a = tmp_path / "a.bin"
+        name_a = remote_name(worker_id, "a.bin")
+        name_b = remote_name(worker_id, "b.bin")
+        local_a = tmp_path / name_a
         local_a.write_bytes(payload_a)
-        local_b = tmp_path / "b.bin"
+        local_b = tmp_path / name_b
         local_b.write_bytes(payload_b)
 
         remote_dir = Path(host1_kit.temp_remote_dir)
@@ -180,22 +183,22 @@ class TestTransferContract:
         put_a_status, put_a_err = await host1.put([local_a], remote_dir)
         assert put_a_status == Status.Success, f"first put failed: {put_a_err}"
         get_a_status, get_a_err = await host1.get(
-            [remote_dir / "a.bin"], landing,
+            [remote_dir / name_a], landing,
         )
         assert get_a_status == Status.Success, f"first get failed: {get_a_err}"
-        assert (landing / "a.bin").read_bytes() == payload_a
+        assert (landing / name_a).read_bytes() == payload_a
 
         put_b_status, put_b_err = await host1.put([local_b], remote_dir)
         assert put_b_status == Status.Success, (
             f"second put on hot host failed: {put_b_err}"
         )
         get_b_status, get_b_err = await host1.get(
-            [remote_dir / "b.bin"], landing,
+            [remote_dir / name_b], landing,
         )
         assert get_b_status == Status.Success, (
             f"second get on hot host failed: {get_b_err}"
         )
-        assert (landing / "b.bin").read_bytes() == payload_b
+        assert (landing / name_b).read_bytes() == payload_b
 
     @pytest.mark.asyncio
     async def test_no_filesystem_backend_surfaces_clear_error(
@@ -237,7 +240,7 @@ class TestTransferProgressContract:
 
     @pytest.mark.asyncio
     async def test_put_emits_completion_event(
-        self, host1, host1_kit, tmp_path: Path,
+        self, host1, host1_kit, worker_id, tmp_path: Path,
     ):
         """Backend-agnostic contract: ``host.put(...)`` must invoke the
         per-file progress handler at least once with ``bytes_done ==
@@ -249,7 +252,7 @@ class TestTransferProgressContract:
             pytest.skip("backend has no filesystem — no progress to report")
 
         payload = b"otto progress contract\n\x00\x01\x02"
-        local_src = tmp_path / "prog.bin"
+        local_src = tmp_path / remote_name(worker_id, "prog.bin")
         local_src.write_bytes(payload)
 
         # Every factory() call returns a fresh handler that appends into
@@ -284,7 +287,7 @@ class TestTransferProgressContract:
 
     @pytest.mark.asyncio
     async def test_get_emits_completion_event(
-        self, host1, host1_kit, tmp_path: Path,
+        self, host1, host1_kit, worker_id, tmp_path: Path,
     ):
         """Symmetric to the put case: ``get`` must report file completion
         through the progress handler. Round-trips via put so the source
@@ -293,7 +296,8 @@ class TestTransferProgressContract:
             pytest.skip("backend has no filesystem — no progress to report")
 
         payload = b"otto progress contract get\n\x03\x04"
-        local_src = tmp_path / "progget.bin"
+        name = remote_name(worker_id, "progget.bin")
+        local_src = tmp_path / name
         local_src.write_bytes(payload)
         remote_dir = Path(host1_kit.temp_remote_dir)
         put_status, put_err = await host1.put([local_src], remote_dir)
@@ -314,7 +318,7 @@ class TestTransferProgressContract:
             transfer_mod, 'make_rich_progress_factory', new=spy_factory,
         ):
             status, err = await host1.get(
-                [remote_dir / "progget.bin"], landing,
+                [remote_dir / name], landing,
             )
         assert status == Status.Success, f"get failed: {err}"
         assert events, (

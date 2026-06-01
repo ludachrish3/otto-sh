@@ -293,6 +293,21 @@ def embedded_param_id(backend_id: str) -> str:
     return "-".join(parts).lower().replace(" ", "")
 
 
+def remote_name(worker_id: str, basename: str) -> str:
+    """Namespace a remote transfer filename by the running xdist worker.
+
+    The host-contract and stability tests transfer to fixed names under a
+    shared remote dir, and ``ssh``+``telnet`` share one host (``carrot:/tmp``)
+    while ``local`` shares the runner's ``/tmp``. Under ``-n auto`` — and the
+    ``COUNT`` soak repeats — different workers would otherwise race the same
+    remote path, one worker's delete/overwrite corrupting another's get
+    (surfacing as ``scp: No such file`` or ``content corrupt``). Tests run
+    sequentially within a worker, so the worker id is a sufficient key. Under
+    a non-xdist run ``worker_id`` is ``"master"``, which is equally fine.
+    """
+    return f"{worker_id}_{basename}"
+
+
 @pytest_asyncio.fixture
 async def host1(request):
     """Integration host parameterized by backend id.

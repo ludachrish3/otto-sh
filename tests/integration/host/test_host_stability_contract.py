@@ -43,7 +43,7 @@ import pytest
 
 from otto.utils import Status
 
-from tests.conftest import EMBEDDED_BACKENDS, embedded_param_id
+from tests.conftest import EMBEDDED_BACKENDS, embedded_param_id, remote_name
 
 
 # Backend ids that carry the `embedded` marker. Single-sourced from
@@ -112,7 +112,7 @@ class TestTransferCycleStability:
 
     @pytest.mark.asyncio
     async def test_put_get_delete_cycles_round_trip(
-        self, host1, host1_kit, tmp_path: Path,
+        self, host1, host1_kit, worker_id, tmp_path: Path,
     ):
         """N put/get/verify/delete cycles must all succeed without
         partition exhaustion or content corruption. On embedded backends
@@ -129,7 +129,7 @@ class TestTransferCycleStability:
 
         for i in range(n):
             payload = f"cycle_{i}_".encode() + secrets.token_bytes(64)
-            name = f"cyc_{i}.bin"
+            name = remote_name(worker_id, f"cyc_{i}.bin")
             local_src = tmp_path / name
             local_src.write_bytes(payload)
 
@@ -179,7 +179,7 @@ class TestLargeTransferStability:
 
     @pytest.mark.asyncio
     async def test_large_file_round_trips_byte_identical(
-        self, host1, host1_kit, tmp_path: Path,
+        self, host1, host1_kit, worker_id, tmp_path: Path,
     ):
         """One transfer at the backend's stability-class size must
         round-trip byte-identically. Embedded sizes are orders of
@@ -190,7 +190,8 @@ class TestLargeTransferStability:
 
         size = host1_kit.stability_large_size
         payload = secrets.token_bytes(size)
-        local_src = tmp_path / "stability_large.bin"
+        name = remote_name(worker_id, "stability_large.bin")
+        local_src = tmp_path / name
         local_src.write_bytes(payload)
 
         remote_dir = Path(host1_kit.temp_remote_dir)
@@ -202,19 +203,19 @@ class TestLargeTransferStability:
         landing = tmp_path / "landing"
         landing.mkdir()
         get_status, get_err = await host1.get(
-            [remote_dir / "stability_large.bin"], landing,
+            [remote_dir / name], landing,
         )
         assert get_status == Status.Success, (
             f"large get ({size} bytes) failed: {get_err}"
         )
 
-        got = (landing / "stability_large.bin").read_bytes()
+        got = (landing / name).read_bytes()
         assert got == payload, (
             f"large file ({size} bytes) corrupt after round-trip: "
             f"len(got)={len(got)}"
         )
 
-        del_status = await _delete_remote(host1, remote_dir / "stability_large.bin")
+        del_status = await _delete_remote(host1, remote_dir / name)
         assert del_status == Status.Success, (
             f"large-file post-roundtrip delete failed (retcode={del_status})"
         )
