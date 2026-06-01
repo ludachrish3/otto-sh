@@ -1,6 +1,7 @@
 """Docstring for otto.logger.logger"""
 
 import atexit
+import re
 from datetime import datetime, timedelta
 from logging import (
     FileHandler,
@@ -25,6 +26,13 @@ from .formatters import (
     RichFormatter,
     format_log_time,
 )
+
+#: Shape of the directories ``create_output_dir`` produces:
+#: ``YYYYMMDD_HHMMSS_mmm`` optionally followed by ``_<subcommand>``.
+#: ``removeOldLogs`` prunes only entries matching this, so a misconfigured
+#: ``xdir`` (e.g. left pointing at the repo root by a leaked global) can never
+#: rmtree stray files like ``docs/conf.py`` or unrelated directories.
+_OUTPUT_DIR_RE = re.compile(r'\d{8}_\d{6}_\d{3}')
 
 
 class OttoLogger(Logger):
@@ -175,6 +183,12 @@ class OttoLogger(Logger):
                 continue
             for log_dir_name in listdir(cmd_dir):
                 output_dir = cmd_dir / log_dir_name
+                # Only ever prune real output directories. Refusing to rmtree
+                # anything that isn't a timestamped dir means a stray file or a
+                # misconfigured xdir cannot delete non-log content (or crash on
+                # a file, as ``rmtree('docs/conf.py')`` did).
+                if not (output_dir.is_dir() and _OUTPUT_DIR_RE.match(log_dir_name)):
+                    continue
                 if output_dir.stat().st_mtime < oldest:
 
                     # Only log the fact that logs are being deleted once when the first old directory is found

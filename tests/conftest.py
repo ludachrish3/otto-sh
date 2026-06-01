@@ -173,6 +173,22 @@ def _reset_dry_run():
     setDryRun(False)
 
 
+@pytest.fixture(autouse=True)
+def _reset_otto_logger_retention():
+    """Stop the process-global OttoLogger singleton from leaking its log
+    retention setting across tests.
+
+    ``keep_seconds`` is what makes the cov/reservation/docker group callbacks
+    prune old logs. A test that sets it (``initOttoLogger``, e.g.
+    ``tests/unit/logger/test_logger.py``) must not leave it set for a later
+    test in the same xdist worker — otherwise that test's CLI invocation prunes
+    under a stale ``xdir``, the root cause of the ``test_cov`` ENOTDIR flakes.
+    Reset to the clean default after every test.
+    """
+    yield
+    getOttoLogger().keep_seconds = None
+
+
 # ---------------------------------------------------------------------------
 # Lab-data helpers
 # ---------------------------------------------------------------------------

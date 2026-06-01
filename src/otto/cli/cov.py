@@ -67,10 +67,16 @@ cov_app = typer.Typer(
 
 
 @cov_app.callback()
-def cov_callback() -> None:
+def cov_callback(ctx: typer.Context) -> None:
     """Generate coverage reports from otto test --cov output."""
-    if logger.keep_seconds is not None:
-        logger.removeOldLogs(logger.keep_seconds)
+    if ctx.resilient_parsing:
+        return
+    # Set up this invocation's output directory the same way run/host/test/
+    # monitor do — create_output_dir also prunes old logs per the retention
+    # policy. Gated on a real subcommand so group ``--help``/no-args never
+    # touches the filesystem.
+    if ctx.invoked_subcommand is not None:
+        logger.create_output_dir('cov', ctx.invoked_subcommand)
 
 
 def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:
