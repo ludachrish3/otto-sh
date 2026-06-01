@@ -44,10 +44,15 @@ docker_app = typer.Typer(
 
 
 @docker_app.callback()
-def docker_callback() -> None:
+def docker_callback(ctx: typer.Context) -> None:
     """Build images and orchestrate compose stacks on docker-capable lab hosts."""
-    if logger.keep_seconds is not None:
-        logger.removeOldLogs(logger.keep_seconds)
+    if ctx.resilient_parsing:
+        return
+    # Mirror run/host/test/cov: set up this invocation's output directory
+    # (which also prunes old logs per the retention policy), only for a real
+    # subcommand — never on group ``--help``/no-args.
+    if ctx.invoked_subcommand is not None:
+        logger.create_output_dir('docker', ctx.invoked_subcommand)
 
 
 def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:

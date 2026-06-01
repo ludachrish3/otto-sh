@@ -33,10 +33,15 @@ reservation_app = typer.Typer(
 
 
 @reservation_app.callback()
-def reservation_callback() -> None:
+def reservation_callback(ctx: typer.Context) -> None:
     """Inspect and verify lab reservations."""
-    if logger.keep_seconds is not None:
-        logger.removeOldLogs(logger.keep_seconds)
+    if ctx.resilient_parsing:
+        return
+    # Mirror run/host/test/cov: set up this invocation's output directory
+    # (which also prunes old logs per the retention policy), only for a real
+    # subcommand — never on group ``--help``/no-args.
+    if ctx.invoked_subcommand is not None:
+        logger.create_output_dir('reservation', ctx.invoked_subcommand)
 
 
 @reservation_app.command()
