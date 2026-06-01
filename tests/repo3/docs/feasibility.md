@@ -90,9 +90,83 @@ must replicate exactly that, then `arm-zephyr-eabi-gcov` + the build `.gcno`
 produce coverage. gcc-12 compatible: `GCOV_COUNTERS=8` for `__GNUC__ >= 10`, and
 the `.gcda` version word is taken from the gcc-populated `info->version`.
 
-## Not yet done
+## Gate results (continued) — coverage path PROVEN end-to-end ✅
 
-- The instrumented `math_ops`+embedded-gcov extension and `cov_dump`.
-- `src/otto/coverage/fetcher/embedded.py` (`EmbeddedGcdaCollector`) + the
-  `remote.py` routing change.
-- The standalone `mps2_an385` coverage lab instance + the repo3 `OttoSuite`.
+Implemented and ran on `mps2_an385` (Approach C: runtime in base, product-only extension):
+
+- **Base image** = `shell_loader` + the embedded-gcov runtime (`gcov_public.c`,
+  `gcov_gcc.c`, `gcov_printf.c`, output routed to `printk`) with
+  `EXPORT_SYMBOL(__gcov_init/__gcov_exit/__gcov_merge_add/__gcov_clear)` so an
+  instrumented extension resolves them. Needed `CONFIG_SHELL_CMD_BUFF_SIZE=16384`
+  (+ RX ring 4096) to carry the extension's `load_hex` hex.
+- **Extension** = a single instrumented TU (`math_clamp`/`math_div` + `op_*` +
+  `cov_init`/`cov_dump`), ~4 KB. Build wrinkle: gcc emits an `.init_array` entry
+  for the gcov ctor; **LLEXT 3.7 fails to load any extension with `.init_array`**
+  (`-ENOEXEC` on `.rel.init_array`), so strip it post-build
+  (`objcopy --remove-section .init_array* --remove-section .fini_array* --strip-debug`).
+  The ctor *function* `_sub_I_00100_0` stays in `.text` and `cov_init` reaches it
+  via the `__asm__` alias.
+- **Two gcc-12 ports of embedded-gcov were required** (it was written for gcc ≤11;
+  both guarded `#if __GNUC__ >= 12`, old behavior preserved in `#else`):
+  1. gcc 12 added a `checksum` field to `struct gcov_info` (after `stamp`, before
+     `filename`). Without it the runtime reads `filename` 4 bytes early → **bus
+     fault** the instant it prints the file name. Fix: add the field *and* write
+     the matching `checksum` word into the `.gcda` header after `stamp`.
+  2. gcc 12 changed gcov record **length fields from 32-bit words to bytes**.
+     `GCOV_TAG_FUNCTION_LENGTH` (3 → 12) and `GCOV_TAG_COUNTER_LENGTH(NUM)`
+     (`NUM*2` → `NUM*2*4`). Without it `gcov` reads a 3-byte function record where
+     12 is expected → *"record size mismatch, 9 bytes overread"* → counters
+     unreadable → **0% coverage** despite a valid dump.
+
+- **PROVEN end-to-end:** `load_hex → cov_init (__gcov_init fires) → call_fn op_*
+  → cov_dump` emits the serial hexdump; host decode (`xxd -r`) → 376-byte `.gcda`;
+  `arm-zephyr-eabi-gcov` reports **`Lines executed: 100.00% of 13`,
+  `Branches executed: 100.00% of 6`, `Taken at least once: 83.33%`** — and
+  `math_clamp` shows *blocks executed 83%* (the `v > hi` clamp branch never run),
+  precisely the gap a second instance would fill (cross-instance merge proof).
+
+> The embedded-gcov patches above live in the basil spike copy only. In repo3 they
+> must be applied as a **patch over the submodule** (don't edit the vendored
+> sources), e.g. `tests/repo3/third_party/patches/embedded-gcov-gcc12.patch` applied
+> by the product's CMake, so the submodule stays pristine.
+
+## Compiler-version bounds & clang support (future work)
+
+The on-target `.gcda` writer hard-codes gcc's internal gcov structs and record
+format, so it is **compiler-version-sensitive**. Current status and bounds:
+
+- **gcc 12.x:** working (proven on `arm-zephyr-eabi-gcc 12.2.0`, gcov version
+  `B22*`). The gcov *version word* itself is taken from the live `info->version`,
+  so it auto-matches the compiler; only the struct/record format is hand-coded.
+- **gcc ≤11:** the `#else` branches restore the historical layout, but this is
+  **untested** in this bed — verify before relying on it.
+- **gcc 13/14+:** **unverified.** The native reference here was gcc 13.3 (version
+  `B24*`) and parsed compatibly, but newer gcc may shift the format again. Also
+  embedded-gcov omits the `OBJECT_SUMMARY` record (gcc writes it; gcov tolerated
+  its absence here — `runs` shows 0 — but `lcov`/newer gcov may want it). Work
+  items: test gcc 13/14, add `OBJECT_SUMMARY`, and treat `struct gcov_info` /
+  `gcov_fn_info` / `gcov_ctr_info` as version-gated.
+- **clang:** not supported as-is. Two separate paths, each its own work item:
+  - *clang `--coverage` (gcov-compatible):* emits gcno/gcda but with clang's own
+    gcov version + struct layout; needs `__clang_*`-gated struct/format variants
+    distinct from gcc's.
+  - *LLVM-native (`-fprofile-instr-generate -fcoverage-mapping` → `.profraw` +
+    `llvm-cov`):* a completely different runtime (`__llvm_profile_*`) and on-wire
+    format — a separate in-target dumper and host `llvm-cov` path, not embedded-gcov.
+- **Recommended architecture to contain this churn:** keep the on-target side as
+  dumb as possible (dump raw counters + minimal identity) and do the
+  format-specific serialization **on the host** in `EmbeddedGcdaCollector`, keyed
+  off the host toolchain's gcov/llvm-cov version. That decouples the firmware-side
+  runtime from compiler-format drift and is where clang/gcc/version handling
+  should ultimately live.
+
+## Still to build (framework)
+
+- Finish the gcc-12 `.gcda` serialization (above) so `gcov`/`lcov` report real
+  coverage; then prove cross-instance merge raises coverage.
+- `src/otto/coverage/fetcher/embedded.py` (`EmbeddedGcdaCollector`): drive
+  `cov_dump`, decode the hexdump → `.gcda` under `staging_root/<host>/`, write
+  `.otto_cov_meta.json` with the Zephyr cross-`gcov`; route `EmbeddedHost` in
+  `remote.py` (currently skipped) to it.
+- A standalone `mps2_an385` coverage lab instance + the repo3 `OttoSuite`
+  (mirroring `TestCoverageProduct`).
