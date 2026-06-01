@@ -22,9 +22,8 @@ import pytest_asyncio  # noqa: E402
 from otto.host.host import setDryRun  # noqa: E402
 from otto.host.localHost import LocalHost  # noqa: E402
 from otto.host.unixHost import UnixHost  # noqa: E402
-from otto.storage.factory import create_host_from_dict  # noqa: E402
-from otto.suite import timeout  # noqa: E402
 from otto.logger import getOttoLogger  # noqa: E402
+from otto.storage.factory import create_host_from_dict  # noqa: E402
 
 _logger = getOttoLogger()
 
@@ -64,8 +63,43 @@ def pytest_runtest_call(item: pytest.Item):
 
 
 def pytest_configure(config):  # type: ignore[no-untyped-def]
-    if not config.pluginmanager.has_plugin('otto-timeout'):
-        config.pluginmanager.register(timeout, name='otto-timeout')
+    _install_sigint_traceback_dump()
+
+
+def _install_sigint_traceback_dump() -> None:
+    """Dump every thread's stack on the first Ctrl-C, then fall through to
+    pytest's normal interrupt handling so the JUnit report is still emitted.
+
+    ``pytest-timeout`` (configured in ``pyproject.toml``: 180s, signal method)
+    already covers *hung* tests — it fails the test and lets the session reach
+    sessionfinish. This covers the third case: *you* decide to bail early.
+    Without it, a Ctrl-C while a worker is wedged in a blocking C call gives no
+    diagnostics and, under xdist, often no report.
+
+    ``chain=True`` runs faulthandler's C-level dump and then the previous
+    SIGINT handler (CPython's, which raises ``KeyboardInterrupt``), so pytest
+    still unwinds to ``pytest_sessionfinish`` and the junitxml plugin writes
+    its file. Registered in the controller and every xdist worker (conftest is
+    imported in each), so the dump shows the worker actually stuck, not just
+    the controller. Stacks go to the real stderr fd.
+    """
+    import faulthandler
+    import signal
+    import sys
+
+    if not hasattr(faulthandler, 'register'):  # not available on Windows
+        return
+    faulthandler.register(
+        signal.SIGINT, file=sys.stderr, all_threads=True, chain=True,
+    )
+
+
+def pytest_unconfigure(config):  # type: ignore[no-untyped-def]
+    import faulthandler
+    import signal
+
+    if hasattr(faulthandler, 'unregister'):
+        faulthandler.unregister(signal.SIGINT)
 
 
 # ---------------------------------------------------------------------------

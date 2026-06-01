@@ -100,16 +100,16 @@ class OttoPlugin:
         self._monitor_hosts = monitor_hosts
 
     def pytest_configure(self, config: pytest.Config) -> None:
-        """Register the shared async timeout fixture and enforce auto asyncio mode.
+        """Enforce auto asyncio mode for OttoSuites.
 
         OttoSuites always run with ``asyncio_mode=auto`` so that async
         fixtures and test methods work without explicit ``@pytest.mark.asyncio``
         markers.  This is distinct from otto's own unit tests which use
         ``asyncio_mode=strict`` (set in ``pyproject.toml``).
+
+        Per-test timeouts are handled by ``pytest-timeout`` (a runtime
+        dependency), which honors ``@pytest.mark.timeout(seconds)`` natively.
         """
-        from . import timeout
-        if not config.pluginmanager.has_plugin('otto-timeout'):
-            config.pluginmanager.register(timeout, name='otto-timeout')
         config.option.asyncio_mode = "auto"
         config.stash[otto_cov_key] = self._cov
 

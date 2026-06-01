@@ -139,10 +139,9 @@ class OttoSuite(Generic[TOptions]):
     - ``_otto_test_dir`` — creates ``self.testDir`` with sanitized node name
     - ``_otto_monitor_events`` — records monitor start/end events
 
-    Per-test timeouts are enforced by the shared ``_otto_timeout`` fixture
-    in :mod:`otto.suite.timeout`, registered automatically by ``OttoPlugin``.
-    Apply ``@pytest.mark.timeout(seconds)`` to individual tests, classes,
-    or set a ``timeout`` class attribute on the suite.
+    Per-test timeouts are enforced by ``pytest-timeout`` (a runtime
+    dependency). Apply ``@pytest.mark.timeout(seconds)`` to individual tests
+    or classes; on timeout the test fails and the session continues.
     """
 
     #: Set by ``OttoPlugin._otto_session_monitor`` when ``otto test --monitor``

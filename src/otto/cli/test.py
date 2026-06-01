@@ -218,6 +218,11 @@ def run_suite(
         '-k', suite_class.__name__,
         '-s',
         '-o', 'asyncio_mode=auto',
+        # pytest-timeout honors @pytest.mark.timeout(N) on tests/classes. No
+        # global default is imposed here — timeouts in user suites stay opt-in,
+        # as they were before — but signal method ensures a fired timeout
+        # interrupts blocking calls and the session still reaches sessionfinish.
+        '-o', 'timeout_method=signal',
         '--no-cov',
         '--no-header',
         '--override-ini', 'log_cli=false',
