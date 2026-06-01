@@ -1,0 +1,56 @@
+name = "repo3"
+version = "1.0.0"
+lab_data_type = "json"
+
+# Embedded coverage bed. Full design: ../../../todo/embedded_coverage.md
+#
+# Status: SKELETON. The LLEXT product, the EmbeddedGcdaCollector, the console-dump
+# decoder, and the live qemu_cortex_m3 coverage instance are NOT built yet.
+#
+# `labs` points at the shared tech1 lab data for now (the existing embedded
+# hosts). The dedicated coverage target is a NEW qemu_cortex_m3 instance that does
+# not exist yet — it is stood up during the plan's LLEXT feasibility gate
+# (lab-bound; intentionally deferred). Swap to `--lab embedded` / a dedicated
+# lab_data dir once that instance lands.
+labs = [
+    "${sutDir}/../lab_data/tech1",
+]
+libs = [
+    "${sutDir}/pylib",
+]
+tests = [
+    "${sutDir}/tests",
+]
+init = [
+    'repo3_instructions',
+]
+
+# Reuse repo1's zephyr-* os_profiles pattern. Per embedded_cortex_m_migration.md
+# the board (qemu_cortex_m3 vs qemu_x86) is a firmware-build detail, NOT an
+# os_profile field, so these profiles stay board-agnostic. (The repo1 "zephyr-2.7"
+# inline-retcode profile is intentionally omitted: it needs the zephyr-inline
+# command frame that repo1_instructions registers, which repo3 does not carry.)
+[os_profiles."zephyr-3.7"]
+base = "embedded"
+osName = "Zephyr"
+osVersion = "3.7"
+command_frame = "zephyr"
+transfer = "console"
+max_filename_len = 32
+
+[os_profiles."zephyr-4.4"]
+base = "embedded"
+osName = "Zephyr"
+osVersion = "4.4"
+command_frame = "zephyr"
+transfer = "console"
+max_filename_len = 32
+
+[coverage]
+# Embedded coverage uses console transport, not a remote .gcda directory, so the
+# Unix `gcda_remote_dir` key does not apply. The embedded path instead:
+#   - drives `llext call_fn cov_dump` over the console (EmbeddedGcdaCollector),
+#   - decodes the hex stream to .gcda on the host,
+#   - carries a per-host cross-gcov (arm-zephyr-eabi-gcov) in .otto_cov_meta.json.
+# None of that is implemented yet (see the plan, "The three pieces to build").
+# This empty section is a placeholder for that wiring.

@@ -1,0 +1,3 @@
+[submodule "tests/repo3/third_party/embedded-gcov"]
+	path = tests/repo3/third_party/embedded-gcov
+	url = https://github.com/nasa-jpl/embedded-gcov
