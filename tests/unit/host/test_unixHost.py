@@ -1216,6 +1216,8 @@ class TestOpenSession:
             _owned_client=mock_client,
             command_frame=None,
             init_timeout=None,
+            write_chunk_size=mock_client.options.write_chunk_size,
+            write_chunk_delay=mock_client.options.write_chunk_delay,
         )
         await h.close()
 

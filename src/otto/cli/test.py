@@ -568,13 +568,20 @@ async def _run_coverage(
     log_dir: Path,
     cov_dir_override: Optional[Path] = None,
 ) -> None:
-    """Fetch .gcda files from remote hosts into the coverage destination.
+    """Collect ``.gcda`` coverage from Unix and/or embedded hosts into the cov dir.
 
-    When ``cov_dir_override`` is provided, coverage data is written there;
-    otherwise the default ``<log_dir>/cov`` is used.
+    Unix hosts emit ``.gcda`` to a filesystem fetched by :class:`GcdaFetcher`;
+    embedded (Zephyr LLEXT) hosts have no filesystem and instead dump theirs
+    over the console, decoded by :func:`collect_embedded_coverage`.  Both land
+    under the same ``cov_dir`` so the merge/report step treats them identically.
+
+    When ``cov_dir_override`` is provided, coverage is written there; otherwise
+    the default ``<log_dir>/cov`` is used.
     """
     from ..configmodule import all_hosts
+    from ..coverage.fetcher.embedded import collect_embedded_coverage
     from ..coverage.fetcher.remote import GcdaFetcher
+    from ..host import UnixHost
 
     cov_config = _get_cov_config(repos)
     if not cov_config:
@@ -583,55 +590,81 @@ async def _run_coverage(
         )
         return
 
-    gcda_remote_dir = cov_config.get('gcda_remote_dir', '')
-    if not gcda_remote_dir:
-        logger.error('coverage.gcda_remote_dir is required in .otto/settings.toml')
-        return
-
-    # Coverage collection targets UnixHosts that compile the SUT and emit
-    # .gcda files. all_hosts() now yields EmbeddedHost (RTOS targets) too,
-    # which have no toolchain; filter them out here alongside containers.
-    from ..host import UnixHost
-    hosts = [h for h in all_hosts() if isinstance(h, UnixHost)]
-    if not hosts:
-        logger.warning('No hosts available for coverage collection')
-        return
-
-    # Hosts may carry stale connections from pytest's event loop.
-    # Rebuild their connection state so they reconnect on the current loop.
-    for host in hosts:
-        host.rebuild_connections()
-
     cov_dir = cov_dir_override if cov_dir_override else log_dir / 'cov'
-    fetcher = GcdaFetcher(cov_dir)
-    host_dirs = await fetcher.fetch_all(gcda_remote_dir)
+    host_dirs: dict[str, Path] = {}
 
-    if host_dirs:
-        logger.info('Coverage data collected to %s (%d hosts)', cov_dir, len(host_dirs))
-        await fetcher.clean_remote(gcda_remote_dir)
+    # Unix hosts compile the SUT and emit .gcda to a filesystem we fetch over
+    # the network. EmbeddedHost/DockerContainerHost are skipped by the fetcher.
+    unix_hosts = [h for h in all_hosts() if isinstance(h, UnixHost)]
+    gcda_remote_dir = cov_config.get('gcda_remote_dir', '')
+    if gcda_remote_dir and unix_hosts:
+        # Hosts may carry stale connections from pytest's event loop; rebuild
+        # their connection state so they reconnect on the current loop.
+        for host in unix_hosts:
+            host.rebuild_connections()
+        fetcher = GcdaFetcher(cov_dir)
+        unix_dirs = await fetcher.fetch_all(gcda_remote_dir)
+        host_dirs.update(unix_dirs)
+        if unix_dirs:
+            await fetcher.clean_remote(gcda_remote_dir)
 
-        # Write metadata so ``otto cov report`` can find the source root
-        # and per-host toolchains without relying on the working directory.
-        import json
-        cov_repo = _get_cov_repo(repos)
-        if cov_repo:
-            meta: dict[str, object] = {
-                'repo_name': cov_repo.name,
-                'sut_dir': str(cov_repo.sutDir.resolve()),
+    # Embedded (RTOS) hosts dump .gcda over the console (no filesystem).
+    embedded_dirs = await collect_embedded_coverage(cov_config, cov_dir)
+    host_dirs.update(embedded_dirs)
+
+    if not host_dirs:
+        logger.warning('No coverage data collected from any host')
+        return
+
+    logger.info('Coverage data collected to %s (%d hosts)', cov_dir, len(host_dirs))
+
+    # Write metadata so ``otto cov report`` can find the source root and
+    # per-host toolchains without relying on the working directory.
+    import json
+    cov_repo = _get_cov_repo(repos)
+    if not cov_repo:
+        return
+
+    toolchains: dict[str, dict[str, str]] = {}
+    for host in unix_hosts:
+        tc = host.toolchain
+        toolchains[host.id] = {
+            'sysroot': str(tc.sysroot),
+            'lcov': str(tc.lcov),
+            'gcov': str(tc.gcov),
+        }
+
+    sut_dir = str(cov_repo.sutDir.resolve())
+
+    # Embedded hosts carry no toolchain object; derive the cross-gcov by
+    # inspecting the build's .gcno (same discovery the Unix path can use), and
+    # treat the embedded build dir as the source root when there are no Unix
+    # hosts (the standalone-embedded case; combined multi-root reports are
+    # tracked separately in coverage_roadmap.md).
+    embedded_build_dir = (cov_config.get('embedded') or {}).get('build_dir')
+    if embedded_dirs and embedded_build_dir:
+        from ..host import LocalHost
+        from ..host.toolchain_discovery import discover_toolchain_from_gcno
+        tc = await discover_toolchain_from_gcno(
+            Path(embedded_build_dir), LocalHost(), cov_dir / '_toolchain_work',
+        )
+        if tc:
+            entry = {
+                'sysroot': str(tc.sysroot),
+                'lcov': str(tc.lcov),
+                'gcov': str(tc.gcov),
             }
-            # Persist per-host toolchain info for the report step
-            toolchains: dict[str, dict[str, str]] = {}
-            for host in hosts:
-                tc = host.toolchain
-                toolchains[host.id] = {
-                    'sysroot': str(tc.sysroot),
-                    'lcov': str(tc.lcov),
-                    'gcov': str(tc.gcov),
-                }
-            meta['toolchains'] = toolchains
-            (cov_dir / '.otto_cov_meta.json').write_text(json.dumps(meta, indent=2))
-    else:
-        logger.warning('No .gcda files fetched from any host')
+            for host_id in embedded_dirs:
+                toolchains[host_id] = entry
+        if not unix_hosts:
+            sut_dir = str(Path(embedded_build_dir).resolve())
+
+    meta: dict[str, object] = {
+        'repo_name': cov_repo.name,
+        'sut_dir': sut_dir,
+        'toolchains': toolchains,
+    }
+    (cov_dir / '.otto_cov_meta.json').write_text(json.dumps(meta, indent=2))
 
 
 def _get_cov_repo(repos: list['Repo']) -> 'Repo | None':

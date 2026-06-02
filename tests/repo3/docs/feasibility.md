@@ -160,13 +160,155 @@ format, so it is **compiler-version-sensitive**. Current status and bounds:
   runtime from compiler-format drift and is where clang/gcc/version handling
   should ultimately live.
 
-## Still to build (framework)
+## Framework status — done
 
-- Finish the gcc-12 `.gcda` serialization (above) so `gcov`/`lcov` report real
-  coverage; then prove cross-instance merge raises coverage.
-- `src/otto/coverage/fetcher/embedded.py` (`EmbeddedGcdaCollector`): drive
-  `cov_dump`, decode the hexdump → `.gcda` under `staging_root/<host>/`, write
-  `.otto_cov_meta.json` with the Zephyr cross-`gcov`; route `EmbeddedHost` in
-  `remote.py` (currently skipped) to it.
-- A standalone `mps2_an385` coverage lab instance + the repo3 `OttoSuite`
-  (mirroring `TestCoverageProduct`).
+Host-side framework implemented and unit-tested (`tests/unit/cov/test_embedded_collector.py`):
+- `decode_cov_dump` (serial hexdump → `.gcda`, validated against the live capture),
+  `EmbeddedGcdaCollector.collect_all`, `collect_embedded_coverage` (config-driven).
+- `_run_coverage` (`src/otto/cli/test.py`) routes Unix and/or embedded collection;
+  embedded `.otto_cov_meta.json` cross-`gcov` via `discover_toolchain_from_gcno`.
+- Config schema: `[coverage.embedded].extension` (→ `llext call_fn <ext> cov_dump`)
+  and `.build_dir`.
+
+## Lab integration: mps2_an385 networking — PROVEN ✅
+
+The plan's flagged "main risk" (Cortex-M networking) is cleared. `mps2_an385` runs
+in-guest Zephyr networking + the telnet shell, reachable like the existing x86
+instances (`192.0.2.x:23` via the basil hop). Non-obvious config it needs:
+
+- **Driver:** the mps2_an385 DTS already has `eth@40200000` (`smsc,lan9220`);
+  enable `CONFIG_ETH_SMSC911X` (the LAN9118/9220 driver) — *not* x86's
+  `ETH_E1000`/`PCIE`.
+- **Entropy:** mps2 has no entropy device, so the net stack won't link
+  (undefined `z_impl_sys_rand_get`) — add `CONFIG_TEST_RANDOM_GENERATOR=y`.
+- **Telnet line buffer:** `CONFIG_SHELL_TELNET_LINE_BUF_SIZE` defaults to **80
+  bytes** and truncates the `load_hex` line — bump to ≥ the hex length (16384).
+- **LLEXT log:** `shell_loader` ships `CONFIG_LLEXT_LOG_LEVEL_DBG`, which floods
+  the telnet link with relocation debug during load — set to `WRN`.
+- **QEMU:** `qemu-system-arm -machine mps2-an385 -nic tap,model=lan9118,ifname=<tap>`,
+  using the **SDK** qemu (apt's broke e1000 on x86; SDK is the known-good family).
+  Host TAP mirrors the x86 units (`ip tuntap add … 192.0.2.x/30`).
+- Verified: `ping` 0% loss; telnet `kernel version` → `Zephyr 3.7.2`; `load_hex`
+  transfers and the LLEXT loader parses the ELF over telnet.
+
+Networked image config: `~/gate/an385_cov_net.conf` (basil); instance runs at
+`192.0.2.33:23`.
+
+## RESOLVED — in-guest LAN9118 networking can't do bulk `load_hex`; pivot to serial-telnet
+
+The earlier "otto crashes the mps2 instance" was misdiagnosed (the `0x5ff8 =
+llext_find_tables` symbol came from a *stale* build — in the live `cov_base_net`
+ELF `0x5ff8` is `z_impl_zsock_getsockopt`, a socket fn). Systematic re-diagnosis
+found the true root cause, and it is **not** otto-specific, **not** echo, and
+**not** LLEXT:
+
+- **Bisected trigger:** otto connect + simple commands (`kernel version`, etc.)
+  work fine. The wedge is `load_hex` — specifically its multi-KB hex line. With a
+  continuous reader and echo forced off, the instance wedges at **exactly 1460 B =
+  one TCP MSS**: `1400+\r` (1 Ethernet frame) survives; `1460+\r` (2 frames) kills
+  it. No CPU fault — the **whole net stack hangs** (ping is lost), so it's a
+  driver/stack deadlock, not a crash.
+- **Ruled out, with evidence:** *echo* (off → still wedges at 1460); *TCP recv
+  window / buffers* (window resolves to `(NET_BUF_RX_COUNT·NET_BUF_DATA_SIZE)/3 =
+  (128·128)/3 = 5461 B`, yet it dies at frame #2, not at a buffer-sized boundary);
+  *host-side pacing* (sub-MSS chunks spaced 1.5 s apart also wedge). otto's
+  `ZephyrFrame` does **not** disable echo (unlike `BashFrame`'s `stty -echo`), but
+  that is irrelevant to this fault.
+- **Root cause:** the mps2 built-in **LAN9118/`smsc911x` NIC** wedges when it must
+  receive a **second inbound Ethernet frame with no intervening outbound frame** —
+  exactly what a multi-frame `load_hex` line needs. The other otto Zephyr hosts are
+  immune because they run **qemu_x86 + E1000** (robust NIC); mps2 was forced only
+  because **qemu_x86 has no LLEXT support**. Net-config tuning can't fix a
+  driver-level consecutive-frame wedge, and patching the stock driver would break
+  the stock-base goal.
+
+**Decision (with Chris): drop in-guest LAN9118 telnet; drive the shell over the
+UART via QEMU's native `-serial telnet:<ip>:<port>,server` bridge.** otto's telnet
+transport connects unchanged; the firmware reverts to the **stock serial shell
+backend** (mps2's default — *more* stock than the net-telnet variant, no net config
+at all). Bulk `load_hex` over UART has no MSS/frame limit — this is exactly the path
+the feasibility gate already proved (`drive_cov.py`, `west build -t run`,
+`uart:~$`, 100 % coverage). All proven LLEXT/gcov work is preserved.
+
+**Sequencing:** serial-telnet now → migrate to `qemu_cortex_a53 + E1000` later, in
+lockstep with the fleet's planned x86→ARM move. Cheap churn: otto always speaks
+telnet (otto-side code unchanged); the gcc-12 gcov port + `_sub_I_00100_0`
+constructor-alias are gcc-version (not arch) specific and transfer to a53; only the
+firmware shell-backend Kconfig + the QEMU launch flag are throwaway.
+
+### otto integration — PROVEN end-to-end over serial-telnet ✅
+
+`cov_base` (stock serial shell + LLEXT) launched under
+`qemu-system-arm … -serial telnet:192.0.2.33:2323,server,nowait` (listener on
+basil's `lo`; port 2323 because 23 is privileged + taken). otto's real
+`EmbeddedHost` reaches it via the `basil_seed` hop and runs the full flow:
+`kernel version` → `load_hex` (4 KB ext) → `cov_dump` → `EmbeddedGcdaCollector`
+decodes a real **376-byte `.gcda`** (matches the gate's `expected.gcda`).
+
+Two general otto fixes were required (both transport-level, no firmware change),
+each TDD'd, 812 host/cov/factory unit tests green:
+
+- **`ZephyrSerialFrame`** (`command_frame.py`, `zephyr-serial`): a `ZephyrFrame`
+  whose handshake is `shell echo off\r{ready}\n`. The in-guest `SHELL_BACKEND_TELNET`
+  honours otto's `IAC DONT ECHO`; the UART shell behind the `-serial telnet:` bridge
+  never sees that IAC (QEMU eats it), so it keeps echo on — and the echoed END marker
+  matched otto's read loop before the real output, desyncing every command. Mirrors
+  repo1's `ZephyrInlineRetcodeFrame` (2.7).
+- **`TelnetOptions.write_chunk_size` / `write_chunk_delay`** (default 0 = unchunked):
+  `TelnetSession._write` paces large writes (`sprout_cov`: 64 B / 15 ms) so the mps2
+  UART RX FIFO doesn't overrun on the bulk `load_hex` line.
+
+`sprout_cov` lab entry: `command_frame: zephyr-serial`,
+`telnet_options: {port: 2323, write_chunk_size: 64, write_chunk_delay: 0.015}`.
+
+### Approach A (self-contained ext, stock base) — PROVEN, 100 % coverage ✅
+
+The first end-to-end pass used the 4 KB ext — which is **Approach C** (gcov runtime
+exported from the base). Switching to the required **Approach A** (self-contained
+16 KB ext, base = stock loader) surfaced two more defects, both now fixed:
+
+1. **Base couldn't load *any* module** (even a 1.1 KB hello-world hung — no fault).
+   Root cause: the hand-rolled `cov_base` app lacked `CONFIG_LOG` and an adequate
+   `CONFIG_SHELL_STACK_SIZE`, so `llext_load`'s relocation work (run on the shell
+   thread) **silently overflowed the shell stack** — and with `CONFIG_ARM_MPU=n`
+   the overflow hangs instead of faulting. Fix: build the base from Zephyr's
+   canonical `samples/subsys/llext/shell_loader` (the real generic loader) +
+   overlay (`CONFIG_SHELL_STACK_SIZE=32768`, `LLEXT_HEAP_SIZE=64`,
+   `LLEXT_SHELL_MAX_SIZE=32768`, `SHELL_CMD_BUFF_SIZE=49152`, `ARM_MPU=n`,
+   `LLEXT_LOG_LEVEL_WRN`). Build: `west build -p always -b mps2_an385 -d
+   build/cov_base zephyr/samples/subsys/llext/shell_loader -- -DEXTRA_CONF_FILE=…`.
+2. **`cov_init` bus-faulted** reading `gcov_info->filename` (garbage pointer).
+   Root cause: `cov_ext_app` was compiled against an **unpatched** embedded-gcov
+   copy, so `struct gcov_info` lacked the **gcc-12 `checksum` field** → `filename`
+   read at the wrong offset. Fix: build against the patched embgcov
+   (`embedded-gcov-zephyr-gcc12.patch`). Confirmed cause via the fault PC + the
+   missing `#if (__GNUC__ >= 12)` branch.
+
+Proven: otto `EmbeddedHost` → `load_hex` (16 KB Approach-A ext) → `cov_init` →
+ops → `cov_dump` → `EmbeddedGcdaCollector` → **2132-byte `.gcda`**;
+`arm-zephyr-eabi-gcov` reports the product `cov_ext.c` at **100 % lines / 100 %
+branches / 100 % calls**. Base carries zero coverage code.
+
+**GCC coupling:** embedded-gcov tracks GCC's internal gcov ABI. Supported floor is
+**gcc 4.9** (oldest `struct` branch); the patch adds **gcc ≥ 12** (`checksum` +
+byte-length records). Build the product and run the host `gcov` with the *same*
+GCC (here Zephyr SDK 0.16.8 = gcc 12.2). otto's decode/collect side is
+format-agnostic — the coupling lives in the product's coverage runtime, not otto.
+
+- **Next:** systemd unit (mirror `zephyr-qemu-*.service`) + repo3
+  `[coverage.embedded]` config + repo3 `OttoSuite` + `otto test --cov` +
+  cross-instance merge. Post-commit cleanup: reconcile the duplicated `embgcov`
+  copies; capture the base build recipe into `tests/firmware/zephyr`; user-facing
+  doc on fetching/applying the gcc-12 patch.
+
+## Remaining
+
+- **lab_data entry** — `sprout_cov` / `192.0.2.33` / lab `embedded-cov` / hop
+  `basil_seed`, added to `tests/lab_data/tech1/hosts.json` (isolated from the
+  existing `embedded` lab + `_ZEPHYR_BACKEND_NE` matrix).
+- **Validate via otto's real `EmbeddedHost` transport** against the live instance
+  — the proper end-to-end check (an ad-hoc telnet driver fights the protocol).
+- **systemd unit** + Vagrantfile/firmware wiring for persistence (mirror the
+  existing `zephyr-qemu-*` units).
+- **repo3 config** (`[coverage.embedded]`) + the repo3 `OttoSuite`
+  (mirroring `TestCoverageProduct`), then `otto test --cov` end-to-end.

@@ -571,11 +571,22 @@ class TelnetSession(ShellSession):
         _owned_client: 'TelnetClient | None' = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
+        write_chunk_size: int = 0,
+        write_chunk_delay: float = 0.0,
     ) -> None:
         super().__init__(command_frame=command_frame, init_timeout=init_timeout)
         self._reader = reader
         self._writer = writer
         self._owned_client = _owned_client
+        # Paced-write tuning for slow/RX-limited consoles. ``write_chunk_size``
+        # of 0 (the default) writes each payload in a single call — correct for
+        # a host-terminated telnet shell (e.g. x86 + E1000). A positive value
+        # splits the payload into <=N-byte writes spaced by ``write_chunk_delay``
+        # seconds so a UART-backed RTOS shell (e.g. a Zephyr ``-serial telnet:``
+        # bridge) doesn't overrun its console RX FIFO on a multi-KB
+        # ``llext load_hex`` line. Set per-host via ``telnet_options``.
+        self._write_chunk_size = write_chunk_size
+        self._write_chunk_delay = write_chunk_delay
 
     async def _open(self) -> None:
         # Transport already established by TelnetClient login — nothing to open
@@ -590,7 +601,15 @@ class TelnetSession(ShellSession):
         # - canonical mode (icrnl maps \r → \n, so the shell sees one newline)
         # - readline raw mode (treats \r as Enter / execute)
         data = re.sub(r'\r?\n', '\r', data)
-        self._writer.write(data.encode())
+        encoded = data.encode()
+        chunk = self._write_chunk_size
+        if chunk and len(encoded) > chunk:
+            for i in range(0, len(encoded), chunk):
+                self._writer.write(encoded[i:i + chunk])
+                if self._write_chunk_delay:
+                    await asyncio.sleep(self._write_chunk_delay)
+        else:
+            self._writer.write(encoded)
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
@@ -1056,6 +1075,8 @@ class SessionManager:
                     telnet_conn.writer,
                     command_frame=self._command_frame,
                     init_timeout=self._init_timeout,
+                    write_chunk_size=telnet_conn.options.write_chunk_size,
+                    write_chunk_delay=telnet_conn.options.write_chunk_delay,
                 )
             case _:
                 raise ValueError(
@@ -1213,6 +1234,8 @@ class SessionManager:
                             _owned_client=client,
                             command_frame=self._command_frame,
                             init_timeout=self._init_timeout,
+                            write_chunk_size=client.options.write_chunk_size,
+                            write_chunk_delay=client.options.write_chunk_delay,
                         )
                     case _:
                         raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')

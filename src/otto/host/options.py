@@ -199,6 +199,17 @@ class TelnetOptions:
     port: int = 23
     """TCP port for the telnet connection."""
 
+    write_chunk_size: int = 0
+    """Split each command write into chunks of at most this many bytes. ``0``
+    (default) writes the whole payload in one call — correct for a
+    host-terminated telnet shell (x86 + E1000). A positive value paces the
+    write so a UART-backed RTOS shell behind a ``-serial telnet:`` bridge
+    doesn't overrun its console RX FIFO on a multi-KB ``llext load_hex`` line."""
+
+    write_chunk_delay: float = 0.0
+    """Seconds to pause between chunked writes (see :attr:`write_chunk_size`).
+    Ignored when ``write_chunk_size`` is 0."""
+
     cols: int = 400
     """Initial terminal width reported to the remote side. otto historically
     used 400 to avoid line-wrap artifacts in automation output."""

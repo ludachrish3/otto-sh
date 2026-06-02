@@ -17,6 +17,7 @@ from otto.host.command_frame import (
     CommandFrame,
     SessionMarkers,
     ZephyrFrame,
+    ZephyrSerialFrame,
     build_command_frame,
     register_command_frame,
 )
@@ -129,11 +130,41 @@ class TestZephyrFrame:
         assert self.frame.parse_output(buf, "version", M) == "Zephyr version 3.7.2"
 
 
+class TestZephyrSerialFrame:
+    """The 3.7 dialect for a serial/UART shell behind a ``-serial telnet:``
+    bridge: identical framing to ZephyrFrame, but the handshake disables the
+    shell's input echo (the bridge swallows otto's ``IAC DONT ECHO``, so unlike
+    the in-guest telnet backend the UART shell never turns echo off itself)."""
+
+    frame = ZephyrSerialFrame()
+
+    def test_type_name(self):
+        assert ZephyrSerialFrame.type_name == "zephyr-serial"
+
+    def test_handshake_disables_echo_then_prints_ready(self):
+        assert self.frame.handshake(M) == f"shell echo off\r{M.ready}\n"
+
+    def test_inherits_retval_framing_from_zephyr(self):
+        assert self.frame.frame("kernel version", M) == (
+            f"{M.begin}\rkernel version\rretval\r{M.end_prefix}\r"
+        )
+
+    def test_inherits_retcode_parse_from_zephyr(self):
+        buf = (
+            f"\r\n{M.begin}: command not found\r\n~$ "
+            f"\r\nZephyr version 3.7.2\r\n~$ "
+            f"\r\n0\r\n~$ "
+            f"\r\n{M.end_prefix}: command not found\r\n~$ "
+        )
+        assert self.frame.extract_retcode(buf, M) == 0
+
+
 class TestRegistry:
 
     def test_stock_frames_resolve_by_name(self):
         assert isinstance(build_command_frame("bash"), BashFrame)
         assert isinstance(build_command_frame("zephyr"), ZephyrFrame)
+        assert isinstance(build_command_frame("zephyr-serial"), ZephyrSerialFrame)
 
     def test_unknown_frame_raises_with_known_list(self):
         with pytest.raises(ValueError, match="Unknown command frame"):

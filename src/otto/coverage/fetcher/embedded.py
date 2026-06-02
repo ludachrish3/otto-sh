@@ -23,6 +23,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ...configmodule.configmodule import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -131,3 +132,72 @@ async def _collect_one_embedded_host(
 
     logger.info("Decoded %d .gcda file(s) from %s into %s", len(blocks), label, dest)
     return dest
+
+
+class EmbeddedGcdaCollector:
+    """Collect coverage from embedded (Zephyr LLEXT) hosts over the console.
+
+    The embedded analogue of :class:`~otto.coverage.fetcher.remote.GcdaFetcher`:
+    each host gets its own ``staging_root/<host.id>/`` subdirectory of decoded
+    ``.gcda`` files, so the downstream merge/report layer treats embedded and
+    Unix hosts identically.
+
+    *dump_command* is the console command that triggers the product's coverage
+    dump (e.g. ``llext call_fn <ext> cov_dump`` → ``__gcov_exit``).
+    """
+
+    def __init__(
+        self,
+        staging_root: Path,
+        dump_command: str,
+        pattern: re.Pattern[str] | None = None,
+    ) -> None:
+        self.staging_root = staging_root
+        self.dump_command = dump_command
+        self.pattern = pattern
+
+    async def collect_all(self) -> dict[str, Path]:
+        """Dump, decode and stage coverage from every matching embedded host.
+
+        Returns a mapping of host id → per-host staging directory.  Non-embedded
+        hosts, hosts with no coverage data, and failed dumps are omitted.
+        """
+        self.staging_root.mkdir(parents=True, exist_ok=True)
+
+        collect_results = await do_for_all_hosts(
+            _collect_one_embedded_host,
+            self.dump_command,
+            self.staging_root,
+            pattern=self.pattern,
+        )
+
+        results: dict[str, Path] = {}
+        for host_id, value in collect_results.items():
+            if isinstance(value, BaseException):
+                logger.error("Failed to collect coverage from %s: %s", host_id, value)
+                continue
+            if value is not None:
+                results[host_id] = value
+        return results
+
+
+async def collect_embedded_coverage(
+    cov_config: dict,
+    staging_root: Path,
+) -> dict[str, Path]:
+    """Collect embedded coverage per the ``[coverage.embedded]`` config section.
+
+    Reads the product's extension name from ``cov_config['embedded']['extension']``
+    and dumps it via ``llext call_fn <ext> cov_dump`` (the conventional
+    embedded-gcov ``__gcov_exit`` trigger) on every embedded host.
+
+    Returns ``{host_id: staging_dir}``, or ``{}`` when no embedded coverage is
+    configured (so the Unix-only path is unaffected).
+    """
+    embedded_cfg = cov_config.get("embedded") or {}
+    extension = embedded_cfg.get("extension")
+    if not extension:
+        return {}
+
+    dump_command = f"llext call_fn {extension} cov_dump"
+    return await EmbeddedGcdaCollector(staging_root, dump_command).collect_all()

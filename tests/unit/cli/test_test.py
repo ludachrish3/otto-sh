@@ -50,7 +50,7 @@ class TestTestHelp:
         assert result.exit_code == 0
 
     def test_suite_help_shows_options(self):
-        """otto test <SuiteName> --help must list suite-specific options."""
+        """Otto test <SuiteName> --help must list suite-specific options."""
         @register_suite()
         class _HelpSuite:
             @dataclass
@@ -195,7 +195,8 @@ class TestRunSuiteInternals:
     def test_monitor_flags_reach_otto_plugin(self, tmp_path):
         """run_suite must hand --monitor settings to OttoPlugin and default the
         output path to ``<output_dir>/monitor.json`` when the user didn't
-        supply ``--monitor-output``."""
+        supply ``--monitor-output``.
+        """
         import otto.cli.test as test_module
 
         mock_logger = MagicMock()
@@ -639,6 +640,7 @@ class TestRunCoverageDestination:
 
     def _invoke(self, *, log_dir, override):
         import asyncio
+
         from otto.cli.test import _run_coverage
 
         repo = MagicMock()
@@ -672,6 +674,32 @@ class TestRunCoverageDestination:
         log_dir.mkdir()
         fetcher_cls = self._invoke(log_dir=log_dir, override=None)
         fetcher_cls.assert_called_once_with(log_dir / 'cov')
+
+
+class TestRunCoverageEmbedded:
+    """``_run_coverage`` collects embedded hosts even with no Unix gcda_remote_dir."""
+
+    def test_collects_embedded_when_only_embedded_configured(self, tmp_path):
+        import asyncio
+
+        from otto.cli.test import _run_coverage
+
+        repo = MagicMock()
+        log_dir = tmp_path / 'log'
+        log_dir.mkdir()
+
+        embedded_collect = AsyncMock(
+            return_value={'sprout': tmp_path / 'cov' / 'sprout'},
+        )
+        with patch('otto.cli.test._get_cov_config',
+                   return_value={'embedded': {'extension': 'cov_ext'}}), \
+             patch('otto.configmodule.all_hosts', return_value=[]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=None):
+            asyncio.run(_run_coverage([repo], log_dir, None))
+
+        embedded_collect.assert_awaited_once()
 
 
 # ── --cov-report option (report generation alongside collection) ─────────────

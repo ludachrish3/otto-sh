@@ -215,5 +215,29 @@
         "labs": [
             "embedded"
         ]
+    },
+    {
+        "ip": "192.0.2.33",
+        "ne": "sprout_cov",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "3.7",
+        "command_frame": "zephyr-serial",
+        "transfer": "console",
+        "filesystem": "none",
+        "max_filename_len": 32,
+        "is_virtual": true,
+        "telnet_options": {
+            "port": 2323,
+            "write_chunk_size": 64,
+            "write_chunk_delay": 0.015
+        },
+        "hop": "basil_seed",
+        "resources": [
+            "sprout_cov"
+        ],
+        "labs": [
+            "embedded-cov"
+        ]
     }
 ]

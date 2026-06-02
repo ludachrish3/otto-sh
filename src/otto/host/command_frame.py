@@ -311,11 +311,35 @@ class ZephyrFrame(CommandFrame):
         return [line.replace("\r", "") for line in region.split("\n")]
 
 
+class ZephyrSerialFrame(ZephyrFrame):
+    """Zephyr 3.7+ dialect for a serial/UART shell reached over a raw byte
+    bridge (e.g. QEMU ``-serial telnet:<ip>:<port>,server``).
+
+    Identical framing and parsing to :class:`ZephyrFrame` — only the handshake
+    differs. The in-guest ``SHELL_BACKEND_TELNET`` honours otto's ``IAC DONT
+    ECHO`` and stops echoing input, which is why the stock ``ZephyrFrame``
+    handshake assumes a non-echoing shell. A UART shell behind a ``-serial
+    telnet:`` bridge never sees that IAC (QEMU consumes it), so it keeps echo
+    **on**; the echoed END marker would then match otto's read loop before the
+    command's real output arrives, desyncing every command by one. Disable echo
+    once, up front — ``shell echo off`` is a stock builtin. The readiness marker
+    (rejected as an unknown command) still comes back via the shell's error
+    handler, which is shell *output*, not input echo, so the probe is
+    unaffected. Mirrors :class:`repo1's ZephyrInlineRetcodeFrame` for 2.7.
+    """
+
+    type_name = "zephyr-serial"
+
+    def handshake(self, m: SessionMarkers) -> str:
+        return f"shell echo off\r{m.ready}\n"
+
+
 # Registry of dialect name -> frame class, mirroring
 # ``embedded_filesystem._FILESYSTEM_CLASSES``.
 _FRAME_CLASSES: dict[str, type[CommandFrame]] = {
     BashFrame.type_name: BashFrame,
     ZephyrFrame.type_name: ZephyrFrame,
+    ZephyrSerialFrame.type_name: ZephyrSerialFrame,
 }
 
 
