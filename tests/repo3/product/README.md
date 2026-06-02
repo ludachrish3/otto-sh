@@ -1,20 +1,67 @@
-# repo3 LLEXT sample product (skeleton — not built)
+# repo3 LLEXT coverage product
 
-The embedded analogue of repo1's `math_ops` (add/sub/mul/div/clamp), to be built
-as a Zephyr **LLEXT extension** rather than a host binary:
+The embedded analogue of repo1's `math_ops`, built as a Zephyr **LLEXT
+extension** rather than a host binary. It is the *product* inserted into the
+otherwise-stock coverage host; the host's base image carries no coverage code.
 
-- `add_llext_target` + `llext_compile_options(-fprofile-arcs -ftest-coverage)`
-- the vendored `../third_party/embedded-gcov` runtime compiled *into* the extension
-- exported entry points invoked via `llext call_fn`: one per operation to exercise
-  code paths, plus `cov_dump`, which walks the extension's own gcov info and prints
-  the `.gcda` content as hex over the console (no filesystem required).
+```
+product/
+  CMakeLists.txt   add_llext_target(cov_ext) + -fprofile-arcs -ftest-coverage
+  prj.conf         CONFIG_LLEXT=y
+  src/
+    main.c         throwaway host app (the .llext is the real artifact)
+    cov_ext.c      math ops + cov_init/cov_dump + the #included gcov runtime
+```
 
-`.gcno` land in the extension's build dir — that path becomes the report step's
-`source_root`.
+**Approach A (self-contained):** `cov_ext.c` `#include`s the embedded-gcov
+runtime, so the product *and* the on-device `.gcda` dumper compile into one
+instrumented translation unit. The base resolves only `printk`. Exported entry
+points (`llext call_fn cov_ext <sym>`): `op_clamp_lo`, `op_clamp_in`,
+`op_div_ok`, `op_div_zero` (exercise code paths), `cov_init` (run the gcov
+constructor), `cov_dump` (print the `.gcda` as a serial hexdump).
 
-**Lifecycle mirrors Unix:** install (`llext load_hex`) -> exercise (`call_fn <op>`)
--> collect (`call_fn cov_dump`) -> uninstall (`llext unload`).
+`.gcno` land in the extension's build dir
+(`build/cov_ext_app/CMakeFiles/cov_ext_llext_lib.dir/src/`) — that path is the
+report step's `source_root` (`[coverage.embedded].build_dir`).
 
-**Status:** intentionally empty. Building this requires the Zephyr SDK / west and
-is sequenced *after* the LLEXT feasibility gate (lab-bound). See
-[`../../../todo/embedded_coverage.md`](../../../todo/embedded_coverage.md).
+## One-time setup — embedded-gcov submodule + gcc-12 patch
+
+The gcov runtime is NASA's [embedded-gcov](../third_party/embedded-gcov)
+(vendored as a git submodule — otto does not own it). It targets gcc ≤ 11, so a
+patch adds gcc-12 support. Apply it over the pristine submodule before building:
+
+```bash
+git submodule update --init tests/repo3/third_party/embedded-gcov
+git -C tests/repo3/third_party/embedded-gcov apply \
+    ../patches/embedded-gcov-zephyr-gcc12.patch
+```
+
+**GCC coupling:** the `.gcda`/`.gcno` format and `struct gcov_info` are
+GCC-internal. Supported floor is **gcc 4.9**; the patch adds **gcc ≥ 12**
+(`checksum` field + byte-length records). The product and the report `gcov` must
+be the **same** GCC — name the cross-gcov in `[coverage.embedded].gcov` (here
+Zephyr SDK 0.16.8 → `arm-zephyr-eabi-gcov` 12.2), matching the toolchain that
+built this extension. A future GCC that changes the format again would need
+another patch branch.
+
+## Build (in the `zephyr` VM)
+
+```bash
+source ~/zephyr-venv-v3_7/bin/activate
+cd ~/zephyrproject-v3_7 && source zephyr/zephyr-env.sh
+
+west build -p always -b mps2_an385 -d ~/build/cov_ext_app \
+    /vagrant/tests/repo3/product
+
+# Strip the sections LLEXT 3.7 cannot relocate (its loader -ENOEXECs on
+# .init_array/.fini_array relocations; cov_init calls the ctor explicitly).
+arm-zephyr-eabi-objcopy \
+    --remove-section='.init_array*' --remove-section='.fini_array*' \
+    --remove-section='.rel.init_array*' --remove-section='.rel.fini_array*' \
+    --strip-debug \
+    ~/build/cov_ext_app/zephyr/cov_ext.llext ~/build/cov_ext_app/zephyr/cov_ext.stripped.llext
+```
+
+`cov_ext.stripped.llext` (~15 KB) is what otto sends via `llext load_hex`. See
+[`../docs/feasibility.md`](../docs/feasibility.md) for why these specific
+sections are stripped and the full bring-up record.

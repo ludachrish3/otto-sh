@@ -85,6 +85,25 @@ async def discover_toolchain_from_gcno(
     return None
 
 
+def toolchain_from_gcov(gcov: Path) -> Toolchain:
+    """Build a :class:`Toolchain` from an explicitly-configured gcov binary.
+
+    A ``.gcno`` embeds no compiler path, and not every build system is CMake,
+    so a cross-toolchain is named directly in the repo config
+    (``[coverage.embedded].gcov``) — the same explicit shape as the Unix
+    coverage config. The sysroot is derived from the gcov's ``bin/`` directory.
+
+    Args:
+        gcov: Absolute path to the cross ``gcov`` binary.
+    """
+    sysroot = _derive_sysroot(gcov.parent)
+    try:
+        gcov_rel = gcov.relative_to(sysroot)
+    except ValueError:
+        gcov_rel = gcov
+    return Toolchain(sysroot=sysroot, gcov=gcov_rel)
+
+
 def _toolchain_from_compiler(compiler_path: Path, work_dir: Path) -> Toolchain | None:
     """Derive a :class:`Toolchain` from a discovered compiler path.
 

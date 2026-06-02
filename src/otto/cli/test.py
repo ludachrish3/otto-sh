@@ -641,13 +641,24 @@ async def _run_coverage(
     # treat the embedded build dir as the source root when there are no Unix
     # hosts (the standalone-embedded case; combined multi-root reports are
     # tracked separately in coverage_roadmap.md).
-    embedded_build_dir = (cov_config.get('embedded') or {}).get('build_dir')
+    embedded_cfg = cov_config.get('embedded') or {}
+    embedded_build_dir = embedded_cfg.get('build_dir')
     if embedded_dirs and embedded_build_dir:
         from ..host import LocalHost
-        from ..host.toolchain_discovery import discover_toolchain_from_gcno
-        tc = await discover_toolchain_from_gcno(
-            Path(embedded_build_dir), LocalHost(), cov_dir / '_toolchain_work',
+        from ..host.toolchain_discovery import (
+            discover_toolchain_from_gcno,
+            toolchain_from_gcov,
         )
+        # A .gcno embeds no compiler path, so the cross-gcov is named explicitly
+        # in the repo config (``[coverage.embedded].gcov``). Fall back to the
+        # best-effort .gcno scan only when it is not configured.
+        configured_gcov = embedded_cfg.get('gcov')
+        if configured_gcov:
+            tc = toolchain_from_gcov(Path(configured_gcov))
+        else:
+            tc = await discover_toolchain_from_gcno(
+                Path(embedded_build_dir), LocalHost(), cov_dir / '_toolchain_work',
+            )
         if tc:
             entry = {
                 'sysroot': str(tc.sysroot),

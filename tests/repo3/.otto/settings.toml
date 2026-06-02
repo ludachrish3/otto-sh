@@ -2,16 +2,14 @@ name = "repo3"
 version = "1.0.0"
 lab_data_type = "json"
 
-# Embedded coverage bed. Full design: ../../../todo/embedded_coverage.md
+# Embedded coverage bed. Full design: ../../../todo/embedded_coverage.md;
+# bring-up record: docs/feasibility.md.
 #
-# Status: SKELETON. The LLEXT product, the EmbeddedGcdaCollector, the console-dump
-# decoder, and the live qemu_cortex_m3 coverage instance are NOT built yet.
-#
-# `labs` points at the shared tech1 lab data for now (the existing embedded
-# hosts). The dedicated coverage target is a NEW qemu_cortex_m3 instance that does
-# not exist yet — it is stood up during the plan's LLEXT feasibility gate
-# (lab-bound; intentionally deferred). Swap to `--lab embedded` / a dedicated
-# lab_data dir once that instance lands.
+# The coverage target is the `sprout_cov` mps2_an385 instance in the shared
+# tech1 lab data — a stock Zephyr LLEXT loader base (built from
+# samples/subsys/llext/shell_loader, see ../../firmware/zephyr/configs/cov_an385)
+# reached over a QEMU `-serial telnet:` bridge. The instrumented product
+# (product/) is loaded at runtime; the base carries no coverage code.
 labs = [
     "${sutDir}/../lab_data/tech1",
 ]
@@ -48,9 +46,22 @@ max_filename_len = 32
 
 [coverage]
 # Embedded coverage uses console transport, not a remote .gcda directory, so the
-# Unix `gcda_remote_dir` key does not apply. The embedded path instead:
-#   - drives `llext call_fn cov_dump` over the console (EmbeddedGcdaCollector),
-#   - decodes the hex stream to .gcda on the host,
-#   - carries a per-host cross-gcov (arm-zephyr-eabi-gcov) in .otto_cov_meta.json.
-# None of that is implemented yet (see the plan, "The three pieces to build").
-# This empty section is a placeholder for that wiring.
+# Unix `gcda_remote_dir` key does not apply. The embedded path instead drives
+# `llext call_fn cov_dump` over the console (EmbeddedGcdaCollector), decodes the
+# hex stream to .gcda on the host, and runs a cross-gcov (arm-zephyr-eabi-gcov)
+# discovered from the .gcno under [coverage.embedded].build_dir.
+
+[coverage.embedded]
+# LLEXT extension name — matches add_llext_target(cov_ext) in product/. otto
+# dumps each embedded host via `llext call_fn cov_ext cov_dump`.
+extension = "cov_ext"
+
+# Cross-gcov for the report, named explicitly (a .gcno embeds no compiler path,
+# and otto must not assume a build system). Must match the GCC that built the
+# product; here the Zephyr SDK's arm-zephyr-eabi-gcov (gcc 12.2). Absolute path
+# on the dev VM where `otto test` runs. See product/README.md ("GCC coupling").
+gcov = "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov"
+
+# The extension's build dir: holds the .gcno + source used as the report's
+# source root. Absolute, on the dev VM where the product is built. See product/.
+build_dir = "/home/vagrant/build/cov_ext_app"

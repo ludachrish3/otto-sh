@@ -56,10 +56,28 @@ Vagrant.configure("2") do |config|
 
         dev.vm.provision "shell", name: "dev-root", keep_color: true, inline: <<-SHELL
 
-            # Install GitHub client and development tools for coverage testing
-            apt install -y  gcc     \
-                            gh      \
-                            lcov    \
+            # GitHub client + coverage tools, plus the Zephyr build dependencies
+            # needed to build the repo3 coverage product (.llext) on this VM
+            # (see the dev-zephyr-sdk / dev-zephyr-workspace provisioners below).
+            # wget + xz-utils fetch/unpack the SDK toolchain; cmake .. python3-*
+            # are `west build` deps — the QEMU/networking/GUI packages the zephyr
+            # VM also installs are intentionally omitted (this VM only *builds*
+            # the product; the coverage instance runs on the zephyr VM).
+            apt install -y  gcc                   \
+                            gh                    \
+                            lcov                  \
+                            wget                  \
+                            xz-utils              \
+                            git                   \
+                            cmake                 \
+                            ninja-build           \
+                            gperf                 \
+                            device-tree-compiler  \
+                            file                  \
+                            libmagic1             \
+                            python3-dev           \
+                            python3-pip           \
+                            python3-venv          \
 
             # Set MTU to 1350 on all ethernet interfaces to support mobile
             # connections that have a smaller MTU size
@@ -80,6 +98,94 @@ Vagrant.configure("2") do |config|
 
             echo 'git config --global core.editor "vim"' >> ~/.bashrc
             echo 'alias gs="git status"' >> ~/.bashrc
+        SHELL
+
+        # Zephyr SDK arm-zephyr-eabi toolchain for the embedded (repo3) coverage
+        # bed. This is the cross-gcov the coverage *report* runs
+        # (tests/repo3/.otto/settings.toml -> [coverage.embedded].gcov) and the
+        # compiler used to build the coverage product extension on this VM.
+        #
+        # Pinned to 0.16.8 to match Zephyr 3.7: the report gcov MUST be the same
+        # GCC (12.2) that compiled the product's .gcno, since gcov's on-disk
+        # format is a GCC-internal ABI. Installs (idempotently) to
+        # ~/zephyr-sdk-0.16.8; `setup.sh -c` registers it as a CMake package.
+        #
+        # NOTE: this installs the toolchain only. *Building* the product .llext
+        # on this VM additionally needs a Zephyr workspace (west + the zephyr
+        # 3.7 tree). gcov-for-reporting works with just this toolchain.
+        dev.vm.provision "shell", name: "dev-zephyr-sdk", privileged: false, keep_color: true, inline: <<-SHELL
+            set -euo pipefail
+            ZSDK=0.16.8
+            case "$(uname -m)" in
+                x86_64)  SDK_HOST="linux-x86_64"  ;;
+                aarch64) SDK_HOST="linux-aarch64" ;;
+                *) echo "unsupported host arch $(uname -m) for Zephyr SDK" >&2; exit 1 ;;
+            esac
+            if [ ! -d "${HOME}/zephyr-sdk-${ZSDK}" ]; then
+                cd "${HOME}"
+                SDK_TARBALL="zephyr-sdk-${ZSDK}_${SDK_HOST}_minimal.tar.xz"
+                wget -q "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZSDK}/${SDK_TARBALL}"
+                tar xf "${SDK_TARBALL}"
+                rm "${SDK_TARBALL}"
+                cd "zephyr-sdk-${ZSDK}"
+                # -t: just the arm toolchain (the gcov + cross-gcc); -h: SDK host
+                # tools; -c: register the Zephyr-sdk CMake package.
+                ./setup.sh -t arm-zephyr-eabi -h -c
+            fi
+            echo "Zephyr SDK arm-zephyr-eabi-gcov:"
+            ls -l "${HOME}/zephyr-sdk-${ZSDK}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov"
+        SHELL
+
+        # Zephyr 3.7 workspace for *building* the repo3 coverage product (.llext)
+        # on this VM. Mirrors the zephyr VM's single-version workspace setup, but
+        # with no QEMU/firmware/networking — this VM only builds the product; the
+        # coverage *instance* runs under QEMU on the zephyr VM. Needs the SDK from
+        # dev-zephyr-sdk and the apt build deps above. First run is slow (clones
+        # Zephyr + modules); idempotent on re-provision.
+        dev.vm.provision "shell", name: "dev-zephyr-workspace", privileged: false, keep_color: true, inline: <<-SHELL
+            set -euo pipefail
+            ZVER=v3_7
+            ZBRANCH=v3.7-branch
+            ZWORKSPACE="${HOME}/zephyrproject-${ZVER}"
+            ZVENV="${HOME}/zephyr-venv-${ZVER}"
+
+            cd "${HOME}"
+            unset ZEPHYR_BASE
+
+            # Per-version venv with west + Zephyr's Python build deps.
+            if [ ! -d "${ZVENV}" ]; then
+                python3 -m venv "${ZVENV}"
+            fi
+            # shellcheck disable=SC1091
+            source "${ZVENV}/bin/activate"
+            pip install --quiet --upgrade pip
+            pip install --quiet setuptools west
+
+            # Shallow + narrow workspace init (Zephyr CI's fast path; ~an order
+            # of magnitude faster than a full west init/update). Idempotent on
+            # .west; a partial checkout from a failed prior run self-heals.
+            if [ ! -d "${ZWORKSPACE}/.west" ]; then
+                rm -rf "${ZWORKSPACE}/zephyr"
+                mkdir -p "${ZWORKSPACE}"
+                git clone --depth 1 --branch "${ZBRANCH}" \
+                    https://github.com/zephyrproject-rtos/zephyr.git \
+                    "${ZWORKSPACE}/zephyr"
+                west init -l "${ZWORKSPACE}/zephyr"
+            fi
+            cd "${ZWORKSPACE}"
+            west update --narrow -o=--depth=1
+            if grep -q 'zephyr-export' zephyr/scripts/west-commands.yml 2>/dev/null; then
+                west zephyr-export
+            fi
+            pip install --quiet -r zephyr/scripts/requirements.txt
+
+            echo ""
+            echo "Zephyr 3.7 workspace ready at ${ZWORKSPACE}."
+            echo "To build the coverage product (see tests/repo3/product/README.md):"
+            echo "  git submodule update --init tests/repo3/third_party/embedded-gcov"
+            echo "  git -C tests/repo3/third_party/embedded-gcov apply ../patches/embedded-gcov-zephyr-gcc12.patch"
+            echo "  source ${ZVENV}/bin/activate && cd ${ZWORKSPACE} && source zephyr/zephyr-env.sh"
+            echo "  west build -p always -b mps2_an385 -d ~/build/cov_ext_app /vagrant/tests/repo3/product"
         SHELL
     end
 

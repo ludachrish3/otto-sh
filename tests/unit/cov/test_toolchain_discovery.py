@@ -13,6 +13,7 @@ from otto.host.toolchain_discovery import (
     _gcc_toolchain,
     _toolchain_from_compiler,
     discover_toolchain_from_gcno,
+    toolchain_from_gcov,
 )
 from otto.utils import CommandStatus, Status
 
@@ -211,3 +212,20 @@ class TestDiscoverToolchainFromGcno:
 
         assert tc is None
         await localhost.close()
+
+
+class TestToolchainFromGcov:
+    """The cross-gcov is named explicitly in the repo config (a .gcno embeds no
+    compiler path, and not every build system is CMake).
+    """
+
+    def test_cross_gcov_path(self):
+        gcov = Path('/opt/zephyr-sdk-0.16.8/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov')
+        tc = toolchain_from_gcov(gcov)
+        assert tc.gcov_bin == str(gcov)
+        assert tc.sysroot == Path('/opt/zephyr-sdk-0.16.8/arm-zephyr-eabi')
+
+    def test_usr_bin_gcov(self):
+        tc = toolchain_from_gcov(Path('/opt/arm/usr/bin/arm-none-eabi-gcov'))
+        assert tc.gcov_bin == '/opt/arm/usr/bin/arm-none-eabi-gcov'
+        assert tc.sysroot == Path('/opt/arm')
