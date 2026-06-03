@@ -7,6 +7,7 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Generic, TypeVar, cast
 
 import pytest
+import pytest_asyncio
 
 from otto.logger.logger import OttoLogger
 
@@ -315,6 +316,43 @@ class OttoSuite(Generic[TOptions]):
                 dash='solid',
                 source='auto',
             )
+
+    @pytest_asyncio.fixture(autouse=True, scope="class", loop_scope="class")
+    async def _otto_release_connections(self, request: pytest.FixtureRequest):
+        """Release host connections at class teardown during coverage runs.
+
+        OttoSuites run each test class on its own event loop
+        (``loop_scope='class'``). A persistent shell session — and the single
+        socket of an RTOS telnet console — is bound to the loop that opened it.
+        Under ``--cov`` the coverage collector runs *after* pytest on a separate
+        ``asyncio.run`` loop (see ``cli/test.py``'s ``_run_coverage``); a session
+        opened here and reused from that loop hangs — its reads await futures on
+        the now-closed class loop — and the stale single-client socket still
+        holds the device's only telnet slot, blocking the collector's reconnect.
+        Closing connections here, in the class loop that created them, lets the
+        collector connect fresh (the loaded LLEXT product stays resident on the
+        device — only the TCP session is dropped, not the extension).
+
+        Scoped to ``--cov`` so ordinary runs keep their persistent sessions and
+        pay no reconnect cost; outside coverage there is no cross-loop consumer.
+        """
+        yield
+        from .plugin import otto_cov_key
+
+        if not request.config.stash.get(otto_cov_key, False):
+            return
+
+        from ..configmodule import all_hosts
+
+        for host in all_hosts():
+            try:
+                await host.close()
+            except Exception as exc:  # best-effort teardown — never fail a class on it
+                logger.debug(
+                    "OttoSuite: error closing %s at class teardown: %s",
+                    getattr(host, "id", host),
+                    exc,
+                )
 
     # ── Monitoring helpers ─────────────────────────────────────────────────
 

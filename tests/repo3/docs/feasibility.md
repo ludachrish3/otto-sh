@@ -301,14 +301,78 @@ format-agnostic — the coupling lives in the product's coverage runtime, not ot
   copies; capture the base build recipe into `tests/firmware/zephyr`; user-facing
   doc on fetching/applying the gcc-12 patch.
 
+## Full CLI pipeline — PROVEN end-to-end ✅ (2026-06-02)
+
+`otto test --cov --lab embedded-cov TestEmbeddedCoverage` → `otto cov report` was run
+all the way through against a live `mps2_an385` coverage instance and produces an HTML
+report. **12 suite tests pass** over serial-telnet (`load_hex` of the 15.6 KB stripped
+ext → `cov_init` → `op_*`), the `EmbeddedGcdaCollector` triggers `cov_dump` and decodes
+a **2132-byte `.gcda`**, and the report's lcov + `arm-zephyr-eabi-gcov` pass renders the
+product **`cov_ext.c` at 93.8 % lines (15/16) / 100 % functions** — the single missed
+line is the `clamp > hi` branch (no `op_clamp_hi` is exercised), exactly the gap a second
+instance would fill (the cross-instance merge proof). Overall % is lower (~44 %) only
+because Approach A co-compiles the embedded-gcov runtime (`gcov_*.c`) into the same TU,
+so those host-dumper files appear in the report too.
+
+**Also proven on the real lab (basil, over the `basil_seed` hop).** The same
+`otto test --cov` → `otto cov report` runs green against the live `sprout_cov`
+(`zephyr-qemu-cov.service` on the zephyr VM, `qemu-system-arm … -serial
+telnet:192.0.2.33:2323`), reached through the real SSH-tunnel + telnet transport — same
+2132-byte `.gcda`, same `cov_ext.c` 93.8 %. A committed integration test,
+`tests/integration/test_embedded_coverage_e2e.py`, drives this full CLI pipeline as a
+subprocess against `sprout_cov` (skips cleanly when the product isn't built or the bed is
+down). It was the *first localhost-only* proof; running it against the real hop surfaced
+two more bugs (4–5 below). NB the x86 net-telnet bed (`sprout`, …) can be independently
+wedged (the documented e1000 net-buffer wedge — `shell never became ready`); that is a
+separate instance from the ARM serial-telnet `sprout_cov` and does not affect coverage.
+
+### Five bugs found + fixed getting the CLI pipeline green (each TDD'd)
+
+1. **Cross-event-loop session reuse (the 120 s `cov_dump` hang).** `otto test` runs the
+   suite via `pytest.main()` (each class on its own `loop_scope='class'` loop), then runs
+   collection via a separate `asyncio.run(_run_coverage)`. The cached embedded telnet
+   session is bound to the (now-closed) class loop; the collector reused it cross-loop, so
+   every read awaited a future on the dead loop and hung — and the stale single-client QEMU
+   socket blocked any reconnect (cross-loop `close()` is a no-op for the socket). Large
+   `cov_dump` output was a red herring (`otto host run cov_dump` on a sole fresh connection
+   always worked). Fix: `OttoSuite._otto_release_connections`, a class-scoped autouse
+   fixture (`loop_scope='class'`) that, **under `--cov`**, closes host connections at class
+   teardown *in the creating loop*, so the collector connects fresh (the loaded LLEXT stays
+   resident — only the TCP session drops).
+2. **Cross-gcov `lcov` path (`lcov: not found`).** `toolchain_from_gcov` left `lcov` at the
+   default `usr/bin/lcov` **relative to the cross sysroot** — which doesn't exist. `lcov` is
+   a host-side Perl orchestrator (it shells to `--gcov-tool <gcov>`), not part of a cross
+   toolchain. Fix: resolve the host `lcov` (`shutil.which`); the cross `gcov` stays under
+   the cross sysroot.
+3. **Gitignored golden fixture.** `tests/unit/fixtures/embedded_coverage/cov_ext.c.gcda`
+   (the known-good decode target) was swept up by the `*.gcda` gitignore, so the 3
+   `test_embedded_collector` decode tests fail on a *fresh* checkout. Fix: a `!`-exception
+   in `.gitignore` + restored fixture (reconstructed independently with `xxd -r`).
+
+*(4–5 surfaced only against the real lab — the localhost bed had no hop.)*
+
+4. **Hop host absent from the coverage lab (`KeyError: 'basil_seed'`).** `sprout_cov`
+   declares `hop="basil_seed"` (= basil's `ne`+`board`), but `basil` was only in the
+   `embedded` lab, so `otto … --lab embedded-cov` filtered it out and the hop couldn't
+   resolve. Fix: add `embedded-cov` to basil's `labs` in `tests/lab_data/tech1/hosts.json`.
+5. **Hop host mistaken for a Unix coverage target (`geninfo: skipping .gcda`).** With
+   basil now in the lab, `_run_coverage` (which iterated *every* Unix host) enrolled the
+   hop as a Unix coverage host: it flipped `if not unix_hosts:` so `sut_dir` became the
+   repo dir instead of the embedded build dir (→ `geninfo` couldn't find the `.gcno`) and
+   wrote a bogus native toolchain. Fix: key the meta off *collected coverage* (`unix_dirs`)
+   not lab membership — a hop produces no `.gcda`, so it contributes nothing to the
+   `source_root` choice or the toolchain map.
+
 ## Remaining
 
-- **lab_data entry** — `sprout_cov` / `192.0.2.33` / lab `embedded-cov` / hop
-  `basil_seed`, added to `tests/lab_data/tech1/hosts.json` (isolated from the
-  existing `embedded` lab + `_ZEPHYR_BACKEND_NE` matrix).
-- **Validate via otto's real `EmbeddedHost` transport** against the live instance
-  — the proper end-to-end check (an ad-hoc telnet driver fights the protocol).
-- **systemd unit** + Vagrantfile/firmware wiring for persistence (mirror the
-  existing `zephyr-qemu-*` units).
-- **repo3 config** (`[coverage.embedded]`) + the repo3 `OttoSuite`
-  (mirroring `TestCoverageProduct`), then `otto test --cov` end-to-end.
+- **Vagrantfile wiring** to *build + persist* the `cov_an385` instance from provisioning.
+  The instance currently runs on the zephyr VM as `zephyr-qemu-cov.service` (proven live),
+  but the Vagrantfile only builds the 5 x86 configs + their `zephyr-qemu-*` units; it does
+  **not** yet build the ARM `cov_base` image or generate the `zephyr-qemu-cov` unit, so the
+  instance is not reproduced by a clean `vagrant provision`. (`make qemu-restart` /
+  `scripts/lab_health.py` already cover the `zephyr-qemu-*` glob, which includes `-cov`.)
+- **Cross-instance merge** — needs ≥2 coverage hosts (e.g. an `op_clamp_hi` on a second
+  instance) to demonstrate merged coverage > any single instance. The merge/decode logic
+  is already unit-tested; only a second live host is missing.
+- Post-commit cleanup: reconcile any duplicated `embgcov` copies; capture the `cov_base`
+  build recipe into `tests/firmware/zephyr`; user-facing doc on the gcc-12 patch.

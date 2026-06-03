@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import stat
 from pathlib import Path
 
@@ -101,7 +102,15 @@ def toolchain_from_gcov(gcov: Path) -> Toolchain:
         gcov_rel = gcov.relative_to(sysroot)
     except ValueError:
         gcov_rel = gcov
-    return Toolchain(sysroot=sysroot, gcov=gcov_rel)
+    # ``lcov`` is a host-side Perl orchestrator that shells out to the gcov tool
+    # (``lcov --gcov-tool <gcov>``); it is NOT part of a *cross* toolchain, so a
+    # cross gcov's sysroot has no ``usr/bin/lcov`` (the dataclass default would
+    # point at a nonexistent path and the report's ``lcov --capture`` would fail
+    # with ``lcov: not found``). Resolve the host lcov instead. Stored absolute,
+    # so ``lcov_bin`` ignores the cross sysroot while ``gcov`` stays under it.
+    host_lcov = shutil.which('lcov')
+    lcov = Path(host_lcov) if host_lcov else Path('usr/bin/lcov')
+    return Toolchain(sysroot=sysroot, gcov=gcov_rel, lcov=lcov)
 
 
 def _toolchain_from_compiler(compiler_path: Path, work_dir: Path) -> Toolchain | None:

@@ -597,6 +597,15 @@ async def _run_coverage(
     # the network. EmbeddedHost/DockerContainerHost are skipped by the fetcher.
     unix_hosts = [h for h in all_hosts() if isinstance(h, UnixHost)]
     gcda_remote_dir = cov_config.get('gcda_remote_dir', '')
+    # Unix hosts that actually produced .gcda (host id -> dir). NOT every UnixHost
+    # in the lab: an embedded coverage lab must also contain the SSH **hop** host
+    # (e.g. `basil` fronting `sprout_cov`) so the hop resolves, but that hop is
+    # infrastructure, not a coverage target, and emits no .gcda. Keying the meta
+    # below off *collected coverage* rather than lab membership keeps such a hop
+    # from being mistaken for a Unix coverage target — which would otherwise flip
+    # the source-root choice (breaking embedded .gcno discovery) and write a bogus
+    # toolchain entry.
+    unix_dirs: dict[str, Path] = {}
     if gcda_remote_dir and unix_hosts:
         # Hosts may carry stale connections from pytest's event loop; rebuild
         # their connection state so they reconnect on the current loop.
@@ -627,6 +636,10 @@ async def _run_coverage(
 
     toolchains: dict[str, dict[str, str]] = {}
     for host in unix_hosts:
+        # Only hosts that actually produced coverage — skip infrastructure hosts
+        # (e.g. an SSH hop) that are in the lab solely for connectivity.
+        if host.id not in unix_dirs:
+            continue
         tc = host.toolchain
         toolchains[host.id] = {
             'sysroot': str(tc.sysroot),
@@ -667,7 +680,11 @@ async def _run_coverage(
             }
             for host_id in embedded_dirs:
                 toolchains[host_id] = entry
-        if not unix_hosts:
+        # Standalone-embedded case: the source root is the embedded build dir.
+        # Gate on *collected Unix coverage*, not lab membership — a Unix SSH hop
+        # in the lab (needed to reach the embedded host) is not a coverage target
+        # and must not force the combined-report source root.
+        if not unix_dirs:
             sut_dir = str(Path(embedded_build_dir).resolve())
 
     meta: dict[str, object] = {

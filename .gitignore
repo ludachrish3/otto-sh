@@ -16,6 +16,10 @@ tests/repo1/product/product
 reports/
 *.gcno
 *.gcda
+# ...but keep the committed golden fixtures the embedded-collector unit tests
+# decode against (a live mps2_an385 cov_dump capture + its known-good .gcda).
+!tests/unit/fixtures/embedded_coverage/*.gcda
+!tests/unit/fixtures/embedded_coverage/*.gcno
 
 # Performance files
 profile.txt

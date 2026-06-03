@@ -701,6 +701,57 @@ class TestRunCoverageEmbedded:
 
         embedded_collect.assert_awaited_once()
 
+    def test_unix_hop_host_not_treated_as_coverage_target(self, tmp_path):
+        """A Unix SSH hop in the lab must not pollute the embedded meta.
+
+        An embedded coverage lab must include the SSH hop (e.g. ``basil``
+        fronting ``sprout_cov``) so the hop resolves — but the hop is
+        infrastructure, not a coverage target, and emits no ``.gcda``. The meta
+        must therefore (a) keep ``sut_dir`` = the embedded build dir (the hop must
+        not flip it to the repo dir, which breaks ``.gcno`` discovery and made
+        ``geninfo`` skip the file on the real lab) and (b) carry only the embedded
+        host's toolchain, not the hop's. Regression for the basil-hop report bug.
+        """
+        import asyncio
+        import json
+
+        from otto.cli.test import _run_coverage
+        from otto.host import UnixHost
+
+        cov_dir = tmp_path / 'cov'
+        cov_dir.mkdir()
+        build_dir = tmp_path / 'build' / 'cov_ext_app'
+        build_dir.mkdir(parents=True)
+
+        repo = MagicMock()
+        repo.name = 'repo3'
+        repo.sutDir = tmp_path / 'repo3'  # NOT what sut_dir should resolve to
+
+        hop = MagicMock(spec=UnixHost)
+        hop.id = 'basil_seed'  # a Unix hop, produces no coverage
+
+        embedded_collect = AsyncMock(
+            return_value={'sprout_cov': cov_dir / 'sprout_cov'},
+        )
+        cov_config = {
+            'embedded': {
+                'extension': 'cov_ext',
+                'build_dir': str(build_dir),
+                'gcov': '/opt/sdk/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov',
+            },
+        }
+        with patch('otto.cli.test._get_cov_config', return_value=cov_config), \
+             patch('otto.configmodule.all_hosts', return_value=[hop]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=repo):
+            asyncio.run(_run_coverage([repo], tmp_path / 'log', cov_dir))
+
+        meta = json.loads((cov_dir / '.otto_cov_meta.json').read_text())
+        assert meta['sut_dir'] == str(build_dir.resolve())
+        assert set(meta['toolchains']) == {'sprout_cov'}
+        assert 'basil_seed' not in meta['toolchains']
+
 
 # ── --cov-report option (report generation alongside collection) ─────────────
 
