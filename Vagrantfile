@@ -3,6 +3,56 @@
 # Must install the vagrant hostmanager plugin
 # vagrant plugin install vagrant-hostmanager
 
+# Shared Zephyr-SDK install step, used by both the dev VM (arm-zephyr-eabi, for
+# building the mps2_an385 coverage product + running the cross-gcov report) and
+# the zephyr VM (the cov base's arm toolchain). Returns an inline shell snippet
+# that installs the given toolchain from each named SDK version, idempotently:
+#   - SDK dir + toolchain present -> skip.
+#   - SDK dir absent              -> download + unpack the minimal tarball, then
+#                                    `setup.sh -t <toolchain> -h -c` (host tools +
+#                                    register the Zephyr-SDK CMake package).
+#   - SDK dir present, toolchain absent -> add just that toolchain
+#                                    (`setup.sh -t <toolchain> -c`), no re-download.
+#                                    This is how the zephyr VM layers
+#                                    arm-zephyr-eabi onto a 0.16.8 SDK that already
+#                                    carries x86_64-zephyr-elf.
+# SDK install dirs are version-named (~/zephyr-sdk-<ver>), so multiple SDKs and
+# toolchains coexist. The per-host-arch tarball is resolved at runtime.
+def zephyr_sdk_install(toolchain, versions)
+  <<-SHELL
+    set -euo pipefail
+    case "$(uname -m)" in
+        x86_64)  SDK_HOST="linux-x86_64"  ;;
+        aarch64) SDK_HOST="linux-aarch64" ;;
+        *) echo "unsupported host arch $(uname -m) for Zephyr SDK" >&2; exit 1 ;;
+    esac
+    for ZSDK in #{versions.join(" ")}; do
+        SDK_DIR="${HOME}/zephyr-sdk-${ZSDK}"
+        # Toolchain layout differs by SDK release: 0.16.x is flat
+        # (<sdk>/<toolchain>); 1.0+ nests it under <sdk>/gnu/<toolchain>. Locate
+        # it either way so the "already present" skip works across both (else a
+        # 1.0+ SDK re-downloads its toolchain on every provision).
+        TC_DIR="$(find "${SDK_DIR}" -maxdepth 2 -type d -name "#{toolchain}" 2>/dev/null | head -1)"
+        if [ -n "${TC_DIR}" ]; then
+            echo "Zephyr SDK ${ZSDK} #{toolchain} already present (${TC_DIR})."
+        elif [ ! -d "${SDK_DIR}" ]; then
+            echo "=== installing Zephyr SDK ${ZSDK} (#{toolchain}) ==="
+            cd "${HOME}"
+            SDK_TARBALL="zephyr-sdk-${ZSDK}_${SDK_HOST}_minimal.tar.xz"
+            wget -q "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZSDK}/${SDK_TARBALL}"
+            tar xf "${SDK_TARBALL}"
+            rm "${SDK_TARBALL}"
+            ( cd "${SDK_DIR}" && ./setup.sh -t #{toolchain} -h -c )
+        else
+            echo "=== adding #{toolchain} toolchain to existing Zephyr SDK ${ZSDK} ==="
+            ( cd "${SDK_DIR}" && ./setup.sh -t #{toolchain} -c )
+        fi
+        GCOV="$(find "${SDK_DIR}" -maxdepth 4 -name "#{toolchain}-gcov" 2>/dev/null | head -1)"
+        if [ -n "${GCOV}" ]; then ls -l "${GCOV}"; else echo "WARNING: #{toolchain}-gcov not found under ${SDK_DIR}"; fi
+    done
+  SHELL
+end
+
 Vagrant.configure("2") do |config|
 
   config.vm.box = "bento/ubuntu-24.04"
@@ -54,6 +104,33 @@ Vagrant.configure("2") do |config|
         # Private network (shared with test VMs)
         dev.vm.network "private_network", ip: "10.10.200.100"
 
+        # Grow the root LV + filesystem to use the full virtual disk. The
+        # bento/ubuntu-24.04 box ships the root LV at only ~half its PV (a ~30 G
+        # LV on a ~61 G partition of a 64 G disk), so the per-version Zephyr
+        # workspaces below (~3.6 G each, x3) would otherwise run the box out of
+        # space. Runs first, before the SDK/workspace downloads. Steps are
+        # dynamic (no hard-coded vg/disk names) and idempotent — each is a no-op
+        # once at max. growpart + pvresize also cover the case where the VDI is
+        # later enlarged (e.g. via the vagrant-disksize plugin): the partition
+        # then trails the disk and these grow it; lvextend + resize2fs fill the LV
+        # into the free VG. resize2fs grows ext4 online, so no reboot is needed.
+        dev.vm.provision "shell", name: "dev-grow-disk", keep_color: true, inline: <<-SHELL
+            set -e
+            apt-get install -y cloud-guest-utils >/dev/null 2>&1 || true  # growpart
+            ROOT_LV="$(findmnt -no SOURCE /)"                       # /dev/mapper/<vg>-<lv>
+            PV="$(pvs --noheadings -o pv_name | head -1 | tr -d ' ')" # e.g. /dev/sda3
+            DISK="/dev/$(lsblk -no pkname "${PV}" | head -1)"       # e.g. /dev/sda (head -1: skip the LVM child row)
+            PARTNUM="$(echo "${PV}" | grep -o '[0-9]*$')"
+            echo "root LV=${ROOT_LV} PV=${PV} disk=${DISK} part=${PARTNUM}"
+            if command -v growpart >/dev/null; then
+                growpart "${DISK}" "${PARTNUM}" || true   # rc 2 == NOCHANGE
+            fi
+            pvresize "${PV}"
+            lvextend -l +100%FREE "${ROOT_LV}" || true    # no-op if no free extents
+            resize2fs "${ROOT_LV}"
+            df -h / | tail -1
+        SHELL
+
         dev.vm.provision "shell", name: "dev-root", keep_color: true, inline: <<-SHELL
 
             # GitHub client + coverage tools, plus the Zephyr build dependencies
@@ -103,92 +180,100 @@ Vagrant.configure("2") do |config|
             echo 'alias gs="git status"' >> ~/.bashrc
         SHELL
 
-        # Zephyr SDK arm-zephyr-eabi toolchain for the embedded (repo3) coverage
-        # bed. This is the cross-gcov the coverage *report* runs
-        # (tests/repo3/.otto/settings.toml -> [coverage.embedded].gcov) and the
-        # compiler used to build the coverage product extension on this VM.
+        # Zephyr SDK arm-zephyr-eabi toolchains for the embedded (repo3) coverage
+        # bed: the cross-gcov the coverage *report* runs
+        # (tests/lab_data/tech1/hosts.json -> each host's `toolchain`) and the
+        # compiler that builds the mps2_an385 coverage product on this VM. The
+        # report gcov MUST be the same GCC that compiled the product's .gcno
+        # (gcov's on-disk format is a GCC-internal ABI), so each Zephyr version
+        # pins its own SDK: 0.16.8 for 2.7/3.7 (gcc 12.2), 1.0.1 for 4.4.
+        # Installed via the shared zephyr_sdk_install helper (idempotent; defined
+        # at the top of this file and shared with the zephyr VM).
         #
-        # Pinned to 0.16.8 to match Zephyr 3.7: the report gcov MUST be the same
-        # GCC (12.2) that compiled the product's .gcno, since gcov's on-disk
-        # format is a GCC-internal ABI. Installs (idempotently) to
-        # ~/zephyr-sdk-0.16.8; `setup.sh -c` registers it as a CMake package.
-        #
-        # NOTE: this installs the toolchain only. *Building* the product .llext
-        # on this VM additionally needs a Zephyr workspace (west + the zephyr
-        # 3.7 tree). gcov-for-reporting works with just this toolchain.
-        dev.vm.provision "shell", name: "dev-zephyr-sdk", privileged: false, keep_color: true, inline: <<-SHELL
-            set -euo pipefail
-            ZSDK=0.16.8
-            case "$(uname -m)" in
-                x86_64)  SDK_HOST="linux-x86_64"  ;;
-                aarch64) SDK_HOST="linux-aarch64" ;;
-                *) echo "unsupported host arch $(uname -m) for Zephyr SDK" >&2; exit 1 ;;
-            esac
-            if [ ! -d "${HOME}/zephyr-sdk-${ZSDK}" ]; then
-                cd "${HOME}"
-                SDK_TARBALL="zephyr-sdk-${ZSDK}_${SDK_HOST}_minimal.tar.xz"
-                wget -q "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${ZSDK}/${SDK_TARBALL}"
-                tar xf "${SDK_TARBALL}"
-                rm "${SDK_TARBALL}"
-                cd "zephyr-sdk-${ZSDK}"
-                # -t: just the arm toolchain (the gcov + cross-gcc); -h: SDK host
-                # tools; -c: register the Zephyr-sdk CMake package.
-                ./setup.sh -t arm-zephyr-eabi -h -c
-            fi
-            echo "Zephyr SDK arm-zephyr-eabi-gcov:"
-            ls -l "${HOME}/zephyr-sdk-${ZSDK}/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov"
-        SHELL
+        # NOTE: this installs the toolchains only. *Building* the product .llext
+        # additionally needs the per-version Zephyr workspaces below.
+        dev.vm.provision "shell", name: "dev-zephyr-sdk", privileged: false, keep_color: true,
+            inline: zephyr_sdk_install("arm-zephyr-eabi", ["0.16.8", "1.0.1"])
 
-        # Zephyr 3.7 workspace for *building* the repo3 coverage product (.llext)
-        # on this VM. Mirrors the zephyr VM's single-version workspace setup, but
-        # with no QEMU/firmware/networking — this VM only builds the product; the
-        # coverage *instance* runs under QEMU on the zephyr VM. Needs the SDK from
-        # dev-zephyr-sdk and the apt build deps above. First run is slow (clones
-        # Zephyr + modules); idempotent on re-provision.
+        # Per-version Zephyr workspaces for *building/testing* against each
+        # otto-supported Zephyr version on this VM. 3.7 + 4.4 build the repo3
+        # coverage product (.llext); 2.7 is for testing only (it predates LLEXT,
+        # so it can't do coverage). One (venv, workspace) per version, mirroring
+        # the zephyr VM's ZEPHYR_VERSIONS table — but with no QEMU/firmware build
+        # (this VM only builds the product on demand; the instances run on the
+        # zephyr VM). Needs the SDKs from dev-zephyr-sdk + the apt build deps
+        # above. First run is slow (clones Zephyr + modules per version);
+        # idempotent on re-provision.
         dev.vm.provision "shell", name: "dev-zephyr-workspace", privileged: false, keep_color: true, inline: <<-SHELL
-            set -euo pipefail
-            ZVER=v3_7
-            ZBRANCH=v3.7-branch
-            ZWORKSPACE="${HOME}/zephyrproject-${ZVER}"
-            ZVENV="${HOME}/zephyr-venv-${ZVER}"
+            set -e
+            # version_id | git branch. Redirected heredoc (not a pipe) so the loop
+            # body runs in this shell and `set -e` persists (see the zephyr VM
+            # provisioner). 2.7 + 3.7 share SDK 0.16.8; 4.4 uses 1.0.1 — both
+            # installed by dev-zephyr-sdk above.
+            while IFS='|' read -r ZVER ZBRANCH; do
+                [ -n "${ZVER}" ] || continue
+                ZWORKSPACE="${HOME}/zephyrproject-${ZVER}"
+                ZVENV="${HOME}/zephyr-venv-${ZVER}"
+                echo ""
+                echo "### Zephyr ${ZVER} (${ZBRANCH}) build env"
 
-            cd "${HOME}"
-            unset ZEPHYR_BASE
+                # Neutral ground before any west command: a prior iteration leaves
+                # cwd + ZEPHYR_BASE inside its own workspace, which would misdirect
+                # west init/discovery for the next version.
+                cd "${HOME}"
+                unset ZEPHYR_BASE
 
-            # Per-version venv with west + Zephyr's Python build deps.
-            if [ ! -d "${ZVENV}" ]; then
-                python3 -m venv "${ZVENV}"
-            fi
-            # shellcheck disable=SC1091
-            source "${ZVENV}/bin/activate"
-            pip install --quiet --upgrade pip
-            pip install --quiet setuptools west
+                # Per-version venv keeps each LTS's west / Python deps isolated.
+                if [ ! -d "${ZVENV}" ]; then
+                    python3 -m venv "${ZVENV}"
+                fi
+                # shellcheck disable=SC1091
+                source "${ZVENV}/bin/activate"
+                pip install --quiet --upgrade pip
+                # setuptools for its distutils shim (Py3.12 dropped distutils;
+                # 2.7's build scripts still import it). Harmless for 3.7/4.4.
+                pip install --quiet setuptools west
 
-            # Shallow + narrow workspace init (Zephyr CI's fast path; ~an order
-            # of magnitude faster than a full west init/update). Idempotent on
-            # .west; a partial checkout from a failed prior run self-heals.
-            if [ ! -d "${ZWORKSPACE}/.west" ]; then
-                rm -rf "${ZWORKSPACE}/zephyr"
-                mkdir -p "${ZWORKSPACE}"
-                git clone --depth 1 --branch "${ZBRANCH}" \
-                    https://github.com/zephyrproject-rtos/zephyr.git \
-                    "${ZWORKSPACE}/zephyr"
-                west init -l "${ZWORKSPACE}/zephyr"
-            fi
-            cd "${ZWORKSPACE}"
-            west update --narrow -o=--depth=1
-            if grep -q 'zephyr-export' zephyr/scripts/west-commands.yml 2>/dev/null; then
-                west zephyr-export
-            fi
-            pip install --quiet -r zephyr/scripts/requirements.txt
+                # Shallow + narrow workspace init (Zephyr CI's fast path).
+                # Idempotent on .west; a partial checkout self-heals.
+                if [ ! -d "${ZWORKSPACE}/.west" ]; then
+                    rm -rf "${ZWORKSPACE}/zephyr"
+                    mkdir -p "${ZWORKSPACE}"
+                    git clone --depth 1 --branch "${ZBRANCH}" \
+                        https://github.com/zephyrproject-rtos/zephyr.git \
+                        "${ZWORKSPACE}/zephyr"
+                    west init -l "${ZWORKSPACE}/zephyr"
+                fi
+                cd "${ZWORKSPACE}"
+                west update --narrow -o=--depth=1
+                if grep -q 'zephyr-export' zephyr/scripts/west-commands.yml 2>/dev/null; then
+                    west zephyr-export
+                fi
+                pip install --quiet -r zephyr/scripts/requirements.txt
+
+                # Apply any per-version source patch (only 2.7 carries one — the
+                # `retCode` shell line; see the zephyr VM provisioner). The glob is
+                # version-gated, so only the 2.7 iteration matches. Idempotent: the
+                # reverse-check skips an already-patched tree.
+                for patch in /vagrant/tests/firmware/zephyr/patches/${ZVER}-*.patch; do
+                    [ -f "${patch}" ] || continue
+                    if git -C zephyr apply --reverse --check "${patch}" 2>/dev/null; then
+                        echo "=== patch already applied: $(basename "${patch}") ==="
+                    else
+                        echo "=== applying patch: $(basename "${patch}") ==="
+                        git -C zephyr apply "${patch}"
+                    fi
+                done
+            done <<'VERS'
+v2_7|v2.7-branch
+v3_7|v3.7-branch
+v4_4|v4.4-branch
+VERS
 
             echo ""
-            echo "Zephyr 3.7 workspace ready at ${ZWORKSPACE}."
-            echo "To build the coverage product (see tests/repo3/product/README.md):"
-            echo "  git submodule update --init tests/repo3/third_party/embedded-gcov"
-            echo "  git -C tests/repo3/third_party/embedded-gcov apply ../patches/embedded-gcov-zephyr-gcc12.patch"
-            echo "  source ${ZVENV}/bin/activate && cd ${ZWORKSPACE} && source zephyr/zephyr-env.sh"
-            echo "  west build -p always -b mps2_an385 -d ~/build/cov_ext_app /vagrant/tests/repo3/product"
+            echo "Zephyr build envs ready: ~/zephyrproject-{v2_7,v3_7,v4_4}."
+            echo "Build the coverage product (3.7/4.4) — see tests/repo3/product/README.md, e.g.:"
+            echo "  tests/repo3/product/build.sh ~/build/cov_ext_app_v3_7 v3_7"
         SHELL
     end
 
@@ -832,13 +917,14 @@ EOF
             SDK="${HOME}/zephyr-sdk-${ZSDK}"
 
             # The coverage image is Cortex-M (mps2_an385), so it needs the
-            # arm-zephyr-eabi toolchain in the same 0.16.8 SDK the 3.7 x86
-            # configs already installed (which fetched x86_64-zephyr-elf only).
-            # Add it idempotently — `setup.sh -t` unpacks just that toolchain.
-            if [ ! -d "${SDK}/arm-zephyr-eabi" ]; then
-                echo "=== installing arm-zephyr-eabi toolchain into ${SDK} ==="
-                (cd "${SDK}" && ./setup.sh -t arm-zephyr-eabi -c)
-            fi
+            # arm-zephyr-eabi toolchain in the same 0.16.8 SDK the 3.7 x86 configs
+            # already installed (which fetched x86_64-zephyr-elf only). Add it via
+            # the shared zephyr_sdk_install helper — its "SDK present, toolchain
+            # absent" path layers arm onto the existing 0.16.8. Run in a subshell
+            # so the helper's `set -u` / cwd changes don't leak into this script.
+            (
+            #{zephyr_sdk_install("arm-zephyr-eabi", ["0.16.8"])}
+            )
 
             # Build the stock LLEXT loader base for mps2_an385 with otto's
             # coverage-host overlay (serial shell, MPU off, large shell buffers —
