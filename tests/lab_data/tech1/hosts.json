@@ -232,6 +232,11 @@
             "write_chunk_size": 64,
             "write_chunk_delay": 0.015
         },
+        "toolchain": {
+            "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
+            "gcov": "bin/arm-zephyr-eabi-gcov",
+            "lcov": "/usr/bin/lcov"
+        },
         "hop": "basil_seed",
         "resources": [
             "sprout_cov"

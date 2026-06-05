@@ -714,9 +714,12 @@ class TestRunCoverageEmbedded:
         """
         import asyncio
         import json
+        from pathlib import Path
 
         from otto.cli.test import _run_coverage
         from otto.host import UnixHost
+        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.toolchain import Toolchain
 
         cov_dir = tmp_path / 'cov'
         cov_dir.mkdir()
@@ -730,6 +733,15 @@ class TestRunCoverageEmbedded:
         hop = MagicMock(spec=UnixHost)
         hop.id = 'basil_seed'  # a Unix hop, produces no coverage
 
+        sprout_cov = EmbeddedHost(
+            ip='192.0.2.33', ne='sprout_cov', transfer='console',
+            toolchain=Toolchain(
+                sysroot=Path('/opt/sdk/arm-zephyr-eabi'),
+                gcov=Path('bin/arm-zephyr-eabi-gcov'),
+                lcov=Path('/usr/bin/lcov'),
+            ),
+        )
+
         embedded_collect = AsyncMock(
             return_value={'sprout_cov': cov_dir / 'sprout_cov'},
         )
@@ -737,11 +749,10 @@ class TestRunCoverageEmbedded:
             'embedded': {
                 'extension': 'cov_ext',
                 'build_dir': str(build_dir),
-                'gcov': '/opt/sdk/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov',
             },
         }
         with patch('otto.cli.test._get_cov_config', return_value=cov_config), \
-             patch('otto.configmodule.all_hosts', return_value=[hop]), \
+             patch('otto.configmodule.all_hosts', return_value=[hop, sprout_cov]), \
              patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
                    new=embedded_collect), \
              patch('otto.cli.test._get_cov_repo', return_value=repo):
@@ -751,6 +762,108 @@ class TestRunCoverageEmbedded:
         assert meta['sut_dir'] == str(build_dir.resolve())
         assert set(meta['toolchains']) == {'sprout_cov'}
         assert 'basil_seed' not in meta['toolchains']
+
+    def test_embedded_toolchain_is_per_host(self, tmp_path):
+        """Each embedded host's coverage toolchain comes from host.toolchain."""
+        import asyncio
+        import json
+        from pathlib import Path
+
+        from otto.cli.test import _run_coverage
+        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.toolchain import Toolchain
+
+        host = EmbeddedHost(
+            ip='192.0.2.33', ne='sprout_cov', transfer='console',
+            toolchain=Toolchain(
+                sysroot=Path('/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi'),
+                gcov=Path('bin/arm-zephyr-eabi-gcov'),
+                lcov=Path('/usr/bin/lcov'),
+            ),
+        )
+        cov_dir = tmp_path / 'cov'
+        cov_dir.mkdir()
+        build_dir = tmp_path / 'build'
+        (build_dir / 'zephyr').mkdir(parents=True)
+
+        repo = MagicMock()
+        repo.name = 'repo3'
+        repo.sutDir = tmp_path / 'repo3'
+
+        embedded_collect = AsyncMock(
+            return_value={'sprout_cov': cov_dir / 'sprout_cov'},
+        )
+        cov_config = {
+            'embedded': {
+                'extension': 'cov_ext',
+                'build_dir': str(build_dir),
+            },
+        }
+        with patch('otto.cli.test._get_cov_config', return_value=cov_config), \
+             patch('otto.configmodule.all_hosts', return_value=[host]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=repo):
+            asyncio.run(_run_coverage([repo], tmp_path / 'log', cov_dir))
+
+        meta = json.loads((cov_dir / '.otto_cov_meta.json').read_text())
+        entry = meta['toolchains']['sprout_cov']
+        assert entry['gcov'] == 'bin/arm-zephyr-eabi-gcov'
+        assert entry['sysroot'] == '/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi'
+        assert entry['lcov'] == '/usr/bin/lcov'
+
+    def test_embedded_toolchain_falls_back_to_gcno_discovery(self, tmp_path):
+        """A host left at the default Toolchain() resolves via .gcno discovery."""
+        import asyncio
+        import json
+        from pathlib import Path
+
+        from otto.cli import test as test_mod
+        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.toolchain import Toolchain
+
+        host = EmbeddedHost(ip='192.0.2.33', ne='sprout_cov', transfer='console')
+        # No toolchain configured -> default Toolchain() -> discovery fallback.
+        cov_dir = tmp_path / 'cov'
+        cov_dir.mkdir()
+        build_dir = tmp_path / 'build'
+        build_dir.mkdir()
+
+        repo = MagicMock()
+        repo.name = 'repo3'
+        repo.sutDir = tmp_path / 'repo3'
+
+        embedded_collect = AsyncMock(
+            return_value={'sprout_cov': cov_dir / 'sprout_cov'},
+        )
+        cov_config = {
+            'embedded': {
+                'extension': 'cov_ext',
+                'build_dir': str(build_dir),
+            },
+        }
+
+        discovered = Toolchain(
+            sysroot=Path('/discovered'),
+            gcov=Path('bin/x-gcov'),
+            lcov=Path('/usr/bin/lcov'),
+        )
+
+        async def _fake_discover(build_dir_arg, localhost, work_dir):
+            return discovered
+
+        with patch('otto.cli.test._get_cov_config', return_value=cov_config), \
+             patch('otto.configmodule.all_hosts', return_value=[host]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=repo), \
+             patch('otto.host.toolchain_discovery.discover_toolchain_from_gcno',
+                   new=_fake_discover):
+            asyncio.run(test_mod._run_coverage([repo], tmp_path / 'log', cov_dir))
+
+        meta = json.loads((cov_dir / '.otto_cov_meta.json').read_text())
+        assert meta['toolchains']['sprout_cov']['gcov'] == 'bin/x-gcov'
+        assert meta['toolchains']['sprout_cov']['sysroot'] == '/discovered'
 
     def test_coverage_hosts_regex_passed_to_both_selectors(self, tmp_path):
         """``[coverage].hosts`` compiles to a regex handed to the Unix and

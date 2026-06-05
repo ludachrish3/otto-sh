@@ -604,7 +604,8 @@ async def _run_coverage(
 
     # Unix hosts compile the SUT and emit .gcda to a filesystem we fetch over
     # the network. EmbeddedHost/DockerContainerHost are skipped by the fetcher.
-    unix_hosts = [h for h in all_hosts(pattern=cov_pattern) if isinstance(h, UnixHost)]
+    cov_hosts = list(all_hosts(pattern=cov_pattern))
+    unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
     gcda_remote_dir = cov_config.get('gcda_remote_dir', '')
     # Unix hosts that actually produced .gcda (host id -> dir). Keying the meta
     # below off *collected coverage* (rather than lab membership) is a safety net
@@ -657,41 +658,47 @@ async def _run_coverage(
 
     sut_dir = str(cov_repo.sutDir.resolve())
 
-    # Embedded hosts carry no toolchain object; derive the cross-gcov by
-    # inspecting the build's .gcno (same discovery the Unix path can use), and
-    # treat the embedded build dir as the source root when there are no Unix
-    # hosts (the standalone-embedded case; combined multi-root reports are
-    # tracked separately in coverage_roadmap.md).
+    # Embedded hosts now carry a per-host Toolchain (lab-data ``toolchain``),
+    # exactly like Unix hosts: the bed declares the cross-gcov for binaries it
+    # runs. Use it per host; fall back to scanning the build's .gcno only for a
+    # host left at the default (unconfigured) toolchain. The build dir is the
+    # report's source root when there are no Unix hosts (standalone-embedded).
     embedded_cfg = cov_config.get('embedded') or {}
     embedded_build_dir = embedded_cfg.get('build_dir')
     if embedded_dirs and embedded_build_dir:
         from ..host import LocalHost
-        from ..host.toolchain_discovery import (
-            discover_toolchain_from_gcno,
-            toolchain_from_gcov,
-        )
-        # A .gcno embeds no compiler path, so the cross-gcov is named explicitly
-        # in the repo config (``[coverage.embedded].gcov``). Fall back to the
-        # best-effort .gcno scan only when it is not configured.
-        configured_gcov = embedded_cfg.get('gcov')
-        if configured_gcov:
-            tc = toolchain_from_gcov(Path(configured_gcov))
-        else:
-            tc = await discover_toolchain_from_gcno(
-                Path(embedded_build_dir), LocalHost(), cov_dir / '_toolchain_work',
+        from ..host.embeddedHost import EmbeddedHost
+        from ..host.toolchain import Toolchain
+        from ..host.toolchain_discovery import discover_toolchain_from_gcno
+
+        embedded_hosts = {
+            h.id: h for h in cov_hosts if isinstance(h, EmbeddedHost)
+        }
+        # Compute the .gcno-discovery fallback at most once, shared by any hosts
+        # that left their toolchain at the default.
+        discovery_attempted = False
+        discovered_tc: Toolchain | None = None
+        for host_id in embedded_dirs:
+            host = embedded_hosts.get(host_id)
+            tc = (
+                host.toolchain
+                if host is not None and host.toolchain != Toolchain()
+                else None
             )
-        if tc:
-            entry = {
-                'sysroot': str(tc.sysroot),
-                'lcov': str(tc.lcov),
-                'gcov': str(tc.gcov),
-            }
-            for host_id in embedded_dirs:
-                toolchains[host_id] = entry
-        # Standalone-embedded case: the source root is the embedded build dir.
-        # Gate on *collected Unix coverage*, not lab membership — a Unix SSH hop
-        # in the lab (needed to reach the embedded host) is not a coverage target
-        # and must not force the combined-report source root.
+            if tc is None:
+                if not discovery_attempted:
+                    discovery_attempted = True
+                    discovered_tc = await discover_toolchain_from_gcno(
+                        Path(embedded_build_dir), LocalHost(),
+                        cov_dir / '_toolchain_work',
+                    )
+                tc = discovered_tc
+            if tc is not None:
+                toolchains[host_id] = {
+                    'sysroot': str(tc.sysroot),
+                    'lcov': str(tc.lcov),
+                    'gcov': str(tc.gcov),
+                }
         if not unix_dirs:
             sut_dir = str(Path(embedded_build_dir).resolve())
 
