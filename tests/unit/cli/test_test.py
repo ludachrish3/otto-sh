@@ -752,6 +752,60 @@ class TestRunCoverageEmbedded:
         assert set(meta['toolchains']) == {'sprout_cov'}
         assert 'basil_seed' not in meta['toolchains']
 
+    def test_coverage_hosts_regex_passed_to_both_selectors(self, tmp_path):
+        """``[coverage].hosts`` compiles to a regex handed to the Unix and
+        embedded host selectors, so the collect-from set is repo-declared
+        rather than inferred from which hosts happened to emit ``.gcda``.
+        """
+        import asyncio
+
+        from otto.cli.test import _run_coverage
+
+        repo = MagicMock()
+        log_dir = tmp_path / 'log'
+        log_dir.mkdir()
+
+        all_hosts_mock = MagicMock(return_value=[])
+        embedded_collect = AsyncMock(return_value={})
+        with patch('otto.cli.test._get_cov_config',
+                   return_value={'hosts': 'sprout_cov',
+                                 'embedded': {'extension': 'cov_ext'}}), \
+             patch('otto.configmodule.all_hosts', new=all_hosts_mock), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=None):
+            asyncio.run(_run_coverage([repo], log_dir, None))
+
+        unix_pat = all_hosts_mock.call_args.kwargs.get('pattern')
+        assert unix_pat is not None
+        assert unix_pat.search('sprout_cov') and not unix_pat.search('basil_seed')
+
+        emb_pat = embedded_collect.await_args.kwargs.get('pattern')
+        assert emb_pat is not None and emb_pat.pattern == 'sprout_cov'
+
+    def test_unset_coverage_hosts_passes_no_pattern(self, tmp_path):
+        """Unset ``[coverage].hosts`` → ``pattern=None`` (collect from all hosts)."""
+        import asyncio
+
+        from otto.cli.test import _run_coverage
+
+        repo = MagicMock()
+        log_dir = tmp_path / 'log'
+        log_dir.mkdir()
+
+        all_hosts_mock = MagicMock(return_value=[])
+        embedded_collect = AsyncMock(return_value={})
+        with patch('otto.cli.test._get_cov_config',
+                   return_value={'embedded': {'extension': 'cov_ext'}}), \
+             patch('otto.configmodule.all_hosts', new=all_hosts_mock), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=None):
+            asyncio.run(_run_coverage([repo], log_dir, None))
+
+        assert all_hosts_mock.call_args.kwargs.get('pattern') is None
+        assert embedded_collect.await_args.kwargs.get('pattern') is None
+
 
 # ── --cov-report option (report generation alongside collection) ─────────────
 

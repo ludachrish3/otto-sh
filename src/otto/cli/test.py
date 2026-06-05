@@ -110,6 +110,7 @@ either limit is reached first.
     otto test -r --cov-report-dir /tmp/myreport TestMyDevice
 """
 
+import re
 import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Optional, cast
@@ -593,17 +594,24 @@ async def _run_coverage(
     cov_dir = cov_dir_override if cov_dir_override else log_dir / 'cov'
     host_dirs: dict[str, Path] = {}
 
+    # The set of hosts to collect coverage from is repo-declared: an optional
+    # ``[coverage].hosts`` regex (matched against each host id) selects targets,
+    # defaulting to every host in the lab. This is how a lab's SSH **hop** (e.g.
+    # `basil` fronting `sprout_cov`) is kept out of the coverage set — it is
+    # excluded by the pattern, not inferred from the fact that it emits no .gcda.
+    hosts_pattern = cov_config.get('hosts')
+    cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
+
     # Unix hosts compile the SUT and emit .gcda to a filesystem we fetch over
     # the network. EmbeddedHost/DockerContainerHost are skipped by the fetcher.
-    unix_hosts = [h for h in all_hosts() if isinstance(h, UnixHost)]
+    unix_hosts = [h for h in all_hosts(pattern=cov_pattern) if isinstance(h, UnixHost)]
     gcda_remote_dir = cov_config.get('gcda_remote_dir', '')
-    # Unix hosts that actually produced .gcda (host id -> dir). NOT every UnixHost
-    # in the lab: an embedded coverage lab must also contain the SSH **hop** host
-    # (e.g. `basil` fronting `sprout_cov`) so the hop resolves, but that hop is
-    # infrastructure, not a coverage target, and emits no .gcda. Keying the meta
-    # below off *collected coverage* rather than lab membership keeps such a hop
-    # from being mistaken for a Unix coverage target — which would otherwise flip
-    # the source-root choice (breaking embedded .gcno discovery) and write a bogus
+    # Unix hosts that actually produced .gcda (host id -> dir). Keying the meta
+    # below off *collected coverage* (rather than lab membership) is a safety net
+    # behind the ``[coverage].hosts`` selector above: should an infrastructure
+    # host slip through the pattern, producing no .gcda keeps it from being
+    # mistaken for a Unix coverage target — which would otherwise flip the
+    # source-root choice (breaking embedded .gcno discovery) and write a bogus
     # toolchain entry.
     unix_dirs: dict[str, Path] = {}
     if gcda_remote_dir and unix_hosts:
@@ -618,7 +626,7 @@ async def _run_coverage(
             await fetcher.clean_remote(gcda_remote_dir)
 
     # Embedded (RTOS) hosts dump .gcda over the console (no filesystem).
-    embedded_dirs = await collect_embedded_coverage(cov_config, cov_dir)
+    embedded_dirs = await collect_embedded_coverage(cov_config, cov_dir, pattern=cov_pattern)
     host_dirs.update(embedded_dirs)
 
     if not host_dirs:

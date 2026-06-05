@@ -145,6 +145,15 @@ class Repo():
     labs: list[Path] = field(default_factory=list[Path], init=False)
     """Paths to lab data"""
 
+    valid_labs: list[str] = field(default_factory=list[str], init=False)
+    """Lab names this repo supports (by ``labs`` membership), e.g. an embedded
+    product that only runs in an embedded lab. Empty when the key is unset.
+
+    Parsed here; *enforcement* — rejecting a selected ``--lab`` that is not in
+    this list, and treating an empty list as "the repo must declare its labs"
+    rather than allow-all — is intentionally deferred to lab-selection time and
+    not yet wired in. Parsing must not silently treat unset as allow-all."""
+
     libs: list[Path] = field(default_factory=list[Path], init=False)
     """Extra paths to add to the PYTHONPATH"""
 
@@ -404,6 +413,10 @@ class Repo():
         self.settings = tomli.loads(settingsText)
 
         self.labs  = [ Path(self._expandString(lab)) for lab in self.settings.get('labs',  []) ]
+        # Lab *names* (not paths, no var expansion). Empty when unset — the
+        # repo declares nothing, which enforcement (deferred) must treat as
+        # "undeclared", not as allow-all.
+        self.valid_labs = list(self.settings.get('valid_labs', []))
         self.libs  = [ Path(self._expandString(lib)) for lib in self.settings.get('libs',  []) ]
         self.tests = [ Path(self._expandString(dir)) for dir in self.settings.get('tests', []) ]
         self.init  = [      self._expandString(mod)  for mod in self.settings.get('init',  []) ]

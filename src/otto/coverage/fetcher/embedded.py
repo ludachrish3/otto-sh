@@ -184,12 +184,21 @@ class EmbeddedGcdaCollector:
 async def collect_embedded_coverage(
     cov_config: dict,
     staging_root: Path,
+    pattern: re.Pattern[str] | None = None,
 ) -> dict[str, Path]:
     """Collect embedded coverage per the ``[coverage.embedded]`` config section.
 
     Reads the product's extension name from ``cov_config['embedded']['extension']``
     and dumps it via ``llext call_fn <ext> cov_dump`` (the conventional
-    embedded-gcov ``__gcov_exit`` trigger) on every embedded host.
+    embedded-gcov ``__gcov_exit`` trigger) on every embedded host whose id
+    matches ``pattern``.
+
+    Args:
+        cov_config: The repo's ``[coverage]`` table.
+        staging_root: Directory under which per-host ``.gcda`` is staged.
+        pattern: Optional compiled regex (the repo-declared ``[coverage].hosts``
+            selector) matched against each host's id; ``None`` collects from
+            every embedded host in the lab.
 
     Returns ``{host_id: staging_dir}``, or ``{}`` when no embedded coverage is
     configured (so the Unix-only path is unaffected).
@@ -200,4 +209,6 @@ async def collect_embedded_coverage(
         return {}
 
     dump_command = f"llext call_fn {extension} cov_dump"
-    return await EmbeddedGcdaCollector(staging_root, dump_command).collect_all()
+    return await EmbeddedGcdaCollector(
+        staging_root, dump_command, pattern=pattern,
+    ).collect_all()

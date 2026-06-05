@@ -154,3 +154,31 @@ async def test_collect_embedded_coverage_noop_without_embedded_config(tmp_path):
     """No [coverage.embedded] section → nothing collected, no host touched."""
     result = await collect_embedded_coverage({"gcda_remote_dir": "/x"}, tmp_path / "cov")
     assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
+    tmp_path, fake_config_module,
+):
+    """A coverage host-id ``pattern`` selects which embedded hosts are dumped.
+
+    The collect-from set is repo-declared (a ``[coverage].hosts`` regex), so a
+    host that does not match the pattern is never touched.
+    """
+    import re
+
+    target = _mock_embedded_host(
+        "sprout_cov", (FIXTURES / "cov_dump_console.txt").read_text(),
+    )
+    other = _mock_embedded_host(
+        "sprout_other", (FIXTURES / "cov_dump_console.txt").read_text(),
+    )
+    fake_config_module(target, other)
+    cov_config = {"embedded": {"extension": "cov_ext"}}
+
+    result = await collect_embedded_coverage(
+        cov_config, tmp_path / "cov", pattern=re.compile("sprout_cov"),
+    )
+
+    assert set(result) == {"sprout_cov"}
+    other.oneshot.assert_not_awaited()
