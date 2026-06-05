@@ -50,6 +50,7 @@ from .session import (
     HostSession,
     SessionManager,
 )
+from .toolchain import Toolchain
 
 logger = getOttoLogger()
 
@@ -157,6 +158,12 @@ class EmbeddedHost(RemoteHost):
     monitor collects this host's metrics over SNMP — a separate channel from
     the single telnet console — instead of running shell commands. See
     :class:`~otto.host.options.SnmpOptions`."""
+
+    toolchain: Toolchain = field(default_factory=Toolchain, repr=False)
+    """Cross-toolchain for this bed's products.  Used by the coverage pipeline
+    to select the correct ``gcov``/``lcov``.  The host is the test bed, so it
+    owns the toolchain matching its target ABI — a Zephyr 3.7 bed and a 4.4 bed
+    declare different SDKs.  Defaults to system-installed tools."""
 
     hop: Optional[str] = None
     """Host ID of the intermediate SSH hop used to reach this host, or None."""

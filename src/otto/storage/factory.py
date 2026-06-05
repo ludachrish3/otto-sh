@@ -247,6 +247,10 @@ def _create_embedded_host(
     resources = kwargs.get('resources', [])
     kwargs['resources'] = set(resources)
 
+    # Convert toolchain dict to Toolchain instance (same as the Unix path).
+    if 'toolchain' in kwargs and isinstance(kwargs['toolchain'], dict):
+        kwargs['toolchain'] = _build_toolchain(kwargs['toolchain'])
+
     # Resolve the lab-data ``filesystem`` string to a typed instance. Absent
     # field defaults to NoFileSystem via the EmbeddedHost field default — no
     # action needed here.

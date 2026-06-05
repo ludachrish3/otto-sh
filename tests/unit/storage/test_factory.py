@@ -598,6 +598,52 @@ class TestEmbeddedFilesystem:
         assert str(host.default_dest_dir) == '/RAM:/uploads'
 
 
+class TestEmbeddedToolchainDeserialization:
+    """Embedded hosts carry a per-host Toolchain, like Unix hosts."""
+
+    def _embedded_host(self, **extra):
+        data = {
+            'ip': '192.0.2.99',
+            'ne': 'sproutx',
+            'osType': 'embedded',
+            'osName': 'Zephyr',
+            'osVersion': '3.7',
+            'transfer': 'console',
+            'filesystem': 'none',
+        }
+        data.update(extra)
+        return data
+
+    def test_no_toolchain_uses_default(self):
+        host = create_host_from_dict(self._embedded_host())
+        assert isinstance(host.toolchain, Toolchain)
+        assert host.toolchain.sysroot == Path('/')
+        assert host.toolchain.gcov_bin == '/usr/bin/gcov'
+
+    def test_sysroot_only_uses_default_relative_tools(self):
+        """Partial config: sysroot only; gcov/lcov stay sysroot-relative."""
+        host = create_host_from_dict(self._embedded_host(
+            toolchain={'sysroot': '/opt/arm'}
+        ))
+        assert host.toolchain.sysroot == Path('/opt/arm')
+        assert host.toolchain.gcov_bin == '/opt/arm/usr/bin/gcov'
+        assert host.toolchain.lcov_bin == '/opt/arm/usr/bin/lcov'
+
+    def test_cross_toolchain_resolves_gcov_under_sysroot(self):
+        host = create_host_from_dict(self._embedded_host(
+            toolchain={
+                'sysroot': '/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi',
+                'gcov': 'bin/arm-zephyr-eabi-gcov',
+                'lcov': '/usr/bin/lcov',
+            }
+        ))
+        assert host.toolchain.gcov_bin == (
+            '/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov'
+        )
+        # lcov is absolute -> ignores the cross sysroot (host-side merge tool).
+        assert host.toolchain.lcov_bin == '/usr/bin/lcov'
+
+
 class TestSnmpBlock:
     """The lab ``snmp`` block deserializes to SnmpOptions on both bases."""
 
