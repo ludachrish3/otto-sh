@@ -36,13 +36,13 @@ from tests.conftest import (
 # directly (the raw factory path), which — unlike a full ``otto`` config load —
 # does not import the SUT repo's init modules, so the ``"zephyr-inline"`` frame
 # the 2.7 lab entries declare would be unregistered. Register it here by
-# importing the very same class repo1's init module registers in production
-# (``repo1_instructions/__init__.py``), adding the repo's pylib to the path the
-# way ``Repo.addLibsToPythonpath`` does at config-load time.
-_REPO1_PYLIB = Path(__file__).resolve().parents[2] / "repo1" / "pylib"
-if str(_REPO1_PYLIB) not in sys.path:
-    sys.path.insert(0, str(_REPO1_PYLIB))
-from repo1_common.zephyr_inline import ZephyrInlineRetcodeFrame  # noqa: E402
+# importing the shared ``custom_hosts`` module (the third-party-style package
+# SUT repos depend on for this frame), adding its dir to the path the way
+# ``Repo.addLibsToPythonpath`` does at config-load time.
+_CUSTOM_HOSTS = Path(__file__).resolve().parents[2] / "custom_hosts"
+if str(_CUSTOM_HOSTS) not in sys.path:
+    sys.path.insert(0, str(_CUSTOM_HOSTS))
+from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame  # noqa: E402
 
 register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)
 

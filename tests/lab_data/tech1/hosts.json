@@ -74,8 +74,7 @@
             "basil"
         ],
         "labs": [
-            "embedded",
-            "embedded-cov"
+            "embedded"
         ]
     },
     {
@@ -238,7 +237,7 @@
             "sprout_cov"
         ],
         "labs": [
-            "embedded-cov"
+            "embedded"
         ]
     }
 ]

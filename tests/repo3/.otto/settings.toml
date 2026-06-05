@@ -13,14 +13,30 @@ lab_data_type = "json"
 labs = [
     "${sutDir}/../lab_data/tech1",
 ]
+
+# Labs this repo supports. The repo3 coverage product is a Zephyr LLEXT and only
+# runs in the embedded lab — declaring it here lets otto reject an unsupported
+# lab (e.g. `veggies`) rather than fail deep in host setup. (Enforcement is not
+# yet wired in; see Repo.valid_labs.)
+valid_labs = [
+    "embedded",
+]
+
 libs = [
     "${sutDir}/pylib",
+    # Shared, third-party-style module. repo3 only targets sprout_cov, but
+    # `--lab embedded` constructs every host in the lab — including the Zephyr
+    # 2.7 sprout27, whose `zephyr-inline` frame lives here. Pulling it in lets
+    # repo3 load the shared lab without owning the 2.7 dialect (see
+    # tests/custom_hosts).
+    "${sutDir}/../custom_hosts",
 ]
 tests = [
     "${sutDir}/tests",
 ]
 init = [
     'repo3_instructions',
+    'custom_hosts',
 ]
 
 # Reuse repo1's zephyr-* os_profiles pattern. Per embedded_cortex_m_migration.md
@@ -50,6 +66,16 @@ max_filename_len = 32
 # `llext call_fn cov_dump` over the console (EmbeddedGcdaCollector), decodes the
 # hex stream to .gcda on the host, and runs a cross-gcov (arm-zephyr-eabi-gcov)
 # discovered from the .gcno under [coverage.embedded].build_dir.
+
+# Which hosts to collect coverage from: a host-id regex (matched with
+# re.search), defaulting to every host in the lab when unset. This selects the
+# coverage target(s) out of the shared `embedded` lab — keeping the plain
+# embedded test hosts and the `basil` SSH hop out — so the collect-from set is
+# repo-declared, not inferred from which hosts happen to emit .gcda. The same
+# selector scopes the TestEmbeddedCoverage suite (which hosts it loads the
+# instrumented extension onto). Future (per embedded_cortex_m_migration.md):
+# when every QEMU host can emit coverage, widen this (e.g. "sprout").
+hosts = "sprout_cov"
 
 [coverage.embedded]
 # LLEXT extension name — matches add_llext_target(cov_ext) in product/. otto

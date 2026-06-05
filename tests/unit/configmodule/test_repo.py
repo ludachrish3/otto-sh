@@ -46,7 +46,7 @@ def test_repo_settings_tests_sut_dir_variable(default_mock_repo):
 
 def test_repo_settings_init_sut_dir_variable(default_mock_repo):
 
-    assert mockRepo.init == [ 'repo1_instructions' ]
+    assert mockRepo.init == [ 'repo1_instructions', 'custom_hosts' ]
 
 def test_repo_apply_settings(default_mock_repo):
 
@@ -68,6 +68,28 @@ def test_repo_apply_settings(default_mock_repo):
 
 
 # TODO: Test various settings fields and the recording of arbitrary additional data
+
+
+class TestValidLabsParsing:
+    """Tests for ``valid_labs`` parsing in ``Repo.parseSettings``.
+
+    ``valid_labs`` lets a repo declare which labs it supports (e.g. an embedded
+    product that only works in an embedded lab). Parsing stores the declared
+    list; an unset key yields an empty list. Enforcement (rejecting a selected
+    lab not in the list, and treating an empty list as "must declare") is a
+    separate, deferred step — parsing must not silently treat unset as
+    allow-all.
+    """
+
+    def test_absent_yields_empty_list(self, tmp_path):
+        sut = _write_repo(tmp_path, '')
+        repo = Repo(sutDir=sut)
+        assert repo.valid_labs == []
+
+    def test_declared_labs_parsed_in_order(self, tmp_path):
+        sut = _write_repo(tmp_path, 'valid_labs = ["embedded", "veggies"]')
+        repo = Repo(sutDir=sut)
+        assert repo.valid_labs == ['embedded', 'veggies']
 
 
 class TestHostDefaultsParsing:

@@ -1,6 +1,6 @@
 """
-Unit tests for repo1's project-defined ``ZephyrInlineRetcodeFrame`` — the
-Zephyr 2.7 dialect that reads the exit code from an inline ``retCode = <n>``
+Unit tests for the shared ``custom_hosts`` module's ``ZephyrInlineRetcodeFrame``
+— the Zephyr 2.7 dialect that reads the exit code from an inline ``retCode = <n>``
 line (emitted by the 2.7 firmware patch) instead of the ``retval`` builtin.
 
 These model the patched shell's stream so the parser can be validated without
@@ -16,11 +16,12 @@ import pytest
 
 from otto.host.command_frame import SessionMarkers
 
-# repo1's pylib carries the frame (it's a project artifact, not otto core).
-_REPO1_PYLIB = Path(__file__).resolve().parents[2] / "repo1" / "pylib"
-if str(_REPO1_PYLIB) not in sys.path:
-    sys.path.insert(0, str(_REPO1_PYLIB))
-from repo1_common.zephyr_inline import ZephyrInlineRetcodeFrame  # noqa: E402
+# The shared custom_hosts module carries the frame (a third-party-style package,
+# not otto core; see tests/custom_hosts/README.md).
+_CUSTOM_HOSTS = Path(__file__).resolve().parents[2] / "custom_hosts"
+if str(_CUSTOM_HOSTS) not in sys.path:
+    sys.path.insert(0, str(_CUSTOM_HOSTS))
+from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame  # noqa: E402
 
 M = SessionMarkers.for_session("2700beef")
 FRAME = ZephyrInlineRetcodeFrame()

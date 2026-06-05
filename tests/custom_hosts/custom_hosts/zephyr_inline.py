@@ -1,7 +1,11 @@
 """
-A project-defined :class:`~otto.host.command_frame.CommandFrame` for Zephyr
-**2.7** targets — the worked example of registering a custom shell dialect from
-a SUT repo (the extension path otto's ``register_command_frame`` exists for).
+A custom :class:`~otto.host.command_frame.CommandFrame` for Zephyr **2.7**
+targets — the worked example of registering a custom shell dialect from an
+out-of-tree module (the extension path otto's ``register_command_frame`` exists
+for). It lives in the shared ``custom_hosts`` package rather than any one SUT
+repo, so every repo whose lab includes a 2.7 host can depend on it the way a
+product depends on a third-party library (see this package's ``__init__`` and
+``tests/custom_hosts/README.md``).
 
 Why 2.7 needs its own frame
 ---------------------------

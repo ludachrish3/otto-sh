@@ -1,8 +1,9 @@
 """End-to-end CLI integration test for embedded (Zephyr LLEXT) coverage.
 
 Invokes the real ``otto test --cov`` + report pipeline as a **subprocess**
-against the live ``sprout_cov`` ``mps2_an385`` instance (lab ``embedded-cov``,
-reached over the ``basil_seed`` SSH hop). Mocked unit tests can't cover this
+against the live ``sprout_cov`` ``mps2_an385`` instance (in the ``embedded``
+lab, selected by the ``[coverage].hosts`` regex, reached over the ``basil_seed``
+SSH hop). Mocked unit tests can't cover this
 path; only the real CLI does, and only over the real multi-hop transport:
 
 * the ``pytest.main()`` test-phase loop followed by the *separate*
@@ -11,8 +12,9 @@ path; only the real CLI does, and only over the real multi-hop transport:
   reused across that boundary hangs, and the single-client QEMU socket blocks
   the collector's reconnect);
 * the cross-gcov report: a host ``lcov`` driving the SDK ``arm-zephyr-eabi-gcov``;
-* the hop host (``basil``) being in the ``embedded-cov`` lab for hop resolution
-  *without* being mistaken for a Unix coverage target in the meta.
+* the hop host (``basil``) being in the ``embedded`` lab for hop resolution
+  *without* being mistaken for a Unix coverage target in the meta (it is
+  excluded from coverage by the ``[coverage].hosts`` regex, not inference).
 
 Requirements (else the test SKIPS, never fails spuriously):
     - the zephyr VM up with ``sprout_cov`` running (``zephyr-qemu-cov.service``);
@@ -107,7 +109,7 @@ def _run_otto(*args: str, timeout: int = 300) -> subprocess.CompletedProcess[str
             [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
         ).rstrip(os.pathsep),
     }
-    full_argv = [str(OTTO_BIN), "--lab", "embedded-cov", "-R", *args]
+    full_argv = [str(OTTO_BIN), "--lab", "embedded", "-R", *args]
     return subprocess.run(
         full_argv, env=env, capture_output=True, text=True,
         cwd=str(PROJECT_ROOT), timeout=timeout,

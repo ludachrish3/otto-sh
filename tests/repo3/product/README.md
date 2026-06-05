@@ -44,14 +44,34 @@ Zephyr SDK 0.16.8 → `arm-zephyr-eabi-gcov` 12.2), matching the toolchain that
 built this extension. A future GCC that changes the format again would need
 another patch branch.
 
-## Build (in the `zephyr` VM)
+## Build
+
+`build.sh` is the one command that builds this extension, and the
+`TestEmbeddedCoverage` suite runs it automatically before loading — so the
+loaded `.llext` always matches the current source (the embedded analogue of
+repo1 recompiling its binary each run). To build by hand into the configured
+`[coverage.embedded].build_dir`:
+
+```bash
+tests/repo3/product/build.sh ~/build/cov_ext_app
+```
+
+It is **idempotent**: it initializes the embedded-gcov submodule and applies the
+gcc-12 patch if not already done (making the One-time setup above optional), runs
+an incremental `west build` for `mps2_an385` (falling back to a pristine rebuild
+if the build dir was previously initialized for a different source tree), then
+strips the sections LLEXT 3.7 cannot relocate. It runs on the machine executing
+the suite (the dev VM, where `build_dir` lives); toolchain paths default to the
+Vagrant-provisioned locations and are overridable via `ZEPHYR_VENV` /
+`ZEPHYR_WORKSPACE` / `ZEPHYR_SDK_INSTALL_DIR`.
+
+The equivalent manual steps (what `build.sh` runs):
 
 ```bash
 source ~/zephyr-venv-v3_7/bin/activate
 cd ~/zephyrproject-v3_7 && source zephyr/zephyr-env.sh
 
-west build -p always -b mps2_an385 -d ~/build/cov_ext_app \
-    /vagrant/tests/repo3/product
+west build -b mps2_an385 -d ~/build/cov_ext_app /path/to/tests/repo3/product
 
 # Strip the sections LLEXT 3.7 cannot relocate (its loader -ENOEXECs on
 # .init_array/.fini_array relocations; cov_init calls the ctor explicitly).
