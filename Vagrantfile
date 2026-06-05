@@ -63,9 +63,12 @@ Vagrant.configure("2") do |config|
             # are `west build` deps — the QEMU/networking/GUI packages the zephyr
             # VM also installs are intentionally omitted (this VM only *builds*
             # the product; the coverage instance runs on the zephyr VM).
+            # ruby provides `ruby -c Vagrantfile` for syntax-checking edits to
+            # this file from inside the dev VM.
             apt install -y  gcc                   \
                             gh                    \
                             lcov                  \
+                            ruby                  \
                             wget                  \
                             xz-utils              \
                             git                   \
@@ -270,6 +273,7 @@ Vagrant.configure("2") do |config|
         zephyr.vm.provision "shell", name: "zephyr-deps", keep_color: true, inline: <<-SHELL
 
             apt -y install  qemu-system-x86           \
+                            qemu-system-arm           \
                             socat                     \
                             libpcap-dev               \
                             git                       \
@@ -715,7 +719,7 @@ EOF
 # changed between those versions that breaks Zephyr 3.7's e1000 driver:
 # the guest boots and shell_telnet inits, but ARP replies never make it
 # back through to the host (TX increments, RX never moves). The SDK
-# binary is what \`west build -t run\` uses, and is the known-good one.
+# binary is what 'west build -t run' uses, and is the known-good one.
 #
 # The SDK qemu path is resolved at provision time (above) and baked in
 # here so we never have to wrangle backslash escaping across Ruby /
@@ -731,7 +735,7 @@ EOF
 #                      qemu_x86 is 32-bit (4 GiB max); 256 MiB is well
 #                      under that and leaves room for future growth.
 #   machine model    Per-version (baked in above): 3.x+ qemu_x86 is q35
-#                      without ACPI; 2.7 is i440FX (qemu's default `pc`
+#                      without ACPI; 2.7 is i440FX (qemu's default 'pc'
 #                      machine) and faults on q35, so it gets -no-acpi only.
 #   -chardev/-serial/-mon  Zephyr's preferred serial+monitor multiplex
 #                      on stdio.
@@ -803,6 +807,122 @@ EOF
                 systemctl enable zephyr-qemu-${cfg}.service
                 systemctl restart zephyr-qemu-${cfg}.service
             done
+        SHELL
+
+        # Coverage instance: an ARM mps2_an385 Zephyr running the stock LLEXT
+        # shell_loader, driven over a QEMU `-serial telnet:` bridge (NOT the
+        # in-guest NIC — the mps2 LAN9118 wedges on a multi-frame `load_hex`
+        # line; see tests/repo3/docs/feasibility.md "pivot to serial-telnet").
+        # This is the `sprout_cov` host in the `embedded` lab; otto reaches it
+        # via the basil SSH hop, then telnets 192.0.2.33:2323. Unlike the x86
+        # net beds it needs no TAP / /30 / SNMP relay — the serial bridge carries
+        # the whole console.
+        #
+        # Two builds back the coverage flow, on two machines: the dev VM builds
+        # the instrumented *extension* (.llext, loaded at runtime) and runs the
+        # cross-gcov report; THIS VM builds + runs the stock *base image* the
+        # extension loads into. The split mirrors the x86 beds (this VM runs
+        # images; the dev VM builds the product + reports).
+        zephyr.vm.provision "shell", name: "zephyr-qemu-cov-build", privileged: false, keep_color: true, inline: <<-SHELL
+            set -e
+            ZVER=v3_7
+            ZSDK=0.16.8
+            ZWORKSPACE="${HOME}/zephyrproject-${ZVER}"
+            ZVENV="${HOME}/zephyr-venv-${ZVER}"
+            SDK="${HOME}/zephyr-sdk-${ZSDK}"
+
+            # The coverage image is Cortex-M (mps2_an385), so it needs the
+            # arm-zephyr-eabi toolchain in the same 0.16.8 SDK the 3.7 x86
+            # configs already installed (which fetched x86_64-zephyr-elf only).
+            # Add it idempotently — `setup.sh -t` unpacks just that toolchain.
+            if [ ! -d "${SDK}/arm-zephyr-eabi" ]; then
+                echo "=== installing arm-zephyr-eabi toolchain into ${SDK} ==="
+                (cd "${SDK}" && ./setup.sh -t arm-zephyr-eabi -c)
+            fi
+
+            # Build the stock LLEXT loader base for mps2_an385 with otto's
+            # coverage-host overlay (serial shell, MPU off, large shell buffers —
+            # see configs/cov_an385/overlay.conf). No DT overlay, no SNMP module,
+            # no networking: the base is product-agnostic and carries no coverage
+            # code (the gcov runtime is co-compiled into the inserted extension).
+            # `-p always` for the same reason the x86 loop uses it (overlay
+            # *content* edits don't change the cmake args -p auto compares).
+            # shellcheck disable=SC1091
+            source "${ZVENV}/bin/activate"
+            cd "${ZWORKSPACE}"
+            # shellcheck disable=SC1091
+            source zephyr/zephyr-env.sh
+            export ZEPHYR_SDK_INSTALL_DIR="${SDK}"
+            west build -p always -b mps2_an385 \
+                zephyr/samples/subsys/llext/shell_loader \
+                -d /home/vagrant/build/cov_base \
+                -- -DEXTRA_CONF_FILE=/vagrant/tests/firmware/zephyr/configs/cov_an385/overlay.conf
+            deactivate
+        SHELL
+
+        # Root step: write the cov QEMU run-script + systemd unit (the build
+        # above runs unprivileged, like zephyr-workspace; unit files need root).
+        zephyr.vm.provision "shell", name: "zephyr-qemu-cov-unit", keep_color: true, inline: <<-SHELL
+
+            # apt's qemu-system-arm (8.2.2) is the binary the feasibility gate
+            # proved for the serial mps2 instance. The SDK qemu was needed only
+            # on x86 (its e1000 emulation differs); the serial bridge uses no
+            # NIC, so the system qemu is fine here.
+            QEMU_ARM=$(command -v qemu-system-arm || true)
+            if [ -z "$QEMU_ARM" ]; then
+                echo "ERROR: qemu-system-arm not found (add it to zephyr-deps)" >&2
+                exit 1
+            fi
+
+            # QEMU bridges the guest UART0 to a telnet listener. otto reaches it
+            # via the basil hop, then telnets 192.0.2.33:2323 (port 2323 because
+            # 23 is privileged + already taken). The listen address lives on this
+            # VM's loopback (added by ExecStartPre) so the hop's in-VM telnet
+            # resolves it; nothing outside this VM needs the address.
+            #
+            # **Build-verify these QEMU flags on first provision** — like the x86
+            # units above, the exact set may need a tweak against this qemu
+            # version (the feasibility gate proved the -machine/-serial core).
+            cat > /home/vagrant/run-zephyr-qemu-cov.sh <<EOF
+#!/usr/bin/env bash
+# Launch the coverage (mps2_an385) Zephyr image under QEMU, bridging its UART
+# to a telnet listener on 192.0.2.33:2323. Serial-telnet (no NIC): the mps2
+# LAN9118 can't receive a multi-frame load_hex line. See tests/repo3/docs/
+# feasibility.md ("pivot to serial-telnet").
+set -euo pipefail
+exec ${QEMU_ARM} \\
+    -machine mps2-an385 \\
+    -display none \\
+    -monitor none \\
+    -serial telnet:192.0.2.33:2323,server,nowait \\
+    -kernel /home/vagrant/build/cov_base/zephyr/zephyr.elf
+EOF
+            chown vagrant:vagrant /home/vagrant/run-zephyr-qemu-cov.sh
+            chmod +x /home/vagrant/run-zephyr-qemu-cov.sh
+
+            cat > /etc/systemd/system/zephyr-qemu-cov.service <<EOF
+[Unit]
+Description=Zephyr coverage instance (mps2_an385, serial-telnet) under QEMU
+After=network.target
+
+[Service]
+Type=simple
+User=vagrant
+# Put the telnet listen address on lo so the hop's in-VM telnet can reach it.
+ExecStartPre=+/bin/sh -c 'ip addr add 192.0.2.33/32 dev lo 2>/dev/null; true'
+ExecStart=/home/vagrant/run-zephyr-qemu-cov.sh
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+            systemctl daemon-reload
+            # `restart` (not just `enable --now`) so a re-provision picks up a
+            # regenerated unit/run-script, matching the x86 loop's behavior.
+            systemctl enable zephyr-qemu-cov.service
+            systemctl restart zephyr-qemu-cov.service
         SHELL
 
         # SNMP UDP relay — bridges otto's SNMP manager to each Zephyr
