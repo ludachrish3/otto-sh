@@ -249,6 +249,42 @@ make test TESTS=test_host     # filter by keyword
 make coverage                 # run tests and enforce coverage threshold
 ```
 
+### Regression-test categories
+
+Tests are partitioned by pytest marker and surfaced through Makefile targets.
+Pick the one that matches what you want to exercise:
+
+| Category | How to run | VMs needed |
+|----------|------------|------------|
+| Unit only | `make coverage-unit` | none |
+| Full coverage gate (excludes `stability`) | `make coverage` | lab VMs |
+| Integration, Unix only | `uv run pytest -m "integration and not embedded and not hops"` | test1/test2/test3 |
+| Embedded (Zephyr) | `uv run pytest -m embedded` | zephyr VM |
+| Multi-hop | `uv run pytest -m hops` | three VMs |
+| Stability / soak | `make stability-all` (or `make stability-embedded`) | lab VMs |
+| Everything (the dev-VM contract) | `make all` | lab VMs |
+| Cross-Python matrix | `make nox` (unit) / `make nox-all` (full) | `nox-all` needs VMs |
+
+`make test TESTS=<kw>` filters any run by keyword. Recover a wedged embedded bed
+with `make qemu-restart`; probe the whole lab with `make vm-health`.
+
+### Embedded coverage bed
+
+`sprout_cov` is the embedded coverage instance: an ARM `mps2_an385` Zephyr in the
+`embedded` lab, reached over a QEMU `-serial telnet:` bridge via the `basil` SSH
+hop (`zephyr-qemu-cov.service` on the zephyr VM, provisioned by the Vagrantfile
+like the other Zephyr instances). The **dev VM runs no QEMU** — it only builds
+the instrumented `.llext` extension and runs the cross-gcov report; the coverage
+instance itself runs on the zephyr VM. Which host(s) coverage is collected from
+is repo-declared by the `[coverage].hosts` regex in `.otto/settings.toml`
+(default: every host in the lab), so the `basil` hop and the plain embedded test
+hosts are excluded by the pattern rather than by inference.
+
+> **Manual-gate convention.** If a test depends on infrastructure that
+> `vagrant up` does not yet reproduce (a hand-built "gate"), label it clearly as
+> a manual gate and record the plan to fold it into the provisioning. A manual
+> gate must not masquerade as part of the reproducible regression suite.
+
 ### Cross-version testing with nox
 
 `make ci` runs the unit suite under one Python (whichever uv resolves by
