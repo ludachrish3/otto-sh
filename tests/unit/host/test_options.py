@@ -109,6 +109,14 @@ class TestTelnetOptions:
         kw = TelnetOptions(extra={'term': 'vt100'})._open_kwargs()
         assert kw['term'] == 'vt100'
 
+    def test_single_client_console_defaults_false(self):
+        from otto.host.options import TelnetOptions
+        assert TelnetOptions().single_client_console is False
+
+    def test_single_client_console_can_be_set(self):
+        from otto.host.options import TelnetOptions
+        assert TelnetOptions(single_client_console=True).single_client_console is True
+
 
 # ---------------------------------------------------------------------------
 # FtpOptions

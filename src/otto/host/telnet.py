@@ -40,6 +40,44 @@ logger = getOttoLogger()
 _naws_subscribers: 'WeakSet[TelnetClient]' = WeakSet()
 _naws_handler_installed: bool = False
 
+# Live single-client console transports — populated when TelnetOptions.
+# single_client_console is True. Strong refs (we keep them reachable so the
+# embedded test teardown can force-release a console slot a timed-out test left
+# half-open) and per-process (each xdist worker owns its own). See
+# abort_console_transports().
+_live_console_transports: set = set()
+
+
+def _register_console_transport(transport: Any) -> None:
+    """Track a live single-client console transport (no-op if None)."""
+    if transport is not None:
+        _live_console_transports.add(transport)
+
+
+def _unregister_console_transport(transport: Any) -> None:
+    """Stop tracking a transport (no-op if absent)."""
+    _live_console_transports.discard(transport)
+
+
+def abort_console_transports() -> int:
+    """Synchronously abort every tracked single-client console transport.
+
+    Releases each FD (and the server-side single-client slot) via the
+    transport's own synchronous ``abort()`` — no event loop required, so this
+    works even after a pytest-timeout signal aborts a test before its async
+    ``close()`` could run. Best-effort and idempotent; returns the count
+    aborted. Per-process.
+    """
+    count = 0
+    for transport in list(_live_console_transports):
+        try:
+            transport.abort()
+            count += 1
+        except Exception:  # noqa: BLE001 — best-effort cleanup; one bad transport must not block the rest
+            pass
+    _live_console_transports.clear()
+    return count
+
 
 def _sigwinch_fanout() -> None:
     """SIGWINCH handler: push a fresh NAWS update to every subscribed client."""
@@ -125,6 +163,8 @@ class TelnetClient():
             self.host,
             **open_kwargs,  # type: ignore[arg-type]
         )
+        if self.options.single_client_console:
+            _register_console_transport(getattr(self.writer, 'transport', None))
 
         if not interactive:
             # Tell the server not to echo our input so commands don't appear in output,
@@ -232,6 +272,7 @@ class TelnetClient():
             # releases the FD synchronously, which is fine for a half-built
             # connection we're discarding.
             transport = getattr(self.writer, 'transport', None)
+            _unregister_console_transport(transport)
             self.writer.close()
             if transport is not None:
                 transport.abort()

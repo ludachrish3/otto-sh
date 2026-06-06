@@ -235,7 +235,7 @@ class EmbeddedHost(RemoteHost):
             term='telnet',
             name=self.name,
             hop=hop_transport,
-            telnet_options=replace(self.telnet_options, login=False),
+            telnet_options=replace(self.telnet_options, login=False, single_client_console=True),
         )
         self._repeater = RepeatRunner(run_cmds=self.run)
         self._session_mgr = SessionManager(

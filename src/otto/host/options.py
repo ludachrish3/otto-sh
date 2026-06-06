@@ -236,6 +236,15 @@ class TelnetOptions:
     with no login step — e.g. a bare-metal/RTOS telnet shell — where waiting
     for a ``login:`` prompt that never arrives would hang the connection."""
 
+    single_client_console: bool = False
+    """When True, this connection targets a single-client console — an RTOS
+    telnet shell that serves one client at a time (e.g. Zephyr ``shell_telnet``
+    reached over a ``-serial telnet:`` bridge). The transport is registered in a
+    process-local set so the embedded test teardown can force-release the slot if
+    a timed-out test left it half-open (see
+    :func:`otto.host.telnet.abort_console_transports`). Unix telnet (multi-session
+    telnetd) leaves this False, so it is never registered or aborted."""
+
     auto_window_resize: bool = False
     """When True and stdin is a TTY, install a SIGWINCH handler that sends
     a NAWS update on every resize so remote TUIs reflow. Off by default;
