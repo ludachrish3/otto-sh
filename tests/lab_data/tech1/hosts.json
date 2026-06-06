@@ -244,5 +244,34 @@
         "labs": [
             "embedded"
         ]
+    },
+    {
+        "ip": "192.0.2.34",
+        "ne": "sprout_cov44",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "4.4",
+        "command_frame": "zephyr-serial",
+        "transfer": "console",
+        "filesystem": "none",
+        "max_filename_len": 32,
+        "is_virtual": true,
+        "telnet_options": {
+            "port": 2324,
+            "write_chunk_size": 64,
+            "write_chunk_delay": 0.015
+        },
+        "toolchain": {
+            "sysroot": "/home/vagrant/zephyr-sdk-1.0.1/gnu/arm-zephyr-eabi",
+            "gcov": "bin/arm-zephyr-eabi-gcov",
+            "lcov": "/usr/bin/lcov"
+        },
+        "hop": "basil_seed",
+        "resources": [
+            "sprout_cov44"
+        ],
+        "labs": [
+            "embedded"
+        ]
     }
 ]
