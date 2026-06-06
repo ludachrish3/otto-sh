@@ -18,9 +18,12 @@ Per-host lifecycle: ``llext load_hex`` (install) -> ``call_fn cov_init`` ->
 ``llext unload`` (teardown — skipped under ``--cov`` so the extension is still
 loaded when the collector dumps it).
 
-The suite rebuilds the extension (``product/build.sh``) before loading it; the
-resulting ``cov_ext.stripped.llext`` is read from ``[coverage.embedded].build_dir``
-on the machine running ``otto test``.
+The suite builds a version-matched product for each host (keyed by
+``host.osVersion``), reading from the per-version ``build_dir`` declared in the
+optional ``[coverage.embedded].builds."<version>"`` table, falling back to the
+single ``[coverage.embedded].build_dir`` when no per-version entry exists.
+Each distinct ``(build_dir, zver)`` pair is built exactly once even when multiple
+hosts share the same Zephyr version.
 """
 
 import binascii
@@ -58,11 +61,8 @@ def _extension() -> str:
     return _embedded_cov_config().get("extension", "cov_ext")
 
 
-def _extension_hex() -> str:
-    """Hex of the pre-built, stripped LLEXT extension (sent via ``load_hex``)."""
-    build_dir = _embedded_cov_config().get("build_dir")
-    if not build_dir:
-        raise RuntimeError("[coverage.embedded].build_dir is not configured")
+def _extension_hex_from(build_dir: str) -> str:
+    """Hex of the pre-built, stripped LLEXT extension for *build_dir* (sent via ``load_hex``)."""
     llext = Path(build_dir) / "zephyr" / f"{_extension()}.stripped.llext"
     if not llext.exists():
         raise RuntimeError(
@@ -71,26 +71,60 @@ def _extension_hex() -> str:
     return binascii.hexlify(llext.read_bytes()).decode()
 
 
-async def _build_extension() -> None:
-    """Rebuild the LLEXT coverage extension into ``[coverage.embedded].build_dir``.
+def _build_dir_for(host: EmbeddedHost) -> str:
+    """Resolve the ``build_dir`` for *host*'s Zephyr version.
+
+    Looks up ``host.osVersion`` in the optional
+    ``[coverage.embedded].builds."<version>"`` table first; falls back to the
+    single ``[coverage.embedded].build_dir``. Raises :exc:`RuntimeError` when
+    neither is configured (mirrors the existing "build_dir is not configured"
+    guard).
+    """
+    cfg = _embedded_cov_config()
+    if host.osVersion:
+        per_version = cfg.get("builds", {}).get(host.osVersion, {})
+        if per_version.get("build_dir"):
+            return per_version["build_dir"]
+    build_dir = cfg.get("build_dir")
+    if not build_dir:
+        raise RuntimeError("[coverage.embedded].build_dir is not configured")
+    return build_dir
+
+
+def _zver_for(host: EmbeddedHost) -> 'str | None':
+    """Map *host*'s ``osVersion`` to ``build.sh``'s ``zver`` positional argument.
+
+    Returns ``"v" + osVersion.replace(".", "_")`` (e.g. ``"3.7"`` → ``"v3_7"``,
+    ``"4.4"`` → ``"v4_4"``). Returns ``None`` when ``osVersion`` is falsy so the
+    caller can omit the argument and rely on ``build.sh``'s default ``v3_7``.
+    """
+    if not host.osVersion:
+        return None
+    return "v" + host.osVersion.replace(".", "_")
+
+
+async def _build_extension_for(build_dir: str, zver: 'str | None') -> None:
+    """Rebuild the LLEXT coverage extension into *build_dir* for Zephyr *zver*.
 
     The embedded analogue of repo1's ``_compile_product``: the suite keeps the
     product up to date rather than trusting a stale pre-built artifact. Runs
-    ``product/build.sh`` on the machine executing the suite (the dev VM, where
-    ``build_dir`` lives) and hard-fails if the build can't run or errors. The
-    script is idempotent, so a pre-existing build dir is fine.
+    ``product/build.sh {build_dir} [{zver}]`` on the machine executing the suite
+    (the dev VM, where ``build_dir`` lives) and hard-fails if the build can't run
+    or errors. The script is idempotent, so a pre-existing build dir is fine.
+    When *zver* is ``None`` the argument is omitted and ``build.sh``'s default
+    (``v3_7``) is used.
     """
-    build_dir = _embedded_cov_config().get("build_dir")
-    if not build_dir:
-        raise RuntimeError("[coverage.embedded].build_dir is not configured")
+    cmd = f"bash {BUILD_SCRIPT} {build_dir}"
+    if zver is not None:
+        cmd = f"{cmd} {zver}"
     localhost = LocalHost()
     try:
-        result = await localhost.oneshot(f"bash {BUILD_SCRIPT} {build_dir}", timeout=900)
+        result = await localhost.oneshot(cmd, timeout=900)
         if result.status != Status.Success:
             raise RuntimeError(
                 f"extension build failed (see {BUILD_SCRIPT}):\n{result.output}"
             )
-        logger.info("Rebuilt %s into %s", _extension(), build_dir)
+        logger.info("Rebuilt %s into %s (zver=%s)", _extension(), build_dir, zver)
     finally:
         await localhost.close()
 
@@ -169,28 +203,43 @@ class TestEmbeddedCoverage(OttoSuite[_Options]):
 
     @pytest_asyncio.fixture(autouse=True, scope="class", loop_scope="class")
     async def _load_extension(self, request):
-        """Rebuild, then load + initialise the extension on every embedded host;
-        unload on teardown (unless ``--cov`` needs it kept for the post-test dump).
+        """Rebuild (per version), then load + initialise the extension on every
+        embedded host; unload on teardown (unless ``--cov`` needs it kept for
+        the post-test dump).
+
+        Each distinct ``(build_dir, zver)`` pair is built exactly once so that
+        multiple hosts sharing the same Zephyr version do not trigger redundant
+        rebuilds. Each host is then loaded its own version-matched artifact.
         """
         hosts = _embedded_hosts()
         if not hosts:
             pytest.skip("no embedded coverage hosts in the active lab")
         request.cls._hosts = hosts
-
-        # Keep the product up to date — repo1's TestCoverageProduct compiles its
-        # binary the same way. Rebuild before reading the artifact below so the
-        # loaded extension always reflects the current source.
-        await _build_extension()
-
         ext = _extension()
-        hexstr = _extension_hex()
+
+        # Keep each version's product up to date — repo1's TestCoverageProduct
+        # compiles its binary the same way. Build before reading the artifact
+        # below so the loaded extension always reflects the current source.
+        # Cache by (build_dir, zver) so same-version hosts share one build.
+        built: set[tuple[str, 'str | None']] = set()
+        host_hex: dict[str, str] = {}
+        host_build_dir: dict[str, str] = {}
+        for host in hosts:
+            build_dir = _build_dir_for(host)
+            zver = _zver_for(host)
+            if (build_dir, zver) not in built:
+                await _build_extension_for(build_dir, zver)
+                built.add((build_dir, zver))
+            host_build_dir[host.id] = build_dir
+            host_hex[host.id] = _extension_hex_from(build_dir)
+
         for host in hosts:
             # Evict any resident copy first so load_hex installs the freshly-built
             # bytes (see _drain_unload): otherwise llext_load refcount-bumps the
             # stale build, the rebuilt .gcno's new stamp no longer matches the
             # dumped .gcda, and `otto cov report` fails with a stamp mismatch.
             await _drain_unload(host, ext)
-            result = await host.oneshot(f"llext load_hex {ext} {hexstr}", timeout=120)
+            result = await host.oneshot(f"llext load_hex {ext} {host_hex[host.id]}", timeout=120)
             # cmd_llext_load_hex always returns shell-success (0) even on a load
             # error, so the exit status can't be trusted — check the printed
             # outcome. A clean device prints "Successfully loaded extension".
@@ -198,7 +247,7 @@ class TestEmbeddedCoverage(OttoSuite[_Options]):
                 raise RuntimeError(f"load_hex did not load {ext} on {host.id}: {result.output}")
             # Run the gcov constructor so cov_dump has a registered gcov_info.
             await _call(host, "cov_init")
-            logger.info("Loaded %s on %s", ext, host.id)
+            logger.info("Loaded %s (%s) on %s", ext, host_build_dir[host.id], host.id)
 
         yield
 
