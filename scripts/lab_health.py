@@ -56,12 +56,17 @@ _DRIFT_WARN_S = 2.0
 # Runs on the hop VM (which has python3) to probe a guest telnet console: open
 # the port, nudge the shell, and read the uptime line back. Prints one of
 # "OK <ms>" / "NOOUT" (TCP open but the guest emitted nothing — the classic
-# wedge) / "CONNFAIL <err>".
+# wedge) / "CONNFAIL <err>". The port is argv[2], NOT hardcoded: the x86 net
+# beds expose the in-guest shell on :23 (reached over their TAP), but the ARM
+# serial beds bridge UART to a telnet listener on a loopback /32 at 2323+. A
+# hardcoded :23 would connect to the hop's own 0.0.0.0:23 telnetd for those
+# loopback addresses and report a false "up" — so honor telnet_options.port.
 _CONSOLE_PROBE = r"""
 import re, socket, sys, time
 ip = sys.argv[1]
+port = int(sys.argv[2])
 try:
-    s = socket.create_connection((ip, 23), timeout=4)
+    s = socket.create_connection((ip, port), timeout=4)
 except Exception as e:
     print("CONNFAIL", e)
     raise SystemExit(0)
@@ -142,7 +147,13 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
         return {"ok": False, "status": "NO-HOP",
                 "info": f"hop {host.get('hop')!r} not in lab"}
     user, password = _ssh_user_pass(hop["creds"])
-    remote_cmd = f"python3 -c {shlex.quote(_CONSOLE_PROBE)} {shlex.quote(host['ip'])}"
+    # ARM serial beds carry the console on telnet_options.port (2323+); x86 net
+    # beds have no telnet_options and use the in-guest shell on :23.
+    port = host.get("telnet_options", {}).get("port", 23)
+    remote_cmd = (
+        f"python3 -c {shlex.quote(_CONSOLE_PROBE)} "
+        f"{shlex.quote(host['ip'])} {port}"
+    )
     rc, out, err = _run_ssh(hop["ip"], user, password, remote_cmd)
     if rc != 0:
         return {"ok": False, "status": "HOP-FAIL", "info": err or f"rc={rc}"}
