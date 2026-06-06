@@ -12,8 +12,6 @@ multi-hop UnixHost tests; both follow the pattern documented in
 :func:`otto.configmodule.setConfigModule`.
 """
 
-import fcntl
-import os
 import sys
 from pathlib import Path
 
@@ -22,13 +20,15 @@ import pytest
 from otto.configmodule import setConfigModule
 from otto.configmodule.lab import Lab
 from otto.host.command_frame import register_command_frame
+from otto.host.telnet import abort_console_transports
 from otto.host.unixHost import UnixHost
 from tests.conftest import (
-    EMBEDDED_BACKENDS,
     _ZEPHYR_BACKEND_NE,
+    EMBEDDED_BACKENDS,
     embedded_param_id,
     host_data,
 )
+from tests.integration.host._console_lock import console_access
 
 # Make repo1's custom Zephyr 2.7 dialect resolvable by the storage factory.
 #
@@ -210,12 +210,11 @@ def _referenced_backends(item: pytest.Item) -> list[str]:
 # so it waits for all in-flight per-device tests to drain and blocks new ones
 # for the brief window it holds every console.
 #
-# flock is reader-preferring on Linux, so a continuously-busy reader set could
-# in theory starve the exclusive waiter; in practice the per-device tests are
-# short and finite, the gap between a reader releasing and the next acquiring
-# lets the waiter in within a few cycles, and the fan-out's own
-# ``@pytest.mark.timeout`` bounds the worst case. Readers never wait on the
-# writer, so the lock cannot deadlock.
+# The lock is writer-fair (see tests/integration/host/_console_lock.py): the
+# EXCLUSIVE fan-out waiter holds a turnstile gate while waiting, so SHARED
+# per-device churn can't starve it. The teardown also force-aborts any console
+# transport a pytest-timeout'd test left half-open (abort_console_transports),
+# so one timed-out fan-out test can't wedge the bed for the rest of the run.
 # ---------------------------------------------------------------------------
 
 @pytest.fixture(autouse=True)
@@ -224,30 +223,29 @@ def _console_access_lock(request: pytest.FixtureRequest, tmp_path_factory):
 
     Autouse + function-scoped, and (having no dependency on ``host1``) set up
     before it, so the lock is held across the whole window ``host1`` keeps a
-    console open — its setup through its ``close()`` in teardown — not just the
-    test body. Non-embedded tests in this tree are a no-op.
+    console open — its setup through its ``close()`` in teardown. Non-embedded
+    tests are a no-op.
+
+    Uses the writer-fair :func:`console_access` lock so the EXCLUSIVE fan-out
+    waiter can't be starved by SHARED per-device churn. On teardown — which runs
+    even after a pytest-timeout signal aborts the test — it force-aborts any
+    single-client console transport a timed-out test left half-open, *before*
+    releasing the lock, so the next test finds both a free lock and a clean
+    console. On a clean test the host already closed + deregistered, so the
+    sweep is a no-op.
     """
     if "embedded" not in request.node.keywords:
         yield
         return
-    # ``getbasetemp().parent`` is common to every xdist worker (each worker's
-    # basetemp is a child of it) and to a plain ``-n0`` run — the documented
-    # pytest-xdist pattern for a cross-worker shared path. O_CREAT is safe under
-    # the concurrent first-touch: the file is created once and reused.
-    lock_path = tmp_path_factory.getbasetemp().parent / "zephyr_console.lock"
+    lock_dir = tmp_path_factory.getbasetemp().parent
     # A fan-out test references no single backend (it opens all of them); a
     # per-device test names exactly one — the same signal the wedge gate uses.
     exclusive = not _referenced_backends(request.node)
-    mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-    fd = os.open(str(lock_path), os.O_RDWR | os.O_CREAT, 0o644)
-    try:
-        fcntl.flock(fd, mode)
+    with console_access(lock_dir, exclusive=exclusive):
         try:
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-    finally:
-        os.close(fd)
+            abort_console_transports()
 
 
 def pytest_runtest_setup(item: pytest.Item) -> None:
