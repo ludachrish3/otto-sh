@@ -711,7 +711,7 @@ VERS
                 deactivate
             done <<EOF
 v2_7|v2.7-branch|0.16.8|v2_7_fat_ram
-v3_7|v3.7-branch|0.16.8|v3_7_fat_ram v3_7_lfs v3_7_no_fs
+v3_7|v3.7-branch|0.16.8|v3_7_fat_ram v3_7_lfs
 v4_4|v4.4-branch|1.0.1|v4_4_lfs
 EOF
         SHELL
@@ -752,7 +752,7 @@ EOF
             # others are unreachable. Multi-LTS /30 layout (Zephyr/host):
             #   3.7  FAT:    .1/.2    (192.0.2.0/30)
             #   3.7  LFS:    .5/.6    (192.0.2.4/30)
-            #   3.7  no_fs:  .9/.10   (192.0.2.8/30)
+            #   3.7  no_fs:  migrated to ARM serial — see ARM_INSTANCES (no_fs_arm)
             #   2.7  FAT:    .13/.14  (192.0.2.12/30)
             #   4.4  LFS:    .29/.30  (192.0.2.28/30)
             # Resolve the Zephyr-SDK qemu binary ONCE here and bake the
@@ -771,7 +771,6 @@ EOF
 
             for cfg_entry in "v3_7_fat_ram:fat:192.0.2.2"      \
                              "v3_7_lfs:lfs:192.0.2.6"          \
-                             "v3_7_no_fs:nofs:192.0.2.10"      \
                              "v2_7_fat_ram:27fat:192.0.2.14"   \
                              "v4_4_lfs:44lfs:192.0.2.30"; do
                 cfg=$(echo "$cfg_entry" | cut -d: -f1)
@@ -886,7 +885,7 @@ EOF
             # `restart` (not just `enable --now`) so already-running services
             # actually pick up the regenerated unit file, wrapper script, and
             # — critically — the fresh TAPs the new ExecStartPre creates.
-            for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs   \
+            for cfg in v3_7_fat_ram v3_7_lfs   \
                        v2_7_fat_ram                        \
                        v4_4_lfs; do
                 systemctl enable zephyr-qemu-${cfg}.service
@@ -894,16 +893,22 @@ EOF
             done
         SHELL
 
-        # Coverage instances: ARM mps2_an385 Zephyr beds running the stock LLEXT
-        # shell_loader, each driven over a QEMU `-serial telnet:` bridge (NOT the
-        # in-guest NIC — the mps2 LAN9118 wedges on a multi-frame `load_hex` line;
-        # see tests/repo3/docs/feasibility.md "pivot to serial-telnet"). One per
-        # Zephyr version that supports LLEXT coverage: `cov` (3.7) and `cov44`
-        # (4.4) — the `sprout_cov` / `sprout_cov44` hosts in the `embedded` lab.
+        # ARM mps2_an385 Zephyr beds, each driven over a QEMU `-serial telnet:`
+        # bridge (NOT the in-guest NIC — the mps2 LAN9118 wedges on a multi-frame
+        # `load_hex` line; see tests/repo3/docs/feasibility.md "pivot to
+        # serial-telnet"). Two kinds share this provisioning because they share the
+        # serial-telnet transport:
+        #   * coverage bases — stock LLEXT shell_loader, one per LLEXT-capable
+        #     Zephyr version: `cov` (3.7) + `cov44` (4.4) = the `sprout_cov` /
+        #     `sprout_cov44` hosts in the `embedded` lab;
+        #   * `no_fs_arm` — stock shell_module, the one Cortex-M *contract* bed
+        #     (see the 2026-06-06 scope decision in
+        #     docs/superpowers/plans/2026-06-05-embedded-arm-bed-migration.md).
         # otto reaches each via the basil SSH hop, then telnets its port. Unlike
         # the x86 net beds they need no TAP / /30 / SNMP relay — the serial bridge
-        # carries the whole console. Adding a coverage version = one row in the
-        # COV_INSTANCES table (shared by the build + unit steps below).
+        # carries the whole console. Adding an instance = one row in the
+        # ARM_INSTANCES table (shared by the build + unit steps below); the row's
+        # `sample` + `overlay` columns select the firmware (loader vs shell_module).
         #
         # Two builds back the coverage flow, on two machines: the dev VM builds
         # the instrumented *extension* (.llext, loaded at runtime, version-matched
@@ -911,7 +916,12 @@ EOF
         # builds + runs the stock *base image* the extension loads into. The split
         # mirrors the x86 beds (this VM runs images; the dev VM builds + reports).
         #
-        # COV_INSTANCES columns: id | zver | zsdk | zephyr-board | base-build-dir | telnet-addr | port
+        # ARM_INSTANCES columns: id | zver | zsdk | zephyr-board | build-dir | telnet-addr | port | sample | overlay-config
+        # NB: telnet-addr must be a *host* address — not the network/broadcast of a
+        # /30 owned by a zeth-* TAP. Those route to the (linkdown) TAP rather than
+        # the /32 the unit adds to lo, so TCP connects fail "Network unreachable".
+        # The cov /30 is 192.0.2.32/30 (.33/.34 = cov/cov44; .35 = its broadcast),
+        # so no_fs_arm uses .37, the first host of the otherwise-free 192.0.2.36/30.
         zephyr.vm.provision "shell", name: "zephyr-qemu-cov-build", privileged: false, keep_color: true, inline: <<-SHELL
             set -e
 
@@ -924,15 +934,17 @@ EOF
             #{zephyr_sdk_install("arm-zephyr-eabi", ["0.16.8", "1.0.1"])}
             )
 
-            # Build the stock LLEXT loader base per version with otto's
-            # coverage-host overlay (serial shell, MPU off, large shell buffers —
-            # see configs/cov_an385/overlay.conf). No DT overlay, no SNMP module,
-            # no networking: the base is product-agnostic and carries no coverage
-            # code (the gcov runtime is co-compiled into the inserted extension).
-            # The Zephyr board name differs by version (HWMv2 renamed it): 3.7 is
-            # `mps2_an385`, 4.4 is `mps2/an385`. `-p always` for the same reason
-            # the x86 loop uses it (overlay *content* edits don't move cmake args).
-            while IFS='|' read -r id zver zsdk board build_dir addr port; do
+            # Build each instance's firmware: the `sample` column picks the Zephyr
+            # sample (LLEXT shell_loader for the coverage bases, shell_module for
+            # the no_fs contract host) and `overlay` picks its config delta under
+            # tests/firmware/zephyr/configs/ — serial shell either way; cov_an385
+            # adds MPU-off + large LLEXT buffers, v3_7_no_fs_arm the net-less
+            # contract surface. No DT overlay, no SNMP, no networking: the serial
+            # bridge carries the console. The Zephyr board name differs by version
+            # (HWMv2 renamed it): 3.7 is `mps2_an385`, 4.4 is `mps2/an385`.
+            # `-p always` for the same reason the x86 loop uses it (overlay
+            # *content* edits don't move cmake args).
+            while IFS='|' read -r id zver zsdk board build_dir addr port sample overlay; do
                 [ -z "$id" ] && continue
                 echo "=== cov base: ${id} (zephyr ${zver}, sdk ${zsdk}, ${board}) ==="
                 (
@@ -943,14 +955,15 @@ EOF
                     source zephyr/zephyr-env.sh
                     export ZEPHYR_SDK_INSTALL_DIR="${HOME}/zephyr-sdk-${zsdk}"
                     west build -p always -b "${board}" \
-                        zephyr/samples/subsys/llext/shell_loader \
+                        "zephyr/${sample}" \
                         -d "${build_dir}" \
-                        -- -DEXTRA_CONF_FILE=/vagrant/tests/firmware/zephyr/configs/cov_an385/overlay.conf
+                        -- -DEXTRA_CONF_FILE=/vagrant/tests/firmware/zephyr/configs/${overlay}/overlay.conf
                 )
-            done <<'COV_INSTANCES'
-cov|v3_7|0.16.8|mps2_an385|/home/vagrant/build/cov_base|192.0.2.33|2323
-cov44|v4_4|1.0.1|mps2/an385|/home/vagrant/build/cov_base_v4_4|192.0.2.34|2324
-COV_INSTANCES
+            done <<'ARM_INSTANCES'
+cov|v3_7|0.16.8|mps2_an385|/home/vagrant/build/cov_base|192.0.2.33|2323|samples/subsys/llext/shell_loader|cov_an385
+cov44|v4_4|1.0.1|mps2/an385|/home/vagrant/build/cov_base_v4_4|192.0.2.34|2324|samples/subsys/llext/shell_loader|cov_an385
+no_fs_arm|v3_7|0.16.8|mps2_an385|/home/vagrant/build/no_fs_arm|192.0.2.37|2325|samples/subsys/shell/shell_module|v3_7_no_fs_arm
+ARM_INSTANCES
         SHELL
 
         # Root step: write each cov QEMU run-script + systemd unit (the build
@@ -973,14 +986,15 @@ COV_INSTANCES
             # because 23 is privileged + already taken). Each listen address lives
             # on this VM's loopback (added by ExecStartPre) so the hop's in-VM
             # telnet resolves it; nothing outside this VM needs the address.
-            while IFS='|' read -r id zver zsdk board build_dir addr port; do
+            while IFS='|' read -r id zver zsdk board build_dir addr port sample overlay; do
                 [ -z "$id" ] && continue
                 cat > /home/vagrant/run-zephyr-qemu-${id}.sh <<EOF
 #!/usr/bin/env bash
-# Launch the ${id} coverage (zephyr ${zver}, ${board}) image under QEMU,
-# bridging UART to a telnet listener on ${addr}:${port}. Serial-telnet (no NIC):
-# the mps2 LAN9118 can't receive a multi-frame load_hex line. See
-# tests/repo3/docs/feasibility.md ("pivot to serial-telnet").
+# Launch the ${id} instance (zephyr ${zver}, ${board}) under QEMU, bridging UART
+# to a telnet listener on ${addr}:${port}. Serial-telnet (no NIC): the mps2
+# LAN9118 can't receive a multi-frame load_hex line, and a serial console needs
+# no in-guest networking anyway. See tests/repo3/docs/feasibility.md
+# ("pivot to serial-telnet").
 set -euo pipefail
 exec ${QEMU_ARM} \\
     -machine mps2-an385 \\
@@ -994,7 +1008,7 @@ EOF
 
                 cat > /etc/systemd/system/zephyr-qemu-${id}.service <<EOF
 [Unit]
-Description=Zephyr ${zver} coverage instance (${board}, serial-telnet) under QEMU
+Description=Zephyr ${zver} serial-telnet instance (${board}) under QEMU
 After=network.target
 
 [Service]
@@ -1010,15 +1024,16 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
                 systemctl enable zephyr-qemu-${id}.service
-            done <<'COV_INSTANCES'
-cov|v3_7|0.16.8|mps2_an385|/home/vagrant/build/cov_base|192.0.2.33|2323
-cov44|v4_4|1.0.1|mps2/an385|/home/vagrant/build/cov_base_v4_4|192.0.2.34|2324
-COV_INSTANCES
+            done <<'ARM_INSTANCES'
+cov|v3_7|0.16.8|mps2_an385|/home/vagrant/build/cov_base|192.0.2.33|2323|samples/subsys/llext/shell_loader|cov_an385
+cov44|v4_4|1.0.1|mps2/an385|/home/vagrant/build/cov_base_v4_4|192.0.2.34|2324|samples/subsys/llext/shell_loader|cov_an385
+no_fs_arm|v3_7|0.16.8|mps2_an385|/home/vagrant/build/no_fs_arm|192.0.2.37|2325|samples/subsys/shell/shell_module|v3_7_no_fs_arm
+ARM_INSTANCES
 
             systemctl daemon-reload
             # `restart` (not just `enable --now`) so a re-provision picks up a
             # regenerated unit/run-script, matching the x86 loop's behavior.
-            for id in cov cov44; do
+            for id in cov cov44 no_fs_arm; do
                 systemctl restart zephyr-qemu-${id}.service
             done
         SHELL
@@ -1043,7 +1058,6 @@ COV_INSTANCES
         zephyr.vm.provision "shell", name: "zephyr-snmp-relay", keep_color: true, inline: <<-SHELL
             for relay_entry in "v3_7_fat_ram:192.0.2.1:16101"   \
                                "v3_7_lfs:192.0.2.5:16102"        \
-                               "v3_7_no_fs:192.0.2.9:16103"      \
                                "v2_7_fat_ram:192.0.2.13:16104"   \
                                "v4_4_lfs:192.0.2.29:16108"; do
                 cfg=$(echo "$relay_entry" | cut -d: -f1)
@@ -1072,7 +1086,7 @@ EOF
             done
 
             systemctl daemon-reload
-            for cfg in v3_7_fat_ram v3_7_lfs v3_7_no_fs   \
+            for cfg in v3_7_fat_ram v3_7_lfs   \
                        v2_7_fat_ram                        \
                        v4_4_lfs; do
                 systemctl enable zephyr-snmp-relay-${cfg}.service

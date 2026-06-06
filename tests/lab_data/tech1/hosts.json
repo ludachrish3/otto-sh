@@ -138,28 +138,22 @@
         ]
     },
     {
-        "ip": "192.0.2.9",
+        "ip": "192.0.2.37",
         "ne": "sprout_no_fs",
         "osType": "embedded",
         "osName": "Zephyr",
         "osVersion": "3.7",
+        "command_frame": "zephyr-serial",
         "transfer": "console",
         "filesystem": "none",
         "max_filename_len": 32,
         "is_virtual": true,
-        "hop": "basil_seed",
-        "snmp": {
-            "address": "10.10.200.14",
-            "port": 16103,
-            "community": "public",
-            "oids": [
-                "1.3.6.1.2.1.1.3.0",
-                "1.3.6.1.4.1.63245.1.1.0",
-                "1.3.6.1.4.1.63245.1.2.0",
-                "1.3.6.1.4.1.63245.1.3.0",
-                "1.3.6.1.4.1.63245.1.4.0"
-            ]
+        "telnet_options": {
+            "port": 2325,
+            "write_chunk_size": 64,
+            "write_chunk_delay": 0.015
         },
+        "hop": "basil_seed",
         "resources": [
             "sprout_no_fs"
         ],
