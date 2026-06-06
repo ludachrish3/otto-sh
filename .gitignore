@@ -21,6 +21,16 @@ reports/
 !tests/unit/fixtures/embedded_coverage/*.gcda
 !tests/unit/fixtures/embedded_coverage/*.gcno
 
+# otto CLI per-subcommand output dirs — timestamped run artifacts written at
+# the repo root by `otto test|host|cov|run|monitor|docker`. Root-anchored so
+# they never shadow tests/ or src/otto/.
+/test/
+/host/
+/cov/
+/run/
+/monitor/
+/docker/
+
 # Performance files
 profile.txt
 
