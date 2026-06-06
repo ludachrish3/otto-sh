@@ -24,25 +24,36 @@ constructor), `cov_dump` (print the `.gcda` as a serial hexdump).
 (`build/cov_ext_app/CMakeFiles/cov_ext_llext_lib.dir/src/`) — that path is the
 report step's `source_root` (`[coverage.embedded].build_dir`).
 
-## One-time setup — embedded-gcov submodule + gcc-12 patch
+## One-time setup — embedded-gcov submodule + gcc 12–14 patch
 
 The gcov runtime is NASA's [embedded-gcov](../third_party/embedded-gcov)
 (vendored as a git submodule — otto does not own it). It targets gcc ≤ 11, so a
-patch adds gcc-12 support. Apply it over the pristine submodule before building:
+patch adds gcc 12–14 support. Apply it over the pristine submodule before building:
 
 ```bash
 git submodule update --init tests/repo3/third_party/embedded-gcov
 git -C tests/repo3/third_party/embedded-gcov apply \
-    ../patches/embedded-gcov-zephyr-gcc12.patch
+    ../patches/embedded-gcov-zephyr-gcc12plus.patch
 ```
 
 **GCC coupling:** the `.gcda`/`.gcno` format and `struct gcov_info` are
-GCC-internal. Supported floor is **gcc 4.9**; the patch adds **gcc ≥ 12**
-(`checksum` field + byte-length records). The product and the report `gcov` must
-be the **same** GCC — name the cross-gcov in `[coverage.embedded].gcov` (here
-Zephyr SDK 0.16.8 → `arm-zephyr-eabi-gcov` 12.2), matching the toolchain that
-built this extension. A future GCC that changes the format again would need
-another patch branch.
+GCC-internal, so the patch is version-gated and **must** be kept in step with
+the cross-gcc. Two version-sensitive things, both handled in the patch:
+- **gcc ≥ 12** changed record-length fields to bytes and added a `checksum`
+  field to `struct gcov_info` (the `#if __GNUC__ >= 12` hunks).
+- **gcc 14** added a 9th gcov counter (`GCOV_COUNTER_CONDS`, condition
+  coverage), growing `struct gcov_info.merge[]` from 8 to 9. The runtime's
+  `GCOV_COUNTERS` must match (`#if __GNUC__ >= 14` ⇒ 9, else 8 for gcc 10–13),
+  or `n_functions` is read one slot early and the device dumps an **empty**
+  `.gcda` (it reads as 0 functions — a silent 0% with no error). Confirmed
+  live: gcc 12.2 emits a 60-byte `gcov_info`, gcc 14.3 a 64-byte one.
+
+The product and the report `gcov` must be the **same** GCC — each coverage host
+declares its cross-gcov as a per-host `toolchain` in lab data (e.g. Zephyr SDK
+0.16.8 → `arm-zephyr-eabi-gcov` 12.2 for 3.7; SDK 1.0.1 → 14.3 for 4.4), matching
+the toolchain that built its extension. A future GCC that changes the format or
+counter set again needs another patch branch — cross-check `gcc/gcov-counter.def`
+and `gcc/gcov-io.h` for that release.
 
 ## Build
 
@@ -57,7 +68,7 @@ tests/repo3/product/build.sh ~/build/cov_ext_app
 ```
 
 It is **idempotent**: it initializes the embedded-gcov submodule and applies the
-gcc-12 patch if not already done (making the One-time setup above optional), runs
+gcc 12–14 patch if not already done (making the One-time setup above optional), runs
 an incremental `west build` for `mps2_an385` (falling back to a pristine rebuild
 if the build dir was previously initialized for a different source tree), then
 strips the sections LLEXT 3.7 cannot relocate. It runs on the machine executing

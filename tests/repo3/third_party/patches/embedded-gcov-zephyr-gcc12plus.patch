@@ -1,0 +1,86 @@
+# embedded-gcov patches for Zephyr + gcc 12-14 (apply over the pristine submodule).
+# 1) gcov_printf.c: route serial output to Zephyr printk.
+# 2) gcov_gcc.h: gcc-12 record lengths in bytes (was 32-bit words); gcc-14
+#    GCOV_COUNTERS=9 (gcc 14 added GCOV_COUNTER_CONDS, condition coverage) so
+#    struct gcov_info.merge[] is sized right -- otherwise n_functions is read one
+#    slot early and gcov_convert_to_gcda emits an empty .gcda (n_functions == 0).
+# 3) gcov_gcc.c: gcc-12 struct gcov_info 'checksum' field + .gcda header write.
+diff --git a/code/gcov_gcc.c b/code/gcov_gcc.c
+index a907738..9186bae 100644
+--- a/code/gcov_gcc.c
++++ b/code/gcov_gcc.c
+@@ -103,6 +103,9 @@ struct gcov_info {
+ 	gcov_unsigned_t version;
+ 	struct gcov_info *next;
+ 	gcov_unsigned_t stamp;
++#if (__GNUC__ >= 12)
++	gcov_unsigned_t checksum;  /* gcc 12 added object checksum */
++#endif
+ 	const char *filename;
+ 	gcov_merge_fn merge[GCOV_COUNTERS];
+ 	unsigned n_functions;
+@@ -229,6 +232,9 @@ size_t gcov_convert_to_gcda(gcov_unsigned_t *buffer, struct gcov_info *gi_ptr)
+ 	/* File header. */
+ 	pos += store_gcov_tag_length(buffer, pos, GCOV_DATA_MAGIC, gi_ptr->version);
+ 	pos += store_gcov_unsigned(buffer, pos, gi_ptr->stamp);
++#if (__GNUC__ >= 12)
++	pos += store_gcov_unsigned(buffer, pos, gi_ptr->checksum);
++#endif
+ 
+ 	/* Write execution counts for each function.  */
+ 	for (fi_idx = 0; fi_idx < gi_ptr->n_functions; fi_idx++) {
+diff --git a/code/gcov_gcc.h b/code/gcov_gcc.h
+index 4c464a0..6c48ccb 100644
+--- a/code/gcov_gcc.h
++++ b/code/gcov_gcc.h
+@@ -61,7 +61,16 @@
+ /* Compare to gcc/gcov-counter.def and gcc/gcov-io.h */
+ /* GCC has changed this back and forth over time, do not know exact GCC versions */
+ /* This has been used with GCC 7.5.0 and GCC 11.1.0 */
+-#if (__GNUC__ >= 10)
++/* GCOV_COUNTERS is the size of struct gcov_info.merge[]; it MUST equal the
++ * compiler's gcov-counter.def entry count, or n_functions (read just past
++ * merge[]) lands at the wrong offset and gcov_convert_to_gcda emits an empty
++ * .gcda (n_functions read as 0). Verified against gcc/gcov-counter.def:
++ *   gcc 10-13 -> 8;  gcc 14 -> 9 (added GCOV_COUNTER_CONDS, condition coverage).
++ * Confirmed empirically on arm-zephyr-eabi: gcc 12.2 emits a 60-byte gcov_info
++ * (8 merge slots), gcc 14.3 a 64-byte one (9 slots). */
++#if (__GNUC__ >= 14)
++#define GCOV_COUNTERS			9
++#elif (__GNUC__ >= 10)
+ #define GCOV_COUNTERS			8
+ #elif (__GNUC__ >= 5) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 9)
+ #define GCOV_COUNTERS			9
+@@ -81,9 +90,15 @@
+  */
+ #define GCOV_DATA_MAGIC		((gcov_unsigned_t) 0x67636461)
+ #define GCOV_TAG_FUNCTION	((gcov_unsigned_t) 0x01000000)
+-#define GCOV_TAG_FUNCTION_LENGTH	(3)
+ #define GCOV_TAG_COUNTER_BASE	((gcov_unsigned_t) 0x01a10000)
+-#define GCOV_TAG_COUNTER_LENGTH(NUM) ((NUM) * 2)
++/* gcc 12 changed gcov record length fields from 32-bit words to BYTES. */
++#if (__GNUC__ >= 12)
++#define GCOV_TAG_FUNCTION_LENGTH	(3 * 4)
++#define GCOV_TAG_COUNTER_LENGTH(NUM)	((NUM) * 2 * 4)
++#else
++#define GCOV_TAG_FUNCTION_LENGTH	(3)
++#define GCOV_TAG_COUNTER_LENGTH(NUM)	((NUM) * 2)
++#endif
+ #define GCOV_TAG_FOR_COUNTER(count) (GCOV_TAG_COUNTER_BASE + ((gcov_unsigned_t) (count) << 17))
+ 
+ /* Interface to access gcov_info data  */
+diff --git a/code/gcov_printf.c b/code/gcov_printf.c
+index 32bb55b..bcaaece 100644
+--- a/code/gcov_printf.c
++++ b/code/gcov_printf.c
+@@ -36,8 +36,8 @@
+  *
+  * @return -1 if error, otherwise returns byte count written to UART
+  */
+-#include <stdio.h>
+-#define write_bytes(fd, buf, n) putchar((int)(*(buf)))
++#include <zephyr/sys/printk.h>
++#define write_bytes(fd, buf, n) printk("%c", (char)(*(buf)))
+ 
+ /***********************************************************************
+  * The following functions support gcov_printf and are not meant to be
