@@ -2,8 +2,10 @@
 
 ## General
 
+- Add the nox matrix to the nightly test. It fails sometimes for pull requests, and causes confusion because it appears that the new code causes the failure.
 - Neutralize `EmbeddedHost`'s class-level Zephyr defaults. The OS-profile layer (`osType` → registered `OsProfile`, see `src/otto/host/os_profile.py`) now lets a profile bundle OS-specific defaults, and a built-in `zephyr` profile carries the Zephyr bundle. As a follow-up, once lab data has migrated to a `zephyr`/versioned profile, make the `EmbeddedHost` class defaults generic — drop the implicit `command_frame=ZephyrFrame` / `osName='Zephyr'` so a bare `embedded` base carries no OS-specific assumptions and a misconfigured non-Zephyr host fails loudly rather than silently inheriting Zephyr framing. Breaking change for directly-constructed `EmbeddedHost(...)` and any `osType:"embedded"` data relying on the implicit default, so it was deferred from the initial profile work.
 - Empty lines in embedded command output have no logger preamble. Running `help` on zehphyr hosts reveals this.
+- Log tracebacks to the complete log file (the otto.log that currently gets saved)
 - Add TFTP to one of the zephyr hosts
 - Consider <https://pypi.org/project/pyftpdlib/> to replace aioftp. It's much faster in all benchmarks.
 - Add other Zephyr configs and versions so that the embedded OS support is hardened.
@@ -17,7 +19,6 @@
   - Plan available in the topology_plan.md file
 - otto cov report --report should be changed to --dir and be a dir, just like the --cov-dir option
 - Further nc transfer startup optimizations deferred to dedicated todos:
-  - [nc_monitor_retirement.md](nc_monitor_retirement.md) — replace `_nc_monitor` session with a lock around the exec pool.
   - [hop_nc_transfer_flake.md](hop_nc_transfer_flake.md) — root-cause the nc-through-hop transfer hang (currently band-aided with `@pytest.mark.retry(3)`).
 - Maybe hosts can have their own list of all supported protocols? This would allow for sane flexibility when choosing a host's term or transfer type, but the host might be limited.
 - Move coverage collection to be a subpage of the test command

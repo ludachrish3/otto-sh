@@ -2,8 +2,9 @@
 
 **Date:** 2026-06-06
 **Status:** Design approved; ready for implementation plan.
-**Fixes:** Issue 1 of [`todo/nox-all-failure-triage-2026-06-01.md`](../../../todo/nox-all-failure-triage-2026-06-01.md)
-(the `_console_access_lock` setup-timeout), root cause now confirmed live.
+**Fixes:** Issue 1 (the `_console_access_lock` setup-timeout) from the
+2026-06-01 nox-all failure triage (since removed — the issue is resolved),
+root cause now confirmed live.
 **Related:** the cross-worker serialization introduced in `2d4bd1a` and the
 reactive wedge gate in `5b75244` (both 2026-05-31); the parked async
 ResourceWarning leak (Issue 2) is **separate and out of scope**.
