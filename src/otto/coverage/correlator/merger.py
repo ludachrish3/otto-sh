@@ -147,27 +147,44 @@ class LcovMerger:
         gcno_dir: Path,
         work_dir: Path,
         toolchains: list[Toolchain] | None = None,
+        gcno_dirs: list[Path] | None = None,
     ) -> Path:
         """Capture each host dir to ``.info``, then merge all.
 
         Args:
             host_gcda_dirs: Per-host directories containing ``.gcda`` files.
             gcno_dir: Directory containing ``.gcno`` files (from the build).
+                Used as the fallback for all hosts when *gcno_dirs* is not
+                provided.
             work_dir: Scratch directory for intermediate ``.info`` files.
             toolchains: Per-host toolchains, parallel to *host_gcda_dirs*.
                 Each entry can be ``None`` to use instance defaults.
                 If the entire list is ``None``, defaults are used for all.
+            gcno_dirs: Per-host ``.gcno`` directories, parallel to
+                *host_gcda_dirs*.  When provided, host ``i`` is captured
+                against ``gcno_dirs[i]`` instead of the shared *gcno_dir*
+                fallback.  Must have the same length as *host_gcda_dirs*.
 
         Returns:
             Path to the merged ``.info`` file.
+
+        Raises:
+            ValueError: If *gcno_dirs* is provided but its length differs
+                from *host_gcda_dirs*.
         """
+        if gcno_dirs is not None and len(gcno_dirs) != len(host_gcda_dirs):
+            raise ValueError(
+                f"gcno_dirs length ({len(gcno_dirs)}) must match "
+                f"host_gcda_dirs length ({len(host_gcda_dirs)})"
+            )
         work_dir.mkdir(parents=True, exist_ok=True)
         info_files: list[Path] = []
 
         for i, gcda_dir in enumerate(host_gcda_dirs):
             tc = toolchains[i] if toolchains else None
+            g = gcno_dirs[i] if gcno_dirs else gcno_dir
             info_out = work_dir / f"host_{i}.info"
-            await self.capture(gcda_dir, gcno_dir, info_out, toolchain=tc)
+            await self.capture(gcda_dir, g, info_out, toolchain=tc)
             info_files.append(info_out)
 
         if len(info_files) == 1:

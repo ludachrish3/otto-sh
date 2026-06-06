@@ -94,6 +94,22 @@ def read_cov_source_root(cov_dirs: list[Path]) -> Path:
     return Path(meta['sut_dir'])
 
 
+def read_cov_source_roots(cov_dirs: list[Path]) -> dict[str, Path]:
+    """Read per-host source roots from coverage metadata.
+
+    Returns a mapping of host directory name → source root :class:`Path`.
+    If no source_roots info is present in the metadata, or if no metadata
+    file is found, returns an empty dict.
+    """
+    try:
+        meta = _read_cov_meta(cov_dirs)
+    except FileNotFoundError:
+        return {}
+
+    raw: dict = meta.get('source_roots', {})
+    return {host_id: Path(v) for host_id, v in raw.items()}
+
+
 def read_cov_toolchains(cov_dirs: list[Path]) -> dict[str, Toolchain]:
     """Read per-host toolchain info from coverage metadata.
 
@@ -147,7 +163,8 @@ class CoverageReporter:
     Args:
         gcda_dirs: Per-host directories containing ``.gcda`` files.
         source_root: Local source tree root (used for path mapping and
-            .gcno discovery).
+            .gcno discovery).  Acts as the fallback for hosts that have
+            no entry in *source_roots*.
         output_dir: Directory for the HTML report output.
         project_name: Title shown in the HTML report.
         toolchains: Per-host toolchains keyed by host directory name.
@@ -159,6 +176,11 @@ class CoverageReporter:
             for the ``system`` tier and indicate the implicit lcov-merged
             output of ``gcda_dirs``.  Defaults to ``[("system", None)]``
             when omitted.
+        source_roots: Per-host source roots keyed by gcda-dir name (i.e.
+            the host id).  When provided, each host's ``.gcda`` files are
+            captured against its own ``.gcno`` directory instead of the
+            shared *source_root* fallback.  Hosts with no entry fall back
+            to *source_root*.
     """
 
     def __init__(
@@ -169,6 +191,7 @@ class CoverageReporter:
         project_name: str = "Coverage Report",
         toolchains: dict[str, Toolchain] | None = None,
         tiers: list[TierSpec] | None = None,
+        source_roots: dict[str, Path] | None = None,
     ) -> None:
         self.gcda_dirs = gcda_dirs
         self.source_root = source_root
@@ -176,6 +199,7 @@ class CoverageReporter:
         self.project_name = project_name
         self.toolchains = toolchains or {}
         self.tiers: list[TierSpec] = list(tiers) if tiers else [(TIER_SYSTEM, None)]
+        self.source_roots: dict[str, Path] = source_roots or {}
         self._validate_tiers()
 
     def _validate_tiers(self) -> None:
@@ -189,6 +213,12 @@ class CoverageReporter:
                     f"Tier {name!r} has no .info path; only the "
                     f"{TIER_SYSTEM!r} tier may omit a path."
                 )
+
+    def _per_host_gcno_dirs(self) -> list[Path]:
+        """Per-gcda-dir source root: the host's own root (by dir name) or the
+        single ``source_root`` fallback. Parallel to ``self.gcda_dirs``.
+        """
+        return [self.source_roots.get(d.name, self.source_root) for d in self.gcda_dirs]
 
     async def _resolve_toolchains(self, work_dir: Path) -> list[Toolchain | None]:
         """Build a per-gcda-dir list of toolchains.
@@ -211,7 +241,13 @@ class CoverageReporter:
                 result.append(self.toolchains[host_id])
                 continue
 
-            # Lazy auto-discovery: run once and cache
+            # Lazy auto-discovery: run once and cache, against the shared
+            # source_root. Note: a host with its own ``source_roots`` entry
+            # (a different build tree) but no explicit ``toolchains`` entry
+            # would get a toolchain sniffed from this fallback root, which may
+            # be wrong. The metadata writer (``_run_coverage``) emits a per-host
+            # toolchain whenever it emits a per-host source root, so this path
+            # is not reached for per-version embedded hosts.
             if not fallback_computed:
                 localhost = LocalHost()
                 try:
@@ -271,6 +307,7 @@ class CoverageReporter:
                     gcno_dir=self.source_root,
                     work_dir=work_dir,
                     toolchains=filtered_toolchains if filtered_toolchains else None,
+                    gcno_dirs=self._per_host_gcno_dirs() if self.source_roots else None,
                 )
 
                 # 2. Auto-discover path mappings
@@ -361,6 +398,7 @@ async def run_coverage_report(
         return None
 
     toolchains = read_cov_toolchains(cov_dirs)
+    source_roots = read_cov_source_roots(cov_dirs)
 
     reporter = CoverageReporter(
         gcda_dirs=gcda_dirs,
@@ -369,5 +407,6 @@ async def run_coverage_report(
         project_name=project_name,
         toolchains=toolchains,
         tiers=tier_specs,
+        source_roots=source_roots,
     )
     return await reporter.run()
