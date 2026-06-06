@@ -21,8 +21,9 @@ A campaign **stage is GREEN** iff, across every tier it covers:
   Workstream A — it is *fixed*, not tolerated), and
 - no embedded console wedge at the **diluted** (`-n auto --dist loadgroup`)
   distribution (see §6 decision rule), and
-- any flake that fires is root-caused and fixed (or consciously quarantined
-  with sign-off) before the stage is declared green — see §7.
+- the known inner-pytest race flake is fixed (Workstream D, **required**), and
+  any *new* flake that fires is root-caused and fixed before the stage is
+  declared green.
 
 **Definition of done:** Stage 3 (`COUNT=10`) is GREEN across all tiers, the
 async leak is fixed, and a per-stage evidence appendix (JUnit summaries) is
@@ -52,9 +53,15 @@ outside `testpaths` (`tests/repo1/tests/*`, `tests/repo3/tests/*`) are
 sample-project **fixtures** driven *indirectly* by the integration tier
 (`tests/repo3/tests/test_embedded_coverage.py` runs inside
 `tests/integration/test_embedded_coverage_e2e.py` via `otto test --cov`;
-`repo1/tests/*` back the suite-plugin tests). **One real gap:**
-`make stability-embedded` has no `COUNT`/`--count` knob, so it cannot be driven
-×10 — closed by Workstream B1.
+`repo1/tests/*` back the suite-plugin tests). **Two test-infra defects (both
+feed Workstream B):** (a) `make stability-embedded` has no `COUNT`/`--count`
+knob, so it cannot be driven ×10; (b) the `stability` target — and `stability-all`
+tier 1 and the `nightly.yml` workflow — still names
+`tests/unit/host/test_remoteHost.py`, which the branch renamed to
+`test_unixHost.py`, so `make stability` errors at collection (`exit 4`). Both are
+symptoms of selecting tests by **hardcoded path**; Workstream B converts the
+stability targets (and the campaign runner) to **marker-based selection** so a
+rename can't silently break a target again.
 
 ## 3. Strategy: graduated × tiered campaign
 
@@ -72,16 +79,16 @@ Two axes:
 | T1 unit | `make nox` | all 5 Pythons, every stage | no |
 | T2 full lab — breadth | `make nox-all` (all 5 Py) | **Stage 1 only** (cross-version health + surfaces the leak) | yes |
 | T2 full lab — deep | `nox -s tests_all-3.10 -- --count=N` | **pinned 3.10**, every stage | yes |
-| T3a concurrency | `make stability` | every stage | no |
-| T3b real telnet/SSH | `make stability-all` (incl. embedded tier3) | every stage | yes |
-| T3c embedded contract | `make stability-embedded COUNT=N` (B1) | every stage | yes |
+| T3a concurrency | `make stability` → `-m concurrency` | every stage | no |
+| T3b unix stability | `stability-all` tier 2 → `-m "stability and integration and not embedded"` | every stage | yes |
+| T3c embedded contract | `make stability-embedded` → `-m "stability and embedded"` (COUNT-scaled) | every stage | yes |
 
 **Pinned Python = 3.10** (oldest supported floor — maximizes the chance of
 catching version-floor regressions under the deep hammering).
 
-Note T3b `stability-all` already chains `stability` (tier1) and
-`stability-embedded` (tier3); B1 also threads `COUNT` from `stability-all`
-into the embedded tier so the whole chain scales together.
+Tiers select by **marker, not path** (Workstream B1). `stability-all` chains all
+three stability tiers; the `COUNT` knob (B2) threads through so the whole chain
+scales together.
 
 ## 4. Workstream A — fix the async ResourceWarning leak (prerequisite)
 
@@ -102,14 +109,29 @@ The chosen path is **fix it first** (not document/tolerate). Approach:
 
 ## 5. Workstream B — test-infra
 
-- **B1 — `COUNT` knob on `stability-embedded`** (confirmed required): thread
-  `--count=$(or $(COUNT),1) -p no:cacheprovider`, mirroring `stability`/`stability-all`;
-  and have `stability-all`'s tier-3 call pass `COUNT` through.
-- **B2 — campaign runner + aggregator:** a thin script that drives the
-  graduated stages across tiers, writes per-session JUnit to `reports/junit/`,
-  and aggregates via `scripts/junit_failures.py` into a per-stage pass/flake
-  report. The report is reused verbatim as the PR evidence appendix. It encodes
-  the stage gating (stop on a dirty stage) and the tier breadth rules from §3.
+- **B1 — marker-based test selection (resilience).** The stability targets and
+  the campaign runner select tests by hardcoded path, which is how the
+  `test_remoteHost.py → test_unixHost.py` rename silently broke `make stability`.
+  Introduce a `concurrency` marker for the fast, no-VM tier-1 soak — kept *in*
+  coverage (it is **not** `stability`-marked) — and convert selection to markers:
+  `stability` → `-m concurrency`; `stability-all` tier 2 →
+  `-m "stability and integration and not embedded"`; `stability-embedded` →
+  `-m "stability and embedded"`. The cross-OS contract suite already tags only
+  its embedded backends with `embedded`, so these expressions partition the
+  existing tests **by OS with no test dropped** (proven by a collect-equivalence
+  check against the current path-based sets). Consequence: standalone
+  `stability-embedded` narrows to embedded-only (name-aligned); the unix contract
+  params ride with the unix-stability selection; `stability-all` still runs
+  everything.
+- **B2 — `COUNT` knob on `stability-embedded`** (confirmed required): thread
+  `--count=$(or $(COUNT),1) -p no:cacheprovider`; have `stability-all`'s tier-3
+  call pass `COUNT` through.
+- **B3 — campaign runner + aggregator:** a thin script that drives the graduated
+  stages across tiers (selecting **by marker, not path**), writes per-session
+  JUnit to `reports/junit/`, and aggregates via `scripts/junit_failures.py` into
+  a per-stage pass/flake report (reused verbatim as the PR evidence appendix). It
+  encodes the stage gating (stop on a dirty stage) and the tier breadth rules
+  from §3.
 
 ## 6. Workstream C — run the campaign
 
@@ -127,16 +149,23 @@ distribution, which keeps embedded tests interleaved among thousands of others
   add bed self-recovery (auto `qemu-restart` / reconnect backoff between reps),
   or document as an accepted known-limit. Decide with the user at that point.
 
-## 7. Workstream D — flake watch-items
+## 7. Workstream D — fix the inner-pytest race flake (required)
 
-These known intermittents are in the campaign blast radius and must be resolved
-(or quarantined with sign-off) before the relevant stage is GREEN:
+`test_otto_suite.py::TestOttoTestDir::test_test_dir_created_per_test` flakes
+intermittently — passes in isolation, fails ~1-in-3 full runs. It was *observed*
+on Python 3.12, but the root cause is **version-agnostic**: the test spawns an
+inner `pytest.main()` via `_run_inner_pytest` while the outer session runs under
+`-n auto --dist loadgroup`, so two xdist workers can collide on the inner
+session's plugin/logger state (see `todo/test_otto_suite_3_12_flake.md`). 3.12
+timing merely exposed it first; the T1 unit tier runs every Python ×10, so it
+must be **fixed, not tolerated**.
 
-- **`test_otto_suite.py::TestOttoTestDir::test_test_dir_created_per_test`** —
-  intermittent on Python 3.12 (passes in isolation; ~1-in-3 full runs). The T1
-  unit tier runs 3.12 ×10, so it will likely fire. Investigation plan already
-  recorded in `todo/test_otto_suite_3_12_flake.md` (prime fix: pin the
-  inner-`pytest.main()` tests to one worker via `xdist_group`).
+- **Fix:** reproduce with a repeated cross-version loop, then serialize the
+  inner-pytest tests onto one worker (`@pytest.mark.xdist_group("inner_pytest")`)
+  and scope the logger patch to only the `pytest.main()` call (per the todo's
+  investigation plan). Root-cause-first via `systematic-debugging`.
+- **Gate:** like Workstream A, fixed before Stage 3 is GREEN; developed in
+  parallel with the smoke stages.
 
 ## 8. Workstream E — repository hygiene (largely done this session)
 
@@ -155,7 +184,8 @@ and the current `plans/2026-06-05-embedded-arm-bed-migration.md`.
 2. **B2** (campaign runner) — needed before the campaign.
 3. **Stage 1 (`COUNT=1`)** smoke across all tiers — catch gotchas; expect the
    async leak in the nox-all breadth pass.
-4. **Workstream A** (leak fix) in parallel, using the Stage-1 breadth runs.
+4. **Workstreams A (async leak) + D (inner-pytest race)** in parallel, using
+   the Stage-1/2 runs to reproduce.
 5. Graduate to **Stage 2 (`COUNT=3`)**, then **Stage 3 (`COUNT=10`)** once the
    leak is fixed and the prior stage is GREEN.
 6. Assemble the PR with the evidence appendix; hand off to
