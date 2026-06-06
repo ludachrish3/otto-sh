@@ -26,6 +26,21 @@ COUNT ?= 10
 #   make nox-all COUNT=5
 NOX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
 
+# Iteration count for `make stability-embedded`. Default is 1 (a single pass)
+# so a standalone embedded run doesn't hammer the Zephyr board. When driven
+# from `make stability-all` the parent explicitly passes COUNT=10 (or whatever
+# the user set on the command line), so this resolves to the right value then.
+EMBEDDED_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
+
+# Iteration count for `make stability`. Default is 50 (soak run); honor COUNT
+# only when explicitly passed on the command line so that the global COUNT ?= 10
+# default never silently overrides the documented 50-iteration contract.
+STABILITY_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),50)
+
+# Iteration count for the tier-2 integration leg of `make stability-all`.
+# Default is 10; honor COUNT only when explicitly passed on the command line.
+INTEGRATION_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),10)
+
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
 # Two things dominate wall time: Docker integration tests are pinned to one
@@ -114,11 +129,10 @@ coverage: ## Run tests and enforce coverage threshold (excludes heavy `stability
 coverage-unit: ## Run unit tests only (no Vagrant VMs needed) and enforce CI threshold
 	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not integration and not hops" --cov-fail-under=$(CI_COVERAGE_THRESHOLD)
 
-stability: ## Run targeted SessionManager concurrency tests under pytest-repeat (no VMs). Override iterations with COUNT=N (default 50).
+stability: ## Run no-VM SessionManager concurrency/soak tests by marker. Override iterations with COUNT=N (default 50).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    tests/unit/host/test_session_concurrency.py \
-	    tests/unit/host/test_remoteHost.py::TestOneshot::test_oneshot_telnet_concurrent_does_not_deadlock \
-	    --count=$(or $(COUNT),50) \
+	    -m concurrency \
+	    --count=$(STABILITY_COUNT) \
 	    -p no:cacheprovider
 
 stability-all: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if unit-level tests are RED. Override iterations with COUNT=N (default 10).
@@ -143,22 +157,21 @@ stability-all: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if u
 	    echo "  jq not installed; skipping ping check (tests will fail fast at fixture connect if VMs are down)."; \
 	fi
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    tests/unit/host/test_session_stability_integration.py \
-	    -m integration \
-	    --count=$(or $(COUNT),10) \
+	    -m "stability and integration and not embedded" \
+	    --count=$(INTEGRATION_COUNT) \
 	    -p no:cacheprovider \
 	    -n0
 	@echo
 	@echo "── Tier 3 (cross-OS stability contract — includes embedded) ──"
-	@$(MAKE) stability-embedded
+	@$(MAKE) stability-embedded COUNT=$(or $(COUNT),10)
 
-stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (unix + Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/.
+stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (unix + Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/. Override iterations with COUNT=N (default 1).
 	@mkdir -p reports/junit
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    tests/integration/host/test_host_stability_contract.py \
-	    -m integration \
+	    -m "stability and embedded" \
 	    -p no:cacheprovider \
 	    -n0 \
+	    --count=$(EMBEDDED_COUNT) \
 	    --junitxml=reports/junit/stability-embedded.xml
 
 repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. Override COUNT=N (default 10).

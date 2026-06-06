@@ -20,6 +20,7 @@ from otto.host.connections import ConnectionManager
 from otto.host.session import SessionManager, ShellSession
 from otto.utils import CommandStatus
 
+pytestmark = pytest.mark.concurrency
 
 # ── Fake session + factory ────────────────────────────────────────────────────
 

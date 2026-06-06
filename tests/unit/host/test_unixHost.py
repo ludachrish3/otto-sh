@@ -383,6 +383,7 @@ class TestOneshot:
         )
         await h.close()
 
+    @pytest.mark.concurrency
     @pytest.mark.asyncio
     async def test_oneshot_telnet_concurrent_does_not_deadlock(self):
         """Regression: concurrent telnet ``oneshot()`` calls must not serialize.
