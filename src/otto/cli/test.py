@@ -661,11 +661,28 @@ async def _run_coverage(
     # Embedded hosts now carry a per-host Toolchain (lab-data ``toolchain``),
     # exactly like Unix hosts: the bed declares the cross-gcov for binaries it
     # runs. Use it per host; fall back to scanning the build's .gcno only for a
-    # host left at the default (unconfigured) toolchain. The build dir is the
-    # report's source root when there are no Unix hosts (standalone-embedded).
+    # host left at the default (unconfigured) toolchain.
+    #
+    # The build dir is the report's source root when there are no Unix hosts
+    # (standalone-embedded). Multi-Zephyr-version labs declare per-version build
+    # dirs under [coverage.embedded.builds.<version>]; each host's osVersion
+    # selects its own root, recorded in ``source_roots`` so the reporter can
+    # resolve the correct .gcno tree per host. The single ``build_dir`` remains
+    # supported as a legacy/fallback for single-version labs.
     embedded_cfg = cov_config.get('embedded') or {}
-    embedded_build_dir = embedded_cfg.get('build_dir')
-    if embedded_dirs and embedded_build_dir:
+    embedded_build_dir = embedded_cfg.get('build_dir')          # single legacy/fallback
+    embedded_builds = embedded_cfg.get('builds') or {}          # {"3.7": {"build_dir": ...}}
+
+    def _resolve_build_dir(host) -> str | None:
+        ver = getattr(host, 'osVersion', None)
+        if ver and ver in embedded_builds:
+            bd = embedded_builds[ver].get('build_dir')
+            if bd:
+                return bd
+        return embedded_build_dir
+
+    source_roots: dict[str, str] = {}
+    if embedded_dirs and (embedded_build_dir or embedded_builds):
         from ..host import LocalHost
         from ..host.embeddedHost import EmbeddedHost
         from ..host.toolchain import Toolchain
@@ -674,25 +691,30 @@ async def _run_coverage(
         embedded_hosts = {
             h.id: h for h in cov_hosts if isinstance(h, EmbeddedHost)
         }
-        # Compute the .gcno-discovery fallback at most once, shared by any hosts
-        # that left their toolchain at the default.
-        discovery_attempted = False
-        discovered_tc: Toolchain | None = None
+        # Cache .gcno-discovery per build dir so hosts sharing a build dir do
+        # not re-trigger the (potentially slow) filesystem scan.
+        discovery_cache: dict[str, Toolchain | None] = {}
         for host_id in embedded_dirs:
             host = embedded_hosts.get(host_id)
+            host_build_dir = _resolve_build_dir(host) if host is not None else embedded_build_dir
+            if host_build_dir:
+                source_roots[host_id] = str(Path(host_build_dir).resolve())
             tc = (
                 host.toolchain
                 if host is not None and host.toolchain != Toolchain()
                 else None
             )
             if tc is None:
-                if not discovery_attempted:
-                    discovery_attempted = True
-                    discovered_tc = await discover_toolchain_from_gcno(
-                        Path(embedded_build_dir), LocalHost(),
-                        cov_dir / '_toolchain_work',
-                    )
-                tc = discovered_tc
+                bd_key = host_build_dir or ''
+                if bd_key not in discovery_cache:
+                    if host_build_dir:
+                        discovery_cache[bd_key] = await discover_toolchain_from_gcno(
+                            Path(host_build_dir), LocalHost(),
+                            cov_dir / '_toolchain_work',
+                        )
+                    else:
+                        discovery_cache[bd_key] = None
+                tc = discovery_cache[bd_key]
             if tc is not None:
                 toolchains[host_id] = {
                     'sysroot': str(tc.sysroot),
@@ -700,12 +722,17 @@ async def _run_coverage(
                     'gcov': str(tc.gcov),
                 }
         if not unix_dirs:
-            sut_dir = str(Path(embedded_build_dir).resolve())
+            # Use the single fallback if present; otherwise the first resolved root.
+            if embedded_build_dir:
+                sut_dir = str(Path(embedded_build_dir).resolve())
+            elif source_roots:
+                sut_dir = next(iter(source_roots.values()))
 
     meta: dict[str, object] = {
         'repo_name': cov_repo.name,
         'sut_dir': sut_dir,
         'toolchains': toolchains,
+        'source_roots': source_roots,
     }
     (cov_dir / '.otto_cov_meta.json').write_text(json.dumps(meta, indent=2))
 

@@ -919,6 +919,66 @@ class TestRunCoverageEmbedded:
         assert all_hosts_mock.call_args.kwargs.get('pattern') is None
         assert embedded_collect.await_args.kwargs.get('pattern') is None
 
+    def test_per_version_source_roots_recorded(self, tmp_path):
+        """Two embedded hosts of different osVersion each record their own build_dir
+        as a per-host source root in the meta (multi-Zephyr-version coverage).
+        """
+        import asyncio
+        import json
+        from pathlib import Path
+
+        from otto.cli.test import _run_coverage
+        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.toolchain import Toolchain
+
+        cov_dir = tmp_path / 'cov'
+        cov_dir.mkdir()
+        build37 = tmp_path / 'build' / 'v3_7'
+        build37.mkdir(parents=True)
+        build44 = tmp_path / 'build' / 'v4_4'
+        build44.mkdir(parents=True)
+
+        repo = MagicMock()
+        repo.name = 'repo3'
+        repo.sutDir = tmp_path / 'repo3'
+
+        sprout = EmbeddedHost(
+            ip='192.0.2.33', ne='sprout', transfer='console', osVersion='3.7',
+            toolchain=Toolchain(
+                sysroot=Path('/opt/sdk37/arm-zephyr-eabi'),
+                gcov=Path('bin/arm-zephyr-eabi-gcov'), lcov=Path('/usr/bin/lcov')),
+        )
+        sprout44 = EmbeddedHost(
+            ip='192.0.2.34', ne='sprout44', transfer='console', osVersion='4.4',
+            toolchain=Toolchain(
+                sysroot=Path('/opt/sdk44/gnu/arm-zephyr-eabi'),
+                gcov=Path('bin/arm-zephyr-eabi-gcov'), lcov=Path('/usr/bin/lcov')),
+        )
+
+        embedded_collect = AsyncMock(return_value={
+            'sprout': cov_dir / 'sprout',
+            'sprout44': cov_dir / 'sprout44',
+        })
+        cov_config = {
+            'embedded': {
+                'extension': 'cov_ext',
+                'builds': {
+                    '3.7': {'build_dir': str(build37)},
+                    '4.4': {'build_dir': str(build44)},
+                },
+            },
+        }
+        with patch('otto.cli.test._get_cov_config', return_value=cov_config), \
+             patch('otto.configmodule.all_hosts', return_value=[sprout, sprout44]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=repo):
+            asyncio.run(_run_coverage([repo], tmp_path / 'log', cov_dir))
+
+        meta = json.loads((cov_dir / '.otto_cov_meta.json').read_text())
+        assert meta['source_roots']['sprout'] == str(build37.resolve())
+        assert meta['source_roots']['sprout44'] == str(build44.resolve())
+
 
 # ── --cov-report option (report generation alongside collection) ─────────────
 
