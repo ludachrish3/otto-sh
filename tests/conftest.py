@@ -11,7 +11,10 @@ os.environ["TERM"] = "dumb"
 for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
     os.environ.pop(_var, None)
 
+import asyncio  # noqa: E402
 import json  # noqa: E402
+import sys  # noqa: E402
+import weakref  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any  # noqa: E402
@@ -24,6 +27,7 @@ from otto.host.localHost import LocalHost  # noqa: E402
 from otto.host.unixHost import UnixHost  # noqa: E402
 from otto.logger import getOttoLogger  # noqa: E402
 from otto.storage.factory import create_host_from_dict  # noqa: E402
+from tests._loop_reaper import classify_loop_origin, reap_or_raise  # noqa: E402
 
 _logger = getOttoLogger()
 
@@ -64,6 +68,7 @@ def pytest_runtest_call(item: pytest.Item):
 
 def pytest_configure(config):  # type: ignore[no-untyped-def]
     _install_sigint_traceback_dump()
+    _install_loop_origin_tracker()
 
 
 def _install_sigint_traceback_dump() -> None:
@@ -100,6 +105,106 @@ def pytest_unconfigure(config):  # type: ignore[no-untyped-def]
 
     if hasattr(faulthandler, 'unregister'):
         faulthandler.unregister(signal.SIGINT)
+
+
+# ---------------------------------------------------------------------------
+# Orphaned-event-loop reaper (always on — including CI)
+#
+# Closes leaked pytest-asyncio (harness) function loops at each test boundary
+# so their unclosed-loop ``ResourceWarning`` never gets gc-finalized inside an
+# unrelated later test and escalated by ``filterwarnings=["error"]`` into a
+# flaky, misattributed ``ExceptionGroup`` failure (the usual scapegoat is a
+# Hypothesis ``@given`` test, whose ``register_random`` calls ``gc.collect()``).
+#
+# A loop created by ``otto/`` product code is NEVER closed here — it is
+# reported via :class:`LeakedProductLoopError`, so a genuine product resource
+# leak surfaces loudly with attribution instead of being masked. Product code
+# only ever creates loops via ``asyncio.run()`` (which always closes them), so
+# such a loop never sits open at a boundary today; the raise is a regression
+# guard. See ``tests/_loop_reaper.py`` for the full rationale and evidence.
+# ---------------------------------------------------------------------------
+
+# loop -> (origin, creating-test nodeid). Weak keys: dead loops drop out on
+# their own and loop-id reuse can't produce a stale lookup.
+_LOOP_INFO: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[str, str]]" = (
+    weakref.WeakKeyDictionary()
+)
+_current_test = "(session setup/collection)"
+_loops_reaped = 0
+_tracker_installed = False
+
+
+def _frame_filenames(frame):
+    """Yield ``co_filename`` for ``frame`` and every caller above it.
+
+    Cheap (no line formatting); ``classify_loop_origin`` short-circuits on the
+    first ``otto/`` frame, so the full walk only happens for harness loops.
+    """
+    while frame is not None:
+        yield frame.f_code.co_filename
+        frame = frame.f_back
+
+
+def _install_loop_origin_tracker() -> None:
+    """Tag every event loop with its origin at creation time.
+
+    Wraps ``BaseEventLoop.__init__`` — the single chokepoint every asyncio loop
+    passes through — to record whether the loop was built by ``otto/`` product
+    code or by the harness, plus the test running when it was created.
+    Test-only; runs in the controller and every xdist worker (this conftest is
+    imported in each).
+    """
+    global _tracker_installed
+    if _tracker_installed:
+        return
+    import asyncio.base_events as base_events
+
+    orig_init = base_events.BaseEventLoop.__init__
+
+    def _tracking_init(self, *args, **kwargs):
+        orig_init(self, *args, **kwargs)
+        origin = classify_loop_origin(_frame_filenames(sys._getframe(1)))
+        try:
+            _LOOP_INFO[self] = (origin, _current_test)
+        except TypeError:
+            pass  # not weak-referenceable (shouldn't happen for real loops)
+
+    base_events.BaseEventLoop.__init__ = _tracking_init
+    _tracker_installed = True
+
+
+def pytest_runtest_setup(item):  # type: ignore[no-untyped-def]
+    global _current_test
+    _current_test = item.nodeid
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item):
+    """After the test and all its fixtures finalize, reap orphaned harness
+    loops. Raises :class:`LeakedProductLoopError` if a product loop leaked.
+    """
+    result = yield
+    global _loops_reaped
+
+    def origin_of(loop):
+        info = _LOOP_INFO.get(loop)
+        return info[0] if info else "harness"
+
+    def describe(loop):
+        info = _LOOP_INFO.get(loop)
+        return f"{loop!r} (created during {info[1] if info else '?'})"
+
+    _loops_reaped += reap_or_raise(list(_LOOP_INFO.keys()), origin_of, describe=describe)
+    return result
+
+
+def pytest_terminal_summary(terminalreporter):  # type: ignore[no-untyped-def]
+    if _loops_reaped:
+        terminalreporter.write_line(
+            f"loop-reaper: closed {_loops_reaped} orphaned pytest-asyncio event "
+            "loop(s) at test boundaries (harness teardown race; see "
+            "tests/_loop_reaper.py)"
+        )
 
 
 # ---------------------------------------------------------------------------
