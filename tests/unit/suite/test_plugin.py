@@ -346,6 +346,7 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
     loop and ticks freely while the test runs.
     """
     import asyncio
+    import gc
     import json
     import textwrap
     from collections import deque
@@ -394,6 +395,8 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
     real_collector.run = fake_run  # type: ignore[method-assign]
 
     fake_host = MagicMock(spec=UnixHost, id='host1')
+    loops_before = {o for o in gc.get_objects()
+                    if isinstance(o, asyncio.AbstractEventLoop) and not o.is_closed()}
     with patch('otto.configmodule.all_hosts', return_value=iter([fake_host])), \
          patch('otto.monitor.factory.build_monitor_collector',
                return_value=real_collector):
@@ -412,6 +415,17 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
             # test in the same process (e.g. under `pytest --count`) imports a
             # fresh module instead of hitting "import file mismatch".
             sys.modules.pop(suite_path.stem, None)
+            # pytest-asyncio's session-scoped loop survives the inner
+            # pytest.main(); its self-pipe socketpair surfaces later as
+            # unclosed-socket ResourceWarnings when hypothesis's
+            # register_random calls gc.collect() inside an unrelated test,
+            # which `filterwarnings = ["error"]` turns into a flaky failure.
+            # Same pattern as tests/unit/suite/test_otto_suite.py::_run_inner_pytest.
+            for leaked in [o for o in gc.get_objects()
+                           if isinstance(o, asyncio.AbstractEventLoop)
+                           and not o.is_closed()
+                           and o not in loops_before]:
+                leaked.close()
 
     assert exit_code == 0, f'embedded pytest run failed: {exit_code}'
     assert out_path.exists(), 'monitor.json was not written'

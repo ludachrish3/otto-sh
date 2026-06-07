@@ -129,7 +129,7 @@ def main(
             envvar=XDIR_ENV_VAR,
             help='Directory in which to store logs and artifacts.'
         ),
-    ] = Path(),
+    ],
 
     debug: Annotated[bool,
         typer.Option('--field/--debug',

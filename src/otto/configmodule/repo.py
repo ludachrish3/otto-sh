@@ -272,7 +272,18 @@ class Repo():
         collector = _Collector()
         paths = [str(d) for d in self.tests if d.exists()]
         if paths:
+            import gc
             saved_modules = sys.modules.copy()
+            # pytest-asyncio installs a session-scoped event loop on first
+            # async test collection. The inner pytest.main() session leaves
+            # that loop open (held by plugin reference cycles); without
+            # explicit cleanup its self-pipe socketpair lingers and surfaces
+            # later as PytestUnraisableExceptionWarning when an outer
+            # gc.collect() breaks the cycle. Same pattern as the fix in
+            # tests/unit/suite/test_plugin.py.
+            loops_before = {o for o in gc.get_objects()
+                            if isinstance(o, asyncio.AbstractEventLoop)
+                            and not o.is_closed()}
             try:
                 with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
                     pytest.main(
@@ -284,6 +295,11 @@ class Repo():
             finally:
                 sys.modules.clear()
                 sys.modules.update(saved_modules)
+                for leaked in [o for o in gc.get_objects()
+                               if isinstance(o, asyncio.AbstractEventLoop)
+                               and not o.is_closed()
+                               and o not in loops_before]:
+                    leaked.close()
 
         tests: list[CollectedTest] = []
         for item in collector.items:

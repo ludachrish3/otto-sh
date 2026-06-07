@@ -36,7 +36,7 @@ jobs:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v6.0.3
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v8.1.0
@@ -75,7 +75,7 @@ jobs:
           } > issue-body.md
 
       - name: Create issue from file
-        uses: peter-evans/create-issue-from-file@v5
+        uses: peter-evans/create-issue-from-file@v6
         with:
           title: "Nightly stability run failed"
           content-filepath: issue-body.md

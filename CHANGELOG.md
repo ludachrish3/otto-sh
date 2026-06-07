@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.6] - 2026-05-24
+
+### Dependencies
+
+- bump ty from 0.0.37 to 0.0.39 (#34)
+- bump telnetlib3 from 4.0.2 to 4.0.3 (#35)
+- bump ruff from 0.15.13 to 0.15.14 (#36)
+- bump hypothesis from 6.152.7 to 6.152.9 (#33)
+- bump peter-evans/create-issue-from-file from 5 to 6 (#32)
+
+
+### Fixed
+
+- close inner pytest.main()'s leaked event loop in collectTests
+- require --xdir and harden removeOldLogs against foreign trees
+
+
 ## [0.3.5] - 2026-05-19
 
 ### Added
@@ -180,7 +197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/ludachrish3/otto-sh/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/ludachrish3/otto-sh/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/ludachrish3/otto-sh/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/ludachrish3/otto-sh/compare/v0.3.2...v0.3.3
