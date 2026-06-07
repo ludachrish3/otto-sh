@@ -184,6 +184,7 @@ class OttoLogger(Logger):
                 continue
             for log_dir_name in listdir(cmd_dir):
                 output_dir = cmd_dir / log_dir_name
+
                 # Fail-safe: only rmtree entries that match the timestamped
                 # log-dir naming pattern ``create_output_dir`` writes. Without
                 # this, a misconfigured xdir (the original test_cov.py flake

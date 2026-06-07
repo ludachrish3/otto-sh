@@ -32,7 +32,7 @@ API builders
 ### Hosts
 
 A **Host** represents a machine otto can talk to.
-{class}`~otto.host.remoteHost.RemoteHost` connects over SSH or Telnet;
+{class}`~otto.host.unixHost.UnixHost` connects over SSH or Telnet;
 {class}`~otto.host.localHost.LocalHost` runs commands on the local machine
 without any network connection.
 

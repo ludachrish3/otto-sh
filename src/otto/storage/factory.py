@@ -1,6 +1,9 @@
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from ..host.command_frame import build_command_frame
+from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
+from ..host.embeddedHost import EmbeddedHost
 from ..host.options import (
     FtpOptions,
     LocalPortForward,
@@ -8,12 +11,15 @@ from ..host.options import (
     RemotePortForward,
     ScpOptions,
     SftpOptions,
+    SnmpOptions,
     SocksForward,
     SshOptions,
     TelnetOptions,
 )
+from ..host.os_profile import OsProfile, build_os_profile, get_os_profile, registered_profile_names
 from ..host.remoteHost import RemoteHost
 from ..host.toolchain import Toolchain
+from ..host.unixHost import UnixHost
 
 
 def _build_toolchain(raw: dict[str, Any]) -> Toolchain:
@@ -74,6 +80,18 @@ def _build_nc_options(raw: dict[str, Any]) -> NcOptions:
     return NcOptions(**raw)
 
 
+def _build_snmp_options(raw: dict[str, Any]) -> SnmpOptions:
+    """Build an :class:`SnmpOptions` from a host's ``snmp`` block.
+
+    JSON has no tuples, so the ``oids`` list is converted to a tuple to match
+    the frozen-friendly field type.
+    """
+    kwargs = dict(raw)
+    if isinstance(kwargs.get('oids'), list):
+        kwargs['oids'] = tuple(kwargs['oids'])
+    return SnmpOptions(**kwargs)
+
+
 _OPTIONS_BUILDERS: dict[str, Any] = {
     'ssh_options': _build_ssh_options,
     'telnet_options': _build_telnet_options,
@@ -93,53 +111,78 @@ def create_host_from_dict(
     defaults: dict[str, dict[str, Any]] | None = None,
 ) -> RemoteHost:
     """
-    Create appropriate Host subclass from dictionary.
+    Create the appropriate :class:`RemoteHost` subclass from a host dict.
+
+    The ``osType`` field names a registered :class:`OsProfile`, which selects
+    the base host class to build and carries a bundle of default field values:
+
+    - ``unix`` (the default when ``osType`` is absent) → :class:`UnixHost`
+    - ``embedded`` → :class:`EmbeddedHost`
+    - any custom profile registered via ``register_os_profile`` or an
+      ``[os_profiles.<name>]`` settings table → its declared base class
+
+    Field precedence, highest to lowest:
+
+    1. the host's own value in *host_data*;
+    2. the profile's ``defaults``;
+    3. repo-level ``*_options`` defaults from *defaults* (per-key, options only);
+    4. the base class's stock dataclass default.
 
     Parameters
     ----------
     host_data : dict[str, Any]
-        Dictionary containing host configuration with keys:
-        - ip (required): str
-        - creds (required): dict[str, str]
-        - ne (required): str
-        - user (optional): str
-        - board (optional): str
-        - slot (optional): int
-        - neId (optional): int
-        - resources (optional): list[str] or set[str]
-        - hop (optional): str (host ID of an intermediate hop)
-        - docker_capable (optional): bool (host can run docker containers)
-        - log (optional): bool
-        - log_stdout (optional): bool
-        - name (optional): str
-        - toolchain (optional): dict with sysroot, lcov, gcov paths
-        - ssh_options (optional): dict mapped onto ``SshOptions`` fields
-        - telnet_options (optional): dict mapped onto ``TelnetOptions`` fields
-        - sftp_options (optional): dict mapped onto ``SftpOptions`` fields
-        - scp_options (optional): dict mapped onto ``ScpOptions`` fields
-        - ftp_options (optional): dict mapped onto ``FtpOptions`` fields
-        - nc_options (optional): dict mapped onto ``NcOptions`` fields
+        Dictionary containing host configuration. The accepted keys depend on
+        the profile's base family; see :func:`validate_host_dict` for the
+        required set. Common keys: ``ip``, ``ne``, ``creds``, ``user``,
+        ``board``, ``slot``, ``neId``, ``resources``, ``hop``, ``log``,
+        ``log_stdout``, ``name``, ``osType``, ``osName``, ``osVersion``. Unix
+        hosts additionally accept ``docker_capable``, ``toolchain``, and the
+        ``*_options`` tables; embedded hosts accept ``telnet_options`` only.
     defaults : dict[str, dict[str, Any]] | None
         Optional repo-level option defaults, keyed by ``*_options`` table
-        name. When supplied, each table is merged per-key beneath the
-        host's own ``*_options`` (host keys win). ``None`` (the default)
-        reproduces today's behavior bit-for-bit.
+        name. When supplied, each table is merged per-key beneath the profile's
+        and the host's own ``*_options`` (host keys win, then profile keys).
+        ``None`` (the default) applies no repo-level defaults.
 
     Returns
     -------
-    Host
-        RemoteHost using dict of host options
+    RemoteHost
+        A :class:`UnixHost` or :class:`EmbeddedHost`, selected by the profile's
+        base family.
 
     Raises
     ------
     ValueError
-        If required fields are missing or invalid
+        If ``osType`` names no registered profile, or if an embedded host
+        declares ``docker_capable``.
     TypeError
-        If field types are incorrect
+        If required fields are missing or field types are incorrect.
     """
+    os_type = host_data.get('osType', 'unix')
+    profile = build_os_profile(os_type)
+    if profile.base == 'unix':
+        return _create_unix_host(host_data, defaults, profile)
+    return _create_embedded_host(host_data, defaults, profile)
 
-    # Only keep fields that are relevant to RemoteHost init
-    kwargs = { k: v for k, v in host_data.items() if k in RemoteHost.__slots__ }
+
+def _create_unix_host(
+    host_data: dict[str, Any],
+    defaults: dict[str, dict[str, Any]] | None = None,
+    profile: OsProfile | None = None,
+) -> UnixHost:
+    """Build a :class:`UnixHost` (SSH/Telnet, bash shell) from a host dict.
+
+    The profile's ``defaults`` are layered beneath the host's own fields
+    (host wins per-key); ``*_options`` tables merge three-deep so a single key
+    can come from the host, the profile, or the repo defaults independently.
+    """
+    profile_defaults = profile.defaults if profile else {}
+
+    # Layer profile defaults beneath the host's own fields, then keep only
+    # fields relevant to UnixHost init. The *_options tables get a finer-grained
+    # merge below, so this shallow layer only fixes the scalar/atomic fields.
+    effective = {**profile_defaults, **host_data}
+    kwargs = { k: v for k, v in effective.items() if k in UnixHost.__slots__ }
 
     # Ensure resources is a set
     resources = kwargs.get('resources', [])
@@ -149,23 +192,111 @@ def create_host_from_dict(
     if 'toolchain' in kwargs and isinstance(kwargs['toolchain'], dict):
         kwargs['toolchain'] = _build_toolchain(kwargs['toolchain'])
 
-    # Convert each *_options dict to its dataclass instance, merging
-    # repo-level defaults beneath the host's own values per-key.
+    # Convert the lab ``snmp`` block to SnmpOptions (monitor over SNMP).
+    if isinstance(kwargs.get('snmp'), dict):
+        kwargs['snmp'] = _build_snmp_options(kwargs['snmp'])
+
+    # Convert each *_options dict to its dataclass instance, merging per-key:
+    # repo defaults (lowest) < profile defaults < host's own values (highest).
     defaults = defaults or {}
     for opt_key, builder in _OPTIONS_BUILDERS.items():
-        raw_host = kwargs.get(opt_key)
-        host_table: dict[str, Any] = raw_host if isinstance(raw_host, dict) else {}
-        default_table: dict[str, Any] = defaults.get(opt_key, {})
-        if default_table or host_table:
-            kwargs[opt_key] = builder({**default_table, **host_table})
+        raw_default = defaults.get(opt_key)
+        raw_profile = profile_defaults.get(opt_key)
+        raw_host = host_data.get(opt_key)
+        default_table: dict[str, Any] = raw_default if isinstance(raw_default, dict) else {}
+        profile_table: dict[str, Any] = cast('dict[str, Any]', raw_profile) if isinstance(raw_profile, dict) else {}
+        host_table: dict[str, Any] = cast('dict[str, Any]', raw_host) if isinstance(raw_host, dict) else {}
+        merged: dict[str, Any] = {**default_table, **profile_table, **host_table}
+        if merged:
+            kwargs[opt_key] = builder(merged)
 
-    # Determine which Host subclass to instantiate
-    return RemoteHost(**kwargs)
+    kwargs['osType'] = profile.base if profile else 'unix'
+    return UnixHost(**kwargs)
+
+
+def _create_embedded_host(
+    host_data: dict[str, Any],
+    defaults: dict[str, dict[str, Any]] | None = None,
+    profile: OsProfile | None = None,
+) -> EmbeddedHost:
+    """Build an :class:`EmbeddedHost` (telnet RTOS shell) from a host dict.
+
+    The profile's ``defaults`` are layered beneath the host's own fields
+    (host wins per-key). Embedded hosts speak telnet only, so ``telnet_options``
+    is the single per-protocol option table honored — it merges three-deep
+    (repo defaults < profile < host). A bare-metal/RTOS target cannot run Docker
+    containers — a ``docker_capable: true`` entry (from the host or profile) is
+    rejected outright.
+    """
+    profile_defaults = profile.defaults if profile else {}
+
+    # Layer profile defaults beneath the host's own fields, then keep only
+    # fields relevant to EmbeddedHost init. telnet_options is merged finer below.
+    effective = {**profile_defaults, **host_data}
+
+    if effective.get('docker_capable'):
+        raise ValueError(
+            f"docker_capable is not supported on embedded hosts "
+            f"(host {effective.get('ne', '?')!r}) — a bare-metal/RTOS "
+            f"target cannot run Docker containers"
+        )
+
+    kwargs = { k: v for k, v in effective.items() if k in EmbeddedHost.__slots__ }
+
+    # Ensure resources is a set
+    resources = kwargs.get('resources', [])
+    kwargs['resources'] = set(resources)
+
+    # Convert toolchain dict to Toolchain instance (same as the Unix path).
+    if 'toolchain' in kwargs and isinstance(kwargs['toolchain'], dict):
+        kwargs['toolchain'] = _build_toolchain(kwargs['toolchain'])
+
+    # Resolve the lab-data ``filesystem`` string to a typed instance. Absent
+    # field defaults to NoFileSystem via the EmbeddedHost field default — no
+    # action needed here.
+    if 'filesystem' in kwargs and isinstance(kwargs['filesystem'], str):
+        kwargs['filesystem'] = build_filesystem(kwargs['filesystem'])
+
+    # Resolve the lab-data ``command_frame`` string to a typed instance.
+    # Absent field defaults to ZephyrFrame via the EmbeddedHost field default
+    # (the stock Zephyr 3.7/4.4 shell) — no action needed here.
+    if 'command_frame' in kwargs and isinstance(kwargs['command_frame'], str):
+        kwargs['command_frame'] = build_command_frame(kwargs['command_frame'])
+
+    # Convert the lab ``snmp`` block to SnmpOptions (monitor over SNMP).
+    if isinstance(kwargs.get('snmp'), dict):
+        kwargs['snmp'] = _build_snmp_options(kwargs['snmp'])
+
+    # telnet_options is the only per-protocol option table an embedded host
+    # uses; merge per-key: repo defaults < profile defaults < host's own values.
+    defaults = defaults or {}
+    raw_profile = profile_defaults.get('telnet_options')
+    raw_host = host_data.get('telnet_options')
+    default_table: dict[str, Any] = defaults.get('telnet_options', {})
+    profile_table: dict[str, Any] = cast('dict[str, Any]', raw_profile) if isinstance(raw_profile, dict) else {}
+    host_table: dict[str, Any] = cast('dict[str, Any]', raw_host) if isinstance(raw_host, dict) else {}
+    merged: dict[str, Any] = {**default_table, **profile_table, **host_table}
+    if merged:
+        kwargs['telnet_options'] = _build_telnet_options(merged)
+
+    kwargs['osType'] = profile.base if profile else 'embedded'
+    return EmbeddedHost(**kwargs)
 
 
 def validate_host_dict(host_data: dict[str, Any]) -> None:
     """
     Validate host dictionary structure without creating a Host object.
+
+    ``osType`` must name a registered :class:`OsProfile`; the profile's base
+    family determines the required-field set and the family-specific checks.
+    The checks run against the *effective* dict — the host's fields layered
+    over the profile's ``defaults`` — so a value supplied by the profile (e.g.
+    ``creds`` or ``filesystem``) satisfies/validates the same as a host field.
+
+    - ``unix`` base (the default when ``osType`` is absent): ``ip``, ``creds``,
+      ``ne`` required.
+    - ``embedded`` base: ``ip``, ``ne`` required — ``creds`` is optional, since
+      the RTOS telnet shell typically has no login step.
 
     Parameters
     ----------
@@ -175,17 +306,55 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     Raises
     ------
     ValueError
-        If validation fails
+        If ``osType`` names no registered profile, a required field is missing,
+        a field has the wrong type, an embedded host declares ``docker_capable``,
+        or an embedded host's ``transfer`` value is not ``console`` or ``tftp``.
     """
-    required_fields = ['ip', 'creds', 'ne']
-    missing = [f for f in required_fields if f not in host_data]
+    os_type = host_data.get('osType', 'unix')
+    profile = get_os_profile(os_type)
+    if profile is None:
+        known = ', '.join(registered_profile_names())
+        raise ValueError(
+            f"Field 'osType' {os_type!r} is not a registered profile. "
+            f"Registered profiles: {known}"
+        )
+    base = profile.base
+
+    # Validate against the host fields layered over the profile defaults, so a
+    # profile-supplied required field (e.g. creds) counts as present.
+    effective = {**profile.defaults, **host_data}
+
+    required_fields = ['ip', 'ne'] if base == 'embedded' else ['ip', 'creds', 'ne']
+    missing = [f for f in required_fields if f not in effective]
     if missing:
         raise ValueError(f"Missing required host fields: {missing}")
 
     # Type validation
-    if not isinstance(host_data['ip'], str):
-        raise ValueError(f"Field 'ip' must be str, got {type(host_data['ip']).__name__}")
-    if not isinstance(host_data['creds'], dict):
-        raise ValueError(f"Field 'creds' must be dict, got {type(host_data['creds']).__name__}")
-    if not isinstance(host_data['ne'], str):
-        raise ValueError(f"Field 'ne' must be str, got {type(host_data['ne']).__name__}")
+    if not isinstance(effective['ip'], str):
+        raise ValueError(f"Field 'ip' must be str, got {type(effective['ip']).__name__}")
+    if not isinstance(effective['ne'], str):
+        raise ValueError(f"Field 'ne' must be str, got {type(effective['ne']).__name__}")
+    if 'creds' in effective and not isinstance(effective['creds'], dict):
+        raise ValueError(f"Field 'creds' must be dict, got {type(effective['creds']).__name__}")
+
+    if base == 'embedded' and effective.get('docker_capable'):
+        raise ValueError(
+            f"docker_capable is not supported on embedded hosts "
+            f"(host {effective['ne']!r})"
+        )
+
+    if base == 'embedded' and 'transfer' in effective:
+        if effective['transfer'] not in ('console', 'tftp'):
+            raise ValueError(
+                f"Field 'transfer' must be 'console' or 'tftp' for embedded "
+                f"hosts, got {effective['transfer']!r}"
+            )
+
+    if base == 'embedded' and 'filesystem' in effective:
+        fs = effective['filesystem']
+        if not isinstance(fs, str) or fs not in _FILESYSTEM_CLASSES:
+            known = ', '.join(sorted(_FILESYSTEM_CLASSES))
+            raise ValueError(
+                f"Field 'filesystem' must be one of: {known} "
+                f"(host {effective['ne']!r} declared {fs!r})"
+            )

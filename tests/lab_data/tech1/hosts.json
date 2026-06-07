@@ -2,6 +2,7 @@
     {
         "ip": "10.10.200.11",
         "ne": "carrot",
+        "osType": "unix",
         "board": "seed",
         "term": "ssh",
         "transfer": "scp",
@@ -20,6 +21,7 @@
     {
         "ip": "10.10.200.12",
         "ne": "tomato",
+        "osType": "unix",
         "board": "seed",
         "term": "telnet",
         "transfer": "nc",
@@ -38,6 +40,7 @@
     {
         "ip": "10.10.200.13",
         "ne": "pepper",
+        "osType": "unix",
         "board": "seed",
         "term": "ssh",
         "transfer": "scp",
@@ -53,6 +56,216 @@
         ],
         "labs": [
             "veggies"
+        ]
+    },
+    {
+        "ip": "10.10.200.14",
+        "ne": "basil",
+        "osType": "unix",
+        "board": "seed",
+        "term": "ssh",
+        "transfer": "scp",
+        "is_virtual": true,
+        "creds": {
+            "vagrant": "vagrant",
+            "test": "Password1"
+        },
+        "resources": [
+            "basil"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.1",
+        "ne": "sprout",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "3.7",
+        "transfer": "console",
+        "filesystem": "fat-ram",
+        "max_filename_len": 32,
+        "is_virtual": true,
+        "hop": "basil_seed",
+        "snmp": {
+            "address": "10.10.200.14",
+            "port": 16101,
+            "community": "public",
+            "oids": [
+                "1.3.6.1.2.1.1.3.0",
+                "1.3.6.1.4.1.63245.1.1.0",
+                "1.3.6.1.4.1.63245.1.2.0",
+                "1.3.6.1.4.1.63245.1.3.0",
+                "1.3.6.1.4.1.63245.1.4.0"
+            ]
+        },
+        "resources": [
+            "sprout"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.5",
+        "ne": "sprout_lfs",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "3.7",
+        "transfer": "console",
+        "filesystem": "littlefs",
+        "max_filename_len": 32,
+        "is_virtual": true,
+        "hop": "basil_seed",
+        "snmp": {
+            "address": "10.10.200.14",
+            "port": 16102,
+            "community": "public",
+            "oids": [
+                "1.3.6.1.2.1.1.3.0",
+                "1.3.6.1.4.1.63245.1.1.0",
+                "1.3.6.1.4.1.63245.1.2.0",
+                "1.3.6.1.4.1.63245.1.3.0",
+                "1.3.6.1.4.1.63245.1.4.0"
+            ]
+        },
+        "resources": [
+            "sprout_lfs"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.37",
+        "ne": "sprout_no_fs",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "3.7",
+        "command_frame": "zephyr-serial",
+        "transfer": "console",
+        "filesystem": "none",
+        "max_filename_len": 32,
+        "is_virtual": true,
+        "telnet_options": {
+            "port": 2325,
+            "write_chunk_size": 64,
+            "write_chunk_delay": 0.015
+        },
+        "hop": "basil_seed",
+        "resources": [
+            "sprout_no_fs"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.13",
+        "ne": "sprout27",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "2.7",
+        "command_frame": "zephyr-inline",
+        "transfer": "console",
+        "filesystem": "fat-ram",
+        "max_filename_len": 32,
+        "is_virtual": true,
+        "hop": "basil_seed",
+        "resources": [
+            "sprout27"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.29",
+        "ne": "sprout44_lfs",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "4.4",
+        "transfer": "console",
+        "filesystem": "littlefs",
+        "max_filename_len": 32,
+        "is_virtual": true,
+        "hop": "basil_seed",
+        "snmp": {
+            "address": "10.10.200.14",
+            "port": 16108,
+            "community": "public",
+            "oids": [
+                "1.3.6.1.2.1.1.3.0",
+                "1.3.6.1.4.1.63245.1.1.0",
+                "1.3.6.1.4.1.63245.1.2.0",
+                "1.3.6.1.4.1.63245.1.3.0",
+                "1.3.6.1.4.1.63245.1.4.0"
+            ]
+        },
+        "resources": [
+            "sprout44_lfs"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.33",
+        "ne": "sprout_cov",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "3.7",
+        "command_frame": "zephyr-serial",
+        "transfer": "console",
+        "filesystem": "none",
+        "max_filename_len": 32,
+        "is_virtual": true,
+        "telnet_options": {
+            "port": 2323,
+            "write_chunk_size": 64,
+            "write_chunk_delay": 0.015
+        },
+        "toolchain": {
+            "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
+            "gcov": "bin/arm-zephyr-eabi-gcov",
+            "lcov": "/usr/bin/lcov"
+        },
+        "hop": "basil_seed",
+        "resources": [
+            "sprout_cov"
+        ],
+        "labs": [
+            "embedded"
+        ]
+    },
+    {
+        "ip": "192.0.2.34",
+        "ne": "sprout_cov44",
+        "osType": "embedded",
+        "osName": "Zephyr",
+        "osVersion": "4.4",
+        "command_frame": "zephyr-serial",
+        "transfer": "console",
+        "filesystem": "none",
+        "max_filename_len": 32,
+        "is_virtual": true,
+        "telnet_options": {
+            "port": 2324,
+            "write_chunk_size": 64,
+            "write_chunk_delay": 0.015
+        },
+        "toolchain": {
+            "sysroot": "/home/vagrant/zephyr-sdk-1.0.1/gnu/arm-zephyr-eabi",
+            "gcov": "bin/arm-zephyr-eabi-gcov",
+            "lcov": "/usr/bin/lcov"
+        },
+        "hop": "basil_seed",
+        "resources": [
+            "sprout_cov44"
+        ],
+        "labs": [
+            "embedded"
         ]
     }
 ]

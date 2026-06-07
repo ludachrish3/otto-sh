@@ -20,6 +20,7 @@ from otto.host.connections import ConnectionManager
 from otto.host.session import SessionManager, ShellSession
 from otto.utils import CommandStatus
 
+pytestmark = pytest.mark.concurrency
 
 # ── Fake session + factory ────────────────────────────────────────────────────
 
@@ -398,3 +399,92 @@ async def test_open_session_closes_session_when_init_cancelled() -> None:
 
     assert len(created) == 1
     assert created[0].closed, "open_session leaked the session on cancellation"
+
+
+# ── Retry once on a failed readiness handshake ────────────────────────────────
+
+class _HandshakeFailsOnceFakeSession(_StabilityFakeSession):
+    """Fake whose first ``_ensure_initialized`` raises ``ConnectionError``
+    (simulating ``_fail_init``); subsequent instances succeed normally.
+
+    Selected per-instance via ``instance_id`` so a counting factory can
+    produce one failing session followed by a healthy one — modeling the
+    race the retry path addresses: a fresh telnet socket whose peer EOFs
+    the marker handshake, where a second open lands cleanly."""
+
+    fail_until_instance: int = 1
+
+    async def _write(self, data: str) -> None:
+        if (
+            self._ready_marker in data
+            and self.instance_id <= self.fail_until_instance
+        ):
+            raise ConnectionError(
+                "shell never became ready after open — the device is "
+                "unresponsive or login failed (e.g. bad credentials)"
+            )
+        await super()._write(data)
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+async def test_ensure_session_retries_once_on_handshake_failure() -> None:
+    """A ``ConnectionError`` from the first ``_ensure_initialized`` triggers
+    exactly one rebuild + retry; the second attempt's success becomes the
+    caller's success. Regression guard for the fan-out race fix in
+    ``SessionManager._ensure_session``."""
+    factory = _Factory()
+
+    def make_session() -> _HandshakeFailsOnceFakeSession:
+        session = _HandshakeFailsOnceFakeSession(
+            instance_id=len(factory.created) + 1,
+        )
+        factory.created.append(session)
+        return session
+
+    mgr = SessionManager(
+        connections=cast(ConnectionManager, SimpleNamespace(term='telnet')),
+        session_factory=make_session,
+    )
+
+    # Single run_cmd: first session fails its handshake, retry builds a
+    # fresh session that completes. The caller observes a success.
+    result = await mgr.run_cmd('echo hello', timeout=2.0)
+    assert result.status.is_ok, f"expected success after retry, got {result!r}"
+    assert factory.created_count == 2, (
+        f"expected exactly 2 session builds (1 failed + 1 retry), got "
+        f"{factory.created_count}"
+    )
+
+    await mgr.close_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
+    """If both attempts fail, ``_ensure_session`` propagates the
+    ``ConnectionError`` rather than looping forever. Genuine "device
+    unresponsive / bad credentials" must still surface."""
+    factory = _Factory()
+
+    def make_session() -> _HandshakeFailsOnceFakeSession:
+        session = _HandshakeFailsOnceFakeSession(
+            instance_id=len(factory.created) + 1,
+        )
+        session.fail_until_instance = 999  # always fail
+        factory.created.append(session)
+        return session
+
+    mgr = SessionManager(
+        connections=cast(ConnectionManager, SimpleNamespace(term='telnet')),
+        session_factory=make_session,
+    )
+
+    with pytest.raises(ConnectionError):
+        await mgr.run_cmd('echo hello', timeout=2.0)
+    assert factory.created_count == 2, (
+        f"expected exactly 2 attempts before giving up, got "
+        f"{factory.created_count}"
+    )
+
+    await mgr.close_all()

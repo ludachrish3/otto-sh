@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-all repeat
+.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-all stability-embedded repeat vm-health qemu-restart
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -11,7 +11,7 @@ BUMP ?= patch
 # that integration/hops tests require.
 COVERAGE_TARGET ?= coverage
 
-COVERAGE_THRESHOLD := 85
+COVERAGE_THRESHOLD := 88
 # CI runs unit tests only (integration/hops markers need Vagrant VMs that
 # don't exist in GitHub Actions), so the achievable threshold is lower.
 CI_COVERAGE_THRESHOLD := 80
@@ -26,14 +26,33 @@ COUNT ?= 10
 #   make nox-all COUNT=5
 NOX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
 
+# Iteration count for `make stability-embedded`. Default is 1 (a single pass)
+# so a standalone embedded run doesn't hammer the Zephyr board. When driven
+# from `make stability-all` the parent explicitly passes COUNT=10 (or whatever
+# the user set on the command line), so this resolves to the right value then.
+EMBEDDED_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
+
+# Iteration count for `make stability`. Default is 50 (soak run); honor COUNT
+# only when explicitly passed on the command line so that the global COUNT ?= 10
+# default never silently overrides the documented 50-iteration contract.
+STABILITY_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),50)
+
+# Iteration count for the tier-2 integration leg of `make stability-all`.
+# Default is 10; honor COUNT only when explicitly passed on the command line.
+INTEGRATION_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),10)
+
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
-# Docker integration tests are pinned to one xdist worker (xdist_group)
-# because they share /tmp/otto-docker/repo1/ on the parent and can't safely
-# parallelize compose_up's `rm -rf` of the staging dir. That serialization
-# is what dominates wall time; 4 min leaves headroom for slower runners.
+# Two things dominate wall time: Docker integration tests are pinned to one
+# xdist worker (xdist_group) because they share /tmp/otto-docker/repo1/ on the
+# parent and can't safely parallelize compose_up's `rm -rf` of the staging
+# dir; and the embedded Zephyr tests are serialized per-device (one telnet
+# client per console — see tests/integration/host/conftest.py). The heavy
+# stability/soak tests are excluded from `coverage` (the `stability` marker)
+# and run only via `make stability-all` / `stability-embedded`, so 6 min
+# leaves comfortable headroom for slower runners.
 # --kill-after escalates SIGTERM → SIGKILL if xdist workers don't drain.
-PYTEST_TIMEOUT := 240s
+PYTEST_TIMEOUT := 360s
 TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 
 all: ## Run full pipeline against the dev VM (includes integration tests)
@@ -104,17 +123,16 @@ build: ## Build the project with uv
 test: ## Run tests (use TESTS= to filter)
 	uv run pytest -k '$(TESTS)'
 
-coverage: ## Run tests and enforce coverage threshold
-	$(TIMEOUT_CMD) uv run pytest --cov-fail-under=$(COVERAGE_THRESHOLD)
+coverage: ## Run tests and enforce coverage threshold (excludes heavy `stability` tests — those run via `make stability-all`)
+	$(TIMEOUT_CMD) uv run pytest -m "not stability" --cov-fail-under=$(COVERAGE_THRESHOLD)
 
 coverage-unit: ## Run unit tests only (no Vagrant VMs needed) and enforce CI threshold
 	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not integration and not hops" --cov-fail-under=$(CI_COVERAGE_THRESHOLD)
 
-stability: ## Run targeted SessionManager concurrency tests under pytest-repeat (no VMs). Override iterations with COUNT=N (default 50).
+stability: ## Run no-VM SessionManager concurrency/soak tests by marker. Override iterations with COUNT=N (default 50).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    tests/unit/host/test_session_concurrency.py \
-	    tests/unit/host/test_remoteHost.py::TestOneshot::test_oneshot_telnet_concurrent_does_not_deadlock \
-	    --count=$(or $(COUNT),50) \
+	    -m concurrency \
+	    --count=$(STABILITY_COUNT) \
 	    -p no:cacheprovider
 
 stability-all: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if unit-level tests are RED. Override iterations with COUNT=N (default 10).
@@ -139,16 +157,33 @@ stability-all: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if u
 	    echo "  jq not installed; skipping ping check (tests will fail fast at fixture connect if VMs are down)."; \
 	fi
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    tests/unit/host/test_session_stability_integration.py \
-	    -m integration \
-	    --count=$(or $(COUNT),10) \
+	    -m "stability and integration and not embedded" \
+	    --count=$(INTEGRATION_COUNT) \
 	    -p no:cacheprovider \
 	    -n0
+	@echo
+	@echo "── Tier 3 (cross-OS stability contract — includes embedded) ──"
+	@$(MAKE) stability-embedded COUNT=$(or $(COUNT),10)
+
+stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (unix + Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/. Override iterations with COUNT=N (default 1).
+	@mkdir -p reports/junit
+	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	    -m "stability and embedded" \
+	    -p no:cacheprovider \
+	    -n0 \
+	    --count=$(EMBEDDED_COUNT) \
+	    --junitxml=reports/junit/stability-embedded.xml
 
 repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. Override COUNT=N (default 10).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest tests/unit \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider
+
+vm-health: ## Probe every lab VM + Zephyr QEMU instance; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
+	uv run python scripts/lab_health.py
+
+qemu-restart: ## Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded bed.
+	uv run python scripts/lab_health.py --restart-qemu
 
 typecheck: ## Run ty type checker (advisory during trial; not wired into `all`)
 	uv run ty check

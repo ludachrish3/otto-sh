@@ -2,19 +2,36 @@ from pathlib import Path
 
 import pytest
 
-from otto.host.remoteHost import RemoteHost
+from otto.host import os_profile
+from otto.host.command_frame import ZephyrFrame
+from otto.host.embedded_filesystem import FatRamFileSystem
+from otto.host.embeddedHost import EmbeddedHost
+from otto.host.options import SnmpOptions
+from otto.host.os_profile import register_os_profile
 from otto.host.toolchain import Toolchain
+from otto.host.unixHost import UnixHost
 from otto.storage.factory import (
     create_host_from_dict,
     validate_host_dict,
 )
 
 
+@pytest.fixture
+def restore_profiles():
+    """Snapshot/restore the global os-profile registry around a test."""
+    saved = dict(os_profile._OS_PROFILES)
+    try:
+        yield
+    finally:
+        os_profile._OS_PROFILES.clear()
+        os_profile._OS_PROFILES.update(saved)
+
+
 class TestCreateHostFromDict:
     """Tests for create_host_from_dict function."""
 
     def test_create_remotehost_with_complete_data(self):
-        """Test creating RemoteHost with all fields."""
+        """Test creating UnixHost with all fields."""
         host_data = {
             'ip': '10.10.200.11',
             'ne': 'orange',
@@ -24,7 +41,7 @@ class TestCreateHostFromDict:
         }
         host = create_host_from_dict(host_data)
 
-        assert isinstance(host, RemoteHost)
+        assert isinstance(host, UnixHost)
         assert host.ip == '10.10.200.11'
         assert host.ne == 'orange'
         assert host.board == 'seed'
@@ -297,3 +314,369 @@ class TestRepoLevelOptionDefaults:
         after = create_host_from_dict(self._base_host(), defaults={})
         assert before.ssh_options == after.ssh_options
         assert before.telnet_options == after.telnet_options
+
+
+class TestOsTypeDispatch:
+    """Tests for ``osType``-based dispatch in ``create_host_from_dict``."""
+
+    def test_absent_ostype_defaults_to_unix(self):
+        """A host dict without ``osType`` builds a UnixHost (backward compatible)."""
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+        })
+        assert isinstance(host, UnixHost)
+        assert host.osType == 'unix'
+
+    def test_explicit_unix_ostype(self):
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'osType': 'unix',
+        })
+        assert isinstance(host, UnixHost)
+
+    def test_embedded_ostype_builds_embedded_host(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.osType == 'embedded'
+        assert host.ip == '192.0.2.1'
+        assert host.ne == 'sprout'
+
+    def test_embedded_creds_are_optional(self):
+        """An embedded host needs no ``creds`` — the RTOS shell has no login."""
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+        assert host.creds == {}
+
+    def test_embedded_osname_and_version(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'osName': 'Zephyr', 'osVersion': '3.7.0',
+        })
+        assert host.osName == 'Zephyr'
+        assert host.osVersion == '3.7.0'
+
+    def test_embedded_resources_converted_to_set(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'resources': ['sprout', 'mote'],
+        })
+        assert host.resources == {'sprout', 'mote'}
+
+    def test_embedded_hop_is_honored(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'hop': 'basil_seed',
+        })
+        assert host.hop == 'basil_seed'
+
+    def test_embedded_telnet_options_deserialized(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'telnet_options': {'port': 2323},
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.telnet_options.port == 2323
+
+    def test_unknown_ostype_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            create_host_from_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'windows',
+            })
+        assert 'osType' in str(exc_info.value)
+        assert 'windows' in str(exc_info.value)
+
+    def test_embedded_docker_capable_rejected(self):
+        """A bare-metal target cannot run Docker — reject the flag outright."""
+        with pytest.raises(ValueError) as exc_info:
+            create_host_from_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'docker_capable': True,
+            })
+        assert 'docker_capable' in str(exc_info.value)
+
+    def test_embedded_transfer_backend_honored(self):
+        """An embedded host's ``transfer`` value flows through the factory."""
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'transfer': 'tftp',
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.transfer == 'tftp'
+
+    def test_embedded_transfer_defaults_to_console(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.transfer == 'console'
+
+
+class TestOsProfileDispatch:
+    """Tests for custom ``osType`` profiles in ``create_host_from_dict``."""
+
+    def test_unix_profile_applies_defaults(self, restore_profiles):
+        register_os_profile('custom-nix', base='unix',
+                            defaults={'osName': 'CustomNix', 'term': 'telnet'})
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'osType': 'custom-nix',
+        })
+        assert isinstance(host, UnixHost)
+        assert host.osName == 'CustomNix'
+        assert host.term == 'telnet'
+
+    def test_host_field_overrides_profile_default(self, restore_profiles):
+        register_os_profile('custom-nix', base='unix', defaults={'osName': 'CustomNix'})
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'osType': 'custom-nix', 'osName': 'HostWins',
+        })
+        assert host.osName == 'HostWins'
+
+    def test_stored_ostype_is_base_family_not_profile_name(self, restore_profiles):
+        register_os_profile('custom-nix', base='unix')
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'osType': 'custom-nix',
+        })
+        # The OsType-typed field keeps a valid family value; the profile name
+        # is only the selector, it must not leak into the field.
+        assert host.osType == 'unix'
+
+    def test_options_three_layer_precedence(self, restore_profiles):
+        """Per-key: host > profile > repo-default for an ``*_options`` table."""
+        register_os_profile('nix-ssh', base='unix', defaults={
+            'ssh_options': {'connect_timeout': 50.0, 'port': 3333},
+        })
+        host = create_host_from_dict(
+            {
+                'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+                'osType': 'nix-ssh', 'ssh_options': {'port': 9000},
+            },
+            defaults={'ssh_options': {'connect_timeout': 99.0, 'keepalive_interval': 42.0}},
+        )
+        assert host.ssh_options.port == 9000               # host wins
+        assert host.ssh_options.connect_timeout == 50.0    # profile beats repo-default
+        assert host.ssh_options.keepalive_interval == 42.0  # repo-default fills the gap
+
+    def test_embedded_profile_coerces_frame_and_filesystem_strings(self, restore_profiles):
+        register_os_profile('zephyr-fat', base='embedded', defaults={
+            'osName': 'Zephyr', 'osVersion': '3.7', 'command_frame': 'zephyr',
+            'filesystem': 'fat-ram', 'transfer': 'console', 'max_filename_len': 32,
+        })
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr-fat',
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert host.osType == 'embedded'
+        assert host.osVersion == '3.7'
+        assert host.max_filename_len == 32
+        assert isinstance(host.command_frame, ZephyrFrame)
+        assert isinstance(host.filesystem, FatRamFileSystem)
+
+    def test_embedded_profile_with_docker_capable_host_rejected(self, restore_profiles):
+        register_os_profile('zephyr-fat', base='embedded', defaults={'osName': 'Zephyr'})
+        with pytest.raises(ValueError) as exc_info:
+            create_host_from_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr-fat',
+                'docker_capable': True,
+            })
+        assert 'docker_capable' in str(exc_info.value)
+
+
+class TestValidateOsType:
+    """Tests for ``osType`` handling in ``validate_host_dict``."""
+
+    def test_validate_embedded_minimal(self):
+        """Embedded host needs only ip + ne (no creds)."""
+        validate_host_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+
+    def test_validate_embedded_missing_ne(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({'ip': '192.0.2.1', 'osType': 'embedded'})
+        assert 'ne' in str(exc_info.value)
+
+    def test_validate_unix_still_requires_creds(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '10.10.200.11', 'ne': 'orange', 'osType': 'unix',
+            })
+        assert 'creds' in str(exc_info.value)
+
+    def test_validate_invalid_ostype_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'windows',
+            })
+        assert 'osType' in str(exc_info.value)
+
+    def test_validate_embedded_docker_capable_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'docker_capable': True,
+            })
+        assert 'docker_capable' in str(exc_info.value)
+
+    def test_validate_embedded_transfer_accepts_known_backends(self):
+        for backend in ('console', 'tftp'):
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'transfer': backend,
+            })
+
+    def test_validate_embedded_invalid_transfer_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'transfer': 'scp',
+            })
+        assert 'transfer' in str(exc_info.value)
+
+
+class TestEmbeddedFilesystem:
+    """Lab data's ``filesystem`` field resolves to a typed
+    :class:`~otto.host.embedded_filesystem.EmbeddedFileSystem` instance on
+    the built host; validation rejects unknown variants up-front so a typo
+    is caught before the host is constructed.
+    """
+
+    def test_filesystem_defaults_to_no_filesystem(self):
+        """No ``filesystem`` key in lab data means the host has no FS — the
+        runtime transfer short-circuits with a clear error.
+        """
+        from otto.host.embedded_filesystem import NoFileSystem
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+        })
+        assert isinstance(host.filesystem, NoFileSystem)
+
+    def test_filesystem_fat_ram_string_resolves_to_class(self):
+        from otto.host.embedded_filesystem import FatRamFileSystem
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'filesystem': 'fat-ram',
+        })
+        assert isinstance(host.filesystem, FatRamFileSystem)
+        # `default_dest_dir` falls back to the FS mount when not explicitly set.
+        assert str(host.default_dest_dir) == '/RAM:'
+
+    def test_filesystem_littlefs_string_resolves_to_class(self):
+        from otto.host.embedded_filesystem import LittleFsFileSystem
+        host = create_host_from_dict({
+            'ip': '192.0.2.5', 'ne': 'sprout_lfs', 'osType': 'embedded',
+            'filesystem': 'littlefs',
+        })
+        assert isinstance(host.filesystem, LittleFsFileSystem)
+        assert str(host.default_dest_dir) == '/lfs'
+
+    def test_validate_unknown_filesystem_raises(self):
+        with pytest.raises(ValueError) as exc_info:
+            validate_host_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'filesystem': 'btrfs',  # not a registered embedded FS
+            })
+        assert 'filesystem' in str(exc_info.value)
+        assert 'btrfs' in str(exc_info.value)
+        # The error names the registered types so the typo is diagnosable.
+        assert 'fat-ram' in str(exc_info.value)
+
+    def test_explicit_default_dest_dir_overrides_filesystem_mount(self):
+        """A host with a real FS but a non-default ``default_dest_dir`` (e.g.
+        a sub-directory under the mount) should keep its lab-data value.
+        """
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'filesystem': 'fat-ram',
+            'default_dest_dir': '/RAM:/uploads',
+        })
+        assert str(host.default_dest_dir) == '/RAM:/uploads'
+
+
+class TestEmbeddedToolchainDeserialization:
+    """Embedded hosts carry a per-host Toolchain, like Unix hosts."""
+
+    def _embedded_host(self, **extra):
+        data = {
+            'ip': '192.0.2.99',
+            'ne': 'sproutx',
+            'osType': 'embedded',
+            'osName': 'Zephyr',
+            'osVersion': '3.7',
+            'transfer': 'console',
+            'filesystem': 'none',
+        }
+        data.update(extra)
+        return data
+
+    def test_no_toolchain_uses_default(self):
+        host = create_host_from_dict(self._embedded_host())
+        assert isinstance(host.toolchain, Toolchain)
+        assert host.toolchain.sysroot == Path('/')
+        assert host.toolchain.gcov_bin == '/usr/bin/gcov'
+
+    def test_sysroot_only_uses_default_relative_tools(self):
+        """Partial config: sysroot only; gcov/lcov stay sysroot-relative."""
+        host = create_host_from_dict(self._embedded_host(
+            toolchain={'sysroot': '/opt/arm'}
+        ))
+        assert host.toolchain.sysroot == Path('/opt/arm')
+        assert host.toolchain.gcov_bin == '/opt/arm/usr/bin/gcov'
+        assert host.toolchain.lcov_bin == '/opt/arm/usr/bin/lcov'
+
+    def test_cross_toolchain_resolves_gcov_under_sysroot(self):
+        host = create_host_from_dict(self._embedded_host(
+            toolchain={
+                'sysroot': '/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi',
+                'gcov': 'bin/arm-zephyr-eabi-gcov',
+                'lcov': '/usr/bin/lcov',
+            }
+        ))
+        assert host.toolchain.gcov_bin == (
+            '/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov'
+        )
+        # lcov is absolute -> ignores the cross sysroot (host-side merge tool).
+        assert host.toolchain.lcov_bin == '/usr/bin/lcov'
+
+
+class TestSnmpBlock:
+    """The lab ``snmp`` block deserializes to SnmpOptions on both bases."""
+
+    def test_absent_snmp_is_none(self):
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+        })
+        assert host.snmp is None
+
+    def test_embedded_snmp_block_parsed(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'snmp': {
+                'address': '10.10.200.14', 'port': 16101, 'community': 'public',
+                'oids': ['1.3.6.1.2.1.1.3.0', '1.3.6.1.4.1.63245.1.1.0'],
+            },
+        })
+        assert isinstance(host, EmbeddedHost)
+        assert isinstance(host.snmp, SnmpOptions)
+        assert host.snmp.address == '10.10.200.14'
+        assert host.snmp.port == 16101
+        # JSON list coerced to tuple (frozen-friendly field type)
+        assert host.snmp.oids == ('1.3.6.1.2.1.1.3.0', '1.3.6.1.4.1.63245.1.1.0')
+
+    def test_unix_snmp_block_parsed(self):
+        """SNMP is not embedded-only — a Unix host may declare one."""
+        host = create_host_from_dict({
+            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'snmp': {'oids': ['1.3.6.1.2.1.1.3.0']},
+        })
+        assert isinstance(host, UnixHost)
+        assert isinstance(host.snmp, SnmpOptions)
+        # address omitted -> None (the monitor factory defaults it to host.ip)
+        assert host.snmp.address is None
+        assert host.snmp.community == 'public'  # field default
+        assert host.snmp.version == '2c'        # field default

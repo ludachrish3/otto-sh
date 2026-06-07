@@ -10,6 +10,7 @@ from typing import (
     Generator,
     Optional,
     TypeVar,
+    cast,
 )
 
 from ..logger import getOttoLogger
@@ -18,7 +19,7 @@ from .lab import Lab
 from .repo import Repo
 
 if TYPE_CHECKING:
-    from ..host import RemoteHost, RunResult
+    from ..host import EmbeddedHost, RunResult, UnixHost
     from ..host.options import (
         FtpOptions,
         NcOptions,
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
         SshOptions,
         TelnetOptions,
     )
+    from ..host.remoteHost import RemoteHost
     from ..reservations import ReservationBackend, ResolvedIdentity
 
 T = TypeVar("T")
@@ -143,7 +145,7 @@ def _apply_option_overrides(
     the full options instance they want.
 
     The copy is built via :func:`dataclasses.replace`, which re-runs
-    :meth:`RemoteHost.__post_init__` and therefore constructs a *fresh*
+    ``__post_init__`` and therefore constructs a *fresh*
     :class:`ConnectionManager` with the override options wired in from
     the start. This is required because protocol options shape the
     connection itself (key algorithms, hop wiring, etc.) and cannot be
@@ -151,11 +153,17 @@ def _apply_option_overrides(
     connection it owns are untouched; the override copy will open its
     own connection on first use.
 
-    When no overrides are supplied, the original *host* is returned
-    unchanged so identity (``host is host``) is preserved for non-override
-    callers.
+    Override keys that don't correspond to a field on *host* are silently
+    dropped — e.g. ``ssh_options`` is ignored for an :class:`EmbeddedHost`,
+    which only carries ``telnet_options``. This lets fleet callers pass
+    SSH-shaped overrides without erroring on embedded hosts that simply
+    don't speak SSH.
+
+    When no applicable overrides are supplied, the original *host* is
+    returned unchanged so identity (``host is host``) is preserved for
+    non-override callers.
     """
-    overrides: dict[str, Any] = {
+    candidates: dict[str, Any] = {
         k: v
         for k, v in (
             ('ssh_options', ssh_options),
@@ -167,14 +175,21 @@ def _apply_option_overrides(
         )
         if v is not None
     }
+    if not candidates:
+        return host
+    # RemoteHost subclasses (UnixHost, EmbeddedHost) are all dataclasses,
+    # but RemoteHost itself isn't decorated — cast around the type checker.
+    host_any = cast(Any, host)
+    host_fields = {f.name for f in dataclasses.fields(host_any)}
+    overrides = {k: v for k, v in candidates.items() if k in host_fields}
     if not overrides:
         return host
-    return dataclasses.replace(host, **overrides)
+    return cast('RemoteHost', dataclasses.replace(host_any, **overrides))
 
 
 def getHost(
     name: str,
-) -> 'RemoteHost':
+) -> 'UnixHost':
 
     configModule = getConfigModule()
     hosts = configModule.lab.hosts
@@ -195,13 +210,14 @@ def all_hosts(
 ) -> Generator['RemoteHost', Any, Any]:
     """Yield the active lab's real remote hosts, optionally filtered by regex.
 
-    This is the *fleet* generator: by default it yields only real
-    :class:`RemoteHost` instances and skips :class:`DockerContainerHost`
-    entries, since containers aren't operated on as part of the host
-    fleet (e.g. ``otto monitor``, coverage collection). Containers remain
-    reachable for targeted use via tab completion and ``get_host`` —
-    neither of which goes through this generator. Pass
-    ``include_containers=True`` to yield container hosts as well.
+    This is the *fleet* generator: it yields every network-reached
+    :class:`RemoteHost` in the active lab — both :class:`UnixHost`
+    (SSH/telnet to a shell) and :class:`EmbeddedHost` (telnet to an RTOS
+    console). :class:`DockerContainerHost` entries are skipped by default
+    because containers aren't operated on as part of the host fleet
+    (e.g. ``otto monitor``, coverage collection); containers remain
+    reachable for targeted use via tab completion and ``get_host``.
+    Pass ``include_containers=True`` to yield container hosts as well.
 
     Args:
         pattern: Compiled regex matched against each host's ``id`` via
@@ -218,12 +234,16 @@ def all_hosts(
             a fresh :class:`ConnectionManager` constructed with the
             override options, so the override values shape whichever
             connection opens first. Stored hosts in ``lab.hosts`` are
-            untouched. When no overrides are passed, the stored
-            instances are yielded as-is so identity is preserved. Hop
-            resolution is internal and is *not* affected by overrides.
+            untouched. Override keys that don't correspond to a field on
+            a given host are silently dropped — e.g. ``ssh_options`` is
+            ignored for an :class:`EmbeddedHost`, which only carries
+            ``telnet_options``. When no applicable overrides remain, the
+            stored instance is yielded as-is so identity is preserved.
+            Hop resolution is internal and is *not* affected by overrides.
 
     Yields:
-        RemoteHost: Each matching host from the lab configuration.
+        RemoteHost: Each matching :class:`UnixHost` or
+        :class:`EmbeddedHost` from the lab configuration.
 
     Examples:
         >>> import re
@@ -239,7 +259,7 @@ def all_hosts(
         if not include_containers and isinstance(host, DockerContainerHost):
             continue
         yield _apply_option_overrides(
-            host,
+            cast('RemoteHost', host),
             ssh_options=ssh_options,
             telnet_options=telnet_options,
             sftp_options=sftp_options,
@@ -265,7 +285,7 @@ async def do_for_all_hosts(
     """Call an async host method on every matching host.
 
     Args:
-        method: Unbound async method (e.g. ``RemoteHost.oneshot``).
+        method: Unbound async method (e.g. ``UnixHost.oneshot``).
         *args: Positional arguments forwarded to *method* after the host.
         pattern: Compiled regex filter passed to :func:`all_hosts`.
         concurrent: When ``True`` (default), run all calls via
@@ -285,9 +305,9 @@ async def do_for_all_hosts(
 
     Examples:
         >>> import re
-        >>> from otto.host import RemoteHost
+        >>> from otto.host import UnixHost
         >>> results = await do_for_all_hosts(  # doctest: +SKIP
-        ...     RemoteHost.oneshot, "uname -a",
+        ...     UnixHost.oneshot, "uname -a",
         ...     pattern=re.compile(r"router"),
         ... )
     """
@@ -332,7 +352,7 @@ async def run_on_all_hosts(
     ftp_options: 'FtpOptions | None' = None,
     nc_options: 'NcOptions | None' = None,
 ) -> 'dict[str, RunResult | BaseException]':
-    """Run commands on every matching host via :meth:`RemoteHost.run`.
+    """Run commands on every matching host via :meth:`UnixHost.run`.
 
     Convenience wrapper around :func:`do_for_all_hosts` for the most
     common use case.
@@ -356,12 +376,12 @@ async def run_on_all_hosts(
     Examples:
         >>> results = await run_on_all_hosts("uname -a")  # doctest: +SKIP
     """
-    from ..host import RemoteHost
+    from ..host import UnixHost
 
     cmd_list: list[str] = [cmds] if isinstance(cmds, str) else cmds
 
     async def _run_list(
-        host: 'RemoteHost',
+        host: 'UnixHost',
     ) -> 'RunResult':
         return await host.run(cmd_list, timeout=timeout)
 
@@ -388,11 +408,11 @@ def get_host(
     scp_options: 'ScpOptions | None' = None,
     ftp_options: 'FtpOptions | None' = None,
     nc_options: 'NcOptions | None' = None,
-) -> 'RemoteHost':
+) -> 'UnixHost':
     """Return the host registered under *host_id* in the active lab.
 
     Args:
-        host_id: Unique host id (as produced by ``RemoteHost.id``).
+        host_id: Unique host id (as produced by ``UnixHost.id``).
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides.
             Each non-``None`` argument **replaces** the corresponding
@@ -407,8 +427,8 @@ def get_host(
     """
 
     configModule = getConfigModule()
-    host = configModule.lab.hosts[host_id]
-    return _apply_option_overrides(
+    host = cast('RemoteHost', configModule.lab.hosts[host_id])
+    return cast('UnixHost', _apply_option_overrides(
         host,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
@@ -416,4 +436,4 @@ def get_host(
         scp_options=scp_options,
         ftp_options=ftp_options,
         nc_options=nc_options,
-    )
+    ))

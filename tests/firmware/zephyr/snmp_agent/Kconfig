@@ -1,0 +1,39 @@
+# otto test-bed SNMP agent — Kconfig gate + knobs.
+#
+# Kept deliberately small: the agent serves a fixed, read-only OID table for
+# otto's monitoring tests (sysUpTime + an otto-enterprise scalar set for CPU /
+# heap / thread-count). It is NOT a general-purpose agent.
+
+menuconfig OTTO_SNMP_AGENT
+	bool "otto test-bed SNMP v2c agent"
+	depends on NETWORKING && NET_IPV4 && NET_UDP && NET_SOCKETS
+	depends on THREAD_RUNTIME_STATS
+	# k_thread_foreach() (thread-count OID) walks the kernel thread list,
+	# which is only maintained when THREAD_MONITOR is on.
+	select THREAD_MONITOR
+	help
+	  Build a minimal, read-only SNMP v2c responder that otto's SNMP manager
+	  polls over a channel separate from the single telnet shell session.
+	  Heap used/free OIDs additionally require SYS_HEAP_RUNTIME_STATS; when
+	  that is off (e.g. the 2.7 configs) the agent still builds and those two
+	  OIDs report 0.
+
+if OTTO_SNMP_AGENT
+
+config OTTO_SNMP_AGENT_PORT
+	int "UDP port the agent listens on"
+	default 161
+	help
+	  Standard SNMP is UDP/161. The test bed reaches this via a per-instance
+	  socat relay on the zephyr VM (see the Vagrantfile), so the device-side
+	  port can stay at the well-known 161.
+
+config OTTO_SNMP_AGENT_STACK_SIZE
+	int "Agent listener thread stack size (bytes)"
+	default 2048
+
+config OTTO_SNMP_AGENT_THREAD_PRIO
+	int "Agent listener thread priority"
+	default 7
+
+endif # OTTO_SNMP_AGENT

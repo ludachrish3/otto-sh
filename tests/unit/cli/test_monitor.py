@@ -24,7 +24,7 @@ from typer.testing import CliRunner
 
 from otto.cli.monitor import _load_historical, monitor_app
 from otto.host import RunResult
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.monitor.collector import MetricCollector
 from otto.monitor.factory import build_monitor_collector
 from otto.monitor.parsers import LoadParser, MemParser
@@ -35,9 +35,9 @@ runner = CliRunner()
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
-def _make_host(name: str = 'box') -> RemoteHost:
-    """Return a real RemoteHost (no connection is made on construction)."""
-    return RemoteHost(ip='10.0.0.1', ne=name, creds={'admin': 'secret'}, log=True)
+def _make_host(name: str = 'box') -> UnixHost:
+    """Return a real UnixHost (no connection is made on construction)."""
+    return UnixHost(ip='10.0.0.1', ne=name, creds={'admin': 'secret'}, log=True)
 
 
 def _close_coro(coro):
@@ -321,12 +321,12 @@ _CPUINFO_OUTPUT = "4"
 
 
 def _make_monitor_host(name: str = 'router1') -> MagicMock:
-    """Return a mock RemoteHost whose run returns canned metric output.
+    """Return a mock UnixHost whose run returns canned metric output.
 
     The mock boundary is at the host I/O layer — the collector, parsers,
     and storage all run for real.
     """
-    host = MagicMock(spec=RemoteHost)
+    host = MagicMock(spec=UnixHost)
     host.name = name
     host.id = name
     host.log = True

@@ -1,10 +1,10 @@
 """
-MetricCollector — collects metrics from multiple RemoteHosts via asyncio.gather().
+MetricCollector — collects metrics from multiple UnixHosts via asyncio.gather().
 
 On each tick all hosts are polled simultaneously so results share one timestamp.
 
 Supports three data sources:
-  1. Live collection from multiple RemoteHosts (asyncio.gather() per tick)
+  1. Live collection from multiple UnixHosts (asyncio.gather() per tick)
   2. Historical JSON files
   3. Historical SQLite databases (written by a previous live collection)
 """
@@ -17,27 +17,44 @@ import logging
 import os
 import sqlite3
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Optional, Protocol
 
 import aiosqlite
 
-from .events import MonitorEvent
-from .parsers import DEFAULT_PARSERS, MetricParser
-
 from ..host.host import RunResult
+from .events import MonitorEvent
+from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser
+from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
 
 if TYPE_CHECKING:
     from ..host.remoteHost import RemoteHost
     from ..utils import CommandStatus, Status
+
+
+class MetricView(Protocol):
+    """The presentation surface a series needs to be charted.
+
+    Both :class:`~otto.monitor.parsers.MetricParser` and
+    :class:`~otto.monitor.snmp.SnmpMetric` satisfy this structurally, so the
+    record/publish path is identical whether a point came from a shell command
+    or an SNMP OID.
+    """
+
+    chart:     str
+    y_title:   str
+    unit:      str
+    tab:       str
+    tab_label: str
 
 logger = logging.getLogger('otto')
 
 
 @dataclass
 class MonitorTarget:
-    """Pairs a RemoteHost with the parser dict to use when collecting from it.
+    """Pairs a UnixHost with the parser dict to use when collecting from it.
 
     By default all hosts use DEFAULT_PARSERS.  Pass a custom dict to add new
     metrics or override built-in commands for a specific host::
@@ -53,11 +70,17 @@ class MonitorTarget:
     In most cases you do not construct these directly — use
     :func:`~otto.monitor.parsers.register_host_parsers` from an init module and
     let the CLI build targets automatically.
+
+    Set ``snmp`` to collect from this host over SNMP instead of by running shell
+    commands — the host then needs no shell parsers, and ``parsers`` is ignored.
+    This is what lets otto monitor a host (embedded or Unix) over a channel
+    separate from command execution.
     """
 
     host:       'RemoteHost'
     parsers:    dict[str, MetricParser] = field(default_factory=lambda: copy.deepcopy(DEFAULT_PARSERS))
     core_count: int = field(default=1)
+    snmp:       SnmpSource | None = field(default=None)
 
 
 _SCHEMA = """
@@ -82,7 +105,7 @@ CREATE TABLE IF NOT EXISTS events (
 
 class MetricCollector:
     """
-    Collects numeric metrics from multiple RemoteHosts and stores time-series data.
+    Collects numeric metrics from multiple UnixHosts and stores time-series data.
 
     On each tick, all hosts are polled simultaneously via asyncio.gather() so that
     results from every host share the same timestamp.
@@ -97,22 +120,13 @@ class MetricCollector:
 
     def __init__(
         self,
-        hosts: 'list[RemoteHost] | None' = None,
+        hosts: 'Sequence[RemoteHost] | None' = None,
         parsers: list[MetricParser] | None = None,
         db_path: str | None = None,
         targets: 'list[MonitorTarget] | None' = None,
     ) -> None:
         if targets is not None:
             self._targets = targets
-            # Build a unified parser dict (union by command) for metadata endpoints.
-            seen_commands: set[str] = set()
-            unified: list[MetricParser] = []
-            for t in targets:
-                for p in t.parsers.values():
-                    if p.command not in seen_commands:
-                        seen_commands.add(p.command)
-                        unified.append(p)
-            self._parsers: dict[str, MetricParser] = {p.command: p for p in unified}
         else:
             parser_dict: dict[str, MetricParser] = (
                 {p.command: p for p in parsers}
@@ -120,7 +134,32 @@ class MetricCollector:
                 else dict(DEFAULT_PARSERS)
             )
             self._targets = [MonitorTarget(host=h, parsers=parser_dict) for h in (hosts or [])]
-            self._parsers = parser_dict
+
+        # Unified presentation metadata for the dashboard, drawn from both
+        # collection modes: shell parsers (deduped by command) and SNMP OID
+        # descriptors (deduped by OID). SNMP targets contribute no shell
+        # parsers — their ``parsers`` default is never consulted.
+        seen_commands: set[str] = set()
+        unified: list[MetricParser] = []
+        seen_oids: set[str] = set()
+        snmp_views: list[SnmpMetric] = []
+        for t in self._targets:
+            if t.snmp is not None:
+                for oid in t.snmp.oids:
+                    if oid not in seen_oids:
+                        seen_oids.add(oid)
+                        snmp_views.append(resolve_snmp_metric(oid))
+            else:
+                for p in t.parsers.values():
+                    if p.command not in seen_commands:
+                        seen_commands.add(p.command)
+                        unified.append(p)
+        self._parsers: dict[str, MetricParser] = {p.command: p for p in unified}
+        # list[MetricView] is invariant, so build by extending from the
+        # concrete lists (Iterable[T] is covariant) rather than splatting.
+        self._views: list[MetricView] = []
+        self._views.extend(unified)
+        self._views.extend(snmp_views)
 
         self._hosts = [t.host for t in self._targets]
         self._db_path = db_path
@@ -260,17 +299,22 @@ class MetricCollector:
         self,
         target: MonitorTarget,
         timeout: float,
-    ) -> 'RunResult | None':
-        """Collect metrics from a single host with a cumulative timeout.
+    ) -> 'RunResult | list[tuple[str, MetricDataPoint, SnmpMetric]] | None':
+        """Collect metrics from a single host with a per-tick timeout.
 
-        The *timeout* is passed to :meth:`~otto.host.host.BaseHost.run` as
-        a deadline-based budget shared across all parser commands.  Each
-        command receives the remaining budget so fast commands donate surplus
-        time to slower ones.  When a command exceeds its budget,
-        ``run``'s own ``wait_for`` fires, triggering Ctrl+C session
-        recovery (see :meth:`ShellSession._recover_session`) — the session
-        stays healthy for the next tick.
+        SNMP targets GET their OIDs (bounded by ``timeout`` so a stuck relay is
+        skipped for the tick, mirroring the shell path) and return normalized
+        ``(label, point, view)`` triples. Shell targets pass *timeout* to
+        :meth:`~otto.host.host.BaseHost.run` as a deadline-based budget shared
+        across all parser commands; when a command exceeds it, ``run``'s own
+        ``wait_for`` fires and triggers Ctrl+C session recovery
+        (see :meth:`ShellSession._recover_session`) so the session stays healthy.
         """
+        if target.snmp is not None:
+            values = await asyncio.wait_for(
+                target.snmp.client.get(target.snmp.oids), timeout,
+            )
+            return points_from_values(values)
         return await target.host.run(
             list(target.parsers.keys()),
             timeout=timeout,
@@ -300,14 +344,17 @@ class MetricCollector:
 
         await self.init_db()
 
-        # One-time setup: determine core count for each host and propagate to
-        # any parser that uses it for normalization (e.g. TopCpuParser).
-        # grep -c ^processor /proc/cpuinfo is universally available on Linux.
+        # One-time setup: determine core count for each shell host and propagate
+        # to any parser that uses it for normalization (e.g. TopCpuParser).
+        # grep -c ^processor /proc/cpuinfo is universally available on Linux but
+        # meaningless for SNMP targets (no shell), so they are skipped — their
+        # core_count stays 1 and the SNMP descriptors don't use it.
+        shell_targets = [t for t in self._targets if t.snmp is None]
         setup_results = await asyncio.gather(
-            *[target.host.run(['grep -c ^processor /proc/cpuinfo']) for target in self._targets],
+            *[target.host.run(['grep -c ^processor /proc/cpuinfo']) for target in shell_targets],
             return_exceptions=True,
         )
-        for target, result in zip(self._targets, setup_results):
+        for target, result in zip(shell_targets, setup_results):
             match result:
                 case RunResult(statuses=[cmd_status]):
                     try:
@@ -319,7 +366,7 @@ class MetricCollector:
                         'Monitor: could not determine core count for %s, defaulting to 1',
                         target.host.name,
                     )
-        for target in self._targets:
+        for target in shell_targets:
             for parser in target.parsers.values():
                 parser.core_count = target.core_count
 
@@ -336,6 +383,8 @@ class MetricCollector:
             match result:
                 case RunResult(statuses=cmd_statuses):
                     await self._process_host_results(target.host.name, ts, cmd_statuses, target.parsers)
+                case list():
+                    await self._process_snmp_results(target.host.name, ts, result)
                 case BaseException():
                     logger.warning('Monitor: error collecting from %s: %s', target.host.name, result)
                 case _:
@@ -355,6 +404,9 @@ class MetricCollector:
                     case RunResult(statuses=cmd_statuses):
                         await self._process_host_results(target.host.name, ts, cmd_statuses, target.parsers)
 
+                    case list():
+                        await self._process_snmp_results(target.host.name, ts, result)
+
                     case BaseException():
                         logger.warning('Monitor: error collecting from %s: %s', target.host.name, result)
                         continue
@@ -362,6 +414,40 @@ class MetricCollector:
                     case _:
                         continue
 
+
+    async def _record_point(
+        self,
+        host_name: str,
+        ts: datetime,
+        label: str,
+        dp: MetricDataPoint,
+        view: MetricView,
+    ) -> None:
+        """Store one data point, persist it, and publish it to dashboards.
+
+        Shared by the shell and SNMP collection paths — *view* supplies the
+        chart/unit/title presentation regardless of where the point came from.
+        """
+        key = f'{host_name}/{label}'
+        if key not in self._series:
+            self._series[key] = deque()
+        self._series[key].append((ts, dp.value, dp.meta))
+        self._chart_map[label] = view.chart
+        await self._db_write_point(ts, host_name, label, dp.value)
+        msg: dict[str, Any] = {
+            'type':    'metric',
+            'host':    host_name,
+            'label':   label,
+            'chart':   view.chart,
+            'y_title': view.y_title,
+            'unit':    view.unit,
+            'key':     key,
+            'ts':      ts.isoformat(),
+            'value':   dp.value,
+        }
+        if dp.meta is not None:
+            msg['meta'] = dp.meta
+        self._publish(msg)
 
     async def _process_host_results(
         self,
@@ -376,28 +462,17 @@ class MetricCollector:
                 points = parser.parse(cmd_status.output)
                 if not points:
                     continue
-                parser_chart = parser.chart
                 for label, dp in points.items():
-                    key = f'{host_name}/{label}'
-                    if key not in self._series:
-                        self._series[key] = deque()
-                    self._series[key].append((ts, dp.value, dp.meta))
-                    self._chart_map[label] = parser_chart
-                    await self._db_write_point(ts, host_name, label, dp.value)
-                    msg: dict[str, Any] = {
-                        'type':    'metric',
-                        'host':    host_name,
-                        'label':   label,
-                        'chart':   parser_chart,
-                        'y_title': parser.y_title,
-                        'unit':    parser.unit,
-                        'key':     key,
-                        'ts':      ts.isoformat(),
-                        'value':   dp.value,
-                    }
-                    if dp.meta is not None:
-                        msg['meta'] = dp.meta
-                    self._publish(msg)
+                    await self._record_point(host_name, ts, label, dp, parser)
+
+    async def _process_snmp_results(
+        self,
+        host_name: str,
+        ts: datetime,
+        points: 'list[tuple[str, MetricDataPoint, SnmpMetric]]',
+    ) -> None:
+        for label, dp, view in points:
+            await self._record_point(host_name, ts, label, dp, view)
 
     # ------------------------------------------------------------------
     # Events
@@ -494,24 +569,27 @@ class MetricCollector:
         if not hosts and self._hosts:
             hosts = [h.name for h in self._hosts]
 
-        # Build ordered tabs list from parsers, preserving first-encountered tab order
+        # Build ordered tabs list from all views (shell parsers + SNMP
+        # descriptors), preserving first-encountered tab order.
         tabs_map: dict[str, dict[str, Any]] = {}
-        for p in self._parsers.values():
-            tab_id    = getattr(p, 'tab',       'metrics')
-            tab_label = getattr(p, 'tab_label', 'Metrics')
+        for v in self._views:
+            tab_id    = getattr(v, 'tab',       'metrics')
+            tab_label = getattr(v, 'tab_label', 'Metrics')
             if tab_id not in tabs_map:
                 tabs_map[tab_id] = {'id': tab_id, 'label': tab_label, 'metrics': []}
-            tabs_map[tab_id]['metrics'].append(p.chart)
+            tabs_map[tab_id]['metrics'].append(v.chart)
 
         result: dict[str, Any] = {
             'hosts': hosts,
             'live':  bool(self._hosts),   # False when loaded from --file (no live collection)
             'metrics': [
                 {
-                    'label': p.chart, 'y_title': p.y_title, 'unit': p.unit, 'command': p.command,
-                    'chart': p.chart,
+                    'label': v.chart, 'y_title': v.y_title, 'unit': v.unit,
+                    # Shell views key off the command; SNMP views off the OID.
+                    'command': getattr(v, 'command', None) or getattr(v, 'oid', ''),
+                    'chart': v.chart,
                 }
-                for p in self._parsers.values()
+                for v in self._views
             ],
             'tabs': list(tabs_map.values()),
         }

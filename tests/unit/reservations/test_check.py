@@ -16,7 +16,7 @@ from otto.reservations import (
     required_resources,
 )
 
-from tests.unit.conftest import make_host
+from tests.conftest import make_host
 
 
 @dataclass

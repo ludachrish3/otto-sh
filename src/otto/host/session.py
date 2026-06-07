@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 import asyncssh
 from asyncssh import SSHClientConnection
 
+from .command_frame import BashFrame, CommandFrame, SessionMarkers
 from .telnet import TelnetClient
 
 if TYPE_CHECKING:
@@ -52,13 +53,21 @@ _INIT_TIMEOUT = 3.0
 class ShellSession(ABC):
     """Abstract base for persistent shell sessions.
 
-    Subclasses implement the I/O primitives (_write, _read_until_pattern, _open, close).
-    The base class provides shared logic for sentinel-wrapped command execution,
-    expect handling, and timeout recovery.
+    A session is **transport + dialect**. Subclasses implement the I/O
+    primitives (_write, _read_until_pattern, _open, close) — that is the
+    transport (SSH, telnet, local subprocess). The *dialect* — how a command is
+    wrapped in sentinels and how output/retcode are parsed back — is composed
+    in as a :class:`~otto.host.command_frame.CommandFrame` (default
+    :class:`~otto.host.command_frame.BashFrame`), not inherited. The base class
+    provides the shared engine: sentinel-wrapped command execution, expect
+    handling, and timeout recovery, all delegating the dialect to the frame.
     """
 
     # Ceiling on the marker handshake in _ensure_initialized. Class-level so
-    # tests can shrink it without patching the module constant.
+    # tests can shrink it without patching the module constant. A session built
+    # against a slow-to-start shell (e.g. a Zephyr QEMU telnet console) gets a
+    # more generous value via the ``init_timeout`` constructor argument, which
+    # shadows this with an instance attribute.
     _init_timeout: float = _INIT_TIMEOUT
 
     # How long to wait for one readiness probe before resending it. Bounds the
@@ -66,13 +75,31 @@ class ShellSession(ABC):
     # reading) to roughly one interval.
     _init_probe_interval: float = 0.5
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        command_frame: CommandFrame | None = None,
+        init_timeout: float | None = None,
+    ) -> None:
         self._session_id = uuid.uuid4().hex[:12]
-        self._begin_marker = f"__OTTO_{self._session_id}_BEGIN__"
-        self._end_marker_prefix = f"__OTTO_{self._session_id}_END__"
-        self._end_pattern = re.compile(rf"__OTTO_{self._session_id}_END__(\d+)__")
-        self._ready_marker = f"__OTTO_{self._session_id}_READY__"
-        self._recover_marker = f"__OTTO_{self._session_id}_RECOVER__"
+        # The dialect: how commands are framed and parsed. Defaults to bash; an
+        # embedded host injects a ZephyrFrame (or a project-registered frame).
+        self._frame: CommandFrame = command_frame or BashFrame()
+        # Unique per-session sentinels, handed to the frame for every
+        # render/parse call. Aliased as individual attributes too because the
+        # session orchestration (and its tests) reference them directly.
+        self._markers = SessionMarkers.for_session(self._session_id)
+        self._begin_marker = self._markers.begin
+        self._end_marker_prefix = self._markers.end_prefix
+        self._ready_marker = self._markers.ready
+        self._recover_marker = self._markers.recover
+        # The frame owns the end-of-output pattern (bash bakes the retcode into
+        # it; Zephyr's is the bare token). Compiled once per session.
+        self._end_pattern = self._frame.end_pattern(self._markers)
+        # A non-default readiness ceiling (slow embedded shells) is set as an
+        # instance attribute so it shadows the monkeypatchable class default
+        # only for the sessions that need it.
+        if init_timeout is not None:
+            self._init_timeout = init_timeout
         self._initialized = False
         self._alive = False
         # Set when an in-flight operation (run_cmd / expect) is externally
@@ -87,6 +114,16 @@ class ShellSession(ABC):
     def alive(self) -> bool:
         """Whether the session is initialized and responsive."""
         return self._alive
+
+    @property
+    def _log_tag(self) -> str:
+        """Stable tag for debug log lines: ``<class>@<session_id>``.
+
+        Identifies which subclass and which session a log line came from when
+        multiple are running concurrently — useful when bringing up a new
+        embedded OS subclass alongside the existing Zephyr/Unix ones.
+        """
+        return f"{type(self).__name__}@{self._session_id}"
 
     # --- Abstract I/O primitives (implemented by subclasses) ---
 
@@ -153,36 +190,74 @@ class ShellSession(ABC):
         # ("... echo __OTTO_..._READY__") — which is fatal on a failed telnet
         # login, where the device loops back to "login:" and echoes our probe
         # as a username, making a rejected login look successful.
-        marker = re.compile(r'(?:^|\r|\n)' + re.escape(self._ready_marker))
+        #
+        # ``(?:\x1b\[[0-9;]*m)*`` after the anchor absorbs any ANSI colour
+        # codes a shell emits between the line start and the marker — the
+        # Zephyr RTOS shell colours its ``command not found`` line, so the
+        # rejected marker arrives as ``\n\x1b[1;31m__OTTO_..._READY__``.
+        # The group matches zero times for a plain bash shell, so this is a
+        # no-op there.
+        marker = re.compile(
+            r'(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*' + re.escape(self._ready_marker)
+        )
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._init_timeout
+        handshake_cmd = self._frame.handshake(self._markers)
+        logger.debug(
+            f"{self._log_tag}: handshake start "
+            f"cmd={handshake_cmd!r} marker={self._ready_marker!r} "
+            f"timeout={self._init_timeout}s"
+        )
+        start = loop.time()
+        attempt = 0
         while True:
-            await self._write(f"stty -echo 2>/dev/null; echo {self._ready_marker}\n")
+            attempt += 1
+            await self._write(handshake_cmd)
             remaining = deadline - loop.time()
             if remaining <= 0:
-                await self._fail_init()
+                await self._fail_init(attempt=attempt)
             try:
-                await asyncio.wait_for(
+                data = await asyncio.wait_for(
                     self._read_until_pattern(marker),
                     timeout=min(self._init_probe_interval, remaining),
+                )
+                elapsed = loop.time() - start
+                # Truncate the matched data so a noisy banner doesn't flood
+                # the log; the tail (where the marker landed) is the part
+                # that matters for diagnosing a future bring-up.
+                shown = data if len(data) <= 512 else f"...{data[-512:]}"
+                logger.debug(
+                    f"{self._log_tag}: handshake matched in {elapsed:.2f}s "
+                    f"(attempts={attempt}, {len(data)} bytes): {shown!r}"
                 )
                 break
             except asyncio.TimeoutError:
                 # No response to this probe — the shell may not be reading
                 # input yet. Resend, unless we've run out the clock.
+                logger.debug(
+                    f"{self._log_tag}: handshake probe #{attempt} timed out, "
+                    f"resending (deadline in {deadline - loop.time():.2f}s)"
+                )
                 if loop.time() >= deadline:
-                    await self._fail_init()
+                    await self._fail_init(attempt=attempt)
                 continue
             except asyncio.IncompleteReadError:
                 # Peer EOF mid-handshake — the connection is gone; retrying
                 # cannot help.
-                await self._fail_init()
+                logger.debug(
+                    f"{self._log_tag}: handshake hit EOF on attempt #{attempt}"
+                )
+                await self._fail_init(attempt=attempt)
 
         self._initialized = True
         self._alive = True
 
-    async def _fail_init(self) -> None:
+    async def _fail_init(self, attempt: int = 0) -> None:
         """Tear down a session whose readiness handshake never completed."""
+        logger.debug(
+            f"{self._log_tag}: handshake FAILED after {attempt} attempt(s); "
+            f"marking session dead and closing"
+        )
         self._alive = False
         try:
             await self.close()
@@ -303,13 +378,16 @@ class ShellSession(ABC):
         command text stripped) is streamed to ``self._on_output`` as it arrives.
         """
 
-        # Wrap the command with BEGIN/END sentinels. $? captures the exit code.
-        wrapped = (
-            f'echo "{self._begin_marker}"; '
-            f'{cmd}; '
-            f'echo "{self._end_marker_prefix}$?__"'
-        )
-        await self._write(wrapped + "\n")
+        # Write the framed command. The framing — BEGIN/END sentinels and how
+        # the exit code is captured — is supplied by the session's CommandFrame
+        # so that a target can diverge from the bash form (see ZephyrFrame).
+        framed = self._frame.frame(cmd, self._markers)
+        # Truncate for the log so a multi-line script doesn't dominate the
+        # output. The frame seam is the natural call site to instrument once —
+        # every dialect then gets the visibility for free.
+        shown = framed if len(framed) <= 256 else f"{framed[:256]}...({len(framed)} bytes total)"
+        logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
+        await self._write(framed)
 
         # Build regex that matches any expect pattern OR the end sentinel OR
         # a newline.  The newline alternative causes _read_until_pattern to
@@ -332,7 +410,6 @@ class ShellSession(ABC):
                     pre = data[:end_match.start()].replace('\r', '').strip()
                     if pre:
                         self._on_output(pre)
-                retcode = int(end_match.group(1))
                 break
 
             # An expect pattern matched — find which one and send its response
@@ -342,6 +419,11 @@ class ShellSession(ABC):
                     pat = re.compile(pat_str) if isinstance(pat_str, str) else pat_str
                     if pat.search(data):
                         await self._write(response)
+                        logger.debug(
+                            f"{self._log_tag}: expect matched "
+                            f"pattern={getattr(pat, 'pattern', pat)!r} "
+                            f"response={response!r}"
+                        )
                         expect_matched = True
                         break
 
@@ -351,16 +433,27 @@ class ShellSession(ABC):
             # (which embeds the marker inside quotes on the same line).
             if not expect_matched:
                 if not seen_begin:
-                    stripped = data.rstrip('\r\n')
-                    if stripped == self._begin_marker or stripped.endswith(self._begin_marker):
+                    if self._frame.marks_begin(data, self._markers):
+                        logger.debug(
+                            f"{self._log_tag}: begin marker matched on chunk={data!r}"
+                        )
                         seen_begin = True
                 else:
                     line = data.rstrip('\r\n').replace('\r', '')
                     if line:
                         self._on_output(line)
 
-        output = self._parse_output(buffer)
+        output = self._frame.parse_output(buffer, cmd, self._markers)
+        retcode = self._frame.extract_retcode(buffer, self._markers)
         status = Status.Success if retcode == 0 else Status.Failed
+        # Log a per-command summary at the seam. The full buffer is dumped at
+        # DEBUG so a future-dialect bring-up can see exactly what the frame's
+        # extract_retcode / parse_output had to work with.
+        buffer_preview = buffer if len(buffer) <= 1024 else f"{buffer[:512]}...({len(buffer)}b)...{buffer[-512:]}"
+        logger.debug(
+            f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
+            f"output_len={len(output)} buffer={buffer_preview!r}"
+        )
         return CommandStatus(command=cmd, output=output, status=status, retcode=retcode)
 
     def _build_combined_pattern(
@@ -383,52 +476,41 @@ class ShellSession(ABC):
         parts.append(r"(?P<newline>\n)")
         return re.compile("|".join(parts))
 
-    def _parse_output(self, buffer: str) -> str:
-        """Extract command output from between BEGIN and END sentinel markers."""
-
-        # Find the LAST BEGIN marker — if the shell echoes the wrapped command,
-        # the marker appears twice: once in the echoed command text and once as
-        # actual output.  Using rfind ensures we skip the echoed copy.
-        begin_idx = buffer.rfind(self._begin_marker)
-        if begin_idx != -1:
-            start = begin_idx + len(self._begin_marker)
-            # Skip trailing newline(s) after the marker
-            while start < len(buffer) and buffer[start] in ('\r', '\n'):
-                start += 1
-        else:
-            start = 0
-
-        # Find END marker — output ends before it
-        end_match = self._end_pattern.search(buffer, start)
-        end = end_match.start() if end_match else len(buffer)
-
-        output = buffer[start:end].rstrip('\r\n')
-        # Strip carriage returns left over from PTY \r\n line endings
-        output = output.replace('\r', '')
-        return output
-
     async def _recover_session(self) -> str:
         """Attempt session recovery after timeout: Ctrl+C, then recovery sentinel.
 
         Returns any partial output captured during recovery.
         Sets self._alive = False if recovery fails.
         """
+        recover_cmd = self._frame.recover(self._markers)
+        logger.debug(
+            f"{self._log_tag}: recover_session entry "
+            f"marker={self._recover_marker!r} cmd={recover_cmd!r}"
+        )
         try:
             # Send Ctrl+C (SIGINT) to interrupt the hung foreground process
             await self._write("\x03")
             await asyncio.sleep(0.1)
 
             # Send recovery sentinel to re-synchronize
-            await self._write(f"echo {self._recover_marker}\n")
+            await self._write(recover_cmd)
             data = await asyncio.wait_for(
                 self._read_until_pattern(re.compile(re.escape(self._recover_marker))),
                 timeout=_RECOVERY_TIMEOUT,
             )
             # Session is recovered and usable for the next command
-            return data.split(self._recover_marker)[0].strip()
+            partial = data.split(self._recover_marker)[0].strip()
+            logger.debug(
+                f"{self._log_tag}: recover_session ok partial_len={len(partial)}"
+            )
+            return partial
 
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError):
+        except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
             # Shell itself is unresponsive — mark session as dead
+            logger.debug(
+                f"{self._log_tag}: recover_session failed ({type(exc).__name__}); "
+                f"session marked dead"
+            )
             self._alive = False
             return ""
 
@@ -436,8 +518,13 @@ class ShellSession(ABC):
 class SshSession(ShellSession):
     """SSH persistent shell session via asyncssh create_process()."""
 
-    def __init__(self, conn: SSHClientConnection | None) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        conn: SSHClientConnection | None,
+        command_frame: CommandFrame | None = None,
+        init_timeout: float | None = None,
+    ) -> None:
+        super().__init__(command_frame=command_frame, init_timeout=init_timeout)
         self._conn = conn
         self._process: Any = None
         # When set by a subclass, _open passes this as the command to
@@ -482,11 +569,24 @@ class TelnetSession(ShellSession):
         reader: Any,
         writer: Any,
         _owned_client: 'TelnetClient | None' = None,
+        command_frame: CommandFrame | None = None,
+        init_timeout: float | None = None,
+        write_chunk_size: int = 0,
+        write_chunk_delay: float = 0.0,
     ) -> None:
-        super().__init__()
+        super().__init__(command_frame=command_frame, init_timeout=init_timeout)
         self._reader = reader
         self._writer = writer
         self._owned_client = _owned_client
+        # Paced-write tuning for slow/RX-limited consoles. ``write_chunk_size``
+        # of 0 (the default) writes each payload in a single call — correct for
+        # a host-terminated telnet shell (e.g. x86 + E1000). A positive value
+        # splits the payload into <=N-byte writes spaced by ``write_chunk_delay``
+        # seconds so a UART-backed RTOS shell (e.g. a Zephyr ``-serial telnet:``
+        # bridge) doesn't overrun its console RX FIFO on a multi-KB
+        # ``llext load_hex`` line. Set per-host via ``telnet_options``.
+        self._write_chunk_size = write_chunk_size
+        self._write_chunk_delay = write_chunk_delay
 
     async def _open(self) -> None:
         # Transport already established by TelnetClient login — nothing to open
@@ -501,7 +601,15 @@ class TelnetSession(ShellSession):
         # - canonical mode (icrnl maps \r → \n, so the shell sees one newline)
         # - readline raw mode (treats \r as Enter / execute)
         data = re.sub(r'\r?\n', '\r', data)
-        self._writer.write(data.encode())
+        encoded = data.encode()
+        chunk = self._write_chunk_size
+        if chunk and len(encoded) > chunk:
+            for i in range(0, len(encoded), chunk):
+                self._writer.write(encoded[i:i + chunk])
+                if self._write_chunk_delay:
+                    await asyncio.sleep(self._write_chunk_delay)
+        else:
+            self._writer.write(encoded)
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
@@ -752,7 +860,7 @@ class HostSession:
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
     async def send(self, text: str) -> None:
-        """Send raw text to this session's stdin. See :meth:`RemoteHost.send`."""
+        """Send raw text to this session's stdin. See :meth:`UnixHost.send`."""
         self._log_command(text.rstrip())
         await self._session.send(text)
 
@@ -761,7 +869,7 @@ class HostSession:
         pattern: str | re.Pattern[str],
         timeout: float = 10.0,
     ) -> str:
-        """Wait for a pattern in this session's output. See :meth:`RemoteHost.expect`."""
+        """Wait for a pattern in this session's output. See :meth:`UnixHost.expect`."""
         result = await self._session.expect(pattern, timeout)
         self._log_output(result)
         return result
@@ -787,7 +895,11 @@ class SessionManager:
     Session creation is pluggable: provide a ``session_factory`` callable to
     control how sessions are created (e.g. ``LocalSession`` for local hosts),
     or pass a ``ConnectionManager`` to use the default SSH/Telnet dispatch.
-    Similarly, ``oneshot_factory`` controls stateless command execution.
+    Similarly, ``oneshot_factory`` controls stateless command execution. The
+    shell *dialect* is selected by ``command_frame`` (default bash; an embedded
+    host passes a :class:`~otto.host.command_frame.ZephyrFrame`) — it is handed
+    to every session this manager builds, independent of the transport. A slow
+    target's readiness ceiling is raised via ``init_timeout``.
     """
 
     def __init__(
@@ -798,6 +910,8 @@ class SessionManager:
         log_output: Callable[[str], None] = lambda _: None,
         session_factory: 'Callable[[], ShellSession] | None' = None,
         oneshot_factory: 'Callable[[str, float | None], Awaitable[CommandStatus]] | None' = None,
+        command_frame: CommandFrame | None = None,
+        init_timeout: float | None = None,
     ) -> None:
         self._connections = connections
         self._name = name
@@ -805,6 +919,15 @@ class SessionManager:
         self._log_output = log_output
         self._session_factory = session_factory
         self._oneshot_factory = oneshot_factory
+        # Shell dialect handed to every session built on the ConnectionManager
+        # dispatch path (SSH or telnet alike). ``None`` resolves to bash inside
+        # ``ShellSession``; an embedded host passes a ZephyrFrame so its
+        # sessions speak the RTOS shell's framing. Decoupled from the transport,
+        # so e.g. Zephyr-framing-over-SSH needs no new session class.
+        self._command_frame = command_frame
+        # Optional readiness-handshake ceiling for slow shells (e.g. a Zephyr
+        # QEMU telnet console); ``None`` keeps the session's class default.
+        self._init_timeout = init_timeout
         self._session: ShellSession | None = None
         self._named_sessions: dict[str, HostSession] = {}
         # Free-list of idle shell sessions used by `oneshot()` for terminals
@@ -849,6 +972,21 @@ class SessionManager:
         prevents a follow-on caller from observing the just-created session
         as ``alive=False`` (because the handshake hasn't run yet) and falling
         through to recreate.
+
+        A failed readiness handshake (``ConnectionError`` from ``_fail_init``)
+        is retried **once** with a brief backoff. The failure mode this
+        addresses: concurrent fan-out across multiple embedded targets
+        sharing a single SSH hop (e.g. ``do_for_all_hosts(EmbeddedHost.put,
+        …)`` to several Zephyr boards over one ``basil_seed`` hop) can land
+        a fresh telnet socket on a device whose console isn't quite ready —
+        the peer accepts the TCP connection then closes it before the
+        marker probe lands, producing ``IncompleteReadError(0 bytes)`` →
+        ``ConnectionError``. Rebuilding the transport (the closed session's
+        teardown drops the stale ``TelnetClient``; ``connections.telnet()``
+        re-opens cleanly) and retrying once recovers from the race without
+        masking a genuine misconfiguration: a real "device unresponsive /
+        bad credentials" failure will fail the same way on the second
+        attempt and propagate.
         """
         if self._session and self._session.alive:
             return
@@ -865,38 +1003,86 @@ class SessionManager:
             if self._session is not None:
                 await self._session.close()
 
-            if self._session_factory is not None:
-                new_session: ShellSession = self._session_factory()
-            else:
-                assert self._connections is not None
-                match self._connections.term:
-                    case 'ssh':
-                        ssh_conn = await self._connections.ssh()
-                        new_session = SshSession(ssh_conn)
-                    case 'telnet':
-                        telnet_conn = await self._connections.telnet()
-                        new_session = TelnetSession(
-                            telnet_conn.reader,
-                            telnet_conn.writer,
-                        )
-                    case _:
-                        raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
-
-            new_session._on_output = self._log_output
-            # The marker handshake can take ~1 s on a cold telnet open. A
-            # caller-side ``wait_for`` cancellation (or a failed login)
-            # landing here would otherwise drop the just-built session — and
-            # its open transport FD — on the floor. Close it before the
-            # exception propagates.
-            try:
-                await new_session._ensure_initialized()
-            except BaseException:
+            last_exc: ConnectionError | None = None
+            for attempt in range(2):
+                new_session = await self._build_session()
+                new_session._on_output = self._log_output
+                # The marker handshake can take ~1 s on a cold telnet open. A
+                # caller-side ``wait_for`` cancellation (or a failed login)
+                # landing here would otherwise drop the just-built session — and
+                # its open transport FD — on the floor. Close it before the
+                # exception propagates.
                 try:
-                    await new_session.close()
-                except Exception:  # pragma: no cover - best-effort cleanup
-                    pass
-                raise
-            self._session = new_session
+                    await new_session._ensure_initialized()
+                except ConnectionError as exc:
+                    try:
+                        await new_session.close()
+                    except Exception:  # pragma: no cover - best-effort cleanup
+                        pass
+                    last_exc = exc
+                    if attempt == 0:
+                        logger.debug(
+                            f"SessionManager[{self._name}]: handshake failed "
+                            f"on first attempt ({exc!r}); rebuilding transport "
+                            f"and retrying once"
+                        )
+                        # Backoff lets the peer fully release any half-open
+                        # slot before the next telnet() rebuilds the TCP
+                        # connection. 2 s is calibrated to single-client
+                        # RTOS telnet servers (Zephyr's
+                        # ``CONFIG_SHELL_BACKEND_TELNET``) which do not
+                        # always free the slot the instant the FIN lands —
+                        # observed on live QEMU runs to take well over
+                        # 500 ms after the close.
+                        await asyncio.sleep(2.0)
+                        continue
+                    raise
+                except BaseException:
+                    try:
+                        await new_session.close()
+                    except Exception:  # pragma: no cover - best-effort cleanup
+                        pass
+                    raise
+                self._session = new_session
+                break
+            else:  # pragma: no cover - the loop always breaks or raises
+                assert last_exc is not None
+                raise last_exc
+
+    async def _build_session(self) -> 'ShellSession':
+        """Construct a fresh ShellSession from the configured factory or
+        connection manager. Split out from ``_ensure_session`` so the retry
+        path can rebuild the transport cleanly."""
+        if self._session_factory is not None:
+            return self._session_factory()
+        assert self._connections is not None
+        match self._connections.term:
+            case 'ssh':
+                ssh_conn = await self._connections.ssh()
+                return SshSession(
+                    ssh_conn,
+                    command_frame=self._command_frame,
+                    init_timeout=self._init_timeout,
+                )
+            case 'telnet':
+                telnet_conn = await self._connections.telnet()
+                logger.debug(
+                    f"SessionManager[{self._name}]: building telnet session "
+                    f"with frame={type(self._command_frame).__name__}"
+                )
+                return TelnetSession(
+                    telnet_conn.reader,
+                    telnet_conn.writer,
+                    command_frame=self._command_frame,
+                    init_timeout=self._init_timeout,
+                    write_chunk_size=telnet_conn.options.write_chunk_size,
+                    write_chunk_delay=telnet_conn.options.write_chunk_delay,
+                )
+            case _:
+                raise ValueError(
+                    f'{self._name}: unsupported terminal type '
+                    f'"{self._connections.term}"'
+                )
 
     async def run_cmd(
         self,
@@ -1014,7 +1200,11 @@ class SessionManager:
                 match self._connections.term:
                     case 'ssh':
                         ssh_conn = await self._connections.ssh()
-                        shell_session = SshSession(ssh_conn)
+                        shell_session = SshSession(
+                            ssh_conn,
+                            command_frame=self._command_frame,
+                            init_timeout=self._init_timeout,
+                        )
                     case 'telnet':
                         user, password = self._connections.credentials
                         client = TelnetClient(
@@ -1042,6 +1232,10 @@ class SessionManager:
                             client.reader,
                             client.writer,
                             _owned_client=client,
+                            command_frame=self._command_frame,
+                            init_timeout=self._init_timeout,
+                            write_chunk_size=client.options.write_chunk_size,
+                            write_chunk_delay=client.options.write_chunk_delay,
                         )
                     case _:
                         raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')

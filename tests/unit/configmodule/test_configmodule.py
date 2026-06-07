@@ -14,10 +14,12 @@ from otto.configmodule.configmodule import (
     run_on_all_hosts,
 )
 from otto.configmodule.lab import Lab
+from otto.host import EmbeddedHost, UnixHost
 from otto.host.options import SshOptions, TelnetOptions
+from otto.storage.factory import create_host_from_dict
 from otto.utils import CommandStatus, Status
 
-from tests.unit.conftest import make_host
+from tests.conftest import host_data, make_host
 
 
 @pytest.fixture()
@@ -71,6 +73,55 @@ class TestAllHosts:
         pat = re.compile(r"seed$")
         result = list(all_hosts(pattern=pat))
         assert len(result) == 3
+
+
+@pytest.fixture()
+def mixed_lab():
+    """ConfigModule containing one UnixHost (carrot_seed) and one EmbeddedHost (sprout)."""
+    unix = make_host("carrot")
+    embedded = create_host_from_dict(host_data("sprout"))
+    hosts = {unix.id: unix, embedded.id: embedded}
+    lab = Lab(name="mixed_lab")
+    lab.hosts = hosts
+    cm = ConfigModule(repos=[], lab=lab)
+    with patch(
+        "otto.configmodule.configmodule._manager",
+        spec=ConfigModuleManager,
+    ) as mock_mgr:
+        type(mock_mgr).configModule = PropertyMock(return_value=cm)
+        yield hosts
+
+
+class TestAllHostsMixed:
+    """all_hosts() must yield both UnixHost and EmbeddedHost entries."""
+
+    def test_yields_both_unix_and_embedded(self, mixed_lab):
+        result = list(all_hosts())
+        kinds = {type(h).__name__ for h in result}
+        assert kinds == {"UnixHost", "EmbeddedHost"}
+        assert len(result) == 2
+
+    def test_ssh_options_override_skipped_for_embedded(self, mixed_lab):
+        """Passing SSH-only overrides must not crash on an EmbeddedHost.
+
+        EmbeddedHost carries only ``telnet_options`` (no SSH/SFTP/SCP/FTP/NC
+        fields), so override keys that don't apply are silently dropped
+        rather than raising from dataclasses.replace.
+        """
+        override = SshOptions(port=2222)
+        result = list(all_hosts(ssh_options=override))
+        by_id = {h.id: h for h in result}
+        assert isinstance(by_id["carrot_seed"], UnixHost)
+        assert by_id["carrot_seed"].ssh_options is override
+        assert isinstance(by_id["sprout"], EmbeddedHost)
+        # No mutation, no crash — embedded host is yielded as-is.
+
+    def test_telnet_options_override_applied_to_both(self, mixed_lab):
+        """telnet_options is a valid field on both host types and is applied."""
+        override = TelnetOptions(login=False)
+        result = list(all_hosts(telnet_options=override))
+        for h in result:
+            assert h.telnet_options is override
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +202,7 @@ class TestRunOnAllHosts:
         """run_on_all_hosts delegates to run and returns status tuples."""
         expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
         with patch(
-            "otto.host.remoteHost.RemoteHost.run",
+            "otto.host.unixHost.UnixHost.run",
             new_callable=AsyncMock,
             return_value=expected,
         ):
@@ -166,7 +217,7 @@ class TestRunOnAllHosts:
         """run_on_all_hosts works in concurrent mode."""
         expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
         with patch(
-            "otto.host.remoteHost.RemoteHost.run",
+            "otto.host.unixHost.UnixHost.run",
             new_callable=AsyncMock,
             return_value=expected,
         ):
@@ -181,7 +232,7 @@ class TestRunOnAllHosts:
         """run_on_all_hosts respects the pattern filter."""
         expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
         with patch(
-            "otto.host.remoteHost.RemoteHost.run",
+            "otto.host.unixHost.UnixHost.run",
             new_callable=AsyncMock,
             return_value=expected,
         ):
@@ -195,7 +246,7 @@ class TestRunOnAllHosts:
 class TestPerCallOptionOverrides:
     """Tests for the per-call ``*_options=`` kwargs on get_host / all_hosts.
 
-    The override path must produce a *fresh* RemoteHost via
+    The override path must produce a *fresh* UnixHost via
     ``dataclasses.replace`` so ``__post_init__`` re-runs and the new
     ConnectionManager is constructed with the override options. Stored
     hosts must be untouched, and identity must be preserved when no
@@ -210,7 +261,7 @@ class TestPerCallOptionOverrides:
         assert a is three_hosts["carrot_seed"]
 
     def test_get_host_with_override_returns_copy(self, three_hosts):
-        """With an override, get_host returns a fresh RemoteHost copy."""
+        """With an override, get_host returns a fresh UnixHost copy."""
         original = three_hosts["carrot_seed"]
         override = SshOptions(port=9999, connect_timeout=5.0)
         host = get_host("carrot_seed", ssh_options=override)

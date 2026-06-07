@@ -1,0 +1,18 @@
+--- a/subsys/shell/shell.c
++++ b/subsys/shell/shell.c
+@@ -987,7 +987,14 @@
+ 					z_cursor_next_line_move(shell);
+ 				} else {
+ 					/* Command execution */
+-					(void)execute(shell);
++					int otto_ret = execute(shell);
++					/* otto: Zephyr 2.7's shell has no `retval`
++					 * command, so emit the return value inline as
++					 * `retCode = <n>` after every command. The host
++					 * (ZephyrInlineRetcodeFrame) parses this in place
++					 * of the 3.x `retval` builtin. */
++					z_shell_fprintf(shell, SHELL_NORMAL,
++							"retCode = %d\n", otto_ret);
+ 				}
+ 				/* Function responsible for printing prompt
+ 				 * on received NL.

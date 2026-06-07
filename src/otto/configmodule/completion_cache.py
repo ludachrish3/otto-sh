@@ -530,7 +530,7 @@ def collect_host_ids(repos: list['Repo']) -> list[str]:
     """Enumerate every host ID reachable via the configured lab search paths.
 
     Reads each repo's ``labs`` directories for a ``hosts.json`` file and
-    builds :class:`RemoteHost` objects via the existing factory so the
+    builds :class:`UnixHost` objects via the existing factory so the
     resulting IDs match what ``get_host`` will look up at runtime. Also
     synthesizes container host IDs of the form ``<parent>.<project>.<service>``
     from each repo's ``[docker]`` settings so declared container hosts

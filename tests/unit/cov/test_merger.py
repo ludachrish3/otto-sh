@@ -11,7 +11,6 @@ from otto.host.toolchain import Toolchain
 from otto.utils import CommandStatus, Status
 
 
-
 class TestLcovMerger:
 
     @pytest.mark.asyncio
@@ -195,3 +194,53 @@ class TestLcovMergerToolchain:
         # Third command is the merge
         assert len(commands) == 3
         await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_and_merge_per_host_gcno(self, tmp_path):
+        """Each host is captured against its own gcno dir when gcno_dirs is given."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+
+        host0 = tmp_path / "host0"
+        host0.mkdir()
+        host1 = tmp_path / "host1"
+        host1.mkdir()
+        gcno_a = tmp_path / "build_v3_7"
+        gcno_a.mkdir()
+        gcno_b = tmp_path / "build_v4_4"
+        gcno_b.mkdir()
+        work_dir = tmp_path / "work"
+
+        commands: list[str] = []
+
+        async def mock_oneshot(cmd, timeout=None):
+            commands.append(cmd)
+            return CommandStatus(
+                command=cmd, output="",
+                status=Status.Success, retcode=0,
+            )
+
+        with patch.object(localhost, 'oneshot', side_effect=mock_oneshot):
+            await merger.capture_and_merge(
+                [host0, host1], tmp_path / "fallback_gcno", work_dir,
+                gcno_dirs=[gcno_a, gcno_b],
+            )
+
+        assert str(gcno_a) in commands[0]        # host0 -> its own gcno
+        assert str(gcno_b) in commands[1]        # host1 -> its own gcno
+        assert str(tmp_path / "fallback_gcno") not in commands[0]
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_and_merge_gcno_dirs_length_mismatch(self, tmp_path):
+        """A gcno_dirs list that does not match host_gcda_dirs is rejected."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        try:
+            with pytest.raises(ValueError, match="gcno_dirs length"):
+                await merger.capture_and_merge(
+                    [tmp_path / "host0"], tmp_path / "gcno", tmp_path / "work",
+                    gcno_dirs=[],
+                )
+        finally:
+            await localhost.close()

@@ -294,17 +294,17 @@ class TestRunBridge:
 
 
 # ---------------------------------------------------------------------------
-# RemoteHost._interact dispatch — verifies CLI path reaches the right runner
+# UnixHost._interact dispatch — verifies CLI path reaches the right runner
 # ---------------------------------------------------------------------------
 
 
-class TestRemoteHostInteractDispatch:
+class TestUnixHostInteractDispatch:
 
     @pytest.mark.asyncio
     async def test_ssh_dispatch_uses_cached_connection(self):
-        from otto.host.remoteHost import RemoteHost
+        from otto.host.unixHost import UnixHost
 
-        host = RemoteHost(
+        host = UnixHost(
             ip='10.0.0.1', ne='router', creds={'u': 'p'},
             term='ssh', log=False,
         )
@@ -312,7 +312,7 @@ class TestRemoteHostInteractDispatch:
         fake_conn = object()
         host._connections.ssh = AsyncMock(return_value=fake_conn)  # type: ignore[method-assign]
 
-        with patch('otto.host.remoteHost.run_ssh_login', new=AsyncMock()) as mock_ssh_login:
+        with patch('otto.host.unixHost.run_ssh_login', new=AsyncMock()) as mock_ssh_login:
             await host._interact()
 
         mock_ssh_login.assert_awaited_once()
@@ -323,9 +323,9 @@ class TestRemoteHostInteractDispatch:
 
     @pytest.mark.asyncio
     async def test_telnet_dispatch_builds_dedicated_interactive_client(self):
-        from otto.host.remoteHost import RemoteHost
+        from otto.host.unixHost import UnixHost
 
-        host = RemoteHost(
+        host = UnixHost(
             ip='10.0.0.1', ne='router', creds={'u': 'p'},
             term='telnet', log=False,
         )
@@ -334,8 +334,8 @@ class TestRemoteHostInteractDispatch:
         fake_client = AsyncMock()
         fake_client.connect = AsyncMock()
         fake_client.close = AsyncMock()
-        with patch('otto.host.remoteHost.TelnetClient', return_value=fake_client) as mock_cls, \
-             patch('otto.host.remoteHost.run_telnet_login', new=AsyncMock()) as mock_login:
+        with patch('otto.host.unixHost.TelnetClient', return_value=fake_client) as mock_cls, \
+             patch('otto.host.unixHost.run_telnet_login', new=AsyncMock()) as mock_login:
             await host._interact()
 
         # A fresh client was constructed with auto_window_resize=True.

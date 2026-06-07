@@ -8,10 +8,16 @@ local and remote machines.
 
    host
    remotehost
+   unixhost
+   embeddedhost
    localhost
    transfer
+   embedded_transfer
+   embedded_filesystem
    session
    connections
    transport
    repeat
    telnet
+   adding_an_embedded_os
+   adding_an_embedded_filesystem

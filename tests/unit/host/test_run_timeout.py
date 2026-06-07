@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from otto.host.localHost import LocalHost
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.utils import CommandStatus, Status
 
 
@@ -20,16 +20,16 @@ from otto.utils import CommandStatus, Status
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def host() -> RemoteHost:
-    """Bare RemoteHost, no connections established."""
-    return RemoteHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+def host() -> UnixHost:
+    """Bare UnixHost, no connections established."""
+    return UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
 
 
 class TestRunTimeout:
     """Unit tests for deadline-based timeout propagation."""
 
     @pytest.mark.asyncio
-    async def test_no_timeout_passes_none_to_run_one(self, host: RemoteHost):
+    async def test_no_timeout_passes_none_to_run_one(self, host: UnixHost):
         """Without timeout, _run_one receives no explicit timeout."""
         ok = CommandStatus('echo hi', 'hi', Status.Success, 0)
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
@@ -37,7 +37,7 @@ class TestRunTimeout:
         mock.assert_called_once_with('echo hi', expects=None, timeout=None)
 
     @pytest.mark.asyncio
-    async def test_timeout_passes_remaining_to_run_one(self, host: RemoteHost):
+    async def test_timeout_passes_remaining_to_run_one(self, host: UnixHost):
         """With a timeout, each _run_one receives the remaining budget."""
         ok = CommandStatus('cmd', 'ok', Status.Success, 0)
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
@@ -52,7 +52,7 @@ class TestRunTimeout:
         assert first_timeout > second_timeout  # budget decreases
 
     @pytest.mark.asyncio
-    async def test_budget_exhausted_skips_remaining_commands(self, host: RemoteHost):
+    async def test_budget_exhausted_skips_remaining_commands(self, host: UnixHost):
         """When the budget runs out, remaining commands are skipped."""
         async def slow_cmd(cmd, **kwargs):
             # Simulate a command that takes nearly all the budget
@@ -71,7 +71,7 @@ class TestRunTimeout:
         assert len(skipped) >= 1
 
     @pytest.mark.asyncio
-    async def test_fast_commands_donate_surplus(self, host: RemoteHost):
+    async def test_fast_commands_donate_surplus(self, host: UnixHost):
         """Fast commands leave surplus for later commands."""
         call_timeouts: list[float] = []
 

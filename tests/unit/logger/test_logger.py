@@ -84,6 +84,29 @@ def test_removeOldLogs_old_logs_exist_different_command(caplog):
     logrecord = caplog.records[0]
     assert logrecord.message == '[magenta]Deleting log directories that are more than 0 days old'
 
+def test_removeOldLogs_ignores_non_output_entries():
+    """Stray files and non-output directories must never be pruned.
+
+    Regression guard: with a misconfigured ``xdir`` (e.g. left pointing at the
+    repo root by a leaked global), the old code walked real content and called
+    ``rmtree('docs/conf.py')`` → NotADirectoryError. Only timestamped output
+    directories may be pruned, even when the strays are older than the cutoff.
+    """
+    cmd_dir = logger.xdir / 'pytest'
+    stray_file = cmd_dir / 'conf.py'
+    stray_file.write_text('not a log dir')
+    stray_dir = cmd_dir / 'guide'
+    stray_dir.mkdir()
+    _backdate(stray_file, seconds=3600)
+    _backdate(stray_dir, seconds=3600)
+
+    # Must not raise, and must leave both strays untouched.
+    logger.removeOldLogs(seconds=60)
+
+    assert stray_file.exists(), 'removeOldLogs deleted a stray file'
+    assert stray_dir.exists(), 'removeOldLogs deleted a non-output directory'
+
+
 def test_removeOldLogs_old_logs_do_not_exist(tmpdir, caplog):
 
     xdir = logger.xdir

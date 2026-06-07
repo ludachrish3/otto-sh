@@ -50,7 +50,7 @@ class TestTestHelp:
         assert result.exit_code == 0
 
     def test_suite_help_shows_options(self):
-        """otto test <SuiteName> --help must list suite-specific options."""
+        """Otto test <SuiteName> --help must list suite-specific options."""
         @register_suite()
         class _HelpSuite:
             @dataclass
@@ -195,7 +195,8 @@ class TestRunSuiteInternals:
     def test_monitor_flags_reach_otto_plugin(self, tmp_path):
         """run_suite must hand --monitor settings to OttoPlugin and default the
         output path to ``<output_dir>/monitor.json`` when the user didn't
-        supply ``--monitor-output``."""
+        supply ``--monitor-output``.
+        """
         import otto.cli.test as test_module
 
         mock_logger = MagicMock()
@@ -639,6 +640,7 @@ class TestRunCoverageDestination:
 
     def _invoke(self, *, log_dir, override):
         import asyncio
+
         from otto.cli.test import _run_coverage
 
         repo = MagicMock()
@@ -649,9 +651,11 @@ class TestRunCoverageDestination:
         fetcher_instance.fetch_all = AsyncMock(return_value={})
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
+        from otto.host import UnixHost
         with patch('otto.cli.test._get_cov_config',
                    return_value={'gcda_remote_dir': '/remote'}), \
-             patch('otto.configmodule.all_hosts', return_value=[MagicMock()]), \
+             patch('otto.configmodule.all_hosts',
+                   return_value=[MagicMock(spec=UnixHost)]), \
              patch('otto.coverage.fetcher.remote.GcdaFetcher',
                    return_value=fetcher_instance) as fetcher_cls:
             asyncio.run(_run_coverage([repo], log_dir, override))
@@ -670,6 +674,310 @@ class TestRunCoverageDestination:
         log_dir.mkdir()
         fetcher_cls = self._invoke(log_dir=log_dir, override=None)
         fetcher_cls.assert_called_once_with(log_dir / 'cov')
+
+
+class TestRunCoverageEmbedded:
+    """``_run_coverage`` collects embedded hosts even with no Unix gcda_remote_dir."""
+
+    def test_collects_embedded_when_only_embedded_configured(self, tmp_path):
+        import asyncio
+
+        from otto.cli.test import _run_coverage
+
+        repo = MagicMock()
+        log_dir = tmp_path / 'log'
+        log_dir.mkdir()
+
+        embedded_collect = AsyncMock(
+            return_value={'sprout': tmp_path / 'cov' / 'sprout'},
+        )
+        with patch('otto.cli.test._get_cov_config',
+                   return_value={'embedded': {'extension': 'cov_ext'}}), \
+             patch('otto.configmodule.all_hosts', return_value=[]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=None):
+            asyncio.run(_run_coverage([repo], log_dir, None))
+
+        embedded_collect.assert_awaited_once()
+
+    def test_unix_hop_host_not_treated_as_coverage_target(self, tmp_path):
+        """A Unix SSH hop in the lab must not pollute the embedded meta.
+
+        An embedded coverage lab must include the SSH hop (e.g. ``basil``
+        fronting ``sprout_cov``) so the hop resolves — but the hop is
+        infrastructure, not a coverage target, and emits no ``.gcda``. The meta
+        must therefore (a) keep ``sut_dir`` = the embedded build dir (the hop must
+        not flip it to the repo dir, which breaks ``.gcno`` discovery and made
+        ``geninfo`` skip the file on the real lab) and (b) carry only the embedded
+        host's toolchain, not the hop's. Regression for the basil-hop report bug.
+        """
+        import asyncio
+        import json
+        from pathlib import Path
+
+        from otto.cli.test import _run_coverage
+        from otto.host import UnixHost
+        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.toolchain import Toolchain
+
+        cov_dir = tmp_path / 'cov'
+        cov_dir.mkdir()
+        build_dir = tmp_path / 'build' / 'cov_ext_app'
+        build_dir.mkdir(parents=True)
+
+        repo = MagicMock()
+        repo.name = 'repo3'
+        repo.sutDir = tmp_path / 'repo3'  # NOT what sut_dir should resolve to
+
+        hop = MagicMock(spec=UnixHost)
+        hop.id = 'basil_seed'  # a Unix hop, produces no coverage
+
+        sprout_cov = EmbeddedHost(
+            ip='192.0.2.33', ne='sprout_cov', transfer='console',
+            toolchain=Toolchain(
+                sysroot=Path('/opt/sdk/arm-zephyr-eabi'),
+                gcov=Path('bin/arm-zephyr-eabi-gcov'),
+                lcov=Path('/usr/bin/lcov'),
+            ),
+        )
+
+        embedded_collect = AsyncMock(
+            return_value={'sprout_cov': cov_dir / 'sprout_cov'},
+        )
+        cov_config = {
+            'embedded': {
+                'extension': 'cov_ext',
+                'build_dir': str(build_dir),
+            },
+        }
+        with patch('otto.cli.test._get_cov_config', return_value=cov_config), \
+             patch('otto.configmodule.all_hosts', return_value=[hop, sprout_cov]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=repo):
+            asyncio.run(_run_coverage([repo], tmp_path / 'log', cov_dir))
+
+        meta = json.loads((cov_dir / '.otto_cov_meta.json').read_text())
+        assert meta['sut_dir'] == str(build_dir.resolve())
+        assert set(meta['toolchains']) == {'sprout_cov'}
+        assert 'basil_seed' not in meta['toolchains']
+
+    def test_embedded_toolchain_is_per_host(self, tmp_path):
+        """Each embedded host's coverage toolchain comes from host.toolchain."""
+        import asyncio
+        import json
+        from pathlib import Path
+
+        from otto.cli.test import _run_coverage
+        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.toolchain import Toolchain
+
+        host = EmbeddedHost(
+            ip='192.0.2.33', ne='sprout_cov', transfer='console',
+            toolchain=Toolchain(
+                sysroot=Path('/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi'),
+                gcov=Path('bin/arm-zephyr-eabi-gcov'),
+                lcov=Path('/usr/bin/lcov'),
+            ),
+        )
+        cov_dir = tmp_path / 'cov'
+        cov_dir.mkdir()
+        build_dir = tmp_path / 'build'
+        (build_dir / 'zephyr').mkdir(parents=True)
+
+        repo = MagicMock()
+        repo.name = 'repo3'
+        repo.sutDir = tmp_path / 'repo3'
+
+        embedded_collect = AsyncMock(
+            return_value={'sprout_cov': cov_dir / 'sprout_cov'},
+        )
+        cov_config = {
+            'embedded': {
+                'extension': 'cov_ext',
+                'build_dir': str(build_dir),
+            },
+        }
+        with patch('otto.cli.test._get_cov_config', return_value=cov_config), \
+             patch('otto.configmodule.all_hosts', return_value=[host]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=repo):
+            asyncio.run(_run_coverage([repo], tmp_path / 'log', cov_dir))
+
+        meta = json.loads((cov_dir / '.otto_cov_meta.json').read_text())
+        entry = meta['toolchains']['sprout_cov']
+        assert entry['gcov'] == 'bin/arm-zephyr-eabi-gcov'
+        assert entry['sysroot'] == '/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi'
+        assert entry['lcov'] == '/usr/bin/lcov'
+
+    def test_embedded_toolchain_falls_back_to_gcno_discovery(self, tmp_path):
+        """A host left at the default Toolchain() resolves via .gcno discovery."""
+        import asyncio
+        import json
+        from pathlib import Path
+
+        from otto.cli import test as test_mod
+        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.toolchain import Toolchain
+
+        host = EmbeddedHost(ip='192.0.2.33', ne='sprout_cov', transfer='console')
+        # No toolchain configured -> default Toolchain() -> discovery fallback.
+        cov_dir = tmp_path / 'cov'
+        cov_dir.mkdir()
+        build_dir = tmp_path / 'build'
+        build_dir.mkdir()
+
+        repo = MagicMock()
+        repo.name = 'repo3'
+        repo.sutDir = tmp_path / 'repo3'
+
+        embedded_collect = AsyncMock(
+            return_value={'sprout_cov': cov_dir / 'sprout_cov'},
+        )
+        cov_config = {
+            'embedded': {
+                'extension': 'cov_ext',
+                'build_dir': str(build_dir),
+            },
+        }
+
+        discovered = Toolchain(
+            sysroot=Path('/discovered'),
+            gcov=Path('bin/x-gcov'),
+            lcov=Path('/usr/bin/lcov'),
+        )
+
+        async def _fake_discover(build_dir_arg, localhost, work_dir):
+            return discovered
+
+        with patch('otto.cli.test._get_cov_config', return_value=cov_config), \
+             patch('otto.configmodule.all_hosts', return_value=[host]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=repo), \
+             patch('otto.host.toolchain_discovery.discover_toolchain_from_gcno',
+                   new=_fake_discover):
+            asyncio.run(test_mod._run_coverage([repo], tmp_path / 'log', cov_dir))
+
+        meta = json.loads((cov_dir / '.otto_cov_meta.json').read_text())
+        assert meta['toolchains']['sprout_cov']['gcov'] == 'bin/x-gcov'
+        assert meta['toolchains']['sprout_cov']['sysroot'] == '/discovered'
+
+    def test_coverage_hosts_regex_passed_to_both_selectors(self, tmp_path):
+        """``[coverage].hosts`` compiles to a regex handed to the Unix and
+        embedded host selectors, so the collect-from set is repo-declared
+        rather than inferred from which hosts happened to emit ``.gcda``.
+        """
+        import asyncio
+
+        from otto.cli.test import _run_coverage
+
+        repo = MagicMock()
+        log_dir = tmp_path / 'log'
+        log_dir.mkdir()
+
+        all_hosts_mock = MagicMock(return_value=[])
+        embedded_collect = AsyncMock(return_value={})
+        with patch('otto.cli.test._get_cov_config',
+                   return_value={'hosts': 'sprout_cov',
+                                 'embedded': {'extension': 'cov_ext'}}), \
+             patch('otto.configmodule.all_hosts', new=all_hosts_mock), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=None):
+            asyncio.run(_run_coverage([repo], log_dir, None))
+
+        unix_pat = all_hosts_mock.call_args.kwargs.get('pattern')
+        assert unix_pat is not None
+        assert unix_pat.search('sprout_cov') and not unix_pat.search('basil_seed')
+
+        emb_pat = embedded_collect.await_args.kwargs.get('pattern')
+        assert emb_pat is not None and emb_pat.pattern == 'sprout_cov'
+
+    def test_unset_coverage_hosts_passes_no_pattern(self, tmp_path):
+        """Unset ``[coverage].hosts`` → ``pattern=None`` (collect from all hosts)."""
+        import asyncio
+
+        from otto.cli.test import _run_coverage
+
+        repo = MagicMock()
+        log_dir = tmp_path / 'log'
+        log_dir.mkdir()
+
+        all_hosts_mock = MagicMock(return_value=[])
+        embedded_collect = AsyncMock(return_value={})
+        with patch('otto.cli.test._get_cov_config',
+                   return_value={'embedded': {'extension': 'cov_ext'}}), \
+             patch('otto.configmodule.all_hosts', new=all_hosts_mock), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=None):
+            asyncio.run(_run_coverage([repo], log_dir, None))
+
+        assert all_hosts_mock.call_args.kwargs.get('pattern') is None
+        assert embedded_collect.await_args.kwargs.get('pattern') is None
+
+    def test_per_version_source_roots_recorded(self, tmp_path):
+        """Two embedded hosts of different osVersion each record their own build_dir
+        as a per-host source root in the meta (multi-Zephyr-version coverage).
+        """
+        import asyncio
+        import json
+        from pathlib import Path
+
+        from otto.cli.test import _run_coverage
+        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.toolchain import Toolchain
+
+        cov_dir = tmp_path / 'cov'
+        cov_dir.mkdir()
+        build37 = tmp_path / 'build' / 'v3_7'
+        build37.mkdir(parents=True)
+        build44 = tmp_path / 'build' / 'v4_4'
+        build44.mkdir(parents=True)
+
+        repo = MagicMock()
+        repo.name = 'repo3'
+        repo.sutDir = tmp_path / 'repo3'
+
+        sprout = EmbeddedHost(
+            ip='192.0.2.33', ne='sprout', transfer='console', osVersion='3.7',
+            toolchain=Toolchain(
+                sysroot=Path('/opt/sdk37/arm-zephyr-eabi'),
+                gcov=Path('bin/arm-zephyr-eabi-gcov'), lcov=Path('/usr/bin/lcov')),
+        )
+        sprout44 = EmbeddedHost(
+            ip='192.0.2.34', ne='sprout44', transfer='console', osVersion='4.4',
+            toolchain=Toolchain(
+                sysroot=Path('/opt/sdk44/gnu/arm-zephyr-eabi'),
+                gcov=Path('bin/arm-zephyr-eabi-gcov'), lcov=Path('/usr/bin/lcov')),
+        )
+
+        embedded_collect = AsyncMock(return_value={
+            'sprout': cov_dir / 'sprout',
+            'sprout44': cov_dir / 'sprout44',
+        })
+        cov_config = {
+            'embedded': {
+                'extension': 'cov_ext',
+                'builds': {
+                    '3.7': {'build_dir': str(build37)},
+                    '4.4': {'build_dir': str(build44)},
+                },
+            },
+        }
+        with patch('otto.cli.test._get_cov_config', return_value=cov_config), \
+             patch('otto.configmodule.all_hosts', return_value=[sprout, sprout44]), \
+             patch('otto.coverage.fetcher.embedded.collect_embedded_coverage',
+                   new=embedded_collect), \
+             patch('otto.cli.test._get_cov_repo', return_value=repo):
+            asyncio.run(_run_coverage([repo], tmp_path / 'log', cov_dir))
+
+        meta = json.loads((cov_dir / '.otto_cov_meta.json').read_text())
+        assert meta['source_roots']['sprout'] == str(build37.resolve())
+        assert meta['source_roots']['sprout44'] == str(build44.resolve())
 
 
 # ── --cov-report option (report generation alongside collection) ─────────────

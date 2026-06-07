@@ -10,6 +10,7 @@ from otto.coverage.reporter import (
     CoverageReporter,
     discover_gcda_dirs,
     read_cov_source_root,
+    read_cov_source_roots,
 )
 
 
@@ -74,6 +75,43 @@ class TestDiscoverGcdaDirs:
         result = discover_gcda_dirs([cov_dir])
         assert len(result) == 1
         assert result[0].name == "host1"
+
+
+class TestReadCovSourceRoots:
+
+    def test_read_cov_source_roots(self, tmp_path):
+        cov = tmp_path / "cov"
+        cov.mkdir()
+        (cov / ".otto_cov_meta.json").write_text(json.dumps({
+            "sut_dir": "/x", "toolchains": {},
+            "source_roots": {"sprout": "/b/v3_7", "sprout44": "/b/v4_4"},
+        }))
+        assert read_cov_source_roots([cov]) == {"sprout": Path("/b/v3_7"),
+                                                "sprout44": Path("/b/v4_4")}
+
+    def test_read_cov_source_roots_missing_meta_returns_empty(self, tmp_path):
+        assert read_cov_source_roots([tmp_path / "nope"]) == {}
+
+    def test_read_cov_source_roots_no_key_returns_empty(self, tmp_path):
+        cov = tmp_path / "cov"
+        cov.mkdir()
+        (cov / ".otto_cov_meta.json").write_text(json.dumps({"sut_dir": "/x"}))
+        assert read_cov_source_roots([cov]) == {}
+
+
+class TestCoverageReporterPerHostGcno:
+
+    def test_per_host_gcno_dirs_uses_source_roots_then_fallback(self, tmp_path):
+        gcda_dirs = [tmp_path / "cov" / "sprout", tmp_path / "cov" / "sprout44",
+                     tmp_path / "cov" / "other"]
+        root_a = tmp_path / "build_v3_7"
+        root_b = tmp_path / "build_v4_4"
+        fallback = tmp_path / "fallback"
+        r = CoverageReporter(
+            gcda_dirs=gcda_dirs, source_root=fallback, output_dir=tmp_path / "out",
+            source_roots={"sprout": root_a, "sprout44": root_b},
+        )
+        assert r._per_host_gcno_dirs() == [root_a, root_b, fallback]  # 3rd falls back
 
 
 class TestCoverageReporter:

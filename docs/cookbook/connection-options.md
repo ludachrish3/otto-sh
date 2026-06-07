@@ -4,7 +4,7 @@ Each network protocol otto speaks — SSH, Telnet, SFTP, SCP, FTP,
 netcat — has a dedicated options dataclass in
 [`otto.host.options`](../../src/otto/host/options.py).  The default
 constructor of each class reproduces otto's historical behavior, so
-dropping an options object onto an existing `RemoteHost` never changes
+dropping an options object onto an existing `UnixHost` never changes
 how it connects.
 
 Options can be set in three places, layered lowest-to-highest:
@@ -80,10 +80,10 @@ for shared conventions and others its overlays.
 ## Non-standard SSH port
 
 ```python
-from otto.host import RemoteHost
+from otto.host import UnixHost
 from otto.host.options import SshOptions
 
-host = RemoteHost(
+host = UnixHost(
     ip='10.10.200.12',
     creds={'admin': 'secret'},
     ne='lab',
@@ -278,7 +278,7 @@ instance you want — there is no per-key merge at this layer.
 ```
 
 ```{note}
-Hop hosts (`RemoteHost.hop`) are resolved internally via `get_host()`.
+Hop hosts (`UnixHost.hop`) are resolved internally via `get_host()`.
 A per-call override on the parent host does **not** flow into hop
 resolution.
 ```

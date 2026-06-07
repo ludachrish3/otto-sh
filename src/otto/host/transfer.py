@@ -1,5 +1,5 @@
 """
-File transfer utilities for RemoteHost.
+File transfer utilities for UnixHost.
 
 Defines the canonical TransferProgressHandler callback type used across all
 transfer protocols (SCP, SFTP, FTP, netcat).  Rich (or any other progress
@@ -11,6 +11,7 @@ can forward it directly without any adaptation layer.
 """
 
 import asyncio
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -132,6 +133,130 @@ async def _acquire_shared_progress() -> AsyncIterator[Progress]:
 
 
 FileTransferType = Literal['scp', 'sftp', 'ftp', 'nc']
+
+
+def validate_filename_lengths(
+    files: list[Path], limit: int, host_name: str,
+) -> tuple[Status, str]:
+    """Reject files whose basename exceeds the host's filesystem cap.
+
+    Shared by :class:`FileTransfer` (Unix) and :class:`~otto.host.
+    embedded_transfer.EmbeddedFileTransfer` (embedded) so every backend
+    surfaces the same self-explaining error. Without this guard the
+    failure modes are:
+
+    - Unix SCP/SFTP/FTP: server returns ``File name too long`` (errno 36),
+      mid-transfer, after the local file is already read.
+    - Embedded FAT (8.3, no LFN) or LittleFS over ``NAME_MAX``: device
+      fails ``fs_open`` with ``-ENOENT``, giving no hint that the *name*
+      was the problem.
+
+    Returns ``(Status.Success, '')`` when every basename fits.
+    """
+    for path in files:
+        name = path.name
+        if len(name) > limit:
+            return Status.Error, (
+                f"filename {name!r} ({len(name)} chars) exceeds the "
+                f"{limit}-character basename limit for host "
+                f"{host_name!r}. The target filesystem cannot open longer "
+                f"names — rename the file or raise the firmware/filesystem "
+                f"limit (``CONFIG_FS_FATFS_MAX_LFN`` for FAT, "
+                f"``CONFIG_FS_LITTLEFS_NAME_MAX`` for LittleFS; ``NAME_MAX`` "
+                f"on POSIX)."
+            )
+    return Status.Success, ''
+
+
+class BaseFileTransfer(ABC):
+    """Shared API + progress plumbing for any file-transfer backend.
+
+    The public ``put_files`` / ``get_files`` surface (filename-length
+    validation, shared Rich progress acquisition) is owned by this base.
+    Concrete backends (Unix's :class:`FileTransfer`, embedded's
+    :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`, and any
+    future ones such as TFTP) implement two abstract methods —
+    ``_run_put`` and ``_run_get`` — both of which receive a
+    :data:`TransferProgressFactory` and are responsible for invoking it
+    at least once per source file, terminating with
+    ``bytes_done == bytes_total`` to mark completion.
+
+    The progress-bar capability is enforced at the *type system* level:
+    ``abc.abstractmethod`` refuses to instantiate a subclass that omits
+    either method, so a new backend cannot be defined without supplying a
+    way to report progress. The runtime contract test
+    (``TestTransferProgressContract``) verifies the factory is actually
+    invoked, not just that the methods exist.
+    """
+
+    def __init__(self, name: str, max_filename_len: int = 255) -> None:
+        self._name = name
+        self._max_filename_len = max_filename_len
+
+    async def put_files(
+        self,
+        srcFiles: list[Path],
+        destDir: Path,
+        show_progress: bool = True,
+    ) -> tuple[Status, str]:
+        status, err = validate_filename_lengths(
+            srcFiles, self._max_filename_len, self._name,
+        )
+        if not status.is_ok:
+            return status, err
+        if not show_progress:
+            return await self._run_put(srcFiles, destDir, None)
+        async with _acquire_shared_progress() as progress:
+            return await self._run_put(
+                srcFiles, destDir,
+                make_rich_progress_factory(progress, self._name),
+            )
+
+    async def get_files(
+        self,
+        srcFiles: list[Path],
+        destDir: Path,
+        show_progress: bool = True,
+    ) -> tuple[Status, str]:
+        status, err = validate_filename_lengths(
+            srcFiles, self._max_filename_len, self._name,
+        )
+        if not status.is_ok:
+            return status, err
+        if not show_progress:
+            return await self._run_get(srcFiles, destDir, None)
+        async with _acquire_shared_progress() as progress:
+            return await self._run_get(
+                srcFiles, destDir,
+                make_rich_progress_factory(progress, self._name),
+            )
+
+    @abstractmethod
+    async def _run_put(
+        self,
+        srcFiles: list[Path],
+        destDir: Path,
+        progress_factory: 'TransferProgressFactory | None',
+    ) -> tuple[Status, str]:
+        """Backend-specific put implementation.
+
+        For each src file the implementation must call
+        ``progress_factory()`` (if not ``None``) to obtain a fresh
+        :data:`TransferProgressHandler`, then invoke that handler as bytes
+        complete — at minimum once with ``bytes_done == bytes_total`` so
+        the file's progress bar reaches 100%.
+        """
+
+    @abstractmethod
+    async def _run_get(
+        self,
+        srcFiles: list[Path],
+        destDir: Path,
+        progress_factory: 'TransferProgressFactory | None',
+    ) -> tuple[Status, str]:
+        """Backend-specific get implementation. Same progress contract as
+        :meth:`_run_put`."""
+
 
 NcPortStrategy = Literal['auto', 'ss', 'netstat', 'python', 'proc', 'custom']
 """Strategy for finding free ports on the remote host for netcat transfers.
@@ -307,11 +432,15 @@ def _make_sftp_progress(
     return adapted
 
 
-class FileTransfer:
-    """Handles all file-transfer protocols (SCP, SFTP, FTP, netcat) for a RemoteHost.
+class FileTransfer(BaseFileTransfer):
+    """Handles all file-transfer protocols (SCP, SFTP, FTP, netcat) for a UnixHost.
 
     Receives injectable callables for open_session and oneshot so it can be tested
     without real connections.
+
+    Inherits ``put_files`` / ``get_files`` from :class:`BaseFileTransfer`;
+    implements the abstract ``_run_put`` / ``_run_get`` as protocol dispatch
+    on ``self.transfer``.
     """
 
     def __init__(
@@ -323,9 +452,10 @@ class FileTransfer:
         scp_options: 'ScpOptions',
         get_local_ip: Callable[[], str],
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
+        max_filename_len: int = 255,
     ) -> None:
+        super().__init__(name=name, max_filename_len=max_filename_len)
         self._connections = connections
-        self._name = name
         self.transfer = transfer
         self._nc_options = nc_options
         self._scp_options = scp_options
@@ -384,44 +514,14 @@ class FileTransfer:
         return max(1, int(self._nc_options.listener_timeout))
 
     # ------------------------------------------------------------------
-    # Public API
+    # Protocol dispatch (implements BaseFileTransfer's abstract methods)
     # ------------------------------------------------------------------
 
-    async def get_files(
+    async def _run_get(
         self,
         srcFiles: list[Path],
         destDir: Path,
-        show_progress: bool = True,
-    ) -> tuple[Status, str]:
-        if not show_progress:
-            return await self._get_files(srcFiles, destDir, None)
-        async with _acquire_shared_progress() as progress:
-            return await self._get_files(
-                srcFiles, destDir, make_rich_progress_factory(progress, self._name),
-            )
-
-    async def put_files(
-        self,
-        srcFiles: list[Path],
-        destDir: Path,
-        show_progress: bool = True,
-    ) -> tuple[Status, str]:
-        if not show_progress:
-            return await self._put_files(srcFiles, destDir, None)
-        async with _acquire_shared_progress() as progress:
-            return await self._put_files(
-                srcFiles, destDir, make_rich_progress_factory(progress, self._name),
-            )
-
-    # ------------------------------------------------------------------
-    # Protocol dispatch
-    # ------------------------------------------------------------------
-
-    async def _get_files(
-        self,
-        srcFiles: list[Path],
-        destDir: Path,
-        progress_factory: TransferProgressFactory | None = None,
+        progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
         match self.transfer:
             case 'scp':
@@ -435,11 +535,11 @@ class FileTransfer:
             case _:
                 raise ValueError(f'{self._name}: unsupported file_transfer "{self.transfer}"')
 
-    async def _put_files(
+    async def _run_put(
         self,
         srcFiles: list[Path],
         destDir: Path,
-        progress_factory: TransferProgressFactory | None = None,
+        progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
         match self.transfer:
             case 'scp':

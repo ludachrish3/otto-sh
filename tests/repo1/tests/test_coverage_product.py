@@ -29,7 +29,7 @@ from otto.configmodule.configmodule import (
     do_for_all_hosts,
 )
 from otto.host import LocalHost
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.logger import getOttoLogger
 from otto.suite import OttoSuite, register_suite
 from otto.suite.plugin import otto_cov_key
@@ -41,7 +41,7 @@ PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
 GCDA_REMOTE_DIR = "/var/coverage/product"
 
-# Match bare RemoteHost ids (e.g. ``pepper_seed``) and exclude the
+# Match bare UnixHost ids (e.g. ``pepper_seed``) and exclude the
 # dotted ``<parent>.<project>.<service>`` ids of DockerContainerHost
 # placeholders that ``register_declared_container_hosts`` synthesizes
 # at lab-load time. Coverage runs target compile-and-run hosts only —
@@ -66,7 +66,7 @@ async def _compile_product() -> None:
         await localhost.close()
 
 
-async def _install_on_host(host: RemoteHost) -> None:
+async def _install_on_host(host: UnixHost) -> None:
     """Deploy the compiled product binary to a remote host."""
     # Create directories on remote
     await host.oneshot(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
@@ -85,13 +85,13 @@ async def _install_on_host(host: RemoteHost) -> None:
     logger.info("Installed product on %s", host.id)
 
 
-async def _uninstall_from_host(host: RemoteHost) -> None:
+async def _uninstall_from_host(host: UnixHost) -> None:
     """Remove the product and coverage data from a remote host."""
     await host.oneshot(f"sudo rm -rf {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
     logger.info("Uninstalled product from %s", host.id)
 
 
-async def _run_product(host: RemoteHost, op: str, *args: int) -> str:
+async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     """Run the product on a remote host with GCOV_PREFIX set.
 
     Returns the stdout output from the product.
@@ -140,7 +140,7 @@ class TestCoverageProduct(OttoSuite[_Options]):
         if cov_active:
             # Only remove the binary; leave .gcda files for post-test fetch.
             await do_for_all_hosts(
-                RemoteHost.oneshot,
+                UnixHost.oneshot,
                 f"sudo rm -rf {REMOTE_INSTALL_DIR}",
                 timeout=10,
                 pattern=_REAL_HOSTS,

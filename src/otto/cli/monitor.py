@@ -80,8 +80,15 @@ def monitor(
     from ..reservations import gate
     gate(tryGetConfigModule())
 
+    from ..host import UnixHost
     pattern = re.compile(hosts) if hosts else None
-    selected = list(all_hosts(pattern=pattern))
+    # Monitorable hosts: any Unix host (shell metrics), plus any host declaring
+    # an `snmp` block (collected over SNMP — this is how embedded targets, which
+    # can't share their single shell session, get monitored).
+    selected = [
+        h for h in all_hosts(pattern=pattern)
+        if isinstance(h, UnixHost) or getattr(h, 'snmp', None) is not None
+    ]
     if not selected:
         msg = (
             f'No hosts match regex "{hosts}".'

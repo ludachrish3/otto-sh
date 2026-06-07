@@ -1,9 +1,18 @@
 """
-Shared integration tests that run against all host backends (SSH, Telnet, Local).
+Unix-host integration tests (formerly tests/unit/host/test_host_integration.py).
 
-These test session-level behavior that is common across all host types.
-Remote-only tests (file transfer protocols, multi-host, credentials) stay
-in test_remoteHost.py.
+These exercise behavior that is **specific to a POSIX shell** — bash builtins
+(``echo``, ``cd``, ``export``), Linux commands (``uname -s``, ``ls``), and
+transfer protocols (scp/sftp/ftp/nc). The contract these tests assert is
+"this is what a Unix host does", not "this is what every otto host does";
+the cross-OS contract lives in :mod:`test_host_contract` and is parametrized
+over Unix and Zephyr backends both.
+
+The file was renamed from ``test_host_integration`` and moved out of the
+unit tree because it has no unit-test scope (every test carries
+``@pytest.mark.integration`` and requires a Vagrant test VM). The
+parametrized ``host1`` fixture lives in :mod:`tests.conftest` and resolves
+``ssh`` / ``telnet`` / ``local`` to :class:`UnixHost` / :class:`LocalHost`.
 """
 
 import logging

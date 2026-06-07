@@ -13,7 +13,7 @@ from asyncssh import SSHClientConnection
 
 from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions, ScpOptions
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.host.transport import SshHopTransport
 
 
@@ -22,15 +22,15 @@ from otto.host.transport import SshHopTransport
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def host() -> RemoteHost:
+def host() -> UnixHost:
     """A simple host with no hop."""
-    return RemoteHost(ip='10.0.0.1', ne='target', creds={'user': 'pass'}, log=False)
+    return UnixHost(ip='10.0.0.1', ne='target', creds={'user': 'pass'}, log=False)
 
 
 @pytest.fixture
-def hop_host() -> RemoteHost:
+def hop_host() -> UnixHost:
     """A host configured with a hop."""
-    return RemoteHost(
+    return UnixHost(
         ip='10.0.0.2', ne='target', creds={'user': 'pass'},
         hop='jumpbox', log=False,
     )
@@ -42,16 +42,16 @@ def hop_host() -> RemoteHost:
 
 class TestHopField:
 
-    def test_default_hop_is_none(self, host: RemoteHost):
+    def test_default_hop_is_none(self, host: UnixHost):
         assert host.hop is None
 
-    def test_hop_field_set(self, hop_host: RemoteHost):
+    def test_hop_field_set(self, hop_host: UnixHost):
         assert hop_host.hop == 'jumpbox'
 
-    def test_no_tunnel_when_no_hop(self, host: RemoteHost):
+    def test_no_tunnel_when_no_hop(self, host: UnixHost):
         assert not host._connections.has_tunnel
 
-    def test_has_tunnel_when_hop_set(self, hop_host: RemoteHost):
+    def test_has_tunnel_when_hop_set(self, hop_host: UnixHost):
         assert hop_host._connections.has_tunnel
 
 
@@ -317,7 +317,7 @@ class TestTunnelCleanup:
 class TestRebuildConnections:
 
     def test_rebuild_adds_tunnel(self):
-        host = RemoteHost(ip='10.0.0.1', ne='target', creds={'user': 'pass'}, log=False)
+        host = UnixHost(ip='10.0.0.1', ne='target', creds={'user': 'pass'}, log=False)
         assert not host._connections.has_tunnel
 
         host.hop = 'some_hop'
@@ -325,7 +325,7 @@ class TestRebuildConnections:
         assert host._connections.has_tunnel
 
     def test_rebuild_removes_tunnel(self):
-        host = RemoteHost(
+        host = UnixHost(
             ip='10.0.0.1', ne='target', creds={'user': 'pass'},
             hop='some_hop', log=False,
         )
@@ -625,8 +625,8 @@ class TestCycleDetection:
     @pytest.mark.asyncio
     async def test_cycle_detection_in_tunnel_factory(self):
         """Verify that circular hop references are detected."""
-        host_a = RemoteHost(ip='10.0.0.1', ne='hostA', creds={'user': 'pass'}, hop='hostb', log=False)
-        host_b = RemoteHost(ip='10.0.0.2', ne='hostB', creds={'user': 'pass'}, hop='hosta', log=False)
+        host_a = UnixHost(ip='10.0.0.1', ne='hostA', creds={'user': 'pass'}, hop='hostb', log=False)
+        host_b = UnixHost(ip='10.0.0.2', ne='hostB', creds={'user': 'pass'}, hop='hosta', log=False)
 
         # Patch before _build_hop_transport so the deferred import picks up the mock
         with patch('otto.configmodule.get_host') as mock_get_host:

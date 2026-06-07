@@ -12,7 +12,7 @@ plus a ``post_connect`` hook together forward the full power of asyncssh
 
 Example::
 
-    host = RemoteHost(
+    host = UnixHost(
         ip='10.0.0.1',
         creds={'admin': 'secret'},
         ne='lab',
@@ -199,6 +199,17 @@ class TelnetOptions:
     port: int = 23
     """TCP port for the telnet connection."""
 
+    write_chunk_size: int = 0
+    """Split each command write into chunks of at most this many bytes. ``0``
+    (default) writes the whole payload in one call — correct for a
+    host-terminated telnet shell (x86 + E1000). A positive value paces the
+    write so a UART-backed RTOS shell behind a ``-serial telnet:`` bridge
+    doesn't overrun its console RX FIFO on a multi-KB ``llext load_hex`` line."""
+
+    write_chunk_delay: float = 0.0
+    """Seconds to pause between chunked writes (see :attr:`write_chunk_size`).
+    Ignored when ``write_chunk_size`` is 0."""
+
     cols: int = 400
     """Initial terminal width reported to the remote side. otto historically
     used 400 to avoid line-wrap artifacts in automation output."""
@@ -218,6 +229,21 @@ class TelnetOptions:
     login_prompt: bytes = b':'
     """Byte delimiter that terminates the login/password prompts. Anything
     ending in a colon matches ``login:``, ``Username:``, ``Password:``, etc."""
+
+    login: bool = True
+    """Whether ``connect()`` performs a telnet login (waits for the
+    login/password prompts and sends credentials). Set ``False`` for a shell
+    with no login step — e.g. a bare-metal/RTOS telnet shell — where waiting
+    for a ``login:`` prompt that never arrives would hang the connection."""
+
+    single_client_console: bool = False
+    """When True, this connection targets a single-client console — an RTOS
+    telnet shell that serves one client at a time (e.g. Zephyr ``shell_telnet``
+    reached over a ``-serial telnet:`` bridge). The transport is registered in a
+    process-local set so the embedded test teardown can force-release the slot if
+    a timed-out test left it half-open (see
+    :func:`otto.host.telnet.abort_console_transports`). Unix telnet (multi-session
+    telnetd) leaves this False, so it is never registered or aborted."""
 
     auto_window_resize: bool = False
     """When True and stdin is a TTY, install a SIGWINCH handler that sends
@@ -353,7 +379,8 @@ class FtpOptions:
 
     def _client_kwargs(self) -> dict[str, Any]:
         """Build the kwargs dict passed to ``aioftp.Client()``. Only
-        includes fields the caller explicitly set so aioftp's defaults apply."""
+        includes fields the caller explicitly set so aioftp's defaults apply.
+        """
         kw: dict[str, Any] = {}
         if self.socket_timeout is not None:
             kw['socket_timeout'] = self.socket_timeout
@@ -384,7 +411,7 @@ class FtpOptions:
 class NcOptions:
     """Connection options for netcat-based file transfers.
 
-    Bundles all nc-specific knobs that previously lived on ``RemoteHost``
+    Bundles all nc-specific knobs that previously lived on ``UnixHost``
     into a single object so that ``NcOptions()`` (with defaults) produces
     the same behavior as the old individual fields.
     """
@@ -421,3 +448,71 @@ class NcOptions:
     *its* listener and ours never gets a client — without this it would block
     forever. A transfer whose connection is established stays unaffected; this
     only caps the wait for a client that never arrives."""
+
+
+# ---------------------------------------------------------------------------
+# TFTP
+# ---------------------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class TftpOptions:
+    """Connection options for TFTP file transfer to an embedded host.
+
+    **Reserved.** TFTP is the deferred ``tftp`` embedded-transfer backend — a
+    faster alternative to console ``fs`` transfer for targets whose firmware
+    has a TFTP client. The backend itself is not yet implemented
+    (:class:`~otto.host.embedded_transfer.EmbeddedFileTransfer` raises
+    :class:`NotImplementedError` for ``tftp``); this dataclass exists so lab
+    data and the host API can name the option table now, without a later
+    breaking change when the backend lands.
+    """
+
+    port: int = 69
+    """UDP port of the TFTP server."""
+
+    server_ip: str | None = None
+    """IP address otto's TFTP server binds to and the target transfers
+    against. ``None`` auto-detects the local IP, as the netcat path does."""
+
+    block_size: int = 512
+    """TFTP block size (RFC 2348 ``blksize`` option). 512 is the protocol
+    default; larger blocks reduce round-trips on a reliable link."""
+
+    timeout: float = 5.0
+    """Per-block retransmit timeout, in seconds."""
+
+
+@dataclass(slots=True)
+class SnmpOptions:
+    """Per-host SNMP polling config — the acquisition half of SNMP monitoring.
+
+    Declared in lab data as a host's ``snmp`` block; carries only *what to poll*
+    and *how to reach the agent*. Presentation for each OID (chart/unit/scale)
+    lives in the monitor module's descriptor registry, never here. The monitor
+    factory turns this into a live
+    :class:`~otto.monitor.snmp.SnmpClient` + :class:`~otto.monitor.snmp.SnmpSource`.
+
+    A host carrying an ``snmp`` block is monitored over SNMP instead of by
+    running shell commands — the way otto reaches an embedded target's metrics
+    without contending for its single shell session. It is not embedded-only; a
+    Unix host may declare one too.
+    """
+
+    oids: tuple[str, ...] = ()
+    """OIDs to GET each tick (e.g. ``("1.3.6.1.2.1.1.3.0", ...)``)."""
+
+    community: str = 'public'
+    """SNMP v2c community string."""
+
+    port: int = 161
+    """UDP port of the agent (or of a relay standing in for it)."""
+
+    version: str = '2c'
+    """SNMP version — ``"2c"`` (default) or ``"1"``."""
+
+    address: str | None = None
+    """Address otto sends SNMP to. ``None`` (the default) means use the host's
+    own ``ip``; set it when the agent is reached at a different address than the
+    host's primary interface — e.g. a relay endpoint, or (future) a named
+    interface from a per-host interface map. See ``todo/multi_interface_hosts.md``."""

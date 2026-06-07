@@ -6,7 +6,7 @@ from otto.reservations import (
     check_reservations,
 )
 
-from tests.unit.conftest import make_host
+from tests.conftest import make_host
 
 
 def test_empty_resources():

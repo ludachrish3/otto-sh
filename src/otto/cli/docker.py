@@ -27,7 +27,7 @@ from ..docker import (
     compose_up,
     get_user_compose_project,
 )
-from ..host.remoteHost import RemoteHost
+from ..host.unixHost import UnixHost
 from ..logger import getOttoLogger
 from ..utils import Status, async_typer_command
 
@@ -44,10 +44,15 @@ docker_app = typer.Typer(
 
 
 @docker_app.callback()
-def docker_callback() -> None:
+def docker_callback(ctx: typer.Context) -> None:
     """Build images and orchestrate compose stacks on docker-capable lab hosts."""
-    if logger.keep_seconds is not None:
-        logger.removeOldLogs(logger.keep_seconds)
+    if ctx.resilient_parsing:
+        return
+    # Mirror run/host/test/cov: set up this invocation's output directory
+    # (which also prunes old logs per the retention policy), only for a real
+    # subcommand — never on group ``--help``/no-args.
+    if ctx.invoked_subcommand is not None:
+        logger.create_output_dir('docker', ctx.invoked_subcommand)
 
 
 def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
@@ -127,7 +132,7 @@ def _select_repos(repo_name: Optional[str], on: Optional[str] = None):
     return applicable
 
 
-def _resolve_parent_for_repo(repo, lab, on: Optional[str]) -> RemoteHost:
+def _resolve_parent_for_repo(repo, lab, on: Optional[str]) -> UnixHost:
     """Reuse compose._resolve_parent — public via private import to avoid duplicate logic."""
     from ..docker.compose import _resolve_parent
     return _resolve_parent(repo, lab, on, list(repo.docker_settings.composes))
@@ -211,17 +216,17 @@ async def _ps(
 ) -> None:
     """List running containers on docker-capable lab hosts."""
     cfg = getConfigModule()
-    parents: list[RemoteHost] = []
+    parents: list[UnixHost] = []
     if on:
         host = cfg.lab.hosts.get(on)
-        if not isinstance(host, RemoteHost) or not host.docker_capable:
+        if not isinstance(host, UnixHost) or not host.docker_capable:
             rprint(f"[red]{on!r} is not a docker-capable lab host.")
             raise typer.Exit(1)
         parents = [host]
     else:
         parents = [
             h for h in cfg.lab.hosts.values()
-            if isinstance(h, RemoteHost) and h.docker_capable
+            if isinstance(h, UnixHost) and h.docker_capable
         ]
 
     table = Table('host', 'container_id', 'image', 'status', 'names')

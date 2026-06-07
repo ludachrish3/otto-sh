@@ -16,6 +16,7 @@ import pytest
 from telnetlib3.telopt import IAC, NAWS, SB, SE
 
 from otto.host.telnet import TelnetClient
+from otto.host import telnet as telnet_mod
 
 
 @pytest.fixture
@@ -146,3 +147,91 @@ class TestLogin:
 
         c.reader.feed_data(b'banner text\nready> ')
         await asyncio.wait_for(login_task, timeout=0.5)
+
+
+class TestConsoleTransportRegistry:
+    @pytest.fixture(autouse=True)
+    def _clear_registry(self):
+        telnet_mod._live_console_transports.clear()
+        yield
+        telnet_mod._live_console_transports.clear()
+
+    def test_abort_aborts_registered_transport_and_clears(self):
+        t = MagicMock()
+        telnet_mod._register_console_transport(t)
+        n = telnet_mod.abort_console_transports()
+        t.abort.assert_called_once_with()
+        assert n == 1
+        assert len(telnet_mod._live_console_transports) == 0
+
+    def test_register_none_is_noop(self):
+        telnet_mod._register_console_transport(None)
+        assert len(telnet_mod._live_console_transports) == 0
+
+    def test_unregister_removes_transport(self):
+        t = MagicMock()
+        telnet_mod._register_console_transport(t)
+        telnet_mod._unregister_console_transport(t)
+        assert telnet_mod.abort_console_transports() == 0
+        t.abort.assert_not_called()
+
+    def test_abort_is_defensive_against_one_bad_transport(self):
+        good, bad = MagicMock(), MagicMock()
+        bad.abort.side_effect = RuntimeError("already closed")
+        telnet_mod._register_console_transport(bad)
+        telnet_mod._register_console_transport(good)
+        telnet_mod.abort_console_transports()  # must not raise
+        good.abort.assert_called_once_with()
+        assert len(telnet_mod._live_console_transports) == 0
+
+    @pytest.mark.asyncio
+    async def test_connect_registers_when_single_client_console(self, monkeypatch):
+        from otto.host.options import TelnetOptions
+        fake_writer = MagicMock()
+        fake_writer.transport = MagicMock()
+
+        async def fake_open(host, **kwargs):
+            return (MagicMock(), fake_writer)
+
+        monkeypatch.setattr(telnet_mod, "open_telnet_connection", fake_open)
+        c = TelnetClient(
+            host="h", user="u", password="p",
+            options=TelnetOptions(login=False, single_client_console=True),
+        )
+        await c.connect(interactive=True)  # interactive=True skips ECHO negotiation
+        assert fake_writer.transport in telnet_mod._live_console_transports
+
+    @pytest.mark.asyncio
+    async def test_connect_does_not_register_plain_telnet(self, monkeypatch):
+        from otto.host.options import TelnetOptions
+        fake_writer = MagicMock()
+        fake_writer.transport = MagicMock()
+
+        async def fake_open(host, **kwargs):
+            return (MagicMock(), fake_writer)
+
+        monkeypatch.setattr(telnet_mod, "open_telnet_connection", fake_open)
+        c = TelnetClient(
+            host="h", user="u", password="p",
+            options=TelnetOptions(login=False, single_client_console=False),
+        )
+        await c.connect(interactive=True)
+        assert fake_writer.transport not in telnet_mod._live_console_transports
+
+    @pytest.mark.asyncio
+    async def test_close_deregisters(self, monkeypatch):
+        from otto.host.options import TelnetOptions
+        fake_writer = MagicMock()
+        fake_writer.transport = MagicMock()
+
+        async def fake_open(host, **kwargs):
+            return (MagicMock(), fake_writer)
+
+        monkeypatch.setattr(telnet_mod, "open_telnet_connection", fake_open)
+        c = TelnetClient(
+            host="h", user="u", password="p",
+            options=TelnetOptions(login=False, single_client_console=True),
+        )
+        await c.connect(interactive=True)
+        await c.close()
+        assert fake_writer.transport not in telnet_mod._live_console_transports

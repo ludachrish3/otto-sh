@@ -10,13 +10,13 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from otto.host import RunResult, ShellCommand
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.utils import CommandStatus, Status
 
 
 @pytest.fixture
-def host() -> RemoteHost:
-    return RemoteHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+def host() -> UnixHost:
+    return UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ class TestRunResultOnly:
 class TestRunInputForms:
 
     @pytest.mark.asyncio
-    async def test_run_string_single(self, host: RemoteHost, ok: CommandStatus):
+    async def test_run_string_single(self, host: UnixHost, ok: CommandStatus):
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run('ls')
         mock.assert_called_once_with('ls', expects=None, timeout=None)
@@ -77,7 +77,7 @@ class TestRunInputForms:
         assert result.only is ok
 
     @pytest.mark.asyncio
-    async def test_run_shell_command_single(self, host: RemoteHost, ok: CommandStatus):
+    async def test_run_shell_command_single(self, host: UnixHost, ok: CommandStatus):
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run(ShellCommand(cmd='ls'))
         mock.assert_called_once_with('ls', expects=None, timeout=None)
@@ -85,7 +85,7 @@ class TestRunInputForms:
         assert result.only is ok
 
     @pytest.mark.asyncio
-    async def test_run_shell_command_list(self, host: RemoteHost, ok: CommandStatus):
+    async def test_run_shell_command_list(self, host: UnixHost, ok: CommandStatus):
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run([ShellCommand(cmd='a'), ShellCommand(cmd='b')])
         assert mock.call_count == 2
@@ -93,7 +93,7 @@ class TestRunInputForms:
         assert len(result.statuses) == 2
 
     @pytest.mark.asyncio
-    async def test_run_mixed_list(self, host: RemoteHost, ok: CommandStatus):
+    async def test_run_mixed_list(self, host: UnixHost, ok: CommandStatus):
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(['a', ShellCommand(cmd='b', timeout=2.0)])
         assert mock.call_count == 2
@@ -105,21 +105,21 @@ class TestRunInputForms:
 class TestTimeoutInheritance:
 
     @pytest.mark.asyncio
-    async def test_shell_command_inherits_run_kwarg(self, host: RemoteHost, ok: CommandStatus):
+    async def test_shell_command_inherits_run_kwarg(self, host: UnixHost, ok: CommandStatus):
         """ShellCommand.timeout=None → run-kwarg timeout is used."""
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd='x'), timeout=5.0)
         mock.assert_called_once_with('x', expects=None, timeout=5.0)
 
     @pytest.mark.asyncio
-    async def test_shell_command_overrides_run_kwarg(self, host: RemoteHost, ok: CommandStatus):
+    async def test_shell_command_overrides_run_kwarg(self, host: UnixHost, ok: CommandStatus):
         """ShellCommand.timeout=2 beats run-kwarg timeout=5 in single-cmd form."""
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd='x', timeout=2.0), timeout=5.0)
         mock.assert_called_once_with('x', expects=None, timeout=2.0)
 
     @pytest.mark.asyncio
-    async def test_budget_caps_per_command_timeout(self, host: RemoteHost, ok: CommandStatus):
+    async def test_budget_caps_per_command_timeout(self, host: UnixHost, ok: CommandStatus):
         """In list form, ShellCommand.timeout is bounded by remaining budget."""
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
             await host.run([ShellCommand(cmd='x', timeout=100.0)], timeout=1.0)
@@ -128,7 +128,7 @@ class TestTimeoutInheritance:
         assert 0 < actual <= 1.0, f'expected timeout bounded by 1.0s budget, got {actual}'
 
     @pytest.mark.asyncio
-    async def test_none_timeout_everywhere(self, host: RemoteHost, ok: CommandStatus):
+    async def test_none_timeout_everywhere(self, host: UnixHost, ok: CommandStatus):
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
             await host.run([ShellCommand(cmd='x')])
         mock.assert_called_once_with('x', expects=None, timeout=None)
@@ -138,7 +138,7 @@ class TestExpectsInheritance:
 
     @pytest.mark.asyncio
     async def test_run_level_expects_inherits_to_commands_without_own(
-        self, host: RemoteHost, ok: CommandStatus
+        self, host: UnixHost, ok: CommandStatus
     ):
         """Run-level expects is a default that each command without its own inherits."""
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
@@ -154,7 +154,7 @@ class TestExpectsInheritance:
 
     @pytest.mark.asyncio
     async def test_scalar_expects_wrapped_for_run_one(
-        self, host: RemoteHost, ok: CommandStatus
+        self, host: UnixHost, ok: CommandStatus
     ):
         """A scalar Expect tuple passed to run() is normalized to a list."""
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
@@ -165,7 +165,7 @@ class TestExpectsInheritance:
 
     @pytest.mark.asyncio
     async def test_scalar_expects_on_shell_command(
-        self, host: RemoteHost, ok: CommandStatus
+        self, host: UnixHost, ok: CommandStatus
     ):
         """A scalar Expect tuple on a ShellCommand is normalized too."""
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:

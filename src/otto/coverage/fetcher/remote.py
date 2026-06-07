@@ -1,6 +1,6 @@
 """Fetch ``.gcda`` files from remote hosts using otto's file transfer.
 
-Uses :meth:`RemoteHost.get() <otto.host.remoteHost.RemoteHost.get>`
+Uses :meth:`UnixHost.get() <otto.host.unixHost.UnixHost.get>`
 which supports SCP, SFTP, FTP, and netcat with progress tracking and
 multi-hop SSH chains.
 """
@@ -15,13 +15,13 @@ from ...configmodule.configmodule import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
-    from ...host.remoteHost import RemoteHost
+    from ...host.unixHost import UnixHost
 
 logger = logging.getLogger(__name__)
 
 
 async def _clean_one_host(
-    host: RemoteHost,
+    host: UnixHost,
     gcda_remote_dir: str,
 ) -> None:
     """Delete .gcda files on a single host, logging the outcome."""
@@ -39,7 +39,7 @@ async def _clean_one_host(
 
 
 async def _fetch_one_host(
-    host: RemoteHost,
+    host: UnixHost,
     gcda_remote_dir: str,
     staging_root: Path,
 ) -> Path | None:
@@ -49,11 +49,13 @@ async def _fetch_one_host(
     no files were found or the transfer failed.
     """
     # DockerContainerHost piggybacks on a parent and doesn't compile the
-    # SUT, so it never has its own .gcda files. Skip without creating an
-    # empty dest dir that would trip up downstream tools (e.g. lcov's
-    # ``geninfo`` errors out on empty dirs).
+    # SUT, so it never has its own .gcda files. EmbeddedHost (RTOS targets)
+    # likewise carries no toolchain. Skip without creating an empty dest
+    # dir that would trip up downstream tools (e.g. lcov's ``geninfo``
+    # errors out on empty dirs).
     from ...host.dockerHost import DockerContainerHost
-    if isinstance(host, DockerContainerHost):
+    from ...host.embeddedHost import EmbeddedHost
+    if isinstance(host, (DockerContainerHost, EmbeddedHost)):
         return None
 
     label = host.id

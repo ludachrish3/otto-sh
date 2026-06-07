@@ -41,11 +41,15 @@ dependencies = [
     "asyncssh>=2.22.0",
     "fastapi>=0.135.1",
     "jinja2>=3.1.0",
-    # pytest + pytest-asyncio are runtime deps because otto imports user
-    # test files at runtime (orchestration introspection), and those files
-    # commonly `import pytest` / use `pytest_asyncio` markers.
+    # SNMP manager for embedded / separate-channel performance monitoring.
+    "pysnmp>=7.1.0",
+    # pytest + pytest-asyncio + pytest-timeout are runtime deps because otto
+    # imports user test files at runtime (orchestration introspection), those
+    # files commonly `import pytest` / use `pytest_asyncio` markers, and
+    # `otto test` relies on pytest-timeout to honor `@pytest.mark.timeout(N)`.
     "pytest>=9.0.1",
-    "pytest-asyncio>=1.3.0",
+    "pytest-asyncio>=1.4.0",
+    "pytest-timeout>=2.3.1",
     "rich>=15.0.0",
     "sse-starlette>=3.3.3",
     "telnetlib3>=4.0.1",
@@ -134,14 +138,29 @@ addopts = "--doctest-modules --cov=otto --cov-context=test --cov-report term-mis
 doctest_optionflags = ["NORMALIZE_WHITESPACE", "ELLIPSIS"]
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "strict"
+# Per-test wall-clock budget. Deliberately lax (3 min) until the embedded suite's
+# new duration profile is understood — dial down once we know real expectations.
+# A hung test fails individually (SIGALRM on the worker's main thread) and the
+# session still reaches sessionfinish, so the JUnit report is written. Override
+# per-test/module with @pytest.mark.timeout(N).
+timeout = 180
+timeout_method = "signal"
+# Backstop for hangs the per-test SIGALRM can't break (e.g. a blocking C call) or
+# hangs in session teardown/finalization: faulthandler dumps every thread's stack
+# after this many seconds so a wedge is diagnosable instead of silent. Kept above
+# `timeout` so the graceful per-test path fires first under normal hangs.
+faulthandler_timeout = 300
 filterwarnings = [
     "error",
 ]
 markers = [
     "integration: requires running Vagrant VMs (deselect with -m 'not integration')",
     "hops: multi-hop integration tests requiring 3 Vagrant VMs (deselect with -m 'not hops')",
+    "embedded: requires Zephyr QEMU under the zephyr Vagrant VM (deselect with -m 'not embedded')",
     "timeout(seconds): fail the test if it exceeds the given number of seconds",
     "retry(n): retry the test up to n times on failure before reporting it as failed",
+    "stability: heavy stability/soak tests — excluded from `make coverage`; run via `make stability-all` / `make stability-embedded`",
+    "concurrency: fast, no-VM SessionManager concurrency/soak tests — run via `make stability`; stays in coverage",
 ]
 
 # NB: coverage.py config lives in .coveragerc, not here — that file is shared

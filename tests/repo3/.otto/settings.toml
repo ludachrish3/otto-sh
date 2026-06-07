@@ -1,0 +1,107 @@
+name = "repo3"
+version = "1.0.0"
+lab_data_type = "json"
+
+# Embedded coverage bed. Full design: ../../../todo/embedded_coverage.md;
+# bring-up record: docs/feasibility.md.
+#
+# The coverage target is the `sprout_cov` mps2_an385 instance in the shared
+# tech1 lab data — a stock Zephyr LLEXT loader base (built from
+# samples/subsys/llext/shell_loader, see ../../firmware/zephyr/configs/cov_an385)
+# reached over a QEMU `-serial telnet:` bridge. The instrumented product
+# (product/) is loaded at runtime; the base carries no coverage code.
+labs = [
+    "${sutDir}/../lab_data/tech1",
+]
+
+# Labs this repo supports. The repo3 coverage product is a Zephyr LLEXT and only
+# runs in the embedded lab — declaring it here lets otto reject an unsupported
+# lab (e.g. `veggies`) rather than fail deep in host setup. (Enforcement is not
+# yet wired in; see Repo.valid_labs.)
+valid_labs = [
+    "embedded",
+]
+
+libs = [
+    "${sutDir}/pylib",
+    # Shared, third-party-style module. repo3 only targets sprout_cov, but
+    # `--lab embedded` constructs every host in the lab — including the Zephyr
+    # 2.7 sprout27, whose `zephyr-inline` frame lives here. Pulling it in lets
+    # repo3 load the shared lab without owning the 2.7 dialect (see
+    # tests/custom_hosts).
+    "${sutDir}/../custom_hosts",
+]
+tests = [
+    "${sutDir}/tests",
+]
+init = [
+    'repo3_instructions',
+    'custom_hosts',
+]
+
+# Reuse repo1's zephyr-* os_profiles pattern. Per embedded_cortex_m_migration.md
+# the board (qemu_cortex_m3 vs qemu_x86) is a firmware-build detail, NOT an
+# os_profile field, so these profiles stay board-agnostic. (The repo1 "zephyr-2.7"
+# inline-retcode profile is intentionally omitted: it needs the zephyr-inline
+# command frame that repo1_instructions registers, which repo3 does not carry.)
+[os_profiles."zephyr-3.7"]
+base = "embedded"
+osName = "Zephyr"
+osVersion = "3.7"
+command_frame = "zephyr"
+transfer = "console"
+max_filename_len = 32
+
+[os_profiles."zephyr-4.4"]
+base = "embedded"
+osName = "Zephyr"
+osVersion = "4.4"
+command_frame = "zephyr"
+transfer = "console"
+max_filename_len = 32
+
+[coverage]
+# Embedded coverage uses console transport, not a remote .gcda directory, so the
+# Unix `gcda_remote_dir` key does not apply. The embedded path instead drives
+# `llext call_fn cov_dump` over the console (EmbeddedGcdaCollector), decodes the
+# hex stream to .gcda on the host, and runs a cross-gcov (arm-zephyr-eabi-gcov)
+# discovered from the .gcno under [coverage.embedded].build_dir.
+
+# Which hosts to collect coverage from: a host-id regex (matched with
+# re.search), defaulting to every host in the lab when unset. This selects the
+# coverage target(s) out of the shared `embedded` lab — keeping the plain
+# embedded test hosts and the `basil` SSH hop out — so the collect-from set is
+# repo-declared, not inferred from which hosts happen to emit .gcda. The same
+# selector scopes the TestEmbeddedCoverage suite (which hosts it loads the
+# instrumented extension onto). The re.search match means "sprout_cov" selects
+# BOTH coverage beds — sprout_cov (3.7) and sprout_cov44 (4.4) — so coverage is
+# collected across multiple Zephyr versions. Future (per
+# embedded_cortex_m_migration.md): when every QEMU host can emit coverage,
+# widen this further (e.g. "sprout").
+hosts = "sprout_cov"
+
+[coverage.embedded]
+# LLEXT extension name — matches add_llext_target(cov_ext) in product/. otto
+# dumps each embedded host via `llext call_fn cov_ext cov_dump`.
+extension = "cov_ext"
+
+# The cross-gcov is no longer named here — it is a per-host bed property declared
+# in lab data (each host's ``toolchain`` dict). See the embedded host entries in
+# lab_data/tech1/hosts.json. (.gcno discovery remains the no-config fallback.)
+
+# The extension's build dir: holds the .gcno + source used as the report's
+# source root. Absolute, on the dev VM where the product is built. See product/.
+# Retained as the single-version fallback for any coverage host whose osVersion
+# has no entry in the per-version [coverage.embedded.builds] table below.
+build_dir = "/home/vagrant/build/cov_ext_app"
+
+# Per-Zephyr-version product builds. Each coverage host's osVersion selects its
+# own build_dir (whose .gcno is that host's report source root); the cross-gcov
+# comes from the host's lab-data toolchain. This is what lets coverage span
+# multiple Zephyr versions: sprout_cov (3.7) -> cov_ext_app (built `build.sh
+# <dir> v3_7`); sprout_cov44 (4.4) -> cov_ext_app_v4_4 (`build.sh <dir> v4_4`).
+[coverage.embedded.builds."3.7"]
+build_dir = "/home/vagrant/build/cov_ext_app"
+
+[coverage.embedded.builds."4.4"]
+build_dir = "/home/vagrant/build/cov_ext_app_v4_4"

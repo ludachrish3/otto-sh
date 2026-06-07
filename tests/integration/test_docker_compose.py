@@ -18,7 +18,7 @@ from otto.configmodule.lab import Lab
 from otto.configmodule.repo import Repo
 from otto.docker import build_images, compose_down, compose_up, composed
 from otto.host.dockerHost import DockerContainerHost
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.utils import Status
 
 
@@ -32,7 +32,7 @@ pytestmark = pytest.mark.xdist_group("docker_e2e")
 
 @pytest_asyncio.fixture
 async def parent():
-    h = RemoteHost(
+    h = UnixHost(
         ip="10.10.200.13",
         ne="pepper",
         creds={"vagrant": "vagrant"},

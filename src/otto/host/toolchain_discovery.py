@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
 import stat
 from pathlib import Path
 
@@ -83,6 +84,33 @@ async def discover_toolchain_from_gcno(
 
     logger.debug("Could not discover toolchain from .gcno files in %s", gcno_dir)
     return None
+
+
+def toolchain_from_gcov(gcov: Path) -> Toolchain:
+    """Build a :class:`Toolchain` from an explicitly-configured gcov binary.
+
+    A ``.gcno`` embeds no compiler path, and not every build system is CMake,
+    so a cross-toolchain is named directly in the repo config
+    (``[coverage.embedded].gcov``) — the same explicit shape as the Unix
+    coverage config. The sysroot is derived from the gcov's ``bin/`` directory.
+
+    Args:
+        gcov: Absolute path to the cross ``gcov`` binary.
+    """
+    sysroot = _derive_sysroot(gcov.parent)
+    try:
+        gcov_rel = gcov.relative_to(sysroot)
+    except ValueError:
+        gcov_rel = gcov
+    # ``lcov`` is a host-side Perl orchestrator that shells out to the gcov tool
+    # (``lcov --gcov-tool <gcov>``); it is NOT part of a *cross* toolchain, so a
+    # cross gcov's sysroot has no ``usr/bin/lcov`` (the dataclass default would
+    # point at a nonexistent path and the report's ``lcov --capture`` would fail
+    # with ``lcov: not found``). Resolve the host lcov instead. Stored absolute,
+    # so ``lcov_bin`` ignores the cross sysroot while ``gcov`` stays under it.
+    host_lcov = shutil.which('lcov')
+    lcov = Path(host_lcov) if host_lcov else Path('usr/bin/lcov')
+    return Toolchain(sysroot=sysroot, gcov=gcov_rel, lcov=lcov)
 
 
 def _toolchain_from_compiler(compiler_path: Path, work_dir: Path) -> Toolchain | None:

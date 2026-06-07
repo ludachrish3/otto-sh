@@ -25,7 +25,7 @@ import pytest
 from otto.coverage.fetcher.remote import GcdaFetcher
 from otto.coverage.reporter import CoverageReporter, discover_gcda_dirs
 from otto.host.localHost import LocalHost
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.utils import Status
 
 from tests.unit.cov.conftest import configured_hosts
@@ -51,7 +51,7 @@ async def _compile_product() -> None:
         await localhost.close()
 
 
-async def _install_on_host(host: RemoteHost) -> None:
+async def _install_on_host(host: UnixHost) -> None:
     """Deploy the product binary to a remote host."""
     await host.oneshot(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
     await host.oneshot(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
@@ -65,12 +65,12 @@ async def _install_on_host(host: RemoteHost) -> None:
     await host.oneshot(f"chmod +x {REMOTE_INSTALL_DIR}/product", timeout=10)
 
 
-async def _uninstall_from_host(host: RemoteHost) -> None:
+async def _uninstall_from_host(host: UnixHost) -> None:
     """Remove the product and coverage data from a remote host."""
     await host.oneshot(f"sudo rm -rf {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
 
 
-async def _run_product(host: RemoteHost, op: str, *args: int) -> str:
+async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     """Run the product on a remote host with GCOV_PREFIX set."""
     strip = _gcov_prefix_strip()
     str_args = " ".join(str(a) for a in args)

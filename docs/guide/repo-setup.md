@@ -294,7 +294,7 @@ only `connect_timeout` in the repo default still inherits `port` from
 the dataclass default.
 
 The merge is performed at host construction time, so the resulting
-`RemoteHost` carries the fully-resolved `*_options` instances —
+`UnixHost` carries the fully-resolved `*_options` instances —
 nothing has to be re-resolved at use time, and every storage backend
 that goes through `create_host_from_dict()` (JSON today, anything
 implementing `LabRepository` tomorrow) gets the behavior for free.

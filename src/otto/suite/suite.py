@@ -7,11 +7,12 @@ from logging import getLogger
 from typing import TYPE_CHECKING, Generic, TypeVar, cast
 
 import pytest
+import pytest_asyncio
 
 from otto.logger.logger import OttoLogger
 
 if TYPE_CHECKING:
-    from otto.host.remoteHost import RemoteHost
+    from otto.host.unixHost import UnixHost
     from otto.monitor.collector import MetricCollector, MonitorTarget
     from otto.monitor.events import MonitorEvent
     from otto.monitor.parsers import MetricParser
@@ -139,10 +140,9 @@ class OttoSuite(Generic[TOptions]):
     - ``_otto_test_dir`` — creates ``self.testDir`` with sanitized node name
     - ``_otto_monitor_events`` — records monitor start/end events
 
-    Per-test timeouts are enforced by the shared ``_otto_timeout`` fixture
-    in :mod:`otto.suite.timeout`, registered automatically by ``OttoPlugin``.
-    Apply ``@pytest.mark.timeout(seconds)`` to individual tests, classes,
-    or set a ``timeout`` class attribute on the suite.
+    Per-test timeouts are enforced by ``pytest-timeout`` (a runtime
+    dependency). Apply ``@pytest.mark.timeout(seconds)`` to individual tests
+    or classes; on timeout the test fails and the session continues.
     """
 
     #: Set by ``OttoPlugin._otto_session_monitor`` when ``otto test --monitor``
@@ -317,11 +317,48 @@ class OttoSuite(Generic[TOptions]):
                 source='auto',
             )
 
+    @pytest_asyncio.fixture(autouse=True, scope="class", loop_scope="class")
+    async def _otto_release_connections(self, request: pytest.FixtureRequest):
+        """Release host connections at class teardown during coverage runs.
+
+        OttoSuites run each test class on its own event loop
+        (``loop_scope='class'``). A persistent shell session — and the single
+        socket of an RTOS telnet console — is bound to the loop that opened it.
+        Under ``--cov`` the coverage collector runs *after* pytest on a separate
+        ``asyncio.run`` loop (see ``cli/test.py``'s ``_run_coverage``); a session
+        opened here and reused from that loop hangs — its reads await futures on
+        the now-closed class loop — and the stale single-client socket still
+        holds the device's only telnet slot, blocking the collector's reconnect.
+        Closing connections here, in the class loop that created them, lets the
+        collector connect fresh (the loaded LLEXT product stays resident on the
+        device — only the TCP session is dropped, not the extension).
+
+        Scoped to ``--cov`` so ordinary runs keep their persistent sessions and
+        pay no reconnect cost; outside coverage there is no cross-loop consumer.
+        """
+        yield
+        from .plugin import otto_cov_key
+
+        if not request.config.stash.get(otto_cov_key, False):
+            return
+
+        from ..configmodule import all_hosts
+
+        for host in all_hosts():
+            try:
+                await host.close()
+            except Exception as exc:  # best-effort teardown — never fail a class on it
+                logger.debug(
+                    "OttoSuite: error closing %s at class teardown: %s",
+                    getattr(host, "id", host),
+                    exc,
+                )
+
     # ── Monitoring helpers ─────────────────────────────────────────────────
 
     async def startMonitor(
         self,
-        hosts: 'list[RemoteHost] | None' = None,
+        hosts: 'list[UnixHost] | None' = None,
         interval: 'timedelta | float' = timedelta(seconds=5),
         parsers: 'list[MetricParser] | None' = None,
         port: int = 0,
@@ -340,7 +377,7 @@ class OttoSuite(Generic[TOptions]):
         Series keys in results are ``"hostname/metric_label"``.
 
         Args:
-            hosts: The RemoteHosts to monitor. Ignored when *targets* is provided.
+            hosts: The UnixHosts to monitor. Ignored when *targets* is provided.
             interval: How often to poll the hosts. timedelta or float (seconds).
             parsers: Custom metric parsers applied to all hosts. Ignored when *targets* is provided.
             port: TCP port for the dashboard web server (0 = auto-assign).

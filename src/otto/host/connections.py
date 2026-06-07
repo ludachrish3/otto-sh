@@ -17,7 +17,7 @@ connections are routed through the hop's SSH tunnel:
 - Netcat transfers use ``forward_port`` to reach the remote ``nc``
   listener through the tunnel (both PUT and GET directions).
 
-Inject a subclass via ``RemoteHost._connection_factory`` to replace the real
+Inject a subclass via ``UnixHost._connection_factory`` to replace the real
 transport with a test double — no monkeypatching of library functions needed.
 """
 
@@ -98,7 +98,7 @@ class ConnectionManager:
     connections are then routed through this tunnel rather than connecting
     directly to the target IP.
 
-    Subclass and inject via ``RemoteHost._connection_factory`` to swap in test
+    Subclass and inject via ``UnixHost._connection_factory`` to swap in test
     doubles without monkeypatching library functions::
 
         class FakeConnections(ConnectionManager):
@@ -111,7 +111,7 @@ class ConnectionManager:
             async def ssh(self):
                 return self._ssh_conn
 
-        host = RemoteHost(..., _connection_factory=FakeConnections)
+        host = UnixHost(..., _connection_factory=FakeConnections)
     """
 
     def __init__(
@@ -163,8 +163,15 @@ class ConnectionManager:
 
     @property
     def credentials(self) -> tuple[str, str]:
-        """Return the active (username, password) pair."""
+        """Return the active (username, password) pair.
+
+        Returns ``('', '')`` when no credentials are configured — valid for a
+        loginless shell (e.g. an RTOS telnet shell reached with
+        ``TelnetOptions.login = False``), where the empty pair is never used.
+        """
         if self._user is None:
+            if not self._creds_dict:
+                return ('', '')
             return next(iter(self._creds_dict.items()))
         return self._user, self._creds_dict[self._user]
 

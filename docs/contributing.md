@@ -3,16 +3,122 @@
 ## Development environment
 
 Vagrant can be used to develop and test changes to `otto`. After
-[installing Vagrant](https://developer.hashicorp.com/vagrant/install), run:
+[installing Vagrant](https://developer.hashicorp.com/vagrant/install), run
+`vagrant up` from the repository root.
+
+### The VMs
+
+The `Vagrantfile` defines five machines on a private `10.10.200.0/24`
+network:
+
+| VM       | IP              | `autostart` | Purpose                                                   |
+|----------|-----------------|-------------|-----------------------------------------------------------|
+| `dev`    | `10.10.200.100` | yes         | Development VM - develop and run the test suite here      |
+| `test1`  | `10.10.200.11`  | no          | SSH + SCP test host                                       |
+| `test2`  | `10.10.200.12`  | no          | Telnet + netcat test host                                 |
+| `test3`  | `10.10.200.13`  | no          | Docker-capable test host                                  |
+| `zephyr` | `10.10.200.14`  | no          | Zephyr RTOS test bed (3 QEMU instances) + SSH hop to them |
+
+The `zephyr` VM hosts **three** Zephyr QEMU instances concurrently, one per
+filesystem config. They share the SSH hop (`10.10.200.14`) but each lives on
+its own QEMU-internal `/30` so the host VM's routing table holds a distinct
+route per TAP (a shared `/24` overlaps and the kernel picks one TAP for
+all of them, making the other two unreachable):
+
+| Zephyr instance | IP          | /30 subnet     | Filesystem                      | systemd unit                         |
+|-----------------|-------------|----------------|---------------------------------|--------------------------------------|
+| `sprout`        | `192.0.2.1` | `192.0.2.0/30` | FAT on a RAM disk               | `zephyr-qemu-v3_7_fat_ram.service`   |
+| `sprout_lfs`    | `192.0.2.5` | `192.0.2.4/30` | LittleFS on the flash simulator | `zephyr-qemu-v3_7_lfs.service`       |
+| `sprout_no_fs`  | `192.0.2.9` | `192.0.2.8/30` | (none — no `fs` shell)          | `zephyr-qemu-v3_7_no_fs.service`     |
+
+See `tests/firmware/zephyr/README.md` in the repo for the per-config
+overlay layout.
+
+Only `dev` starts on a bare `vagrant up` (the rest are `autostart: false`).
+Bring the others up explicitly when you need them:
 
 ```bash
-vagrant up            # start the dev VM and three test VMs
-vagrant ssh           # connect to the `dev` VM (the default)
+vagrant up                              # dev VM only
+vagrant up test1 test2 test3 zephyr     # the test hosts
+vagrant ssh                             # connect to dev (the default)
 ```
 
-The `dev` VM is privately networked with three test VMs (`test`, `test2`,
-`test3`). Develop and test from the `dev` VM — unit, integration, and
-end-to-end tests assume connectivity to the test VMs.
+Develop and test from the `dev` VM — integration and end-to-end tests
+assume connectivity to the test hosts.
+
+### Files required at provision time
+
+Most provisioning is self-contained (inline shell in the `Vagrantfile`),
+but the `zephyr` VM's build step reads files from the repository checkout
+through the `/vagrant` synced folder. These **must be present in your local
+checkout before `vagrant up zephyr`** (a fresh `git clone` has them all —
+this matters mainly if you iterate on overlays from outside the host
+checkout; see the next subsection):
+
+| File                                                                | Used for                                                          |
+|---------------------------------------------------------------------|-------------------------------------------------------------------|
+| `Vagrantfile`                                                       | The provisioning definition itself                                |
+| `tests/firmware/zephyr/common/otto-overlay.conf`                    | Shared Kconfig overlay (shell, networking, runtime stats)         |
+| `tests/firmware/zephyr/configs/v3_7_fat_ram/overlay.conf`           | FAT-on-RAM-disk Kconfig delta                                     |
+| `tests/firmware/zephyr/configs/v3_7_fat_ram/app.overlay`            | FAT-on-RAM-disk devicetree (RAM disk node)                        |
+| `tests/firmware/zephyr/configs/v3_7_lfs/overlay.conf`               | LittleFS Kconfig delta                                            |
+| `tests/firmware/zephyr/configs/v3_7_lfs/app.overlay`                | LittleFS devicetree (flash simulator + fstab automount)           |
+| `tests/firmware/zephyr/configs/v3_7_no_fs/overlay.conf`             | no-filesystem Kconfig delta (graceful-degradation target)         |
+
+The `zephyr` VM builds an **unmodified** Zephyr shell sample
+(`samples/subsys/shell/shell_module`) three times — once per filesystem
+config — layering `common/otto-overlay.conf` plus the per-config
+`overlay.conf` via `-DEXTRA_CONF_FILE="a;b"`, with the matching
+`app.overlay` via `-DEXTRA_DTC_OVERLAY_FILE=` (the `no_fs` config omits
+the DT overlay). otto ships no firmware code — the overlays only flip
+standard Zephyr Kconfig options (telnet shell backend, networking,
+runtime stats, filesystem), the same way a Unix host needs an
+`sshd_config`. If any overlay is missing, the `west build` provisioning
+step fails with a missing-file error.
+
+The lab definition `tests/lab_data/tech1/hosts.json` is read by otto at
+**runtime** (not provision time); it must be present to target the test
+hosts but is not needed for `vagrant up` itself.
+
+### Iterating on overlays from outside the host checkout
+
+`vagrant up zephyr` (and `vagrant provision zephyr`) run on your **host**
+machine, and the `zephyr` VM's `/vagrant` synced folder maps to the
+**host's** otto-sh checkout. If you edit firmware overlays from anywhere
+other than the host checkout — for example, from inside the `dev` VM —
+those edits do **not** reach the `zephyr` VM until they land in the host
+checkout.
+
+The sync mechanism is whatever your workflow already uses for source
+control. With a shared remote: commit + push from where you edited and
+pull on the host. Without one: any file-copy mechanism (`scp`, `rsync`,
+manual copy) that puts the changed `tests/firmware/zephyr/...` and
+`Vagrantfile` files into the host checkout will do. Either way:
+
+```bash
+# on the host, in the otto-sh checkout
+vagrant provision zephyr                                # rebuild all 3 Zephyr images
+vagrant ssh zephyr -c 'sudo systemctl restart zephyr-qemu-v3_7_fat_ram.service'
+vagrant ssh zephyr -c 'sudo systemctl restart zephyr-qemu-v3_7_lfs.service'
+vagrant ssh zephyr -c 'sudo systemctl restart zephyr-qemu-v3_7_no_fs.service'
+```
+
+`west build` is incremental within each per-config build dir, so
+re-provision after an overlay edit is fast on the second run.
+
+For a tighter iteration loop on a single config from the host:
+
+```bash
+vagrant ssh zephyr
+source ~/zephyr-venv/bin/activate
+source ~/zephyrproject/zephyr/zephyr-env.sh
+west build -d ~/build/v3_7_lfs     # incremental rebuild of just that config
+sudo systemctl restart zephyr-qemu-v3_7_lfs.service
+```
+
+A fresh `git clone` on the host has all the files above by default — this
+workflow only matters when you are iterating on overlays from a different
+checkout.
 
 ## Development setup
 
@@ -142,6 +248,42 @@ make test                     # run all tests
 make test TESTS=test_host     # filter by keyword
 make coverage                 # run tests and enforce coverage threshold
 ```
+
+### Regression-test categories
+
+Tests are partitioned by pytest marker and surfaced through Makefile targets.
+Pick the one that matches what you want to exercise:
+
+| Category | How to run | VMs needed |
+|----------|------------|------------|
+| Unit only | `make coverage-unit` | none |
+| Full coverage gate (excludes `stability`) | `make coverage` | lab VMs |
+| Integration, Unix only | `uv run pytest -m "integration and not embedded and not hops"` | test1/test2/test3 |
+| Embedded (Zephyr) | `uv run pytest -m embedded` | zephyr VM |
+| Multi-hop | `uv run pytest -m hops` | three VMs |
+| Stability / soak | `make stability-all` (or `make stability-embedded`) | lab VMs |
+| Everything (the dev-VM contract) | `make all` | lab VMs |
+| Cross-Python matrix | `make nox` (unit) / `make nox-all` (full) | `nox-all` needs VMs |
+
+`make test TESTS=<kw>` filters any run by keyword. Recover a wedged embedded bed
+with `make qemu-restart`; probe the whole lab with `make vm-health`.
+
+### Embedded coverage bed
+
+`sprout_cov` is the embedded coverage instance: an ARM `mps2_an385` Zephyr in the
+`embedded` lab, reached over a QEMU `-serial telnet:` bridge via the `basil` SSH
+hop (`zephyr-qemu-cov.service` on the zephyr VM, provisioned by the Vagrantfile
+like the other Zephyr instances). The **dev VM runs no QEMU** — it only builds
+the instrumented `.llext` extension and runs the cross-gcov report; the coverage
+instance itself runs on the zephyr VM. Which host(s) coverage is collected from
+is repo-declared by the `[coverage].hosts` regex in `.otto/settings.toml`
+(default: every host in the lab), so the `basil` hop and the plain embedded test
+hosts are excluded by the pattern rather than by inference.
+
+> **Manual-gate convention.** If a test depends on infrastructure that
+> `vagrant up` does not yet reproduce (a hand-built "gate"), label it clearly as
+> a manual gate and record the plan to fold it into the provisioning. A manual
+> gate must not masquerade as part of the reproducible regression suite.
 
 ### Cross-version testing with nox
 

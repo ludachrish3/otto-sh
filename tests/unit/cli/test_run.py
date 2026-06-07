@@ -18,7 +18,7 @@ import typer
 from typer.testing import CliRunner
 
 from otto.cli.run import instruction, run_app
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.utils import CommandStatus, Status
 
 runner = CliRunner()
@@ -117,7 +117,7 @@ class TestInstructionExecution:
     """Verify that instruction bodies run end-to-end, not just register.
 
     Mock boundary: logger.create_output_dir (filesystem I/O) and
-    RemoteHost methods (network I/O).  The @instruction decorator,
+    UnixHost methods (network I/O).  The @instruction decorator,
     async_typer_command wrapper, and Typer argument parsing all run for real.
     """
 
@@ -177,7 +177,7 @@ class TestInstructionExecution:
         """
         from otto.cli import run as run_module
 
-        mock_host = AsyncMock(spec=RemoteHost)
+        mock_host = AsyncMock(spec=UnixHost)
         mock_host.run.return_value = CommandStatus(
             command='echo hello',
             output='hello',

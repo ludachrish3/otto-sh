@@ -100,16 +100,16 @@ class OttoPlugin:
         self._monitor_hosts = monitor_hosts
 
     def pytest_configure(self, config: pytest.Config) -> None:
-        """Register the shared async timeout fixture and enforce auto asyncio mode.
+        """Enforce auto asyncio mode for OttoSuites.
 
         OttoSuites always run with ``asyncio_mode=auto`` so that async
         fixtures and test methods work without explicit ``@pytest.mark.asyncio``
         markers.  This is distinct from otto's own unit tests which use
         ``asyncio_mode=strict`` (set in ``pyproject.toml``).
+
+        Per-test timeouts are handled by ``pytest-timeout`` (a runtime
+        dependency), which honors ``@pytest.mark.timeout(seconds)`` natively.
         """
-        from . import timeout
-        if not config.pluginmanager.has_plugin('otto-timeout'):
-            config.pluginmanager.register(timeout, name='otto-timeout')
         config.option.asyncio_mode = "auto"
         config.stash[otto_cov_key] = self._cov
 
@@ -327,11 +327,14 @@ class OttoPlugin:
             return
 
         from ..configmodule import all_hosts
+        from ..host import UnixHost
         from ..monitor.factory import build_monitor_collector
         from .suite import OttoSuite
 
         pattern = re.compile(self._monitor_hosts) if self._monitor_hosts else None
-        hosts = list(all_hosts(pattern=pattern))
+        # build_monitor_collector only handles UnixHost; embedded RTOS
+        # targets don't expose the metric-collection commands it issues.
+        hosts = [h for h in all_hosts(pattern=pattern) if isinstance(h, UnixHost)]
         if not hosts:
             label = f'matching "{self._monitor_hosts}"' if self._monitor_hosts else ''
             logger.warning(f'--monitor: no hosts {label} — collection disabled.')

@@ -82,7 +82,7 @@ hand-roll `asyncio.gather` every time:
 - {func}`~otto.configmodule.configmodule.run_on_all_hosts` — the simplest
   case: run one or more shell commands on every matching host.
 - {func}`~otto.configmodule.configmodule.do_for_all_hosts` — the general
-  form: call any async `RemoteHost` method (including user-defined
+  form: call any async `UnixHost` method (including user-defined
   coroutines that take a host as their first argument).
 
 Both return a `dict[host_id, result | BaseException]`, with
@@ -129,12 +129,12 @@ your own.
 ```python
 from pathlib import Path
 from otto.configmodule.configmodule import do_for_all_hosts
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 
 async def deploy_firmware():
     """Push a firmware file to all hosts concurrently."""
     results = await do_for_all_hosts(
-        RemoteHost.put,
+        UnixHost.put,
         src_files=[Path("firmware.bin")],
         dest_dir=Path("/tmp"),
     )
@@ -152,7 +152,7 @@ You can also pass a user-defined coroutine that takes a host as its first
 argument — handy for multi-step workflows:
 
 ```python
-async def install_and_verify(host: RemoteHost, package: str) -> str:
+async def install_and_verify(host: UnixHost, package: str) -> str:
     await host.oneshot(f"sudo apt-get install -y {package}")
     result = await host.oneshot(f"dpkg -s {package}")
     return result.output

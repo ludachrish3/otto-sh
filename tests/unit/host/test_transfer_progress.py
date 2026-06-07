@@ -10,12 +10,14 @@ know it exists — they just call ``get``/``put`` concurrently.
 """
 
 import asyncio
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 import otto.host.transfer as transfer_mod
-from otto.host.transfer import _acquire_shared_progress
+from otto.host.transfer import BaseFileTransfer, _acquire_shared_progress
+from otto.utils import Status
 
 
 @pytest.fixture(autouse=True)
@@ -96,3 +98,91 @@ class TestSharedProgress:
             async with _acquire_shared_progress():
                 pass
         assert factory.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# BaseFileTransfer enforces the progress contract at the type level
+# ---------------------------------------------------------------------------
+
+class TestBaseFileTransferIsAbstract:
+    """``BaseFileTransfer`` makes progress reporting a structural requirement
+    of every transfer backend: ``_run_put`` and ``_run_get`` are both
+    ``@abstractmethod`` and receive a ``TransferProgressFactory``. A new
+    backend cannot be instantiated without implementing both — the type
+    system, not a runtime test, is the first line of defense."""
+
+    def test_missing_both_hooks_raises_type_error(self):
+        class NoHooks(BaseFileTransfer):
+            pass
+
+        with pytest.raises(TypeError, match='abstract'):
+            NoHooks(name='x')
+
+    def test_missing_run_get_raises_type_error(self):
+        class OnlyPut(BaseFileTransfer):
+            async def _run_put(self, srcFiles, destDir, progress_factory):
+                return Status.Success, ''
+
+        with pytest.raises(TypeError, match='_run_get'):
+            OnlyPut(name='x')
+
+    def test_missing_run_put_raises_type_error(self):
+        class OnlyGet(BaseFileTransfer):
+            async def _run_get(self, srcFiles, destDir, progress_factory):
+                return Status.Success, ''
+
+        with pytest.raises(TypeError, match='_run_put'):
+            OnlyGet(name='x')
+
+    def test_both_hooks_present_instantiates(self):
+        class Concrete(BaseFileTransfer):
+            async def _run_put(self, srcFiles, destDir, progress_factory):
+                return Status.Success, ''
+            async def _run_get(self, srcFiles, destDir, progress_factory):
+                return Status.Success, ''
+
+        # No exception — both abstract methods supplied.
+        Concrete(name='x')
+
+
+class TestBaseFileTransferProgressWiring:
+    """The base owns the progress-acquisition plumbing — verify the factory
+    actually reaches ``_run_put`` / ``_run_get``, and that
+    ``show_progress=False`` short-circuits with ``progress_factory=None``."""
+
+    def _spy_subclass(self):
+        captured: dict[str, object] = {}
+
+        class Spy(BaseFileTransfer):
+            async def _run_put(self, srcFiles, destDir, progress_factory):
+                captured['put_factory'] = progress_factory
+                return Status.Success, ''
+            async def _run_get(self, srcFiles, destDir, progress_factory):
+                captured['get_factory'] = progress_factory
+                return Status.Success, ''
+
+        return Spy(name='spy'), captured
+
+    @pytest.mark.asyncio
+    async def test_show_progress_true_passes_a_factory(self):
+        spy, captured = self._spy_subclass()
+        await spy.put_files([Path('/a/foo')], Path('/dest'), show_progress=True)
+        assert callable(captured['put_factory'])
+
+    @pytest.mark.asyncio
+    async def test_show_progress_false_passes_none(self):
+        spy, captured = self._spy_subclass()
+        await spy.put_files([Path('/a/foo')], Path('/dest'), show_progress=False)
+        assert captured['put_factory'] is None
+
+    @pytest.mark.asyncio
+    async def test_filename_validation_short_circuits_before_run_put(self):
+        """An over-limit name returns Status.Error before ``_run_put``
+        executes — the spy never gets called."""
+        spy, captured = self._spy_subclass()
+        spy._max_filename_len = 5
+        status, err = await spy.put_files(
+            [Path('/a/long_filename.bin')], Path('/dest'),
+        )
+        assert status == Status.Error
+        assert 'put_factory' not in captured

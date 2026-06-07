@@ -25,7 +25,7 @@ The gate runs at the top of every live-lab subcommand:
 | `otto reservation ...`| no     | The whoami/check helpers only *report* on state.   |
 
 For each gated invocation, otto computes the **required set** as the
-union of the selected lab's `resources` plus every `RemoteHost.resources`
+union of the selected lab's `resources` plus every `UnixHost.resources`
 in that lab, then asks the configured backend which of those the
 effective user holds.  Anything missing raises an error and the command
 does not run.
@@ -76,7 +76,7 @@ The top-level object has two required fields:
   * `user` *(string, required)* — the reservation-system username.
   * `resources` *(list of strings, required)* — resource identifiers
     the user holds.  Must match byte-for-byte the strings in
-    `RemoteHost.resources` and `Lab.resources`.
+    `UnixHost.resources` and `Lab.resources`.
   * `expires` *(string, optional)* — ISO-8601 timestamp.  Past-dated
     entries are silently ignored.  Omit for "no expiry".
 
@@ -299,7 +299,7 @@ or use any other `sys.path` mechanism.
   hint — swallowing it means otto proceeds as if the user has nothing
   reserved, which is the opposite of fail-closed.
 - **String-match byte-for-byte.**  The strings you return from
-  `get_reserved_resources` must match `RemoteHost.resources` and
+  `get_reserved_resources` must match `UnixHost.resources` and
   `Lab.resources` exactly.  If the upstream scheduler uses different
   identifiers, normalize inside your backend — not in otto.
 - **`backend_name()` should be stable.**  The name shows up in

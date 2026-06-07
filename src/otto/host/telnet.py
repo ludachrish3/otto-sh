@@ -40,6 +40,44 @@ logger = getOttoLogger()
 _naws_subscribers: 'WeakSet[TelnetClient]' = WeakSet()
 _naws_handler_installed: bool = False
 
+# Live single-client console transports — populated when TelnetOptions.
+# single_client_console is True. Strong refs (we keep them reachable so the
+# embedded test teardown can force-release a console slot a timed-out test left
+# half-open) and per-process (each xdist worker owns its own). See
+# abort_console_transports().
+_live_console_transports: set = set()
+
+
+def _register_console_transport(transport: Any) -> None:
+    """Track a live single-client console transport (no-op if None)."""
+    if transport is not None:
+        _live_console_transports.add(transport)
+
+
+def _unregister_console_transport(transport: Any) -> None:
+    """Stop tracking a transport (no-op if absent)."""
+    _live_console_transports.discard(transport)
+
+
+def abort_console_transports() -> int:
+    """Synchronously abort every tracked single-client console transport.
+
+    Releases each FD (and the server-side single-client slot) via the
+    transport's own synchronous ``abort()`` — no event loop required, so this
+    works even after a pytest-timeout signal aborts a test before its async
+    ``close()`` could run. Best-effort and idempotent; returns the count
+    aborted. Per-process.
+    """
+    count = 0
+    for transport in list(_live_console_transports):
+        try:
+            transport.abort()
+            count += 1
+        except Exception:  # noqa: BLE001 — best-effort cleanup; one bad transport must not block the rest
+            pass
+    _live_console_transports.clear()
+    return count
+
 
 def _sigwinch_fanout() -> None:
     """SIGWINCH handler: push a fresh NAWS update to every subscribed client."""
@@ -108,7 +146,16 @@ class TelnetClient():
         """
 
         port = self.connect_port if self.connect_port is not None else self.options.port
-        logger.debug(f"Connecting to {self.host} via telnet on port {port}")
+        # Detailed entry log so a future-embedded-OS bring-up has the
+        # parameters that drove the connect right next to whatever went wrong.
+        logger.debug(
+            f"TelnetClient.connect host={self.host}:{port} "
+            f"user={self.user!r} login={self.options.login} "
+            f"login_prompt={self.options.login_prompt!r} "
+            f"interactive={interactive}"
+        )
+
+        start = asyncio.get_event_loop().time()
 
         open_kwargs = self.options._open_kwargs()
         open_kwargs['port'] = port  # override for tunneled case
@@ -116,6 +163,8 @@ class TelnetClient():
             self.host,
             **open_kwargs,  # type: ignore[arg-type]
         )
+        if self.options.single_client_console:
+            _register_console_transport(getattr(self.writer, 'transport', None))
 
         if not interactive:
             # Tell the server not to echo our input so commands don't appear in output,
@@ -128,7 +177,11 @@ class TelnetClient():
                 )
             except asyncio.TimeoutError:
                 logger.debug("ECHO negotiation timed out — proceeding anyway")
-        await self.login()
+        if self.options.login:
+            logger.debug(f"Performing telnet login for {self.host}")
+            await self.login()
+        else:
+            logger.debug(f"Skipping telnet login for {self.host} (options.login=False)")
 
         # Hook up NAWS after login so banners/MOTD don't get mixed with
         # subnegotiation bytes on the wire.
@@ -138,7 +191,8 @@ class TelnetClient():
             _naws_subscribers.add(self)
             _install_sigwinch_handler()
 
-        logger.debug(f"Telnet connected to {self.host}")
+        elapsed = asyncio.get_event_loop().time() - start
+        logger.debug(f"Telnet connected to {self.host}:{port} in {elapsed:.2f}s")
 
     def _send_naws(self, cols: int, rows: int) -> None:
         """Transmit a NAWS subnegotiation with the given terminal size.
@@ -218,6 +272,7 @@ class TelnetClient():
             # releases the FD synchronously, which is fine for a half-built
             # connection we're discarding.
             transport = getattr(self.writer, 'transport', None)
+            _unregister_console_transport(transport)
             self.writer.close()
             if transport is not None:
                 transport.abort()

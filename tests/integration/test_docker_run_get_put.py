@@ -14,7 +14,7 @@ import pytest_asyncio
 from otto.configmodule.lab import Lab
 from otto.configmodule.repo import Repo
 from otto.docker import build_images, compose_down, compose_up
-from otto.host.remoteHost import RemoteHost
+from otto.host.unixHost import UnixHost
 from otto.utils import Status
 
 REPO1_DIR = Path(__file__).parent.parent / "repo1"
@@ -37,7 +37,7 @@ async def stack():
     creates a module-scoped event loop that the fixture can outlive its
     creating test under (the default ``function`` loop_scope would close
     after the first test and corrupt the cached SSH connection)."""
-    parent = RemoteHost(
+    parent = UnixHost(
         ip="10.10.200.13",
         ne="pepper",
         creds={"vagrant": "vagrant"},

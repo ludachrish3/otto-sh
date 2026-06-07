@@ -13,6 +13,7 @@ from otto.host.toolchain_discovery import (
     _gcc_toolchain,
     _toolchain_from_compiler,
     discover_toolchain_from_gcno,
+    toolchain_from_gcov,
 )
 from otto.utils import CommandStatus, Status
 
@@ -211,3 +212,37 @@ class TestDiscoverToolchainFromGcno:
 
         assert tc is None
         await localhost.close()
+
+
+class TestToolchainFromGcov:
+    """The cross-gcov is named explicitly in the repo config (a .gcno embeds no
+    compiler path, and not every build system is CMake).
+    """
+
+    def test_cross_gcov_path(self):
+        gcov = Path('/opt/zephyr-sdk-0.16.8/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov')
+        tc = toolchain_from_gcov(gcov)
+        assert tc.gcov_bin == str(gcov)
+        assert tc.sysroot == Path('/opt/zephyr-sdk-0.16.8/arm-zephyr-eabi')
+
+    def test_usr_bin_gcov(self):
+        tc = toolchain_from_gcov(Path('/opt/arm/usr/bin/arm-none-eabi-gcov'))
+        assert tc.gcov_bin == '/opt/arm/usr/bin/arm-none-eabi-gcov'
+        assert tc.sysroot == Path('/opt/arm')
+
+    def test_lcov_resolves_to_host_lcov(self, monkeypatch):
+        """A cross gcov has no bundled lcov: lcov is a host-side Perl
+        orchestrator that shells out to ``--gcov-tool <gcov>``. It must resolve
+        to the host lcov, not ``<cross-sysroot>/usr/bin/lcov`` (which does not
+        exist) — otherwise ``otto cov report`` execs a missing binary on the
+        embedded path. The cross gcov itself stays under the cross sysroot.
+        """
+        import otto.host.toolchain_discovery as td
+        monkeypatch.setattr(
+            td.shutil, 'which',
+            lambda name: '/usr/bin/lcov' if name == 'lcov' else None,
+        )
+        gcov = Path('/opt/zephyr-sdk-0.16.8/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov')
+        tc = toolchain_from_gcov(gcov)
+        assert tc.lcov_bin == '/usr/bin/lcov'
+        assert tc.gcov_bin == str(gcov)

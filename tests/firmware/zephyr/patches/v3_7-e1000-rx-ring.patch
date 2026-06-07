@@ -1,0 +1,167 @@
+diff --git a/drivers/ethernet/Kconfig.e1000 b/drivers/ethernet/Kconfig.e1000
+index e6cc21b2..23d01926 100644
+--- a/drivers/ethernet/Kconfig.e1000
++++ b/drivers/ethernet/Kconfig.e1000
+@@ -43,4 +43,10 @@ config ETH_E1000_PTP_CLOCK_SRC_HZ
+ 	  Set the frequency in Hz sourced to the PTP timer.
+ 	  If the value is set properly, the timer will be accurate.
+ 
++config ETH_E1000_RX_QUEUE_SIZE
++	int "Size of receive queue"
++	default 8
++	help
++	  Sets size of receive descriptor queue. It has to be a multiple of 8.
++
+ endif # ETH_E1000
+diff --git a/drivers/ethernet/eth_e1000.c b/drivers/ethernet/eth_e1000.c
+index 31dd7e28..fb1bad79 100644
+--- a/drivers/ethernet/eth_e1000.c
++++ b/drivers/ethernet/eth_e1000.c
+@@ -136,19 +136,19 @@ static struct net_pkt *e1000_rx(struct e1000_dev *dev)
+ 	void *buf;
+ 	ssize_t len;
+ 
+-	LOG_DBG("rx.sta: 0x%02hx", dev->rx.sta);
++	LOG_DBG("rx.sta: 0x%02hx", dev->rx[dev->next_rx_desc].sta);
+ 
+-	if (!(dev->rx.sta & RDESC_STA_DD)) {
+-		LOG_ERR("RX descriptor not ready");
+-		goto out;
++	if (!(dev->rx[dev->next_rx_desc].sta & RDESC_STA_DD)) {
++		return NULL;
+ 	}
+ 
+-	buf = INT_TO_POINTER((uint32_t)dev->rx.addr);
+-	len = dev->rx.len - 4;
++	buf = INT_TO_POINTER((uint32_t)dev->rx[dev->next_rx_desc].addr);
++	len = dev->rx[dev->next_rx_desc].len - 4;
+ 
+ 	if (len <= 0) {
+-		LOG_ERR("Invalid RX descriptor length: %hu", dev->rx.len);
+-		goto out;
++		LOG_ERR("Invalid RX descriptor length: %hu",
++			dev->rx[dev->next_rx_desc].len);
++		goto err;
+ 	}
+ 
+ 	hexdump(buf, len, "%zd byte(s)", len);
+@@ -157,16 +157,24 @@ static struct net_pkt *e1000_rx(struct e1000_dev *dev)
+ 					   K_NO_WAIT);
+ 	if (!pkt) {
+ 		LOG_ERR("Out of buffers");
+-		goto out;
++		goto err;
+ 	}
+ 
+ 	if (net_pkt_write(pkt, buf, len)) {
+ 		LOG_ERR("Out of memory for received frame");
+ 		net_pkt_unref(pkt);
+ 		pkt = NULL;
++	} else {
++		goto out;
+ 	}
+ 
++err:
++	eth_stats_update_errors_rx(get_iface(dev));
+ out:
++	dev->rx[dev->next_rx_desc].sta = 0;
++	iow32(dev, RDT, dev->next_rx_desc);
++	dev->next_rx_desc = (dev->next_rx_desc + 1) % CONFIG_ETH_E1000_RX_QUEUE_SIZE;
++
+ 	return pkt;
+ }
+ 
+@@ -177,16 +185,14 @@ static void e1000_isr(const struct device *ddev)
+ 
+ 	icr &= ~(ICR_TXDW | ICR_TXQE);
+ 
+-	if (icr & ICR_RXO) {
+-		struct net_pkt *pkt = e1000_rx(dev);
+-
+-		icr &= ~ICR_RXO;
++	if (icr & (ICR_RXO | ICR_RXDMT0 | ICR_RXT0)) {
++		struct net_pkt *pkt = NULL;
+ 
+-		if (pkt) {
++		while ((pkt = e1000_rx(dev))) {
+ 			net_recv_data(get_iface(dev), pkt);
+-		} else {
+-			eth_stats_update_errors_rx(get_iface(dev));
+ 		}
++
++		icr &= ~(ICR_RXO | ICR_RXDMT0 | ICR_RXT0);
+ 	}
+ 
+ 	if (icr) {
+@@ -224,19 +230,23 @@ int e1000_probe(const struct device *ddev)
+ 
+ 	iow32(dev, TCTL, TCTL_EN);
+ 
+-	/* Setup RX descriptor */
++	/* Setup RX descriptors */
+ 
+-	dev->rx.addr = POINTER_TO_INT(dev->rxb);
+-	dev->rx.len = sizeof(dev->rxb);
++	for (int i = 0; i < CONFIG_ETH_E1000_RX_QUEUE_SIZE; i++) {
++		dev->rx[i].addr = POINTER_TO_INT(dev->rxb[i]);
++		dev->rx[i].len = sizeof(dev->rxb[i]);
++	}
+ 
+-	iow32(dev, RDBAL, (uint32_t)POINTER_TO_UINT(&dev->rx));
+-	iow32(dev, RDBAH, (uint32_t)((POINTER_TO_UINT(&dev->rx) >> 16) >> 16));
+-	iow32(dev, RDLEN, 1*16);
++	iow32(dev, RDBAL, (uint32_t)POINTER_TO_UINT(&dev->rx[0]));
++	iow32(dev, RDBAH, (uint32_t)((POINTER_TO_UINT(&dev->rx[0]) >> 16) >> 16));
++	iow32(dev, RDLEN, (uint32_t)(CONFIG_ETH_E1000_RX_QUEUE_SIZE *
++				    sizeof(struct e1000_rx)));
+ 
+ 	iow32(dev, RDH, 0);
+-	iow32(dev, RDT, 1);
++	iow32(dev, RDT, CONFIG_ETH_E1000_RX_QUEUE_SIZE - 1);
++	dev->next_rx_desc = 0;
+ 
+-	iow32(dev, IMS, IMS_RXO);
++	iow32(dev, IMS, IMS_RXDMT0 | IMS_RXO | IMS_RXT0);
+ 
+ 	ral = ior32(dev, RAL);
+ 	rah = ior32(dev, RAH);
+diff --git a/drivers/ethernet/eth_e1000_priv.h b/drivers/ethernet/eth_e1000_priv.h
+index 64b7497b..991bc73a 100644
+--- a/drivers/ethernet/eth_e1000_priv.h
++++ b/drivers/ethernet/eth_e1000_priv.h
+@@ -18,9 +18,13 @@ extern "C" {
+ 
+ #define ICR_TXDW	     (1) /* Transmit Descriptor Written Back */
+ #define ICR_TXQE	(1 << 1) /* Transmit Queue Empty */
++#define ICR_RXDMT0	(1 << 4) /* Receive Descriptor Minimum Threshold */
+ #define ICR_RXO		(1 << 6) /* Receiver Overrun */
++#define ICR_RXT0	(1 << 7) /* Receiver Timer */
+ 
++#define IMS_RXDMT0	(1 << 4) /* Receive Descriptor Minimum Threshold */
+ #define IMS_RXO		(1 << 6) /* Receiver FIFO Overrun */
++#define IMS_RXT0	(1 << 7) /* Receiver Timer */
+ 
+ #define RCTL_MPE	(1 << 4) /* Multicast Promiscuous Enabled */
+ 
+@@ -76,9 +80,11 @@ struct e1000_rx {
+ 
+ struct e1000_dev {
+ 	volatile struct e1000_tx tx __aligned(16);
+-	volatile struct e1000_rx rx __aligned(16);
++	volatile struct e1000_rx rx[CONFIG_ETH_E1000_RX_QUEUE_SIZE] __aligned(16);
+ 	mm_reg_t address;
+ 
++	uint32_t next_rx_desc;
++
+ 	/* BDF & DID/VID */
+ 	struct pcie_dev *pcie;
+ 
+@@ -89,7 +95,7 @@ struct e1000_dev {
+ 	struct net_if *iface;
+ 	uint8_t mac[ETH_ALEN];
+ 	uint8_t txb[NET_ETH_MTU];
+-	uint8_t rxb[NET_ETH_MTU];
++	uint8_t rxb[CONFIG_ETH_E1000_RX_QUEUE_SIZE][NET_ETH_MTU];
+ #if defined(CONFIG_ETH_E1000_PTP_CLOCK)
+ 	const struct device *ptp_clock;
+ 	double clk_ratio;
