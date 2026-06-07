@@ -62,7 +62,7 @@ html_theme_options = {
     ]
 }
 
-exclude_patterns = ["RESTRUCTURE_PLAN.md"]
+exclude_patterns = ["RESTRUCTURE_PLAN.md", "superpowers/**"]
 
 # -- autodoc ------------------------------------------------------------------
 

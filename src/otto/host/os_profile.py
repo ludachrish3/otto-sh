@@ -27,7 +27,7 @@ The registry mirrors ``command_frame._FRAME_CLASSES`` and
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from ..logger import getOttoLogger
 
@@ -134,7 +134,9 @@ def register_os_profile(
             f"register_os_profile: overriding built-in profile {name!r}"
         )
 
-    _OS_PROFILES[name] = OsProfile(name=name, base=base, defaults=defaults)
+    # ``base`` is validated against ``_VALID_BASES`` above, so it is one of the
+    # ``BaseFamily`` literals here; narrow the str for the typed field.
+    _OS_PROFILES[name] = OsProfile(name=name, base=cast(BaseFamily, base), defaults=defaults)
 
 
 def build_os_profile(name: str) -> OsProfile:

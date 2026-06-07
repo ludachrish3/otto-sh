@@ -15,7 +15,6 @@ local and remote machines.
    embedded_transfer
    embedded_filesystem
    session
-   zephyr
    connections
    transport
    repeat
