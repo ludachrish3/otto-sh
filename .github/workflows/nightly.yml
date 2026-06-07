@@ -5,6 +5,9 @@ name: Nightly
 # catch timing-only races. Tier 1 only — no Vagrant VMs in GHA, so this
 # exercises the manager-level interleaving via FakeSession (transports are
 # mocked).
+#
+# Also re-runs the full nox unit matrix under pytest-repeat (5 iterations by
+# default) to flush flakes anywhere in the suite, not just the stability tests.
 on:
   schedule:
     # Nightly at 06:00 UTC. cron is in UTC regardless of repo timezone.
@@ -12,9 +15,13 @@ on:
   workflow_dispatch:
     inputs:
       count:
-        description: 'pytest-repeat iteration count'
+        description: 'pytest-repeat iteration count (stability tests)'
         required: false
         default: '500'
+      nox_count:
+        description: 'pytest-repeat iteration count (nox unit matrix)'
+        required: false
+        default: '5'
 
 concurrency:
   group: nightly-${{ github.workflow }}-${{ github.ref }}
@@ -52,11 +59,40 @@ jobs:
       - name: Run stability tests
         run: make stability COUNT=${{ inputs.count || '500' }}
 
+  # Re-run the full nox unit matrix several times under pytest-repeat to flush
+  # flakes anywhere in the suite (not just the stability tests). Mirrors the CI
+  # `tests` job but loops each session with --count via pytest-repeat, matching
+  # the repo's `make nox COUNT=N` convention.
+  unit-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v6.0.3
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      - name: Run nox unit tests ${{ inputs.nox_count || '5' }}x
+        run: >-
+          uv run nox -s tests-${{ matrix.python-version }} --
+          --count=${{ inputs.nox_count || '5' }} --repeat-scope=session
+
   # If any matrix cell fails, open (or update) a tracking issue so a flaky
   # nightly surfaces without anyone having to watch the Actions tab.
   report-failure:
     name: Open issue on failure
-    needs: tests
+    needs: [tests, unit-matrix]
     if: failure()
     runs-on: ubuntu-latest
     permissions:
@@ -65,18 +101,19 @@ jobs:
       - name: Write issue body
         run: |
           {
-            echo "The nightly stability run failed."
+            echo "The nightly run failed (stability and/or nox unit matrix)."
             echo
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the matrix logs for the failing Python version and the"
-            echo "pytest-repeat iteration that tripped a SessionManager race."
+            echo "Check the matrix logs for the failing job (stability vs."
+            echo "unit-matrix), the Python version, and the pytest-repeat"
+            echo "iteration that tripped the failure."
           } > issue-body.md
 
       - name: Create issue from file
         uses: peter-evans/create-issue-from-file@v6
         with:
-          title: "Nightly stability run failed"
+          title: "Nightly run failed"
           content-filepath: issue-body.md
           labels: stability, ci
