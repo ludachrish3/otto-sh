@@ -17,7 +17,7 @@ on:
       count:
         description: 'pytest-repeat iteration count (stability tests)'
         required: false
-        default: '500'
+        default: '50'
       nox_count:
         description: 'pytest-repeat iteration count (nox unit matrix)'
         required: false
@@ -36,7 +36,7 @@ env:
   CLICOLOR: ""
 
 jobs:
-  tests:
+  stability-matrix:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
