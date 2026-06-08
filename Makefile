@@ -233,5 +233,14 @@ clean: ## Remove all generated artifacts
 	@rm -rf docs/_build
 
 help: ## Show this help message
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@printf '\n\033[1mTesting\033[0m  (COUNT=N overrides iterations; omit the scope to run all environments)\n'
+	@printf '  unit = no VMs (fast)  ·  unix = Linux VMs (incl. hops)  ·  embedded = Zephyr\n'
+	@printf '  \033[36m%-31s\033[0m %s\n' 'nox-{unit,unix,embedded}'       'multi-Python matrix        (nox = all envs)'
+	@printf '  \033[36m%-31s\033[0m %s\n' 'coverage-{unit,unix,embedded}'  'pinned Python + coverage   (coverage = all, gated)'
+	@printf '  \033[36m%-31s\033[0m %s\n' 'stability-{unit,unix,embedded}' 'pinned pytest-repeat soak  (stability = all tiers)'
+	@printf '  \033[36m%-31s\033[0m %s\n' 'test TESTS=<kw>' 'filter any run by keyword'
+	@printf '  \033[36m%-31s\033[0m %s\n' 'repeat'          'soak the full unit suite (pytest-repeat)'
+	@printf '\n\033[1mOther targets\033[0m\n'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
+		| grep -vE '^(nox|coverage|stability)(-(unit|unix|embedded))?:|^(test|repeat):' \
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
