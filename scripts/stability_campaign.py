@@ -103,8 +103,8 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
         # T1 unit — all Pythons via nox (no VMs); nox writes per-session JUnit.
         Tier(
             name="unit",
-            argv=["uv", "run", "nox", "-s", "tests", "--", *repeat],
-            junit=[f"reports/junit/tests-{py}.xml" for py in PYTHONS],
+            argv=["uv", "run", "nox", "-s", "tests_unit", "--", *repeat],
+            junit=[f"reports/junit/tests_unit-{py}.xml" for py in PYTHONS],
         ),
         # T2 full lab — deep, pinned Python.
         Tier(
@@ -124,14 +124,16 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
             junit=[f"{cdir}/concurrency.xml"],
             env=leak_env,
         ),
-        # T3b unix stability (real telnet/SSH) — direct pytest, marker, serial.
+        # T3b unix stability (real telnet/SSH) — direct pytest, marker.
+        # No -n0: the suite self-serializes (docker via xdist_group, etc.),
+        # mirroring `make stability-unix`.
         Tier(
             name="integration-stability",
             argv=[
                 "uv", "run", "pytest",
                 "-m", "stability and integration and not embedded",
                 f"--count={count}",
-                "-p", "no:cacheprovider", "-n0",
+                "-p", "no:cacheprovider",
                 f"--junitxml={cdir}/integration-stability.xml",
             ],
             junit=[f"{cdir}/integration-stability.xml"],

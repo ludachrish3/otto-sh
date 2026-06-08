@@ -2,7 +2,6 @@
 
 ## General
 
-- Add the nox matrix to the nightly test. It fails sometimes for pull requests, and causes confusion because it appears that the new code causes the failure.
 - Neutralize `EmbeddedHost`'s class-level Zephyr defaults. The OS-profile layer (`osType` → registered `OsProfile`, see `src/otto/host/os_profile.py`) now lets a profile bundle OS-specific defaults, and a built-in `zephyr` profile carries the Zephyr bundle. As a follow-up, once lab data has migrated to a `zephyr`/versioned profile, make the `EmbeddedHost` class defaults generic — drop the implicit `command_frame=ZephyrFrame` / `osName='Zephyr'` so a bare `embedded` base carries no OS-specific assumptions and a misconfigured non-Zephyr host fails loudly rather than silently inheriting Zephyr framing. Breaking change for directly-constructed `EmbeddedHost(...)` and any `osType:"embedded"` data relying on the implicit default, so it was deferred from the initial profile work.
 - Empty lines in embedded command output have no logger preamble. Running `help` on zehphyr hosts reveals this.
 - Log tracebacks to the complete log file (the otto.log that currently gets saved)

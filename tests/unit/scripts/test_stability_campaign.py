@@ -87,6 +87,12 @@ def test_deep_tier_pins_python_3_10():
     assert "tests_all-3.10" in deep.argv
 
 
+def test_unit_tier_uses_tests_unit_session():
+    unit = next(t for t in build_tiers(count=1, breadth=False) if t.name == "unit")
+    assert "tests_unit" in unit.argv
+    assert unit.junit and all("tests_unit-" in j for j in unit.junit)
+
+
 def test_dry_run_prints_each_tier_command(capsys):
     rc = main(["run", "--count", "1", "--breadth", "--dry-run"])
     out = capsys.readouterr().out

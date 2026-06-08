@@ -78,7 +78,7 @@ _ALL_BACKENDS = pytest.mark.parametrize(
 # breathe. Unix iterations finish well inside this ceiling.
 #
 # `stability` keeps these heavy soak tests out of `make coverage` (which runs
-# `-m "not stability"`); they run via `make stability-embedded` / `stability-all`.
+# `-m "not stability"`); they run via `make stability-embedded` / `stability`.
 pytestmark = [pytest.mark.timeout(600), pytest.mark.stability]
 
 

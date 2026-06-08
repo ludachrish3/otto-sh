@@ -56,13 +56,13 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras --dev
 
-      - name: Run stability tests
-        run: make stability COUNT=${{ inputs.count || '500' }}
+      - name: Run unit stability tests
+        run: make stability-unit COUNT=${{ inputs.count || '500' }}
 
   # Re-run the full nox unit matrix several times under pytest-repeat to flush
   # flakes anywhere in the suite (not just the stability tests). Mirrors the CI
-  # `tests` job but loops each session with --count via pytest-repeat, matching
-  # the repo's `make nox COUNT=N` convention.
+  # `tests_unit` job but loops each session with --count via pytest-repeat,
+  # matching the repo's `make nox-unit COUNT=N` convention.
   unit-matrix:
     runs-on: ubuntu-latest
     strategy:
@@ -85,7 +85,7 @@ jobs:
 
       - name: Run nox unit tests ${{ inputs.nox_count || '5' }}x
         run: >-
-          uv run nox -s tests-${{ matrix.python-version }} --
+          uv run nox -s tests_unit-${{ matrix.python-version }} --
           --count=${{ inputs.nox_count || '5' }} --repeat-scope=session
 
   # If any matrix cell fails, open (or update) a tracking issue so a flaky

@@ -24,7 +24,7 @@ env:
 
 jobs:
   tests:
-    name: tests-${{ matrix.python }}
+    name: tests_unit-${{ matrix.python }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -42,7 +42,7 @@ jobs:
         run: uv python install ${{ matrix.python }}
 
       - name: Run tests under Python ${{ matrix.python }}
-        run: uv run nox -s tests-${{ matrix.python }}
+        run: uv run nox -s tests_unit-${{ matrix.python }}
 
   typecheck:
     runs-on: ubuntu-latest

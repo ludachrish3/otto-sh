@@ -256,14 +256,14 @@ Pick the one that matches what you want to exercise:
 
 | Category | How to run | VMs needed |
 |----------|------------|------------|
-| Unit only | `make coverage-unit` | none |
+| Unit only | `make coverage-unit` (pinned) / `make nox-unit` (all Pythons) | none |
 | Full coverage gate (excludes `stability`) | `make coverage` | lab VMs |
-| Integration, Unix only | `uv run pytest -m "integration and not embedded and not hops"` | test1/test2/test3 |
-| Embedded (Zephyr) | `uv run pytest -m embedded` | zephyr VM |
-| Multi-hop | `uv run pytest -m hops` | three VMs |
-| Stability / soak | `make stability-all` (or `make stability-embedded`) | lab VMs |
+| Integration, Unix (incl. multi-hop) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
+| Embedded (Zephyr) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
+| Multi-hop only | `uv run pytest -m hops` | three VMs |
+| Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-embedded`) | lab VMs (`-unit` needs none) |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
-| Cross-Python matrix | `make nox` (unit) / `make nox-all` (full) | `nox-all` needs VMs |
+| Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full) | `nox` needs VMs |
 
 `make test TESTS=<kw>` filters any run by keyword. Recover a wedged embedded bed
 with `make qemu-restart`; probe the whole lab with `make vm-health`.
@@ -292,9 +292,10 @@ default). To exercise the full matrix the way CI does — Python 3.10
 through 3.14 — use `nox`:
 
 ```bash
-make nox                       # full matrix: all Pythons + lint + typecheck + docs
-uv run nox -s tests-3.12       # just one Python's tests
-uv run nox -s tests-3.14 -- -k test_session    # forward args to pytest
+make nox-unit                  # quick: unit suite across all Pythons (no VMs)
+make nox                       # full matrix: all environments, all Pythons (needs VMs)
+uv run nox -s tests_unit-3.12  # just one Python's unit tests
+uv run nox -s tests_unit-3.14 -- -k test_session   # forward args to pytest
 uv run nox --list              # show every available session
 ```
 

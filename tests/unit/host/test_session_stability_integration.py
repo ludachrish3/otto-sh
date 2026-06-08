@@ -7,8 +7,8 @@ cancellation paths, FD/process leaks, transfer-protocol stability under
 fan-out.
 
 All tests are gated by ``@pytest.mark.integration`` so the existing
-``-m "not integration and not hops"`` filter excludes them from
-``make ci``. Run via ``make stability-local`` (requires ``vagrant up``).
+``-m "not integration"`` filter excludes them from
+``make ci``. Run via ``make stability-unix`` (requires ``vagrant up``).
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ from tests.unit.host._transfer_retry import transfer_with_retry
 pytestmark = [
     pytest.mark.timeout(60),
     # `stability` keeps these soak tests out of `make coverage` (`-m "not
-    # stability"`); they run via `make stability-all` (tier 2).
+    # stability"`); they run via `make stability-unix` (tier 2).
     pytest.mark.stability,
 ]
 

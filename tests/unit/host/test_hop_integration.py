@@ -33,7 +33,7 @@ from otto.utils import Status
 from tests.conftest import host_data
 from tests.unit.host._transfer_retry import transfer_with_retry
 
-pytestmark = pytest.mark.timeout(30)
+pytestmark = [pytest.mark.timeout(30), pytest.mark.integration]
 
 
 # ---------------------------------------------------------------------------

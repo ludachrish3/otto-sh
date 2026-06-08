@@ -4,7 +4,7 @@ Run all default sessions:
     uv run nox
 
 Run a single Python version's tests:
-    uv run nox -s tests-3.12
+    uv run nox -s tests_unit-3.12
 
 List available sessions:
     uv run nox --list
@@ -20,7 +20,7 @@ import nox_uv
 PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
 # Each Python version is a separate pytest process, so JUnit XML is written
-# per session (e.g. reports/junit/tests-3.12.xml) to avoid clobbering. With
+# per session (e.g. reports/junit/tests_unit-3.12.xml) to avoid clobbering. With
 # `--count=N` the repeats land in the same file, so a multi-run stability
 # pass collects every failure for a given Python in one place.
 JUNIT_DIR = Path("reports/junit")
@@ -35,20 +35,53 @@ nox.options.default_venv_backend = "uv"
 # `lint` is intentionally opt-in (`nox -s lint`) until the existing ruff
 # violations under tests/ and src/otto/ have been swept; running it by
 # default would block the matrix on pre-existing style debt.
-nox.options.sessions = ["tests", "typecheck", "docs"]
+nox.options.sessions = ["tests_unit", "typecheck", "docs"]
 
 UNIT_TEST_ARGS = (
     "tests/unit",
     "-m",
-    "not integration and not hops",
+    "not integration",
     "--cov-fail-under=80",
 )
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
-def tests(session: nox.Session) -> None:
+def tests_unit(session: nox.Session) -> None:
     """Run unit tests (no Vagrant VMs) under each supported Python."""
     session.run("pytest", *UNIT_TEST_ARGS, _junitxml(session), *session.posargs)
+
+
+@nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
+def tests_unix(session: nox.Session) -> None:
+    """Run the Unix-VM integration suite (incl. multi-hop) under each Python.
+
+    Requires the dev VM with Vagrant hosts up; not run in CI. No coverage gate
+    is enforced — a single environment exercises only a slice of otto.
+    """
+    session.run(
+        "pytest",
+        "-m",
+        "integration and not embedded",
+        _junitxml(session),
+        *session.posargs,
+    )
+
+
+@nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
+def tests_embedded(session: nox.Session) -> None:
+    """Run the embedded (Zephyr) suite under each supported Python.
+
+    Requires the Vagrant lab (zephyr VM) up; not run in CI. Serialization is
+    handled by the per-device xdist_group + console lock in
+    tests/integration/host/conftest.py, so no -n0 is forced. No coverage gate.
+    """
+    session.run(
+        "pytest",
+        "-m",
+        "embedded",
+        _junitxml(session),
+        *session.posargs,
+    )
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])

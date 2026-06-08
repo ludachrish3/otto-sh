@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-all validate clean-dist dev build test coverage coverage-unit docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-all stability-embedded repeat vm-health qemu-restart
+.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build test coverage coverage-unit coverage-unix coverage-embedded docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -20,26 +20,37 @@ CI_COVERAGE_THRESHOLD := 80
 #   make repeat COUNT=50
 COUNT ?= 10
 
-# Iteration count for `make nox` / `make nox-all`. The shared COUNT default
-# (10) is wrong for nox, so honor COUNT only when set explicitly on the
-# command line; otherwise run the matrix once.
-#   make nox-all COUNT=5
+# Iteration count for the `nox-*` targets. The shared COUNT default (10) is
+# wrong for nox, so honor COUNT only when set explicitly on the command line;
+# otherwise run the matrix once.
+#   make nox-unit COUNT=5
 NOX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
 
 # Iteration count for `make stability-embedded`. Default is 1 (a single pass)
 # so a standalone embedded run doesn't hammer the Zephyr board. When driven
-# from `make stability-all` the parent explicitly passes COUNT=10 (or whatever
-# the user set on the command line), so this resolves to the right value then.
-EMBEDDED_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
+# from `make stability` the parent explicitly passes COUNT=10 (or whatever the
+# user set on the command line), so this resolves to the right value then.
+STABILITY_EMBEDDED_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
 
-# Iteration count for `make stability`. Default is 50 (soak run); honor COUNT
-# only when explicitly passed on the command line so that the global COUNT ?= 10
-# default never silently overrides the documented 50-iteration contract.
-STABILITY_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),50)
+# Iteration count for `make stability-unit`. Default is 50 (soak run); honor
+# COUNT only when explicitly passed on the command line so that the global
+# COUNT ?= 10 default never silently overrides the documented 50-iteration
+# contract.
+STABILITY_UNIT_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),50)
 
-# Iteration count for the tier-2 integration leg of `make stability-all`.
-# Default is 10; honor COUNT only when explicitly passed on the command line.
-INTEGRATION_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),10)
+# Iteration count for the Unix-VM leg `make stability-unix`. Default is 10;
+# honor COUNT only when explicitly passed on the command line.
+STABILITY_UNIX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),10)
+
+# Shared pytest marker expressions for the test "environment" axis, reused by
+# the coverage-* targets (the nox-* sessions encode the same expressions in
+# noxfile.py). Keep the two in sync.
+#   unit     — no VM (mocked transports)
+#   unix     — real telnet/SSH against the Linux Vagrant VMs (incl. multi-hop)
+#   embedded — Zephyr/QEMU under the zephyr VM
+M_UNIT := not integration
+M_UNIX := integration and not embedded
+M_EMBEDDED := embedded
 
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
@@ -49,7 +60,7 @@ INTEGRATION_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),10)
 # dir; and the embedded Zephyr tests are serialized per-device (one telnet
 # client per console — see tests/integration/host/conftest.py). The heavy
 # stability/soak tests are excluded from `coverage` (the `stability` marker)
-# and run only via `make stability-all` / `stability-embedded`, so 6 min
+# and run only via `make stability` / `stability-embedded`, so 6 min
 # leaves comfortable headroom for slower runners.
 # --kill-after escalates SIGTERM → SIGKILL if xdist workers don't drain.
 PYTEST_TIMEOUT := 360s
@@ -70,7 +81,7 @@ release: ## Validate (typecheck + docs + FULL nox matrix across all Pythons, req
 	@$(MAKE) clean-dist \
 		&& $(MAKE) typecheck \
 		&& $(MAKE) docs \
-		&& OTTO_DETECT_ASYNCIO_LEAKS=1 $(MAKE) nox-all \
+		&& OTTO_DETECT_ASYNCIO_LEAKS=1 $(MAKE) nox \
 		&& NEW_VERSION="$${NEW_VERSION:-$$(bump-my-version show new_version --increment $(BUMP))}" \
 		&& echo "Targeting v$$NEW_VERSION" \
 		&& git-cliff --tag "v$$NEW_VERSION" -o CHANGELOG.md \
@@ -97,10 +108,16 @@ publish: ## Manual fallback: upload dist/ to PyPI — permanent (prefer pushing 
 	uv publish \
 		--check-url https://pypi.org/simple/
 
-nox: ## Run the default nox session matrix (unit tests across all supported Pythons + typecheck + docs). Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/.
-	uv run nox -- --count=$(NOX_COUNT) --repeat-scope=session
+nox-unit: ## Run the unit suite across all supported Pythons (no VMs). Fastest safe test. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/.
+	uv run nox -s tests_unit -- --count=$(NOX_COUNT) --repeat-scope=session
 
-nox-all: ## Run the FULL test suite across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/.
+nox-unix: ## Run the Unix-VM integration suite (incl. multi-hop) across all supported Pythons. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/.
+	uv run nox -s tests_unix -- --count=$(NOX_COUNT) --repeat-scope=session
+
+nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. Requires Vagrant lab up. Override COUNT=N (default 1); JUnit XML in reports/junit/.
+	uv run nox -s tests_embedded -- --count=$(NOX_COUNT) --repeat-scope=session
+
+nox: ## Run the FULL test suite (all environments) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override COUNT=N (default 1); JUnit XML in reports/junit/.
 	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 
 validate: ## Run validation (clean-dist, typecheck, coverage, docs) without building dist
@@ -123,21 +140,41 @@ build: ## Build the project with uv
 test: ## Run tests (use TESTS= to filter)
 	uv run pytest -k '$(TESTS)'
 
-coverage: ## Run tests and enforce coverage threshold (excludes heavy `stability` tests — those run via `make stability-all`)
+coverage: ## Run the pinned-Python suite and enforce the coverage gate (excludes heavy `stability` tests — those run via `make stability`)
 	$(TIMEOUT_CMD) uv run pytest -m "not stability" --cov-fail-under=$(COVERAGE_THRESHOLD)
 
-coverage-unit: ## Run unit tests only (no Vagrant VMs needed) and enforce CI threshold
-	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not integration and not hops" --cov-fail-under=$(CI_COVERAGE_THRESHOLD)
+coverage-unit: ## Run the pinned-Python unit suite (no Vagrant VMs) and enforce the CI coverage gate
+	$(TIMEOUT_CMD) uv run pytest tests/unit -m "$(M_UNIT)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD)
 
-stability: ## Run no-VM SessionManager concurrency/soak tests by marker. Override iterations with COUNT=N (default 50).
+coverage-unix: ## Run the pinned-Python Unix-VM integration suite (incl. multi-hop) with a coverage report (no gate — one env can't meet the whole-repo threshold). Requires lab VMs.
+	$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX)"
+
+coverage-embedded: ## Run the pinned-Python embedded (Zephyr) suite with a coverage report (no gate). Requires Vagrant lab up.
+	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)"
+
+stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. Override iterations with COUNT=N (default 50).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m concurrency \
-	    --count=$(STABILITY_COUNT) \
+	    --count=$(STABILITY_UNIT_COUNT) \
 	    -p no:cacheprovider
 
-stability-all: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if unit-level tests are RED. Override iterations with COUNT=N (default 10).
+stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. Override iterations with COUNT=N (default 10).
+	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	    -m "stability and integration and not embedded" \
+	    --count=$(STABILITY_UNIX_COUNT) \
+	    -p no:cacheprovider
+
+stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/. Override iterations with COUNT=N (default 1).
+	@mkdir -p reports/junit
+	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	    -m "stability and embedded" \
+	    -p no:cacheprovider \
+	    --count=$(STABILITY_EMBEDDED_COUNT) \
+	    --junitxml=reports/junit/stability-embedded.xml
+
+stability: ## Run the full stability/soak suite: no-VM concurrency, then real telnet/SSH (Unix + embedded). Runs all tiers even if an earlier one is RED. Requires lab VMs for tiers 2-3. Override iterations with COUNT=N.
 	@echo "── Tier 1 (unit-level concurrency) ──"
-	-@$(MAKE) stability COUNT=$(or $(COUNT),50)
+	-@$(MAKE) stability-unit COUNT=$(COUNT)
 	@echo
 	@echo "── Tier 2 (real telnet/SSH) ──"
 	@if command -v jq >/dev/null 2>&1; then \
@@ -156,23 +193,10 @@ stability-all: ## Real telnet/SSH against Vagrant VMs. Runs all tests, even if u
 	else \
 	    echo "  jq not installed; skipping ping check (tests will fail fast at fixture connect if VMs are down)."; \
 	fi
-	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    -m "stability and integration and not embedded" \
-	    --count=$(INTEGRATION_COUNT) \
-	    -p no:cacheprovider \
-	    -n0
+	@$(MAKE) stability-unix COUNT=$(COUNT)
 	@echo
 	@echo "── Tier 3 (cross-OS stability contract — includes embedded) ──"
-	@$(MAKE) stability-embedded COUNT=$(or $(COUNT),10)
-
-stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (unix + Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/. Override iterations with COUNT=N (default 1).
-	@mkdir -p reports/junit
-	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    -m "stability and embedded" \
-	    -p no:cacheprovider \
-	    -n0 \
-	    --count=$(EMBEDDED_COUNT) \
-	    --junitxml=reports/junit/stability-embedded.xml
+	@$(MAKE) stability-embedded COUNT=$(COUNT)
 
 repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. Override COUNT=N (default 10).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest tests/unit \
