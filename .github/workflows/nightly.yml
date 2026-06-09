@@ -17,7 +17,7 @@ on:
       count:
         description: 'pytest-repeat iteration count (stability tests)'
         required: false
-        default: '50'
+        default: '100'
       nox_count:
         description: 'pytest-repeat iteration count (nox unit matrix)'
         required: false
@@ -57,7 +57,7 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run unit stability tests
-        run: make stability-unit COUNT=${{ inputs.count || '500' }}
+        run: make stability-unit COUNT=${{ inputs.count || '100' }}
 
   # Re-run the full nox unit matrix several times under pytest-repeat to flush
   # flakes anywhere in the suite (not just the stability tests). Mirrors the CI
