@@ -92,7 +92,7 @@ jobs:
   # nightly surfaces without anyone having to watch the Actions tab.
   report-failure:
     name: Open issue on failure
-    needs: [tests, unit-matrix]
+    needs: [stability-matrix, unit-matrix]
     if: failure()
     runs-on: ubuntu-latest
     permissions:
