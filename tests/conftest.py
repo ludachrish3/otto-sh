@@ -122,6 +122,15 @@ def pytest_unconfigure(config):  # type: ignore[no-untyped-def]
 # only ever creates loops via ``asyncio.run()`` (which always closes them), so
 # such a loop never sits open at a boundary today; the raise is a regression
 # guard. See ``tests/_loop_reaper.py`` for the full rationale and evidence.
+#
+# Loops owned by a still-live *wider-than-function* pytest-asyncio runner
+# (``loop_scope`` of class/module/package/session) are ALSO never closed here:
+# they are open-but-idle between tests by design and pytest-asyncio closes them
+# itself at scope end. Reaping one mid-scope closes the loop out from under the
+# next test in that scope, which then dies with ``RuntimeError: Event loop is
+# closed`` (and orphans its coroutines into later unrelated tests). The reaper
+# only ever targets *leaked function* loops, so ``_live_scoped_runner_loops``
+# excludes the wider-scoped runner loops from the reap set.
 # ---------------------------------------------------------------------------
 
 # loop -> (origin, creating-test nodeid). Weak keys: dead loops drop out on
@@ -178,10 +187,52 @@ def pytest_runtest_setup(item):  # type: ignore[no-untyped-def]
     _current_test = item.nodeid
 
 
+# pytest-asyncio backs each non-function ``loop_scope`` with a fixture named
+# ``_{scope}_scoped_runner`` whose value is an ``asyncio.Runner`` holding the
+# scope's persistent loop. The function runner is intentionally omitted — its
+# leaked loops are exactly what the reaper exists to close.
+_SCOPED_RUNNER_FIXTURES = (
+    "_class_scoped_runner",
+    "_module_scoped_runner",
+    "_package_scoped_runner",
+    "_session_scoped_runner",
+)
+
+
+def _live_scoped_runner_loops(item) -> set:
+    """Loops owned by a still-live wider-than-function pytest-asyncio runner.
+
+    pytest-asyncio requests the runner fixture dynamically inside ``runtest``
+    (``request.getfixturevalue``), so it is not in the item's fixture closure;
+    look each runner fixturedef up in the session-wide registry and read its
+    cached value. A fixturedef with a live ``cached_result`` means its scope
+    has not ended, so its loop must be left alone. Defensive throughout: a
+    pytest/pytest-asyncio internals change degrades to "reap as before" rather
+    than crashing teardown.
+    """
+    owned: set = set()
+    fm = getattr(item.session, "_fixturemanager", None)
+    registry = getattr(fm, "_arg2fixturedefs", None) or {}
+    for name in _SCOPED_RUNNER_FIXTURES:
+        for fixturedef in registry.get(name, ()):
+            cached = getattr(fixturedef, "cached_result", None)
+            if not cached:  # never set up, or already finalized -> scope ended
+                continue
+            try:
+                owned.add(cached[0].get_loop())
+            except Exception:
+                pass
+    return owned
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item):
     """After the test and all its fixtures finalize, reap orphaned harness
     loops. Raises :class:`LeakedProductLoopError` if a product loop leaked.
+
+    Loops still owned by a live wider-than-function runner are excluded so the
+    reaper never closes a class/module/package/session loop out from under the
+    next test in that scope (see :func:`_live_scoped_runner_loops`).
     """
     result = yield
     global _loops_reaped
@@ -194,7 +245,17 @@ def pytest_runtest_teardown(item):
         info = _LOOP_INFO.get(loop)
         return f"{loop!r} (created during {info[1] if info else '?'})"
 
-    _loops_reaped += reap_or_raise(list(_LOOP_INFO.keys()), origin_of, describe=describe)
+    owned = _live_scoped_runner_loops(item)
+    # A product (otto/-created) loop must ALWAYS reach reap_or_raise so a real
+    # leak still raises LeakedProductLoopError — never let the scoped-runner
+    # exclusion swallow one. ``owned`` only ever holds harness runner loops, so
+    # this guard is belt-and-suspenders, but it keeps the "product leaks are
+    # never masked" invariant local and self-evident.
+    reapable = [
+        loop for loop in _LOOP_INFO.keys()
+        if loop not in owned or origin_of(loop) == "product"
+    ]
+    _loops_reaped += reap_or_raise(reapable, origin_of, describe=describe)
     return result
 
 
