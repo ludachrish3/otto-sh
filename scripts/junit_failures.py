@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Summarize failures and errors from pytest JUnit XML reports.
 
-Useful for triaging CI flakes: point it at one or more ``reports/junit/*.xml``
+Useful for triaging CI flakes: point it at one or more ``reports/junit/**/*.xml``
 files and it prints each failing/erroring test case with its message, and
-optionally the full failure text.
+optionally the full failure text. Each make test target writes into its own
+subdirectory (e.g. ``reports/junit/nox-unit/``, ``reports/junit/coverage/``).
 
 Usage::
 
-    scripts/junit_failures.py reports/junit/*.xml
-    scripts/junit_failures.py --full reports/junit/tests_all-3.13.xml
+    scripts/junit_failures.py reports/junit/**/*.xml
+    scripts/junit_failures.py --full reports/junit/nox/tests_all-3.13.xml
 """
 
 from __future__ import annotations

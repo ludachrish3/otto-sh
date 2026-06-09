@@ -66,6 +66,14 @@ M_EMBEDDED := embedded
 PYTEST_TIMEOUT := 360s
 TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 
+# JUnit XML output. Every test target writes into its own subdirectory of
+# reports/junit/ named after the target, so runs never clobber each other and
+# `make clean` (rm -rf reports) removes them all. pytest creates the parent
+# directory for --junitxml, so no mkdir is needed. The nox-* targets encode the
+# same layout in noxfile.py (_junitxml). Usage: $(call junitxml,coverage-unit)
+JUNIT_DIR := reports/junit
+junitxml = --junitxml=$(JUNIT_DIR)/$(1)/$(1).xml
+
 all: ## Run full pipeline against the dev VM (includes integration tests)
 	@$(MAKE) validate \
 		&& $(MAKE) build
@@ -108,16 +116,16 @@ publish: ## Manual fallback: upload dist/ to PyPI — permanent (prefer pushing 
 	uv publish \
 		--check-url https://pypi.org/simple/
 
-nox-unit: ## Run the unit suite across all supported Pythons (no VMs). Fastest safe test. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/.
+nox-unit: ## Run the unit suite across all supported Pythons (no VMs). Fastest safe test. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/nox-unit/.
 	uv run nox -s tests_unit -- --count=$(NOX_COUNT) --repeat-scope=session
 
-nox-unix: ## Run the Unix-VM integration suite (incl. multi-hop) across all supported Pythons. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/.
+nox-unix: ## Run the Unix-VM integration suite (incl. multi-hop) across all supported Pythons. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox-unix/.
 	uv run nox -s tests_unix -- --count=$(NOX_COUNT) --repeat-scope=session
 
-nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. Requires Vagrant lab up. Override COUNT=N (default 1); JUnit XML in reports/junit/.
+nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. Requires Vagrant lab up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox-embedded/.
 	uv run nox -s tests_embedded -- --count=$(NOX_COUNT) --repeat-scope=session
 
-nox: ## Run the FULL test suite (all environments) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override COUNT=N (default 1); JUnit XML in reports/junit/.
+nox: ## Run the FULL test suite (all environments) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 
 validate: ## Run validation (clean-dist, typecheck, coverage, docs) without building dist
@@ -137,40 +145,41 @@ dev:
 build: ## Build the project with uv
 	uv build
 
-test: ## Run tests (use TESTS= to filter)
-	uv run pytest -k '$(TESTS)'
+test: ## Run tests (use TESTS= to filter). JUnit XML lands in reports/junit/test/.
+	uv run pytest -k '$(TESTS)' $(call junitxml,test)
 
-coverage: ## Run the pinned-Python suite and enforce the coverage gate (excludes heavy `stability` tests — those run via `make stability`)
-	$(TIMEOUT_CMD) uv run pytest -m "not stability" --cov-fail-under=$(COVERAGE_THRESHOLD)
+coverage: ## Run the pinned-Python suite and enforce the coverage gate (excludes heavy `stability` tests — those run via `make stability`). JUnit XML lands in reports/junit/coverage/.
+	$(TIMEOUT_CMD) uv run pytest -m "not stability" --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
 
-coverage-unit: ## Run the pinned-Python unit suite (no Vagrant VMs) and enforce the CI coverage gate
-	$(TIMEOUT_CMD) uv run pytest tests/unit -m "$(M_UNIT)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD)
+coverage-unit: ## Run the pinned-Python unit suite (no Vagrant VMs) and enforce the CI coverage gate. JUnit XML lands in reports/junit/coverage-unit/.
+	$(TIMEOUT_CMD) uv run pytest tests/unit -m "$(M_UNIT)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-unit)
 
-coverage-unix: ## Run the pinned-Python Unix-VM integration suite (incl. multi-hop) with a coverage report (no gate — one env can't meet the whole-repo threshold). Requires lab VMs.
-	$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX)"
+coverage-unix: ## Run the pinned-Python Unix-VM integration suite (incl. multi-hop) with a coverage report (no gate — one env can't meet the whole-repo threshold). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
+	$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX)" $(call junitxml,coverage-unix)
 
-coverage-embedded: ## Run the pinned-Python embedded (Zephyr) suite with a coverage report (no gate). Requires Vagrant lab up.
-	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)"
+coverage-embedded: ## Run the pinned-Python embedded (Zephyr) suite with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
+	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
 
-stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. Override iterations with COUNT=N (default 50).
+stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JUnit XML lands in reports/junit/stability-unit/. Override iterations with COUNT=N (default 50).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m concurrency \
 	    --count=$(STABILITY_UNIT_COUNT) \
-	    -p no:cacheprovider
+	    -p no:cacheprovider \
+	    $(call junitxml,stability-unit)
 
-stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. Override iterations with COUNT=N (default 10).
+stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m "stability and integration and not embedded" \
 	    --count=$(STABILITY_UNIX_COUNT) \
-	    -p no:cacheprovider
+	    -p no:cacheprovider \
+	    $(call junitxml,stability-unix)
 
-stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/. Override iterations with COUNT=N (default 1).
-	@mkdir -p reports/junit
+stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/stability-embedded/. Override iterations with COUNT=N (default 1).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m "stability and embedded" \
 	    -p no:cacheprovider \
 	    --count=$(STABILITY_EMBEDDED_COUNT) \
-	    --junitxml=reports/junit/stability-embedded.xml
+	    $(call junitxml,stability-embedded)
 
 stability: ## Run the full stability/soak suite: no-VM concurrency, then real telnet/SSH (Unix + embedded). Runs all tiers even if an earlier one is RED. Requires lab VMs for tiers 2-3. Override iterations with COUNT=N.
 	@echo "── Tier 1 (unit-level concurrency) ──"
@@ -198,10 +207,11 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 	@echo "── Tier 3 (cross-OS stability contract — includes embedded) ──"
 	@$(MAKE) stability-embedded COUNT=$(COUNT)
 
-repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. Override COUNT=N (default 10).
+repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest tests/unit \
 	    --count=$(COUNT) \
-	    -p no:cacheprovider
+	    -p no:cacheprovider \
+	    $(call junitxml,repeat)
 
 vm-health: ## Probe every lab VM + Zephyr QEMU instance; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
 	uv run python scripts/lab_health.py

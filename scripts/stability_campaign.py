@@ -104,13 +104,13 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
         Tier(
             name="unit",
             argv=["uv", "run", "nox", "-s", "tests_unit", "--", *repeat],
-            junit=[f"reports/junit/tests_unit-{py}.xml" for py in PYTHONS],
+            junit=[f"reports/junit/nox-unit/tests_unit-{py}.xml" for py in PYTHONS],
         ),
         # T2 full lab — deep, pinned Python.
         Tier(
             name="full-deep",
             argv=["uv", "run", "nox", "-s", f"tests_all-{DEEP_PYTHON}", "--", *repeat],
-            junit=[f"reports/junit/tests_all-{DEEP_PYTHON}.xml"],
+            junit=[f"reports/junit/nox/tests_all-{DEEP_PYTHON}.xml"],
         ),
         # T3a concurrency soak — direct pytest, marker-selected, controlled JUnit.
         Tier(
@@ -143,7 +143,7 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
         Tier(
             name="embedded-contract",
             argv=["make", "stability-embedded", f"COUNT={count}"],
-            junit=["reports/junit/stability-embedded.xml"],
+            junit=["reports/junit/stability-embedded/stability-embedded.xml"],
         ),
     ]
     if breadth:
@@ -151,7 +151,7 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
             name="full-breadth",
             argv=["uv", "run", "nox", "-s", "tests_all", "--",
                   "--count=1", "--repeat-scope=session"],
-            junit=[f"reports/junit/tests_all-{py}.xml" for py in PYTHONS],
+            junit=[f"reports/junit/nox/tests_all-{py}.xml" for py in PYTHONS],
         ))
     return tiers
 

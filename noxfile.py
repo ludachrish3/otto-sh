@@ -19,17 +19,19 @@ import nox_uv
 
 PYTHON_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
-# Each Python version is a separate pytest process, so JUnit XML is written
-# per session (e.g. reports/junit/tests_unit-3.12.xml) to avoid clobbering. With
-# `--count=N` the repeats land in the same file, so a multi-run stability
-# pass collects every failure for a given Python in one place.
+# JUnit XML is written into a per-target subdirectory of reports/junit/ named
+# after the `make` target that drives the session (nox-unit, nox-unix,
+# nox-embedded, nox), matching the layout the standalone Makefile test targets
+# use. Each Python version is a separate pytest process, so the file inside the
+# subdir keeps the full session name (e.g. reports/junit/nox-unit/tests_unit-3.12.xml)
+# to avoid clobbering. With `--count=N` the repeats land in the same file, so a
+# multi-run stability pass collects every failure for a given Python in one place.
 JUNIT_DIR = Path("reports/junit")
 
 
-def _junitxml(session: nox.Session) -> str:
-    """Return a `--junitxml=` arg with a per-session report path."""
-    JUNIT_DIR.mkdir(parents=True, exist_ok=True)
-    return f"--junitxml={JUNIT_DIR / f'{session.name}.xml'}"
+def _junitxml(session: nox.Session, group: str) -> str:
+    """Return a `--junitxml=` arg pointing at reports/junit/<group>/<session>.xml."""
+    return f"--junitxml={JUNIT_DIR / group / f'{session.name}.xml'}"
 
 nox.options.default_venv_backend = "uv"
 # `lint` is intentionally opt-in (`nox -s lint`) until the existing ruff
@@ -48,7 +50,7 @@ UNIT_TEST_ARGS = (
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
 def tests_unit(session: nox.Session) -> None:
     """Run unit tests (no Vagrant VMs) under each supported Python."""
-    session.run("pytest", *UNIT_TEST_ARGS, _junitxml(session), *session.posargs)
+    session.run("pytest", *UNIT_TEST_ARGS, _junitxml(session, "nox-unit"), *session.posargs)
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
@@ -62,7 +64,7 @@ def tests_unix(session: nox.Session) -> None:
         "pytest",
         "-m",
         "integration and not embedded",
-        _junitxml(session),
+        _junitxml(session, "nox-unix"),
         *session.posargs,
     )
 
@@ -79,7 +81,7 @@ def tests_embedded(session: nox.Session) -> None:
         "pytest",
         "-m",
         "embedded",
-        _junitxml(session),
+        _junitxml(session, "nox-embedded"),
         *session.posargs,
     )
 
@@ -93,7 +95,7 @@ def tests_all(session: nox.Session) -> None:
     tree, so no marker filter is passed here. Coverage threshold matches
     ``make coverage`` (85%).
     """
-    session.run("pytest", "--cov-fail-under=85", _junitxml(session), *session.posargs)
+    session.run("pytest", "--cov-fail-under=85", _junitxml(session, "nox"), *session.posargs)
 
 
 @nox_uv.session(uv_groups=["dev"])
