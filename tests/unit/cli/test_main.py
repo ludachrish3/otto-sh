@@ -39,8 +39,9 @@ def main_mocks(tmp_path):
     mock_config.lab = mock_lab
 
     # Clear OTTO_* env vars so Typer envvar= defaults aren't overridden
-    # by the user's shell environment; supply OTTO_XDIR so the now-required
-    # --xdir option is satisfied without each test having to thread it.
+    # by the user's shell environment; point OTTO_XDIR at tmp_path so logger
+    # side-effects land there instead of the project root (--xdir is optional
+    # and defaults to CWD, which we don't want tests writing to).
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith('OTTO_')}
     clean_env['OTTO_XDIR'] = str(tmp_path)
 
@@ -209,17 +210,17 @@ class TestLoggerArguments:
         _invoke(['--xdir', str(custom_xdir)])
         assert getOttoLogger().xdir == custom_xdir
 
-    def test_xdir_required_when_neither_flag_nor_env(self):
-        """--xdir (or OTTO_XDIR) must be supplied; otherwise the CLI exits non-zero.
+    def test_xdir_default_when_neither_flag_nor_env(self, real_main_mocks, monkeypatch):
+        """--xdir is optional: with neither flag nor OTTO_XDIR it defaults to CWD.
 
-        Defaulting xdir to ``Path()`` (== CWD) was a footgun: combined with
-        --log-days, removeOldLogs walked the project tree at startup.
+        The CWD default is safe because ``removeOldLogs`` only rmtree's entries
+        matching otto's timestamped log-dir name pattern (see logger.py), so a
+        CWD-pointed xdir can no longer walk foreign trees at startup.
         """
-        clean_env = {k: v for k, v in os.environ.items()
-                     if not k.startswith('OTTO_')}
-        with patch.dict(os.environ, clean_env, clear=True):
-            result = runner.invoke(app, ['--lab', 'test_lab'])
-        assert result.exit_code != 0
+        monkeypatch.delenv('OTTO_XDIR', raising=False)
+        result = _invoke([])
+        assert result.exit_code == 0
+        assert getOttoLogger().xdir == Path()
 
 
 # ── Lab loading ───────────────────────────────────────────────────────────────
