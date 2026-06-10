@@ -98,7 +98,7 @@ class TestAllHostsMixed:
     def test_yields_both_unix_and_embedded(self, mixed_lab):
         result = list(all_hosts())
         kinds = {type(h).__name__ for h in result}
-        assert kinds == {"UnixHost", "EmbeddedHost"}
+        assert kinds == {"UnixHost", "ZephyrHost"}
         assert len(result) == 2
 
     def test_ssh_options_override_skipped_for_embedded(self, mixed_lab):

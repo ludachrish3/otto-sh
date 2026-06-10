@@ -8,6 +8,7 @@ class TestBuildMonitorCollector:
     def test_snmp_host_becomes_snmp_target(self):
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'snmp': {'port': 16101, 'oids': ['1.3.6.1.2.1.1.3.0']},
         })
         collector = build_monitor_collector([host])
@@ -22,6 +23,7 @@ class TestBuildMonitorCollector:
     def test_snmp_address_override_is_used(self):
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'snmp': {'address': '10.10.200.14', 'port': 16101, 'oids': ['1.3.6.1.2.1.1.3.0']},
         })
         collector = build_monitor_collector([host])

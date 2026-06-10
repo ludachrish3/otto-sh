@@ -16,7 +16,14 @@ from ..host.options import (
     SshOptions,
     TelnetOptions,
 )
-from ..host.os_profile import OsProfile, build_os_profile, get_os_profile, registered_profile_names
+from ..host.os_profile import (
+    _all_slots,
+    OsProfile,
+    build_host_class,
+    build_os_profile,
+    get_os_profile,
+    registered_profile_names,
+)
 from ..host.remoteHost import RemoteHost
 from ..host.toolchain import Toolchain
 from ..host.unixHost import UnixHost
@@ -158,17 +165,25 @@ def create_host_from_dict(
     TypeError
         If required fields are missing or field types are incorrect.
     """
-    os_type = host_data.get('osType', 'unix')
-    profile = build_os_profile(os_type)
-    if profile.base == 'unix':
-        return _create_unix_host(host_data, defaults, profile)
-    return _create_embedded_host(host_data, defaults, profile)
+    selector = host_data.get('osType', 'unix')
+    profile = build_os_profile(selector)
+    cls = build_host_class(profile.base)
+    if issubclass(cls, EmbeddedHost):
+        return _create_embedded_host(host_data, defaults, profile, cls, selector)
+    if issubclass(cls, UnixHost):
+        return _create_unix_host(host_data, defaults, profile, cls, selector)
+    raise ValueError(
+        f"osType {selector!r} resolves to {cls.__name__}, which is neither a "
+        f"Unix nor an embedded host"
+    )
 
 
 def _create_unix_host(
     host_data: dict[str, Any],
     defaults: dict[str, dict[str, Any]] | None = None,
     profile: OsProfile | None = None,
+    cls: type[UnixHost] = UnixHost,
+    selector: str = 'unix',
 ) -> UnixHost:
     """Build a :class:`UnixHost` (SSH/Telnet, bash shell) from a host dict.
 
@@ -182,7 +197,7 @@ def _create_unix_host(
     # fields relevant to UnixHost init. The *_options tables get a finer-grained
     # merge below, so this shallow layer only fixes the scalar/atomic fields.
     effective = {**profile_defaults, **host_data}
-    kwargs = { k: v for k, v in effective.items() if k in UnixHost.__slots__ }
+    kwargs = { k: v for k, v in effective.items() if k in _all_slots(cls) }
 
     # Ensure resources is a set
     resources = kwargs.get('resources', [])
@@ -210,14 +225,16 @@ def _create_unix_host(
         if merged:
             kwargs[opt_key] = builder(merged)
 
-    kwargs['osType'] = profile.base if profile else 'unix'
-    return UnixHost(**kwargs)
+    kwargs['osType'] = selector
+    return cls(**kwargs)
 
 
 def _create_embedded_host(
     host_data: dict[str, Any],
     defaults: dict[str, dict[str, Any]] | None = None,
     profile: OsProfile | None = None,
+    cls: type[EmbeddedHost] = EmbeddedHost,
+    selector: str = 'embedded',
 ) -> EmbeddedHost:
     """Build an :class:`EmbeddedHost` (telnet RTOS shell) from a host dict.
 
@@ -241,7 +258,7 @@ def _create_embedded_host(
             f"target cannot run Docker containers"
         )
 
-    kwargs = { k: v for k, v in effective.items() if k in EmbeddedHost.__slots__ }
+    kwargs = { k: v for k, v in effective.items() if k in _all_slots(cls) }
 
     # Ensure resources is a set
     resources = kwargs.get('resources', [])
@@ -258,8 +275,9 @@ def _create_embedded_host(
         kwargs['filesystem'] = build_filesystem(kwargs['filesystem'])
 
     # Resolve the lab-data ``command_frame`` string to a typed instance.
-    # Absent field defaults to ZephyrFrame via the EmbeddedHost field default
-    # (the stock Zephyr 3.7/4.4 shell) — no action needed here.
+    # A bare ``embedded`` host has no default frame: an absent field leaves
+    # ``command_frame=None`` and ``EmbeddedHost.__post_init__`` fails loud.
+    # A subclass (e.g. ``ZephyrHost``) or a profile supplies the frame.
     if 'command_frame' in kwargs and isinstance(kwargs['command_frame'], str):
         kwargs['command_frame'] = build_command_frame(kwargs['command_frame'])
 
@@ -279,8 +297,8 @@ def _create_embedded_host(
     if merged:
         kwargs['telnet_options'] = _build_telnet_options(merged)
 
-    kwargs['osType'] = profile.base if profile else 'embedded'
-    return EmbeddedHost(**kwargs)
+    kwargs['osType'] = selector
+    return cls(**kwargs)
 
 
 def validate_host_dict(host_data: dict[str, Any]) -> None:
@@ -318,7 +336,8 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
             f"Field 'osType' {os_type!r} is not a registered profile. "
             f"Registered profiles: {known}"
         )
-    base = profile.base
+    cls = build_host_class(profile.base)
+    base = 'embedded' if issubclass(cls, EmbeddedHost) else 'unix'
 
     # Validate against the host fields layered over the profile defaults, so a
     # profile-supplied required field (e.g. creds) counts as present.

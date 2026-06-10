@@ -1,9 +1,10 @@
 """Named OS profiles: a higher-level selector layered over the host base
 classes.
 
-The ``osType`` field in lab data names an :class:`OsProfile` rather than a bare
-``unix`` / ``embedded`` family. A profile records which *base* host class to
-build (:class:`~otto.host.unixHost.UnixHost` or
+The ``osType`` field in lab data selects an :class:`OsProfile`; the value is
+stamped onto the constructed host's ``osType`` attribute as the profile selector.
+A profile records which *base* registered host class to build (e.g.
+:class:`~otto.host.unixHost.UnixHost` or
 :class:`~otto.host.embeddedHost.EmbeddedHost`) plus a bundle of *default field
 values* that the storage factory merges beneath each host's own fields. This
 lets many hosts that share a characteristic bundle (e.g. a particular Zephyr
@@ -23,26 +24,54 @@ Profiles are authorable two ways, both feeding the same registry:
 
 The registry mirrors ``command_frame._FRAME_CLASSES`` and
 ``embedded_filesystem._FILESYSTEM_CLASSES``.
+
+A companion registry — ``_HOST_CLASSES`` / :func:`register_host_class` — maps
+a name to a concrete :class:`~otto.host.remoteHost.RemoteHost` subclass.
+Built-in classes (``unix`` → ``UnixHost``, ``embedded`` → ``EmbeddedHost``,
+``zephyr`` → ``ZephyrHost``) are registered at module load. An
+:class:`OsProfile` names one of these via its ``base`` field, and registering a
+class auto-registers a same-named trivial profile, so ``osType: <name>``
+resolves with no extra config.
+
+**Registering a custom host class**
+
+To ship a host subclass from an external repo:
+
+1. Subclass :class:`~otto.host.embeddedHost.EmbeddedHost` or
+   :class:`~otto.host.unixHost.UnixHost` (whichever family fits).
+2. Call ``register_host_class('myos', MyHost)`` from an init module listed
+   in ``.otto/settings.toml`` — the same hook
+   :func:`otto.host.command_frame.register_command_frame` uses.
+3. Optionally call ``register_os_profile('myos-v1', base='myos',
+   defaults={...})`` to layer a per-build data bundle (e.g. a specific
+   ``command_frame``, ``max_filename_len``, or ``osName``) over the class,
+   selectable via ``osType: myos-v1`` in ``hosts.json``.
+
+:class:`~otto.host.embeddedHost.ZephyrHost` is the in-tree worked example: it
+subclasses :class:`~otto.host.embeddedHost.EmbeddedHost`, declares Zephyr-
+specific defaults, and is registered under ``"zephyr"`` at module load.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, cast
+from typing import Any
 
 from ..logger import getOttoLogger
 
 logger = getOttoLogger()
 
-BaseFamily = Literal['unix', 'embedded']
-"""The host base class an :class:`OsProfile` builds.
+BaseFamily = str
+"""The name of a registered host class an :class:`OsProfile` builds.
 
-``unix`` → :class:`~otto.host.unixHost.UnixHost`;
-``embedded`` → :class:`~otto.host.embeddedHost.EmbeddedHost`. No new base
-classes are added by the profile layer — a profile only bundles defaults over
-one of these existing families.
+Built-ins: ``unix`` (:class:`~otto.host.unixHost.UnixHost`), ``embedded``
+(:class:`~otto.host.embeddedHost.EmbeddedHost`), ``zephyr``
+(:class:`~otto.host.embeddedHost.ZephyrHost`). Register more with
+:func:`register_host_class`.
 """
 
-_VALID_BASES: frozenset[str] = frozenset(('unix', 'embedded'))
+# Registry of host-class name -> class, mirroring ``_OS_PROFILES`` /
+# ``command_frame._FRAME_CLASSES``. Populated for built-ins at module load.
+_HOST_CLASSES: dict[str, type] = {}
 
 
 @dataclass(frozen=True)
@@ -60,7 +89,9 @@ class OsProfile:
     """The ``osType`` selector this profile is registered under."""
 
     base: BaseFamily
-    """Which base host class the profile builds (``unix`` or ``embedded``)."""
+    """Name of the registered host class the profile builds (e.g. ``unix``,
+    ``embedded``, ``zephyr``, or a custom class registered via
+    :func:`register_host_class`)."""
 
     defaults: dict[str, Any] = field(default_factory=dict)
     """Raw field defaults merged beneath a host's own ``hosts.json`` fields."""
@@ -71,19 +102,73 @@ class OsProfile:
 _OS_PROFILES: dict[str, OsProfile] = {}
 
 
-def _slots_for_base(base: str) -> frozenset[str]:
-    """Return the settable field names for *base*'s host class.
+def _all_slots(cls: type) -> frozenset[str]:
+    """All settable field names of *cls*, gathered across its MRO.
 
-    Lazily imports the host classes to avoid an import cycle (the host modules
-    do not import this one). The returned set is the same ``__slots__`` the
-    storage factory filters host dicts against, so a profile key that passes
-    here will not be silently dropped at build time.
+    A ``@dataclass(slots=True)`` subclass may not repeat inherited slot names
+    (Python 3.11+ adds only *new* fields to the subclass ``__slots__``), so a
+    single-class ``__slots__`` lookup can miss inherited fields. The union over
+    the MRO is what the storage factory filters host/profile dicts against.
     """
-    if base == 'unix':
-        from .unixHost import UnixHost
-        return frozenset(UnixHost.__slots__)
-    from .embeddedHost import EmbeddedHost
-    return frozenset(EmbeddedHost.__slots__)
+    names: set[str] = set()
+    for klass in cls.__mro__:
+        names.update(getattr(klass, '__slots__', ()))
+    return frozenset(names)
+
+
+def register_host_class(name: str, cls: type) -> None:
+    """Register a host class so lab data can select it by ``osType``.
+
+    Mirrors :func:`otto.host.command_frame.register_command_frame`. Call from
+    an init module listed in ``.otto/settings.toml`` to ship a custom host
+    subclass. Registering a class also registers a trivial same-named
+    :class:`OsProfile` (``base=name``, empty ``defaults``), so ``osType: name``
+    resolves with no extra config. Re-registering replaces the prior class.
+
+    Raises
+    ------
+    ValueError
+        If *cls* is not a :class:`~otto.host.remoteHost.RemoteHost` subclass.
+    """
+    from .remoteHost import RemoteHost
+    if not (isinstance(cls, type) and issubclass(cls, RemoteHost)):
+        raise ValueError(
+            f"register_host_class({name!r}): cls must be a RemoteHost "
+            f"subclass, got {cls!r}"
+        )
+    if name in _BUILTIN_NAMES and name in _HOST_CLASSES:
+        logger.warning(
+            f"register_host_class: overriding built-in host class {name!r}"
+        )
+    _HOST_CLASSES[name] = cls
+    # Auto-register a selector profile so osType:<name> works immediately.
+    _OS_PROFILES[name] = OsProfile(name=name, base=name, defaults={})
+
+
+def build_host_class(name: str) -> type:
+    """Return the host class registered under *name* (raising on miss)."""
+    try:
+        return _HOST_CLASSES[name]
+    except KeyError:
+        known = ', '.join(sorted(_HOST_CLASSES))
+        raise ValueError(
+            f"Unknown host class {name!r}. Registered: {known}. "
+            f"Add one via register_host_class()."
+        ) from None
+
+
+def get_host_class(name: str) -> type | None:
+    """Return the host class registered under *name*, or ``None``.
+
+    Non-raising counterpart to :func:`build_host_class`, for callers that
+    produce their own error (e.g. :func:`otto.storage.factory.validate_host_dict`).
+    """
+    return _HOST_CLASSES.get(name)
+
+
+def _slots_for_base(base: str) -> frozenset[str]:
+    """Return the settable field names for the host class named *base*."""
+    return _all_slots(build_host_class(base))
 
 
 def register_os_profile(
@@ -103,7 +188,7 @@ def register_os_profile(
     name : str
         The ``osType`` string lab-data entries will use to select this profile.
     base : str
-        ``'unix'`` or ``'embedded'`` — the host class the profile builds.
+        Name of a registered host class (e.g. ``'unix'`` or ``'embedded'``).
     defaults : dict[str, Any] | None
         Raw field defaults merged beneath each host's own fields. Keys are
         validated against the base class's fields.
@@ -111,13 +196,14 @@ def register_os_profile(
     Raises
     ------
     ValueError
-        If *base* is not ``'unix'`` or ``'embedded'``, or if a ``defaults`` key
+        If *base* is not a registered host class name, or if a ``defaults`` key
         is not a field on the base class (a likely typo).
     """
-    if base not in _VALID_BASES:
+    if base not in _HOST_CLASSES:
+        known = ', '.join(sorted(_HOST_CLASSES))
         raise ValueError(
-            f"register_os_profile({name!r}): base must be one of "
-            f"{sorted(_VALID_BASES)}, got {base!r}"
+            f"register_os_profile({name!r}): base must name a registered "
+            f"host class (one of {known}), got {base!r}"
         )
 
     defaults = dict(defaults or {})
@@ -134,9 +220,7 @@ def register_os_profile(
             f"register_os_profile: overriding built-in profile {name!r}"
         )
 
-    # ``base`` is validated against ``_VALID_BASES`` above, so it is one of the
-    # ``BaseFamily`` literals here; narrow the str for the typed field.
-    _OS_PROFILES[name] = OsProfile(name=name, base=cast(BaseFamily, base), defaults=defaults)
+    _OS_PROFILES[name] = OsProfile(name=name, base=base, defaults=defaults)
 
 
 def build_os_profile(name: str) -> OsProfile:
@@ -177,18 +261,24 @@ def registered_profile_names() -> list[str]:
     return sorted(_OS_PROFILES)
 
 
-# Built-in profiles. ``unix`` and ``embedded`` carry no defaults, so they build
-# their base class with its stock field defaults — keeping existing lab data
-# (and an absent ``osType``, which defaults to ``unix``) byte-for-byte
-# unchanged. ``zephyr`` names the stock Zephyr bundle explicitly; a non-Zephyr
-# embedded OS registers its own profile rather than re-overriding Zephyr-isms
-# on every host.
+# Built-in host classes. ``unix`` and ``embedded`` carry no profile defaults —
+# they build their base class with its stock field defaults, keeping existing
+# lab data (and an absent ``osType``, which defaults to ``unix``) byte-for-byte
+# unchanged. ``zephyr`` maps to :class:`~otto.host.embeddedHost.ZephyrHost`,
+# which re-declares the Zephyr-specific defaults on the class itself. Registering
+# each class also auto-registers a same-named trivial :class:`OsProfile`, so
+# ``osType: <name>`` resolves with no extra config.
 _BUILTIN_NAMES: frozenset[str] = frozenset(('unix', 'embedded', 'zephyr'))
 
-register_os_profile('unix', base='unix')
-register_os_profile('embedded', base='embedded')
-register_os_profile(
-    'zephyr',
-    base='embedded',
-    defaults={'osName': 'Zephyr', 'command_frame': 'zephyr', 'transfer': 'console'},
-)
+
+def _register_builtin_host_classes() -> None:
+    """Register the built-in host classes. Imported lazily to avoid an import
+    cycle (the host modules do not import this one at module top)."""
+    from .unixHost import UnixHost
+    from .embeddedHost import EmbeddedHost, ZephyrHost
+    register_host_class('unix', UnixHost)
+    register_host_class('embedded', EmbeddedHost)
+    register_host_class('zephyr', ZephyrHost)
+
+
+_register_builtin_host_classes()

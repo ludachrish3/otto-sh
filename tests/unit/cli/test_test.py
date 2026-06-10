@@ -718,7 +718,7 @@ class TestRunCoverageEmbedded:
 
         from otto.cli.test import _run_coverage
         from otto.host import UnixHost
-        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.embeddedHost import ZephyrHost
         from otto.host.toolchain import Toolchain
 
         cov_dir = tmp_path / 'cov'
@@ -733,7 +733,7 @@ class TestRunCoverageEmbedded:
         hop = MagicMock(spec=UnixHost)
         hop.id = 'basil_seed'  # a Unix hop, produces no coverage
 
-        sprout_cov = EmbeddedHost(
+        sprout_cov = ZephyrHost(
             ip='192.0.2.33', ne='sprout_cov', transfer='console',
             toolchain=Toolchain(
                 sysroot=Path('/opt/sdk/arm-zephyr-eabi'),
@@ -770,10 +770,10 @@ class TestRunCoverageEmbedded:
         from pathlib import Path
 
         from otto.cli.test import _run_coverage
-        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.embeddedHost import ZephyrHost
         from otto.host.toolchain import Toolchain
 
-        host = EmbeddedHost(
+        host = ZephyrHost(
             ip='192.0.2.33', ne='sprout_cov', transfer='console',
             toolchain=Toolchain(
                 sysroot=Path('/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi'),
@@ -819,10 +819,10 @@ class TestRunCoverageEmbedded:
         from pathlib import Path
 
         from otto.cli import test as test_mod
-        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.embeddedHost import ZephyrHost
         from otto.host.toolchain import Toolchain
 
-        host = EmbeddedHost(ip='192.0.2.33', ne='sprout_cov', transfer='console')
+        host = ZephyrHost(ip='192.0.2.33', ne='sprout_cov', transfer='console')
         # No toolchain configured -> default Toolchain() -> discovery fallback.
         cov_dir = tmp_path / 'cov'
         cov_dir.mkdir()
@@ -928,7 +928,7 @@ class TestRunCoverageEmbedded:
         from pathlib import Path
 
         from otto.cli.test import _run_coverage
-        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.embeddedHost import ZephyrHost
         from otto.host.toolchain import Toolchain
 
         cov_dir = tmp_path / 'cov'
@@ -942,13 +942,13 @@ class TestRunCoverageEmbedded:
         repo.name = 'repo3'
         repo.sutDir = tmp_path / 'repo3'
 
-        sprout = EmbeddedHost(
+        sprout = ZephyrHost(
             ip='192.0.2.33', ne='sprout', transfer='console', osVersion='3.7',
             toolchain=Toolchain(
                 sysroot=Path('/opt/sdk37/arm-zephyr-eabi'),
                 gcov=Path('bin/arm-zephyr-eabi-gcov'), lcov=Path('/usr/bin/lcov')),
         )
-        sprout44 = EmbeddedHost(
+        sprout44 = ZephyrHost(
             ip='192.0.2.34', ne='sprout44', transfer='console', osVersion='4.4',
             toolchain=Toolchain(
                 sysroot=Path('/opt/sdk44/gnu/arm-zephyr-eabi'),

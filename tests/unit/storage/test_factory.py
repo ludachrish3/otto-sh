@@ -5,7 +5,7 @@ import pytest
 from otto.host import os_profile
 from otto.host.command_frame import ZephyrFrame
 from otto.host.embedded_filesystem import FatRamFileSystem
-from otto.host.embeddedHost import EmbeddedHost
+from otto.host.embeddedHost import EmbeddedHost, ZephyrHost
 from otto.host.options import SnmpOptions
 from otto.host.os_profile import register_os_profile
 from otto.host.toolchain import Toolchain
@@ -337,22 +337,32 @@ class TestOsTypeDispatch:
     def test_embedded_ostype_builds_embedded_host(self):
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
         })
         assert isinstance(host, EmbeddedHost)
-        assert host.osType == 'embedded'
+        assert not isinstance(host, ZephyrHost)   # the generic base, not Zephyr
         assert host.ip == '192.0.2.1'
         assert host.ne == 'sprout'
+        assert host.osType == 'embedded'
+        assert host.osName is None                # generic: no implicit OS name
+
+    def test_embedded_ostype_without_frame_fails_loud(self):
+        with pytest.raises(ValueError, match='command_frame'):
+            create_host_from_dict({
+                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            })
 
     def test_embedded_creds_are_optional(self):
         """An embedded host needs no ``creds`` — the RTOS shell has no login."""
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
         })
         assert host.creds == {}
 
     def test_embedded_osname_and_version(self):
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr',
             'osName': 'Zephyr', 'osVersion': '3.7.0',
         })
         assert host.osName == 'Zephyr'
@@ -361,6 +371,7 @@ class TestOsTypeDispatch:
     def test_embedded_resources_converted_to_set(self):
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'resources': ['sprout', 'mote'],
         })
         assert host.resources == {'sprout', 'mote'}
@@ -368,6 +379,7 @@ class TestOsTypeDispatch:
     def test_embedded_hop_is_honored(self):
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'hop': 'basil_seed',
         })
         assert host.hop == 'basil_seed'
@@ -375,10 +387,21 @@ class TestOsTypeDispatch:
     def test_embedded_telnet_options_deserialized(self):
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'telnet_options': {'port': 2323},
         })
         assert isinstance(host, EmbeddedHost)
         assert host.telnet_options.port == 2323
+
+    def test_zephyr_ostype_builds_zephyr_host(self):
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr',
+        })
+        assert isinstance(host, ZephyrHost)
+        assert isinstance(host, EmbeddedHost)       # family still embedded
+        assert host.osType == 'zephyr'              # selector recorded
+        assert host.osName == 'Zephyr'              # from the class default
+        assert isinstance(host.command_frame, ZephyrFrame)
 
     def test_unknown_ostype_raises(self):
         with pytest.raises(ValueError) as exc_info:
@@ -401,6 +424,7 @@ class TestOsTypeDispatch:
         """An embedded host's ``transfer`` value flows through the factory."""
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'transfer': 'tftp',
         })
         assert isinstance(host, EmbeddedHost)
@@ -409,6 +433,7 @@ class TestOsTypeDispatch:
     def test_embedded_transfer_defaults_to_console(self):
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
         })
         assert isinstance(host, EmbeddedHost)
         assert host.transfer == 'console'
@@ -436,15 +461,15 @@ class TestOsProfileDispatch:
         })
         assert host.osName == 'HostWins'
 
-    def test_stored_ostype_is_base_family_not_profile_name(self, restore_profiles):
+    def test_stored_ostype_is_selector_not_base_family(self, restore_profiles):
         register_os_profile('custom-nix', base='unix')
         host = create_host_from_dict({
             'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
             'osType': 'custom-nix',
         })
-        # The OsType-typed field keeps a valid family value; the profile name
-        # is only the selector, it must not leak into the field.
-        assert host.osType == 'unix'
+        # The selector (lab-data osType value) is recorded verbatim, so round-
+        # trips are lossless and a future reader knows which profile was used.
+        assert host.osType == 'custom-nix'
 
     def test_options_three_layer_precedence(self, restore_profiles):
         """Per-key: host > profile > repo-default for an ``*_options`` table."""
@@ -471,7 +496,7 @@ class TestOsProfileDispatch:
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr-fat',
         })
         assert isinstance(host, EmbeddedHost)
-        assert host.osType == 'embedded'
+        assert host.osType == 'zephyr-fat'
         assert host.osVersion == '3.7'
         assert host.max_filename_len == 32
         assert isinstance(host.command_frame, ZephyrFrame)
@@ -553,6 +578,7 @@ class TestEmbeddedFilesystem:
         from otto.host.embedded_filesystem import NoFileSystem
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
         })
         assert isinstance(host.filesystem, NoFileSystem)
 
@@ -560,6 +586,7 @@ class TestEmbeddedFilesystem:
         from otto.host.embedded_filesystem import FatRamFileSystem
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'filesystem': 'fat-ram',
         })
         assert isinstance(host.filesystem, FatRamFileSystem)
@@ -570,6 +597,7 @@ class TestEmbeddedFilesystem:
         from otto.host.embedded_filesystem import LittleFsFileSystem
         host = create_host_from_dict({
             'ip': '192.0.2.5', 'ne': 'sprout_lfs', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'filesystem': 'littlefs',
         })
         assert isinstance(host.filesystem, LittleFsFileSystem)
@@ -592,6 +620,7 @@ class TestEmbeddedFilesystem:
         """
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'filesystem': 'fat-ram',
             'default_dest_dir': '/RAM:/uploads',
         })
@@ -610,6 +639,7 @@ class TestEmbeddedToolchainDeserialization:
             'osVersion': '3.7',
             'transfer': 'console',
             'filesystem': 'none',
+            'command_frame': 'zephyr',
         }
         data.update(extra)
         return data
@@ -656,6 +686,7 @@ class TestSnmpBlock:
     def test_embedded_snmp_block_parsed(self):
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'command_frame': 'zephyr',
             'snmp': {
                 'address': '10.10.200.14', 'port': 16101, 'community': 'public',
                 'oids': ['1.3.6.1.2.1.1.3.0', '1.3.6.1.4.1.63245.1.1.0'],

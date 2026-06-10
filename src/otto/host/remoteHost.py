@@ -25,7 +25,7 @@ concrete subclass supplies the real ``@dataclass`` fields.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Optional
 
 from ..logger import getOttoLogger
 from .host import BaseHost
@@ -37,12 +37,13 @@ if TYPE_CHECKING:
 
 logger = getOttoLogger()
 
-OsType = Literal['unix', 'embedded']
-"""OS family of a host.
+OsType = str
+"""Profile selector recorded on a host (the ``osType`` field).
 
-``unix`` — a POSIX system with a bash shell (:class:`UnixHost`).
-``embedded`` — a bare-metal/RTOS target with a constrained shell
-(:class:`EmbeddedHost`; Zephyr is the first concrete example).
+Built-ins: ``unix`` (:class:`UnixHost`), ``embedded`` (generic
+:class:`EmbeddedHost`), ``zephyr`` (:class:`ZephyrHost`). Custom profiles add
+more names. The base *family* (unix vs embedded) is derived from the host
+class, not from this string.
 """
 
 
@@ -103,7 +104,8 @@ class RemoteHost(BaseHost):
     """Host ID of the intermediate hop used to reach this host, or None."""
 
     osType: OsType
-    """OS family of this host (``unix`` or ``embedded``)."""
+    """Profile selector recorded on this host (see :data:`OsType`). The base
+    *family* (unix vs embedded) is derived from the host class, not this string."""
 
     osName: Optional[str]
     """Kernel/OS name (e.g. ``Linux``, ``Zephyr``)."""

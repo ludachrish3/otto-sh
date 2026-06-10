@@ -108,7 +108,8 @@ class UnixHost(RemoteHost):
     """Network element to which this host belongs."""
 
     osType: OsType = 'unix'
-    """OS family of this host. Always ``unix`` for a :class:`UnixHost`."""
+    """Default profile selector for a bare :class:`UnixHost`. A custom
+    unix-based profile (e.g. ``ubuntu-22.04``) records its own name here."""
 
     osName: Optional[str] = 'Linux'
     """Kernel/OS name. Defaults to ``Linux`` (the concrete Unix kernel today)."""

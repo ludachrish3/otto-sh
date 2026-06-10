@@ -494,12 +494,13 @@ class Repo():
     ) -> dict[str, 'OsProfile']:
         """Validate, expand, and register the ``[os_profiles]`` TOML table.
 
-        Each ``[os_profiles.<name>]`` sub-table needs a ``base`` key
-        (``'unix'`` or ``'embedded'``) selecting the host class to build; the
-        remaining keys are default field values bundled with the profile (with
-        ``${sutDir}`` expanded). Every profile is registered into the global
-        os-profile registry so lab-data entries can select it by name in the
-        ``osType`` field.
+        Each ``[os_profiles.<name>]`` sub-table needs a ``base`` key naming
+        a registered host class (e.g. ``'unix'``, ``'embedded'``, ``'zephyr'``,
+        or a custom class registered via :func:`otto.host.os_profile.register_host_class`)
+        that selects the host class to build; the remaining keys are default
+        field values bundled with the profile (with ``${sutDir}`` expanded).
+        Every profile is registered into the global os-profile registry so
+        lab-data entries can select it by name in the ``osType`` field.
 
         This runs at settings-parse time, *before* init modules are imported,
         so a code ``register_os_profile`` call in an ``init`` module (imported
@@ -529,7 +530,8 @@ class Repo():
             if 'base' not in table:
                 raise ValueError(
                     f"{TOML_SETTINGS_PATH}: [os_profiles.{name}] is missing the "
-                    f"required 'base' key ('unix' or 'embedded')"
+                    f"required 'base' key (the name of a registered host class, "
+                    f"e.g. 'unix', 'embedded', 'zephyr')"
                 )
             expanded = self._expandRecursive(table)
             base = expanded.pop('base')

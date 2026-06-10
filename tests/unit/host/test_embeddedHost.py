@@ -12,7 +12,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from otto.host import EmbeddedHost, RemoteHost
+from otto.host import EmbeddedHost, RemoteHost, ZephyrHost
+from otto.host.command_frame import ZephyrFrame
 from otto.host.host import setDryRun
 from otto.host.options import TelnetOptions
 from otto.utils import CommandStatus, Status
@@ -20,13 +21,33 @@ from otto.utils import CommandStatus, Status
 
 @pytest.fixture
 def host():
-    """Bare EmbeddedHost, no connections established."""
-    h = EmbeddedHost(ip='192.0.2.1', ne='sprout', log=False)
+    """Bare ZephyrHost, no connections established."""
+    h = ZephyrHost(ip='192.0.2.1', ne='sprout', log=False)
     yield h
     # Several tests swap internals for AsyncMocks. A mocked ``_connections``
     # makes ``__del__``'s ``connected`` check truthy, so at GC it would churn
     # an event loop. Drop the reference so ``__del__`` early-returns.
     h._connections = None  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# Generic embedded host: fail-loud without a command_frame
+# ---------------------------------------------------------------------------
+
+class TestGenericEmbeddedFailsLoud:
+    def test_no_command_frame_raises(self):
+        with pytest.raises(ValueError, match='command_frame'):
+            EmbeddedHost(ip='192.0.2.1', ne='sprout', log=False)
+
+    def test_explicit_frame_builds_generic_embedded(self):
+        h = EmbeddedHost(
+            ip='192.0.2.1', ne='sprout', log=False,
+            command_frame=ZephyrFrame(),
+        )
+        h._connections = None  # type: ignore[assignment]
+        assert h.osName is None          # generic: no implicit OS name
+        assert h.osType == 'embedded'
+        assert isinstance(h.command_frame, ZephyrFrame)
 
 
 # ---------------------------------------------------------------------------
@@ -47,12 +68,12 @@ class TestInit:
         assert isinstance(host, RemoteHost)
 
     def test_os_schema_defaults(self, host: EmbeddedHost):
-        assert host.osType == 'embedded'
+        assert host.osType == 'zephyr'
         assert host.osName == 'Zephyr'
         assert host.osVersion is None
 
     def test_os_schema_overrides(self):
-        host = EmbeddedHost(
+        host = ZephyrHost(
             ip='192.0.2.1', ne='sprout', log=False,
             osName='Zephyr', osVersion='3.7.0',
         )
@@ -65,7 +86,7 @@ class TestInit:
         assert host._connections._telnet_conn is None
 
     def test_custom_telnet_options(self):
-        host = EmbeddedHost(
+        host = ZephyrHost(
             ip='192.0.2.1', ne='sprout', log=False,
             telnet_options=TelnetOptions(port=2323),
         )
@@ -79,17 +100,17 @@ class TestInit:
 class TestIdAndNameGeneration:
 
     def test_id_no_board(self):
-        host = EmbeddedHost(ip='192.0.2.1', ne='Sprout', log=False)
+        host = ZephyrHost(ip='192.0.2.1', ne='Sprout', log=False)
         assert host.id == 'sprout'
         assert host.name == 'Sprout'
 
     def test_id_with_board(self):
-        host = EmbeddedHost(ip='192.0.2.1', ne='Sprout', board='Mote', log=False)
+        host = ZephyrHost(ip='192.0.2.1', ne='Sprout', board='Mote', log=False)
         assert host.id == 'sprout_mote'
         assert host.name == 'Sprout Mote'
 
     def test_custom_name_preserved(self):
-        host = EmbeddedHost(ip='192.0.2.1', ne='sprout', name='custom', log=False)
+        host = ZephyrHost(ip='192.0.2.1', ne='sprout', name='custom', log=False)
         assert host.name == 'custom'
 
 
@@ -104,7 +125,7 @@ class TestHop:
 
     def test_hop_builds_transport(self):
         """A configured hop produces an SshHopTransport on the ConnectionManager."""
-        host = EmbeddedHost(ip='192.0.2.1', ne='sprout', hop='basil_seed', log=False)
+        host = ZephyrHost(ip='192.0.2.1', ne='sprout', hop='basil_seed', log=False)
         assert host.hop == 'basil_seed'
         assert host._connections._hop is not None
 
@@ -157,7 +178,7 @@ class TestFileTransfer:
         assert host._file_transfer.transfer == 'console'
 
     def test_transfer_backend_is_configurable(self):
-        host = EmbeddedHost(ip='192.0.2.1', ne='sprout', log=False, transfer='tftp')
+        host = ZephyrHost(ip='192.0.2.1', ne='sprout', log=False, transfer='tftp')
         host._connections = None  # type: ignore[assignment]  # avoid __del__ churn
         assert host.transfer == 'tftp'
         assert host._file_transfer.transfer == 'tftp'
@@ -201,7 +222,7 @@ class TestDefaultDestDir:
     def test_string_in_lab_data_is_coerced_to_path(self):
         """Lab JSON stores ``default_dest_dir`` as a string; ``__post_init__``
         must coerce it so ``_resolve_dest`` can use Path arithmetic."""
-        h = EmbeddedHost(
+        h = ZephyrHost(
             ip='192.0.2.1', ne='sprout', log=False,
             default_dest_dir='/RAM:',  # type: ignore[arg-type]
         )
@@ -209,7 +230,7 @@ class TestDefaultDestDir:
         assert h.default_dest_dir == Path('/RAM:')
 
     def test_resolve_empty_returns_default(self):
-        h = EmbeddedHost(
+        h = ZephyrHost(
             ip='192.0.2.1', ne='sprout', log=False,
             default_dest_dir=Path('/RAM:'),
         )
@@ -217,7 +238,7 @@ class TestDefaultDestDir:
         assert h._resolve_dest(Path()) == Path('/RAM:')
 
     def test_resolve_absolute_passes_through(self):
-        h = EmbeddedHost(
+        h = ZephyrHost(
             ip='192.0.2.1', ne='sprout', log=False,
             default_dest_dir=Path('/RAM:'),
         )
@@ -227,7 +248,7 @@ class TestDefaultDestDir:
         assert h._resolve_dest(Path('/lfs/elsewhere')) == Path('/lfs/elsewhere')
 
     def test_resolve_relative_joins_under_default(self):
-        h = EmbeddedHost(
+        h = ZephyrHost(
             ip='192.0.2.1', ne='sprout', log=False,
             default_dest_dir=Path('/RAM:'),
         )

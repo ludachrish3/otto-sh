@@ -19,13 +19,27 @@ What makes an embedded target different from a Unix host:
 - **Telnet only.** The shell is reached over telnet (optionally through an SSH
   hop), never SSH directly.
 
-Command execution speaks the Zephyr shell: the :class:`SessionManager` is
-handed a :class:`~otto.host.command_frame.ZephyrFrame` (the default
-``command_frame``), which frames each command for the RTOS shell over a plain
-telnet transport (see that module). File transfer (``get``/``put``) is
-delegated to :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`, which
-speaks the device shell only (the ``console`` backend uses Zephyr's ``fs``
-commands). The interactive bridge (``_interact``) currently raises
+Command execution requires a *command frame*: a :class:`CommandFrame` instance
+that frames each command for the target's RTOS shell over the plain telnet
+transport and parses the output/return-code back. There is **no default frame**
+— a bare :class:`EmbeddedHost` raises ``ValueError`` at construction if none
+is supplied (fail loud). The frame is provided by:
+
+- a registered :class:`~otto.host.os_profile.OsProfile` data bundle (e.g. a
+  ``command_frame`` key in an ``[os_profiles.<name>]`` settings table), or
+- a concrete subclass that re-declares the default, or
+- an explicit constructor argument.
+
+:class:`ZephyrHost` is the in-tree concrete class: it subclasses
+:class:`EmbeddedHost` and declares :class:`~otto.host.command_frame.ZephyrFrame`
+as the default ``command_frame`` (along with ``osType='zephyr'`` and
+``osName='Zephyr'``). Zephyr-specific framing and OS naming live on
+:class:`ZephyrHost`, not on the base class.
+
+File transfer (``get``/``put``) is delegated to
+:class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`, which speaks the
+device shell only (the ``console`` backend uses Zephyr's ``fs`` commands).
+The interactive bridge (``_interact``) currently raises
 :class:`NotImplementedError`.
 """
 
@@ -63,7 +77,14 @@ _EMBEDDED_INIT_TIMEOUT = 15.0
 
 @dataclass(slots=True)
 class EmbeddedHost(RemoteHost):
-    """A bare-metal / RTOS host reached over telnet (Zephyr being the first kind)."""
+    """OS-agnostic bare-metal / RTOS host reached over telnet.
+
+    :class:`EmbeddedHost` carries no OS-specific defaults. A ``command_frame``
+    must be supplied — either via a profile, a subclass (e.g.
+    :class:`ZephyrHost`), or an explicit constructor argument — or construction
+    raises ``ValueError`` (fail loud). :class:`ZephyrHost` is the in-tree
+    concrete subclass and worked example.
+    """
 
     ip: str
     """IP address of the host's telnet shell."""
@@ -72,10 +93,12 @@ class EmbeddedHost(RemoteHost):
     """Network element to which this host belongs."""
 
     osType: OsType = 'embedded'
-    """OS family of this host. Always ``embedded`` for an :class:`EmbeddedHost`."""
+    """Default profile selector for a bare :class:`EmbeddedHost`. Subclasses
+    (e.g. :class:`ZephyrHost`) override this to their registered name."""
 
-    osName: Optional[str] = 'Zephyr'
-    """Kernel/OS name. Defaults to ``Zephyr``, the first supported RTOS."""
+    osName: Optional[str] = None
+    """Kernel/OS name, or None. A bare ``embedded`` host carries no OS name;
+    a concrete subclass (e.g. :class:`ZephyrHost`) sets it."""
 
     osVersion: Optional[str] = None
     """OS/kernel version string, or None if unspecified."""
@@ -118,11 +141,13 @@ class EmbeddedHost(RemoteHost):
     register custom variants via
     :func:`otto.host.embedded_filesystem.register_filesystem`."""
 
-    command_frame: CommandFrame = field(default_factory=ZephyrFrame)
+    command_frame: Optional[CommandFrame] = None
     """Shell-framing *dialect* for this target's console — how a command is
-    wrapped in sentinels and how output/retcode are parsed back. Defaults to
-    the stock Zephyr ``retval`` shell
-    (:class:`~otto.host.command_frame.ZephyrFrame`, 3.7 / 4.4 LTS).
+    wrapped in sentinels and how output/retcode are parsed back. There is NO
+    default: a bare ``embedded`` host carries no dialect, so a frame is
+    *required* — supplied either by a profile/subclass (e.g.
+    :class:`ZephyrHost`) or as an explicit value. A frame-less
+    :class:`EmbeddedHost` fails loud at construction.
 
     Lab data declares the dialect by string in the ``command_frame`` field
     (e.g. a Zephyr 2.7 build that reports its retcode inline would name a
@@ -212,6 +237,17 @@ class EmbeddedHost(RemoteHost):
         if isinstance(self.command_frame, str):
             from .command_frame import build_command_frame
             self.command_frame = build_command_frame(self.command_frame)
+
+        # A bare 'embedded' host carries no shell-framing dialect. Fail loud
+        # rather than silently inheriting one, so a misconfigured non-Zephyr
+        # host is caught at construction, not at first command.
+        if self.command_frame is None:
+            raise ValueError(
+                f"EmbeddedHost {self.name!r} has no command_frame. A bare "
+                f"'embedded' host carries no shell-framing dialect. Set osType "
+                f"to a profile that supplies one (e.g. \"zephyr\"), or pass an "
+                f"explicit command_frame."
+            )
 
         # Lab JSON serializes ``default_dest_dir`` as a string; coerce so
         # callers can use Path arithmetic uniformly. When the field was left
@@ -423,3 +459,26 @@ class EmbeddedHost(RemoteHost):
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
+
+
+@dataclass(slots=True)
+class ZephyrHost(EmbeddedHost):
+    """A Zephyr RTOS host — the concrete, registered embedded host.
+
+    This is the worked example for shipping a host subclass: it re-declares the
+    Zephyr-specific field defaults that :class:`EmbeddedHost` no longer assumes,
+    and is registered under ``osType: "zephyr"`` via
+    :func:`otto.host.os_profile.register_host_class`. External repositories
+    register their own ``EmbeddedHost``/``UnixHost`` subclasses the same way
+    (from an init module listed in ``.otto/settings.toml``), and may layer
+    per-build ``OsProfile`` data bundles over them.
+    """
+
+    osType: OsType = 'zephyr'
+    """Profile selector recorded on the host. ``zephyr`` for this class."""
+
+    osName: Optional[str] = 'Zephyr'
+    """Kernel/OS name — ``Zephyr`` for this class."""
+
+    command_frame: CommandFrame = field(default_factory=ZephyrFrame)
+    """Stock Zephyr ``retval`` shell framing (3.7 / 4.4 LTS)."""

@@ -80,8 +80,7 @@
     {
         "ip": "192.0.2.1",
         "ne": "sprout",
-        "osType": "embedded",
-        "osName": "Zephyr",
+        "osType": "zephyr",
         "osVersion": "3.7",
         "transfer": "console",
         "filesystem": "fat-ram",
@@ -110,8 +109,7 @@
     {
         "ip": "192.0.2.5",
         "ne": "sprout_lfs",
-        "osType": "embedded",
-        "osName": "Zephyr",
+        "osType": "zephyr",
         "osVersion": "3.7",
         "transfer": "console",
         "filesystem": "littlefs",
@@ -140,8 +138,7 @@
     {
         "ip": "192.0.2.37",
         "ne": "sprout_no_fs",
-        "osType": "embedded",
-        "osName": "Zephyr",
+        "osType": "zephyr",
         "osVersion": "3.7",
         "command_frame": "zephyr-serial",
         "transfer": "console",
@@ -164,8 +161,7 @@
     {
         "ip": "192.0.2.13",
         "ne": "sprout27",
-        "osType": "embedded",
-        "osName": "Zephyr",
+        "osType": "zephyr",
         "osVersion": "2.7",
         "command_frame": "zephyr-inline",
         "transfer": "console",
@@ -183,8 +179,7 @@
     {
         "ip": "192.0.2.29",
         "ne": "sprout44_lfs",
-        "osType": "embedded",
-        "osName": "Zephyr",
+        "osType": "zephyr",
         "osVersion": "4.4",
         "transfer": "console",
         "filesystem": "littlefs",
@@ -213,8 +208,7 @@
     {
         "ip": "192.0.2.33",
         "ne": "sprout_cov",
-        "osType": "embedded",
-        "osName": "Zephyr",
+        "osType": "zephyr",
         "osVersion": "3.7",
         "command_frame": "zephyr-serial",
         "transfer": "console",
@@ -242,8 +236,7 @@
     {
         "ip": "192.0.2.34",
         "ne": "sprout_cov44",
-        "osType": "embedded",
-        "osName": "Zephyr",
+        "osType": "zephyr",
         "osVersion": "4.4",
         "command_frame": "zephyr-serial",
         "transfer": "console",

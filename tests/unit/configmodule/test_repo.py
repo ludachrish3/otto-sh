@@ -204,7 +204,7 @@ class TestOsProfilesParsing:
             [os_profiles.broken]
             base = "windows"
         '''))
-        with pytest.raises(ValueError, match='base must be one of'):
+        with pytest.raises(ValueError, match='base'):
             Repo(sutDir=sut)
 
     def test_unknown_default_field_raises(self, tmp_path, restore_profiles):
@@ -265,7 +265,7 @@ class TestOsProfilesIntegration:
                     sys.path.remove(pylib)
 
         assert isinstance(host, EmbeddedHost)
-        assert host.osType == 'embedded'      # base family, not the profile name
+        assert host.osType == 'zephyr-2.7'    # the profile selector is recorded
         assert host.osName == 'Zephyr'
         assert host.osVersion == '2.7'
         assert host.max_filename_len == 32

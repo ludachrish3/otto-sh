@@ -12,6 +12,7 @@ from .remoteHost import OsType as OsType
 from .remoteHost import RemoteHost as RemoteHost
 from .unixHost import UnixHost as UnixHost
 from .embeddedHost import EmbeddedHost as EmbeddedHost
+from .embeddedHost import ZephyrHost as ZephyrHost
 from .toolchain import Toolchain as Toolchain
 from .session import Expect as Expect
 from .session import HostSession as HostSession
@@ -29,6 +30,9 @@ from .os_profile import OsProfile as OsProfile
 from .os_profile import build_os_profile as build_os_profile
 from .os_profile import get_os_profile as get_os_profile
 from .os_profile import register_os_profile as register_os_profile
+from .os_profile import register_host_class as register_host_class
+from .os_profile import build_host_class as build_host_class
+from .os_profile import get_host_class as get_host_class
 from .embedded_transfer import EmbeddedFileTransfer as EmbeddedFileTransfer
 from .embedded_transfer import EmbeddedTransferType as EmbeddedTransferType
 from .transfer import NcListenerCheck as NcListenerCheck
