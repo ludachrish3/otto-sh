@@ -95,15 +95,24 @@ def clean_sprout_cov():
             await host.close()
 
     if not asyncio.run(_prep()):
-        pytest.skip("sprout_cov console not reachable/healthy")
+        pytest.fail(
+            "sprout_cov console not reachable/healthy — the embedded bed is down. "
+            "Bring the zephyr VM/QEMU back up (e.g. `make qemu-restart`) and retry. "
+            "This is a hard failure by design (not a skip) so a dead bed can't hide "
+            "behind a green run."
+        )
     yield
 
 
-def _run_otto(*args: str, timeout: int = 300) -> subprocess.CompletedProcess[str]:
+def _run_otto(*args: str, xdir: Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
     env = {
         "PATH": os.environ.get("PATH", ""),
         "HOME": os.environ.get("HOME", ""),
         "OTTO_SUT_DIRS": str(REPO3),
+        # Keep otto's run-log dirs under the test's tmp_path (auto-cleaned)
+        # rather than the default CWD (== PROJECT_ROOT), matching the sibling
+        # subprocess runners in test_coverage_e2e.py / test_docker_e2e_cli.py.
+        "OTTO_XDIR": str(xdir),
         "COVERAGE_PROCESS_START": str(COVERAGERC),
         "PYTHONPATH": os.pathsep.join(
             [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
@@ -148,10 +157,25 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
         "--cov-report",
         "--cov-report-dir", str(report_dir),
         "TestEmbeddedCoverage",
+        xdir=tmp_path,
     )
+    # A `.gcda` "stamp mismatch with notes file" is gcov's stamp check correctly
+    # refusing to merge a `.gcda` from a stale bed-resident extension against a
+    # freshly-built `.gcno` — i.e. a wedged/stale coverage QEMU, not a product or
+    # test bug. Surface that as an actionable hint instead of the raw geninfo
+    # error (recovery is `make qemu-restart`); see _drain_unload in the suite.
+    hint = ""
+    if "stamp mismatch" in (result.stdout + result.stderr):
+        hint = (
+            "\n\nHINT: '.gcda stamp mismatch with notes file' means the coverage bed "
+            "is serving a stale extension (wedged QEMU) — its gcov stamp no longer "
+            "matches the freshly-built .gcno. This is a bed-state issue, not a "
+            "product/test failure: run `make qemu-restart` and retry."
+        )
     assert result.returncode == 0, (
         f"otto test --cov failed (rc={result.returncode}):\n"
         f"STDOUT:\n{result.stdout[-3000:]}\nSTDERR:\n{result.stderr[-2000:]}"
+        f"{hint}"
     )
 
     # The collector decoded a .gcda for the embedded host (cross-loop fix +

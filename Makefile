@@ -241,6 +241,13 @@ clean: ## Remove all generated artifacts
 	@rm -rf dist
 	@rm -rf reports
 	@rm -rf docs/_build
+	@# Reset the embedded-gcov submodule(s) to pristine. This discards the
+	@# gcc-12+ patch that product/build.sh applies; that patch is tracked
+	@# (tests/repo3/third_party/patches/) and re-applied idempotently on the
+	@# next build, so resetting here keeps the submodule from drifting between
+	@# builds (a stale patch/build is what desyncs .gcno and trips gcov's
+	@# "stamp mismatch").
+	@git submodule foreach --recursive 'git reset --hard && git clean -fdx'
 
 help: ## Show this help message
 	@printf '\n\033[1mTesting\033[0m  (COUNT=N overrides iterations; omit the scope to run all environments)\n'
