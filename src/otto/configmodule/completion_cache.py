@@ -396,7 +396,7 @@ def write_cache(
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    existing: dict = {}
+    existing: dict[str, Any] = {}
     if cache_path.is_file():
         try:
             loaded = json.loads(cache_path.read_text())

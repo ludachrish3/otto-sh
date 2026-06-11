@@ -19,7 +19,7 @@ import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..configmodule import getConfigModule, getRepos
+from ..configmodule import Repo, getConfigModule, getRepos
 from ..docker import (
     build_images,
     compose_down,
@@ -111,7 +111,7 @@ def _select_repos(repo_name: Optional[str], on: Optional[str] = None):
             raise typer.Exit(1)
         docker_repos = matches
 
-    applicable: list = []
+    applicable: list[Repo] = []
     for r in docker_repos:
         # Lab applicability is determined by the repo's declared default_hosts,
         # not by --on. --on is a runtime override of where to deploy, not a

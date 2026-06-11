@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .correlator.lcov_loader import LCOVLoader
 from .correlator.merger import LcovMerger
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 TierSpec = tuple[str, Path | None]
 
 
-def _read_cov_meta(cov_dirs: list[Path]) -> dict:
+def _read_cov_meta(cov_dirs: list[Path]) -> dict[str, Any]:
     """Read coverage metadata written by ``otto test --cov``.
 
     Looks for ``.otto_cov_meta.json`` directly inside each *cov_dir* and
@@ -106,7 +106,7 @@ def read_cov_source_roots(cov_dirs: list[Path]) -> dict[str, Path]:
     except FileNotFoundError:
         return {}
 
-    raw: dict = meta.get('source_roots', {})
+    raw: dict[str, str] = meta.get('source_roots', {})
     return {host_id: Path(v) for host_id, v in raw.items()}
 
 
@@ -123,7 +123,7 @@ def read_cov_toolchains(cov_dirs: list[Path]) -> dict[str, Toolchain]:
     except FileNotFoundError:
         return {}
 
-    raw_toolchains: dict = meta.get('toolchains', {})
+    raw_toolchains: dict[str, Any] = meta.get('toolchains', {})
     result: dict[str, Toolchain] = {}
     for host_id, tc_data in raw_toolchains.items():
         kwargs = {}

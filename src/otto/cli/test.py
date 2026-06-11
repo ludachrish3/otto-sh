@@ -113,7 +113,7 @@ either limit is reached first.
 import re
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Optional, cast
+from typing import TYPE_CHECKING, Annotated, Any, Optional, cast
 
 if TYPE_CHECKING:
     from ..suite.plugin import StabilityCollector
@@ -745,7 +745,7 @@ def _get_cov_repo(repos: list['Repo']) -> 'Repo | None':
     return None
 
 
-def _get_cov_config(repos: list['Repo']) -> dict:
+def _get_cov_config(repos: list['Repo']) -> dict[str, Any]:
     """Extract the ``[coverage]`` config from the first repo that has one."""
     repo = _get_cov_repo(repos)
     return repo.settings['coverage'] if repo else {}

@@ -45,7 +45,7 @@ _naws_handler_installed: bool = False
 # embedded test teardown can force-release a console slot a timed-out test left
 # half-open) and per-process (each xdist worker owns its own). See
 # abort_console_transports().
-_live_console_transports: set = set()
+_live_console_transports: set[Any] = set()
 
 
 def _register_console_transport(transport: Any) -> None:

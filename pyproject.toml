@@ -123,6 +123,12 @@ exclude = ["tests", "typings", "docs", "build", "dist"]
 # visible in diff review.
 [tool.ty.rules]
 all = "error"
+# Demoted: ty 0.0.45 added `missing-override-decorator`, which flags every
+# method overriding a base without `@override`. Adopting it means decorating
+# ~80 methods and adding a `typing_extensions.override` dependency (our floor
+# is 3.10; `typing.override` is 3.12+). Tracked separately for deliberate
+# adoption rather than riding in on a dependency bump. See GitHub issue.
+missing-override-decorator = "ignore"
 
 [tool.pytest.ini_options]
 testpaths = [

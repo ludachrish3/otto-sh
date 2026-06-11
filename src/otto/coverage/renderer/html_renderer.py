@@ -125,7 +125,7 @@ class HtmlRenderer:
             )
         )
 
-    def _build_file_row(self, fr: FileRecord, tier_order: list[str]) -> dict:
+    def _build_file_row(self, fr: FileRecord, tier_order: list[str]) -> dict[str, Any]:
         """Build the template context for one row of the files table."""
         totals = self._file_totals(fr, tier_order)
         return {
@@ -184,13 +184,13 @@ class HtmlRenderer:
         source_text: str,
         lr: LineRecord | None,
         tier_order: list[str],
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Build the template context for one row of the source table."""
         coverable = lr is not None
         if lr is None:
             tier_hits = {t: 0 for t in tier_order}
             row_class = "line-uncoverable"
-            branches: list[dict] = []
+            branches: list[dict[str, Any]] = []
         else:
             tier_hits = {t: lr.hits.for_tier(t) for t in tier_order}
             row_class = self._row_class_for(lr, tier_order)
@@ -214,7 +214,7 @@ class HtmlRenderer:
         return "line-missed"
 
     @staticmethod
-    def _build_branch(branch: BranchHits, tier_order: list[str]) -> dict:
+    def _build_branch(branch: BranchHits, tier_order: list[str]) -> dict[str, Any]:
         if branch.hits.total() > 0:
             pill_class = "branch-taken"
         elif branch.is_reachable():
@@ -239,7 +239,7 @@ class HtmlRenderer:
     # Aggregations (lines / branches → hit/total/%)
     # ------------------------------------------------------------------
 
-    def _file_totals(self, fr: FileRecord, tier_order: list[str]) -> dict:
+    def _file_totals(self, fr: FileRecord, tier_order: list[str]) -> dict[str, Any]:
         """Compute aggregate + per-tier counts and percentages for a file."""
         lines_total = len(fr.lines)
         lines_hit = sum(1 for l in fr.lines.values() if l.hits.is_hit())
@@ -284,7 +284,7 @@ class HtmlRenderer:
             "per_tier": per_tier,
         }
 
-    def _store_totals(self, store: CoverageStore, tier_order: list[str]) -> dict:
+    def _store_totals(self, store: CoverageStore, tier_order: list[str]) -> dict[str, Any]:
         """Compute aggregate + per-tier counts and percentages for the whole store."""
         lines_total = 0
         lines_hit = 0
