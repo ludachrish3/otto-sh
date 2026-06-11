@@ -15,6 +15,7 @@ The public surface (re-exported from :mod:`otto.docker`) is:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import getpass
 import json
@@ -31,6 +32,27 @@ from ..logger import getOttoLogger
 from ..utils import Status
 
 logger = getOttoLogger()
+
+# Brief pause before re-running `up -d` after a transient libnetwork race so
+# the daemon's freshly-created network has settled. Module-level so tests can
+# zero it out.
+_NETWORK_RACE_RETRY_BACKOFF_S = 1.0
+
+
+def _is_transient_network_race(output: str) -> bool:
+    """True when ``up -d`` failed with the libnetwork "network created then
+    not found on attach" race, which a convergent re-run gets past.
+
+    The daemon Creates the ``_default`` network and Creates the container, then
+    fails at "Starting" with ``failed to set up container networking: network
+    <proj>_default not found`` because the just-created network isn't yet
+    visible to the container's networking setup. Re-running ``up -d`` (which is
+    convergent) starts the already-created container once the network settles.
+    Gated on this specific signature so genuine compose failures (bad file,
+    pull denied, port clash) are *not* retried and propagate immediately.
+    """
+    low = output.lower()
+    return "failed to set up container networking" in low and "not found" in low
 
 
 def get_user_compose_project(repo_name: str, suffix: Optional[str] = None) -> str:
@@ -178,8 +200,31 @@ async def compose_up(
 
     if not await _stack_already_up(parent, proj):
         logger.info(f"[docker] composing {proj} on {parent.id}")
-        status, output = await _compose_cmd(parent, proj, remote_file_strs, "up -d")
-        if not status.is_ok:
+        # `up -d` is convergent, so a transient libnetwork race (network
+        # Created then reported "not found" when the container attaches) is
+        # retried once with a brief backoff — the re-run starts the already-
+        # created container cleanly. A genuine failure fails identically on
+        # the retry and propagates, so this never masks a real error.
+        #
+        # Follow-up if this single retry doesn't stabilize `otto docker up`:
+        # the tell is the RuntimeError below STILL reporting "network ... not
+        # found" *after* the retry (i.e. attempt 1 raced too). That means the
+        # parent daemon is degraded, not merely racing — pull `journalctl -u
+        # docker` on the parent (the docker_capable host) around the failure.
+        # Levers, roughly in order: widen the retry (range(2) -> range(3) and/or
+        # a longer _NETWORK_RACE_RETRY_BACKOFF_S); a pre-`up` `docker network
+        # prune` on the parent; or restart the daemon between runs.
+        for attempt in range(2):
+            status, output = await _compose_cmd(parent, proj, remote_file_strs, "up -d")
+            if status.is_ok:
+                break
+            if attempt == 0 and _is_transient_network_race(output):
+                logger.debug(
+                    f"[docker] {proj} hit a transient network race on up; "
+                    f"retrying once after {_NETWORK_RACE_RETRY_BACKOFF_S}s"
+                )
+                await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
+                continue
             raise RuntimeError(f"docker compose up failed: {output}")
     else:
         logger.info(f"[docker] {proj} already running on {parent.id}; reusing")

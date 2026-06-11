@@ -39,6 +39,21 @@ def _ok(out: str = "") -> CommandStatus:
     return CommandStatus(command="", output=out, status=Status.Success, retcode=0)
 
 
+def _fail(out: str = "") -> CommandStatus:
+    return CommandStatus(command="", output=out, status=Status.Failed, retcode=1)
+
+
+# The libnetwork race compose_up retries past: the network is Created, the
+# container is Created, then attaching it at "Starting" fails because the
+# just-created network isn't yet visible to the daemon's networking setup.
+_TRANSIENT_NETWORK_RACE_OUTPUT = (
+    " Network otto-repo1-x_default  Created\n"
+    " Container otto-repo1-x-api-1  Starting\n"
+    "Error response from daemon: failed to set up container networking: "
+    "network otto-repo1-x_default not found\n"
+)
+
+
 def _make_repo(tmp: Path, *, name: str = "repo1", services: tuple = ("api",), default_host: str = "pepper_seed") -> Repo:
     sut = tmp / name
     (sut / ".otto").mkdir(parents=True)
@@ -268,6 +283,73 @@ async def test_compose_up_idempotent_when_already_running(tmp_path):
     assert "api" in hosts
     up_cmds = [c for c in call_log if "compose" in c and "up -d" in c]
     assert up_cmds == [], "must NOT issue a second `up -d` when already running"
+
+
+@pytest.mark.asyncio
+async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monkeypatch):
+    """A transient libnetwork "network ... not found" on the first `up -d` is
+    retried once; the convergent re-run then starts the already-created
+    container and succeeds."""
+    monkeypatch.setattr(
+        "otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False
+    )
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+    up_attempts = 0
+    call_log: list[str] = []
+
+    async def oneshot(cmd, *_, **__):
+        nonlocal up_attempts
+        call_log.append(cmd)
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")  # stack not up
+        if "compose" in cmd and " up -d" in cmd:
+            up_attempts += 1
+            if up_attempts == 1:
+                return _fail(_TRANSIENT_NETWORK_RACE_OUTPUT)
+            return _ok()
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
+            return _ok("abc123\n")
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+
+    hosts = await compose_up(repo, lab)
+    assert "api" in hosts
+    up_cmds = [c for c in call_log if "compose" in c and "up -d" in c]
+    assert len(up_cmds) == 2, "transient network race must trigger exactly one retry"
+
+
+@pytest.mark.asyncio
+async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypatch):
+    """A genuine compose failure (not the network race) is NOT retried — it
+    propagates as RuntimeError after a single attempt, so the retry can't
+    mask real errors (bad compose file, pull denied, port clash)."""
+    monkeypatch.setattr(
+        "otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False
+    )
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+    call_log: list[str] = []
+
+    async def oneshot(cmd, *_, **__):
+        call_log.append(cmd)
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        if "compose" in cmd and " up -d" in cmd:
+            return _fail("Error response from daemon: pull access denied for repo1-api")
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+
+    with pytest.raises(RuntimeError, match="docker compose up failed"):
+        await compose_up(repo, lab)
+    up_cmds = [c for c in call_log if "compose" in c and "up -d" in c]
+    assert len(up_cmds) == 1, "a non-transient failure must NOT be retried"
 
 
 @pytest.mark.asyncio
