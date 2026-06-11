@@ -24,6 +24,7 @@ concrete subclass supplies the real ``@dataclass`` fields.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -33,7 +34,9 @@ from .host import BaseHost
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
+    from .connections import ConnectionManager
     from .options import SnmpOptions
+    from .session import SessionManager
 
 logger = getOttoLogger()
 
@@ -138,6 +141,51 @@ class RemoteHost(BaseHost):
     without LFN support). ``put`` / ``get`` reject over-limit names up
     front with a clear message instead of letting the device produce an
     opaque error like ``-ENOENT`` or ``File name too long``."""
+
+    # --- Connection-state contract ---------------------------------------
+    # Concrete subclasses supply these as real ``@dataclass`` fields (a
+    # ``ConnectionManager`` and a ``SessionManager``). Declared here as bare
+    # annotations so the shared lifecycle below — ``_connected`` and
+    # ``__del__`` — type-checks against every remote host.
+    _connections: ConnectionManager
+    _session_mgr: SessionManager
+
+    ####################
+    #  Connection state / lifecycle
+    ####################
+
+    @property
+    def _connected(self) -> bool:
+        """Whether the host has any current connections or live sessions."""
+        return self._session_mgr.has_live_sessions or self._connections.connected
+
+    def __del__(self):
+        """Best-effort cleanup on garbage collection. Call close() explicitly for reliable cleanup."""
+
+        # Guard against partially-constructed instances (e.g. __post_init__ threw)
+        if getattr(self, '_connections', None) is None:
+            return
+
+        if not self._connected:
+            return
+
+        # Best-effort async cleanup, but NEVER build an event loop here. __del__
+        # runs at an arbitrary GC moment on an arbitrary thread, so
+        # ``asyncio.run()`` would spin up a loop attributed to whatever
+        # unrelated test/work is active — the harness loop-reaper then reports
+        # it as a leaked *product* loop and fails an innocent test (otto issue
+        # #53, surfaced against ``test_log_formatting``) — and in production it
+        # can race interpreter shutdown. Reliable teardown is ``await close()``.
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no running loop; do not create one
+        # Inside an async context: schedule close on the live loop (no new loop).
+        coro = self.close()
+        try:
+            loop.create_task(coro)
+        except Exception:
+            coro.close()  # scheduling failed; consume the coroutine, never raise
 
     ####################
     #  Dest dir resolution

@@ -43,7 +43,6 @@ The interactive bridge (``_interact``) currently raises
 :class:`NotImplementedError`.
 """
 
-import asyncio
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -290,11 +289,6 @@ class EmbeddedHost(RemoteHost):
             max_filename_len=self.max_filename_len,
         )
 
-    @property
-    def _connected(self) -> bool:
-        """Whether the host has any current connections or live sessions."""
-        return self._session_mgr.has_live_sessions or self._connections.connected
-
     ####################
     #  Connection
     ####################
@@ -313,25 +307,6 @@ class EmbeddedHost(RemoteHost):
         await self._repeater.stop_all()
         await self._session_mgr.close_all()
         await self._connections.close()
-
-    def __del__(self):
-        """Best-effort cleanup on garbage collection. Call close() explicitly for reliable cleanup."""
-
-        # Guard against partially-constructed instances (e.g. __post_init__ threw)
-        if getattr(self, '_connections', None) is None:
-            return
-
-        if not self._connected:
-            return
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(self.close())
-        except RuntimeError:
-            try:
-                asyncio.run(self.close())
-            except (RuntimeError, TypeError):
-                pass  # Loop is closed or mocks can't be awaited; OS will clean up
 
     ####################
     #  Command execution

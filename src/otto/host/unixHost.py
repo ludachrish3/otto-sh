@@ -38,7 +38,6 @@ class lives here as ``UnixHost``.
 # Then the _ssh_conn would be the connection used in an "async with" block to issue the command.
 # Main problem here is that eash library uses its own method names to run commands and put/get files
 # Possibly make the homegrown TelnetClient class mirror asyncssh? that could really help with design symmetry.
-import asyncio
 import re
 import socket
 from dataclasses import (
@@ -283,11 +282,6 @@ class UnixHost(RemoteHost):
         """Provide the (username, password) pair from creds. Delegates to ConnectionManager."""
         return self._connections.credentials
 
-    @property
-    def _connected(self) -> bool:
-        """Whether the host has any current connections or live sessions."""
-        return self._session_mgr.has_live_sessions or self._connections.connected
-
     ####################
     #  Connection
     ####################
@@ -377,27 +371,6 @@ class UnixHost(RemoteHost):
         await self._repeater.stop_all()
         await self._session_mgr.close_all()
         await self._connections.close()
-
-    def __del__(self):
-        """Best-effort cleanup on garbage collection. Call close() explicitly for reliable cleanup."""
-
-        # Guard against partially-constructed instances (e.g. __post_init__ threw)
-        if getattr(self, '_connections', None) is None:
-            return
-
-        if not self._connected:
-            return
-
-        try:
-            loop = asyncio.get_running_loop()
-            # A loop is running (we're inside an async context) — schedule cleanup on it
-            loop.create_task(self.close())
-        except RuntimeError:
-            # No running loop — create one
-            try:
-                asyncio.run(self.close())
-            except (RuntimeError, TypeError):
-                pass  # Loop is closed or mocks can't be awaited; OS will clean up
 
     ####################
     #  Command execution
