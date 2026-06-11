@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 # Conventional tier name used by the merged .gcda pipeline.  Any string
 # is a valid tier name — this constant just spares callers a string
@@ -119,7 +119,7 @@ class BranchHits:
         for tier, reachable in other.reachable.items():
             self.set_reachable(tier, reachable)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "block": self.block,
             "branch": self.branch,
@@ -221,7 +221,7 @@ class FileRecord:
     def sorted_lines(self) -> Iterator[LineRecord]:
         yield from (self.lines[k] for k in sorted(self.lines))
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "path": str(self.path),
             "lines": {

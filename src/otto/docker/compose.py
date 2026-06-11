@@ -20,7 +20,7 @@ import getpass
 import json
 import os
 import shlex
-from typing import AsyncIterator, Optional
+from typing import Any, AsyncIterator, Optional
 
 from ..configmodule.lab import Lab
 from ..configmodule.repo import DockerCompose, Repo
@@ -311,7 +311,7 @@ async def composed(
             await compose_down(repo, lab, on=on, project_name=proj)
 
 
-async def compose_ps(parent: Host) -> list[dict]:
+async def compose_ps(parent: Host) -> list[dict[str, Any]]:
     """Return a list of dicts describing running containers on *parent*.
 
     Uses ``docker ps --format '{{json .}}'`` so the output is structured.
@@ -319,7 +319,7 @@ async def compose_ps(parent: Host) -> list[dict]:
     result = await parent.oneshot("docker ps --format '{{json .}}'")
     if not result.status.is_ok:
         return []
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for line in result.output.splitlines():
         line = line.strip()
         if not line:

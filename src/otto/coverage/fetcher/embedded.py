@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ...configmodule.configmodule import do_for_all_hosts
 from ...utils import Status
@@ -182,7 +182,7 @@ class EmbeddedGcdaCollector:
 
 
 async def collect_embedded_coverage(
-    cov_config: dict,
+    cov_config: dict[str, Any],
     staging_root: Path,
     pattern: re.Pattern[str] | None = None,
 ) -> dict[str, Path]:

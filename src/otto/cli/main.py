@@ -406,7 +406,7 @@ def _placeholder_subapp(name: str) -> typer.Typer:
 
 def _attach_cached_stubs(
     parent: typer.Typer,
-    commands: list[dict],
+    commands: list[dict[str, Any]],
 ) -> None:
     """Rebuild per-suite / per-instruction stubs under ``parent`` from the cache.
 
