@@ -160,11 +160,17 @@ coverage-unix: ## Run the pinned-Python Unix-VM integration suite (incl. multi-h
 coverage-embedded: ## Run the pinned-Python embedded (Zephyr) suite with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
 	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
 
+# Soak/stability + repeat targets disable coverage (--no-cov, overriding the
+# --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead
+# to every one of the COUNT-multiplied iterations and, on slow CI runners under
+# xdist, helps push tight per-test timeouts over their wall-clock budget. These
+# runs exist to flush flakes, not to measure coverage — that's `make coverage`.
 stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JUnit XML lands in reports/junit/stability-unit/. Override iterations with COUNT=N (default 50).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m concurrency \
 	    --count=$(STABILITY_UNIT_COUNT) \
 	    -p no:cacheprovider \
+	    --no-cov \
 	    $(call junitxml,stability-unit)
 
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
@@ -172,12 +178,14 @@ stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. mult
 	    -m "stability and integration and not embedded" \
 	    --count=$(STABILITY_UNIX_COUNT) \
 	    -p no:cacheprovider \
+	    --no-cov \
 	    $(call junitxml,stability-unix)
 
 stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/stability-embedded/. Override iterations with COUNT=N (default 1).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    -m "stability and embedded" \
 	    -p no:cacheprovider \
+	    --no-cov \
 	    --count=$(STABILITY_EMBEDDED_COUNT) \
 	    $(call junitxml,stability-embedded)
 
@@ -211,6 +219,7 @@ repeat: ## Run the full unit suite (including integration) under pytest-repeat. 
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest tests/unit \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
+	    --no-cov \
 	    $(call junitxml,repeat)
 
 vm-health: ## Probe every lab VM + Zephyr QEMU instance; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
