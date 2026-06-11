@@ -353,6 +353,77 @@ async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
+async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypatch):
+    """A just-Started container can briefly not appear in `docker ps` on a busy
+    daemon; the container-id lookup must poll past that empty first result so
+    the service is registered instead of silently skipped (0 containers)."""
+    monkeypatch.setattr(
+        "otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False
+    )
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+    resolve_calls = 0
+
+    async def oneshot(cmd, *_, **__):
+        nonlocal resolve_calls
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")  # stack not up yet
+        if "compose" in cmd and " up -d" in cmd:
+            return _ok()
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
+            resolve_calls += 1
+            if resolve_calls == 1:
+                return _ok("")  # container not yet visible
+            return _ok("abc123\n")  # now it appears
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+
+    hosts = await compose_up(repo, lab)
+    assert "api" in hosts, "service must register once the container becomes visible"
+    assert hosts["api"].container_id == "abc123"
+    assert resolve_calls >= 2, "resolve must poll past the first empty result"
+
+
+@pytest.mark.asyncio
+async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeypatch):
+    """If the container never becomes visible, resolve gives up after a bounded
+    number of polls (no infinite wait) and the service is skipped."""
+    monkeypatch.setattr(
+        "otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False
+    )
+    monkeypatch.setattr(
+        "otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 3, raising=False
+    )
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+    resolve_calls = 0
+
+    async def oneshot(cmd, *_, **__):
+        nonlocal resolve_calls
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("")
+        if "compose" in cmd and " up -d" in cmd:
+            return _ok()
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
+            resolve_calls += 1
+            return _ok("")  # never visible
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+
+    hosts = await compose_up(repo, lab)
+    assert "api" not in hosts
+    assert resolve_calls == 3, "must poll exactly _CONTAINER_ID_RESOLVE_ATTEMPTS times then stop"
+
+
+@pytest.mark.asyncio
 async def test_compose_down_removes_registered_hosts(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()

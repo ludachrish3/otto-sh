@@ -38,6 +38,13 @@ logger = getOttoLogger()
 # zero it out.
 _NETWORK_RACE_RETRY_BACKOFF_S = 1.0
 
+# A just-Started container can briefly not appear in `docker ps` on a busy
+# remote daemon, so resolving its id polls up to this many times, sleeping this
+# long between attempts. Module-level so tests can shrink them. The common case
+# (container already visible) returns on the first attempt with no sleep.
+_CONTAINER_ID_RESOLVE_ATTEMPTS = 4
+_CONTAINER_ID_RESOLVE_BACKOFF_S = 0.5
+
 
 def _is_transient_network_race(output: str) -> bool:
     """True when ``up -d`` failed with the libnetwork "network created then
@@ -132,16 +139,30 @@ async def _resolve_container_id(
     project_name: str,
     service: str,
 ) -> Optional[str]:
-    """Look up the running container id for ``project_name/service`` on *parent*."""
-    result = await parent.oneshot(
-        f"docker ps -q "
-        f"--filter label=com.docker.compose.project={shlex.quote(project_name)} "
-        f"--filter label=com.docker.compose.service={shlex.quote(service)}"
-    )
-    if not result.status.is_ok:
-        return None
-    cid = result.output.strip().splitlines()
-    return cid[0] if cid else None
+    """Look up the running container id for ``project_name/service`` on *parent*.
+
+    Called right after a successful ``up -d``, where compose has already
+    reported the container Started — but on a busy remote daemon the just-
+    Started container can briefly not yet appear in ``docker ps``. A single-shot
+    lookup then misses it and the service is silently skipped (0 containers
+    registered). Poll up to ``_CONTAINER_ID_RESOLVE_ATTEMPTS`` times with a
+    short backoff; since compose has guaranteed the container exists, this only
+    waits out the visibility lag rather than masking a missing container.
+    Returns ``None`` if it never becomes visible within the bounded polls.
+    """
+    for attempt in range(_CONTAINER_ID_RESOLVE_ATTEMPTS):
+        result = await parent.oneshot(
+            f"docker ps -q "
+            f"--filter label=com.docker.compose.project={shlex.quote(project_name)} "
+            f"--filter label=com.docker.compose.service={shlex.quote(service)}"
+        )
+        if result.status.is_ok:
+            cid = result.output.strip().splitlines()
+            if cid:
+                return cid[0]
+        if attempt < _CONTAINER_ID_RESOLVE_ATTEMPTS - 1:
+            await asyncio.sleep(_CONTAINER_ID_RESOLVE_BACKOFF_S)
+    return None
 
 
 async def compose_up(
