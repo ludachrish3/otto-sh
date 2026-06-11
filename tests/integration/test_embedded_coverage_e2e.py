@@ -159,18 +159,29 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
         "TestEmbeddedCoverage",
         xdir=tmp_path,
     )
-    # A `.gcda` "stamp mismatch with notes file" is gcov's stamp check correctly
-    # refusing to merge a `.gcda` from a stale bed-resident extension against a
-    # freshly-built `.gcno` — i.e. a wedged/stale coverage QEMU, not a product or
-    # test bug. Surface that as an actionable hint instead of the raw geninfo
-    # error (recovery is `make qemu-restart`); see _drain_unload in the suite.
+    # A `.gcda` "stamp mismatch with notes file" is gcov refusing to merge a
+    # `.gcda` whose gcov stamp differs from the `.gcno` used to decode it — the
+    # bed ran a different compilation than the notes describe. Two causes, neither
+    # a product/test bug:
+    #   (1) host-build staleness — the loaded `.stripped.llext` didn't match the
+    #       freshly-built `.gcno` (Zephyr's LLEXT codegen makes the recompiled
+    #       object only an *order-only* ninja dep, so an incremental rebuild can
+    #       regenerate the `.gcno` without re-linking the extension). build.sh now
+    #       removes the link-tail outputs to force a relink and asserts stamp
+    #       coherence *before* load, so a stale build should fail there, not here.
+    #   (2) bed-resident staleness — the QEMU bed is still serving an older
+    #       resident extension (llext refcount never drained; see _drain_unload),
+    #       cleared by `make qemu-restart`.
+    # Surface that as an actionable hint instead of the raw geninfo error.
     hint = ""
     if "stamp mismatch" in (result.stdout + result.stderr):
         hint = (
-            "\n\nHINT: '.gcda stamp mismatch with notes file' means the coverage bed "
-            "is serving a stale extension (wedged QEMU) — its gcov stamp no longer "
-            "matches the freshly-built .gcno. This is a bed-state issue, not a "
-            "product/test failure: run `make qemu-restart` and retry."
+            "\n\nHINT: '.gcda stamp mismatch with notes file' means the extension the "
+            "bed ran was built from a different compilation than the .gcno used to "
+            "decode its .gcda. build.sh's pre-load stamp-coherence guard makes a stale "
+            "*build* unlikely to reach here, so the usual cause is a stale bed-resident "
+            "extension (llext refcount not drained / wedged QEMU): run "
+            "`make qemu-restart` and retry."
         )
     assert result.returncode == 0, (
         f"otto test --cov failed (rc={result.returncode}):\n"
