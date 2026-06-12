@@ -13,9 +13,8 @@ bundle once instead of copy-pasting it into every ``hosts.json`` entry.
 
 Profiles are authorable two ways, both feeding the same registry:
 
-- **Data** — an ``[os_profiles.<name>]`` table in ``.otto/settings.toml`` (see
-  :meth:`otto.configmodule.repo.Repo._parseOsProfiles`), registered at settings
-  parse time.
+- **Data** — an ``[os_profiles.<name>]`` table in ``.otto/settings.toml``
+  (parsed by ``Repo._parseOsProfiles``), registered at settings parse time.
 - **Code** — :func:`register_os_profile` called from an init module listed in
   ``.otto/settings.toml`` (the same hook
   :func:`otto.host.command_frame.register_command_frame` uses), so third-party

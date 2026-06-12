@@ -24,5 +24,4 @@ local and remote machines.
    command_frame
    toolchain
    options
-   adding_an_embedded_os
-   adding_an_embedded_filesystem
+   interact

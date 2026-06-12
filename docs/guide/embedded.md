@@ -94,7 +94,8 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
 register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)
 ```
 
-See {doc}`os-profiles` for the full init-module extension pattern.
+See {doc}`extending-embedded` for a full walkthrough of writing and
+registering a command frame.
 
 ## Embedded filesystems
 
@@ -194,5 +195,6 @@ Key fields:
 
 - {doc}`lab-config` — full `hosts.json` schema reference
 - {doc}`os-profiles` — custom host classes and data profile bundles
+- {doc}`extending-embedded` — writing custom command frames and filesystems
 - {doc}`coverage` — cross-toolchain configuration for embedded coverage
 - {doc}`monitor` — SNMP monitoring configuration

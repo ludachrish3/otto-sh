@@ -136,4 +136,5 @@ always win.
 
 - {doc}`lab-config` — `hosts.json` schema and repo-level host defaults
 - {doc}`embedded` — embedded host classes, command frames, and filesystems
+- {doc}`extending-embedded` — writing a custom command frame or filesystem
 - {doc}`repo-setup` — `init` modules and `settings.toml` field reference
