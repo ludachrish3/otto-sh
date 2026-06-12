@@ -13,9 +13,9 @@ the repo-declared ``[coverage].hosts`` regex (not a dedicated lab), e.g.::
     otto test --cov --lab embedded TestEmbeddedCoverage
     otto cov report <output_dir> --report ./report
 
-Per-host lifecycle: ``llext load_hex`` (install) -> ``call_fn cov_init`` ->
+Per-host lifecycle: ``host.load`` (install) -> ``call_fn cov_init`` ->
 ``call_fn <op>`` (exercise) -> [collector: ``call_fn cov_dump``] ->
-``llext unload`` (teardown — skipped under ``--cov`` so the extension is still
+``host.unload`` (teardown — skipped under ``--cov`` so the extension is still
 loaded when the collector dumps it).
 
 The suite builds a version-matched product for each host (keyed by
@@ -26,7 +26,6 @@ Each distinct ``(build_dir, zver)`` pair is built exactly once even when multipl
 hosts share the same Zephyr version.
 """
 
-import binascii
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,14 +60,14 @@ def _extension() -> str:
     return _embedded_cov_config().get("extension", "cov_ext")
 
 
-def _extension_hex_from(build_dir: str) -> str:
-    """Hex of the pre-built, stripped LLEXT extension for *build_dir* (sent via ``load_hex``)."""
+def _extension_path_from(build_dir: str) -> Path:
+    """Path of the pre-built, stripped LLEXT extension for *build_dir* (passed to host.load)."""
     llext = Path(build_dir) / "zephyr" / f"{_extension()}.stripped.llext"
     if not llext.exists():
         raise RuntimeError(
             f"extension not built: {llext} — build product/ first (see its README)"
         )
-    return binascii.hexlify(llext.read_bytes()).decode()
+    return llext
 
 
 def _build_dir_for(host: EmbeddedHost) -> str:
@@ -158,34 +157,6 @@ async def _call(host: EmbeddedHost, fn: str, timeout: float = 60) -> None:
         raise RuntimeError(f"call_fn {fn} failed on {host.id}: {result.output}")
 
 
-async def _drain_unload(host: EmbeddedHost, ext: str, max_rounds: int = 16) -> None:
-    """Fully evict *ext* from the device so the next ``load_hex`` installs fresh
-    bytes instead of refcount-bumping a resident copy.
-
-    Zephyr's ``llext_load`` does **not** replace an already-loaded extension: if
-    one of the same name is resident it only increments a use-count and returns
-    the *old* count (which ``cmd_llext_load_hex`` misreports as "Failed to load
-    ... return code N", N>=1). ``llext_unload`` is the matching decrement and
-    frees the extension only when the count reaches 0. A ``--cov`` run leaves the
-    extension loaded (teardown skips the unload so the collector can dump it),
-    and every ``load_hex`` that finds it resident bumps the count further, so a
-    single unload no longer evicts it. The device then keeps serving the old
-    build while the rebuilt ``.gcno`` carries a new stamp, and the report fails
-    with a ``.gcda`` "stamp mismatch with notes file".
-
-    Unload in a loop until the shell reports "No such extension", which is what
-    ``cmd_llext_unload`` prints once ``llext_by_name`` returns NULL (use-count 0).
-    Harmless when nothing is loaded — the first round returns immediately.
-    """
-    for _ in range(max_rounds):
-        result = await host.oneshot(f"llext unload {ext}", timeout=20)
-        if "No such extension" in result.output:
-            return
-    raise RuntimeError(
-        f"could not fully unload {ext} on {host.id} after {max_rounds} rounds "
-        f"(llext use-count never reached 0): {result.output}"
-    )
-
 
 @dataclass
 class _Options:
@@ -222,7 +193,7 @@ class TestEmbeddedCoverage(OttoSuite[_Options]):
         # below so the loaded extension always reflects the current source.
         # Cache by (build_dir, zver) so same-version hosts share one build.
         built: set[tuple[str, 'str | None']] = set()
-        host_hex: dict[str, str] = {}
+        host_llext: dict[str, Path] = {}
         host_build_dir: dict[str, str] = {}
         for host in hosts:
             build_dir = _build_dir_for(host)
@@ -231,24 +202,18 @@ class TestEmbeddedCoverage(OttoSuite[_Options]):
                 await _build_extension_for(build_dir, zver)
                 built.add((build_dir, zver))
             host_build_dir[host.id] = build_dir
-            host_hex[host.id] = _extension_hex_from(build_dir)
+            host_llext[host.id] = _extension_path_from(build_dir)
 
         for host in hosts:
-            # Evict any resident copy first so load_hex installs the freshly-built
-            # bytes (see _drain_unload): otherwise llext_load refcount-bumps the
-            # stale build, the rebuilt .gcno's new stamp no longer matches the
-            # dumped .gcda, and `otto cov report` fails with a stamp mismatch.
-            await _drain_unload(host, ext)
-            # The hex payload is multi-KB; log=False keeps it out of the console
-            # and log file. result.output is unaffected (checked below).
-            result = await host.oneshot(
-                f"llext load_hex {ext} {host_hex[host.id]}", timeout=120, log=False,
-            )
-            # cmd_llext_load_hex always returns shell-success (0) even on a load
-            # error, so the exit status can't be trusted — check the printed
-            # outcome. A clean device prints "Successfully loaded extension".
-            if "Successfully loaded extension" not in result.output:
-                raise RuntimeError(f"load_hex did not load {ext} on {host.id}: {result.output}")
+            # Evict any resident copy first so load installs the freshly-built
+            # bytes: otherwise llext_load refcount-bumps the stale build, the
+            # rebuilt .gcno's new stamp no longer matches the dumped .gcda, and
+            # `otto cov report` fails with a stamp mismatch. host.unload drains
+            # the LLEXT use-count to 0 (idempotent when nothing is loaded).
+            await host.unload(ext)
+            status, err = await host.load(host_llext[host.id], name=ext)
+            if not status.is_ok:
+                raise RuntimeError(f"load did not load {ext} on {host.id}: {err}")
             # Run the gcov constructor so cov_dump has a registered gcov_info.
             await _call(host, "cov_init")
             logger.info("Loaded %s (%s) on %s", ext, host_build_dir[host.id], host.id)
@@ -258,7 +223,7 @@ class TestEmbeddedCoverage(OttoSuite[_Options]):
         cov_active = request.config.stash.get(otto_cov_key, False)
         if not cov_active:
             for host in hosts:
-                await host.oneshot(f"llext unload {ext}", timeout=20)
+                await host.unload(ext)
                 logger.info("Unloaded %s from %s", ext, host.id)
 
     @pytest.mark.integration

@@ -213,6 +213,7 @@
         "command_frame": "zephyr-serial",
         "transfer": "console",
         "filesystem": "none",
+        "loader": "llext-hex",
         "max_filename_len": 32,
         "is_virtual": true,
         "telnet_options": {
@@ -241,6 +242,7 @@
         "command_frame": "zephyr-serial",
         "transfer": "console",
         "filesystem": "none",
+        "loader": "llext-hex",
         "max_filename_len": 32,
         "is_virtual": true,
         "telnet_options": {
