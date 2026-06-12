@@ -18,7 +18,7 @@ override any subset of the hooks.
 Lab data declares the variant by string — ``"filesystem": "fat-ram"`` etc. —
 and :func:`otto.storage.factory.create_host_from_dict` instantiates the
 right class. A project can register additional types via
-:func:`register_filesystem`; see :doc:`/api/host/adding_an_embedded_filesystem`
+:func:`register_filesystem`; see :doc:`/guide/extending-embedded`
 for the extension walkthrough.
 
 Built-in variants
