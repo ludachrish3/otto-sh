@@ -161,21 +161,31 @@ class TestSingleConsole:
         """Opening a second named session while the default session is live
         must not silently succeed.
 
-        **Observed behavior (Zephyr 3.7.2, qemu_x86 telnet shell):**
-        :class:`ConnectionManager` caches the underlying ``TelnetClient`` and
-        returns the same one to the second ``open_session``. The new
-        :class:`ZephyrSession`'s readiness handshake then writes its READY
-        marker onto the shared byte stream — which the first session is also
-        reading — and waits for an echo it never gets. The result is a
-        hang, which our bounded ``wait_for`` surfaces as a cancellation.
+        An embedded target exposes a single shell console, so a second
+        session has nowhere safe to go. :meth:`SessionManager.open_session`
+        builds a *fresh* ``TelnetClient`` and opens a **second telnet
+        connection** to the target — it does not reuse the default session's
+        client. That second connection cannot succeed, and how it fails is
+        environment-dependent:
 
-        This test pins down that "not silent" property as a regression
-        guard. If a future change opens a *second* TCP connection (which
-        the device would close immediately, per raw-telnet testing), the
-        failure mode would shift to ``ConnectionError`` /
-        ``IncompleteReadError`` — both equally acceptable. What is NOT
-        acceptable is the second ``open_session`` returning a working
-        session that quietly shares state with the first.
+        - On a directly-reachable single-client backend, the device refuses
+          or immediately closes the extra connection
+          (``ConnectionError``/``IncompleteReadError``), or the readiness
+          handshake gets no shell and the bounded ``wait_for`` cancels it.
+        - On a hop-tunneled bed (our embedded CI), the named-session path
+          does not replicate the SSH port-forward that the default path
+          (``ConnectionManager.telnet``) sets up, so it dials the raw device
+          IP — which the runner can only route through the hop. The connect
+          is rejected at the network layer with a *non-deterministic* errno:
+          ``ECONNREFUSED``, a SYN timeout, or ``ENETUNREACH``/``EHOSTUNREACH``
+          (the last two are plain ``OSError``, *not* ``ConnectionError``).
+
+        All of these are acceptable. The property this guards is simply that
+        the second ``open_session`` **raises** rather than returning a working
+        session that quietly shares state with the first — hence the broad
+        ``OSError`` (plus ``asyncio`` cancellation/timeout) below. Narrowing
+        it to ``ConnectionError`` makes the test flaky whenever the rejection
+        arrives as ``ENETUNREACH``.
         """
         # Warm the default session so it holds the device's one telnet slot.
         warmup = (await host1.run("kernel version")).only
@@ -188,7 +198,7 @@ class TestSingleConsole:
         with pytest.raises((
             asyncio.TimeoutError,
             asyncio.CancelledError,
-            ConnectionError,
+            OSError,  # parent of ConnectionError; also covers ENETUNREACH/EHOSTUNREACH
             asyncio.IncompleteReadError,
         )):
             await asyncio.wait_for(host1.open_session("aux"), timeout=5.0)
