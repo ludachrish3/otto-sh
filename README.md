@@ -37,12 +37,7 @@ air-gapped installation, see [docs/getting-started.md](docs/getting-started.md).
 
 ### Hosts
 
-A **Host** represents a machine otto can talk to. `RemoteHost` connects over
-SSH or Telnet; `LocalHost` runs commands on the local machine without any
-network connection.
-
-Both expose the same core interface — `run`, `oneshot`, `send` / `expect`, and
-file-transfer methods (`put`, `get`).
+A **Host** represents a machine otto can talk to. `UnixHost` connects over SSH or Telnet; `EmbeddedHost` (and its concrete `ZephyrHost`) drives a firmware/RTOS target over a serial console; `LocalHost` runs commands on the local machine with no network; `DockerContainerHost` targets a container. All extend a common `BaseHost` interface (`run`, `oneshot`, `send`/`expect`, and — on the networked hosts — `put`/`get`).
 
 `run` executes a command on a host's persistent shell session (state like the
 working directory and environment variables are preserved between calls).
@@ -54,13 +49,32 @@ concurrent `oneshot` calls, making it safe to fan out via `asyncio.gather()`.
 Hosts can be reached through intermediate **hops** — SSH jump hosts that otto
 tunnels through automatically. Hops can be chained for multi-hop paths
 (`otto -> hop1 -> hop2 -> target`). All file transfer protocols (SCP, SFTP,
-FTP, netcat) work through hops. Set the `hop` field in a host's JSON
-definition or use `--hop` on the CLI.
+FTP, netcat) work through hops. Embedded hosts use their own `console`/`tftp`
+transfer backends instead (see the embedded-hosts guide). Set the `hop` field
+in a host's JSON definition or use `--hop` on the CLI.
 
 A **Lab** is a JSON file that describes a set of hosts and their topology.
 Otto loads labs at startup (via `--lab` or the `OTTO_LAB` environment
 variable) and makes every host available to instructions, test suites, and
 the monitor. Multiple labs can be merged by passing several names.
+
+```json
+[
+    {
+        "ip": "192.168.1.1",
+        "ne": "router1",
+        "osType": "unix",
+        "term": "ssh",
+        "creds": { "admin": "secret" }
+    },
+    {
+        "ip": "192.168.1.2",
+        "ne": "switch1",
+        "term": "telnet",
+        "creds": { "admin": "secret" }
+    }
+]
+```
 
 ### Repos and settings
 
@@ -199,5 +213,8 @@ The same content lives under `docs/` and can be built locally with `make docs`
 
 - `docs/getting-started.md` — installation and first steps
 - `docs/guide/` — detailed guides for each CLI command
+- `docs/guide/lab-config.md` — full lab/host schema
+- `docs/guide/embedded.md` — embedded (firmware/RTOS) hosts
+- `docs/guide/os-profiles.md` — OS profiles & custom host classes
 - `docs/cookbook/` — recipes for common asyncio patterns
 - `docs/api/` — full API reference for all otto packages

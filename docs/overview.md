@@ -35,12 +35,13 @@ A **Host** represents a machine otto can talk to.
 {class}`~otto.host.unixHost.UnixHost` connects over SSH or Telnet;
 {class}`~otto.host.localHost.LocalHost` runs commands on the local machine
 without any network connection.
+{class}`~otto.host.embeddedHost.EmbeddedHost` (and its concrete {class}`~otto.host.embeddedHost.ZephyrHost`) drives a firmware/RTOS target over a serial console; a `DockerContainerHost` targets a container.
 
-Both expose the same core interface — {meth}`~otto.host.host.Host.run`,
+They all share a common `BaseHost` interface — {meth}`~otto.host.host.Host.run`,
 {meth}`~otto.host.host.Host.oneshot`, {meth}`~otto.host.host.Host.send` /
-{meth}`~otto.host.host.Host.expect`, and file-transfer methods
-({meth}`~otto.host.host.Host.put`,
-{meth}`~otto.host.host.Host.get`).
+{meth}`~otto.host.host.Host.expect` — plus file-transfer methods
+({meth}`~otto.host.host.Host.put`, {meth}`~otto.host.host.Host.get`) on the
+networked hosts.
 
 `run` executes a command on a host's persistent shell session (state
 like the working directory and environment variables are preserved between

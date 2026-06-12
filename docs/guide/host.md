@@ -118,7 +118,8 @@ otto --lab my_lab host --hop jumpbox target_seed put firmware.bin /tmp/
 otto --lab my_lab host --hop jumpbox target_seed get /var/log/syslog ./logs/
 ```
 
-For persistent hop configuration, set the `hop` field in `hosts.json`:
+For persistent hop configuration, set the `hop` field in `hosts.json`
+(see {doc}`lab-config` for the full host schema):
 
 ```json
 {
@@ -382,10 +383,13 @@ Both options can be combined:
 otto --lab my_lab host --term telnet --transfer ftp router1 put config.txt /etc/
 ```
 
-Valid values:
+Valid values (UnixHost):
 
 - `--term`: `ssh`, `telnet`
 - `--transfer`: `scp`, `sftp`, `ftp`, `nc`
+
+Embedded hosts use the `console` / `tftp` transfer backends instead — see
+{doc}`embedded`.
 
 The override applies only to the current invocation. To persist the change,
 update the `term` or `transfer` field in `hosts.json`.
@@ -450,4 +454,5 @@ File transfer methods are only available on
 {class}`~otto.host.unixHost.UnixHost` instances, not
 {class}`~otto.host.localHost.LocalHost`.  The doctest above uses
 `run` which is available on all host types.
+`EmbeddedHost` provides its own console/tftp transfer; see {doc}`embedded`.
 ```

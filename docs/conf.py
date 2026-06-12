@@ -81,6 +81,7 @@ napoleon_numpy_docstring = False
 napoleon_use_param = False
 napoleon_use_rtype = False
 napoleon_attr_annotations = True
+napoleon_use_ivar = True
 
 # -- doctest ------------------------------------------------------------------
 

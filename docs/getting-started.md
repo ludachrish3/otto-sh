@@ -409,3 +409,9 @@ This opens a web dashboard showing CPU, memory, disk, and network metrics.
 - {doc}`guide/index` -- Detailed guides for each CLI command and project configuration
 - {doc}`cookbook/index` -- Recipes for common asyncio patterns
 - {doc}`api/index` -- Full API reference
+
+## Next steps
+
+- {doc}`guide/lab-config` — configuring hosts and labs
+- {doc}`guide/embedded` — firmware/RTOS targets
+- {doc}`guide/index` — all command guides

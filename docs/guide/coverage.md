@@ -300,3 +300,68 @@ runs/
 
 That way a single `otto cov report runs/2026-04-09_T1234/` invocation
 has everything it needs in a single tree.
+
+## Embedded (console) coverage
+
+Embedded RTOS targets (Zephyr) have no filesystem that otto can `scp` or
+`sftp` from, so the standard `.gcda`-over-SSH path does not apply.  Instead,
+otto uses a separate embedded fetcher that pulls coverage data over the
+console.
+
+### How it works
+
+A coverage-instrumented LLEXT extension built against NASA's embedded-gcov
+library dumps its counters as an ASCII hexdump over the serial console when the
+`cov_dump` function is called (via `llext call_fn <extension> cov_dump` →
+`__gcov_exit`).  Otto captures that output, decodes the hexdump blocks back to
+binary `.gcda` files, and stages them under the same per-host directory
+structure used by the remote fetcher:
+
+```text
+<staging_root>/
+    <host_id>/
+        *.gcda
+```
+
+This means the downstream merge and report pipeline (`lcov --capture`, path
+mapping, HTML render) is reused without modification — the embedded and Unix
+code paths converge at the same `.gcda` file tree.
+
+### Embedded coverage configuration
+
+Declare the extension name in `.otto/settings.toml` under `[coverage.embedded]`:
+
+```toml
+[coverage.embedded]
+extension = "my_product_cov"
+```
+
+When `extension` is set, otto issues `llext call_fn my_product_cov cov_dump` on
+every embedded host in the lab that matches the optional `[coverage].hosts`
+selector.  Non-embedded hosts (Unix, Docker) are skipped automatically.
+
+The `dump_command` timeout is generous (120 s) because the hexdump is emitted
+one `printk` character at a time and can take several seconds for large binaries.
+
+### Toolchain for embedded coverage
+
+Embedded hosts that need a cross-`gcov` binary for the report step can declare
+a `toolchain` block in `hosts.json` pointing to the cross toolchain's `gcov`:
+
+```json
+{
+    "ne": "sprout_cov",
+    "toolchain": {
+        "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
+        "gcov": "bin/arm-zephyr-eabi-gcov",
+        "lcov": "/usr/bin/lcov"
+    }
+}
+```
+
+Note that `lcov` is a host-side Perl orchestrator and is **not** part of the
+cross toolchain — point it at the host's `lcov` binary (e.g. `/usr/bin/lcov`),
+not a path under the sysroot.
+
+See {doc}`embedded` for embedded host setup and {doc}`lab-config` for the full
+`hosts.json` schema.

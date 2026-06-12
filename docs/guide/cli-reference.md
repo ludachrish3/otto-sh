@@ -17,7 +17,7 @@ These options are available on every `otto` command:
 | `--verbose, -v` | | `False` | Verbose console output |
 | `--dry-run, -n` | | `False` | Preview without running commands |
 | `--as-user USERNAME` | | current user | Check reservations as USERNAME instead of the current user |
-| `--skip-reservation, -R` | | `False` | Bypass the reservation check entirely (emergency use only) |
+| `--skip-reservation-check, -R` | | `False` | Bypass the reservation check entirely (emergency use only) |
 | `--list-labs` | | | List available lab names and exit |
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |
 | `--show-lab` | | | Print full lab details and exit |

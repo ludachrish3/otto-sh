@@ -11,6 +11,7 @@ local and remote machines.
    unixhost
    embeddedhost
    localhost
+   dockerhost
    transfer
    embedded_transfer
    embedded_filesystem
@@ -19,5 +20,9 @@ local and remote machines.
    transport
    repeat
    telnet
+   os_profile
+   command_frame
+   toolchain
+   options
    adding_an_embedded_os
    adding_an_embedded_filesystem

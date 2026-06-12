@@ -10,3 +10,6 @@ The cli package implements otto's Typer-based command-line interface.
    test
    monitor
    host
+   cov
+   docker
+   reservation
