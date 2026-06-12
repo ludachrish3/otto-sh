@@ -14,6 +14,7 @@ All tests are gated by ``@pytest.mark.integration`` so the existing
 from __future__ import annotations
 
 import asyncio
+import uuid
 from pathlib import Path
 from typing import cast
 
@@ -232,9 +233,18 @@ async def test_real_concurrent_transfers(
     For nc transfers, also verifies no leftover ``nc -l`` listeners on the
     remote — the listener-leak class of bug.
     """
+    # `--count=N` expands each param into N distinct items (`[sftp-1-N]` …)
+    # which `-n auto --dist loadgroup` schedules on *different* workers
+    # concurrently. The scp/sftp/ftp params aren't pinned to a single xdist
+    # group (unlike nc-telnet), so those copies genuinely overlap — and a fixed
+    # remote name would make one copy's cleanup `rm` race another's verify
+    # `cat` (a real "No such file or directory" flake, not a transfer bug). Tag
+    # the remote names per-invocation so concurrent copies stay isolated on the
+    # remote box; the 5 intra-test concurrent puts still share one token.
+    token = uuid.uuid4().hex[:8]
     files = []
     for i in range(5):
-        src = tmp_path / f'concurrent_{i}_{transfer_host.transfer}_{transfer_host.term}.txt'
+        src = tmp_path / f'concurrent_{i}_{transfer_host.transfer}_{transfer_host.term}_{token}.txt'
         src.write_text(f'content_{i}')
         files.append(src)
 
