@@ -8,10 +8,11 @@ each defined host, reports reachability and a timestamp:
   each VM's wall clock and prints the **drift** against this machine's clock,
   so you can spot NTP/clock-skew problems at a glance.
 
-* **Embedded QEMU instances** (``osType == "embedded"``) sit behind an SSH hop
-  VM and are reached by SSHing to the hop and telnetting to the guest console
-  (the same path otto uses). Zephyr has no RTC, so these report **kernel
-  uptime** + console responsiveness rather than wall-clock drift.
+* **Embedded console instances** (the ``EmbeddedHost`` family — e.g.
+  ``osType == "zephyr"``) carry no SSH creds of their own: they sit behind an
+  SSH hop VM and are reached by SSHing to the hop and telnetting to the guest
+  console (the same path otto uses). Zephyr has no RTC, so these report
+  **kernel uptime** + console responsiveness rather than wall-clock drift.
 
 With ``--restart-qemu`` the script first restarts the ``zephyr-qemu-*`` and
 ``zephyr-snmp-relay-*`` systemd units on each hop VM, waits for the guests to
@@ -121,6 +122,22 @@ def _hop_index(hosts: list[dict]) -> dict[str, dict]:
     return {f"{h['ne']}_{h.get('board', 'seed')}": h for h in hosts}
 
 
+def _is_ssh_host(host: dict) -> bool:
+    """True if we log in directly over SSH (the ``UnixHost`` family); False if
+    the host is an embedded console reached via a hop (``EmbeddedHost`` /
+    ``ZephyrHost`` family).
+
+    Route on the credential shape, not a hardcoded ``osType`` literal. The SSH
+    probe dereferences the host's own ``creds``; embedded consoles carry none
+    and borrow their hop's. Keying on ``osType == "embedded"`` silently
+    misrouted every console — straight into a ``KeyError('creds')`` — once the
+    lab data moved to ``osType: "zephyr"`` (commit 41cf70c). The credential
+    shape also survives the next osType rename, and correctly keeps a Unix VM
+    that fronts a guest (its own ``hop``, e.g. ``pepper``) on the SSH path.
+    """
+    return "creds" in host
+
+
 def _check_unix(host: dict) -> dict:
     """Reachability + clock drift for a Unix VM."""
     user, password = _ssh_user_pass(host["creds"])
@@ -210,10 +227,10 @@ def _print_report(hosts: list[dict], hops: dict[str, dict]) -> bool:
     drifts: list[tuple[str, float]] = []
     for host in hosts:
         ostype = host.get("osType", "?")
-        if ostype == "embedded":
-            res = _check_embedded(host, hops)
-        else:
+        if _is_ssh_host(host):
             res = _check_unix(host)
+        else:
+            res = _check_embedded(host, hops)
         all_ok = all_ok and res["ok"]
 
         drift_col = "—"
