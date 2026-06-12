@@ -87,6 +87,10 @@ class TestBashFrame:
         )
         assert self.frame.parse_output(buf, "cmd", M) == "real output"
 
+    def test_streams_output_live_is_true(self):
+        # Bash with echo off emits a clean line-by-line stream, so it streams live.
+        assert BashFrame.streams_output_live is True
+
 
 class TestZephyrFrame:
 
@@ -109,6 +113,11 @@ class TestZephyrFrame:
     def test_marks_begin_is_substring(self):
         assert self.frame.marks_begin(f"{M.begin}: command not found", M)
         assert not self.frame.marks_begin("nope", M)
+
+    def test_streams_output_live_is_false(self):
+        # The Zephyr stream interleaves prompts + a `retval` line, so it must be
+        # buffered and emitted via parse_output rather than streamed raw.
+        assert ZephyrFrame.streams_output_live is False
 
     def test_extract_retcode_reads_retval_integer_line(self):
         # Modelled on the real shell: prompt after each executed line.
@@ -157,6 +166,9 @@ class TestZephyrSerialFrame:
             f"\r\n{M.end_prefix}: command not found\r\n~$ "
         )
         assert self.frame.extract_retcode(buf, M) == 0
+
+    def test_inherits_buffered_streaming(self):
+        assert ZephyrSerialFrame.streams_output_live is False
 
 
 class TestRegistry:

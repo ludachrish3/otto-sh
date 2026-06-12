@@ -313,6 +313,7 @@ class ShellSession(ABC):
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = None,
+        on_output: Callable[[str], None] | None = None,
     ) -> CommandStatus:
         """Execute a shell command with sentinel-based output demarcation.
 
@@ -332,13 +333,14 @@ class ShellSession(ABC):
             CommandStatus with exit code extracted from the sentinel.
         """
         await self._ensure_ready()
+        sink = on_output if on_output is not None else self._on_output
         try:
             if timeout is not None:
                 return await asyncio.wait_for(
-                    self._run_cmd_inner(cmd, expects),
+                    self._run_cmd_inner(cmd, expects, sink),
                     timeout=timeout,
                 )
-            return await self._run_cmd_inner(cmd, expects)
+            return await self._run_cmd_inner(cmd, expects, sink)
 
         except asyncio.TimeoutError:
             partial = await self._recover_session()
@@ -371,12 +373,20 @@ class ShellSession(ABC):
         self,
         cmd: str,
         expects: list[Expect] | None,
+        on_output: Callable[[str], None],
     ) -> CommandStatus:
-        """Send sentinel-wrapped command, handle expects, stream output.
+        """Send sentinel-wrapped command, handle expects, surface output.
 
-        Output is read line-by-line. Each content line (sentinels and echoed
-        command text stripped) is streamed to ``self._on_output`` as it arrives.
+        Output is read line-by-line. How it reaches ``on_output`` depends on the
+        frame's :attr:`~otto.host.command_frame.CommandFrame.streams_output_live`:
+        a *live* frame (e.g. bash) emits each content line as it arrives, with
+        sentinels and echoed command text stripped; a *buffered* frame (e.g.
+        Zephyr) emits nothing mid-stream and surfaces ``parse_output(buffer)``
+        once on completion, so shell prompts and retcode scaffolding never reach
+        the log. ``on_output`` is the per-command sink (the host's logger, or a
+        no-op when the caller passed ``log=False``).
         """
+        live = self._frame.streams_output_live
 
         # Write the framed command. The framing — BEGIN/END sentinels and how
         # the exit code is captured — is supplied by the session's CommandFrame
@@ -406,10 +416,10 @@ class ShellSession(ABC):
             if end_match:
                 # Emit any output text that precedes the sentinel on the same
                 # line (happens when a command produces no trailing newline).
-                if seen_begin:
+                if live and seen_begin:
                     pre = data[:end_match.start()].replace('\r', '').strip()
                     if pre:
-                        self._on_output(pre)
+                        on_output(pre)
                 break
 
             # An expect pattern matched — find which one and send its response
@@ -438,14 +448,19 @@ class ShellSession(ABC):
                             f"{self._log_tag}: begin marker matched on chunk={data!r}"
                         )
                         seen_begin = True
-                else:
+                elif live:
                     line = data.rstrip('\r\n').replace('\r', '')
                     if line:
-                        self._on_output(line)
+                        on_output(line)
 
         output = self._frame.parse_output(buffer, cmd, self._markers)
         retcode = self._frame.extract_retcode(buffer, self._markers)
         status = Status.Success if retcode == 0 else Status.Failed
+        # Buffered frames (raw stream not clean line-by-line) emit the parsed
+        # output once here — identical to the returned CommandStatus.output, so
+        # the log never shows shell prompts or the retcode scaffolding.
+        if not live and output:
+            on_output(output)
         # Log a per-command summary at the seam. The full buffer is dumped at
         # DEBUG so a future-dialect bring-up can see exactly what the frame's
         # extract_retcode / parse_output had to work with.

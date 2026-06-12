@@ -92,6 +92,14 @@ class CommandFrame(ABC):
     """Lab-data string for this dialect (e.g. ``'bash'``). Looked up against
     :data:`_FRAME_CLASSES` by the storage factory; unique across frames."""
 
+    streams_output_live: ClassVar[bool] = False
+    """Whether this dialect's raw inter-marker byte stream is already clean
+    line-by-line and can be streamed to the log as it arrives. Default False:
+    the session buffers to the END sentinel and logs ``parse_output(buffer)`` —
+    so the log shows exactly the command's parsed output, with no shell prompts
+    or retcode scaffolding. A dialect sets this True only when its raw stream
+    has no scaffolding to strip (e.g. bash with echo off)."""
+
     # --- render half: command -> bytes to write ---
 
     @abstractmethod
@@ -142,6 +150,7 @@ class BashFrame(CommandFrame):
     """
 
     type_name = "bash"
+    streams_output_live = True  # echo off + single prompt: raw stream == clean output
 
     def handshake(self, m: SessionMarkers) -> str:
         # Silence echo so the probe command text doesn't come back, then print
