@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-06-12
+
+### Added
+
+- OS-agnostic EmbeddedHost + host-class registry (ZephyrHost)
+- Zephyr embedded-host support + test-suite stability hardening (#52)
+
+
+### Changed
+
+- drop local loop-cleanup guards now covered by the reaper
+
+
+### Dependencies
+
+- bump ty from 0.0.39 to 0.0.45
+- bump ruff from 0.15.14 to 0.15.16
+- bump astral-sh/setup-uv from 8.1.0 to 8.2.0
+- bump fastapi from 0.136.1 to 0.136.3
+- bump hypothesis from 6.152.9 to 6.155.2
+- bump actions/checkout from 6.0.2 to 6.0.3
+- bump uvicorn from 0.47.0 to 0.48.0
+- bump telnetlib3 from 4.0.3 to 4.0.4 (#44)
+
+
+### Documentation
+
+- repoint orphaned :doc: ref after relocating the FS how-to
+- relocate embedded-extension how-tos into the guide; drop stale API pages
+- add embedded/lab-config/os-profile guides
+- plan generic EmbeddedHost + host-class registry
+- group `make help` with nox/coverage/stability-{unit,unix,embedded} shorthand
+
+
+### Fixed
+
+- route host probes by credential shape, not osType literal
+- poll for the container id after a successful compose up
+- retry compose up once past the libnetwork "network not found" race
+- force LLEXT link tail to track the recompiled object
+- satisfy ty 0.0.45's new lint rules
+- never create an event loop in RemoteHost.__del__
+- make --xdir optional again, defaulting to CWD
+- don't let the loop reaper close wider-scoped pytest-asyncio loops
+- reap orphaned pytest-asyncio loops to kill misattributed CI flake
+
+
+### Maintenance
+
+- ignore embedded-gcov worktree churn
+
+
 ## [0.3.6] - 2026-05-24
 
 ### Dependencies
@@ -197,7 +249,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.3.6...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ludachrish3/otto-sh/compare/v0.3.6...v0.4.0
 [0.3.6]: https://github.com/ludachrish3/otto-sh/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/ludachrish3/otto-sh/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/ludachrish3/otto-sh/compare/v0.3.3...v0.3.4
