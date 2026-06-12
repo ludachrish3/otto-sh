@@ -433,6 +433,7 @@ class UnixHost(RemoteHost):
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
+        log: bool = True,
     ) -> CommandStatus:
         """Execute a single command on the remote host via the **persistent shell session**.
 
@@ -464,12 +465,13 @@ class UnixHost(RemoteHost):
         """
         if isDryRun():
             return self._dry_run_result(cmd)
-        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout)
+        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
     async def oneshot(
         self,
         cmd: str,
         timeout: float | None = None,
+        log: bool = True,
     ) -> CommandStatus:
         """Run a single command concurrent-safely, independent of the persistent shell.
 
@@ -520,7 +522,7 @@ class UnixHost(RemoteHost):
         """
         if isDryRun():
             return self._dry_run_result(cmd)
-        return await self._session_mgr.oneshot(cmd, timeout=timeout)
+        return await self._session_mgr.oneshot(cmd, timeout=timeout, log=log)
 
     async def open_session(self, name: str) -> HostSession:
         """Open a named persistent shell session.

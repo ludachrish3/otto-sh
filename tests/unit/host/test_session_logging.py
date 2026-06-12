@@ -210,3 +210,81 @@ class TestLogTag:
         tag = s._log_tag
         assert tag.startswith("MockSession@")
         assert s._session_id in tag
+
+
+# ---------------------------------------------------------------------------
+# Per-command log suppression (log=False)
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+from typing import cast
+
+from otto.host.connections import ConnectionManager
+from otto.host.session import SessionManager
+from otto.utils import CommandStatus, Status
+
+
+class _AliveStubSession(ShellSession):
+    """A session that's already 'initialized' and echoes one output line
+    through whichever sink run_cmd is given. No real transport/handshake."""
+
+    async def _open(self) -> None: ...
+    async def _write(self, data: str) -> None: ...
+    async def _read_until_pattern(self, pattern):  # pragma: no cover - unused
+        raise AssertionError("stub does not read")
+    async def close(self) -> None:
+        self._alive = False
+        self._initialized = False
+
+    async def _ensure_initialized(self) -> None:
+        self._initialized = True
+        self._alive = True
+
+    async def run_cmd(self, cmd, expects=None, timeout=None, on_output=None):
+        sink = on_output if on_output is not None else self._on_output
+        sink("OUT")
+        return CommandStatus(command=cmd, output="OUT", status=Status.Success, retcode=0)
+
+
+def _logging_mgr():
+    cmds: list[str] = []
+    outs: list[str] = []
+    mgr = SessionManager(
+        connections=cast(ConnectionManager, SimpleNamespace(term="telnet")),
+        session_factory=_AliveStubSession,
+        log_command=cmds.append,
+        log_output=outs.append,
+    )
+    return mgr, cmds, outs
+
+
+class TestPerCommandLogSuppression:
+
+    @pytest.mark.asyncio
+    async def test_log_true_records_command_and_output(self):
+        mgr, cmds, outs = _logging_mgr()
+        result = await mgr.run_cmd("echo hi", log=True)
+        assert result.output == "OUT"
+        assert cmds == ["echo hi"]
+        assert outs == ["OUT"]
+
+    @pytest.mark.asyncio
+    async def test_log_false_suppresses_command_and_output(self):
+        mgr, cmds, outs = _logging_mgr()
+        result = await mgr.run_cmd("llext load_hex foo DEADBEEF", log=False)
+        # Output still returned to the caller — only logging is suppressed.
+        assert result.output == "OUT"
+        assert cmds == []
+        assert outs == []
+
+    @pytest.mark.asyncio
+    async def test_log_flag_does_not_leak_between_calls(self):
+        # The argument-passed sink means a log=False command leaves no lingering
+        # suppression — the next log=True command logs normally. (A host.log
+        # mutation that forgot to restore would suppress "b" too.) This is the
+        # property the concurrent-netcat-shells requirement depends on.
+        mgr, cmds, outs = _logging_mgr()
+        await mgr.run_cmd("a", log=False)
+        await mgr.run_cmd("b", log=True)
+        assert cmds == ["b"]
+        assert outs == ["OUT"]

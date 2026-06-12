@@ -249,6 +249,7 @@ class DockerContainerHost(BaseHost):
         self,
         cmd: str,
         timeout: float | None = None,
+        log: bool = True,
     ) -> CommandStatus:
         """Run a single command in the container via the parent.
 
@@ -258,16 +259,17 @@ class DockerContainerHost(BaseHost):
         """
         if isDryRun():
             return self._dry_run_result(cmd)
-        return await self._oneshot_via_parent(cmd, timeout)
+        return await self._oneshot_via_parent(cmd, timeout, log=log)
 
     async def _oneshot_via_parent(
         self,
         cmd: str,
         timeout: float | None = None,
+        log: bool = True,
     ) -> CommandStatus:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent."""
         wrapped = await self._docker_exec(cmd)
-        result = await self.parent.oneshot(wrapped, timeout=timeout)
+        result = await self.parent.oneshot(wrapped, timeout=timeout, log=log)
         # Replace the wrapped command in the result so callers see what
         # they asked for, not the docker-exec wrapper.
         return CommandStatus(
@@ -282,6 +284,7 @@ class DockerContainerHost(BaseHost):
         cmd: str,
         expects: 'list[Expect] | None' = None,
         timeout: float | None = 10.0,
+        log: bool = True,
     ) -> CommandStatus:
         """Execute one command on the persistent in-container shell.
 
@@ -292,7 +295,7 @@ class DockerContainerHost(BaseHost):
         if isDryRun():
             return self._dry_run_result(cmd)
         await self._ensure_running()
-        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout)
+        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
     async def open_session(self, name: str) -> 'HostSession':
         """Open a named persistent shell session inside the container."""

@@ -86,6 +86,12 @@ class ShellCommand:
     cumulative budget.
     """
 
+    log: bool | None = None
+    """Per-command logging switch. ``None`` inherits the run-level ``log`` value.
+    Set ``False`` to suppress this command's echo and output from the console and
+    log file (e.g. a multi-KB inline payload); the returned ``CommandStatus`` is
+    unaffected."""
+
 
 @dataclass(slots=True)
 class RunResult:
@@ -135,14 +141,16 @@ def _resolve_command(
     item: 'str | ShellCommand',
     default_expects: 'Expect | list[Expect] | None',
     default_timeout: float | None,
+    default_log: bool = True,
 ) -> ShellCommand:
     """Coerce ``item`` to a ``ShellCommand`` whose ``None`` fields inherit from defaults."""
     if isinstance(item, str):
-        return ShellCommand(cmd=item, expects=default_expects, timeout=default_timeout)
+        return ShellCommand(cmd=item, expects=default_expects, timeout=default_timeout, log=default_log)
     return ShellCommand(
         cmd=item.cmd,
         expects=item.expects if item.expects is not None else default_expects,
         timeout=item.timeout if item.timeout is not None else default_timeout,
+        log=item.log if item.log is not None else default_log,
     )
 
 
@@ -216,12 +224,14 @@ class Host(Protocol):
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = None,
+        log: bool = True,
     ) -> RunResult:
         ...
 
     async def oneshot(self,
         cmd: str,
         timeout: float | None = None,
+        log: bool = True,
     ) -> CommandStatus:
         ...
 
@@ -303,6 +313,7 @@ class BaseHost(ABC):
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = None,
+        log: bool = True,
     ) -> RunResult:
         """Execute one or more commands on the host via the persistent shell session.
 
@@ -333,23 +344,25 @@ class BaseHost(ABC):
         """
         default_expects = _normalize_expects(expects)
         if isinstance(cmds, (str, ShellCommand)):
-            resolved = [_resolve_command(cmds, default_expects, timeout)]
-            single_timeout = resolved[0].timeout
+            resolved = [_resolve_command(cmds, default_expects, timeout, log)]
+            single = resolved[0]
             result = await self._run_one(
-                resolved[0].cmd,
-                expects=_normalize_expects(resolved[0].expects),
-                timeout=single_timeout,
+                single.cmd,
+                expects=_normalize_expects(single.expects),
+                timeout=single.timeout,
+                log=single.log,
             )
             status = result.status if not result.status.is_ok else Status.Success
             return RunResult(status=status, statuses=[result])
 
-        resolved = [_resolve_command(c, default_expects, None) for c in cmds]
+        resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
 
         async def _run_sc(sc: ShellCommand, t: float | None) -> CommandStatus:
             return await self._run_one(
                 sc.cmd,
                 expects=_normalize_expects(sc.expects),
                 timeout=t,
+                log=sc.log,
             )
 
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
@@ -358,6 +371,7 @@ class BaseHost(ABC):
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = None,
+        log: bool = True,
     ) -> CommandStatus:
         """Per-command runner for the persistent shell session. Subclasses override."""
         raise NotImplementedError from None
@@ -365,6 +379,7 @@ class BaseHost(ABC):
     async def oneshot(self,
         cmd: str,
         timeout: float | None = None,
+        log: bool = True,
     ) -> CommandStatus:
         raise NotImplementedError from None
 

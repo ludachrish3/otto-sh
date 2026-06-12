@@ -104,6 +104,7 @@ class LocalHost(BaseHost):
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
+        log: bool = True,
     ) -> CommandStatus:
         """Execute a command via the persistent local shell session.
 
@@ -112,12 +113,13 @@ class LocalHost(BaseHost):
         """
         if isDryRun():
             return self._dry_run_result(cmd)
-        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout)
+        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
     async def oneshot(
         self,
         cmd: str,
         timeout: float | None = None,
+        log: bool = True,
     ) -> CommandStatus:
         """Run a command in a fresh subprocess (stateless, concurrent-safe).
 
@@ -127,18 +129,20 @@ class LocalHost(BaseHost):
         """
         if isDryRun():
             return self._dry_run_result(cmd)
-        return await self._exec_subprocess(cmd, timeout)
+        return await self._exec_subprocess(cmd, timeout, log=log)
 
     async def _exec_subprocess(
         self,
         cmd: str,
         timeout: float | None = None,
+        log: bool = True,
     ) -> CommandStatus:
         """Fire-and-forget subprocess execution."""
         status = Status.Error
         lines: list[str] = []
 
-        self._log_command(cmd)
+        if log:
+            self._log_command(cmd)
 
         proc = await asyncio.create_subprocess_shell(
             cmd=cmd,
@@ -156,7 +160,8 @@ class LocalHost(BaseHost):
                     break
                 line = data.decode().rstrip()
                 lines.append(line)
-                self._log_output(line)
+                if log:
+                    self._log_output(line)
         except asyncio.TimeoutError:
             proc.terminate()
             return CommandStatus(

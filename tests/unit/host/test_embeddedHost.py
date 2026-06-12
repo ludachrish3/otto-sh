@@ -334,6 +334,27 @@ class TestDelegation:
         host._session_mgr.close_all.assert_awaited_once()
         host._connections.close.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_oneshot_forwards_log_false(self, host):
+        host._session_mgr = AsyncMock()
+        host._session_mgr.run_cmd.return_value = CommandStatus(
+            command="c", output="", status=Status.Success, retcode=0,
+        )
+        await host.oneshot("llext load_hex foo DEADBEEF", log=False)
+        host._session_mgr.run_cmd.assert_awaited_once_with(
+            "llext load_hex foo DEADBEEF", timeout=None, log=False,
+        )
+
+    @pytest.mark.asyncio
+    async def test_run_forwards_log_false(self, host):
+        host._session_mgr = AsyncMock()
+        host._session_mgr.run_cmd.return_value = CommandStatus(
+            command="c", output="", status=Status.Success, retcode=0,
+        )
+        await host.run("llext load_hex foo DEADBEEF", log=False)
+        _, kwargs = host._session_mgr.run_cmd.await_args
+        assert kwargs["log"] is False
+
 
 class TestDelDoesNotChurnEventLoop:
     """``__del__`` must not build an event loop at garbage-collection time.

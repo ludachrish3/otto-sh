@@ -239,7 +239,11 @@ class TestEmbeddedCoverage(OttoSuite[_Options]):
             # stale build, the rebuilt .gcno's new stamp no longer matches the
             # dumped .gcda, and `otto cov report` fails with a stamp mismatch.
             await _drain_unload(host, ext)
-            result = await host.oneshot(f"llext load_hex {ext} {host_hex[host.id]}", timeout=120)
+            # The hex payload is multi-KB; log=False keeps it out of the console
+            # and log file. result.output is unaffected (checked below).
+            result = await host.oneshot(
+                f"llext load_hex {ext} {host_hex[host.id]}", timeout=120, log=False,
+            )
             # cmd_llext_load_hex always returns shell-success (0) even on a load
             # error, so the exit status can't be trusted — check the printed
             # outcome. A clean device prints "Successfully loaded extension".

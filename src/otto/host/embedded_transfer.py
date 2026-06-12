@@ -32,8 +32,11 @@ read back inside a hexdump (``fs read``), one bounded command at a time. That
 is fine for test artifacts and configuration files — kilobytes — but it is not
 a path for firmware images; use TFTP (once implemented) for bulk data.
 
-``show_progress`` is accepted for signature parity with ``FileTransfer`` but
-Phase 5 does not render a progress bar — a known, documented gap.
+``show_progress`` drives the same shared Rich progress bar as the Unix
+transfers: ``put`` reports genuine per-chunk progress (one event per 32-byte
+``fs write`` — finer than asyncssh's 256 KB SCP block), and ``get`` reports a
+single completion event at 100% because ``fs read`` is monolithic (per-byte GET
+progress would need chunked ``fs read <path> <off> <len>``; deferred).
 """
 
 import errno

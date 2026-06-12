@@ -305,7 +305,7 @@ class TestCommandExecution:
         expects = [(r"Password:", "secret\n")]
         await host.run('sudo ls', expects=expects)
         host._session_mgr._session.run_cmd.assert_called_once_with(
-            'sudo ls', expects=expects, timeout=None,
+            'sudo ls', expects=expects, timeout=None, on_output=None,
         )
 
     @pytest.mark.asyncio
@@ -314,7 +314,7 @@ class TestCommandExecution:
         host._session_mgr._session = self._mock_session(ok)
         await host.run('sleep 1', timeout=30.0)
         host._session_mgr._session.run_cmd.assert_called_once_with(
-            'sleep 1', expects=None, timeout=30.0,
+            'sleep 1', expects=None, timeout=30.0, on_output=None,
         )
 
     @pytest.mark.asyncio
@@ -411,7 +411,7 @@ class TestOneshot:
         assert result.output == 'hello'
         mock_client.connect.assert_called_once()
         mock_session.run_cmd.assert_called_once_with(
-            'echo hello', expects=None, timeout=None,
+            'echo hello', expects=None, timeout=None, on_output=None,
         )
         await h.close()
 
@@ -437,7 +437,7 @@ class TestOneshot:
         listener_running = asyncio.Event()
         release_listener = asyncio.Event()
 
-        async def _fake_run_cmd(cmd, expects=None, timeout=None):
+        async def _fake_run_cmd(cmd, expects=None, timeout=None, on_output=None):
             if 'nc -l' in cmd:
                 listener_running.set()
                 await release_listener.wait()
@@ -499,6 +499,21 @@ class TestOneshot:
         await host.oneshot('sleep 5', timeout=30.0)
 
         host._connections._ssh_conn.create_process.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_oneshot_forwards_log_false(self):
+        from unittest.mock import AsyncMock
+        from otto.host.unixHost import UnixHost
+        from otto.utils import CommandStatus, Status
+        h = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+        h._session_mgr = AsyncMock()
+        h._session_mgr.oneshot.return_value = CommandStatus(
+            command="c", output="", status=Status.Success, retcode=0,
+        )
+        await h.oneshot("base64 /bin/ls", log=False)
+        h._session_mgr.oneshot.assert_awaited_once_with(
+            "base64 /bin/ls", timeout=None, log=False,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1415,20 +1430,20 @@ class TestHostSessionProxy:
     async def test_run_delegates_cmd_to_shell_session(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.run('ls /tmp')
-        shell.run_cmd.assert_called_once_with('ls /tmp', expects=None, timeout=10.0)
+        shell.run_cmd.assert_called_once_with('ls /tmp', expects=None, timeout=10.0, on_output=None)
 
     @pytest.mark.asyncio
     async def test_run_forwards_expects(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         expects = [(r'Password:', 'secret\n')]
         await session.run('sudo ls', expects=expects)  # type: ignore[arg-type]
-        shell.run_cmd.assert_called_once_with('sudo ls', expects=expects, timeout=10.0)
+        shell.run_cmd.assert_called_once_with('sudo ls', expects=expects, timeout=10.0, on_output=None)
 
     @pytest.mark.asyncio
     async def test_run_forwards_timeout(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.run('sleep 5', timeout=60.0)
-        shell.run_cmd.assert_called_once_with('sleep 5', expects=None, timeout=60.0)
+        shell.run_cmd.assert_called_once_with('sleep 5', expects=None, timeout=60.0, on_output=None)
 
     @pytest.mark.asyncio
     async def test_send_delegates(self, host: UnixHost):

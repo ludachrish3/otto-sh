@@ -50,6 +50,11 @@ _RECOVERY_TIMEOUT = 5.0
 _INIT_TIMEOUT = 3.0
 
 
+def _drop_output(_line: str) -> None:
+    """Output sink that discards a command's streamed output — used to honor a
+    per-command ``log=False`` without mutating any shared logging state."""
+
+
 class ShellSession(ABC):
     """Abstract base for persistent shell sessions.
 
@@ -844,6 +849,7 @@ class HostSession:
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = 10.0,
+        log: bool = True,
     ) -> RunResult:
         """Execute one or more commands on this named session.
 
@@ -853,25 +859,27 @@ class HostSession:
         defaults; a scalar :data:`Expect` tuple at the run level is normalized to a
         one-element list.
         """
-        from .host import _run_cmds_with_budget, _normalize_expects, _resolve_command
+        from .host import _normalize_expects, _resolve_command, _run_cmds_with_budget
 
         default_expects = _normalize_expects(expects)
 
         async def _run_sc(sc: ShellCommand, t: float | None) -> CommandStatus:
-            self._log_command(sc.cmd)
+            if sc.log:
+                self._log_command(sc.cmd)
             return await self._session.run_cmd(
                 sc.cmd,
                 expects=_normalize_expects(sc.expects),
                 timeout=t,
+                on_output=None if sc.log else _drop_output,
             )
 
         if isinstance(cmds, (str, ShellCommand)):
-            sc = _resolve_command(cmds, default_expects, timeout)
+            sc = _resolve_command(cmds, default_expects, timeout, log)
             result = await _run_sc(sc, sc.timeout)
             status = result.status if not result.status.is_ok else Status.Success
             return RunResult(status=status, statuses=[result])
 
-        resolved = [_resolve_command(c, default_expects, None) for c in cmds]
+        resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
     async def send(self, text: str) -> None:
@@ -1104,23 +1112,30 @@ class SessionManager:
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
+        log: bool = True,
     ) -> CommandStatus:
         await self._ensure_session()
-        self._log_command(cmd)
+        if log:
+            self._log_command(cmd)
         assert self._session is not None
-        result = await self._session.run_cmd(cmd, expects=expects, timeout=timeout)
+        result = await self._session.run_cmd(
+            cmd, expects=expects, timeout=timeout,
+            on_output=None if log else _drop_output,
+        )
         return result
 
     async def oneshot(
         self,
         cmd: str,
         timeout: float | None = None,
+        log: bool = True,
     ) -> CommandStatus:
         if self._oneshot_factory is not None:
             return await self._oneshot_factory(cmd, timeout)
 
         assert self._connections is not None
-        self._log_command(cmd)
+        if log:
+            self._log_command(cmd)
         match self._connections.term:
             case 'ssh':
                 ssh_conn = await self._connections.ssh()
@@ -1132,7 +1147,8 @@ class SessionManager:
                     async for raw_line in process.stdout:
                         line = raw_line.rstrip('\n')
                         lines.append(line)
-                        self._log_output(line)
+                        if log:
+                            self._log_output(line)
                 except asyncio.TimeoutError:
                     process.terminate()
                 result = await process.wait()
@@ -1154,7 +1170,7 @@ class SessionManager:
                 # their own, preserving the documented concurrency contract.
                 oneshot_session = await self._acquire_oneshot_session()
                 try:
-                    return (await oneshot_session.run(cmd, timeout=timeout)).only
+                    return (await oneshot_session.run(cmd, timeout=timeout, log=log)).only
                 finally:
                     self._oneshot_pool.append(oneshot_session)
             case _:

@@ -34,7 +34,7 @@ class TestRunTimeout:
         ok = CommandStatus('echo hi', 'hi', Status.Success, 0)
         with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(['echo hi'])
-        mock.assert_called_once_with('echo hi', expects=None, timeout=None)
+        mock.assert_called_once_with('echo hi', expects=None, timeout=None, log=True)
 
     @pytest.mark.asyncio
     async def test_timeout_passes_remaining_to_run_one(self, host: UnixHost):
