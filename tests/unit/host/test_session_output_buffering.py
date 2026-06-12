@@ -142,3 +142,64 @@ async def test_on_output_argument_overrides_default_sink(bash_session: FrameMock
 
     assert sink == ["hi"]
     assert s.emitted == []  # the per-command sink replaced the default
+
+
+from types import SimpleNamespace
+
+from otto.host.session import TelnetSession
+
+
+class TestWriteProgress:
+
+    @pytest.mark.asyncio
+    async def test_telnet_write_reports_progress_per_chunk(self):
+        writes: list[bytes] = []
+        writer = SimpleNamespace(write=writes.append)
+        s = TelnetSession(reader=None, writer=writer, write_chunk_size=4)
+        progress: list[tuple[int, int]] = []
+        s._write_progress = lambda done, total: progress.append((done, total))
+
+        await s._write("0123456789")  # 10 bytes, chunk 4 -> 3 writes
+
+        assert b"".join(writes) == b"0123456789"
+        assert progress == [(4, 10), (8, 10), (10, 10)]
+
+    @pytest.mark.asyncio
+    async def test_telnet_single_write_reports_once_at_completion(self):
+        writer = SimpleNamespace(write=lambda b: None)
+        s = TelnetSession(reader=None, writer=writer, write_chunk_size=0)  # unchunked
+        progress: list[tuple[int, int]] = []
+        s._write_progress = lambda done, total: progress.append((done, total))
+
+        await s._write("abcd")
+
+        assert progress == [(4, 4)]
+
+    @pytest.mark.asyncio
+    async def test_run_cmd_scopes_write_progress_to_framed_write(self, zephyr_session):
+        # write_progress is set only for the framed command write, then cleared.
+        s = zephyr_session
+        seen: list[object] = []
+        orig_write = s._write
+
+        async def _record_write(data):
+            if s._begin_marker in data:           # the framed command write
+                seen.append(s._write_progress)
+            await orig_write(data)
+
+        s._write = _record_write
+        cb = lambda done, total: None
+
+        async def simulate():
+            await asyncio.sleep(0.01)
+            s.feed(
+                f"\r\n{s._begin_marker}: command not found\r\n~$ "
+                f"\r\nok\r\n~$ \r\n0\r\n~$ "
+                f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
+            )
+
+        asyncio.create_task(simulate())
+        await s.run_cmd("noop", write_progress=cb)
+
+        assert seen == [cb]                # set during the framed write
+        assert s._write_progress is None   # cleared afterward

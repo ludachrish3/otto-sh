@@ -50,6 +50,7 @@ from typing import Optional, cast
 
 from ..logger import getOttoLogger
 from ..utils import CommandStatus, Status
+from .binary_loader import BinaryLoader
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
@@ -64,6 +65,7 @@ from .session import (
     SessionManager,
 )
 from .toolchain import Toolchain
+from .transfer import _acquire_shared_progress, make_rich_progress_handler
 
 logger = getOttoLogger()
 
@@ -156,6 +158,15 @@ class EmbeddedHost(RemoteHost):
     independent of the transport, so it is handed straight to the
     :class:`~otto.host.session.SessionManager`."""
 
+    loader: Optional[BinaryLoader] = None
+    """Binary-load strategy for this target's runtime (e.g. Zephyr LLEXT).
+    Unlike ``command_frame`` it is *optional* — many embedded hosts never load
+    binaries. Lab data declares it by string in the ``loader`` field (e.g.
+    ``"llext-hex"``); ``__post_init__`` resolves the string to an instance.
+    ``load()`` / ``unload()`` fail loud (``ValueError``) when it is None. Projects
+    register custom loaders via
+    :func:`otto.host.binary_loader.register_binary_loader`."""
+
     default_dest_dir: Path = field(default_factory=Path)
     """Default landing directory for ``put`` / ``get`` when the caller
     supplies an empty or relative ``dest_dir``. When left at the default
@@ -236,6 +247,12 @@ class EmbeddedHost(RemoteHost):
         if isinstance(self.command_frame, str):
             from .command_frame import build_command_frame
             self.command_frame = build_command_frame(self.command_frame)
+
+        # Same for ``loader`` — lab JSON declares the binary-load strategy by
+        # name. Optional, so no fail-loud here (load()/unload() check at call).
+        if isinstance(self.loader, str):
+            from .binary_loader import build_binary_loader
+            self.loader = build_binary_loader(self.loader)
 
         # A bare 'embedded' host carries no shell-framing dialect. Fail loud
         # rather than silently inheriting one, so a misconfigured non-Zephyr
@@ -387,6 +404,16 @@ class EmbeddedHost(RemoteHost):
             return ""
         return await self._session_mgr.expect(pattern, timeout)
 
+    def _require_loader(self) -> BinaryLoader:
+        """Return this host's binary loader, or fail loud if none is declared."""
+        if self.loader is None:
+            raise ValueError(
+                f"EmbeddedHost {self.name!r} has no binary loader. Declare a "
+                f"'loader' (e.g. \"llext-hex\") in the host's profile/lab data, "
+                f"or pass an explicit loader, before calling load()/unload()."
+            )
+        return self.loader
+
     ####################
     #  File transfer
     ####################
@@ -436,6 +463,85 @@ class EmbeddedHost(RemoteHost):
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
+
+    ####################
+    #  Binary load
+    ####################
+
+    async def load(
+        self,
+        file: Path,
+        name: str,
+        show_progress: bool = False,
+        timeout: float | None = 120.0,
+    ) -> tuple[Status, str]:
+        """Load a binary into the device runtime via the host's binary loader.
+
+        Distinct from :meth:`put` (a *file* transfer to a mounted filesystem):
+        ``load`` pushes a binary into the target's loader (e.g. Zephyr LLEXT's
+        ``llext load_hex``), with no destination file. The payload is read from
+        *file*, formatted into the device command by the loader, and sent with
+        ``log=False`` so the (large) encoded payload never reaches the console
+        or log. Returns ``(Status, str)`` like :meth:`put`/:meth:`get`; the
+        ``str`` carries the device's failure text on error.
+
+        ``show_progress`` is **off by default** (the bar only renders in
+        interactive / ``otto run``; under ``otto test`` output is captured). When
+        enabled it drives a transfer-style Rich bar from the paced telnet write
+        of the payload — the only measurable progress (the device's relocation
+        emits no incremental signal). Fails loud (``ValueError``) if the host
+        declares no loader.
+        """
+        loader = self._require_loader()
+        if isDryRun():
+            return self._dry_run_transfer("LOAD", [file], Path(name))
+        payload = file.read_bytes()
+        cmd = loader.load_command(name, payload)
+        if show_progress:
+            async with _acquire_shared_progress() as progress:
+                handler = make_rich_progress_handler(progress, self.name)
+
+                def _wp(done: int, total: int) -> None:
+                    handler(str(file), f"{self.name}:{name}", done, total)
+
+                result = await self._session_mgr.run_cmd(
+                    cmd, timeout=timeout, log=False, write_progress=_wp,
+                )
+        else:
+            result = await self._session_mgr.run_cmd(cmd, timeout=timeout, log=False)
+        ok, reason = loader.check_loaded(result.output)
+        if ok:
+            return Status.Success, ""
+        return Status.Error, f"load {name} from {file} failed: {reason}"
+
+    async def unload(
+        self,
+        name: str,
+        timeout: float | None = 20.0,
+    ) -> tuple[Status, str]:
+        """Unload *name* from the device runtime, draining to full eviction.
+
+        Some loaders (LLEXT) refcount a resident binary, so one unload may only
+        decrement it. ``unload`` loops the loader's unload command until
+        :meth:`~otto.host.binary_loader.BinaryLoader.is_fully_unloaded` reports
+        the binary gone (bounded by ``loader.max_unload_rounds``). Idempotent:
+        unloading something not loaded succeeds on the first round. Returns
+        ``(Status, str)``; fails loud (``ValueError``) if no loader is declared.
+        """
+        loader = self._require_loader()
+        if isDryRun():
+            return self._dry_run_transfer("UNLOAD", [], Path(name))
+        cmd = loader.unload_command(name)
+        last = ""
+        for _ in range(loader.max_unload_rounds):
+            result = await self._session_mgr.run_cmd(cmd, timeout=timeout)
+            last = result.output
+            if loader.is_fully_unloaded(result.output):
+                return Status.Success, ""
+        return Status.Error, (
+            f"{name} still resident after {loader.max_unload_rounds} unload "
+            f"rounds: {last.strip()}"
+        )
 
 
 @dataclass(slots=True)

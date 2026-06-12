@@ -114,6 +114,11 @@ class ShellSession(ABC):
         # return the shell to a clean prompt.
         self._needs_recovery = False
         self._on_output: Callable[[str], None] = lambda _: None
+        # Optional per-command write-progress sink: (bytes_written, total).
+        # Set transiently around a single framed write (see _run_cmd_inner) and
+        # honored by transports that pace their writes (TelnetSession). Used to
+        # drive a transfer-style bar for bulk console pushes (EmbeddedHost.load).
+        self._write_progress: Callable[[int, int], None] | None = None
 
     @property
     def alive(self) -> bool:
@@ -319,6 +324,7 @@ class ShellSession(ABC):
         expects: list[Expect] | None = None,
         timeout: float | None = None,
         on_output: Callable[[str], None] | None = None,
+        write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandStatus:
         """Execute a shell command with sentinel-based output demarcation.
 
@@ -342,10 +348,10 @@ class ShellSession(ABC):
         try:
             if timeout is not None:
                 return await asyncio.wait_for(
-                    self._run_cmd_inner(cmd, expects, sink),
+                    self._run_cmd_inner(cmd, expects, sink, write_progress),
                     timeout=timeout,
                 )
-            return await self._run_cmd_inner(cmd, expects, sink)
+            return await self._run_cmd_inner(cmd, expects, sink, write_progress)
 
         except asyncio.TimeoutError:
             partial = await self._recover_session()
@@ -379,6 +385,7 @@ class ShellSession(ABC):
         cmd: str,
         expects: list[Expect] | None,
         on_output: Callable[[str], None],
+        write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandStatus:
         """Send sentinel-wrapped command, handle expects, surface output.
 
@@ -402,7 +409,11 @@ class ShellSession(ABC):
         # every dialect then gets the visibility for free.
         shown = framed if len(framed) <= 256 else f"{framed[:256]}...({len(framed)} bytes total)"
         logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
-        await self._write(framed)
+        self._write_progress = write_progress
+        try:
+            await self._write(framed)
+        finally:
+            self._write_progress = None
 
         # Build regex that matches any expect pattern OR the end sentinel OR
         # a newline.  The newline alternative causes _read_until_pattern to
@@ -622,14 +633,19 @@ class TelnetSession(ShellSession):
         # - readline raw mode (treats \r as Enter / execute)
         data = re.sub(r'\r?\n', '\r', data)
         encoded = data.encode()
+        total = len(encoded)
         chunk = self._write_chunk_size
-        if chunk and len(encoded) > chunk:
-            for i in range(0, len(encoded), chunk):
+        if chunk and total > chunk:
+            for i in range(0, total, chunk):
                 self._writer.write(encoded[i:i + chunk])
+                if self._write_progress is not None:
+                    self._write_progress(min(i + chunk, total), total)
                 if self._write_chunk_delay:
                     await asyncio.sleep(self._write_chunk_delay)
         else:
             self._writer.write(encoded)
+            if self._write_progress is not None:
+                self._write_progress(total, total)
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
@@ -1113,6 +1129,7 @@ class SessionManager:
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
         log: bool = True,
+        write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandStatus:
         await self._ensure_session()
         if log:
@@ -1121,6 +1138,7 @@ class SessionManager:
         result = await self._session.run_cmd(
             cmd, expects=expects, timeout=timeout,
             on_output=None if log else _drop_output,
+            write_progress=write_progress,
         )
         return result
 

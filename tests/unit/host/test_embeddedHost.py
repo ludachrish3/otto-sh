@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from otto.host import EmbeddedHost, RemoteHost, ZephyrHost
+from otto.host.binary_loader import LlextHexLoader
 from otto.host.command_frame import ZephyrFrame
 from otto.host.host import setDryRun
 from otto.host.options import TelnetOptions
@@ -416,3 +417,139 @@ class TestVerifyConnection:
         result = await host.verify_connection()
         assert result.status == Status.Error
         assert 'no route to host' in result.output
+
+
+# ---------------------------------------------------------------------------
+# Task 3: loader field + coercion + _require_loader
+# ---------------------------------------------------------------------------
+
+class TestLoaderField:
+
+    def test_loader_string_coerced_to_instance(self):
+        h = ZephyrHost(ip="192.0.2.1", ne="sprout", log=False, loader="llext-hex")
+        assert isinstance(h.loader, LlextHexLoader)
+
+    def test_loader_defaults_to_none(self):
+        h = ZephyrHost(ip="192.0.2.1", ne="sprout", log=False)
+        assert h.loader is None
+
+    def test_require_loader_raises_when_none(self):
+        h = ZephyrHost(ip="192.0.2.1", ne="sprout", log=False)
+        with pytest.raises(ValueError, match="no binary loader"):
+            h._require_loader()
+
+
+# ---------------------------------------------------------------------------
+# Task 4: load() / unload()
+# ---------------------------------------------------------------------------
+
+def _ok(output: str) -> CommandStatus:
+    return CommandStatus(command="c", output=output, status=Status.Success, retcode=0)
+
+
+class TestLoad:
+
+    @pytest.mark.asyncio
+    async def test_load_runs_loader_command_with_log_false(self, host, tmp_path):
+        host.loader = LlextHexLoader()
+        host._session_mgr = AsyncMock()
+        host._session_mgr.run_cmd.return_value = _ok("Successfully loaded extension cov_ext")
+        f = tmp_path / "cov_ext.llext"
+        f.write_bytes(b"\x01\x02\x03")
+
+        status, err = await host.load(f, "cov_ext")
+
+        assert status == Status.Success
+        assert err == ""
+        _, kwargs = host._session_mgr.run_cmd.await_args
+        assert host._session_mgr.run_cmd.await_args.args[0] == "llext load_hex cov_ext 010203"
+        assert kwargs["log"] is False
+        assert "write_progress" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_load_returns_error_when_marker_absent(self, host, tmp_path):
+        host.loader = LlextHexLoader()
+        host._session_mgr = AsyncMock()
+        host._session_mgr.run_cmd.return_value = _ok("Failed to load: return code -8")
+        f = tmp_path / "cov_ext.llext"
+        f.write_bytes(b"\x01")
+
+        status, err = await host.load(f, "cov_ext")
+
+        assert status == Status.Error
+        assert "Failed to load" in err
+
+    @pytest.mark.asyncio
+    async def test_load_raises_without_loader(self, host, tmp_path):
+        host.loader = None
+        f = tmp_path / "x.llext"
+        f.write_bytes(b"\x00")
+        with pytest.raises(ValueError, match="no binary loader"):
+            await host.load(f, "x")
+
+    @pytest.mark.asyncio
+    async def test_load_show_progress_passes_write_progress(self, host, tmp_path, monkeypatch):
+        from contextlib import asynccontextmanager
+        import otto.host.embeddedHost as eh
+
+        @asynccontextmanager
+        async def _fake_progress():
+            yield object()
+
+        monkeypatch.setattr(eh, "_acquire_shared_progress", _fake_progress)
+        monkeypatch.setattr(eh, "make_rich_progress_handler", lambda progress, name: (lambda *a: None))
+        host.loader = LlextHexLoader()
+        host._session_mgr = AsyncMock()
+        host._session_mgr.run_cmd.return_value = _ok("Successfully loaded extension cov_ext")
+        f = tmp_path / "cov_ext.llext"
+        f.write_bytes(b"\x01\x02")
+
+        await host.load(f, "cov_ext", show_progress=True)
+
+        assert host._session_mgr.run_cmd.await_args.kwargs["write_progress"] is not None
+
+
+class TestUnload:
+
+    @pytest.mark.asyncio
+    async def test_unload_drains_until_fully_unloaded(self, host):
+        host.loader = LlextHexLoader()
+        host._session_mgr = AsyncMock()
+        host._session_mgr.run_cmd.side_effect = [
+            _ok("Unloaded extension cov_ext"),
+            _ok("No such extension cov_ext"),
+        ]
+
+        status, err = await host.unload("cov_ext")
+
+        assert status == Status.Success
+        assert host._session_mgr.run_cmd.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_unload_not_loaded_succeeds_first_round(self, host):
+        host.loader = LlextHexLoader()
+        host._session_mgr = AsyncMock()
+        host._session_mgr.run_cmd.return_value = _ok("No such extension cov_ext")
+
+        status, _ = await host.unload("cov_ext")
+
+        assert status == Status.Success
+        assert host._session_mgr.run_cmd.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_unload_errors_if_never_evicted(self, host):
+        host.loader = LlextHexLoader()
+        host._session_mgr = AsyncMock()
+        host._session_mgr.run_cmd.return_value = _ok("Unloaded extension cov_ext")
+
+        status, err = await host.unload("cov_ext")
+
+        assert status == Status.Error
+        assert "still resident" in err
+        assert host._session_mgr.run_cmd.await_count == LlextHexLoader.max_unload_rounds
+
+    @pytest.mark.asyncio
+    async def test_unload_raises_without_loader(self, host):
+        host.loader = None
+        with pytest.raises(ValueError, match="no binary loader"):
+            await host.unload("x")

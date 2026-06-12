@@ -305,7 +305,7 @@ class TestCommandExecution:
         expects = [(r"Password:", "secret\n")]
         await host.run('sudo ls', expects=expects)
         host._session_mgr._session.run_cmd.assert_called_once_with(
-            'sudo ls', expects=expects, timeout=None, on_output=None,
+            'sudo ls', expects=expects, timeout=None, on_output=None, write_progress=None,
         )
 
     @pytest.mark.asyncio
@@ -314,7 +314,7 @@ class TestCommandExecution:
         host._session_mgr._session = self._mock_session(ok)
         await host.run('sleep 1', timeout=30.0)
         host._session_mgr._session.run_cmd.assert_called_once_with(
-            'sleep 1', expects=None, timeout=30.0, on_output=None,
+            'sleep 1', expects=None, timeout=30.0, on_output=None, write_progress=None,
         )
 
     @pytest.mark.asyncio
