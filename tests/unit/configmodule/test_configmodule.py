@@ -1,30 +1,28 @@
 """Tests for otto.configmodule.configmodule — all_hosts and host utility functions."""
 
 import re
-from unittest.mock import AsyncMock, patch, PropertyMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from otto.configmodule.configmodule import (
     all_hosts,
-    ConfigModuleManager,
-    ConfigModule,
     do_for_all_hosts,
     get_host,
     run_on_all_hosts,
 )
 from otto.configmodule.lab import Lab
+from otto.context import OttoContext, reset_context, set_context
 from otto.host import EmbeddedHost, UnixHost
 from otto.host.options import SshOptions, TelnetOptions
 from otto.storage.factory import create_host_from_dict
 from otto.utils import CommandStatus, Status
-
 from tests.conftest import host_data, make_host
 
 
 @pytest.fixture()
 def three_hosts():
-    """Set up a ConfigModule with three hosts: carrot_seed, tomato_seed, pepper_seed."""
+    """Set up an OttoContext with three hosts: carrot_seed, tomato_seed, pepper_seed."""
     hosts = {
         "carrot_seed": make_host("carrot"),
         "tomato_seed": make_host("tomato"),
@@ -32,13 +30,10 @@ def three_hosts():
     }
     lab = Lab(name="test_lab")
     lab.hosts = hosts
-    cm = ConfigModule(repos=[], lab=lab)
-    with patch(
-        "otto.configmodule.configmodule._manager",
-        spec=ConfigModuleManager,
-    ) as mock_mgr:
-        type(mock_mgr).configModule = PropertyMock(return_value=cm)
-        yield hosts
+    ctx = OttoContext(lab=lab)
+    token = set_context(ctx)
+    yield hosts
+    reset_context(token)
 
 
 class TestAllHosts:
@@ -77,19 +72,16 @@ class TestAllHosts:
 
 @pytest.fixture()
 def mixed_lab():
-    """ConfigModule containing one UnixHost (carrot_seed) and one EmbeddedHost (sprout)."""
+    """OttoContext containing one UnixHost (carrot_seed) and one EmbeddedHost (sprout)."""
     unix = make_host("carrot")
     embedded = create_host_from_dict(host_data("sprout"))
     hosts = {unix.id: unix, embedded.id: embedded}
     lab = Lab(name="mixed_lab")
     lab.hosts = hosts
-    cm = ConfigModule(repos=[], lab=lab)
-    with patch(
-        "otto.configmodule.configmodule._manager",
-        spec=ConfigModuleManager,
-    ) as mock_mgr:
-        type(mock_mgr).configModule = PropertyMock(return_value=cm)
-        yield hosts
+    ctx = OttoContext(lab=lab)
+    token = set_context(ctx)
+    yield hosts
+    reset_context(token)
 
 
 class TestAllHostsMixed:
@@ -282,7 +274,8 @@ class TestPerCallOptionOverrides:
     def test_override_rebuilds_connection_manager(self, three_hosts):
         """``__post_init__`` re-runs, so the override host has a *fresh*
         ConnectionManager — proving options are wired in via construction
-        rather than post-hoc field assignment."""
+        rather than post-hoc field assignment.
+        """
         original = three_hosts["carrot_seed"]
         override = SshOptions(port=9999)
         host = get_host("carrot_seed", ssh_options=override)

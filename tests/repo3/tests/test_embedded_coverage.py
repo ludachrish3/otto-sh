@@ -33,7 +33,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.configmodule import all_hosts, getConfigModule
+from otto.configmodule.configmodule import all_hosts
+from otto.configmodule import getRepos
 from otto.host import LocalHost
 from otto.host.embeddedHost import EmbeddedHost
 from otto.logger import getOttoLogger
@@ -49,7 +50,7 @@ BUILD_SCRIPT = PRODUCT_DIR / "build.sh"
 
 def _embedded_cov_config() -> dict:
     """Return the ``[coverage.embedded]`` table from the first repo declaring one."""
-    for repo in getConfigModule().repos:
+    for repo in getRepos():
         embedded = (repo.settings.get("coverage") or {}).get("embedded")
         if embedded:
             return embedded
@@ -130,7 +131,7 @@ async def _build_extension_for(build_dir: str, zver: 'str | None') -> None:
 
 def _coverage_host_pattern() -> 're.Pattern[str] | None':
     """Return the repo-declared ``[coverage].hosts`` selector, compiled (or ``None``)."""
-    for repo in getConfigModule().repos:
+    for repo in getRepos():
         hosts = (repo.settings.get("coverage") or {}).get("hosts")
         if hosts:
             return re.compile(hosts)

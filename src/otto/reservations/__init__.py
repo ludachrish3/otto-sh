@@ -17,6 +17,9 @@ from .check import (
     ReservationBackendError as ReservationBackendError,
 )
 from .check import (
+    ReservationState as ReservationState,
+)
+from .check import (
     check_reservations as check_reservations,
 )
 from .check import (

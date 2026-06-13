@@ -21,7 +21,6 @@ import typer
 
 from ..params import options_params
 
-
 # ---------------------------------------------------------------------------
 # Module-level registry — populated by @register_suite() as test files are
 # imported during startup; consumed by cli/test.py to build suite_app subcommands.
@@ -51,6 +50,12 @@ class OttoOptionsPlugin:
     def suite_options(self) -> Any:
         """The Options dataclass instance populated from CLI arguments."""
         return self.options
+
+    @pytest.fixture
+    def ctx(self) -> Any:
+        """Return the active OttoContext for this invocation."""
+        from ..context import get_context
+        return get_context()
 
 
 # ---------------------------------------------------------------------------

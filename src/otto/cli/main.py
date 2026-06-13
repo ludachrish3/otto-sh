@@ -13,10 +13,8 @@ import typer
 
 from ..configmodule import (
     getCompletionNames,
-    getConfigModule,
-    getLab,
     getRepos,
-    setConfigModule,
+    load_lab,
 )
 from ..configmodule.env import (
     DEFAULT_LOG_RETENTION_DAYS,
@@ -265,8 +263,8 @@ def main(
         for opt_key, table in repo.host_defaults.items():
             merged_host_defaults.setdefault(opt_key, {}).update(table)
 
-    # Pass search paths and merged defaults to getLab
-    lab = getLab(labs, search_paths=lab_search_paths, defaults=merged_host_defaults)
+    # Pass search paths and merged defaults to load_lab
+    lab = load_lab(labs, search_paths=lab_search_paths, defaults=merged_host_defaults)
 
     # Synthesize placeholder Docker container hosts from each repo's
     # `[docker]` settings. They appear in `--list-hosts` and tab-completion
@@ -309,15 +307,16 @@ def main(
             f"(--as-user)[/bold magenta]"
         )
 
-    # Enough is known to create the config module now
-    setConfigModule(
-        lab=lab,
-        repos=repos,
-        reservation_backend=reservation_backend,
+    from ..reservations import ReservationState
+    ctx.meta["otto_reservation"] = ReservationState(
+        backend=reservation_backend,
         identity=identity,
-        skip_reservation_check=skip_reservation_check,
+        skip_check=skip_reservation_check,
     )
-    configModule = getConfigModule()
+
+    # Install the runtime context: lab + dry_run flag.
+    from ..context import OttoContext, set_context
+    set_context(OttoContext(lab=lab, dry_run=dry_run))
 
     if show_lab:
         from rich.pretty import pprint
@@ -326,23 +325,21 @@ def main(
         if not verbose:
             pprintDepth = 3
 
-        pprint(configModule, max_depth=pprintDepth, expand_all=True)
+        pprint(lab, max_depth=pprintDepth, expand_all=True)
         raise typer.Exit
 
-    # Listing hosts can't be done as a callback because configmodule creation must be done first.
-    # It's simpler and cleaner to just call the callback here after configmodule creation.
+    # Listing hosts can't be done as a callback because context creation must be done first.
+    # It's simpler and cleaner to just call the callback here after context creation.
     if list_hosts:
         list_hosts_callback(True)
         raise typer.Exit()
 
     if dry_run:
-        from ..host import setDryRun
-
         logger.info("[magenta][DRY RUN] Commands and file transfers will be skipped. "
                     "Connections will still be verified.")
-        setDryRun(True)
 
-    configModule.logRepoCommits()
+    for repo in repos:
+        logger.debug(f"{repo.sutDir}: {repo.commit}")
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +394,8 @@ def _requested_subcommands() -> set[str]:
 
 def _placeholder_subapp(name: str) -> typer.Typer:
     """Empty Typer with just a name/help — used for subcommands that aren't
-    being completed in this invocation so the top-level help still lists them."""
+    being completed in this invocation so the top-level help still lists them.
+    """
     return typer.Typer(
         name=name,
         help=f'(run `otto {name} -h` for details)',

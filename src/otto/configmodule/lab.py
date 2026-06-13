@@ -41,14 +41,22 @@ class Lab():
                 f"but this key already exists in {self.name}'s known hosts."
             ) from None
 
+        from ..host.remoteHost import RemoteHost  # lazy import avoids a module-load cycle
+        if isinstance(host, RemoteHost):
+            host._lab = self
+
         self.hosts[host.id] = host
 
     def __add__(self,
         other: 'Lab',
     ) -> 'Lab':
 
+        from ..host.remoteHost import RemoteHost
         self.name = f"{self.name}_{other.name}"
-        self.resources.union(other.resources)
+        self.resources = self.resources.union(other.resources)
+        for host in other.hosts.values():
+            if isinstance(host, RemoteHost):
+                host._lab = self
         self.hosts.update(other.hosts)
 
         return self
@@ -86,7 +94,7 @@ def _getIndividualLab(
     repo = JsonFileLabRepository()
     return repo.load_lab(labname, search_paths, defaults=defaults)
 
-def getLab(
+def load_lab(
     labnames: str | list[str],
     search_paths: list[Path] | None = None,
     defaults: dict[str, dict[str, Any]] | None = None,

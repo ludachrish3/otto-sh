@@ -202,15 +202,17 @@ class DockerContainerHost(BaseHost):
         :func:`compose_up` with ``build=False`` so access never triggers an
         image rebuild — a missing image fails fast with an actionable error.
         """
-        from ..configmodule import getConfigModule
+        from ..configmodule import get_lab as _get_lab
+        from ..configmodule import getRepos as _getRepos
         from ..docker.compose import compose_up
 
         logger.info(
             f"[docker] container {self.id!r} not running; "
             f"auto-starting stack {self.compose_project!r}"
         )
-        cfg = getConfigModule()
-        repo = next((r for r in cfg.repos if r.name == self.project), None)
+        repos = _getRepos()
+        lab = _get_lab()
+        repo = next((r for r in repos if r.name == self.project), None)
         if repo is None:
             raise RuntimeError(
                 f"Container {self.id!r} is declared but not running, and no "
@@ -220,7 +222,7 @@ class DockerContainerHost(BaseHost):
 
         try:
             hosts = await compose_up(
-                repo, cfg.lab, project_name=self.compose_project, build=False
+                repo, lab, project_name=self.compose_project, build=False
             )
         except Exception as e:
             raise RuntimeError(

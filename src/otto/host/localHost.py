@@ -71,8 +71,14 @@ class LocalHost(BaseHost):
 
     name: str = field(default='localhost', init=False)
 
+    id: str = field(default='local', init=False)
+    """Stable identifier for the local host — always ``"local"``."""
+
     log: bool = field(default=True, repr=False)
     """Determines whether this host should log its output to stdout and log files."""
+
+    resources: set[str] = field(default_factory=set, repr=False)
+    """Resources required to reserve this host — always empty for LocalHost."""
 
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages persistent shell sessions for this host."""

@@ -3,13 +3,12 @@ Fixtures local to tests/integration/host/.
 
 The parametrized ``host1`` / ``host1_kit`` fixtures live in
 :mod:`tests.conftest` (shared with the unit tree). This conftest exists
-only to populate the lab into otto's configModule so the embedded hosts'
+only to populate the lab into an OttoContext so the embedded hosts'
 hop resolution (``configmodule.get_host('basil_seed')`` inside
 ``RemoteHost._build_hop_transport``) can find the SSH hop.
 
 The same wiring is done in :mod:`tests.unit.host.test_hop_integration` for
-multi-hop UnixHost tests; both follow the pattern documented in
-:func:`otto.configmodule.setConfigModule`.
+multi-hop UnixHost tests.
 """
 
 import sys
@@ -17,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from otto.configmodule import setConfigModule
 from otto.configmodule.lab import Lab
+from otto.context import OttoContext, set_context
 from otto.host.command_frame import register_command_frame
 from otto.host.telnet import abort_console_transports
 from otto.host.unixHost import UnixHost
@@ -61,8 +60,8 @@ def _install_integration_lab() -> None:
     Factored out of :func:`_load_lab` so the session-start bed probe
     (:func:`_probe_backend`) — which runs in ``pytest_runtest_setup``, before
     any module-scoped fixture — can populate the same lab before building
-    hosts. ``setConfigModule`` is global and idempotent, so the later
-    ``_load_lab`` call simply re-sets it.
+    hosts. ``set_context`` is idempotent for the same lab, so the later
+    ``_load_lab`` call simply re-installs the context.
     """
     lab = Lab(name="integration_host")
     for ne in ("carrot", "tomato", "pepper", "basil"):
@@ -77,14 +76,27 @@ def _install_integration_lab() -> None:
             transfer=data.get("transfer", "scp"),
             log=False,
         ))
-    setConfigModule(lab=lab, repos=[])
+    set_context(OttoContext(lab=lab))
 
 
 @pytest.fixture(autouse=True, scope="module")
 def _load_lab():
-    """Make the SSH hops resolvable by the embedded host transport."""
+    """Make the SSH hops resolvable by the embedded host transport.
+
+    Snapshots the OttoContext ContextVar before installing the integration
+    lab and restores it on module teardown. xdist workers are long-lived
+    processes, so without this restore the ``integration_host`` context would
+    persist after this module finishes and leak into whatever test the worker
+    runs next — e.g. a ``tests/unit/test_context.py`` case asserting a pristine
+    ``try_get_context() is None``. The function-scoped ``_reset_otto_context``
+    in the root conftest cannot undo this: it snapshots the *already-installed*
+    module context, so the module-scoped install needs its own restore.
+    """
+    from otto.context import _active
+    snapshot = _active.get()
     _install_integration_lab()
     yield
+    _active.set(snapshot)
 
 
 # ---------------------------------------------------------------------------

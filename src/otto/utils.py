@@ -70,7 +70,16 @@ R = TypeVar("R")
 def async_typer_command(f: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, R]:
     @functools.wraps(f)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-        return asyncio.run(f(*args, **kwargs))
+        from .context import try_get_context
+
+        async def _run() -> R:
+            ctx = try_get_context()
+            if ctx is None:
+                return await f(*args, **kwargs)
+            async with ctx.scope:
+                return await f(*args, **kwargs)
+
+        return asyncio.run(_run())
     return wrapper
 
 T = TypeVar("T")

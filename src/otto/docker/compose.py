@@ -445,10 +445,10 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
 
 def get_container_host(host_id: str) -> DockerContainerHost:
     """Look up a registered container host by id. Raises if not present."""
-    from ..configmodule import getConfigModule
+    from ..configmodule import get_lab
 
-    cfg = getConfigModule()
-    host = cfg.lab.hosts.get(host_id)
+    lab = get_lab()
+    host = lab.hosts.get(host_id)
     if not isinstance(host, DockerContainerHost):
         raise KeyError(
             f"No container host registered with id {host_id!r}. "

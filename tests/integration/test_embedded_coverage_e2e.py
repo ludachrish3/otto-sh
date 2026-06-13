@@ -66,8 +66,8 @@ def clean_sprout_cov():
     """
     import asyncio
 
-    from otto.configmodule import setConfigModule
     from otto.configmodule.lab import Lab
+    from otto.context import OttoContext, set_context
     from otto.host.unixHost import UnixHost
     from otto.storage.factory import create_host_from_dict
     from otto.utils import Status
@@ -80,7 +80,7 @@ def clean_sprout_cov():
         board=basil.get("board"), is_virtual=True, term="ssh",
         transfer="scp", log=False,
     ))
-    setConfigModule(lab=lab, repos=[])
+    set_context(OttoContext(lab=lab))
 
     host = create_host_from_dict(host_data("sprout_cov"))
 

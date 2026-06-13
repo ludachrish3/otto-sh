@@ -22,7 +22,8 @@ from typing import Any  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 
-from otto.host.host import setDryRun  # noqa: E402
+from otto.context import OttoContext, reset_context, set_context  # noqa: E402
+from otto.configmodule.lab import Lab  # noqa: E402
 from otto.host.localHost import LocalHost  # noqa: E402
 from otto.host.unixHost import UnixHost  # noqa: E402
 from otto.logger import getOttoLogger  # noqa: E402
@@ -323,20 +324,44 @@ def _detect_asyncio_leaks(request):
 
 
 # ---------------------------------------------------------------------------
-# Dry-run reset (autouse on every test — leaks across tests via the module
-# global otherwise).
+# active_context: test helper for installing an OttoContext in a block.
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(autouse=True)
-def _reset_dry_run():
-    """Ensure the global dry-run flag is off before and after every test.
+import contextlib  # noqa: E402
 
-    Without this, tests in test_dry_run.py that call ``setDryRun(True)`` can
-    leak into other tests when pytest-xdist runs them in the same worker.
+
+@contextlib.contextmanager
+def active_context(lab=None, **kwargs):
+    """Install an OttoContext for the duration of the block (test helper)."""
+    token = set_context(OttoContext(lab=lab if lab is not None else Lab(name="test"), **kwargs))
+    try:
+        yield
+    finally:
+        reset_context(token)
+
+
+@pytest.fixture(autouse=True)
+def _reset_otto_context():
+    """Restore the OttoContext ContextVar to its pre-test value after every test.
+
+    The main() callback (and some fixtures) call set_context(), which persists in
+    the ContextVar. We snapshot the value at test start and restore it at
+    teardown, so a test that sets a context can't leak into later tests run on
+    the same (long-lived) xdist worker. We do NOT force the var to None during
+    the test — that would wipe a module/session scoped context a fixture
+    installed for the test to use (e.g. the hop integration suite's
+    module-scoped lab).
+
+    Lives in the *root* conftest so it covers the integration tree too: under
+    ``make coverage`` the whole suite runs in one process and ungrouped unit
+    tests can land on a worker that previously ran integration tests.
     """
-    setDryRun(False)
-    yield
-    setDryRun(False)
+    from otto.context import _active
+    snapshot = _active.get()
+    try:
+        yield
+    finally:
+        _active.set(snapshot)
 
 
 @pytest.fixture(autouse=True)

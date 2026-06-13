@@ -498,9 +498,8 @@ def main(
     ctx.obj['monitor_hosts'] = monitor_hosts
     if ctx.invoked_subcommand is not None:
         logger.create_output_dir('test', ctx.invoked_subcommand)
-        from ..configmodule import tryGetConfigModule
         from ..reservations import gate
-        gate(tryGetConfigModule())
+        gate(ctx)
 
 
 # ---------------------------------------------------------------------------

@@ -97,9 +97,8 @@ def main(
         raise typer.Exit()
 
     logger.create_output_dir("host", f"{ctx.invoked_subcommand}")
-    from ..configmodule import tryGetConfigModule
     from ..reservations import gate
-    gate(tryGetConfigModule())
+    gate(ctx)
 
     host = _resolve_host(host_id)
 

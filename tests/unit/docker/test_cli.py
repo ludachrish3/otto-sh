@@ -44,7 +44,7 @@ def test_select_repos_filters_by_lab_applicability(tmp_path):
     fake_cfg.lab = lab
 
     with patch.object(docker_cli, "getRepos", return_value=[repo_in_lab, repo_out_of_lab]), \
-         patch.object(docker_cli, "getConfigModule", return_value=fake_cfg):
+         patch.object(docker_cli, "get_lab", return_value=fake_cfg.lab):
         selected = docker_cli._select_repos(repo_name=None)
 
     names = [r.name for r in selected]
@@ -70,7 +70,7 @@ def test_select_repos_on_does_not_override_lab_filter(tmp_path):
     fake_cfg.lab = lab
 
     with patch.object(docker_cli, "getRepos", return_value=[repo]), \
-         patch.object(docker_cli, "getConfigModule", return_value=fake_cfg):
+         patch.object(docker_cli, "get_lab", return_value=fake_cfg.lab):
         selected = docker_cli._select_repos(repo_name=None, on="pepper_seed")
 
     assert [r.name for r in selected] == []

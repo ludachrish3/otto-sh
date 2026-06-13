@@ -1,25 +1,20 @@
-import asyncio
 import dataclasses
 import re
-from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
     Awaitable,
     Callable,
     Generator,
-    Optional,
     TypeVar,
     cast,
 )
 
 from ..logger import getOttoLogger
-from ..utils import CommandStatus, Status
 from .lab import Lab
-from .repo import Repo
 
 if TYPE_CHECKING:
-    from ..host import EmbeddedHost, RunResult, UnixHost
+    from ..host import RunResult, UnixHost
     from ..host.options import (
         FtpOptions,
         NcOptions,
@@ -29,104 +24,12 @@ if TYPE_CHECKING:
         TelnetOptions,
     )
     from ..host.remoteHost import RemoteHost
-    from ..reservations import ReservationBackend, ResolvedIdentity
 
 T = TypeVar("T")
 
 logger = getOttoLogger()
 
 
-# TODO: use the dataclass.asdict function can turn dataclasses into dicts of just their defined values
-@dataclass(
-    frozen=True,
-)
-class ConfigModule():
-    repos: list[Repo]
-    """Repos under test."""
-
-    lab: Lab
-    """All lab information, like hosts, version information, etc."""
-
-    reservation_backend: Optional['ReservationBackend'] = None
-    """Configured reservation backend, or ``None`` if the repo has no
-    ``[reservations]`` settings wired up yet."""
-
-    identity: Optional['ResolvedIdentity'] = field(default=None)
-    """Effective reservation identity for this invocation (set by the top-level
-    CLI callback after parsing ``--as-user``)."""
-
-    skip_reservation_check: bool = False
-    """``True`` when ``-R``/``--skip-reservation-check`` is on the command line."""
-
-    def logRepoCommits(self):
-
-        for repo in self.repos:
-            logger.debug(f"{repo.sutDir}: {repo.commit}")
-
-
-@dataclass(
-    init=False,
-)
-class ConfigModuleManager():
-
-    _configModule: ConfigModule
-
-    @property
-    def configModule(self) -> ConfigModule:
-        return self._configModule
-
-    @configModule.setter
-    def configModule(self, configModule: ConfigModule):
-        self._configModule = configModule
-
-
-_manager = ConfigModuleManager()
-
-
-def getConfigModule():
-
-    global _manager
-    return _manager.configModule
-
-
-def tryGetConfigModule() -> Optional[ConfigModule]:
-    """Return the active ConfigModule, or None if none has been set.
-
-    Unlike :func:`getConfigModule`, this does not raise when the singleton
-    is uninitialized.  Used by code paths (e.g. the reservation ``gate``)
-    that must be callable from unit tests which invoke subcommand apps
-    directly without going through the top-level ``main`` callback.
-    """
-    global _manager
-    return getattr(_manager, '_configModule', None)
-
-
-def setConfigModule(
-    configModule: Optional[ConfigModule] = None,
-    lab: Optional[Lab] = None,
-    repos: Optional[list[Repo]] = None,
-    reservation_backend: Optional['ReservationBackend'] = None,
-    identity: Optional['ResolvedIdentity'] = None,
-    skip_reservation_check: bool = False,
-):
-
-    global _manager
-
-    if      lab is not None \
-        and repos is not None:
-        configModule = ConfigModule(
-            lab=lab,
-            repos=repos,
-            reservation_backend=reservation_backend,
-            identity=identity,
-            skip_reservation_check=skip_reservation_check,
-        )
-
-    if configModule is None:
-        raise ValueError("Invalid ConfigModule. Either a ConfigModule object or a set of OttoEnv "
-                         "and Lab objects must be provided.")
-
-    _manager.configModule = configModule
 
 def _apply_option_overrides(
     host: 'RemoteHost',
@@ -187,16 +90,6 @@ def _apply_option_overrides(
     return cast('RemoteHost', dataclasses.replace(host_any, **overrides))
 
 
-def getHost(
-    name: str,
-) -> 'UnixHost':
-
-    configModule = getConfigModule()
-    hosts = configModule.lab.hosts
-    if name not in hosts:
-        raise ValueError(f'Attempted to retrieve a host named "{name}", but no such host exists in {configModule.lab}')
-    return configModule.lab.hosts[name]
-
 def all_hosts(
     pattern: re.Pattern[str] | None = None,
     *,
@@ -250,23 +143,17 @@ def all_hosts(
         >>> # assuming hosts: carrot_seed, tomato_seed, pepper_seed
         >>> seeds = list(all_hosts(re.compile(r"tomato")))  # doctest: +SKIP
     """
-    from ..host.dockerHost import DockerContainerHost
-
-    configModule = getConfigModule()
-    for host in configModule.lab.hosts.values():
-        if pattern is not None and not pattern.search(host.id):
-            continue
-        if not include_containers and isinstance(host, DockerContainerHost):
-            continue
-        yield _apply_option_overrides(
-            cast('RemoteHost', host),
-            ssh_options=ssh_options,
-            telnet_options=telnet_options,
-            sftp_options=sftp_options,
-            scp_options=scp_options,
-            ftp_options=ftp_options,
-            nc_options=nc_options,
-        )
+    from ..context import get_context
+    yield from get_context().all_hosts(
+        pattern,
+        include_containers=include_containers,
+        ssh_options=ssh_options,
+        telnet_options=telnet_options,
+        sftp_options=sftp_options,
+        scp_options=scp_options,
+        ftp_options=ftp_options,
+        nc_options=nc_options,
+    )
 
 async def do_for_all_hosts(
     method: Callable[..., Awaitable[T]],
@@ -311,8 +198,12 @@ async def do_for_all_hosts(
         ...     pattern=re.compile(r"router"),
         ... )
     """
-    hosts = list(all_hosts(
+    from ..context import get_context
+    return await get_context().do_for_all_hosts(
+        method,
+        *args,
         pattern=pattern,
+        concurrent=concurrent,
         include_containers=include_containers,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
@@ -320,22 +211,8 @@ async def do_for_all_hosts(
         scp_options=scp_options,
         ftp_options=ftp_options,
         nc_options=nc_options,
-    ))
-
-    if concurrent:
-        results = await asyncio.gather(
-            *(method(host, *args, **kwargs) for host in hosts),
-            return_exceptions=True,
-        )
-        return dict(zip([h.id for h in hosts], results))
-
-    out: dict[str, T | BaseException] = {}
-    for host in hosts:
-        try:
-            out[host.id] = await method(host, *args, **kwargs)
-        except BaseException as exc:
-            out[host.id] = exc
-    return out
+        **kwargs,
+    )
 
 
 async def run_on_all_hosts(
@@ -376,19 +253,12 @@ async def run_on_all_hosts(
     Examples:
         >>> results = await run_on_all_hosts("uname -a")  # doctest: +SKIP
     """
-    from ..host import UnixHost
-
-    cmd_list: list[str] = [cmds] if isinstance(cmds, str) else cmds
-
-    async def _run_list(
-        host: 'UnixHost',
-    ) -> 'RunResult':
-        return await host.run(cmd_list, timeout=timeout)
-
-    return await do_for_all_hosts(
-        _run_list,
+    from ..context import get_context
+    return await get_context().run_on_all_hosts(
+        cmds,
         pattern=pattern,
         concurrent=concurrent,
+        timeout=timeout,
         include_containers=include_containers,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
@@ -426,14 +296,19 @@ def get_host(
             resolution is internal and is *not* affected by overrides.
     """
 
-    configModule = getConfigModule()
-    host = cast('RemoteHost', configModule.lab.hosts[host_id])
-    return cast('UnixHost', _apply_option_overrides(
-        host,
+    from ..context import get_context
+    return get_context().get_host(
+        host_id,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
         sftp_options=sftp_options,
         scp_options=scp_options,
         ftp_options=ftp_options,
         nc_options=nc_options,
-    ))
+    )
+
+
+def get_lab() -> Lab:
+    """Return the active lab from the current OttoContext."""
+    from ..context import get_context
+    return get_context().lab

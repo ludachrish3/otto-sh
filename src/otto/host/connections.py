@@ -398,7 +398,11 @@ class ConnectionManager:
 
         # NOTE: the asyncssh zombie ``_SelectorSocketTransport`` is handled
         # precisely above by closing ``asyncio_transport`` explicitly, which
-        # sets ``_closing=True`` so its ``__del__`` is a no-op. We deliberately
+        # sets the *asyncio transport's* ``_closing=True`` so asyncio's own
+        # ``_SelectorSocketTransport.__del__`` finalizer is a no-op. This is
+        # unrelated to otto's host lifecycle and remains REQUIRED after the
+        # removal of ``RemoteHost.__del__`` — do not delete it as "dead
+        # ``__del__`` scaffolding". We deliberately
         # do *not* call ``gc.collect()`` here: a process-wide collection sweeps
         # up every leaked object in the interpreter — including sockets/loops
         # leaked by unrelated tests — firing their ``__del__`` and letting

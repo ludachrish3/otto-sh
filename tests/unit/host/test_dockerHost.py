@@ -202,17 +202,13 @@ async def test_session_factory_resolves_container_id_lazily():
 # Placeholder (container_id == "") — auto-up behavior
 # ---------------------------------------------------------------------------
 
-def _mock_config(repo_name: str | None = "repo1"):
-    """A fake ConfigModule whose repos optionally include *repo_name*."""
-    cfg = MagicMock()
+def _mock_repos(repo_name: str | None = "repo1"):
+    """Return a fake repos list optionally including *repo_name*."""
     if repo_name:
         repo = MagicMock()
         repo.name = repo_name
-        cfg.repos = [repo]
-    else:
-        cfg.repos = []
-    cfg.lab = MagicMock()
-    return cfg
+        return [repo]
+    return []
 
 
 @pytest.mark.asyncio
@@ -224,7 +220,8 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.getConfigModule", lambda: _mock_config())
+    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
     result = await h.oneshot("echo hi")
 
@@ -239,9 +236,8 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
 async def test_placeholder_no_repo_raises(monkeypatch):
     """No configured repo to auto-start -> clear 'not running' error."""
     h = _make_container(container_id="")
-    monkeypatch.setattr(
-        "otto.configmodule.getConfigModule", lambda: _mock_config(repo_name=None)
-    )
+    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos(repo_name=None))
+    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.oneshot("echo hi")
 
@@ -252,7 +248,8 @@ async def test_placeholder_auto_up_failure_raises(monkeypatch):
     h = _make_container(container_id="")
     compose_up = AsyncMock(side_effect=RuntimeError("compose boom"))
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.getConfigModule", lambda: _mock_config())
+    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.oneshot("echo hi")
 
@@ -268,7 +265,8 @@ async def test_concurrent_access_triggers_single_auto_up(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.getConfigModule", lambda: _mock_config())
+    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
     await asyncio.gather(h.oneshot("echo a"), h.oneshot("echo b"))
 
@@ -287,7 +285,8 @@ async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.getConfigModule", lambda: _mock_config())
+    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
     status, _ = await h.put([f], Path("/tmp"))
 

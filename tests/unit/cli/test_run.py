@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import typer
 from typer.testing import CliRunner
 
@@ -201,7 +202,8 @@ class TestInstructionExecution:
 
 class TestInstructionOptions:
     """The ``options=`` parameter on ``@instruction()`` enables dataclass-based
-    option inheritance, mirroring the suite pattern."""
+    option inheritance, mirroring the suite pattern.
+    """
 
     def test_instruction_with_options_dataclass(self):
         """Dataclass fields become CLI options on the instruction."""
@@ -362,3 +364,73 @@ class TestInstructionOptions:
             @instruction('_unit_test_opts_orphan', options=_Orphan)
             async def _orphan() -> CommandStatus:
                 return CommandStatus('test', '', Status.Success, 0)
+
+
+# ── OttoContext injection ────────────────────────────────────────────────────
+
+class TestInstructionCtxInjection:
+    """The ``ctx: OttoContext`` parameter is stripped from the CLI signature and
+    injected at call time from the active context.
+    """
+
+    def test_instruction_ctx_param_excluded_from_signature(self):
+        """A handler declaring ctx: OttoContext must not expose it as a CLI param."""
+        from otto.context import OttoContext
+
+        @instruction(name='probe_ctx')
+        async def probe(ctx: OttoContext) -> CommandStatus:
+            return CommandStatus(command='probe', output='', status=Status.Success, retcode=0)
+
+        import inspect
+        assert 'ctx' not in inspect.signature(probe).parameters
+
+    def test_instruction_ctx_and_options_compose(self):
+        """An @instruction with both options= and ctx: OttoContext registers without
+        raising, exposing the options field but not ctx.
+        """
+        from otto.context import OttoContext
+
+        @dataclass
+        class _CtxOpts:
+            level: Annotated[int, typer.Option(help='Level.')] = 1
+
+        import inspect
+        # Should not raise:
+        @instruction('_unit_test_ctx_opts_compose', options=_CtxOpts)
+        async def _ctx_opts_handler(ctx: OttoContext, opts: _CtxOpts) -> CommandStatus:
+            return CommandStatus('test', '', Status.Success, 0)
+
+        sig = inspect.signature(_ctx_opts_handler)
+        assert 'ctx' not in sig.parameters
+        assert 'level' in sig.parameters
+
+
+@pytest.mark.asyncio
+async def test_inject_ctx_supplies_active_context():
+    """_inject_ctx wraps a handler so the ctx param is filled from the active context."""
+    import inspect
+
+    from otto.cli.run import _inject_ctx
+    from otto.configmodule.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+
+    seen: dict[str, object] = {}
+
+    async def handler(*, ctx: OttoContext, value: int = 0) -> str:
+        seen['ctx'] = ctx
+        seen['value'] = value
+        return 'ok'
+
+    wrapped = _inject_ctx(handler, 'ctx')
+    assert 'ctx' not in inspect.signature(wrapped).parameters
+    assert 'value' in inspect.signature(wrapped).parameters
+
+    ctx = OttoContext(lab=Lab(name='t'))
+    token = set_context(ctx)
+    try:
+        result = await wrapped(value=5)
+        assert result == 'ok'
+        assert seen['ctx'] is ctx
+        assert seen['value'] == 5
+    finally:
+        reset_context(token)

@@ -47,10 +47,14 @@ from dataclasses import (
 )
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Any,
     Optional,
     cast,
 )
+
+if TYPE_CHECKING:
+    from ..configmodule.lab import Lab
 
 from ..utils import (
     CommandStatus,
@@ -213,6 +217,10 @@ class UnixHost(RemoteHost):
     """Toolchain associated with this host's products.  Used by the
     coverage pipeline to select the correct ``gcov`` and ``lcov``
     binaries.  Defaults to system-installed tools."""
+
+    _lab: "Lab | None" = field(default=None, compare=False, repr=False, kw_only=True)
+    """Back-reference to the owning Lab, wired by Lab.addHost. Lets hop
+    resolution use self._lab.hosts[...] instead of ambient state."""
 
     id: str = field(init=False, repr=False)
     """Unique identifier for this host."""

@@ -28,11 +28,17 @@ bulk library ports yet. Only do work that tolerates or *informs* otto's churn:
         `ShellCommand` / `Expect` / `HostSession`.
   - [ ] Logging: plain stdlib `logging.Logger` (libraries call
         `logging.getLogger(__name__)`; otto's logger is a `Logger` subclass).
-  - [ ] Config: the **decomposed** pieces — `getConfigModule()` / `get_host()` /
-        `all_hosts()` / `Lab` for lab+host data; a project-owned `RepoOptions`
+  - [ ] Config: the **decomposed** pieces — `get_lab()` / `get_host()` /
+        `all_hosts()` / `Lab` for lab+host data (the old `getConfigModule()`
+        bundle was removed in WS#1); `getRepos()` for repos (import-time
+        environment, not per-invocation); a project-owned `RepoOptions`
         dataclass for repo-wide options; the suite/instruction `Options`
         dataclass for per-invocation CLI values. There is **no single config
-        object** in the contract.
+        object** in the contract. The per-invocation runtime is `OttoContext`
+        (lab + runtime flags + host-lifecycle scope), propagated via a
+        contextvar and obtainable explicitly via `get_context()` /
+        `open_context()`; **reservations are a CLI-layer concern carried in
+        Typer `ctx.meta`, not part of the runtime-context contract.**
 - [ ] Prototype the old-platform adapters (additive code in the old tools' repo):
   - [ ] `OldHostAsOttoHost` — wraps the old sync host, implements otto's async
         `Host` protocol via `asyncio.to_thread`.

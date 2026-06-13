@@ -624,16 +624,113 @@ class TestCycleDetection:
 
     @pytest.mark.asyncio
     async def test_cycle_detection_in_tunnel_factory(self):
-        """Verify that circular hop references are detected."""
+        """Verify that circular hop references are detected.
+
+        Uses the transport built during __post_init__ (when _lab is None),
+        then wires into a Lab — this is the production ordering and confirms
+        _create_tunnel reads self._lab lazily rather than at build time.
+        """
+        from otto.configmodule.lab import Lab
+
         host_a = UnixHost(ip='10.0.0.1', ne='hostA', creds={'user': 'pass'}, hop='hostb', log=False)
         host_b = UnixHost(ip='10.0.0.2', ne='hostB', creds={'user': 'pass'}, hop='hosta', log=False)
 
-        # Patch before _build_hop_transport so the deferred import picks up the mock
-        with patch('otto.configmodule.get_host') as mock_get_host:
-            def _get(host_id):
-                return {'hosta': host_a, 'hostb': host_b}[host_id]
-            mock_get_host.side_effect = _get
+        # Capture the transport built at construction time (with _lab=None).
+        transport_a = host_a._connections._hop
 
-            transport = host_a._build_hop_transport()
-            with pytest.raises(ValueError, match="Circular hop detected"):
-                await transport.get_tunnel()
+        # Wire both hosts into a lab AFTER construction (production ordering).
+        lab = Lab(name="cycle_test")
+        lab.addHost(host_a)
+        lab.addHost(host_b)
+
+        # The transport was built before wiring; it must still detect the cycle.
+        with pytest.raises(ValueError, match="Circular hop detected"):
+            await transport_a.get_tunnel()
+
+    @pytest.mark.asyncio
+    async def test_hop_transport_reads_lab_lazily_after_addhost(self):
+        """The transport built during __post_init__ (when _lab is None) must still
+        resolve the hop once the host is added to a Lab — i.e. _create_tunnel reads
+        self._lab lazily, not at build time.
+
+        With the eager bug (lab = self._lab at build time), the closure holds
+        None forever and get_tunnel() raises "no lab back-reference".
+        With the lazy fix (lab = self._lab inside _create_tunnel), it resolves
+        correctly after addHost wires self._lab.
+        """
+        from otto.configmodule.lab import Lab
+
+        mock_ssh_conn = MagicMock(spec=SSHClientConnection)
+
+        # Patch asyncssh.connect BEFORE construction so the closure captures the mock.
+        # _build_hop_transport does `from asyncssh import connect as _ssh_connect`
+        # at call time — patching asyncssh.connect makes the import pick up the mock.
+        with patch('asyncssh.connect', AsyncMock(return_value=mock_ssh_conn)):
+            jumpbox = UnixHost(ip='10.10.0.1', ne='jumpbox', creds={'admin': 'secret'}, log=False)
+            target = UnixHost(ip='10.10.0.2', ne='target', creds={'user': 'pass'}, hop='jumpbox', log=False)
+
+            # Capture the transport built at __post_init__ time — _lab was None then.
+            transport = target._connections._hop
+            assert transport is not None, "hop transport should be wired at construction"
+
+            # Wire both hosts into a lab AFTER construction (production ordering).
+            lab = Lab(name="lazy_test")
+            lab.addHost(jumpbox)
+            lab.addHost(target)
+
+            # Drive the transport — must NOT raise "no lab back-reference" if lazy.
+            result = await transport.get_tunnel()
+
+        # If lazy read works, we resolved the hop and got back the mock SSH connection.
+        assert result is mock_ssh_conn
+
+
+# ---------------------------------------------------------------------------
+# Standalone host: hop resolution via active OttoContext (FD-model)
+# ---------------------------------------------------------------------------
+
+class TestStandaloneHostHopResolution:
+
+    @pytest.mark.asyncio
+    async def test_standalone_host_resolves_hop_from_active_context_lab(self):
+        """A host constructed standalone (not addHost'd) with a hop must resolve the
+        hop target from the active OttoContext's lab (FD-model), not raise.
+
+        Regression test for: _create_tunnel raising "no lab back-reference" when
+        self._lab is None because the host was never added to a Lab.
+        """
+        from otto.configmodule.lab import Lab
+        from otto.context import OttoContext, reset_context, set_context
+
+        mock_ssh_conn = MagicMock(spec=SSHClientConnection)
+
+        with patch('asyncssh.connect', AsyncMock(return_value=mock_ssh_conn)):
+            # Build the hop TARGET and add it to a Lab.
+            jumpbox = UnixHost(ip='10.20.0.1', ne='jumpbox', creds={'admin': 'secret'}, log=False)
+            lab = Lab(name="fd_model_test")
+            lab.addHost(jumpbox)
+
+            # Install the lab in an active OttoContext so try_get_context() returns it.
+            ctx = OttoContext(lab=lab)
+            token = set_context(ctx)
+            try:
+                # Build the host-under-test STANDALONE — do NOT addHost it.
+                # Its _lab remains None; the hop target must come from the active context.
+                standalone = UnixHost(
+                    ip='10.20.0.2', ne='target', creds={'user': 'pass'},
+                    hop='jumpbox', log=False,
+                )
+                assert standalone._lab is None, "standalone host must have no lab back-reference"
+
+                transport = standalone._connections._hop
+                assert transport is not None, "hop transport should be wired at construction"
+
+                # Drive the tunnel — must NOT raise "no lab back-reference" or
+                # "cannot resolve hop"; it should reach the mocked asyncssh.connect.
+                result = await transport.get_tunnel()
+            finally:
+                reset_context(token)
+
+        assert result is mock_ssh_conn, (
+            "Standalone host should have resolved jumpbox from the active context's lab"
+        )

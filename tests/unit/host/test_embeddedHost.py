@@ -15,7 +15,7 @@ import pytest
 from otto.host import EmbeddedHost, RemoteHost, ZephyrHost
 from otto.host.binary_loader import LlextHexLoader
 from otto.host.command_frame import ZephyrFrame
-from otto.host.host import setDryRun
+from tests.conftest import active_context
 from otto.host.options import TelnetOptions
 from otto.utils import CommandStatus, Status
 
@@ -139,20 +139,14 @@ class TestDryRun:
 
     @pytest.mark.asyncio
     async def test_run_in_dry_run_skips(self, host: EmbeddedHost):
-        setDryRun(True)
-        try:
+        with active_context(dry_run=True):
             result = await host.run('kernel version')
-        finally:
-            setDryRun(False)
         assert result.only.status == Status.Skipped
 
     @pytest.mark.asyncio
     async def test_oneshot_in_dry_run_skips(self, host: EmbeddedHost):
-        setDryRun(True)
-        try:
+        with active_context(dry_run=True):
             result = await host.oneshot('kernel uptime')
-        finally:
-            setDryRun(False)
         assert result.status == Status.Skipped
 
 
@@ -186,20 +180,14 @@ class TestFileTransfer:
 
     @pytest.mark.asyncio
     async def test_get_dry_run_skips(self, host: EmbeddedHost, tmp_path):
-        setDryRun(True)
-        try:
+        with active_context(dry_run=True):
             status, _ = await host.get(tmp_path / 'f', tmp_path)
-        finally:
-            setDryRun(False)
         assert status == Status.Skipped
 
     @pytest.mark.asyncio
     async def test_put_dry_run_skips(self, host: EmbeddedHost, tmp_path):
-        setDryRun(True)
-        try:
+        with active_context(dry_run=True):
             status, _ = await host.put(tmp_path / 'f', tmp_path)
-        finally:
-            setDryRun(False)
         assert status == Status.Skipped
 
 
@@ -355,46 +343,6 @@ class TestDelegation:
         await host.run("llext load_hex foo DEADBEEF", log=False)
         _, kwargs = host._session_mgr.run_cmd.await_args
         assert kwargs["log"] is False
-
-
-class TestDelDoesNotChurnEventLoop:
-    """``__del__`` must not build an event loop at garbage-collection time.
-
-    The old ``__del__`` fell back to ``asyncio.run(self.close())`` whenever no
-    loop was running. That builds a fresh event loop at an arbitrary GC moment,
-    on whatever thread tripped the collection, attributed by the harness
-    loop-origin tracker to whichever unrelated test is active. The reaper then
-    flags it as a leaked *product* loop and fails an innocent test — the nightly
-    flake in otto issue #53 (surfaced against ``test_log_formatting``). GC-time
-    cleanup must never create a loop; reliable teardown is ``await host.close()``.
-    """
-
-    def test_del_without_running_loop_creates_no_event_loop(self, monkeypatch):
-        import asyncio
-        import gc
-
-        h = ZephyrHost(ip='192.0.2.1', ne='sprout', log=False)
-        # Mocked internals make the ``_connected`` check truthy so __del__
-        # reaches its cleanup path instead of early-returning.
-        h._repeater = AsyncMock()
-        h._session_mgr = AsyncMock()
-        h._connections = AsyncMock()
-        assert h._connected, 'precondition: __del__ would attempt cleanup'
-
-        runs: list[object] = []
-
-        def _record_run(coro, *args, **kwargs):
-            coro.close()  # consume the coroutine; never spin up a real loop
-            runs.append(coro)
-
-        monkeypatch.setattr(asyncio, 'run', _record_run)
-
-        # Sync test: no loop is running, so the pre-fix __del__ would take the
-        # ``asyncio.run`` branch and build a loop.
-        del h
-        gc.collect()
-
-        assert not runs, '__del__ built an event loop via asyncio.run() at GC time'
 
 
 # ---------------------------------------------------------------------------

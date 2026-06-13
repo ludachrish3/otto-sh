@@ -76,9 +76,8 @@ def monitor(
         asyncio.run(_serve_historical(file))
         return
 
-    from ..configmodule import tryGetConfigModule
     from ..reservations import gate
-    gate(tryGetConfigModule())
+    gate(ctx)
 
     from ..host import UnixHost
     pattern = re.compile(hosts) if hosts else None

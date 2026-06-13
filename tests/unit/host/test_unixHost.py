@@ -180,38 +180,6 @@ class TestClose:
             gc.enable()
             gc.collect()  # clean up our own cycle
 
-    def test_del_without_running_loop_creates_no_event_loop(self, monkeypatch):
-        """GC of a connected host with no running loop must not build a loop.
-
-        ``__del__`` used to fall back to ``asyncio.run(self.close())``; that
-        spins up an event loop at an arbitrary GC moment, attributed to an
-        unrelated test, which the harness reaper flags as a leaked *product*
-        loop and fails that innocent test (otto issue #53). Best-effort GC
-        cleanup must never create a loop — rely on explicit ``await close()``.
-        """
-        import asyncio
-        import gc
-
-        h = UnixHost(ip='10.0.0.1', ne='box', creds={'u': 'p'}, log=False)
-        # Mocked internals make the ``_connected`` check truthy so __del__
-        # reaches its cleanup path instead of early-returning.
-        h._session_mgr = AsyncMock()
-        h._connections = AsyncMock()
-        assert h._connected, 'precondition: __del__ would attempt cleanup'
-
-        runs: list[object] = []
-
-        def _record_run(coro, *args, **kwargs):
-            coro.close()  # consume the coroutine; never spin up a real loop
-            runs.append(coro)
-
-        monkeypatch.setattr(asyncio, 'run', _record_run)
-
-        del h
-        gc.collect()
-
-        assert not runs, '__del__ built an event loop via asyncio.run() at GC time'
-
 
 # ---------------------------------------------------------------------------
 # run() — list form

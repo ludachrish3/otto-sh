@@ -84,8 +84,8 @@ def real_main_mocks(tmp_path):
 
     What runs for real:
       - ``initOttoLogger`` (level, handler setup)
-      - ``getLab`` (reads hosts.json from tmp_path)
-      - ``setConfigModule`` / ``getConfigModule``
+      - ``load_lab`` (reads hosts.json from tmp_path)
+      - OttoContext installation via ``set_context``
 
     What is mocked (I/O boundaries only):
       - ``OttoLogger.removeOldLogs`` — filesystem listing + deletion

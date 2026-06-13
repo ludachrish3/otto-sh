@@ -1,34 +1,25 @@
 from typing import Any
 
 from .configmodule import (
-    ConfigModule as ConfigModule,
-)
-from .configmodule import (
     all_hosts as all_hosts,
 )
 from .configmodule import (
     do_for_all_hosts as do_for_all_hosts,
 )
 from .configmodule import (
-    run_on_all_hosts as run_on_all_hosts,
-)
-from .configmodule import (
     get_host as get_host,
 )
 from .configmodule import (
-    getConfigModule as getConfigModule,
+    get_lab as get_lab,
 )
 from .configmodule import (
-    setConfigModule as setConfigModule,
-)
-from .configmodule import (
-    tryGetConfigModule as tryGetConfigModule,
+    run_on_all_hosts as run_on_all_hosts,
 )
 from .env import (
     OttoEnv as OttoEnv,
 )
 from .lab import (
-    getLab as getLab,
+    load_lab as load_lab,
 )
 from .repo import (
     DockerCompose as DockerCompose,
@@ -78,6 +69,19 @@ from .completion_cache import (
     write_cache,
 )
 
+
+# Defined BEFORE applyRepoSettings() below: that call exec's user/test files at
+# import time, and those files may `from otto.configmodule import getRepos`. If
+# these accessors were defined later (after applyRepoSettings) the import would
+# hit a partially-initialized module → circular ImportError.
+def getRepos() -> list[Repo]:
+    return _repos
+
+
+def getEnv() -> OttoEnv:
+    return _env
+
+
 _completion_names: dict[str, Any] | None = None
 
 if is_completion_mode():
@@ -100,12 +104,6 @@ if _completion_names is None:
         # Cache writes are best-effort — never block real work on them.
         pass
 
-
-def getRepos() -> list[Repo]:
-    return _repos
-
-def getEnv() -> OttoEnv:
-    return _env
 
 def getCompletionNames() -> dict[str, Any] | None:
     """Return cached instruction/suite/host data when the completion fast

@@ -37,32 +37,18 @@ FileTransferType = Literal['scp', 'sftp', 'ftp', 'nc']
 
 logger = getLogger('otto')
 
-_logCommandOutput = True
+def getLoggingCommandOutputEnabled() -> bool:
+    """Return True if command-output logging is enabled on the active context."""
+    from ..context import try_get_context
+    ctx = try_get_context()
+    return ctx.log_command_output if ctx is not None else True
 
-def getLoggingCommandOutputEnabled(
-) -> bool:
-
-    global _logCommandOutput
-    return _logCommandOutput
-
-def _setLoggingCommandOutputEnabled(
-    enabled: bool,
-) -> None:
-
-    global _logCommandOutput
-    _logCommandOutput = enabled
-
-
-_globalDryRun = False
 
 def isDryRun() -> bool:
-    """Return True if dry-run mode is enabled globally."""
-    return _globalDryRun
-
-def setDryRun(enabled: bool = True) -> None:
-    """Enable or disable global dry-run mode."""
-    global _globalDryRun
-    _globalDryRun = enabled
+    """Return True if dry-run mode is enabled on the active context."""
+    from ..context import try_get_context
+    ctx = try_get_context()
+    return ctx.dry_run if ctx is not None else False
 
 
 @dataclass(slots=True)
@@ -271,9 +257,17 @@ class Host(Protocol):
     async def close(self) -> None:
         ...
 
+    async def __aenter__(self) -> "Host": ...
+
+    async def __aexit__(self, *exc: object) -> None: ...
+
+
 class BaseHost(ABC):
 
+    id: str
     name: str
+    log: bool
+    resources: set[str]
     _repeater: 'RepeatRunner'
 
     ####################
@@ -419,6 +413,12 @@ class BaseHost(ABC):
     async def close(self) -> None:
         raise NotImplementedError from None
 
+    async def __aenter__(self) -> "BaseHost":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     ####################
     #  Repeat commands
     ####################
@@ -487,8 +487,8 @@ class HostFilter(Filter):
         if host is None:
             return True
 
-        # Also respect the global and host logging flags
-        return _logCommandOutput and host.log
+        # Also respect the context and host logging flags
+        return getLoggingCommandOutputEnabled() and host.log
 
 # TODO: Consider a way to make commands and their output log no matter what if the log level were debug.
 @dataclass
@@ -500,10 +500,10 @@ class SuppressCommandOutput():
     one — and makes concurrent per-host suppressions race-free, since
     each context only touches its own host's ``log`` attribute.
 
-    The no-host (global) path still mutates shared module state, so
-    overlapping global contexts across async tasks can still step on
-    each other. Prefer the per-host form when suppressing work that
-    runs concurrently.
+    The no-host (global) path mutates ``log_command_output`` on the active
+    :class:`~otto.context.OttoContext` when one is present. When no context
+    is active the call is a no-op (there is nothing to suppress). Prefer the
+    per-host form when suppressing work that runs concurrently.
     """
 
     host: Optional[Host] = None
@@ -514,11 +514,15 @@ class SuppressCommandOutput():
             self._prev_host_log = self.host.log
             self.host.log = False
         else:
-            self._prev_global = getLoggingCommandOutputEnabled()
-            _setLoggingCommandOutputEnabled(False)
+            from ..context import try_get_context
+            self._ctx = try_get_context()
+            self._prev_global = self._ctx.log_command_output if self._ctx is not None else True
+            if self._ctx is not None:
+                self._ctx.log_command_output = False
 
     def __exit__(self, *_):
         if self.host is not None:
             self.host.log = self._prev_host_log
         else:
-            _setLoggingCommandOutputEnabled(self._prev_global)
+            if self._ctx is not None:
+                self._ctx.log_command_output = self._prev_global

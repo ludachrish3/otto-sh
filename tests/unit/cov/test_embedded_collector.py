@@ -1,12 +1,12 @@
 """Tests for the embedded (Zephyr LLEXT) coverage collector / decoder."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from otto.configmodule.configmodule import ConfigModule, ConfigModuleManager
 from otto.configmodule.lab import Lab
+from otto.context import OttoContext, reset_context, set_context
 from otto.coverage.fetcher.embedded import (
     EmbeddedGcdaCollector,
     _collect_one_embedded_host,
@@ -30,7 +30,7 @@ def _mock_embedded_host(host_id: str, console_output: str) -> MagicMock:
 
 @pytest.fixture()
 def fake_config_module():
-    """Install a fake ConfigModule so ``all_hosts()`` returns test hosts.
+    """Install an OttoContext so ``all_hosts()`` returns test hosts.
 
     Yields ``set_hosts(*hosts)`` to register the host list for the test.
     """
@@ -42,19 +42,16 @@ def fake_config_module():
 
     lab = Lab(name="test_lab")
     lab.hosts = _FakeHostsDict()  # type: ignore[assignment]
-    cm = ConfigModule(repos=[], lab=lab)
-    with patch(
-        "otto.configmodule.configmodule._manager",
-        spec=ConfigModuleManager,
-    ) as mock_mgr:
-        type(mock_mgr).configModule = PropertyMock(return_value=cm)
+    ctx = OttoContext(lab=lab)
+    token = set_context(ctx)
 
-        def set_hosts(*hosts: MagicMock) -> None:
-            current.clear()
-            for h in hosts:
-                current[h.id] = h
+    def set_hosts(*hosts: MagicMock) -> None:
+        current.clear()
+        for h in hosts:
+            current[h.id] = h
 
-        yield set_hosts
+    yield set_hosts
+    reset_context(token)
 
 
 def test_decode_cov_dump_reconstructs_gcda_from_console_capture():

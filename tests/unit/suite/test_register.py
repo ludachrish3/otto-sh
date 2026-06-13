@@ -19,8 +19,8 @@ import typer
 from typer.testing import CliRunner
 
 from otto.suite.register import (
-    OttoOptionsPlugin,
     _SUITE_REGISTRY,
+    OttoOptionsPlugin,
     _options_params,
     register_suite,
 )
@@ -288,6 +288,28 @@ class TestOttoOptionsPlugin:
         # Verify it's a pytest fixture wrapper
         method = type(plugin).suite_options
         assert 'pytest_fixture' in repr(method)
+
+    def test_provides_ctx_fixture(self):
+        """OttoOptionsPlugin exposes a ctx fixture."""
+        plugin = OttoOptionsPlugin(None)
+        assert hasattr(plugin, 'ctx')
+        method = type(plugin).ctx
+        assert 'pytest_fixture' in repr(method)
+
+    def test_ctx_fixture_returns_active_context(self):
+        """The ctx fixture body returns the active OttoContext."""
+        from otto.configmodule.lab import Lab
+        from otto.context import OttoContext, reset_context, set_context
+
+        plugin = OttoOptionsPlugin(None)
+        ctx = OttoContext(lab=Lab(name='test'))
+        token = set_context(ctx)
+        try:
+            # Call the underlying fixture function directly (bypassing pytest machinery)
+            result = OttoOptionsPlugin.ctx.__wrapped__(plugin)
+            assert result is ctx
+        finally:
+            reset_context(token)
 
 
 # ── Annotated[T, typer.Option(...)] field help text ───────────────────────────

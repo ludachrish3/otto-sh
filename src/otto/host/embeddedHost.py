@@ -43,10 +43,15 @@ The interactive bridge (``_interact``) currently raises
 :class:`NotImplementedError`.
 """
 
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Optional, cast
+from typing import TYPE_CHECKING, Optional, cast
+
+if TYPE_CHECKING:
+    from ..configmodule.lab import Lab
 
 from ..logger import getOttoLogger
 from ..utils import CommandStatus, Status
@@ -211,6 +216,10 @@ class EmbeddedHost(RemoteHost):
 
     log_stdout: bool = field(default=True, repr=False)
     """Whether this host should log its output to stdout."""
+
+    _lab: "Lab | None" = field(default=None, compare=False, repr=False, kw_only=True)
+    """Back-reference to the owning Lab, wired by Lab.addHost. Lets hop
+    resolution use self._lab.hosts[...] instead of ambient state."""
 
     id: str = field(init=False, repr=False)
     """Unique identifier for this host."""

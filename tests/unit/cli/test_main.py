@@ -49,14 +49,11 @@ def main_mocks(tmp_path):
         patch.dict(os.environ, clean_env, clear=True),
         patch('otto.cli.main.initOttoLogger') as p_logger,
         patch('otto.cli.main.getRepos', return_value=[]),
-        patch('otto.cli.main.getLab', return_value=mock_lab) as p_getlab,
-        patch('otto.cli.main.setConfigModule'),
-        patch('otto.cli.main.getConfigModule', return_value=mock_config),
-        patch('otto.cli.callbacks.getConfigModule', return_value=mock_config),
+        patch('otto.cli.main.load_lab', return_value=mock_lab) as p_getlab,
     ):
         yield {
             'initOttoLogger': p_logger,
-            'getLab': p_getlab,
+            'load_lab': p_getlab,
             'lab': mock_lab,
             'config': mock_config,
         }
@@ -228,7 +225,7 @@ class TestLoggerArguments:
 class TestLabLoading:
     """Verify lab loading produces real Lab objects with correct hosts.
 
-    getLab runs for real here, reading hosts.json from the tmp_path fixture.
+    load_lab runs for real here, reading hosts.json from the tmp_path fixture.
     The fixture data has three hosts across two labs:
       - test_lab: host1, host2
       - lab2: host2, host3
@@ -237,29 +234,29 @@ class TestLabLoading:
     def test_single_lab_loads_correct_hosts(self, real_main_mocks):
         result = _invoke([])
         assert result.exit_code == 0
-        from otto.configmodule import getConfigModule
-        lab = getConfigModule().lab
+        from otto.configmodule import get_lab
+        lab = get_lab()
         assert lab.name == 'test_lab'
         assert set(lab.hosts.keys()) == {'host1', 'host2'}
 
     def test_multiple_labs_split_on_comma(self, real_main_mocks):
         result = runner.invoke(app, ['--lab', 'test_lab,lab2'])
         assert result.exit_code == 0
-        from otto.configmodule import getConfigModule
-        lab = getConfigModule().lab
+        from otto.configmodule import get_lab
+        lab = get_lab()
         assert set(lab.hosts.keys()) == {'host1', 'host2', 'host3'}
 
     def test_multiple_lab_flags(self, real_main_mocks):
         result = runner.invoke(app, ['--lab', 'test_lab', '--lab', 'lab2'])
         assert result.exit_code == 0
-        from otto.configmodule import getConfigModule
-        lab = getConfigModule().lab
+        from otto.configmodule import get_lab
+        lab = get_lab()
         assert set(lab.hosts.keys()) == {'host1', 'host2', 'host3'}
 
     def test_host_objects_have_correct_ip(self, real_main_mocks):
         _invoke([])
-        from otto.configmodule import getConfigModule
-        lab = getConfigModule().lab
+        from otto.configmodule import get_lab
+        lab = get_lab()
         assert lab.hosts['host1'].ip == '10.0.0.1'
         assert lab.hosts['host2'].ip == '10.0.0.2'
 
@@ -308,10 +305,8 @@ class TestDryRunMode:
         result = _invoke(['-n'])
         assert result.exit_code == 0
 
-    def test_dry_run_sets_global_flag(self, main_mocks):
-        """--dry-run should enable the global dry-run flag."""
-        from otto.host.host import isDryRun, setDryRun
-        setDryRun(False)  # ensure clean state
+    def test_dry_run_sets_context_flag(self, main_mocks):
+        """--dry-run should enable dry_run on the active OttoContext."""
+        from otto.host.host import isDryRun
         _invoke(['--dry-run'])
         assert isDryRun() is True
-        setDryRun(False)  # cleanup

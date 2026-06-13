@@ -26,8 +26,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.configmodule import setConfigModule
 from otto.configmodule.lab import Lab
+from otto.context import OttoContext, set_context
 from otto.host import UnixHost
 from otto.utils import Status
 from tests.conftest import host_data
@@ -57,12 +57,20 @@ def _build_host(ne: str, **overrides) -> UnixHost:
 
 @pytest.fixture(autouse=True, scope="module")
 def _load_lab():
-    """Populate the config module with all lab hosts so hop resolution works."""
+    """Populate the active OttoContext with all lab hosts so hop resolution works.
+
+    Snapshots/restores the contextvar so the module's lab doesn't leak past the
+    module (the function-scoped _reset_otto_context preserves it *within* each
+    test rather than forcing None).
+    """
+    from otto.context import _active
     lab = Lab(name="hops_test")
     for ne in ("carrot", "tomato", "pepper"):
         lab.addHost(_build_host(ne))
-    setConfigModule(lab=lab, repos=[])
+    snapshot = _active.get()
+    set_context(OttoContext(lab=lab))
     yield
+    _active.set(snapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +121,7 @@ async def two_hop_ssh():
     )
     lab.addHost(tomato_with_hop)
     lab.addHost(_build_host("pepper"))
-    setConfigModule(lab=lab, repos=[])
+    set_context(OttoContext(lab=lab))
 
     pepper_data = host_data("pepper")
     h = UnixHost(
@@ -128,7 +136,7 @@ async def two_hop_ssh():
     lab = Lab(name="hops_test")
     for ne in ("carrot", "tomato", "pepper"):
         lab.addHost(_build_host(ne))
-    setConfigModule(lab=lab, repos=[])
+    set_context(OttoContext(lab=lab))
 
 
 # ---------------------------------------------------------------------------

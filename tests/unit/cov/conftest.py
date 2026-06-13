@@ -12,32 +12,21 @@ from pathlib import Path
 # import time to compute the module-level _repos singleton.
 os.environ.setdefault("OTTO_SUT_DIRS", str(Path(__file__).resolve().parents[2] / "repo1"))
 
-from contextlib import contextmanager
-from unittest.mock import PropertyMock, patch
-
 import pytest_asyncio
 
-from otto.configmodule.configmodule import ConfigModule, ConfigModuleManager
 from otto.configmodule.lab import Lab
-from tests.conftest import make_host
+from tests.conftest import active_context, make_host
 
 
-@contextmanager
 def configured_hosts(*hosts):
-    """Temporarily install a ConfigModule exposing the given hosts via all_hosts().
+    """Temporarily install an OttoContext exposing the given hosts via all_hosts().
 
     Used by integration tests that construct UnixHost instances directly
     (bypassing the lab loader) but need the new GcdaFetcher to see them.
     """
     lab = Lab(name="pipeline_test")
     lab.hosts = {h.id: h for h in hosts}
-    cm = ConfigModule(repos=[], lab=lab)
-    with patch(
-        "otto.configmodule.configmodule._manager",
-        spec=ConfigModuleManager,
-    ) as mock_mgr:
-        type(mock_mgr).configModule = PropertyMock(return_value=cm)
-        yield
+    return active_context(lab=lab)
 
 
 @pytest_asyncio.fixture

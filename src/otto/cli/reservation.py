@@ -12,7 +12,6 @@ Both reuse the top-level ``--lab`` option — no redundant flags here.
 import typer
 from rich import print as rprint
 
-from ..configmodule import getConfigModule
 from ..logger import getOttoLogger
 from ..reservations import (
     MissingReservationError,
@@ -45,15 +44,12 @@ def reservation_callback(ctx: typer.Context) -> None:
 
 
 @reservation_app.command()
-def whoami() -> None:
+def whoami(ctx: typer.Context) -> None:
     """Show the resolved reservation identity and backend."""
-    cm = getConfigModule()
-    backend_name = (
-        cm.reservation_backend.backend_name()
-        if cm.reservation_backend is not None
-        else '<none>'
-    )
-    identity = cm.identity
+    from ..configmodule import get_lab
+    res = ctx.meta.get("otto_reservation")
+    backend_name = res.backend.backend_name() if (res and res.backend) else "<none>"
+    identity = res.identity if res else None
     if identity is None:
         rprint("[yellow]No identity resolved (did the top-level callback run?)[/yellow]")
         raise typer.Exit(1)
@@ -62,30 +58,32 @@ def whoami() -> None:
         f"username: [bold]{identity.username}[/bold]\n"
         f"source:   {identity.source}\n"
         f"backend:  {backend_name}\n"
-        f"lab:      {cm.lab.name}"
+        f"lab:      {get_lab().name}"
     )
 
 
 @reservation_app.command()
-def check() -> None:
+def check(ctx: typer.Context) -> None:
     """Run the reservation check for the top-level ``--lab`` and report."""
-    cm = getConfigModule()
+    from ..configmodule import get_lab
+    res = ctx.meta.get("otto_reservation")
 
-    if cm.reservation_backend is None or cm.identity is None:
+    if res is None or res.backend is None or res.identity is None:
         rprint("[red]Reservation backend or identity not configured.[/red]")
         raise typer.Exit(1)
 
-    username = cm.identity.username
-    needed = required_resources(cm.lab)
+    lab = get_lab()
+    username = res.identity.username
+    needed = required_resources(lab)
 
     rprint(
         f"Checking reservations for [bold]{username}[/bold] "
-        f"against lab [bold]{cm.lab.name}[/bold]"
+        f"against lab [bold]{lab.name}[/bold]"
     )
     rprint(f"Required resources: {sorted(needed)}")
 
     try:
-        check_reservations(cm.lab, username, cm.reservation_backend)
+        check_reservations(lab, username, res.backend)
     except MissingReservationError as e:
         rprint(f"[red]{e}[/red]")
         raise typer.Exit(1) from e

@@ -19,7 +19,7 @@ import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..configmodule import Repo, getConfigModule, getRepos
+from ..configmodule import Repo, get_lab, getRepos
 from ..docker import (
     build_images,
     compose_down,
@@ -94,12 +94,12 @@ def _select_repos(repo_name: Optional[str], on: Optional[str] = None):
     lab, that's a user error — fail fast rather than silently skipping
     every repo and exiting 0.
     """
-    cfg = getConfigModule()
+    lab = get_lab()
 
-    if on is not None and on not in cfg.lab.hosts:
+    if on is not None and on not in lab.hosts:
         rprint(
-            f"[red]--on {on!r} is not a host in the active lab {cfg.lab.name!r}. "
-            f"Available hosts: {sorted(cfg.lab.hosts)}"
+            f"[red]--on {on!r} is not a host in the active lab {lab.name!r}. "
+            f"Available hosts: {sorted(lab.hosts)}"
         )
         raise typer.Exit(1)
 
@@ -122,12 +122,12 @@ def _select_repos(repo_name: Optional[str], on: Optional[str] = None):
         ]
         # A repo with no candidate hosts at all (no default_host) is kept —
         # _resolve_parent will surface a clear error of its own.
-        if not candidates or any(c in cfg.lab.hosts for c in candidates):
+        if not candidates or any(c in lab.hosts for c in candidates):
             applicable.append(r)
         else:
             logger.debug(
                 f"docker: skipping repo {r.name!r} — its docker hosts "
-                f"{candidates} are not in active lab {cfg.lab.name!r}"
+                f"{candidates} are not in active lab {lab.name!r}"
             )
     return applicable
 
@@ -145,13 +145,13 @@ async def _build(
     image: Annotated[Optional[list[str]], typer.Argument(help='Image names to build (default: all).')] = None,
 ) -> None:
     """Build docker images declared in selected repos."""
-    cfg = getConfigModule()
+    lab = get_lab()
     selected_repos = _select_repos(repo, on=on)
     any_failed = False
     for r in selected_repos:
         if not r.docker_settings.images:
             continue
-        parent = _resolve_parent_for_repo(r, cfg.lab, on)
+        parent = _resolve_parent_for_repo(r, lab, on)
         results = await build_images(r, parent, image_names=image, rebuild=rebuild)
         for name, (status, msg) in results.items():
             if status is Status.Skipped:
@@ -176,12 +176,12 @@ async def _up(
     the context-hash skip). Pass --no-build if your compose file references
     only published images and otto's build step is unnecessary.
     """
-    cfg = getConfigModule()
+    lab = get_lab()
     selected_repos = _select_repos(repo, on=on)
     for r in selected_repos:
         if not r.docker_settings.composes:
             continue
-        hosts = await compose_up(r, cfg.lab, on=on, build=not no_build)
+        hosts = await compose_up(r, lab, on=on, build=not no_build)
         proj = get_user_compose_project(r.name)
         rprint(f"[green]{r.name} ({proj}): {len(hosts)} container(s) registered:")
         for service, host in hosts.items():
@@ -193,13 +193,13 @@ async def _down(
     on: Annotated[Optional[str], typer.Option('--on', help='Lab host id to compose on.', autocompletion=_docker_host_completer)] = None,
 ) -> None:
     """Tear down compose stacks for selected repos."""
-    cfg = getConfigModule()
+    lab = get_lab()
     selected_repos = _select_repos(repo, on=on)
     any_failed = False
     for r in selected_repos:
         if not r.docker_settings.composes:
             continue
-        status = await compose_down(r, cfg.lab, on=on)
+        status = await compose_down(r, lab, on=on)
         if status is Status.Skipped:
             rprint(f"[dim]{r.name}: nothing to tear down.")
         elif status.is_ok:
@@ -215,17 +215,17 @@ async def _ps(
     on: Annotated[Optional[str], typer.Option('--on', help='Specific docker-capable host to query (default: all).', autocompletion=_docker_host_completer)] = None,
 ) -> None:
     """List running containers on docker-capable lab hosts."""
-    cfg = getConfigModule()
+    lab = get_lab()
     parents: list[UnixHost] = []
     if on:
-        host = cfg.lab.hosts.get(on)
+        host = lab.hosts.get(on)
         if not isinstance(host, UnixHost) or not host.docker_capable:
             rprint(f"[red]{on!r} is not a docker-capable lab host.")
             raise typer.Exit(1)
         parents = [host]
     else:
         parents = [
-            h for h in cfg.lab.hosts.values()
+            h for h in lab.hosts.values()
             if isinstance(h, UnixHost) and h.docker_capable
         ]
 

@@ -9,23 +9,33 @@ NOT advertise ``--skip-reservation-check`` — that flag is surfaced only when
 the backend itself is unreachable, where proceeding requires it.
 
 :func:`gate` is the subcommand-facing entry point that wires the check into
-the CLI: it reads state from the configmodule, honors the top-level skip
-flag, emits the bold-red skip warning when used, and otherwise runs the
-check.
+the CLI: it reads the per-invocation reservation state from Typer's
+``ctx.meta["otto_reservation"]``, honors the top-level skip flag, emits the
+bold-red skip warning when used, and otherwise runs the check.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import typer
 
 from ..logger import getOttoLogger
 
 if TYPE_CHECKING:
-    from ..configmodule.configmodule import ConfigModule
     from ..configmodule.lab import Lab
+    from .identity import ResolvedIdentity
     from .protocol import ReservationBackend
 
 logger = getOttoLogger()
+
+
+@dataclass(frozen=True)
+class ReservationState:
+    backend: "ReservationBackend | None" = None
+    identity: "ResolvedIdentity | None" = None
+    skip_check: bool = False
 
 
 class ReservationBackendError(Exception):
@@ -113,42 +123,32 @@ def check_reservations(
     raise MissingReservationError("\n".join(lines))
 
 
-def gate(cm: ConfigModule | None) -> None:
-    """Run the reservation check for the current invocation, if applicable.
+def gate(ctx: typer.Context) -> None:
+    """Run the reservation check for this invocation, reading state from ctx.meta.
 
-    Called from each live-lab subcommand callback (``run``, ``test``,
-    ``host``, ``monitor``) after the configmodule has been populated by the
-    top-level Typer callback.  Not called from ``cov report``, which is
-    offline.
-
-    Behavior:
-
-    - If ``cm`` is ``None`` (the configmodule singleton was never set up —
-      e.g. a unit test invoking a subcommand app directly), the gate is a
-      no-op.
-    - If ``cm.skip_reservation_check`` is set, logs a bold-red WARNING and
-      returns without querying the backend.
-    - Otherwise, calls :func:`check_reservations`.  Lets the raised
-      exception propagate so Typer renders it with the normal error path.
+    No-ops when no reservation state is present (e.g. unit tests invoking a
+    subcommand app directly) or no backend is configured. The active lab is
+    fetched lazily so the no-op paths never require an OttoContext.
     """
-    if cm is None or cm.reservation_backend is None:
-        # build_backend was never called or returned None — no check configured.
+    res = ctx.meta.get("otto_reservation")
+    if res is None or res.backend is None:
         return
 
-    if cm.skip_reservation_check:
-        username = cm.identity.username if cm.identity is not None else "<unknown>"
-        needed = required_resources(cm.lab)
+    from ..configmodule import get_lab
+    lab = get_lab()
+    if res.skip_check:
+        username = res.identity.username if res.identity is not None else "<unknown>"
+        needed = required_resources(lab)
         from rich import print as rprint
         rprint(
-            f"[bold red]\N{WARNING SIGN}  Reservation check SKIPPED "
-            f"for user {username!r} on lab {cm.lab.name!r}. "
-            f"Required resources: {sorted(needed)!r}[/bold red]"
+            f"[bold red]\N{WARNING SIGN}  Reservation check SKIPPED for user "
+            f"{username!r} on lab {lab.name!r}. Required resources: {sorted(needed)!r}[/bold red]"
         )
         logger.warning(
             "Reservation check skipped for user %r on lab %r. Required: %r",
-            username, cm.lab.name, sorted(needed),
+            username, lab.name, sorted(needed),
         )
         return
 
-    assert cm.identity is not None, "identity must be resolved before gate() runs"
-    check_reservations(cm.lab, cm.identity.username, cm.reservation_backend)
+    assert res.identity is not None, "identity must be resolved before gate() runs"
+    check_reservations(lab, res.identity.username, res.backend)

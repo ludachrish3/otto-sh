@@ -64,9 +64,40 @@ def main(
 
     if ctx.invoked_subcommand is not None:
         logger.create_output_dir("run", f"{ctx.invoked_subcommand}")
-        from ..configmodule import tryGetConfigModule
         from ..reservations import gate
-        gate(tryGetConfigModule())
+        gate(ctx)
+
+
+def _ctx_param_name(func: Callable[..., Any]) -> str | None:
+    """Return the name of any parameter annotated as OttoContext, or None."""
+    from ..context import OttoContext
+    hints = get_type_hints(func)
+    for name, hint in hints.items():
+        if hint is OttoContext:
+            return name
+    return None
+
+
+def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
+    """Wrap *func* so the OttoContext param is supplied from the active context
+    at call time and hidden from the Typer-facing signature.
+    """
+    from ..context import get_context
+    sig = inspect.signature(func)
+    exposed = [p for n, p in sig.parameters.items() if n != ctx_name]
+
+    @functools.wraps(func)
+    async def wrapper(**kw: Any) -> Any:
+        kw[ctx_name] = get_context()
+        return await func(**kw)
+
+    # Drop ctx_name from __annotations__ too so get_type_hints() on the
+    # wrapper doesn't see it (important when _wrap_with_options composes on top).
+    wrapper.__annotations__ = {
+        k: v for k, v in func.__annotations__.items() if k != ctx_name
+    }
+    setattr(wrapper, "__signature__", inspect.Signature(exposed))
+    return wrapper
 
 
 def instruction(*args: Any, options: type | None = None, **kwargs: Any):
@@ -78,6 +109,10 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any):
     declare a parameter annotated with the options class; the decorator
     replaces it with the expanded fields and, at call time, constructs the
     populated dataclass instance before forwarding it to the function.
+
+    If the function declares a parameter annotated as ``OttoContext``, that
+    parameter is stripped from the CLI signature and injected at call time from
+    the active context (DI-friendly, additive — existing handlers are unaffected).
 
     Usage without options (unchanged from before)::
 
@@ -95,15 +130,25 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any):
         async def deploy(opts: _Opts):
             print(opts.debug)
 
+    Usage with OttoContext injection::
+
+        @instruction()
+        async def status(ctx: OttoContext) -> CommandStatus:
+            host = ctx.get_host("router")
+            ...
+
     The *same* dataclass may be inherited by a suite's inner ``Options``
     class, giving both ``otto test`` and ``otto run`` subcommands a
     uniform set of repo-wide flags.
     """
     def decorator(func: Callable[P, Coroutine[Any, Any, CommandStatus]]) -> Callable[P, CommandStatus]:
-        target = func
+        ctx_name = _ctx_param_name(func)
+        target: Callable[..., Any] = func
+        if ctx_name is not None:
+            target = _inject_ctx(func, ctx_name)
 
         if options is not None and dataclasses.is_dataclass(options):
-            target = _wrap_with_options(func, options)
+            target = _wrap_with_options(target, options)
 
         app = typer.Typer()
         new_instruction = app.command(*args, **kwargs)(async_typer_command(target))
