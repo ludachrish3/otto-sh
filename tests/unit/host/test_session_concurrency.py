@@ -445,6 +445,11 @@ async def test_ensure_session_retries_once_on_handshake_failure() -> None:
     mgr = SessionManager(
         connections=cast(ConnectionManager, SimpleNamespace(term='telnet')),
         session_factory=make_session,
+        # Skip the real ~2 s peer-release backoff — these fakes have no peer to
+        # wait on, and paying it burns 40% of the tight timeout(5) budget,
+        # making the test flake under CI teardown load. See
+        # test_ensure_session_retry_backoff_is_configurable.
+        retry_backoff=0.0,
     )
 
     # Single run_cmd: first session fails its handshake, retry builds a
@@ -478,6 +483,9 @@ async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
     mgr = SessionManager(
         connections=cast(ConnectionManager, SimpleNamespace(term='telnet')),
         session_factory=make_session,
+        # Skip the real ~2 s peer-release backoff (no peer here) — it otherwise
+        # eats most of the timeout(5) budget and flakes under CI teardown load.
+        retry_backoff=0.0,
     )
 
     with pytest.raises(ConnectionError):
@@ -485,6 +493,48 @@ async def test_ensure_session_propagates_persistent_handshake_failure() -> None:
     assert factory.created_count == 2, (
         f"expected exactly 2 attempts before giving up, got "
         f"{factory.created_count}"
+    )
+
+    await mgr.close_all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(5)
+async def test_ensure_session_retry_backoff_is_configurable() -> None:
+    """The inter-attempt retry backoff is injectable so tests don't pay the
+    production ~2 s peer-release wait. With ``retry_backoff=0`` a persistent
+    handshake failure surfaces in well under that budget while still making
+    exactly two attempts — the retry *logic* is unchanged, only its real-world
+    timing is. (Paying the real 2 s here burned 40% of the tight
+    ``timeout(5)`` budget and made these tests flake under CI teardown load.)"""
+    factory = _Factory()
+
+    def make_session() -> _HandshakeFailsOnceFakeSession:
+        session = _HandshakeFailsOnceFakeSession(
+            instance_id=len(factory.created) + 1,
+        )
+        session.fail_until_instance = 999  # always fail
+        factory.created.append(session)
+        return session
+
+    mgr = SessionManager(
+        connections=cast(ConnectionManager, SimpleNamespace(term='telnet')),
+        session_factory=make_session,
+        retry_backoff=0.0,
+    )
+
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    with pytest.raises(ConnectionError):
+        await mgr.run_cmd('echo hello', timeout=2.0)
+    elapsed = loop.time() - start
+
+    assert factory.created_count == 2, (
+        f"expected exactly 2 attempts, got {factory.created_count}"
+    )
+    assert elapsed < 0.5, (
+        f"retry backoff not bypassed: _ensure_session took {elapsed:.3f}s "
+        f"(expected << the 2 s production default)"
     )
 
     await mgr.close_all()

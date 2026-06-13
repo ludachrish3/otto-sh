@@ -49,6 +49,13 @@ _RECOVERY_TIMEOUT = 5.0
 # error instead of hanging indefinitely.
 _INIT_TIMEOUT = 3.0
 
+# Default pause between a failed first readiness handshake and the single retry
+# in ``SessionManager._ensure_session``. Calibrated to single-client RTOS telnet
+# servers (Zephyr's ``CONFIG_SHELL_BACKEND_TELNET``) that don't free the console
+# slot the instant the FIN lands. Injectable via ``SessionManager(retry_backoff=)``
+# so fakes-only unit tests can zero it instead of paying the real wall-clock wait.
+_HANDSHAKE_RETRY_BACKOFF = 2.0
+
 
 def _drop_output(_line: str) -> None:
     """Output sink that discards a command's streamed output — used to honor a
@@ -951,6 +958,7 @@ class SessionManager:
         oneshot_factory: 'Callable[[str, float | None], Awaitable[CommandStatus]] | None' = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
+        retry_backoff: float | None = None,
     ) -> None:
         self._connections = connections
         self._name = name
@@ -967,6 +975,12 @@ class SessionManager:
         # Optional readiness-handshake ceiling for slow shells (e.g. a Zephyr
         # QEMU telnet console); ``None`` keeps the session's class default.
         self._init_timeout = init_timeout
+        # Pause before the single handshake retry in ``_ensure_session``. ``None``
+        # resolves to the production default; tests pass ``0`` to skip the real
+        # wall-clock wait without changing the retry logic itself.
+        self._retry_backoff = (
+            _HANDSHAKE_RETRY_BACKOFF if retry_backoff is None else retry_backoff
+        )
         self._session: ShellSession | None = None
         self._named_sessions: dict[str, HostSession] = {}
         # Free-list of idle shell sessions used by `oneshot()` for terminals
@@ -1067,13 +1081,13 @@ class SessionManager:
                         )
                         # Backoff lets the peer fully release any half-open
                         # slot before the next telnet() rebuilds the TCP
-                        # connection. 2 s is calibrated to single-client
-                        # RTOS telnet servers (Zephyr's
-                        # ``CONFIG_SHELL_BACKEND_TELNET``) which do not
+                        # connection. The default (``_HANDSHAKE_RETRY_BACKOFF``,
+                        # 2 s) is calibrated to single-client RTOS telnet servers
+                        # (Zephyr's ``CONFIG_SHELL_BACKEND_TELNET``) which do not
                         # always free the slot the instant the FIN lands —
-                        # observed on live QEMU runs to take well over
-                        # 500 ms after the close.
-                        await asyncio.sleep(2.0)
+                        # observed on live QEMU runs to take well over 500 ms
+                        # after the close. Injectable so fakes-only tests skip it.
+                        await asyncio.sleep(self._retry_backoff)
                         continue
                     raise
                 except BaseException:

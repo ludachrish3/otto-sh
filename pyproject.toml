@@ -151,10 +151,19 @@ asyncio_mode = "strict"
 # per-test/module with @pytest.mark.timeout(N).
 timeout = 180
 timeout_method = "signal"
+# Time only the test *function* (call phase), not setup/teardown. Without this,
+# pytest-timeout's signal method scopes the whole item (setup + call + teardown)
+# under one SIGALRM, so per-test fixture/teardown cost — e.g. the autouse
+# OTTO_DETECT_ASYNCIO_LEAKS gc-scan — counts against a tight @timeout(N) and,
+# under nightly xdist contention, tips it over and surfaces as a misattributed
+# "ERROR at teardown: Timeout". The call phase is the test's own contract; hangs
+# in setup/teardown are caught by `faulthandler_timeout` below instead.
+timeout_func_only = true
 # Backstop for hangs the per-test SIGALRM can't break (e.g. a blocking C call) or
-# hangs in session teardown/finalization: faulthandler dumps every thread's stack
-# after this many seconds so a wedge is diagnosable instead of silent. Kept above
-# `timeout` so the graceful per-test path fires first under normal hangs.
+# hangs in session setup/teardown/finalization (now outside the per-test timeout
+# window): faulthandler dumps every thread's stack after this many seconds so a
+# wedge is diagnosable instead of silent. Kept above `timeout` so the graceful
+# per-test path fires first under normal hangs.
 faulthandler_timeout = 300
 filterwarnings = [
     "error",
