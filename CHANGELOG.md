@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-06-13
+
+### Added
+
+- add embedded load()/unload() binary-load API + BinaryLoader strategy
+- add per-command log=False to hide noisy commands from logs
+- log buffered-frame output via parse_output, not the raw stream
+
+
+### Documentation
+
+- Review feedback of otto's design
+
+
+### Fixed
+
+- satisfy ty — cast resolved ShellCommand.log to bool
+
+
 ## [0.4.0] - 2026-06-12
 
 ### Added
@@ -249,7 +268,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/ludachrish3/otto-sh/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ludachrish3/otto-sh/compare/v0.3.6...v0.4.0
 [0.3.6]: https://github.com/ludachrish3/otto-sh/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/ludachrish3/otto-sh/compare/v0.3.4...v0.3.5
