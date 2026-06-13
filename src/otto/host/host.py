@@ -20,6 +20,7 @@ from typing import (
     Literal,
     Optional,
     Protocol,
+    cast,
 )
 
 from ..utils import (
@@ -350,7 +351,7 @@ class BaseHost(ABC):
                 single.cmd,
                 expects=_normalize_expects(single.expects),
                 timeout=single.timeout,
-                log=single.log,
+                log=cast(bool, single.log),  # _resolve_command collapsed the None sentinel
             )
             status = result.status if not result.status.is_ok else Status.Success
             return RunResult(status=status, statuses=[result])
@@ -362,7 +363,7 @@ class BaseHost(ABC):
                 sc.cmd,
                 expects=_normalize_expects(sc.expects),
                 timeout=t,
-                log=sc.log,
+                log=cast(bool, sc.log),  # _resolve_command collapsed the None sentinel
             )
 
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
