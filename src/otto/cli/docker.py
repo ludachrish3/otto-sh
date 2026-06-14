@@ -19,7 +19,7 @@ import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..configmodule import Repo, get_lab, getRepos
+from ..configmodule import Repo, get_lab, get_repos
 from ..docker import (
     build_images,
     compose_down,
@@ -27,11 +27,11 @@ from ..docker import (
     compose_up,
     get_user_compose_project,
 )
-from ..host.unixHost import UnixHost
-from ..logger import getOttoLogger
+from ..host.unix_host import UnixHost
+from ..logger import get_otto_logger
 from ..utils import Status, async_typer_command
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 docker_app = typer.Typer(
     name='docker',
@@ -64,14 +64,14 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     (``cache['docker_hosts']``); falls through to a live ``hosts.json``
     scan on cache miss so first-run completion still works.
     """
-    from ..configmodule import getCompletionNames, getRepos
+    from ..configmodule import get_completion_names, get_repos
     from ..configmodule.completion_cache import collect_docker_capable_host_ids
 
-    cached = getCompletionNames()
+    cached = get_completion_names()
     if cached is not None and isinstance(cached.get('docker_hosts'), list):
         ids = cached['docker_hosts']
     else:
-        ids = collect_docker_capable_host_ids(getRepos())
+        ids = collect_docker_capable_host_ids(get_repos())
 
     return sorted(h for h in ids if h.startswith(incomplete))
 
@@ -103,7 +103,7 @@ def _select_repos(repo_name: Optional[str], on: Optional[str] = None):
         )
         raise typer.Exit(1)
 
-    docker_repos = [r for r in getRepos() if r.docker_settings.composes or r.docker_settings.images]
+    docker_repos = [r for r in get_repos() if r.docker_settings.composes or r.docker_settings.images]
     if repo_name is not None:
         matches = [r for r in docker_repos if r.name == repo_name]
         if not matches:

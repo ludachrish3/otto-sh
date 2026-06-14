@@ -4,12 +4,12 @@
 Reads the lab data (``tests/lab_data/tech1/hosts.json`` by default) and, for
 each defined host, reports reachability and a timestamp:
 
-* **Unix VMs** (``osType == "unix"``) are reached over SSH; the script reads
+* **Unix VMs** (``os_type == "unix"``) are reached over SSH; the script reads
   each VM's wall clock and prints the **drift** against this machine's clock,
   so you can spot NTP/clock-skew problems at a glance.
 
 * **Embedded console instances** (the ``EmbeddedHost`` family — e.g.
-  ``osType == "zephyr"``) carry no SSH creds of their own: they sit behind an
+  ``os_type == "zephyr"``) carry no SSH creds of their own: they sit behind an
   SSH hop VM and are reached by SSHing to the hop and telnetting to the guest
   console (the same path otto uses). Zephyr has no RTC, so these report
   **kernel uptime** + console responsiveness rather than wall-clock drift.
@@ -119,7 +119,7 @@ def _run_ssh(ip: str, user: str, password: str, remote_cmd: str,
 
 def _hop_index(hosts: list[dict]) -> dict[str, dict]:
     """Map an otto hop id (``{ne}_{board}``) to its host entry."""
-    return {f"{h['ne']}_{h.get('board', 'seed')}": h for h in hosts}
+    return {f"{h['element']}_{h.get('board', 'seed')}": h for h in hosts}
 
 
 def _is_ssh_host(host: dict) -> bool:
@@ -127,12 +127,12 @@ def _is_ssh_host(host: dict) -> bool:
     the host is an embedded console reached via a hop (``EmbeddedHost`` /
     ``ZephyrHost`` family).
 
-    Route on the credential shape, not a hardcoded ``osType`` literal. The SSH
+    Route on the credential shape, not a hardcoded ``os_type`` literal. The SSH
     probe dereferences the host's own ``creds``; embedded consoles carry none
-    and borrow their hop's. Keying on ``osType == "embedded"`` silently
+    and borrow their hop's. Keying on ``os_type == "embedded"`` silently
     misrouted every console — straight into a ``KeyError('creds')`` — once the
-    lab data moved to ``osType: "zephyr"`` (commit 41cf70c). The credential
-    shape also survives the next osType rename, and correctly keeps a Unix VM
+    lab data moved to ``os_type: "zephyr"`` (commit 41cf70c). The credential
+    shape also survives the next os_type rename, and correctly keeps a Unix VM
     that fronts a guest (its own ``hop``, e.g. ``pepper``) on the SSH path.
     """
     return "creds" in host
@@ -189,7 +189,7 @@ def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
     """Restart the QEMU + SNMP-relay units on every hop that fronts a guest."""
     hop_ids = sorted({
         h["hop"] for h in hosts
-        if h.get("osType") == "embedded" and h.get("hop")
+        if h.get("os_type") == "embedded" and h.get("hop")
     })
     if not hop_ids:
         print("No embedded guests with a hop in the lab; nothing to restart.")
@@ -208,9 +208,9 @@ def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
         cmd = f"echo {shlex.quote(password)} | sudo -S systemctl restart {units}"
         rc, _out, err = _run_ssh(hop["ip"], user, password, cmd, timeout=60)
         if rc == 0:
-            print(f"  {hop['ne']} ({hop['ip']}): restarted QEMU + relay units")
+            print(f"  {hop['element']} ({hop['ip']}): restarted QEMU + relay units")
         else:
-            print(f"  {hop['ne']} ({hop['ip']}): restart FAILED — {err or f'rc={rc}'}")
+            print(f"  {hop['element']} ({hop['ip']}): restart FAILED — {err or f'rc={rc}'}")
             failures += 1
     return failures
 
@@ -226,7 +226,7 @@ def _print_report(hosts: list[dict], hops: dict[str, dict]) -> bool:
     all_ok = True
     drifts: list[tuple[str, float]] = []
     for host in hosts:
-        ostype = host.get("osType", "?")
+        ostype = host.get("os_type", "?")
         if _is_ssh_host(host):
             res = _check_unix(host)
         else:
@@ -236,8 +236,8 @@ def _print_report(hosts: list[dict], hops: dict[str, dict]) -> bool:
         drift_col = "—"
         if "drift" in res:
             drift_col = f"{res['drift']:+.2f}s"
-            drifts.append((host["ne"], res["drift"]))
-        print(f"{host['ne']:<14}{host['ip']:<16}{ostype:<10}"
+            drifts.append((host["element"], res["drift"]))
+        print(f"{host['element']:<14}{host['ip']:<16}{ostype:<10}"
               f"{res['status']:<13}{res['info']:<18}{drift_col}")
 
     skewed = [(ne, d) for ne, d in drifts if abs(d) > _DRIFT_WARN_S]

@@ -26,7 +26,7 @@ from typing import Any, cast
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from ...version import getVersion
+from ...version import get_version
 from ..store.model import BranchHits, CoverageStore, FileRecord, LineRecord
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ class HtmlRenderer:
         self._copy_static()
         tier_order = self._effective_tier_order(store)
         tier_labels = {t: _label_for(t) for t in tier_order}
-        otto_version = getVersion()
+        otto_version = get_version()
         self._render_index(store, tier_order, tier_labels, otto_version)
         for file_record in store.files():
             self._render_file(file_record, tier_order, tier_labels, otto_version)

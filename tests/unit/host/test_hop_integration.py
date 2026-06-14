@@ -45,7 +45,7 @@ def _build_host(ne: str, **overrides) -> UnixHost:
     data = host_data(ne)
     return UnixHost(
         ip=data["ip"],
-        ne=data["ne"],
+        element=data["element"],
         creds=data["creds"],
         board=data.get("board"),
         is_virtual=data.get("is_virtual", False),
@@ -66,7 +66,7 @@ def _load_lab():
     from otto.context import _active
     lab = Lab(name="hops_test")
     for ne in ("carrot", "tomato", "pepper"):
-        lab.addHost(_build_host(ne))
+        lab.add_host(_build_host(ne))
     snapshot = _active.get()
     set_context(OttoContext(lab=lab))
     yield
@@ -82,7 +82,7 @@ async def single_hop_ssh():
     """Target reached through one SSH hop: otto -> carrot -> tomato (SSH)."""
     data = host_data("tomato")
     h = UnixHost(
-        ip=data["ip"], ne=data["ne"], creds=data["creds"],
+        ip=data["ip"], element=data["element"], creds=data["creds"],
         board=data.get("board"), is_virtual=True,
         term="ssh", transfer="scp", hop="carrot_seed", log=False,
     )
@@ -95,7 +95,7 @@ async def single_hop_telnet():
     """Target reached via SSH hop, using telnet to the target: otto -> carrot -> tomato (telnet)."""
     data = host_data("tomato")
     h = UnixHost(
-        ip=data["ip"], ne=data["ne"], creds=data["creds"],
+        ip=data["ip"], element=data["element"], creds=data["creds"],
         board=data.get("board"), is_virtual=True,
         term="telnet", transfer="ftp", hop="carrot_seed", log=False,
     )
@@ -112,20 +112,20 @@ async def two_hop_ssh():
     """
     # Reconfigure tomato in the lab with a hop through carrot
     lab = Lab(name="hops_test_2hop")
-    lab.addHost(_build_host("carrot"))
+    lab.add_host(_build_host("carrot"))
     tomato_data = host_data("tomato")
     tomato_with_hop = UnixHost(
-        ip=tomato_data["ip"], ne=tomato_data["ne"], creds=tomato_data["creds"],
+        ip=tomato_data["ip"], element=tomato_data["element"], creds=tomato_data["creds"],
         board=tomato_data.get("board"), is_virtual=True,
         term="ssh", transfer="scp", hop="carrot_seed", log=False,
     )
-    lab.addHost(tomato_with_hop)
-    lab.addHost(_build_host("pepper"))
+    lab.add_host(tomato_with_hop)
+    lab.add_host(_build_host("pepper"))
     set_context(OttoContext(lab=lab))
 
     pepper_data = host_data("pepper")
     h = UnixHost(
-        ip=pepper_data["ip"], ne=pepper_data["ne"], creds=pepper_data["creds"],
+        ip=pepper_data["ip"], element=pepper_data["element"], creds=pepper_data["creds"],
         board=pepper_data.get("board"), is_virtual=True,
         term="ssh", transfer="scp", hop="tomato_seed", log=False,
     )
@@ -135,7 +135,7 @@ async def two_hop_ssh():
     # Restore the single-hop lab for subsequent tests
     lab = Lab(name="hops_test")
     for ne in ("carrot", "tomato", "pepper"):
-        lab.addHost(_build_host(ne))
+        lab.add_host(_build_host(ne))
     set_context(OttoContext(lab=lab))
 
 
@@ -248,7 +248,7 @@ class TestFileTransferThroughHop:
         """Download a file through an SSH hop via SFTP."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], ne=data["ne"], creds=data["creds"],
+            ip=data["ip"], element=data["element"], creds=data["creds"],
             board=data.get("board"), is_virtual=True,
             term="ssh", transfer="sftp", hop="carrot_seed", log=False,
         )
@@ -270,7 +270,7 @@ class TestFileTransferThroughHop:
         """Upload a file through an SSH hop via FTP (port-forwarded)."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], ne=data["ne"], creds=data["creds"],
+            ip=data["ip"], element=data["element"], creds=data["creds"],
             board=data.get("board"), is_virtual=True,
             term="ssh", transfer="ftp", hop="carrot_seed", log=False,
         )
@@ -297,7 +297,7 @@ class TestFileTransferThroughHop:
         """Download a file through an SSH hop via FTP (port-forwarded)."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], ne=data["ne"], creds=data["creds"],
+            ip=data["ip"], element=data["element"], creds=data["creds"],
             board=data.get("board"), is_virtual=True,
             term="ssh", transfer="ftp", hop="carrot_seed", log=False,
         )
@@ -320,7 +320,7 @@ class TestFileTransferThroughHop:
         """Upload a file through an SSH hop via netcat (port-forwarded)."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], ne=data["ne"], creds=data["creds"],
+            ip=data["ip"], element=data["element"], creds=data["creds"],
             board=data.get("board"), is_virtual=True,
             term="ssh", transfer="nc", hop="carrot_seed", log=False,
         )
@@ -349,7 +349,7 @@ class TestFileTransferThroughHop:
         """Download a file through an SSH hop via netcat (reversed-listener)."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], ne=data["ne"], creds=data["creds"],
+            ip=data["ip"], element=data["element"], creds=data["creds"],
             board=data.get("board"), is_virtual=True,
             term="ssh", transfer="nc", hop="carrot_seed", log=False,
         )

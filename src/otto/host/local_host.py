@@ -11,9 +11,9 @@ from errno import (
 )
 from pathlib import Path
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
-from .host import BaseHost, isDryRun
+from .host import BaseHost, is_dry_run
 from .repeat import RepeatRunner
 from .session import (
     Expect,
@@ -39,14 +39,14 @@ class LocalFileTransfer(BaseFileTransfer):
 
     async def _do_copy(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
         try:
-            destDir.mkdir(parents=True, exist_ok=True)
-            for src in srcFiles:
-                dest = destDir / src.name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            for src in src_files:
+                dest = dest_dir / src.name
                 await asyncio.to_thread(shutil.copy2, src, dest)
                 if progress_factory is not None:
                     size = dest.stat().st_size
@@ -55,13 +55,13 @@ class LocalFileTransfer(BaseFileTransfer):
         except Exception as e:
             return Status.Error, str(e)
 
-    async def _run_put(self, srcFiles, destDir, progress_factory):
-        return await self._do_copy(srcFiles, destDir, progress_factory)
+    async def _run_put(self, src_files, dest_dir, progress_factory):
+        return await self._do_copy(src_files, dest_dir, progress_factory)
 
-    async def _run_get(self, srcFiles, destDir, progress_factory):
-        return await self._do_copy(srcFiles, destDir, progress_factory)
+    async def _run_get(self, src_files, dest_dir, progress_factory):
+        return await self._do_copy(src_files, dest_dir, progress_factory)
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 @dataclass(
@@ -117,7 +117,7 @@ class LocalHost(BaseHost):
         Shell state (working directory, environment variables) persists between
         calls, matching UnixHost behavior.
         """
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_result(cmd)
         return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
@@ -133,7 +133,7 @@ class LocalHost(BaseHost):
         calls, and multiple oneshot() calls can run concurrently via
         asyncio.gather().
         """
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_result(cmd)
         return await self._exec_subprocess(cmd, timeout, log=log)
 
@@ -191,13 +191,13 @@ class LocalHost(BaseHost):
 
     async def open_session(self, name: str) -> HostSession:
         """Open a named persistent shell session."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] open_session({name!r})")
         return await self._session_mgr.open_session(name)
 
     async def send(self, text: str) -> None:
         """Send raw text to the host's persistent session."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] send({text!r})")
             return
         await self._session_mgr.send(text)
@@ -208,7 +208,7 @@ class LocalHost(BaseHost):
         timeout: float = 10.0,
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command("[DRY RUN] expect() skipped — pattern would never match without a live session")
             return ""
         return await self._session_mgr.expect(pattern, timeout)
@@ -230,7 +230,7 @@ class LocalHost(BaseHost):
         machinery as Unix and embedded backends."""
         if not isinstance(src_files, list):
             src_files = [src_files]
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         return await self._file_transfer.get_files(
             src_files, dest_dir, show_progress,
@@ -247,7 +247,7 @@ class LocalHost(BaseHost):
         Delegates to :class:`LocalFileTransfer`; see :meth:`get`."""
         if not isinstance(src_files, list):
             src_files = [src_files]
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         return await self._file_transfer.put_files(
             src_files, dest_dir, show_progress,

@@ -5,11 +5,11 @@ import pytest
 from otto.host import os_profile
 from otto.host.command_frame import ZephyrFrame
 from otto.host.embedded_filesystem import FatRamFileSystem
-from otto.host.embeddedHost import EmbeddedHost, ZephyrHost
+from otto.host.embedded_host import EmbeddedHost, ZephyrHost
 from otto.host.options import SnmpOptions
 from otto.host.os_profile import register_os_profile
 from otto.host.toolchain import Toolchain
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.storage.factory import (
     create_host_from_dict,
     validate_host_dict,
@@ -34,7 +34,7 @@ class TestCreateHostFromDict:
         """Test creating UnixHost with all fields."""
         host_data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
             'board': 'seed',
             'creds': {'vagrant': 'vagrant'},
             'resources': ['orange'],
@@ -43,7 +43,7 @@ class TestCreateHostFromDict:
 
         assert isinstance(host, UnixHost)
         assert host.ip == '10.10.200.11'
-        assert host.ne == 'orange'
+        assert host.element == 'orange'
         assert host.board == 'seed'
         assert host.creds == {'vagrant': 'vagrant'}
         assert host.resources == {'orange'}
@@ -52,7 +52,7 @@ class TestCreateHostFromDict:
         """Test that resources list is converted to set."""
         host_data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
             'creds': {'vagrant': 'vagrant'},
             'resources': ['orange', 'tomato'],
         }
@@ -65,7 +65,7 @@ class TestCreateHostFromDict:
         """Test that resources set is preserved."""
         host_data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
             'creds': {'vagrant': 'vagrant'},
             'resources': {'orange', 'tomato'},
         }
@@ -77,7 +77,7 @@ class TestCreateHostFromDict:
     def test_missing_ip_raises_typeerror(self):
         """Test that missing ip field raises ValueError."""
         host_data = {
-            'ne': 'orange',
+            'element': 'orange',
             'creds': {'vagrant': 'vagrant'},
         }
         with pytest.raises(TypeError) as exc_info:
@@ -89,7 +89,7 @@ class TestCreateHostFromDict:
         """Test that missing creds field raises ValueError."""
         host_data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
         }
         with pytest.raises(TypeError) as exc_info:
             create_host_from_dict(host_data)
@@ -105,25 +105,25 @@ class TestCreateHostFromDict:
         with pytest.raises(TypeError) as exc_info:
             create_host_from_dict(host_data)
 
-        assert 'ne' in str(exc_info.value)
+        assert 'element' in str(exc_info.value)
 
     def test_optional_fields(self):
         """Test that optional fields are handled correctly."""
         host_data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
             'user': 'vagrant',
             'creds': {'vagrant': 'vagrant'},
             'board': 'seed',
             'slot': 0,
-            'neId': 1,
+            'element_id': 1,
             'name': 'CustomName',
         }
         host = create_host_from_dict(host_data)
 
         assert host.board == 'seed'
         assert host.slot == 0
-        assert host.neId == 1
+        assert host.element_id == 1
         # Note: name will be overridden by __post_init__ if None, but we provide custom name
 
 
@@ -134,7 +134,7 @@ class TestValidateHostDict:
         """Test validation of complete host dictionary."""
         host_data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
             'creds': {'vagrant': 'vagrant'},
         }
         # Should not raise any exception
@@ -144,7 +144,7 @@ class TestValidateHostDict:
         """Test validation fails for missing required field."""
         host_data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
         }
         with pytest.raises(ValueError) as exc_info:
             validate_host_dict(host_data)
@@ -155,7 +155,7 @@ class TestValidateHostDict:
         """Test validation fails when ip is not a string."""
         host_data = {
             'ip': 123,
-            'ne': 'orange',
+            'element': 'orange',
             'creds': {'vagrant': 'vagrant'},
         }
         with pytest.raises(ValueError) as exc_info:
@@ -168,7 +168,7 @@ class TestValidateHostDict:
         """Test validation fails when creds is not a dict."""
         host_data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
             'creds': 'not_a_dict',
         }
         with pytest.raises(ValueError) as exc_info:
@@ -181,13 +181,13 @@ class TestValidateHostDict:
         """Test validation fails when ne is not a string."""
         host_data = {
             'ip': '10.10.200.11',
-            'ne': 123,
+            'element': 123,
             'creds': {'vagrant': 'vagrant'},
         }
         with pytest.raises(ValueError) as exc_info:
             validate_host_dict(host_data)
 
-        assert 'ne' in str(exc_info.value)
+        assert 'element' in str(exc_info.value)
         assert 'str' in str(exc_info.value)
 
 
@@ -197,7 +197,7 @@ class TestToolchainDeserialization:
     def _base_host(self, **extra):
         data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
             'creds': {'vagrant': 'vagrant'},
         }
         data.update(extra)
@@ -247,7 +247,7 @@ class TestRepoLevelOptionDefaults:
     def _base_host(self, **extra):
         data = {
             'ip': '10.10.200.11',
-            'ne': 'orange',
+            'element': 'orange',
             'creds': {'vagrant': 'vagrant'},
         }
         data.update(extra)
@@ -317,60 +317,60 @@ class TestRepoLevelOptionDefaults:
 
 
 class TestOsTypeDispatch:
-    """Tests for ``osType``-based dispatch in ``create_host_from_dict``."""
+    """Tests for ``os_type``-based dispatch in ``create_host_from_dict``."""
 
     def test_absent_ostype_defaults_to_unix(self):
-        """A host dict without ``osType`` builds a UnixHost (backward compatible)."""
+        """A host dict without ``os_type`` builds a UnixHost (backward compatible)."""
         host = create_host_from_dict({
-            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},
         })
         assert isinstance(host, UnixHost)
-        assert host.osType == 'unix'
+        assert host.os_type == 'unix'
 
     def test_explicit_unix_ostype(self):
         host = create_host_from_dict({
-            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
-            'osType': 'unix',
+            'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},
+            'os_type': 'unix',
         })
         assert isinstance(host, UnixHost)
 
     def test_embedded_ostype_builds_embedded_host(self):
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
         })
         assert isinstance(host, EmbeddedHost)
         assert not isinstance(host, ZephyrHost)   # the generic base, not Zephyr
         assert host.ip == '192.0.2.1'
-        assert host.ne == 'sprout'
-        assert host.osType == 'embedded'
-        assert host.osName is None                # generic: no implicit OS name
+        assert host.element == 'sprout'
+        assert host.os_type == 'embedded'
+        assert host.os_name is None                # generic: no implicit OS name
 
     def test_embedded_ostype_without_frame_fails_loud(self):
         with pytest.raises(ValueError, match='command_frame'):
             create_host_from_dict({
-                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             })
 
     def test_embedded_creds_are_optional(self):
         """An embedded host needs no ``creds`` — the RTOS shell has no login."""
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
         })
         assert host.creds == {}
 
     def test_embedded_osname_and_version(self):
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr',
-            'osName': 'Zephyr', 'osVersion': '3.7.0',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'zephyr',
+            'os_name': 'Zephyr', 'os_version': '3.7.0',
         })
-        assert host.osName == 'Zephyr'
-        assert host.osVersion == '3.7.0'
+        assert host.os_name == 'Zephyr'
+        assert host.os_version == '3.7.0'
 
     def test_embedded_resources_converted_to_set(self):
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
             'resources': ['sprout', 'mote'],
         })
@@ -378,7 +378,7 @@ class TestOsTypeDispatch:
 
     def test_embedded_hop_is_honored(self):
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
             'hop': 'basil_seed',
         })
@@ -386,7 +386,7 @@ class TestOsTypeDispatch:
 
     def test_embedded_telnet_options_deserialized(self):
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
             'telnet_options': {'port': 2323},
         })
@@ -395,27 +395,27 @@ class TestOsTypeDispatch:
 
     def test_zephyr_ostype_builds_zephyr_host(self):
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'zephyr',
         })
         assert isinstance(host, ZephyrHost)
         assert isinstance(host, EmbeddedHost)       # family still embedded
-        assert host.osType == 'zephyr'              # selector recorded
-        assert host.osName == 'Zephyr'              # from the class default
+        assert host.os_type == 'zephyr'              # selector recorded
+        assert host.os_name == 'Zephyr'              # from the class default
         assert isinstance(host.command_frame, ZephyrFrame)
 
     def test_unknown_ostype_raises(self):
         with pytest.raises(ValueError) as exc_info:
             create_host_from_dict({
-                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'windows',
+                'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'windows',
             })
-        assert 'osType' in str(exc_info.value)
+        assert 'os_type' in str(exc_info.value)
         assert 'windows' in str(exc_info.value)
 
     def test_embedded_docker_capable_rejected(self):
         """A bare-metal target cannot run Docker — reject the flag outright."""
         with pytest.raises(ValueError) as exc_info:
             create_host_from_dict({
-                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
                 'docker_capable': True,
             })
         assert 'docker_capable' in str(exc_info.value)
@@ -423,7 +423,7 @@ class TestOsTypeDispatch:
     def test_embedded_transfer_backend_honored(self):
         """An embedded host's ``transfer`` value flows through the factory."""
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
             'transfer': 'tftp',
         })
@@ -432,7 +432,7 @@ class TestOsTypeDispatch:
 
     def test_embedded_transfer_defaults_to_console(self):
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
         })
         assert isinstance(host, EmbeddedHost)
@@ -440,36 +440,36 @@ class TestOsTypeDispatch:
 
 
 class TestOsProfileDispatch:
-    """Tests for custom ``osType`` profiles in ``create_host_from_dict``."""
+    """Tests for custom ``os_type`` profiles in ``create_host_from_dict``."""
 
     def test_unix_profile_applies_defaults(self, restore_profiles):
         register_os_profile('custom-nix', base='unix',
-                            defaults={'osName': 'CustomNix', 'term': 'telnet'})
+                            defaults={'os_name': 'CustomNix', 'term': 'telnet'})
         host = create_host_from_dict({
-            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
-            'osType': 'custom-nix',
+            'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},
+            'os_type': 'custom-nix',
         })
         assert isinstance(host, UnixHost)
-        assert host.osName == 'CustomNix'
+        assert host.os_name == 'CustomNix'
         assert host.term == 'telnet'
 
     def test_host_field_overrides_profile_default(self, restore_profiles):
-        register_os_profile('custom-nix', base='unix', defaults={'osName': 'CustomNix'})
+        register_os_profile('custom-nix', base='unix', defaults={'os_name': 'CustomNix'})
         host = create_host_from_dict({
-            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
-            'osType': 'custom-nix', 'osName': 'HostWins',
+            'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},
+            'os_type': 'custom-nix', 'os_name': 'HostWins',
         })
-        assert host.osName == 'HostWins'
+        assert host.os_name == 'HostWins'
 
     def test_stored_ostype_is_selector_not_base_family(self, restore_profiles):
         register_os_profile('custom-nix', base='unix')
         host = create_host_from_dict({
-            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
-            'osType': 'custom-nix',
+            'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},
+            'os_type': 'custom-nix',
         })
-        # The selector (lab-data osType value) is recorded verbatim, so round-
+        # The selector (lab-data os_type value) is recorded verbatim, so round-
         # trips are lossless and a future reader knows which profile was used.
-        assert host.osType == 'custom-nix'
+        assert host.os_type == 'custom-nix'
 
     def test_options_three_layer_precedence(self, restore_profiles):
         """Per-key: host > profile > repo-default for an ``*_options`` table."""
@@ -478,8 +478,8 @@ class TestOsProfileDispatch:
         })
         host = create_host_from_dict(
             {
-                'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
-                'osType': 'nix-ssh', 'ssh_options': {'port': 9000},
+                'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},
+                'os_type': 'nix-ssh', 'ssh_options': {'port': 9000},
             },
             defaults={'ssh_options': {'connect_timeout': 99.0, 'keepalive_interval': 42.0}},
         )
@@ -489,61 +489,61 @@ class TestOsProfileDispatch:
 
     def test_embedded_profile_coerces_frame_and_filesystem_strings(self, restore_profiles):
         register_os_profile('zephyr-fat', base='embedded', defaults={
-            'osName': 'Zephyr', 'osVersion': '3.7', 'command_frame': 'zephyr',
+            'os_name': 'Zephyr', 'os_version': '3.7', 'command_frame': 'zephyr',
             'filesystem': 'fat-ram', 'transfer': 'console', 'max_filename_len': 32,
         })
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr-fat',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'zephyr-fat',
         })
         assert isinstance(host, EmbeddedHost)
-        assert host.osType == 'zephyr-fat'
-        assert host.osVersion == '3.7'
+        assert host.os_type == 'zephyr-fat'
+        assert host.os_version == '3.7'
         assert host.max_filename_len == 32
         assert isinstance(host.command_frame, ZephyrFrame)
         assert isinstance(host.filesystem, FatRamFileSystem)
 
     def test_embedded_profile_with_docker_capable_host_rejected(self, restore_profiles):
-        register_os_profile('zephyr-fat', base='embedded', defaults={'osName': 'Zephyr'})
+        register_os_profile('zephyr-fat', base='embedded', defaults={'os_name': 'Zephyr'})
         with pytest.raises(ValueError) as exc_info:
             create_host_from_dict({
-                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'zephyr-fat',
+                'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'zephyr-fat',
                 'docker_capable': True,
             })
         assert 'docker_capable' in str(exc_info.value)
 
 
 class TestValidateOsType:
-    """Tests for ``osType`` handling in ``validate_host_dict``."""
+    """Tests for ``os_type`` handling in ``validate_host_dict``."""
 
     def test_validate_embedded_minimal(self):
         """Embedded host needs only ip + ne (no creds)."""
         validate_host_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
         })
 
     def test_validate_embedded_missing_ne(self):
         with pytest.raises(ValueError) as exc_info:
-            validate_host_dict({'ip': '192.0.2.1', 'osType': 'embedded'})
-        assert 'ne' in str(exc_info.value)
+            validate_host_dict({'ip': '192.0.2.1', 'os_type': 'embedded'})
+        assert 'element' in str(exc_info.value)
 
     def test_validate_unix_still_requires_creds(self):
         with pytest.raises(ValueError) as exc_info:
             validate_host_dict({
-                'ip': '10.10.200.11', 'ne': 'orange', 'osType': 'unix',
+                'ip': '10.10.200.11', 'element': 'orange', 'os_type': 'unix',
             })
         assert 'creds' in str(exc_info.value)
 
     def test_validate_invalid_ostype_raises(self):
         with pytest.raises(ValueError) as exc_info:
             validate_host_dict({
-                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'windows',
+                'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'windows',
             })
-        assert 'osType' in str(exc_info.value)
+        assert 'os_type' in str(exc_info.value)
 
     def test_validate_embedded_docker_capable_raises(self):
         with pytest.raises(ValueError) as exc_info:
             validate_host_dict({
-                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
                 'docker_capable': True,
             })
         assert 'docker_capable' in str(exc_info.value)
@@ -551,14 +551,14 @@ class TestValidateOsType:
     def test_validate_embedded_transfer_accepts_known_backends(self):
         for backend in ('console', 'tftp'):
             validate_host_dict({
-                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
                 'transfer': backend,
             })
 
     def test_validate_embedded_invalid_transfer_raises(self):
         with pytest.raises(ValueError) as exc_info:
             validate_host_dict({
-                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
                 'transfer': 'scp',
             })
         assert 'transfer' in str(exc_info.value)
@@ -577,7 +577,7 @@ class TestEmbeddedFilesystem:
         """
         from otto.host.embedded_filesystem import NoFileSystem
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
         })
         assert isinstance(host.filesystem, NoFileSystem)
@@ -585,7 +585,7 @@ class TestEmbeddedFilesystem:
     def test_filesystem_fat_ram_string_resolves_to_class(self):
         from otto.host.embedded_filesystem import FatRamFileSystem
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
             'filesystem': 'fat-ram',
         })
@@ -596,7 +596,7 @@ class TestEmbeddedFilesystem:
     def test_filesystem_littlefs_string_resolves_to_class(self):
         from otto.host.embedded_filesystem import LittleFsFileSystem
         host = create_host_from_dict({
-            'ip': '192.0.2.5', 'ne': 'sprout_lfs', 'osType': 'embedded',
+            'ip': '192.0.2.5', 'element': 'sprout_lfs', 'os_type': 'embedded',
             'command_frame': 'zephyr',
             'filesystem': 'littlefs',
         })
@@ -606,7 +606,7 @@ class TestEmbeddedFilesystem:
     def test_validate_unknown_filesystem_raises(self):
         with pytest.raises(ValueError) as exc_info:
             validate_host_dict({
-                'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+                'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
                 'filesystem': 'btrfs',  # not a registered embedded FS
             })
         assert 'filesystem' in str(exc_info.value)
@@ -619,7 +619,7 @@ class TestEmbeddedFilesystem:
         a sub-directory under the mount) should keep its lab-data value.
         """
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
             'filesystem': 'fat-ram',
             'default_dest_dir': '/RAM:/uploads',
@@ -633,10 +633,10 @@ class TestEmbeddedToolchainDeserialization:
     def _embedded_host(self, **extra):
         data = {
             'ip': '192.0.2.99',
-            'ne': 'sproutx',
-            'osType': 'embedded',
-            'osName': 'Zephyr',
-            'osVersion': '3.7',
+            'element': 'sproutx',
+            'os_type': 'embedded',
+            'os_name': 'Zephyr',
+            'os_version': '3.7',
             'transfer': 'console',
             'filesystem': 'none',
             'command_frame': 'zephyr',
@@ -679,13 +679,13 @@ class TestSnmpBlock:
 
     def test_absent_snmp_is_none(self):
         host = create_host_from_dict({
-            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},
         })
         assert host.snmp is None
 
     def test_embedded_snmp_block_parsed(self):
         host = create_host_from_dict({
-            'ip': '192.0.2.1', 'ne': 'sprout', 'osType': 'embedded',
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
             'snmp': {
                 'address': '10.10.200.14', 'port': 16101, 'community': 'public',
@@ -702,7 +702,7 @@ class TestSnmpBlock:
     def test_unix_snmp_block_parsed(self):
         """SNMP is not embedded-only — a Unix host may declare one."""
         host = create_host_from_dict({
-            'ip': '10.10.200.11', 'ne': 'orange', 'creds': {'v': 'v'},
+            'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},
             'snmp': {'oids': ['1.3.6.1.2.1.1.3.0']},
         })
         assert isinstance(host, UnixHost)

@@ -34,7 +34,7 @@ class TestJsonFileLabRepository:
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "board": "seed",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["orange"],
@@ -55,7 +55,7 @@ class TestJsonFileLabRepository:
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "board": "seed",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["orange"],
@@ -63,7 +63,7 @@ class TestJsonFileLabRepository:
             },
             {
                 "ip": "10.10.200.12",
-                "ne": "tomato",
+                "element": "tomato",
                 "board": "seed",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["tomato"],
@@ -94,7 +94,7 @@ class TestJsonFileLabRepository:
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["orange"],
                 "labs": ["other_lab"],
@@ -113,14 +113,14 @@ class TestJsonFileLabRepository:
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["orange"],
                 "labs": ["lab_a"],
             },
             {
                 "ip": "10.10.200.12",
-                "ne": "tomato",
+                "element": "tomato",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["tomato"],
                 "labs": ["lab_b"],
@@ -143,7 +143,7 @@ class TestJsonFileLabRepository:
         _hosts_file(path2, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["orange"],
                 "labs": ["testlab"],
@@ -180,7 +180,7 @@ class TestJsonFileLabRepository:
         """Test that ValueError is raised for invalid host data."""
         _hosts_file(tmp_path, [
             {
-                "ne": "orange",
+                "element": "orange",
                 "creds": {"vagrant": "vagrant"},
                 "labs": ["badlab"],
             },
@@ -199,14 +199,14 @@ class TestJsonFileLabRepository:
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["orange", "citrus"],
                 "labs": ["resourcelab"],
             },
             {
                 "ip": "10.10.200.12",
-                "ne": "tomato",
+                "element": "tomato",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["tomato", "vegetable"],
                 "labs": ["resourcelab"],
@@ -226,7 +226,7 @@ class TestJsonFileLabRepository:
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "board": "seed",
                 "slot": 0,
                 "creds": {"vagrant": "vagrant"},
@@ -245,14 +245,14 @@ class TestJsonFileLabRepository:
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["orange"],
                 "labs": ["alpha"],
             },
             {
                 "ip": "10.10.200.12",
-                "ne": "tomato",
+                "element": "tomato",
                 "creds": {"vagrant": "vagrant"},
                 "resources": ["tomato"],
                 "labs": ["beta"],
@@ -274,7 +274,7 @@ class TestJsonFileLabRepository:
         _hosts_file(path1, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "creds": {"vagrant": "vagrant"},
                 "resources": [],
                 "labs": ["alpha"],
@@ -283,7 +283,7 @@ class TestJsonFileLabRepository:
         _hosts_file(path2, [
             {
                 "ip": "10.10.200.12",
-                "ne": "tomato",
+                "element": "tomato",
                 "creds": {"vagrant": "vagrant"},
                 "resources": [],
                 "labs": ["beta"],
@@ -309,7 +309,7 @@ class TestLoadLabWithDefaults:
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
-                "ne": "orange",
+                "element": "orange",
                 "creds": {"vagrant": "vagrant"},
                 "resources": [],
                 "labs": ["testlab"],

@@ -7,10 +7,10 @@ import pytest
 from otto.host.host import (
     HostFilter,
     SuppressCommandOutput,
-    getLoggingCommandOutputEnabled,
+    get_logging_command_output_enabled,
 )
 from tests.conftest import active_context
-from otto.host.localHost import LocalHost
+from otto.host.local_host import LocalHost
 from otto.utils import Status
 
 
@@ -245,11 +245,11 @@ async def test_run_command_with_global_suppression(caplog):
         with active_context(log_command_output=True):
             with SuppressCommandOutput():
                 await host.run(["echo hello world"])
-                assert getLoggingCommandOutputEnabled() is False
+                assert get_logging_command_output_enabled() is False
                 for log in caplog.records:
                     assert HostFilter().filter(log) is False
                 assert host.log is True
-            assert getLoggingCommandOutputEnabled() is True
+            assert get_logging_command_output_enabled() is True
     finally:
         await host.close()
 
@@ -260,7 +260,7 @@ async def test_run_command_with_local_suppression(caplog):
     host.log = False
     try:
         with SuppressCommandOutput(host=host):
-            assert getLoggingCommandOutputEnabled() is True
+            assert get_logging_command_output_enabled() is True
             await host.run(["echo hello world"])
             for log in caplog.records:
                 assert HostFilter().filter(log) is False
@@ -279,36 +279,36 @@ def test_per_host_suppression_restores_prior_state():
 def test_global_suppression_restores_prior_state():
     # Snapshot True → suppress → restore True
     with active_context(log_command_output=True):
-        assert getLoggingCommandOutputEnabled() is True
+        assert get_logging_command_output_enabled() is True
         with SuppressCommandOutput():
-            assert getLoggingCommandOutputEnabled() is False
-        assert getLoggingCommandOutputEnabled() is True
+            assert get_logging_command_output_enabled() is False
+        assert get_logging_command_output_enabled() is True
 
     # Snapshot False → suppress → restore False (the pre-fix bug path)
     with active_context(log_command_output=False):
-        assert getLoggingCommandOutputEnabled() is False
+        assert get_logging_command_output_enabled() is False
         with SuppressCommandOutput():
-            assert getLoggingCommandOutputEnabled() is False
-        assert getLoggingCommandOutputEnabled() is False
+            assert get_logging_command_output_enabled() is False
+        assert get_logging_command_output_enabled() is False
 
 
 def test_per_host_suppression_does_not_touch_global():
     host = LocalHost()
     host.log = True
     with active_context(log_command_output=True):
-        assert getLoggingCommandOutputEnabled() is True
+        assert get_logging_command_output_enabled() is True
         with SuppressCommandOutput(host=host):
-            assert getLoggingCommandOutputEnabled() is True
-        assert getLoggingCommandOutputEnabled() is True
+            assert get_logging_command_output_enabled() is True
+        assert get_logging_command_output_enabled() is True
 
     # And in the reverse: pre-fix bug flipped the global flag to True on
     # exit of a per-host context; verify it doesn't any more.
     with active_context(log_command_output=False):
         host.log = True
-        assert getLoggingCommandOutputEnabled() is False
+        assert get_logging_command_output_enabled() is False
         with SuppressCommandOutput(host=host):
-            assert getLoggingCommandOutputEnabled() is False
-        assert getLoggingCommandOutputEnabled() is False
+            assert get_logging_command_output_enabled() is False
+        assert get_logging_command_output_enabled() is False
 
 
 def test_nested_global_then_host():
@@ -316,14 +316,14 @@ def test_nested_global_then_host():
     host.log = True
     with active_context(log_command_output=True):
         with SuppressCommandOutput():
-            assert getLoggingCommandOutputEnabled() is False
+            assert get_logging_command_output_enabled() is False
             with SuppressCommandOutput(host=host):
                 assert host.log is False
-                assert getLoggingCommandOutputEnabled() is False
+                assert get_logging_command_output_enabled() is False
             # Inner exit must leave the outer's global suppression intact.
-            assert getLoggingCommandOutputEnabled() is False
+            assert get_logging_command_output_enabled() is False
             assert host.log is True
-        assert getLoggingCommandOutputEnabled() is True
+        assert get_logging_command_output_enabled() is True
 
 
 def test_nested_host_then_global():
@@ -333,24 +333,24 @@ def test_nested_host_then_global():
         with SuppressCommandOutput(host=host):
             assert host.log is False
             with SuppressCommandOutput():
-                assert getLoggingCommandOutputEnabled() is False
+                assert get_logging_command_output_enabled() is False
                 assert host.log is False
             # Inner exit must leave the outer's per-host suppression intact.
             assert host.log is False
-            assert getLoggingCommandOutputEnabled() is True
+            assert get_logging_command_output_enabled() is True
         assert host.log is True
 
 
 def test_nested_global_then_global():
     with active_context(log_command_output=True):
-        assert getLoggingCommandOutputEnabled() is True
+        assert get_logging_command_output_enabled() is True
         with SuppressCommandOutput():
-            assert getLoggingCommandOutputEnabled() is False
+            assert get_logging_command_output_enabled() is False
             with SuppressCommandOutput():
-                assert getLoggingCommandOutputEnabled() is False
+                assert get_logging_command_output_enabled() is False
             # Inner must restore the outer's prior value (still False), not True.
-            assert getLoggingCommandOutputEnabled() is False
-        assert getLoggingCommandOutputEnabled() is True
+            assert get_logging_command_output_enabled() is False
+        assert get_logging_command_output_enabled() is True
 
 
 @pytest.mark.asyncio
@@ -384,7 +384,7 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
             # we can assert the two contexts really do overlap.
             await asyncio.wait_for(both_inside.wait(), timeout=2.0)
             assert host.log is False
-            assert getLoggingCommandOutputEnabled() is True
+            assert get_logging_command_output_enabled() is True
             # Under overlap: each host's own records are filtered out,
             # and the global flag is unaffected for other hosts.
             assert HostFilter().filter(make_record(host)) is False
@@ -395,7 +395,7 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
             run_with_suppression(host_b),
         )
         # Global flag untouched throughout.
-        assert getLoggingCommandOutputEnabled() is True
+        assert get_logging_command_output_enabled() is True
         # Both hosts restored to their prior values.
         assert host_a.log is True
         assert host_b.log is True

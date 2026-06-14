@@ -20,7 +20,7 @@ from typing import cast
 
 import pytest
 
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
 
 from tests.unit.host._transfer_retry import transfer_with_retry
@@ -192,7 +192,7 @@ async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None
 async def test_real_long_telnet_oneshot_vs_concurrent(host1: UnixHost) -> None:
     """Real-transport version of the test_oneshot_telnet_concurrent regression.
 
-    The mocked counterpart in ``test_unixHost.py`` proves the manager's
+    The mocked counterpart in ``test_unix_host.py`` proves the manager's
     pool dispatch is sane; this version proves the *actual* telnetlib3
     reader/writer state holds up under the same workload.
     """

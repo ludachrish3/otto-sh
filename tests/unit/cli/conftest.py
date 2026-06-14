@@ -27,7 +27,7 @@ import pytest
 
 from otto.configmodule.repo import Repo
 from otto.host import RunResult
-from otto.logger import getOttoLogger
+from otto.logger import get_otto_logger
 from otto.utils import CommandStatus, Status
 
 
@@ -36,7 +36,7 @@ def no_logger_output_dir():
     """Prevent OttoLogger.create_output_dir from being called in CLI tests.
 
     The CLI commands call logger.create_output_dir() early, which requires
-    logger.xdir to be set (done by initOttoLogger() in the main callback).
+    logger.xdir to be set (done by init_otto_logger() in the main callback).
     Unit tests invoke subcommand apps directly, bypassing that callback, so
     we patch it out globally here rather than repeating the patch per test.
     """
@@ -47,11 +47,11 @@ def no_logger_output_dir():
 # ── Helpers for real filesystem fixtures ─────────────────────────────────────
 
 HOSTS_DATA = [
-    {"ip": "10.0.0.1", "ne": "host1", "labs": ["test_lab"],
+    {"ip": "10.0.0.1", "element": "host1", "labs": ["test_lab"],
      "creds": {"admin": "pass"}},
-    {"ip": "10.0.0.2", "ne": "host2", "labs": ["test_lab", "lab2"],
+    {"ip": "10.0.0.2", "element": "host2", "labs": ["test_lab", "lab2"],
      "creds": {"admin": "pass"}},
-    {"ip": "10.0.0.3", "ne": "host3", "labs": ["lab2"],
+    {"ip": "10.0.0.3", "element": "host3", "labs": ["lab2"],
      "creds": {"admin": "pass"}},
 ]
 
@@ -72,7 +72,7 @@ def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
     (otto_dir / 'settings.toml').write_text(
         'name = "test_repo"\n'
         'version = "1.0.0"\n'
-        'labs = ["${sutDir}/../lab_data"]\n'
+        'labs = ["${sut_dir}/../lab_data"]\n'
     )
 
     return sut_dir, lab_data_dir
@@ -83,43 +83,43 @@ def real_main_mocks(tmp_path):
     """Fixture that lets business logic run for real, mocking only I/O.
 
     What runs for real:
-      - ``initOttoLogger`` (level, handler setup)
+      - ``init_otto_logger`` (level, handler setup)
       - ``load_lab`` (reads hosts.json from tmp_path)
       - OttoContext installation via ``set_context``
 
     What is mocked (I/O boundaries only):
-      - ``OttoLogger.removeOldLogs`` — filesystem listing + deletion
+      - ``OttoLogger.remove_old_logs`` — filesystem listing + deletion
       - ``RichHandler`` — console I/O
-      - ``getRepos`` — module-level singleton; returns a real ``Repo``
+      - ``get_repos`` — module-level singleton; returns a real ``Repo``
       - ``LocalHost.run`` — subprocess for git commands
     """
     sut_dir, lab_data_dir = _make_lab_fs(tmp_path)
-    repo = Repo(sutDir=sut_dir)
+    repo = Repo(sut_dir=sut_dir)
 
     # Strip the user's OTTO_* env so test outcomes don't drift with the shell;
-    # point OTTO_XDIR at tmp_path so initOttoLogger never writes to the project
+    # point OTTO_XDIR at tmp_path so init_otto_logger never writes to the project
     # root (--xdir is optional and defaults to CWD, which we don't want here).
     clean_env = {k: v for k, v in os.environ.items()
                  if not k.startswith('OTTO_')}
     clean_env['OTTO_XDIR'] = str(tmp_path)
 
-    logger = getOttoLogger()
+    logger = get_otto_logger()
     original_level = logger.level
     original_handlers = list(logger.handlers)
-    # Snapshot singleton state that initOttoLogger mutates so a later test on
+    # Snapshot singleton state that init_otto_logger mutates so a later test on
     # this xdist worker can't inherit a stale xdir/keep_seconds. (The
     # test_cov.py flake came from this exact leak: a polluted xdir landed at
-    # the project root and cov_callback's removeOldLogs walked .git/.)
+    # the project root and cov_callback's remove_old_logs walked .git/.)
     original_xdir = getattr(logger, '_xdir', None)
     original_keep_seconds = logger._keep_seconds
 
     with (
         patch.dict(os.environ, clean_env, clear=True),
-        patch('otto.logger.logger.OttoLogger.removeOldLogs') as p_remove,
+        patch('otto.logger.logger.OttoLogger.remove_old_logs') as p_remove,
         patch('otto.logger.logger.RichHandler') as p_rich,
-        patch('otto.cli.main.getRepos', return_value=[repo]),
+        patch('otto.cli.main.get_repos', return_value=[repo]),
         patch(
-            'otto.host.localHost.LocalHost.run',
+            'otto.host.local_host.LocalHost.run',
             new_callable=AsyncMock,
             return_value=RunResult(
                 status=Status.Success,
@@ -137,7 +137,7 @@ def real_main_mocks(tmp_path):
             'sut_dir': sut_dir,
             'lab_data_dir': lab_data_dir,
             'repo': repo,
-            'removeOldLogs': p_remove,
+            'remove_old_logs': p_remove,
             'RichHandler': p_rich,
         }
 

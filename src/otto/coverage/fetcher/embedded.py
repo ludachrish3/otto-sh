@@ -27,7 +27,7 @@ from ...configmodule.configmodule import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
-    from ...host.embeddedHost import EmbeddedHost
+    from ...host.embedded_host import EmbeddedHost
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,7 @@ async def _collect_one_embedded_host(
     Returns the per-host staging directory, or ``None`` if the host was skipped,
     the dump failed, or it produced no coverage data.
     """
-    from ...host.embeddedHost import EmbeddedHost
+    from ...host.embedded_host import EmbeddedHost
     if not isinstance(host, EmbeddedHost):
         return None
 

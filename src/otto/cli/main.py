@@ -12,8 +12,8 @@ from typing import (
 import typer
 
 from ..configmodule import (
-    getCompletionNames,
-    getRepos,
+    get_completion_names,
+    get_repos,
     load_lab,
 )
 from ..configmodule.env import (
@@ -28,19 +28,19 @@ from ..configmodule.env import (
     XDIR_ENV_VAR,
     OttoEnv,
 )
-from ..logger import initOttoLogger
+from ..logger import init_otto_logger
 from ..utils import (
-    splitOnCommas,
+    split_on_commas,
 )
-from ..version import getVersion
+from ..version import get_version
 
-__version__ = getVersion()
+__version__ = get_version()
 
 # TODO: Should rich help menus be optional?
 # Uncomment the line below to remove rich help menu formatting globally
 #typer.core.HAS_RICH = False
 
-_fieldDefault = OttoEnv.getEnvVar(FIELD_DEFAULT_ENV_VAR) is not None
+_field_default = OttoEnv.get_env_var(FIELD_DEFAULT_ENV_VAR) is not None
 """Determines the default for debug or field. If this variable is set to anything at all, then field is the default."""
 
 DESCRIPTION = f'''
@@ -83,8 +83,8 @@ def list_labs_callback(value: bool):
 
         # Extract lab search paths from all repos
         panels: list[Panel] = []
-        for repo in getRepos():
-            panels.append(repo.getLabPanel())
+        for repo in get_repos():
+            panels.append(repo.get_lab_panel())
 
         table = Table(show_header=False, show_footer=False, box=None, expand=True, padding=(0,1,1,1))
         for _ in panels:
@@ -116,7 +116,7 @@ def main(
     labs: Annotated[list[str],
         typer.Option('--lab', '-l',
             envvar=LAB_ENV_VAR,
-            callback=splitOnCommas,
+            callback=split_on_commas,
             metavar='COMMA SEPARATED LIST',
             help='Name of lab(s) to reserve and use.'
         )
@@ -134,7 +134,7 @@ def main(
             envvar=FIELD_PRODUCT_ENV_VAR,
             help='Use field or debug products.',
         )
-    ] = _fieldDefault,
+    ] = _field_default,
 
     log_days: Annotated[int,
         typer.Option(
@@ -238,7 +238,7 @@ def main(
 
     rprint(Align.center(banner))
 
-    logger = initOttoLogger(xdir=xdir,
+    logger = init_otto_logger(xdir=xdir,
                             log_level=log_level,
                             keep_days=log_days,
                             verbose=verbose,
@@ -248,7 +248,7 @@ def main(
         handler.addFilter(HostFilter())
 
     # Set up config module
-    repos = getRepos()
+    repos = get_repos()
 
     # Extract lab search paths from all repos
     lab_search_paths: list[Path] = []
@@ -283,11 +283,11 @@ def main(
     )
 
     reservation_settings: dict[str, Any] = {}
-    reservation_repo_dir: Path = repos[0].sutDir if repos else Path.cwd()
+    reservation_repo_dir: Path = repos[0].sut_dir if repos else Path.cwd()
     for repo in repos:
-        if repo.reservationSettings:
-            reservation_settings = repo.reservationSettings
-            reservation_repo_dir = repo.sutDir
+        if repo.reservation_settings:
+            reservation_settings = repo.reservation_settings
+            reservation_repo_dir = repo.sut_dir
             break
 
     try:
@@ -339,7 +339,7 @@ def main(
                     "Connections will still be verified.")
 
     for repo in repos:
-        logger.debug(f"{repo.sutDir}: {repo.commit}")
+        logger.debug(f"{repo.sut_dir}: {repo.commit}")
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +436,7 @@ def _register_subcommands() -> None:
       subcommand is apparent (e.g. ``otto --help``) ``_requested_subcommands``
       returns the full set so help output stays complete.
     """
-    cached = getCompletionNames()
+    cached = get_completion_names()
     wanted = _requested_subcommands()
 
     for name, (modpath, attr) in _SUBCOMMAND_MODULES.items():

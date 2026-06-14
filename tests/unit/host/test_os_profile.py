@@ -11,8 +11,8 @@ from otto.host.os_profile import (
     register_os_profile,
     registered_profile_names,
 )
-from otto.host.embeddedHost import EmbeddedHost, ZephyrHost
-from otto.host.unixHost import UnixHost
+from otto.host.embedded_host import EmbeddedHost, ZephyrHost
+from otto.host.unix_host import UnixHost
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +53,7 @@ class TestBuiltins:
 class TestRegistry:
 
     def test_unknown_profile_raises_with_known_list(self):
-        with pytest.raises(ValueError, match='Unknown osType') as exc:
+        with pytest.raises(ValueError, match='Unknown os_type') as exc:
             build_os_profile('does-not-exist')
         # the registered names are listed so a typo is diagnosable
         assert 'unix' in str(exc.value)
@@ -62,9 +62,9 @@ class TestRegistry:
         assert get_os_profile('does-not-exist') is None
 
     def test_register_then_build_round_trips(self):
-        register_os_profile('riot', base='embedded', defaults={'osName': 'RIOT'})
+        register_os_profile('riot', base='embedded', defaults={'os_name': 'RIOT'})
         prof = build_os_profile('riot')
-        assert prof == OsProfile('riot', 'embedded', {'osName': 'RIOT'})
+        assert prof == OsProfile('riot', 'embedded', {'os_name': 'RIOT'})
 
     def test_register_defaults_are_optional(self):
         register_os_profile('bare', base='unix')
@@ -88,17 +88,17 @@ class TestRegistry:
                             defaults={'docker_capable': True})
 
     def test_last_writer_wins_on_name_collision(self):
-        register_os_profile('dup', base='unix', defaults={'osName': 'First'})
-        register_os_profile('dup', base='embedded', defaults={'osName': 'Second'})
+        register_os_profile('dup', base='unix', defaults={'os_name': 'First'})
+        register_os_profile('dup', base='embedded', defaults={'os_name': 'Second'})
         prof = build_os_profile('dup')
         assert prof.base == 'embedded'
-        assert prof.defaults == {'osName': 'Second'}
+        assert prof.defaults == {'os_name': 'Second'}
 
     def test_overriding_builtin_warns(self, caplog):
         import logging
         with caplog.at_level(logging.WARNING):
             register_os_profile('embedded', base='embedded',
-                                defaults={'osName': 'Custom'})
+                                defaults={'os_name': 'Custom'})
         assert any('built-in' in r.message for r in caplog.records)
 
 
@@ -115,7 +115,7 @@ class TestHostClassRegistry:
 
         register_host_class('foo', FooHost)
         assert build_host_class('foo') is FooHost
-        # registering a class also makes osType:"foo" resolvable as a profile
+        # registering a class also makes os_type:"foo" resolvable as a profile
         prof = build_os_profile('foo')
         assert prof.base == 'foo'
         assert prof.defaults == {}
@@ -147,19 +147,19 @@ class TestHostClassRegistry:
 def test_custom_subclass_with_data_bundle_composes():
     """External pattern: register a subclass, then layer a data bundle over it."""
     from otto.storage.factory import create_host_from_dict
-    from otto.host.embeddedHost import EmbeddedHost
+    from otto.host.embedded_host import EmbeddedHost
 
     class MyRtosHost(EmbeddedHost):
         pass
 
     register_host_class('myrtos', MyRtosHost)
     register_os_profile('myrtos-v2', base='myrtos',
-                        defaults={'osName': 'MyRTOS', 'command_frame': 'zephyr',
+                        defaults={'os_name': 'MyRTOS', 'command_frame': 'zephyr',
                                   'max_filename_len': 12})
     host = create_host_from_dict({
-        'ip': '192.0.2.9', 'ne': 'widget', 'osType': 'myrtos-v2',
+        'ip': '192.0.2.9', 'element': 'widget', 'os_type': 'myrtos-v2',
     })
     assert isinstance(host, MyRtosHost)
-    assert host.osType == 'myrtos-v2'      # selector recorded
-    assert host.osName == 'MyRTOS'         # from the data bundle
+    assert host.os_type == 'myrtos-v2'      # selector recorded
+    assert host.os_name == 'MyRTOS'         # from the data bundle
     assert host.max_filename_len == 12     # from the data bundle

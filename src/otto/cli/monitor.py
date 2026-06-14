@@ -22,12 +22,12 @@ import typer
 
 # TODO: Create a SqlPath class that automatically adds the correct slashes and stuff in the front (something like sqlite:////path/to/file)
 from ..configmodule import all_hosts
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..monitor.collector import MetricCollector
 from ..monitor.factory import build_monitor_collector
 from ..monitor.server import MonitorServer
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 monitor_app = typer.Typer(
     help='Launch an interactive performance dashboard.',

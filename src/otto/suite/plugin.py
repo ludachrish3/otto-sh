@@ -37,9 +37,9 @@ import pytest
 import pytest_asyncio
 from _pytest.runner import call_and_report, runtestprotocol, show_test_item
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 #: Stash key indicating that ``--cov`` was passed to ``otto test``.
 #: Fixtures can read this to decide whether to preserve ``.gcda`` files

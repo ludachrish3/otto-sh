@@ -1,4 +1,4 @@
-host.remoteHost
+host.remote_host
 ===============
 
-.. automodule:: otto.host.remoteHost
+.. automodule:: otto.host.remote_host

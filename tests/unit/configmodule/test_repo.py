@@ -7,8 +7,8 @@ import pytest
 from otto.configmodule.repo import Repo
 from tests.mockrepo import MockRepo
 
-mockRepo: MockRepo = None
-testsRoot = Path(__file__).parent.parent.parent
+mock_repo: MockRepo = None
+tests_root = Path(__file__).parent.parent.parent
 
 
 def _write_repo(tmp_path: Path, settings_body: str) -> Path:
@@ -27,30 +27,30 @@ def _write_repo(tmp_path: Path, settings_body: str) -> Path:
 @pytest.fixture(autouse=False, scope='function')
 def default_mock_repo():
 
-    global mockRepo
+    global mock_repo
 
-    mockRepo = MockRepo(testsRoot / 'repo1')
+    mock_repo = MockRepo(tests_root / 'repo1')
 
 def test_repo_config_location(default_mock_repo):
 
-    repoSettingsFile = mockRepo.sutDir / '.otto' / 'settings.toml'
+    repoSettingsFile = mock_repo.sut_dir / '.otto' / 'settings.toml'
     assert repoSettingsFile.exists()
 
 def test_repo_commit_name(default_mock_repo):
 
-    assert mockRepo.commitName == f"{mockRepo.commit} ({mockRepo.description})"
+    assert mock_repo.commit_name == f"{mock_repo.commit} ({mock_repo.description})"
 
 def test_repo_settings_tests_sut_dir_variable(default_mock_repo):
 
-    assert mockRepo.tests == [ mockRepo.sutDir / 'tests' ]
+    assert mock_repo.tests == [ mock_repo.sut_dir / 'tests' ]
 
 def test_repo_settings_init_sut_dir_variable(default_mock_repo):
 
-    assert mockRepo.init == [ 'repo1_instructions', 'custom_hosts' ]
+    assert mock_repo.init == [ 'repo1_instructions', 'custom_hosts' ]
 
 def test_repo_apply_settings(default_mock_repo):
 
-    pylib = str(mockRepo.sutDir / 'pylib')
+    pylib = str(mock_repo.sut_dir / 'pylib')
 
     # Remove any prior entries so the precondition holds even if another
     # test (or a previous run in the same worker) already appended it.
@@ -59,7 +59,7 @@ def test_repo_apply_settings(default_mock_repo):
 
     assert pylib not in sys.path
 
-    mockRepo.applySettings()
+    mock_repo.apply_settings()
 
     assert pylib in sys.path
 
@@ -71,7 +71,7 @@ def test_repo_apply_settings(default_mock_repo):
 
 
 class TestValidLabsParsing:
-    """Tests for ``valid_labs`` parsing in ``Repo.parseSettings``.
+    """Tests for ``valid_labs`` parsing in ``Repo.parse_settings``.
 
     ``valid_labs`` lets a repo declare which labs it supports (e.g. an embedded
     product that only works in an embedded lab). Parsing stores the declared
@@ -83,26 +83,26 @@ class TestValidLabsParsing:
 
     def test_absent_yields_empty_list(self, tmp_path):
         sut = _write_repo(tmp_path, '')
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         assert repo.valid_labs == []
 
     def test_declared_labs_parsed_in_order(self, tmp_path):
         sut = _write_repo(tmp_path, 'valid_labs = ["embedded", "veggies"]')
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         assert repo.valid_labs == ['embedded', 'veggies']
 
 
 class TestHostDefaultsParsing:
-    """Tests for ``[host_defaults]`` parsing in ``Repo.parseSettings``."""
+    """Tests for ``[host_defaults]`` parsing in ``Repo.parse_settings``."""
 
     def test_absent_section_yields_empty_dict(self, tmp_path):
         sut = _write_repo(tmp_path, '')
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         assert repo.host_defaults == {}
 
     def test_empty_section_yields_empty_dict(self, tmp_path):
         sut = _write_repo(tmp_path, '[host_defaults]')
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         assert repo.host_defaults == {}
 
     def test_single_protocol_default(self, tmp_path):
@@ -111,7 +111,7 @@ class TestHostDefaultsParsing:
             port = 2222
             connect_timeout = 5.0
         '''))
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         assert repo.host_defaults == {
             'ssh_options': {'port': 2222, 'connect_timeout': 5.0},
         }
@@ -124,7 +124,7 @@ class TestHostDefaultsParsing:
             [host_defaults.telnet_options]
             cols = 200
         '''))
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         assert repo.host_defaults == {
             'ssh_options': {'connect_timeout': 5.0},
             'telnet_options': {'cols': 200},
@@ -136,23 +136,23 @@ class TestHostDefaultsParsing:
             x = 1
         '''))
         with pytest.raises(ValueError, match='unknown'):
-            Repo(sutDir=sut)
+            Repo(sut_dir=sut)
 
     def test_sutdir_expansion_in_host_defaults(self, tmp_path):
-        """``${sutDir}`` is expanded inside ``[host_defaults]`` strings, like
+        """``${sut_dir}`` is expanded inside ``[host_defaults]`` strings, like
         every other repo settings table."""
         sut = _write_repo(tmp_path, textwrap.dedent('''
             [host_defaults.ssh_options]
-            known_hosts = "${sutDir}/known_hosts"
+            known_hosts = "${sut_dir}/known_hosts"
         '''))
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         assert repo.host_defaults['ssh_options']['known_hosts'] == f'{sut}/known_hosts'
 
 
 @pytest.fixture
 def restore_profiles():
     """Snapshot/restore the global os-profile registry around a test, since
-    ``Repo.parseSettings`` registers data profiles into module-global state."""
+    ``Repo.parse_settings`` registers data profiles into module-global state."""
     from otto.host import os_profile
     saved = dict(os_profile._OS_PROFILES)
     try:
@@ -163,11 +163,11 @@ def restore_profiles():
 
 
 class TestOsProfilesParsing:
-    """Tests for ``[os_profiles]`` parsing in ``Repo.parseSettings``."""
+    """Tests for ``[os_profiles]`` parsing in ``Repo.parse_settings``."""
 
     def test_absent_section_yields_empty_dict(self, tmp_path, restore_profiles):
         sut = _write_repo(tmp_path, '')
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         assert repo.os_profiles == {}
 
     def test_profile_parsed_and_registered(self, tmp_path, restore_profiles):
@@ -175,18 +175,18 @@ class TestOsProfilesParsing:
         sut = _write_repo(tmp_path, textwrap.dedent('''
             [os_profiles.zephyr-3_7]
             base = "embedded"
-            osName = "Zephyr"
-            osVersion = "3.7"
+            os_name = "Zephyr"
+            os_version = "3.7"
             command_frame = "zephyr"
             filesystem = "fat-ram"
             max_filename_len = 32
         '''))
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         assert 'zephyr-3_7' in repo.os_profiles
         # Registered globally so lab data can select it by name.
         prof = build_os_profile('zephyr-3_7')
         assert prof.base == 'embedded'
-        assert prof.defaults['osVersion'] == '3.7'
+        assert prof.defaults['os_version'] == '3.7'
         assert prof.defaults['max_filename_len'] == 32
         # The ``base`` key is consumed, not kept as a default field.
         assert 'base' not in prof.defaults
@@ -194,10 +194,10 @@ class TestOsProfilesParsing:
     def test_missing_base_raises(self, tmp_path, restore_profiles):
         sut = _write_repo(tmp_path, textwrap.dedent('''
             [os_profiles.broken]
-            osName = "Zephyr"
+            os_name = "Zephyr"
         '''))
         with pytest.raises(ValueError, match="missing the required 'base'"):
-            Repo(sutDir=sut)
+            Repo(sut_dir=sut)
 
     def test_invalid_base_raises(self, tmp_path, restore_profiles):
         sut = _write_repo(tmp_path, textwrap.dedent('''
@@ -205,7 +205,7 @@ class TestOsProfilesParsing:
             base = "windows"
         '''))
         with pytest.raises(ValueError, match='base'):
-            Repo(sutDir=sut)
+            Repo(sut_dir=sut)
 
     def test_unknown_default_field_raises(self, tmp_path, restore_profiles):
         sut = _write_repo(tmp_path, textwrap.dedent('''
@@ -214,7 +214,7 @@ class TestOsProfilesParsing:
             osTyp = "unix"
         '''))
         with pytest.raises(ValueError, match='unknown default field'):
-            Repo(sutDir=sut)
+            Repo(sut_dir=sut)
 
     def test_sutdir_expansion_in_profile_default(self, tmp_path, restore_profiles):
         sut = _write_repo(tmp_path, textwrap.dedent('''
@@ -222,9 +222,9 @@ class TestOsProfilesParsing:
             base = "unix"
 
             [os_profiles.nix.ssh_options]
-            known_hosts = "${sutDir}/known_hosts"
+            known_hosts = "${sut_dir}/known_hosts"
         '''))
-        repo = Repo(sutDir=sut)
+        repo = Repo(sut_dir=sut)
         prof = repo.os_profiles['nix']
         assert prof.defaults['ssh_options']['known_hosts'] == f'{sut}/known_hosts'
 
@@ -238,26 +238,26 @@ class TestOsProfilesIntegration:
         import sys
 
         from otto.host.embedded_filesystem import FatRamFileSystem
-        from otto.host.embeddedHost import EmbeddedHost
+        from otto.host.embedded_host import EmbeddedHost
         from otto.storage.factory import create_host_from_dict
 
         # Constructing the repo parses settings, registering the data profiles.
-        repo = MockRepo(testsRoot / 'repo1')
+        repo = MockRepo(tests_root / 'repo1')
         assert {'zephyr-3.7', 'zephyr-2.7', 'zephyr-4.4'} <= set(repo.os_profiles)
 
         # Importing the init modules registers the `zephyr-inline` frame the
         # 2.7 profile names — this runs *after* parse, mirroring bootstrap order.
-        pylib = str(repo.sutDir / 'pylib')
+        pylib = str(repo.sut_dir / 'pylib')
         added = pylib not in sys.path
-        repo.addLibsToPythonpath()
+        repo.add_libs_to_pythonpath()
         try:
-            repo.importInitModules()
+            repo.import_init_modules()
 
             # A host need only declare its identity + filesystem; the profile
             # supplies the rest (the copy-paste this feature eliminates).
             host = create_host_from_dict({
-                'ip': '192.0.2.13', 'ne': 'sprout27demo',
-                'osType': 'zephyr-2.7', 'filesystem': 'fat-ram',
+                'ip': '192.0.2.13', 'element': 'sprout27demo',
+                'os_type': 'zephyr-2.7', 'filesystem': 'fat-ram',
             })
         finally:
             if added:
@@ -265,9 +265,9 @@ class TestOsProfilesIntegration:
                     sys.path.remove(pylib)
 
         assert isinstance(host, EmbeddedHost)
-        assert host.osType == 'zephyr-2.7'    # the profile selector is recorded
-        assert host.osName == 'Zephyr'
-        assert host.osVersion == '2.7'
+        assert host.os_type == 'zephyr-2.7'    # the profile selector is recorded
+        assert host.os_name == 'Zephyr'
+        assert host.os_version == '2.7'
         assert host.max_filename_len == 32
         # The data profile resolved a frame that only code registered:
         assert type(host.command_frame).__name__ == 'ZephyrInlineRetcodeFrame'

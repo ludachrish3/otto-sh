@@ -17,7 +17,7 @@ import pytest_asyncio
 from otto.configmodule.repo import Repo
 from otto.docker import build_images
 from otto.docker.build import image_full_tag, image_latest_tag
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.utils import Status
 
 
@@ -38,7 +38,7 @@ async def parent():
     are real (~1s of asyncssh handshake per test)."""
     h = UnixHost(
         ip="10.10.200.13",
-        ne="pepper",
+        element="pepper",
         creds={"vagrant": "vagrant"},
         board="seed",
         is_virtual=True,
@@ -52,7 +52,7 @@ async def parent():
 
 @pytest.fixture
 def repo1():
-    return Repo(sutDir=REPO1_DIR)
+    return Repo(sut_dir=REPO1_DIR)
 
 
 @pytest.mark.integration

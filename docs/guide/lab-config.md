@@ -16,16 +16,16 @@ contain a `hosts.json` file.  The file is a JSON **array** of host objects:
 [
     {
         "ip": "10.10.200.11",
-        "ne": "carrot",
+        "element": "carrot",
         "board": "seed",
         "creds": { "vagrant": "vagrant" },
         "labs": ["veggies"]
     },
     {
         "ip": "192.0.2.1",
-        "ne": "sprout",
+        "element": "sprout",
         "board": "seed",
-        "osType": "zephyr",
+        "os_type": "zephyr",
         "labs": ["embedded"]
     }
 ]
@@ -36,8 +36,8 @@ Each entry carries a `labs` field listing the lab names it belongs to.  Pass
 `labs` field includes `"veggies"`.
 
 The host **id** used by `get_host()`, `--list-hosts`, and the rest of the CLI
-is derived from the `ne`, `board`, and `neId` fields.  `carrot` with board
-`seed` becomes `carrot_seed`; `carrot` with board `seed` and `neId` `2`
+is derived from the `element`, `board`, and `element_id` fields.  `carrot` with board
+`seed` becomes `carrot_seed`; `carrot` with board `seed` and `element_id` `2`
 becomes `carrot_seed_2`.
 
 ## Per-host fields
@@ -47,7 +47,7 @@ becomes `carrot_seed_2`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `ip` | string | IP address or DNS name otto will connect to. |
-| `ne` | string | Network-element name.  Combined with `board` and `neId` to form the host id. |
+| `element` | string | Network-element name.  Combined with `board` and `element_id` to form the host id. |
 | `creds` | object | Map of username → password.  At least one entry required for Unix hosts; optional for embedded hosts (RTOS telnet shells typically have no login step). |
 | `labs` | array of strings | Lab names this host belongs to.  Without this the host is invisible to `--lab`. |
 
@@ -56,7 +56,7 @@ becomes `carrot_seed_2`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `board` | string | Board type, included in the host id when set. |
-| `neId` | integer | Disambiguates multiple instances of the same NE; appended to the host id. |
+| `element_id` | integer | Disambiguates multiple instances of the same NE; appended to the host id. |
 | `user` | string | Pin a specific user from `creds`.  Defaults to the first entry. |
 | `term` | string | Terminal protocol — `"ssh"` (default) or `"telnet"`. |
 | `transfer` | string | File-transfer protocol — `"scp"` (default), `"sftp"`, `"ftp"`, or `"nc"` for Unix hosts; `"console"` (default) or `"tftp"` for embedded hosts. |
@@ -71,14 +71,14 @@ becomes `carrot_seed_2`.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `osType` | string | Profile selector.  Defaults to `"unix"`.  Resolves to a registered host class and optional defaults bundle — see {doc}`os-profiles`. |
-| `osName` | string | Human-readable OS name (e.g. `"Linux"`, `"Zephyr"`). |
-| `osVersion` | string | OS or kernel version string (e.g. `"3.7"`, `"4.4"`). |
+| `os_type` | string | Profile selector.  Defaults to `"unix"`.  Resolves to a registered host class and optional defaults bundle — see {doc}`os-profiles`. |
+| `os_name` | string | Human-readable OS name (e.g. `"Linux"`, `"Zephyr"`). |
+| `os_version` | string | OS or kernel version string (e.g. `"3.7"`, `"4.4"`). |
 
 ### Embedded-only fields
 
 These fields apply only to hosts with an embedded base type (e.g.
-`osType: "zephyr"` or `osType: "embedded"`).  See {doc}`embedded` for full
+`os_type: "zephyr"` or `os_type: "embedded"`).  See {doc}`embedded` for full
 details.
 
 | Field | Type | Description |
@@ -137,8 +137,8 @@ Two real entries from the test fixture — one Unix host and one Zephyr host:
 [
     {
         "ip": "10.10.200.11",
-        "ne": "carrot",
-        "osType": "unix",
+        "element": "carrot",
+        "os_type": "unix",
         "board": "seed",
         "term": "ssh",
         "transfer": "scp",
@@ -156,9 +156,9 @@ Two real entries from the test fixture — one Unix host and one Zephyr host:
     },
     {
         "ip": "192.0.2.1",
-        "ne": "sprout",
-        "osType": "zephyr",
-        "osVersion": "3.7",
+        "element": "sprout",
+        "os_type": "zephyr",
+        "os_version": "3.7",
         "transfer": "console",
         "filesystem": "fat-ram",
         "max_filename_len": 32,

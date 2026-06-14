@@ -12,7 +12,7 @@ import pytest_asyncio
 from otto.logger.logger import OttoLogger
 
 if TYPE_CHECKING:
-    from otto.host.unixHost import UnixHost
+    from otto.host.unix_host import UnixHost
     from otto.monitor.collector import MetricCollector, MonitorTarget
     from otto.monitor.events import MonitorEvent
     from otto.monitor.parsers import MetricParser
@@ -147,7 +147,7 @@ class OttoSuite(Generic[TOptions]):
 
     #: Set by ``OttoPlugin._otto_session_monitor`` when ``otto test --monitor``
     #: drives session-wide collection.  Falls back to ``None`` so per-suite
-    #: ``startMonitor()`` calls keep working unchanged.
+    #: ``start_monitor()`` calls keep working unchanged.
     _session_monitor_collector: 'MetricCollector | None' = None
 
     def setup_method(self, method: object = None) -> None:
@@ -164,7 +164,7 @@ class OttoSuite(Generic[TOptions]):
         self._monitor_server:    'MonitorServer | None'   = None
         self._monitor_task:      'asyncio.Task[None] | None' = None
 
-    def _activeMonitorCollector(self) -> 'MetricCollector | None':
+    def _active_monitor_collector(self) -> 'MetricCollector | None':
         """Return the per-suite collector if active, else the session-wide one."""
         if self._monitor_collector is not None:
             return self._monitor_collector
@@ -294,7 +294,7 @@ class OttoSuite(Generic[TOptions]):
         node      = cast(pytest.Item, request.node)
         node_name: str = node.name
 
-        collector = self._activeMonitorCollector()
+        collector = self._active_monitor_collector()
         if collector is not None:
             await collector.add_event(
                 label=f'{type(self).__name__}.{node_name}: start',
@@ -305,7 +305,7 @@ class OttoSuite(Generic[TOptions]):
 
         yield
 
-        collector = self._activeMonitorCollector()
+        collector = self._active_monitor_collector()
         if collector is not None:
             rep     = getattr(node, 'rep_call', None)  # type: ignore[arg-type]
             outcome = 'fail' if (rep is not None and not rep.passed) else 'pass'
@@ -356,7 +356,7 @@ class OttoSuite(Generic[TOptions]):
 
     # ── Monitoring helpers ─────────────────────────────────────────────────
 
-    async def startMonitor(
+    async def start_monitor(
         self,
         hosts: 'list[UnixHost] | None' = None,
         interval: 'timedelta | float' = timedelta(seconds=5),
@@ -371,7 +371,7 @@ class OttoSuite(Generic[TOptions]):
 
         Must be called with ``await``::
 
-            url = await self.startMonitor(hosts=[host])
+            url = await self.start_monitor(hosts=[host])
 
         All hosts are polled simultaneously on each tick via asyncio.gather().
         Series keys in results are ``"hostname/metric_label"``.
@@ -436,12 +436,12 @@ class OttoSuite(Generic[TOptions]):
         logger.info(f'Monitor dashboard: {url}')
         return url
 
-    async def stopMonitor(self) -> None:
+    async def stop_monitor(self) -> None:
         """Stop metric collection and shut down the dashboard server.
 
         Must be called with ``await``::
 
-            await self.stopMonitor()
+            await self.stop_monitor()
         """
         if self._monitor_server is not None:
             self._monitor_server.stop()
@@ -456,7 +456,7 @@ class OttoSuite(Generic[TOptions]):
         self._monitor_server    = None
         self._monitor_collector = None
 
-    async def addMonitorEvent(
+    async def add_monitor_event(
         self,
         label: str,
         color: str = '#888888',
@@ -466,10 +466,10 @@ class OttoSuite(Generic[TOptions]):
         Record a labeled event on the live dashboard at the current time.
 
         Has no effect if monitoring is not active.  Honors a per-suite
-        collector created by :meth:`startMonitor` first, then falls back to
+        collector created by :meth:`start_monitor` first, then falls back to
         the session-wide collector started by ``otto test --monitor``.
         """
-        collector = self._activeMonitorCollector()
+        collector = self._active_monitor_collector()
         if collector is not None:
             await collector.add_event(
                 label=label,
@@ -478,8 +478,8 @@ class OttoSuite(Generic[TOptions]):
                 source='user_code',
             )
 
-    def getMonitorResults(self) -> 'dict[str, list[tuple[datetime, float]]]':
-        """Return collected metric series after stopMonitor(). Empty dict if never started."""
+    def get_monitor_results(self) -> 'dict[str, list[tuple[datetime, float]]]':
+        """Return collected metric series after stop_monitor(). Empty dict if never started."""
         if self._monitor_collector is None:
             return {}
         return {
@@ -487,8 +487,8 @@ class OttoSuite(Generic[TOptions]):
             for key, pts in self._monitor_collector.get_series().items()
         }
 
-    def getMonitorEvents(self) -> 'list[MonitorEvent]':
-        """Return all recorded events after stopMonitor(). Empty list if never started."""
+    def get_monitor_events(self) -> 'list[MonitorEvent]':
+        """Return all recorded events after stop_monitor(). Empty list if never started."""
         if self._monitor_collector is None:
             return []
         return self._monitor_collector.get_events()

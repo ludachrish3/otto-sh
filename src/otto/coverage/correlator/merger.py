@@ -1,7 +1,7 @@
 """Merge gcda files from multiple hosts using lcov.
 
 Wraps ``lcov --capture`` and ``lcov --add-tracefile`` invocations,
-executing them through :class:`~otto.host.localHost.LocalHost` so
+executing them through :class:`~otto.host.local_host.LocalHost` so
 they are fully async with proper logging and timeout handling.
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ...host.localHost import LocalHost
+from ...host.local_host import LocalHost
 from ...utils import Status
 
 if TYPE_CHECKING:

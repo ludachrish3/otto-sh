@@ -194,7 +194,7 @@ class TestRunOnAllHosts:
         """run_on_all_hosts delegates to run and returns status tuples."""
         expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
         with patch(
-            "otto.host.unixHost.UnixHost.run",
+            "otto.host.unix_host.UnixHost.run",
             new_callable=AsyncMock,
             return_value=expected,
         ):
@@ -209,7 +209,7 @@ class TestRunOnAllHosts:
         """run_on_all_hosts works in concurrent mode."""
         expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
         with patch(
-            "otto.host.unixHost.UnixHost.run",
+            "otto.host.unix_host.UnixHost.run",
             new_callable=AsyncMock,
             return_value=expected,
         ):
@@ -224,7 +224,7 @@ class TestRunOnAllHosts:
         """run_on_all_hosts respects the pattern filter."""
         expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
         with patch(
-            "otto.host.unixHost.UnixHost.run",
+            "otto.host.unix_host.UnixHost.run",
             new_callable=AsyncMock,
             return_value=expected,
         ):

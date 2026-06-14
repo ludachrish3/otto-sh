@@ -29,7 +29,7 @@ In the repo's `.otto/settings.toml`:
 
 ```toml
 libs = [
-    "${sutDir}/../custom_hosts",   # put this dir on PYTHONPATH
+    "${sut_dir}/../custom_hosts",   # put this dir on PYTHONPATH
 ]
 init = [
     "custom_hosts",                # import at config load -> registers the frames

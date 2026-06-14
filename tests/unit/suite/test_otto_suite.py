@@ -427,7 +427,7 @@ class TestReset(OttoSuite):
         assert capture_file.read_text() == "0"
 
 
-# ── _activeMonitorCollector accessor ─────────────────────────────────────────
+# ── _active_monitor_collector accessor ─────────────────────────────────────────
 
 class TestActiveMonitorCollector:
     """Per-suite ``_monitor_collector`` takes precedence; falls back to the
@@ -449,7 +449,7 @@ class TestActiveMonitorCollector:
 
     def test_returns_none_when_no_monitor_active(self, tmp_path: Path):
         s = self._make_suite(tmp_path)
-        assert s._activeMonitorCollector() is None
+        assert s._active_monitor_collector() is None
 
     def test_per_suite_collector_takes_precedence(self, tmp_path: Path):
         from otto.suite.suite import OttoSuite
@@ -460,7 +460,7 @@ class TestActiveMonitorCollector:
             OttoSuite._session_monitor_collector = session
             s = self._make_suite(tmp_path)
             s._monitor_collector = per_suite
-            assert s._activeMonitorCollector() is per_suite
+            assert s._active_monitor_collector() is per_suite
         finally:
             OttoSuite._session_monitor_collector = None
 
@@ -471,6 +471,6 @@ class TestActiveMonitorCollector:
         try:
             OttoSuite._session_monitor_collector = session
             s = self._make_suite(tmp_path)
-            assert s._activeMonitorCollector() is session
+            assert s._active_monitor_collector() is session
         finally:
             OttoSuite._session_monitor_collector = None

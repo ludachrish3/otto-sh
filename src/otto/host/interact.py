@@ -43,9 +43,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 # Ctrl+] — the classic telnet(1) escape character. Single byte, no common

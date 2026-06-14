@@ -1,4 +1,4 @@
-host.embeddedHost
+host.embedded_host
 =================
 
-.. automodule:: otto.host.embeddedHost
+.. automodule:: otto.host.embedded_host

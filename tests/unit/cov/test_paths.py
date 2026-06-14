@@ -63,7 +63,7 @@ class TestDiscoverPathMappings:
 
     @pytest.mark.asyncio
     async def test_discovers_common_prefix(self, tmp_path):
-        from otto.host.localHost import LocalHost
+        from otto.host.local_host import LocalHost
 
         info_content = (
             "SF:/build/ci/workspace/src/foo.c\n"
@@ -87,7 +87,7 @@ class TestDiscoverPathMappings:
 
     @pytest.mark.asyncio
     async def test_no_sf_lines(self, tmp_path):
-        from otto.host.localHost import LocalHost
+        from otto.host.local_host import LocalHost
 
         info_file = tmp_path / "empty.info"
         info_file.write_text("TN:\nend_of_record\n")

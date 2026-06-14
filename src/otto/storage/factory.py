@@ -3,7 +3,7 @@ from typing import Any, cast
 
 from ..host.command_frame import build_command_frame
 from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
-from ..host.embeddedHost import EmbeddedHost
+from ..host.embedded_host import EmbeddedHost
 from ..host.options import (
     FtpOptions,
     LocalPortForward,
@@ -24,9 +24,9 @@ from ..host.os_profile import (
     get_os_profile,
     registered_profile_names,
 )
-from ..host.remoteHost import RemoteHost
+from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain
-from ..host.unixHost import UnixHost
+from ..host.unix_host import UnixHost
 
 
 def _build_toolchain(raw: dict[str, Any]) -> Toolchain:
@@ -120,10 +120,10 @@ def create_host_from_dict(
     """
     Create the appropriate :class:`RemoteHost` subclass from a host dict.
 
-    The ``osType`` field names a registered :class:`OsProfile`, which selects
+    The ``os_type`` field names a registered :class:`OsProfile`, which selects
     the base host class to build and carries a bundle of default field values:
 
-    - ``unix`` (the default when ``osType`` is absent) → :class:`UnixHost`
+    - ``unix`` (the default when ``os_type`` is absent) → :class:`UnixHost`
     - ``embedded`` → :class:`EmbeddedHost`
     - any custom profile registered via ``register_os_profile`` or an
       ``[os_profiles.<name>]`` settings table → its declared base class
@@ -141,8 +141,8 @@ def create_host_from_dict(
         Dictionary containing host configuration. The accepted keys depend on
         the profile's base family; see :func:`validate_host_dict` for the
         required set. Common keys: ``ip``, ``ne``, ``creds``, ``user``,
-        ``board``, ``slot``, ``neId``, ``resources``, ``hop``, ``log``,
-        ``log_stdout``, ``name``, ``osType``, ``osName``, ``osVersion``. Unix
+        ``board``, ``slot``, ``element_id``, ``resources``, ``hop``, ``log``,
+        ``log_stdout``, ``name``, ``os_type``, ``os_name``, ``os_version``. Unix
         hosts additionally accept ``docker_capable``, ``toolchain``, and the
         ``*_options`` tables; embedded hosts accept ``telnet_options`` only.
     defaults : dict[str, dict[str, Any]] | None
@@ -160,12 +160,12 @@ def create_host_from_dict(
     Raises
     ------
     ValueError
-        If ``osType`` names no registered profile, or if an embedded host
+        If ``os_type`` names no registered profile, or if an embedded host
         declares ``docker_capable``.
     TypeError
         If required fields are missing or field types are incorrect.
     """
-    selector = host_data.get('osType', 'unix')
+    selector = host_data.get('os_type', 'unix')
     profile = build_os_profile(selector)
     cls = build_host_class(profile.base)
     if issubclass(cls, EmbeddedHost):
@@ -173,7 +173,7 @@ def create_host_from_dict(
     if issubclass(cls, UnixHost):
         return _create_unix_host(host_data, defaults, profile, cls, selector)
     raise ValueError(
-        f"osType {selector!r} resolves to {cls.__name__}, which is neither a "
+        f"os_type {selector!r} resolves to {cls.__name__}, which is neither a "
         f"Unix nor an embedded host"
     )
 
@@ -225,7 +225,7 @@ def _create_unix_host(
         if merged:
             kwargs[opt_key] = builder(merged)
 
-    kwargs['osType'] = selector
+    kwargs['os_type'] = selector
     return cls(**kwargs)
 
 
@@ -254,7 +254,7 @@ def _create_embedded_host(
     if effective.get('docker_capable'):
         raise ValueError(
             f"docker_capable is not supported on embedded hosts "
-            f"(host {effective.get('ne', '?')!r}) — a bare-metal/RTOS "
+            f"(host {effective.get('element', '?')!r}) — a bare-metal/RTOS "
             f"target cannot run Docker containers"
         )
 
@@ -297,7 +297,7 @@ def _create_embedded_host(
     if merged:
         kwargs['telnet_options'] = _build_telnet_options(merged)
 
-    kwargs['osType'] = selector
+    kwargs['os_type'] = selector
     return cls(**kwargs)
 
 
@@ -305,13 +305,13 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     """
     Validate host dictionary structure without creating a Host object.
 
-    ``osType`` must name a registered :class:`OsProfile`; the profile's base
+    ``os_type`` must name a registered :class:`OsProfile`; the profile's base
     family determines the required-field set and the family-specific checks.
     The checks run against the *effective* dict — the host's fields layered
     over the profile's ``defaults`` — so a value supplied by the profile (e.g.
     ``creds`` or ``filesystem``) satisfies/validates the same as a host field.
 
-    - ``unix`` base (the default when ``osType`` is absent): ``ip``, ``creds``,
+    - ``unix`` base (the default when ``os_type`` is absent): ``ip``, ``creds``,
       ``ne`` required.
     - ``embedded`` base: ``ip``, ``ne`` required — ``creds`` is optional, since
       the RTOS telnet shell typically has no login step.
@@ -324,16 +324,16 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     Raises
     ------
     ValueError
-        If ``osType`` names no registered profile, a required field is missing,
+        If ``os_type`` names no registered profile, a required field is missing,
         a field has the wrong type, an embedded host declares ``docker_capable``,
         or an embedded host's ``transfer`` value is not ``console`` or ``tftp``.
     """
-    os_type = host_data.get('osType', 'unix')
+    os_type = host_data.get('os_type', 'unix')
     profile = get_os_profile(os_type)
     if profile is None:
         known = ', '.join(registered_profile_names())
         raise ValueError(
-            f"Field 'osType' {os_type!r} is not a registered profile. "
+            f"Field 'os_type' {os_type!r} is not a registered profile. "
             f"Registered profiles: {known}"
         )
     cls = build_host_class(profile.base)
@@ -343,7 +343,7 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     # profile-supplied required field (e.g. creds) counts as present.
     effective = {**profile.defaults, **host_data}
 
-    required_fields = ['ip', 'ne'] if base == 'embedded' else ['ip', 'creds', 'ne']
+    required_fields = ['ip', 'element'] if base == 'embedded' else ['ip', 'creds', 'element']
     missing = [f for f in required_fields if f not in effective]
     if missing:
         raise ValueError(f"Missing required host fields: {missing}")
@@ -351,15 +351,15 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     # Type validation
     if not isinstance(effective['ip'], str):
         raise ValueError(f"Field 'ip' must be str, got {type(effective['ip']).__name__}")
-    if not isinstance(effective['ne'], str):
-        raise ValueError(f"Field 'ne' must be str, got {type(effective['ne']).__name__}")
+    if not isinstance(effective['element'], str):
+        raise ValueError(f"Field 'element' must be str, got {type(effective['element']).__name__}")
     if 'creds' in effective and not isinstance(effective['creds'], dict):
         raise ValueError(f"Field 'creds' must be dict, got {type(effective['creds']).__name__}")
 
     if base == 'embedded' and effective.get('docker_capable'):
         raise ValueError(
             f"docker_capable is not supported on embedded hosts "
-            f"(host {effective['ne']!r})"
+            f"(host {effective['element']!r})"
         )
 
     if base == 'embedded' and 'transfer' in effective:
@@ -375,5 +375,5 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
             known = ', '.join(sorted(_FILESYSTEM_CLASSES))
             raise ValueError(
                 f"Field 'filesystem' must be one of: {known} "
-                f"(host {effective['ne']!r} declared {fs!r})"
+                f"(host {effective['element']!r} declared {fs!r})"
             )

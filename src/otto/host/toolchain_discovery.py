@@ -21,7 +21,7 @@ import shutil
 import stat
 from pathlib import Path
 
-from ..host.localHost import LocalHost
+from ..host.local_host import LocalHost
 from ..host.toolchain import Toolchain
 
 logger = logging.getLogger(__name__)

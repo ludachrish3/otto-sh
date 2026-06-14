@@ -15,7 +15,7 @@ import pytest_asyncio
 from otto.configmodule.lab import Lab
 from otto.configmodule.repo import Repo
 from otto.docker import build_images, composed
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.utils import Status
 
 REPO1_DIR = Path(__file__).parent.parent / "repo1"
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.xdist_group("docker_e2e")
 async def parent_lab():
     parent = UnixHost(
         ip="10.10.200.13",
-        ne="pepper",
+        element="pepper",
         creds={"vagrant": "vagrant"},
         board="seed",
         is_virtual=True,
@@ -49,7 +49,7 @@ async def parent_lab():
 async def test_instruction_uses_composed_context_manager(parent_lab):
     """Simulate an instruction using composed() as its lifecycle scope."""
     parent, lab = parent_lab
-    repo = Repo(sutDir=REPO1_DIR)
+    repo = Repo(sut_dir=REPO1_DIR)
     container_id = f"{parent.id}.repo1.api"
 
     build_results = await build_images(repo, parent, rebuild=False)
@@ -75,7 +75,7 @@ async def test_instruction_uses_composed_context_manager(parent_lab):
 async def test_session_fixture_holds_stack_for_inner_users(parent_lab):
     """A suite-level fixture using own=True should not be torn down by an inner own=False call."""
     parent, lab = parent_lab
-    repo = Repo(sutDir=REPO1_DIR)
+    repo = Repo(sut_dir=REPO1_DIR)
     container_id = f"{parent.id}.repo1.api"
 
     build_results = await build_images(repo, parent, rebuild=False)

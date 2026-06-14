@@ -3,7 +3,7 @@ from re import (
     compile,
 )
 
-versionRe = compile(
+version_re = compile(
     r'(?P<major>\d+)\.'
     r'(?P<minor>\d+)\.'
     r'(?P<patch>\d+)'
@@ -27,17 +27,17 @@ class Version():
         version: str,
     ):
 
-        match = versionRe.match(version)
+        match = version_re.match(version)
         if match is None:
             raise ValueError(
                 f'Version string "{version}" does not match the expected format'
             ) from None
 
-        versionDict = match.groupdict()
+        version_dict = match.groupdict()
 
-        self.major = int(versionDict['major'])
-        self.minor = int(versionDict['minor'])
-        self.patch = int(versionDict['patch'])
+        self.major = int(version_dict['major'])
+        self.minor = int(version_dict['minor'])
+        self.patch = int(version_dict['patch'])
 
     def __repr__(self):
         return f'{self.major}.{self.minor}.{self.patch}'

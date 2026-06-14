@@ -20,7 +20,7 @@ from otto.configmodule.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host.command_frame import register_command_frame
 from otto.host.telnet import abort_console_transports
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from tests.conftest import (
     _ZEPHYR_BACKEND_NE,
     EMBEDDED_BACKENDS,
@@ -37,7 +37,7 @@ from tests.integration.host._console_lock import console_access
 # the 2.7 lab entries declare would be unregistered. Register it here by
 # importing the shared ``custom_hosts`` module (the third-party-style package
 # SUT repos depend on for this frame), adding its dir to the path the way
-# ``Repo.addLibsToPythonpath`` does at config-load time.
+# ``Repo.add_libs_to_pythonpath`` does at config-load time.
 _CUSTOM_HOSTS = Path(__file__).resolve().parents[2] / "custom_hosts"
 if str(_CUSTOM_HOSTS) not in sys.path:
     sys.path.insert(0, str(_CUSTOM_HOSTS))
@@ -66,9 +66,9 @@ def _install_integration_lab() -> None:
     lab = Lab(name="integration_host")
     for ne in ("carrot", "tomato", "pepper", "basil"):
         data = host_data(ne)
-        lab.addHost(UnixHost(
+        lab.add_host(UnixHost(
             ip=data["ip"],
-            ne=data["ne"],
+            element=data["element"],
             creds=data["creds"],
             board=data.get("board"),
             is_virtual=data.get("is_virtual", False),

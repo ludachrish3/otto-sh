@@ -1,6 +1,6 @@
 """Per-host toolchain configuration for coverage and build tools.
 
-Each :class:`~otto.host.unixHost.UnixHost` carries a :class:`Toolchain`
+Each :class:`~otto.host.unix_host.UnixHost` carries a :class:`Toolchain`
 that describes where ``lcov``, ``gcov``, and the compiler live.  Tool
 paths are stored **relative to the sysroot** so that a single
 ``sysroot`` change is enough to switch an entire cross-toolchain.

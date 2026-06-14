@@ -3,7 +3,7 @@ MonitorEvent — a timestamped, annotated marker for the dashboard timeline.
 
 Events appear as vertical lines on all metric charts. They can be created by:
   - The dashboard UI (user types a label and clicks "Mark Event")
-  - Test suite code via OttoSuite.addMonitorEvent()
+  - Test suite code via OttoSuite.add_monitor_event()
   - Automatically by OttoSuite.setUp() / tearDown() when monitoring is active
 """
 

@@ -29,13 +29,13 @@ from otto.configmodule.configmodule import (
     do_for_all_hosts,
 )
 from otto.host import LocalHost
-from otto.host.unixHost import UnixHost
-from otto.logger import getOttoLogger
+from otto.host.unix_host import UnixHost
+from otto.logger import get_otto_logger
 from otto.suite import OttoSuite, register_suite
 from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"

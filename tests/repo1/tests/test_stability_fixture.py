@@ -25,12 +25,12 @@ from _pytest.fixtures import SubRequest
 from repo1_common.options import RepoOptions
 
 from otto.configmodule import all_hosts
-from otto.host.unixHost import UnixHost
-from otto.logger import getOttoLogger
+from otto.host.unix_host import UnixHost
+from otto.logger import get_otto_logger
 from otto.suite import OttoSuite, register_suite
 from otto.utils import Status
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 @dataclass
 class _Options(RepoOptions):

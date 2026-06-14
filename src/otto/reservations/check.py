@@ -21,14 +21,14 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
     from .identity import ResolvedIdentity
     from .protocol import ReservationBackend
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 """pytest configuration for repo1's test suite.
 
 When tests are collected via ``otto test TestDevice``, otto calls
-``Repo.addLibsToPythonpath()`` which adds ``repo1/pylib`` to ``sys.path``
+``Repo.add_libs_to_pythonpath()`` which adds ``repo1/pylib`` to ``sys.path``
 before importing test files.
 
 When pytest collects tests directly (e.g. ``pytest tests/repo1/``), that

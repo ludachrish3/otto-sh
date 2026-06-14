@@ -10,13 +10,13 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 from otto.host import RunResult, ShellCommand
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
 
 
 @pytest.fixture
 def host() -> UnixHost:
-    return UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+    return UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
 
 
 @pytest.fixture

@@ -10,7 +10,7 @@ from typing import (
     cast,
 )
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from .lab import Lab
 
 if TYPE_CHECKING:
@@ -23,11 +23,11 @@ if TYPE_CHECKING:
         SshOptions,
         TelnetOptions,
     )
-    from ..host.remoteHost import RemoteHost
+    from ..host.remote_host import RemoteHost
 
 T = TypeVar("T")
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 

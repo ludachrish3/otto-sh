@@ -2,7 +2,7 @@
 Integration tests for the test-file auto-scan → suite-registration pipeline,
 using the real tests/repo1 SUT repo.
 
-These tests cover the bug fix in ``configmodule.repo.importTestFiles()``:
+These tests cover the bug fix in ``configmodule.repo.import_test_files()``:
 the original implementation tried to derive a dotted module name from
 ``sys.path`` entries and silently skipped files whose parent directory was
 not on ``sys.path``.  The fix uses ``importlib.util.spec_from_file_location``
@@ -10,7 +10,7 @@ to load files directly by path, independent of ``sys.path``.
 
 Two concerns are exercised end-to-end:
 
-1. **Registration** — ``importTestFiles()`` triggers ``@register_suite()`` on
+1. **Registration** — ``import_test_files()`` triggers ``@register_suite()`` on
    ``TestDevice`` and the suite lands in ``_SUITE_REGISTRY``, even though
    ``tests/repo1/tests`` is not on ``sys.path``.
 
@@ -42,7 +42,7 @@ runner = CliRunner()
 _REPO1_DIR: Path = Path(__file__).parents[2] / 'repo1'
 _REPO1_TESTS_DIR: Path = _REPO1_DIR / 'tests'
 
-# Stable module names used by importTestFiles for the two repo1 test files
+# Stable module names used by import_test_files for the two repo1 test files
 _MOD_DEVICE  = '_otto_suite_test_device'
 _MOD_EXAMPLE = '_otto_suite_test_example'
 
@@ -74,10 +74,10 @@ def repo1(clean_registry) -> Repo:  # noqa: F811
     sys.modules.pop(_MOD_DEVICE,  None)
     sys.modules.pop(_MOD_EXAMPLE, None)
 
-    repo = Repo(sutDir=_REPO1_DIR)
+    repo = Repo(sut_dir=_REPO1_DIR)
     # Add repo1/pylib so that `from repo1_common.options import RepoOptions`
     # inside test_device.py resolves correctly.
-    repo.addLibsToPythonpath()
+    repo.add_libs_to_pythonpath()
     return repo
 
 
@@ -100,11 +100,11 @@ def _app_for(suite_name: str) -> typer.Typer:
 # ---------------------------------------------------------------------------
 
 class TestSuiteAutoScan:
-    """``importTestFiles()`` registers suites from external paths (bug-fix coverage)."""
+    """``import_test_files()`` registers suites from external paths (bug-fix coverage)."""
 
     def test_test_device_registered(self, repo1: Repo):
-        """TestDevice must appear in _SUITE_REGISTRY after importTestFiles()."""
-        repo1.importTestFiles()
+        """TestDevice must appear in _SUITE_REGISTRY after import_test_files()."""
+        repo1.import_test_files()
         names = [n for n, _ in _SUITE_REGISTRY]
         assert 'TestDevice' in names
 
@@ -120,18 +120,18 @@ class TestSuiteAutoScan:
         """Suite registers even though tests dir is absent from sys.path (bug regression)."""
         assert str(_REPO1_TESTS_DIR) not in sys.path  # confirm bug scenario
 
-        repo1.importTestFiles()
+        repo1.import_test_files()
 
         names = [n for n, _ in _SUITE_REGISTRY]
         assert 'TestDevice' in names, (
-            'TestDevice not registered — importTestFiles() may have fallen back '
+            'TestDevice not registered — import_test_files() may have fallen back '
             'to the broken sys.path-relative logic'
         )
 
     def test_plain_test_file_without_decorator_not_registered(self, repo1: Repo):
         """test_example.py has no @register_suite() and must not add to the registry."""
         before = len(_SUITE_REGISTRY)
-        repo1.importTestFiles()
+        repo1.import_test_files()
         added_names = [n for n, _ in _SUITE_REGISTRY[before:]]
         assert 'test_example' not in added_names
         # test_device.py adds TestDevice; test_coverage_product.py adds TestCoverageProduct
@@ -139,10 +139,10 @@ class TestSuiteAutoScan:
         assert len(added_names) >= 1
 
     def test_duplicate_import_is_skipped(self, repo1: Repo):
-        """Calling importTestFiles() twice must not double-register suites."""
-        repo1.importTestFiles()
+        """Calling import_test_files() twice must not double-register suites."""
+        repo1.import_test_files()
         count_after_first = len(_SUITE_REGISTRY)
-        repo1.importTestFiles()
+        repo1.import_test_files()
         assert len(_SUITE_REGISTRY) == count_after_first
 
 
@@ -155,7 +155,7 @@ class TestSuiteOptionsInHelp:
 
     @pytest.fixture(autouse=True)
     def _import(self, repo1: Repo):
-        repo1.importTestFiles()
+        repo1.import_test_files()
 
     def test_runner_options_absent_from_suite_help(self):
         """Runner options live on the parent callback, not individual suites."""

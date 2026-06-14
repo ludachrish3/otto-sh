@@ -123,13 +123,13 @@ import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..configmodule import getRepos
+from ..configmodule import get_repos
 from ..configmodule.repo import Repo
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..suite.plugin import OttoPlugin
 from ..suite.register import _SUITE_REGISTRY, OttoOptionsPlugin
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 # ---------------------------------------------------------------------------
@@ -137,13 +137,13 @@ logger = getOttoLogger()
 # ---------------------------------------------------------------------------
 
 def resolve_suite(suite: str, repos: list[Repo]) -> str:
-    """Expand a sutDir-relative suite path to an absolute path for pytest."""
+    """Expand a sut_dir-relative suite path to an absolute path for pytest."""
     file_part, _, suffix = suite.partition('::')
     p = Path(file_part)
     if p.is_absolute():
         return suite
     for repo in repos:
-        candidate = (repo.sutDir / p).resolve()
+        candidate = (repo.sut_dir / p).resolve()
         if candidate.exists():
             return f'{candidate}::{suffix}' if suffix else str(candidate)
     return suite
@@ -197,7 +197,7 @@ def run_suite(
     monitor_output: Optional[Path] = cast(Optional[Path], parent_opts.get('monitor_output'))
     monitor_hosts: Optional[str] = cast(Optional[str], parent_opts.get('monitor_hosts'))
 
-    repos = getRepos()
+    repos = get_repos()
     sut_test_dirs = [path for repo in repos for path in repo.tests]
     log_dir = logger.output_dir
     results_path = results or str(log_dir / 'junit.xml')
@@ -335,7 +335,7 @@ def _print_stability_report(
 # ---------------------------------------------------------------------------
 
 def _list_tests_display(panel_method: str) -> None:
-    panels = [getattr(repo, panel_method)(repo.collectTests()) for repo in getRepos()]
+    panels = [getattr(repo, panel_method)(repo.collect_tests()) for repo in get_repos()]
     table = Table(show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1))
     for _ in panels:
         table.add_column(ratio=1)
@@ -346,7 +346,7 @@ def _list_tests_display(panel_method: str) -> None:
 def list_suites_callback(value: bool) -> None:
     if not value:
         return
-    _list_tests_display('getTestSuitesPanel')
+    _list_tests_display('get_test_suites_panel')
     raise typer.Exit()
 
 
@@ -655,7 +655,7 @@ async def _run_coverage(
             'gcov': str(tc.gcov),
         }
 
-    sut_dir = str(cov_repo.sutDir.resolve())
+    sut_dir = str(cov_repo.sut_dir.resolve())
 
     # Embedded hosts now carry a per-host Toolchain (lab-data ``toolchain``),
     # exactly like Unix hosts: the bed declares the cross-gcov for binaries it
@@ -664,7 +664,7 @@ async def _run_coverage(
     #
     # The build dir is the report's source root when there are no Unix hosts
     # (standalone-embedded). Multi-Zephyr-version labs declare per-version build
-    # dirs under [coverage.embedded.builds.<version>]; each host's osVersion
+    # dirs under [coverage.embedded.builds.<version>]; each host's os_version
     # selects its own root, recorded in ``source_roots`` so the reporter can
     # resolve the correct .gcno tree per host. The single ``build_dir`` remains
     # supported as a legacy/fallback for single-version labs.
@@ -673,7 +673,7 @@ async def _run_coverage(
     embedded_builds = embedded_cfg.get('builds') or {}          # {"3.7": {"build_dir": ...}}
 
     def _resolve_build_dir(host) -> str | None:
-        ver = getattr(host, 'osVersion', None)
+        ver = getattr(host, 'os_version', None)
         if ver and ver in embedded_builds:
             bd = embedded_builds[ver].get('build_dir')
             if bd:
@@ -683,7 +683,7 @@ async def _run_coverage(
     source_roots: dict[str, str] = {}
     if embedded_dirs and (embedded_build_dir or embedded_builds):
         from ..host import LocalHost
-        from ..host.embeddedHost import EmbeddedHost
+        from ..host.embedded_host import EmbeddedHost
         from ..host.toolchain import Toolchain
         from ..host.toolchain_discovery import discover_toolchain_from_gcno
 

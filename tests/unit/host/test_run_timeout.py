@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from otto.host.localHost import LocalHost
-from otto.host.unixHost import UnixHost
+from otto.host.local_host import LocalHost
+from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
 
 
@@ -22,7 +22,7 @@ from otto.utils import CommandStatus, Status
 @pytest.fixture
 def host() -> UnixHost:
     """Bare UnixHost, no connections established."""
-    return UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+    return UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
 
 
 class TestRunTimeout:

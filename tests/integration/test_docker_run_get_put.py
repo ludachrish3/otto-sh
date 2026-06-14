@@ -14,7 +14,7 @@ import pytest_asyncio
 from otto.configmodule.lab import Lab
 from otto.configmodule.repo import Repo
 from otto.docker import build_images, compose_down, compose_up
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.utils import Status
 
 REPO1_DIR = Path(__file__).parent.parent / "repo1"
@@ -39,7 +39,7 @@ async def stack():
     after the first test and corrupt the cached SSH connection)."""
     parent = UnixHost(
         ip="10.10.200.13",
-        ne="pepper",
+        element="pepper",
         creds={"vagrant": "vagrant"},
         board="seed",
         is_virtual=True,
@@ -47,7 +47,7 @@ async def stack():
         transfer="scp",
         docker_capable=True,
     )
-    repo = Repo(sutDir=REPO1_DIR)
+    repo = Repo(sut_dir=REPO1_DIR)
     lab = Lab(name="docker_run_test")
     lab.hosts[parent.id] = parent
 

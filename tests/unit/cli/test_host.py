@@ -20,7 +20,7 @@ from typer.testing import CliRunner
 
 from otto.cli import host as host_module
 from otto.cli.host import _host_id_completer, _resolve_host, host_app
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.host.session import SessionManager, ShellSession
 from otto.utils import Status
 
@@ -31,7 +31,7 @@ runner = CliRunner()
 
 def _make_host(name: str = 'router1') -> UnixHost:
     """Return a real UnixHost (no connection is made on construction)."""
-    return UnixHost(ip='10.0.0.1', ne=name, creds={'admin': 'secret'}, log=True)
+    return UnixHost(ip='10.0.0.1', element=name, creds={'admin': 'secret'}, log=True)
 
 
 class FakeSession(ShellSession):
@@ -89,7 +89,7 @@ def _make_host_with_session(
     Logging callbacks are suppressed to avoid interfering with CliRunner's
     stdout capture.
     """
-    host = UnixHost(ip='10.0.0.1', ne=name, creds={'admin': 'secret'}, log=True)
+    host = UnixHost(ip='10.0.0.1', element=name, creds={'admin': 'secret'}, log=True)
     fake = FakeSession(responses)
     host._session_mgr = SessionManager(
         session_factory=lambda: fake,
@@ -372,28 +372,28 @@ def _fake_repo(*lab_paths: Path) -> SimpleNamespace:
 
 class TestHostIdCompleter:
     """``_host_id_completer`` runs during tab completion, before
-    ``applyRepoSettings()`` populates the ConfigModule.  It must therefore
+    ``apply_repo_settings()`` populates the ConfigModule.  It must therefore
     derive host IDs straight from the ``hosts.json`` files referenced by
     each repo's ``labs`` search paths."""
 
     def test_returns_all_host_ids(self, tmp_path):
         lab = tmp_path / 'labA'
         _write_hosts_json(lab, [
-            {'ip': '1.1.1.1', 'ne': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
-            {'ip': '1.1.1.2', 'ne': 'tomato', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
+            {'ip': '1.1.1.1', 'element': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
+            {'ip': '1.1.1.2', 'element': 'tomato', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
         ])
-        # _host_id_completer lazy-imports getRepos from otto.configmodule.
-        with patch('otto.configmodule.getRepos', return_value=[_fake_repo(lab)]):
+        # _host_id_completer lazy-imports get_repos from otto.configmodule.
+        with patch('otto.configmodule.get_repos', return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete='')
         assert result == ['carrot_seed', 'tomato_seed']
 
     def test_filters_by_incomplete_prefix(self, tmp_path):
         lab = tmp_path / 'labA'
         _write_hosts_json(lab, [
-            {'ip': '1.1.1.1', 'ne': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
-            {'ip': '1.1.1.2', 'ne': 'tomato', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
+            {'ip': '1.1.1.1', 'element': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
+            {'ip': '1.1.1.2', 'element': 'tomato', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
         ])
-        with patch('otto.configmodule.getRepos', return_value=[_fake_repo(lab)]):
+        with patch('otto.configmodule.get_repos', return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete='tom')
         assert result == ['tomato_seed']
 
@@ -401,12 +401,12 @@ class TestHostIdCompleter:
         lab1 = tmp_path / 'lab1'
         lab2 = tmp_path / 'lab2'
         _write_hosts_json(lab1, [
-            {'ip': '1.1.1.1', 'ne': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
+            {'ip': '1.1.1.1', 'element': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
         ])
         _write_hosts_json(lab2, [
-            {'ip': '2.2.2.2', 'ne': 'beet', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['roots']},
+            {'ip': '2.2.2.2', 'element': 'beet', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['roots']},
         ])
-        with patch('otto.configmodule.getRepos', return_value=[_fake_repo(lab1, lab2)]):
+        with patch('otto.configmodule.get_repos', return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete='')
         assert result == ['beet_seed', 'carrot_seed']
 
@@ -414,16 +414,16 @@ class TestHostIdCompleter:
         """Same host id present in two hosts.json files must collapse to one."""
         lab1 = tmp_path / 'lab1'
         lab2 = tmp_path / 'lab2'
-        dup = {'ip': '1.1.1.1', 'ne': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']}
+        dup = {'ip': '1.1.1.1', 'element': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']}
         _write_hosts_json(lab1, [dup])
         _write_hosts_json(lab2, [dup])
-        with patch('otto.configmodule.getRepos', return_value=[_fake_repo(lab1, lab2)]):
+        with patch('otto.configmodule.get_repos', return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete='')
         assert result == ['carrot_seed']
 
     def test_skips_missing_path(self, tmp_path):
         """Non-existent search path must not raise; completer is best-effort."""
-        with patch('otto.configmodule.getRepos', return_value=[_fake_repo(tmp_path / 'nope')]):
+        with patch('otto.configmodule.get_repos', return_value=[_fake_repo(tmp_path / 'nope')]):
             result = _host_id_completer(ctx=MagicMock(), incomplete='')
         assert result == []
 
@@ -431,7 +431,7 @@ class TestHostIdCompleter:
         lab = tmp_path / 'bad'
         lab.mkdir()
         (lab / 'hosts.json').write_text('{not json')
-        with patch('otto.configmodule.getRepos', return_value=[_fake_repo(lab)]):
+        with patch('otto.configmodule.get_repos', return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete='')
         assert result == []
 
@@ -439,10 +439,10 @@ class TestHostIdCompleter:
         """A host dict missing required fields must be skipped, not abort."""
         lab = tmp_path / 'labA'
         _write_hosts_json(lab, [
-            {'ne': 'incomplete'},  # missing ip, creds — validate_host_dict rejects
-            {'ip': '1.1.1.1', 'ne': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
+            {'element': 'incomplete'},  # missing ip, creds — validate_host_dict rejects
+            {'ip': '1.1.1.1', 'element': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
         ])
-        with patch('otto.configmodule.getRepos', return_value=[_fake_repo(lab)]):
+        with patch('otto.configmodule.get_repos', return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete='')
         assert result == ['carrot_seed']
 
@@ -460,23 +460,23 @@ class TestHostIdCompleter:
             'hosts': ['router1', 'router2', 'switch7'],
         }
         with (
-            patch('otto.configmodule.getCompletionNames', return_value=fake_cache),
-            patch('otto.configmodule.getRepos',
+            patch('otto.configmodule.get_completion_names', return_value=fake_cache),
+            patch('otto.configmodule.get_repos',
                   return_value=[_fake_repo(tmp_path / 'does-not-exist')]),
         ):
             result = _host_id_completer(ctx=MagicMock(), incomplete='r')
         assert result == ['router1', 'router2']
 
     def test_falls_through_on_cache_miss(self, tmp_path):
-        """``getCompletionNames`` returns None off the fast path — completer
+        """``get_completion_names`` returns None off the fast path — completer
         must still find host IDs by scanning ``hosts.json`` live."""
         lab = tmp_path / 'labA'
         _write_hosts_json(lab, [
-            {'ip': '1.1.1.1', 'ne': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
+            {'ip': '1.1.1.1', 'element': 'carrot', 'board': 'seed', 'creds': {'u': 'p'}, 'labs': ['veggies']},
         ])
         with (
-            patch('otto.configmodule.getCompletionNames', return_value=None),
-            patch('otto.configmodule.getRepos', return_value=[_fake_repo(lab)]),
+            patch('otto.configmodule.get_completion_names', return_value=None),
+            patch('otto.configmodule.get_repos', return_value=[_fake_repo(lab)]),
         ):
             result = _host_id_completer(ctx=MagicMock(), incomplete='')
         assert result == ['carrot_seed']

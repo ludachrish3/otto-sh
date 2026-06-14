@@ -1,7 +1,7 @@
 # Ensure that the OttoLogger is initialized correctly before anything else happens
-from otto.logger import getOttoLogger as getOttoLogger
+from otto.logger import get_otto_logger as get_otto_logger
 
-getOttoLogger()
+get_otto_logger()
 
 from otto.cli import app
 

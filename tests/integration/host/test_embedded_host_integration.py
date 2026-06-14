@@ -28,8 +28,8 @@ from pathlib import Path
 
 import pytest
 
-from otto.host.embeddedHost import EmbeddedHost
-from otto.host.unixHost import UnixHost
+from otto.host.embedded_host import EmbeddedHost
+from otto.host.unix_host import UnixHost
 from otto.storage.factory import create_host_from_dict
 from otto.utils import Status
 from tests.conftest import (
@@ -324,7 +324,7 @@ def _zephyr_dest_map() -> dict[str, str | None]:
     dest: dict[str, str | None] = {}
     for backend in EMBEDDED_BACKENDS:
         data = host_data(_BACKEND_NE[backend])
-        dest[data["ne"]] = build_filesystem(data.get("filesystem", "none")).mount
+        dest[data["element"]] = build_filesystem(data.get("filesystem", "none")).mount
     return dest
 
 
@@ -413,13 +413,13 @@ class TestConcurrentEmbeddedTransfer:
         try:
             results = await asyncio.gather(
                 *(
-                    h.put([src], Path(_ZEPHYR_DEST[h.ne] or "/"))
+                    h.put([src], Path(_ZEPHYR_DEST[h.element] or "/"))
                     for h in hosts
                 ),
                 return_exceptions=True,
             )
             for h, result in zip(hosts, results):
-                self._check_put_result(h.ne, result)
+                self._check_put_result(h.element, result)
         finally:
             await asyncio.gather(
                 *(h.close() for h in hosts), return_exceptions=True,
@@ -445,7 +445,7 @@ class TestConcurrentEmbeddedTransfer:
             results = await asyncio.gather(
                 basil.put([src], Path("/tmp")),
                 *(
-                    h.put([src], Path(_ZEPHYR_DEST[h.ne] or "/"))
+                    h.put([src], Path(_ZEPHYR_DEST[h.element] or "/"))
                     for h in zephyrs
                 ),
                 return_exceptions=True,
@@ -461,7 +461,7 @@ class TestConcurrentEmbeddedTransfer:
             )
 
             for h, result in zip(zephyrs, zephyr_results):
-                self._check_put_result(h.ne, result)
+                self._check_put_result(h.element, result)
         finally:
             await asyncio.gather(
                 basil.close(),
@@ -486,24 +486,24 @@ class TestConcurrentEmbeddedTransfer:
         try:
             # Sequential pre-stage on the two fs-capable backends.
             for h in hosts:
-                dest = _ZEPHYR_DEST[h.ne]
+                dest = _ZEPHYR_DEST[h.element]
                 if dest is None:
                     continue
                 status, err = await h.put([src], Path(dest))
                 assert status == Status.Success, (
-                    f"{h.ne}: pre-stage put failed: {err!r}"
+                    f"{h.element}: pre-stage put failed: {err!r}"
                 )
 
             # Per-host local landing dir so concurrent gets don't collide
             # on the same destination file.
-            fs_hosts = [h for h in hosts if _ZEPHYR_DEST[h.ne] is not None]
+            fs_hosts = [h for h in hosts if _ZEPHYR_DEST[h.element] is not None]
             for h in fs_hosts:
-                (tmp_path / f"got_{h.ne}").mkdir()
+                (tmp_path / f"got_{h.element}").mkdir()
             results = await asyncio.gather(
                 *(
                     h.get(
-                        [Path(_ZEPHYR_DEST[h.ne]) / "fanout.bin"],
-                        tmp_path / f"got_{h.ne}",
+                        [Path(_ZEPHYR_DEST[h.element]) / "fanout.bin"],
+                        tmp_path / f"got_{h.element}",
                     )
                     for h in fs_hosts
                 ),
@@ -511,13 +511,13 @@ class TestConcurrentEmbeddedTransfer:
             )
 
             for h, result in zip(fs_hosts, results):
-                landing = tmp_path / f"got_{h.ne}"
+                landing = tmp_path / f"got_{h.element}"
                 assert not isinstance(result, BaseException), (
-                    f"{h.ne}: get raised: {result!r}"
+                    f"{h.element}: get raised: {result!r}"
                 )
                 status, err = result
                 assert status == Status.Success, (
-                    f"{h.ne}: get failed: {err!r}"
+                    f"{h.element}: get failed: {err!r}"
                 )
                 assert (landing / "fanout.bin").read_bytes() == self._PAYLOAD
         finally:

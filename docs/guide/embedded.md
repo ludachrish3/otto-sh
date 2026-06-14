@@ -32,19 +32,19 @@ Host (Protocol) / BaseHost (ABC)
 
 ## Selecting an embedded host
 
-Set `osType` in the host's `hosts.json` entry to select the host class:
+Set `os_type` in the host's `hosts.json` entry to select the host class:
 
-- `osType: "zephyr"` builds a `ZephyrHost` with Zephyr-specific defaults
-  (the `zephyr` command frame, `osName: "Zephyr"`).  Use `osVersion` to record
+- `os_type: "zephyr"` builds a `ZephyrHost` with Zephyr-specific defaults
+  (the `zephyr` command frame, `os_name: "Zephyr"`).  Use `os_version` to record
   the exact kernel version — `"2.7"`, `"3.7"`, and `"4.4"` appear in the
   in-tree test fixture.
-- `osType: "embedded"` builds a bare `EmbeddedHost` with no OS-specific
+- `os_type: "embedded"` builds a bare `EmbeddedHost` with no OS-specific
   defaults.  Because `EmbeddedHost` carries no default `command_frame`, it
   **fails loud** at construction if none is supplied:
 
 ```text
 EmbeddedHost '<name>' has no command_frame. A bare 'embedded' host carries no
-shell-framing dialect. Set osType to a profile that supplies one (e.g.
+shell-framing dialect. Set os_type to a profile that supplies one (e.g.
 "zephyr"), or pass an explicit command_frame.
 ```
 
@@ -74,8 +74,8 @@ Declare a frame by name in lab data:
 
 ```json
 {
-    "ne": "sprout_no_fs",
-    "osType": "zephyr",
+    "element": "sprout_no_fs",
+    "os_type": "zephyr",
     "command_frame": "zephyr-serial"
 }
 ```
@@ -149,9 +149,9 @@ A `sprout` entry from the test fixture, annotated:
 ```json
 {
     "ip": "192.0.2.1",
-    "ne": "sprout",
-    "osType": "zephyr",
-    "osVersion": "3.7",
+    "element": "sprout",
+    "os_type": "zephyr",
+    "os_version": "3.7",
     "transfer": "console",
     "filesystem": "fat-ram",
     "max_filename_len": 32,
@@ -180,9 +180,9 @@ A `sprout` entry from the test fixture, annotated:
 
 Key fields:
 
-- `osType: "zephyr"` — builds `ZephyrHost` with the `zephyr` command frame and
-  `osName: "Zephyr"`.
-- `osVersion: "3.7"` — recorded on the host; selects the correct test paths
+- `os_type: "zephyr"` — builds `ZephyrHost` with the `zephyr` command frame and
+  `os_name: "Zephyr"`.
+- `os_version: "3.7"` — recorded on the host; selects the correct test paths
   (e.g. coverage SDK version).
 - `transfer: "console"` — file I/O over the device's `fs` shell commands.
 - `filesystem: "fat-ram"` — FAT on RAM disk, mounted at `/RAM:`.

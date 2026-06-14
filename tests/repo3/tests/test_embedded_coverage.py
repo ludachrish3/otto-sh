@@ -19,7 +19,7 @@ Per-host lifecycle: ``host.load`` (install) -> ``call_fn cov_init`` ->
 loaded when the collector dumps it).
 
 The suite builds a version-matched product for each host (keyed by
-``host.osVersion``), reading from the per-version ``build_dir`` declared in the
+``host.os_version``), reading from the per-version ``build_dir`` declared in the
 optional ``[coverage.embedded].builds."<version>"`` table, falling back to the
 single ``[coverage.embedded].build_dir`` when no per-version entry exists.
 Each distinct ``(build_dir, zver)`` pair is built exactly once even when multiple
@@ -34,15 +34,15 @@ import pytest
 import pytest_asyncio
 
 from otto.configmodule.configmodule import all_hosts
-from otto.configmodule import getRepos
+from otto.configmodule import get_repos
 from otto.host import LocalHost
-from otto.host.embeddedHost import EmbeddedHost
-from otto.logger import getOttoLogger
+from otto.host.embedded_host import EmbeddedHost
+from otto.logger import get_otto_logger
 from otto.suite import OttoSuite, register_suite
 from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
 BUILD_SCRIPT = PRODUCT_DIR / "build.sh"
@@ -50,7 +50,7 @@ BUILD_SCRIPT = PRODUCT_DIR / "build.sh"
 
 def _embedded_cov_config() -> dict:
     """Return the ``[coverage.embedded]`` table from the first repo declaring one."""
-    for repo in getRepos():
+    for repo in get_repos():
         embedded = (repo.settings.get("coverage") or {}).get("embedded")
         if embedded:
             return embedded
@@ -74,15 +74,15 @@ def _extension_path_from(build_dir: str) -> Path:
 def _build_dir_for(host: EmbeddedHost) -> str:
     """Resolve the ``build_dir`` for *host*'s Zephyr version.
 
-    Looks up ``host.osVersion`` in the optional
+    Looks up ``host.os_version`` in the optional
     ``[coverage.embedded].builds."<version>"`` table first; falls back to the
     single ``[coverage.embedded].build_dir``. Raises :exc:`RuntimeError` when
     neither is configured (mirrors the existing "build_dir is not configured"
     guard).
     """
     cfg = _embedded_cov_config()
-    if host.osVersion:
-        per_version = cfg.get("builds", {}).get(host.osVersion, {})
+    if host.os_version:
+        per_version = cfg.get("builds", {}).get(host.os_version, {})
         if per_version.get("build_dir"):
             return per_version["build_dir"]
     build_dir = cfg.get("build_dir")
@@ -92,15 +92,15 @@ def _build_dir_for(host: EmbeddedHost) -> str:
 
 
 def _zver_for(host: EmbeddedHost) -> 'str | None':
-    """Map *host*'s ``osVersion`` to ``build.sh``'s ``zver`` positional argument.
+    """Map *host*'s ``os_version`` to ``build.sh``'s ``zver`` positional argument.
 
-    Returns ``"v" + osVersion.replace(".", "_")`` (e.g. ``"3.7"`` → ``"v3_7"``,
-    ``"4.4"`` → ``"v4_4"``). Returns ``None`` when ``osVersion`` is falsy so the
+    Returns ``"v" + os_version.replace(".", "_")`` (e.g. ``"3.7"`` → ``"v3_7"``,
+    ``"4.4"`` → ``"v4_4"``). Returns ``None`` when ``os_version`` is falsy so the
     caller can omit the argument and rely on ``build.sh``'s default ``v3_7``.
     """
-    if not host.osVersion:
+    if not host.os_version:
         return None
-    return "v" + host.osVersion.replace(".", "_")
+    return "v" + host.os_version.replace(".", "_")
 
 
 async def _build_extension_for(build_dir: str, zver: 'str | None') -> None:
@@ -131,7 +131,7 @@ async def _build_extension_for(build_dir: str, zver: 'str | None') -> None:
 
 def _coverage_host_pattern() -> 're.Pattern[str] | None':
     """Return the repo-declared ``[coverage].hosts`` selector, compiled (or ``None``)."""
-    for repo in getRepos():
+    for repo in get_repos():
         hosts = (repo.settings.get("coverage") or {}).get("hosts")
         if hosts:
             return re.compile(hosts)

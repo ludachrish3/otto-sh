@@ -28,11 +28,11 @@ from .telnet import TelnetClient
 if TYPE_CHECKING:
     from .connections import ConnectionManager
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .host import RunResult, ShellCommand
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 # Type alias for expect patterns: (regex_pattern, response_text)
 Expect = tuple[str | re.Pattern[str], str]

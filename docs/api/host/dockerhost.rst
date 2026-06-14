@@ -1,4 +1,4 @@
-host.dockerHost
+host.docker_host
 ===============
 
-.. automodule:: otto.host.dockerHost
+.. automodule:: otto.host.docker_host

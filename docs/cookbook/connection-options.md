@@ -62,7 +62,7 @@ repo's `connect_timeout`:
 ```json
 {
     "ip": "10.10.200.20",
-    "ne": "router",
+    "element": "router",
     "creds": { "admin": "secret" },
     "labs": ["wan"],
     "ssh_options": { "port": 2222 }
@@ -86,7 +86,7 @@ from otto.host.options import SshOptions
 host = UnixHost(
     ip='10.10.200.12',
     creds={'admin': 'secret'},
-    ne='lab',
+    element='lab',
     ssh_options=SshOptions(port=2222),
 )
 ```
@@ -96,7 +96,7 @@ Equivalent `hosts.json` entry:
 ```json
 {
     "ip": "10.10.200.12",
-    "ne": "lab",
+    "element": "lab",
     "creds": { "admin": "secret" },
     "ssh_options": { "port": 2222 }
 }
@@ -150,7 +150,7 @@ keys mirror the dataclass fields:
 ```json
 {
     "ip": "10.10.200.12",
-    "ne": "lab",
+    "element": "lab",
     "creds": { "admin": "secret" },
     "ssh_options": {
         "local_forwards": [

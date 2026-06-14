@@ -15,7 +15,7 @@ from typing import (
 
 import tomli
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..utils import (
     CommandStatus,
     Status,
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
     from ..host.os_profile import OsProfile
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 SETTINGS_FILENAME  = 'settings.toml'
 TOML_SETTINGS_PATH = Path('.otto') / SETTINGS_FILENAME
@@ -127,14 +127,14 @@ class CollectedTest:
 @dataclass
 class Repo():
 
-    sutDir: Path
+    sut_dir: Path
     """SUT directory from which the settings came."""
 
-    _gitHash: str | None = field(default=None, init=False, repr=False)
-    """HEAD git hash of repo. None if `sutDir` is not a git repo."""
+    _git_hash: str | None = field(default=None, init=False, repr=False)
+    """HEAD git hash of repo. None if `sut_dir` is not a git repo."""
 
-    _gitDescription: str | None = field(default=None, init=False, repr=False)
-    """HEAD git hash of repo. None if `sutDir` is not a git repo."""
+    _git_description: str | None = field(default=None, init=False, repr=False)
+    """HEAD git hash of repo. None if `sut_dir` is not a git repo."""
 
     name: str = field(init=False)
     """Product/repo name"""
@@ -182,7 +182,7 @@ class Repo():
     """Named OS profiles declared by this repo's ``[os_profiles]`` settings,
     keyed by profile name. Each is also registered into the global os-profile
     registry at parse time so lab-data entries can select it by name in the
-    ``osType`` field. See :func:`otto.host.os_profile.register_os_profile`."""
+    ``os_type`` field. See :func:`otto.host.os_profile.register_os_profile`."""
 
     settings: dict[str, Any] = field(default_factory=dict[str, Any])
     """Repo settings dict as parsed from the `settings.toml` file"""
@@ -196,9 +196,9 @@ class Repo():
     section is absent."""
 
     def __post_init__(self):
-        self.parseSettings()
+        self.parse_settings()
 
-    def getLabPanel(self) -> 'Panel':
+    def get_lab_panel(self) -> 'Panel':
         from rich.panel import Panel
         from rich.text import Text
 
@@ -221,7 +221,7 @@ class Repo():
         )
         return panel
 
-    def getInstructionsPanel(self) -> 'Panel':
+    def get_instructions_panel(self) -> 'Panel':
         """Build a Rich panel listing all instructions contributed by this repo.
 
         Instructions are attributed to this repo by matching each registered
@@ -245,9 +245,9 @@ class Repo():
 
         lines = [f'• {n}' for n in instruction_names]
         content = Text('\n'.join(lines)) if lines else Text('no instructions found', style='dim')
-        return self._makeTestPanel(f'{self.name} {self.version}', content)
+        return self._make_test_panel(f'{self.name} {self.version}', content)
 
-    def collectTests(self) -> list[CollectedTest]:
+    def collect_tests(self) -> list[CollectedTest]:
         """Collect all tests from this repo's configured test directories.
 
         Performs a single pytest collection pass (no tests are executed).
@@ -313,7 +313,7 @@ class Repo():
             ))
         return tests
 
-    def _makeTestPanel(self, title: str, content: 'Text') -> 'Panel':
+    def _make_test_panel(self, title: str, content: 'Text') -> 'Panel':
         from rich.panel import Panel
         from rich.text import Text
 
@@ -325,7 +325,7 @@ class Repo():
             expand=True,
         )
 
-    def getTestsPanel(self, items: list[CollectedTest]) -> 'Panel':
+    def get_tests_panel(self, items: list[CollectedTest]) -> 'Panel':
         """Rich panel listing every individual test with its full run syntax.
 
         Each line shows ``otto test <absolute-path>::[Class::]test_fn`` which
@@ -335,15 +335,15 @@ class Repo():
         Parameters
         ----------
         items :
-            Pre-collected tests from :meth:`collectTests`.
+            Pre-collected tests from :meth:`collect_tests`.
         """
         from rich.text import Text
 
-        lines = [f'• {_test_run_syntax(t, self.sutDir)}' for t in items]
+        lines = [f'• {_test_run_syntax(t, self.sut_dir)}' for t in items]
         content = Text('\n'.join(lines)) if lines else Text('(no tests found)', style='dim')
-        return self._makeTestPanel(f'{self.name} {self.version}', content)
+        return self._make_test_panel(f'{self.name} {self.version}', content)
 
-    def getTestFilesPanel(self, items: list[CollectedTest]) -> 'Panel':
+    def get_test_files_panel(self, items: list[CollectedTest]) -> 'Panel':
         """Rich panel listing unique test files with their run syntax.
 
         Each line shows ``otto test <absolute-path>`` which runs all tests
@@ -352,19 +352,19 @@ class Repo():
         Parameters
         ----------
         items :
-            Pre-collected tests from :meth:`collectTests`.
+            Pre-collected tests from :meth:`collect_tests`.
         """
         from rich.text import Text
 
         seen: dict[Path, None] = {}
-        sut_dir = self.sutDir.resolve()
+        sut_dir = self.sut_dir.resolve()
         for t in items:
             seen.setdefault(t.path.relative_to(sut_dir), None)
         lines = [f'• {p}' for p in seen]
         content = Text('\n'.join(lines)) if lines else Text('(no tests found)', style='dim')
-        return self._makeTestPanel(f'{self.name} {self.version}', content)
+        return self._make_test_panel(f'{self.name} {self.version}', content)
 
-    def getTestSuitesPanel(self, items: list[CollectedTest]) -> 'Panel':
+    def get_test_suites_panel(self, items: list[CollectedTest]) -> 'Panel':
         """Rich panel listing unique test suites with their run syntax.
 
         Only class-based tests are listed, using just ``ClassName`` — the
@@ -376,7 +376,7 @@ class Repo():
         Parameters
         ----------
         items :
-            Pre-collected tests from :meth:`collectTests`.
+            Pre-collected tests from :meth:`collect_tests`.
         """
         from rich.text import Text
 
@@ -386,9 +386,9 @@ class Repo():
                 seen.setdefault(t.cls_name, None)
         lines = [f'• {k}' for k in seen]
         content = Text('\n'.join(lines)) if lines else Text('(no tests found)', style='dim')
-        return self._makeTestPanel(f'{self.name} {self.version}', content)
+        return self._make_test_panel(f'{self.name} {self.version}', content)
 
-    def getOttoSettingsPath(self,
+    def get_otto_settings_path(self,
     ) -> Path:
         """
         Create the path to the `otto` settings TOML file.
@@ -403,55 +403,55 @@ class Repo():
             If the TOML file is not found.
         """
 
-        ottoSettingsPath = self.sutDir / TOML_SETTINGS_PATH
+        ottoSettingsPath = self.sut_dir / TOML_SETTINGS_PATH
         if not ottoSettingsPath.exists():
             raise FileNotFoundError(
-                f"The SUT repo {self.sutDir} does not have the required TOML file, {TOML_SETTINGS_PATH}"
+                f"The SUT repo {self.sut_dir} does not have the required TOML file, {TOML_SETTINGS_PATH}"
             ) from None
 
         return ottoSettingsPath
 
 
-    def readSettings(self,
+    def read_settings(self,
     ) -> str:
 
-        ottoSettingsPath = self.getOttoSettingsPath()
+        ottoSettingsPath = self.get_otto_settings_path()
 
         with open(ottoSettingsPath) as ottoSettingsFile:
             settingsText = ottoSettingsFile.read()
 
         return settingsText
 
-    def parseSettings(self) -> None:
+    def parse_settings(self) -> None:
         """Parse the settings TOML file in the repo's `.otto` directory."""
 
-        settingsText = self.readSettings()
+        settingsText = self.read_settings()
         self.settings = tomli.loads(settingsText)
 
-        self.labs  = [ Path(self._expandString(lab)) for lab in self.settings.get('labs',  []) ]
+        self.labs  = [ Path(self._expand_string(lab)) for lab in self.settings.get('labs',  []) ]
         # Lab *names* (not paths, no var expansion). Empty when unset — the
         # repo declares nothing, which enforcement (deferred) must treat as
         # "undeclared", not as allow-all.
         self.valid_labs = list(self.settings.get('valid_labs', []))
-        self.libs  = [ Path(self._expandString(lib)) for lib in self.settings.get('libs',  []) ]
-        self.tests = [ Path(self._expandString(dir)) for dir in self.settings.get('tests', []) ]
-        self.init  = [      self._expandString(mod)  for mod in self.settings.get('init',  []) ]
+        self.libs  = [ Path(self._expand_string(lib)) for lib in self.settings.get('libs',  []) ]
+        self.tests = [ Path(self._expand_string(dir)) for dir in self.settings.get('tests', []) ]
+        self.init  = [      self._expand_string(mod)  for mod in self.settings.get('init',  []) ]
 
-        self.host_defaults = self._parseHostDefaults(self.settings.get('host_defaults', {}))
+        self.host_defaults = self._parse_host_defaults(self.settings.get('host_defaults', {}))
 
-        self.os_profiles = self._parseOsProfiles(self.settings.get('os_profiles', {}))
+        self.os_profiles = self._parse_os_profiles(self.settings.get('os_profiles', {}))
 
-        self.docker_settings = self._parseDockerSettings(self.settings.get('docker', {}))
+        self.docker_settings = self._parse_docker_settings(self.settings.get('docker', {}))
 
         try:
-            self.name = self._expandString(self.settings['name'])
-            self.version = Version(self._expandString(self.settings['version']))
+            self.name = self._expand_string(self.settings['name'])
+            self.version = Version(self._expand_string(self.settings['version']))
         except KeyError as e:
             errorStr = f"{TOML_SETTINGS_PATH} does not specify a required field: {e}"
             logger.critical(errorStr)
             raise KeyError(errorStr) from e
 
-    def _parseHostDefaults(self,
+    def _parse_host_defaults(self,
         raw: dict[str, Any],
     ) -> dict[str, dict[str, Any]]:
         """Validate, expand, and normalize the ``[host_defaults]`` TOML table.
@@ -486,10 +486,10 @@ class Repo():
                     f"{TOML_SETTINGS_PATH}: [host_defaults.{opt_key}] must be a "
                     f"table, got {type(table).__name__}"
                 )
-            result[opt_key] = self._expandRecursive(table)
+            result[opt_key] = self._expand_recursive(table)
         return result
 
-    def _parseOsProfiles(self,
+    def _parse_os_profiles(self,
         raw: dict[str, Any],
     ) -> dict[str, 'OsProfile']:
         """Validate, expand, and register the ``[os_profiles]`` TOML table.
@@ -498,9 +498,9 @@ class Repo():
         a registered host class (e.g. ``'unix'``, ``'embedded'``, ``'zephyr'``,
         or a custom class registered via :func:`otto.host.os_profile.register_host_class`)
         that selects the host class to build; the remaining keys are default
-        field values bundled with the profile (with ``${sutDir}`` expanded).
+        field values bundled with the profile (with ``${sut_dir}`` expanded).
         Every profile is registered into the global os-profile registry so
-        lab-data entries can select it by name in the ``osType`` field.
+        lab-data entries can select it by name in the ``os_type`` field.
 
         This runs at settings-parse time, *before* init modules are imported,
         so a code ``register_os_profile`` call in an ``init`` module (imported
@@ -533,7 +533,7 @@ class Repo():
                     f"required 'base' key (the name of a registered host class, "
                     f"e.g. 'unix', 'embedded', 'zephyr')"
                 )
-            expanded = self._expandRecursive(table)
+            expanded = self._expand_recursive(table)
             base = expanded.pop('base')
             try:
                 register_os_profile(name, base, expanded)
@@ -544,13 +544,13 @@ class Repo():
             result[name] = build_os_profile(name)
         return result
 
-    def _parseDockerSettings(self,
+    def _parse_docker_settings(self,
         raw: dict[str, Any],
     ) -> DockerSettings:
         """Validate and normalize the ``[docker]`` TOML table.
 
         Defaults are applied when keys are absent so projects only need to
-        specify what differs. ``${sutDir}`` is expanded in path-shaped values.
+        specify what differs. ``${sut_dir}`` is expanded in path-shaped values.
         Unknown top-level keys raise ``ValueError`` so typos don't silently
         no-op; sub-tables (images, composes) only validate the fields they
         consume.
@@ -572,7 +572,7 @@ class Repo():
                 f"Valid keys are: {sorted(allowed)}"
             )
 
-        registry_url = self._expandString(raw.get('registry_url', 'docker.io'))
+        registry_url = self._expand_string(raw.get('registry_url', 'docker.io'))
 
         images: list[DockerImage] = []
         for idx, entry in enumerate(raw.get('images', []) or []):
@@ -595,12 +595,12 @@ class Repo():
                     f"must be a table, got {type(build_args_raw).__name__}"
                 )
             images.append(DockerImage(
-                name=self._expandString(name),
-                dockerfile=Path(self._expandString(dockerfile)),
-                context=Path(self._expandString(context)),
-                target=self._expandString(entry['target']) if entry.get('target') else None,
+                name=self._expand_string(name),
+                dockerfile=Path(self._expand_string(dockerfile)),
+                context=Path(self._expand_string(context)),
+                target=self._expand_string(entry['target']) if entry.get('target') else None,
                 build_args=tuple(
-                    (self._expandString(k), self._expandString(str(v)))
+                    (self._expand_string(k), self._expand_string(str(v)))
                     for k, v in sorted(build_args_raw.items())
                 ),
             ))
@@ -624,8 +624,8 @@ class Repo():
                     f"must be a list of strings"
                 )
             composes.append(DockerCompose(
-                path=Path(self._expandString(path)),
-                default_host=self._expandString(entry['default_host']) if entry.get('default_host') else None,
+                path=Path(self._expand_string(path)),
+                default_host=self._expand_string(entry['default_host']) if entry.get('default_host') else None,
                 services=tuple(services_raw),
             ))
 
@@ -636,41 +636,41 @@ class Repo():
         )
 
     @property
-    def reservationSettings(self) -> dict[str, Any]:
-        """Return the ``[reservations]`` settings sub-dict with ${sutDir} expanded.
+    def reservation_settings(self) -> dict[str, Any]:
+        """Return the ``[reservations]`` settings sub-dict with ${sut_dir} expanded.
 
         Returns an empty dict when the section is absent. Every string value
-        (including nested tables) has ``${sutDir}`` substituted so the
+        (including nested tables) has ``${sut_dir}`` substituted so the
         reservation backend can use the same path-expansion convention as
         the other repo settings.
         """
         raw = self.settings.get('reservations', {}) or {}
-        return self._expandRecursive(raw)
+        return self._expand_recursive(raw)
 
-    def _expandRecursive(self,
+    def _expand_recursive(self,
         value: Any,
     ) -> Any:
-        """Recursively walk a dict/list, expanding every string via :meth:`_expandString`."""
+        """Recursively walk a dict/list, expanding every string via :meth:`_expand_string`."""
         if isinstance(value, str):
-            return self._expandString(value)
+            return self._expand_string(value)
         if isinstance(value, dict):
-            return {k: self._expandRecursive(v) for k, v in value.items()}
+            return {k: self._expand_recursive(v) for k, v in value.items()}
         if isinstance(value, list):
-            return [self._expandRecursive(v) for v in value]
+            return [self._expand_recursive(v) for v in value]
         return value
 
-    def addLibsToPythonpath(self) -> None:
+    def add_libs_to_pythonpath(self) -> None:
         """Add configured library directories to the PYTHONPATH"""
 
         for lib in self.libs:
             sys.path.append(f'{lib}')
 
-    def importInitModules(self) -> None:
+    def import_init_modules(self) -> None:
 
         for mod in self.init:
             importlib.import_module(mod)
 
-    def importTestFiles(self) -> None:
+    def import_test_files(self) -> None:
         """Import test_*.py files from each configured tests directory.
 
         This triggers ``@register_suite()`` decorators, which populate
@@ -692,14 +692,14 @@ class Repo():
                 sys.modules[mod_name] = mod
                 spec.loader.exec_module(mod)  # type: ignore[union-attr]
 
-    def _expandString(self,
+    def _expand_string(self,
         field: str,
     ) -> str:
         """
         Expand a string value from the settings file with variable values.
 
         The special strings are:
-        - `"${sutDir}"`: Replaced with the `Repo.sutDir` value.
+        - `"${sut_dir}"`: Replaced with the `Repo.sut_dir` value.
 
         Parameters
         ----------
@@ -710,78 +710,78 @@ class Repo():
         `str` object after all supported substitutions.
         """
 
-        field = field.replace('${sutDir}', f'{self.sutDir}')
+        field = field.replace('${sut_dir}', f'{self.sut_dir}')
 
         return field
 
-    def applySettings(self):
+    def apply_settings(self):
 
-        self.addLibsToPythonpath()
-        self.importInitModules()
-        self.importTestFiles()
+        self.add_libs_to_pythonpath()
+        self.import_init_modules()
+        self.import_test_files()
 
-    async def setGitDescription(self):
+    async def set_git_description(self):
 
-        commandStatus = await self.runGitCommand('describe')
+        commandStatus = await self.run_git_command('describe')
         if commandStatus.status == Status.Success:
-            self._gitDescription = f'({commandStatus.output.strip()})'
+            self._git_description = f'({commandStatus.output.strip()})'
 
         # `git describe` can fail if no names or tags exist for the repo.
         # In this case, which is expected and can happen, set the description
         # to an empty string
         else:
-            self._gitDescription = ''
+            self._git_description = ''
 
 
-    async def setCommitHash(self):
+    async def set_commit_hash(self):
 
-        commandStatus = await self.runGitCommand('log -1 --format=%H')
-        self._gitHash = commandStatus.output
+        commandStatus = await self.run_git_command('log -1 --format=%H')
+        self._git_hash = commandStatus.output
 
     @property
     def commit(self):
-        if self._gitHash is not None:
-            return self._gitHash
+        if self._git_hash is not None:
+            return self._git_hash
 
-        asyncio.run(self.setCommitHash())
-        return self._gitHash
+        asyncio.run(self.set_commit_hash())
+        return self._git_hash
 
     @property
     def description(self):
-        if self._gitDescription is not None:
-            return self._gitDescription
+        if self._git_description is not None:
+            return self._git_description
 
-        asyncio.run(self.setGitDescription())
-        return self._gitDescription
+        asyncio.run(self.set_git_description())
+        return self._git_description
 
     @property
-    def commitName(self) -> str:
+    def commit_name(self) -> str:
         from ..host.host import SuppressCommandOutput
 
         with SuppressCommandOutput():
             return f'{self.commit} ({self.description})'
 
-    async def runGitCommand(self,
+    async def run_git_command(self,
         cmd: str,
     ) -> CommandStatus:
-        from ..host.localHost import LocalHost
+        from ..host.local_host import LocalHost
 
         host = LocalHost(log=False)
         try:
-            return (await host.run(f'git -C {self.sutDir} {cmd}')).only
+            return (await host.run(f'git -C {self.sut_dir} {cmd}')).only
         finally:
             await host.close()
 
 
-def applyRepoSettings(
+def apply_repo_settings(
     repos: list[Repo],
 ) -> None:
 
     for repo in repos:
-        repo.applySettings()
+        repo.apply_settings()
 
 
-def getRepos(
+def get_repos(
     repos: list[Path],
 ) -> list[Repo]:
     """Create `Repo` objects from the list of provided repo paths.
@@ -800,4 +800,4 @@ def getRepos(
         If a repo's settings TOML file is not found.
     """
 
-    return [ Repo(sutDir=repo) for repo in repos ]
+    return [ Repo(sut_dir=repo) for repo in repos ]

@@ -13,7 +13,7 @@ from otto.coverage.fetcher.embedded import (
     collect_embedded_coverage,
     decode_cov_dump,
 )
-from otto.host.embeddedHost import EmbeddedHost
+from otto.host.embedded_host import EmbeddedHost
 from otto.utils import CommandStatus, Status
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "embedded_coverage"

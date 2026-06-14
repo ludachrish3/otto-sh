@@ -350,7 +350,7 @@ a `toolchain` block in `hosts.json` pointing to the cross toolchain's `gcov`:
 
 ```json
 {
-    "ne": "sprout_cov",
+    "element": "sprout_cov",
     "toolchain": {
         "sysroot": "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi",
         "gcov": "bin/arm-zephyr-eabi-gcov",

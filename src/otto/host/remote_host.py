@@ -10,7 +10,7 @@ which runs commands on the local machine and shares no network plumbing.
 History: this name used to belong to the *concrete* SSH/Telnet bash host.
 That class is now :class:`UnixHost`; ``RemoteHost`` is the abstract parent.
 The split makes the OS family of a host explicit (lab data carries an
-``osType`` field) and gives embedded targets a place to live alongside Unix
+``os_type`` field) and gives embedded targets a place to live alongside Unix
 ones without lying about their shape.
 
 ``RemoteHost`` is intentionally **not** a dataclass. The concrete subclasses
@@ -28,7 +28,7 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, cast
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from .host import BaseHost
 
 if TYPE_CHECKING:
@@ -39,10 +39,10 @@ if TYPE_CHECKING:
     from .options import SnmpOptions
     from .session import SessionManager
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 OsType = str
-"""Profile selector recorded on a host (the ``osType`` field).
+"""Profile selector recorded on a host (the ``os_type`` field).
 
 Built-ins: ``unix`` (:class:`UnixHost`), ``embedded`` (generic
 :class:`EmbeddedHost`), ``zephyr`` (:class:`ZephyrHost`). Custom profiles add
@@ -74,14 +74,14 @@ class RemoteHost(BaseHost):
     ip: str
     """IP address of the host."""
 
-    ne: str
+    element: str
     """Network element to which this host belongs."""
 
     id: str
     """Unique identifier for this host."""
 
     name: str
-    """Human-readable name; auto-generated from ``ne``/``board`` if not given."""
+    """Human-readable name; auto-generated from ``element``/``board`` if not given."""
 
     creds: dict[str, str]
     """Users and their respective passwords for this host."""
@@ -95,7 +95,7 @@ class RemoteHost(BaseHost):
     user: Optional[str]
     """User with which to log in, or None to use the first entry in ``creds``."""
 
-    neId: Optional[int]
+    element_id: Optional[int]
     """Network element identifier, or None when no disambiguation is needed."""
 
     board: Optional[str]
@@ -107,14 +107,14 @@ class RemoteHost(BaseHost):
     hop: Optional[str]
     """Host ID of the intermediate hop used to reach this host, or None."""
 
-    osType: OsType
+    os_type: OsType
     """Profile selector recorded on this host (see :data:`OsType`). The base
     *family* (unix vs embedded) is derived from the host class, not this string."""
 
-    osName: Optional[str]
+    os_name: Optional[str]
     """Kernel/OS name (e.g. ``Linux``, ``Zephyr``)."""
 
-    osVersion: Optional[str]
+    os_version: Optional[str]
     """OS/kernel version string, or None if unspecified."""
 
     default_dest_dir: Path
@@ -189,32 +189,32 @@ class RemoteHost(BaseHost):
     #  Naming
     ####################
 
-    def _generateName(self) -> str:
+    def _generate_name(self) -> str:
 
         if not self.board:
-            return f"{self.ne}{self._neIdStr}"
+            return f"{self.element}{self._element_id_str}"
 
-        return f"{self.ne}{self._neIdStr} {self.board}{self._slotStr}"
+        return f"{self.element}{self._element_id_str} {self.board}{self._slot_str}"
 
-    def _generateId(self) -> str:
+    def _generate_id(self) -> str:
 
-        neStr = f"{self.ne.lower()}{self._neIdStr}"
+        neStr = f"{self.element.lower()}{self._element_id_str}"
 
         if self.board is None:
             return neStr
 
-        return f"{neStr}_{self.board.lower()}{self._slotStr}"
+        return f"{neStr}_{self.board.lower()}{self._slot_str}"
 
     @property
-    def _neIdStr(self) -> str:
+    def _element_id_str(self) -> str:
 
-        if self.neId is None:
+        if self.element_id is None:
             return ''
 
-        return f"{self.ne}"
+        return f"{self.element}"
 
     @property
-    def _slotStr(self) -> str:
+    def _slot_str(self) -> str:
 
         if self.slot is None:
             return ''
@@ -288,7 +288,7 @@ class RemoteHost(BaseHost):
                 raise RuntimeError(
                     f"Host {host_name!r} cannot resolve hop {hop_id!r}: the host has no lab "
                     f"back-reference and there is no active OttoContext. Add the host to a Lab "
-                    f"(Lab.addHost) or run within `otto.open_context(...)`."
+                    f"(Lab.add_host) or run within `otto.open_context(...)`."
                 )
             if hop_id not in lab.hosts:
                 raise KeyError(

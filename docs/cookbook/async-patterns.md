@@ -129,7 +129,7 @@ your own.
 ```python
 from pathlib import Path
 from otto.configmodule.configmodule import do_for_all_hosts
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 
 async def deploy_firmware():
     """Push a firmware file to all hosts concurrently."""

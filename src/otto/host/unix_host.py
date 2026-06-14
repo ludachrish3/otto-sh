@@ -68,7 +68,7 @@ from .connections import (
 from .host import (
     Host,
     SuppressCommandOutput,
-    isDryRun,
+    is_dry_run,
 )
 from .interact import run_ssh_login, run_telnet_login
 from .options import (
@@ -80,7 +80,7 @@ from .options import (
     SshOptions,
     TelnetOptions,
 )
-from .remoteHost import OsType, RemoteHost
+from .remote_host import OsType, RemoteHost
 from .repeat import RepeatRunner
 from .session import (
     Expect,
@@ -107,17 +107,17 @@ class UnixHost(RemoteHost):
     creds: dict[str, str]
     """Users and their respective passwords for this host."""
 
-    ne: str = field(repr=False)
+    element: str = field(repr=False)
     """Network element to which this host belongs."""
 
-    osType: OsType = 'unix'
+    os_type: OsType = 'unix'
     """Default profile selector for a bare :class:`UnixHost`. A custom
     unix-based profile (e.g. ``ubuntu-22.04``) records its own name here."""
 
-    osName: Optional[str] = 'Linux'
+    os_name: Optional[str] = 'Linux'
     """Kernel/OS name. Defaults to ``Linux`` (the concrete Unix kernel today)."""
 
-    osVersion: Optional[str] = None
+    os_version: Optional[str] = None
     """OS/kernel version string, or None if unspecified."""
 
     name: str = None # type: ignore
@@ -126,7 +126,7 @@ class UnixHost(RemoteHost):
     user: Optional[str] = None
     """User with which to log in. If not provided, the first user in the `creds` dict will be used."""
 
-    neId: Optional[int] = field(default=None, repr=False)
+    element_id: Optional[int] = field(default=None, repr=False)
     """Network element identifier to which this host belongs.
     None indicates there are no other NEs of this type and a number is not needed."""
 
@@ -219,7 +219,7 @@ class UnixHost(RemoteHost):
     binaries.  Defaults to system-installed tools."""
 
     _lab: "Lab | None" = field(default=None, compare=False, repr=False, kw_only=True)
-    """Back-reference to the owning Lab, wired by Lab.addHost. Lets hop
+    """Back-reference to the owning Lab, wired by Lab.add_host. Lets hop
     resolution use self._lab.hosts[...] instead of ambient state."""
 
     id: str = field(init=False, repr=False)
@@ -243,9 +243,9 @@ class UnixHost(RemoteHost):
 
     def __post_init__(self):
 
-        self.id = self._generateId()
+        self.id = self._generate_id()
         if self.name is None:
-            self.name = self._generateName()
+            self.name = self._generate_name()
 
         # Lab JSON serializes ``default_dest_dir`` as a string; coerce so
         # ``_resolve_dest`` can use Path arithmetic uniformly.
@@ -471,7 +471,7 @@ class UnixHost(RemoteHost):
             ``CommandStatus`` with the command, captured output, ``Status`` enum, and
             exit code. Exit code 0 → ``Status.Success``; non-zero → ``Status.Failed``.
         """
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_result(cmd)
         return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
@@ -528,7 +528,7 @@ class UnixHost(RemoteHost):
         See Also:
             :meth:`run`: stateful, sequential alternative with expect support.
         """
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_result(cmd)
         return await self._session_mgr.oneshot(cmd, timeout=timeout, log=log)
 
@@ -558,13 +558,13 @@ class UnixHost(RemoteHost):
             :meth:`oneshot`: stateless one-shot alternative.
             :meth:`run`: default persistent session.
         """
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] open_session({name!r})")
         return await self._session_mgr.open_session(name)
 
     async def send(self, text: str) -> None:
         """Send raw text to the host's persistent session."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] send({text!r})")
             return
         await self._session_mgr.send(text)
@@ -575,7 +575,7 @@ class UnixHost(RemoteHost):
         timeout: float = 10.0,
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] expect() skipped — pattern would never match without a live connection")
             return ""
         return await self._session_mgr.expect(pattern, timeout)
@@ -593,7 +593,7 @@ class UnixHost(RemoteHost):
         """Transfer files from remote host to the local machine."""
         if not isinstance(src_files, list):
             src_files = [src_files]
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
@@ -612,7 +612,7 @@ class UnixHost(RemoteHost):
         if not isinstance(src_files, list):
             src_files = [src_files]
         dest_dir = self._resolve_dest(dest_dir)
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)

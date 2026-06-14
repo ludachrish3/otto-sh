@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from otto.coverage.correlator.merger import LcovMerger
-from otto.host.localHost import LocalHost
+from otto.host.local_host import LocalHost
 from otto.host.toolchain import Toolchain
 from otto.utils import CommandStatus, Status
 

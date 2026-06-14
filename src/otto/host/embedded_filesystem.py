@@ -1,5 +1,5 @@
 """
-On-device filesystem abstraction for :class:`~otto.host.embeddedHost.EmbeddedHost`.
+On-device filesystem abstraction for :class:`~otto.host.embedded_host.EmbeddedHost`.
 
 Embedded targets are not homogeneous: a Zephyr build may expose FAT on a RAM
 disk, LittleFS on simulated flash, or no filesystem at all. Console file
@@ -67,7 +67,7 @@ class EmbeddedFileSystem(ABC):
     mount: ClassVar[str | None]
     """Mount path of this filesystem on the device, or ``None`` when the
     target has no FS. Also used as the default ``default_dest_dir`` for an
-    :class:`~otto.host.embeddedHost.EmbeddedHost` that doesn't override it
+    :class:`~otto.host.embedded_host.EmbeddedHost` that doesn't override it
     explicitly."""
 
     mount_cmd: ClassVar[str | None] = None
@@ -135,7 +135,7 @@ class EmbeddedFileSystem(ABC):
 class NoFileSystem(EmbeddedFileSystem):
     """The target has no on-device filesystem.
 
-    Set as the default for an :class:`~otto.host.embeddedHost.EmbeddedHost`
+    Set as the default for an :class:`~otto.host.embedded_host.EmbeddedHost`
     when ``"filesystem"`` is absent from lab data. Console transfer and the
     disk parser both short-circuit to a clear no-op / clear error — never
     a hang or a garbled response from running ``fs`` against a target that

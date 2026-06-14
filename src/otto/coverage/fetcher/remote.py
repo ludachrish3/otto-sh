@@ -1,6 +1,6 @@
 """Fetch ``.gcda`` files from remote hosts using otto's file transfer.
 
-Uses :meth:`UnixHost.get() <otto.host.unixHost.UnixHost.get>`
+Uses :meth:`UnixHost.get() <otto.host.unix_host.UnixHost.get>`
 which supports SCP, SFTP, FTP, and netcat with progress tracking and
 multi-hop SSH chains.
 """
@@ -15,7 +15,7 @@ from ...configmodule.configmodule import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
-    from ...host.unixHost import UnixHost
+    from ...host.unix_host import UnixHost
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +53,8 @@ async def _fetch_one_host(
     # likewise carries no toolchain. Skip without creating an empty dest
     # dir that would trip up downstream tools (e.g. lcov's ``geninfo``
     # errors out on empty dirs).
-    from ...host.dockerHost import DockerContainerHost
-    from ...host.embeddedHost import EmbeddedHost
+    from ...host.docker_host import DockerContainerHost
+    from ...host.embedded_host import EmbeddedHost
     if isinstance(host, (DockerContainerHost, EmbeddedHost)):
         return None
 

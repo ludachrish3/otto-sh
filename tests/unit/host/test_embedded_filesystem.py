@@ -41,7 +41,7 @@ class TestBuiltinVariants:
         assert fs.supports_disk_metric is False
         assert fs.statvfs_command() is None
 
-    def test_fat_ram_mounts_at_RAM_with_explicit_mount_cmd(self):
+    def test_fat_ram_mounts_at_ram_with_explicit_mount_cmd(self):
         """FAT on 3.7 LTS does not auto-mount via ``zephyr,fstab``; otto
         issues ``fs mount fat /RAM:`` before the first transfer."""
         fs = FatRamFileSystem()

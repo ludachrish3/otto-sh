@@ -5,9 +5,9 @@ from typing import (
 import typer
 
 from otto.cli.run import instruction
-from otto.logger import getOttoLogger
+from otto.logger import get_otto_logger
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 @instruction()

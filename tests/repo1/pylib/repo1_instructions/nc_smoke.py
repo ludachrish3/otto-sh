@@ -34,10 +34,10 @@ from repo1_common.options import RepoOptions
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import get_host
 from otto.host import LocalHost
-from otto.logger import getOttoLogger
+from otto.logger import get_otto_logger
 from otto.utils import CommandStatus, Status
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 @dataclass

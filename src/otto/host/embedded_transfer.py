@@ -1,10 +1,10 @@
 """
 Console file transfer for embedded hosts.
 
-:class:`~otto.host.unixHost.UnixHost`'s :class:`~otto.host.transfer.FileTransfer`
+:class:`~otto.host.unix_host.UnixHost`'s :class:`~otto.host.transfer.FileTransfer`
 dispatches ``scp``/``sftp``/``ftp``/``netcat`` — none of which exist on a
 bare-metal/RTOS target. :class:`EmbeddedFileTransfer` is the embedded analogue:
-it speaks only the device's own shell, and an :class:`~otto.host.embeddedHost.
+it speaks only the device's own shell, and an :class:`~otto.host.embedded_host.
 EmbeddedHost` delegates ``get``/``put`` to it exactly as ``UnixHost`` delegates
 to ``FileTransfer``.
 
@@ -46,7 +46,7 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any, Literal
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .transfer import (
@@ -74,7 +74,7 @@ def _label_errno(retcode: int) -> str:
         return str(retcode)
     return f"{retcode} (-{name}, {os.strerror(code)})"
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 EmbeddedTransferType = Literal['console', 'tftp']
 """File-transfer backend for an embedded host. ``console`` uses the device
@@ -146,8 +146,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
 
     async def _run_get(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
         """Transfer files off the embedded target — sequential (single console).
@@ -162,17 +162,17 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         if not self._filesystem.supports_transfer:
             return Status.Error, _NO_FILESYSTEM_MSG
         await self._ensure_mounted()
-        for src in srcFiles:
+        for src in src_files:
             handler = progress_factory() if progress_factory is not None else None
-            status, err = await self._console_get_one(src, destDir, handler)
+            status, err = await self._console_get_one(src, dest_dir, handler)
             if not status.is_ok:
                 return status, err
         return Status.Success, ''
 
     async def _run_put(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
         """Transfer local files onto the embedded target — sequential.
@@ -188,9 +188,9 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         if not self._filesystem.supports_transfer:
             return Status.Error, _NO_FILESYSTEM_MSG
         await self._ensure_mounted()
-        for src in srcFiles:
+        for src in src_files:
             handler = progress_factory() if progress_factory is not None else None
-            status, err = await self._console_put_one(src, destDir, handler)
+            status, err = await self._console_put_one(src, dest_dir, handler)
             if not status.is_ok:
                 return status, err
         return Status.Success, ''
@@ -200,7 +200,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
     # ------------------------------------------------------------------
 
     async def _console_get_one(
-        self, src: Path, destDir: Path,
+        self, src: Path, dest_dir: Path,
         progress_handler: TransferProgressHandler | None = None,
     ) -> tuple[Status, str]:
         """Read one file off the target via ``fs read`` and write it locally.
@@ -211,7 +211,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         ``fs read <path> <offset> <length>``; deferred."""
         src_path = src.as_posix()
         read_cmd = self._filesystem.read_command(src_path)
-        logger.debug(f"{self._name}: {read_cmd} -> {destDir}")
+        logger.debug(f"{self._name}: {read_cmd} -> {dest_dir}")
         result = await self._exec_cmd(read_cmd, timeout=_READ_TIMEOUT)
 
         if not result.status.is_ok:
@@ -225,7 +225,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         except ValueError as e:
             return Status.Error, f"{read_cmd}: {e}"
 
-        dest = destDir / src.name
+        dest = dest_dir / src.name
         dest.write_bytes(data)
         if progress_handler is not None:
             progress_handler(src_path, dest.as_posix(), len(data), len(data))
@@ -236,7 +236,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
     # ------------------------------------------------------------------
 
     async def _console_put_one(
-        self, src: Path, destDir: Path,
+        self, src: Path, dest_dir: Path,
         progress_handler: TransferProgressHandler | None = None,
     ) -> tuple[Status, str]:
         """Write one local file onto the target via chunked ``fs write``.
@@ -246,7 +246,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         Empty files emit a single ``(0, 0)`` event so the bar appears and
         immediately completes."""
         data = src.read_bytes()
-        dest_path = (destDir / src.name).as_posix()
+        dest_path = (dest_dir / src.name).as_posix()
         src_str = str(src)
         total = len(data)
         logger.debug(

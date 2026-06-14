@@ -32,10 +32,10 @@ API builders
 ### Hosts
 
 A **Host** represents a machine otto can talk to.
-{class}`~otto.host.unixHost.UnixHost` connects over SSH or Telnet;
-{class}`~otto.host.localHost.LocalHost` runs commands on the local machine
+{class}`~otto.host.unix_host.UnixHost` connects over SSH or Telnet;
+{class}`~otto.host.local_host.LocalHost` runs commands on the local machine
 without any network connection.
-{class}`~otto.host.embeddedHost.EmbeddedHost` (and its concrete {class}`~otto.host.embeddedHost.ZephyrHost`) drives a firmware/RTOS target over a serial console; a `DockerContainerHost` targets a container.
+{class}`~otto.host.embedded_host.EmbeddedHost` (and its concrete {class}`~otto.host.embedded_host.ZephyrHost`) drives a firmware/RTOS target over a serial console; a `DockerContainerHost` targets a container.
 
 They all share a common `BaseHost` interface — {meth}`~otto.host.host.Host.run`,
 {meth}`~otto.host.host.Host.oneshot`, {meth}`~otto.host.host.Host.send` /
@@ -72,13 +72,13 @@ test suites, run instructions, and lab data:
 name = "my_project"
 version = "1.0.0"
 
-labs  = ["${sutDir}/../lab_data"]
-libs  = ["${sutDir}/pylib"]
-tests = ["${sutDir}/tests"]
+labs  = ["${sut_dir}/../lab_data"]
+libs  = ["${sut_dir}/pylib"]
+tests = ["${sut_dir}/tests"]
 init  = ["my_instructions"]
 ```
 
-`${sutDir}` is replaced with the repository root at load time.  The `init`
+`${sut_dir}` is replaced with the repository root at load time.  The `init`
 list names Python modules that otto imports at startup — this is where you
 register your instructions and shared options.
 
@@ -92,9 +92,9 @@ their own CLI options via Typer annotations:
 ```python
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import all_hosts
-from otto.logger import getOttoLogger
+from otto.logger import get_otto_logger
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 @instruction()
 async def deploy(

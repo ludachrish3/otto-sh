@@ -37,14 +37,14 @@ FileTransferType = Literal['scp', 'sftp', 'ftp', 'nc']
 
 logger = getLogger('otto')
 
-def getLoggingCommandOutputEnabled() -> bool:
+def get_logging_command_output_enabled() -> bool:
     """Return True if command-output logging is enabled on the active context."""
     from ..context import try_get_context
     ctx = try_get_context()
     return ctx.log_command_output if ctx is not None else True
 
 
-def isDryRun() -> bool:
+def is_dry_run() -> bool:
     """Return True if dry-run mode is enabled on the active context."""
     from ..context import try_get_context
     ctx = try_get_context()
@@ -433,7 +433,7 @@ class BaseHost(ABC):
         on_result: Callable[[str, datetime, list[CommandStatus]], None] | None = None,
         max_history: int = 1000,
     ) -> None:
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] start_repeat({name!r}, {cmds}, interval={interval})")
             return
         self._repeater.start(
@@ -488,7 +488,7 @@ class HostFilter(Filter):
             return True
 
         # Also respect the context and host logging flags
-        return getLoggingCommandOutputEnabled() and host.log
+        return get_logging_command_output_enabled() and host.log
 
 # TODO: Consider a way to make commands and their output log no matter what if the log level were debug.
 @dataclass

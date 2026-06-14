@@ -11,7 +11,7 @@ lab_data_type = "json"
 # reached over a QEMU `-serial telnet:` bridge. The instrumented product
 # (product/) is loaded at runtime; the base carries no coverage code.
 labs = [
-    "${sutDir}/../lab_data/tech1",
+    "${sut_dir}/../lab_data/tech1",
 ]
 
 # Labs this repo supports. The repo3 coverage product is a Zephyr LLEXT and only
@@ -23,16 +23,16 @@ valid_labs = [
 ]
 
 libs = [
-    "${sutDir}/pylib",
+    "${sut_dir}/pylib",
     # Shared, third-party-style module. repo3 only targets sprout_cov, but
     # `--lab embedded` constructs every host in the lab — including the Zephyr
     # 2.7 sprout27, whose `zephyr-inline` frame lives here. Pulling it in lets
     # repo3 load the shared lab without owning the 2.7 dialect (see
     # tests/custom_hosts).
-    "${sutDir}/../custom_hosts",
+    "${sut_dir}/../custom_hosts",
 ]
 tests = [
-    "${sutDir}/tests",
+    "${sut_dir}/tests",
 ]
 init = [
     'repo3_instructions',
@@ -46,16 +46,16 @@ init = [
 # command frame that repo1_instructions registers, which repo3 does not carry.)
 [os_profiles."zephyr-3.7"]
 base = "embedded"
-osName = "Zephyr"
-osVersion = "3.7"
+os_name = "Zephyr"
+os_version = "3.7"
 command_frame = "zephyr"
 transfer = "console"
 max_filename_len = 32
 
 [os_profiles."zephyr-4.4"]
 base = "embedded"
-osName = "Zephyr"
-osVersion = "4.4"
+os_name = "Zephyr"
+os_version = "4.4"
 command_frame = "zephyr"
 transfer = "console"
 max_filename_len = 32
@@ -91,11 +91,11 @@ extension = "cov_ext"
 
 # The extension's build dir: holds the .gcno + source used as the report's
 # source root. Absolute, on the dev VM where the product is built. See product/.
-# Retained as the single-version fallback for any coverage host whose osVersion
+# Retained as the single-version fallback for any coverage host whose os_version
 # has no entry in the per-version [coverage.embedded.builds] table below.
 build_dir = "/home/vagrant/build/cov_ext_app"
 
-# Per-Zephyr-version product builds. Each coverage host's osVersion selects its
+# Per-Zephyr-version product builds. Each coverage host's os_version selects its
 # own build_dir (whose .gcno is that host's report source root); the cross-gcov
 # comes from the host's lab-data toolchain. This is what lets coverage span
 # multiple Zephyr versions: sprout_cov (3.7) -> cov_ext_app (built `build.sh

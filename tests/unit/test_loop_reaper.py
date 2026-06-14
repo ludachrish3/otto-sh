@@ -23,7 +23,7 @@ class TestClassifyLoopOrigin:
     def test_otto_frame_in_stack_is_product(self):
         stack = [
             "/x/_pytest/runner.py",
-            "/home/u/otto-sh/src/otto/host/unixHost.py",
+            "/home/u/otto-sh/src/otto/host/unix_host.py",
             "/usr/lib/python3.12/asyncio/runners.py",
         ]
         assert classify_loop_origin(stack) == "product"

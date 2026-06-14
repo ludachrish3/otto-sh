@@ -87,7 +87,7 @@ def _lab_with(*ne_names: str) -> Lab:
     from tests.conftest import make_host
     lab = Lab(name="t")
     for ne in ne_names:
-        lab.addHost(make_host(ne))
+        lab.add_host(make_host(ne))
     return lab
 
 

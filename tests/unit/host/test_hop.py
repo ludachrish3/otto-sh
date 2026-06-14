@@ -13,7 +13,7 @@ from asyncssh import SSHClientConnection
 
 from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions, ScpOptions
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.host.transport import SshHopTransport
 
 
@@ -24,14 +24,14 @@ from otto.host.transport import SshHopTransport
 @pytest.fixture
 def host() -> UnixHost:
     """A simple host with no hop."""
-    return UnixHost(ip='10.0.0.1', ne='target', creds={'user': 'pass'}, log=False)
+    return UnixHost(ip='10.0.0.1', element='target', creds={'user': 'pass'}, log=False)
 
 
 @pytest.fixture
 def hop_host() -> UnixHost:
     """A host configured with a hop."""
     return UnixHost(
-        ip='10.0.0.2', ne='target', creds={'user': 'pass'},
+        ip='10.0.0.2', element='target', creds={'user': 'pass'},
         hop='jumpbox', log=False,
     )
 
@@ -317,7 +317,7 @@ class TestTunnelCleanup:
 class TestRebuildConnections:
 
     def test_rebuild_adds_tunnel(self):
-        host = UnixHost(ip='10.0.0.1', ne='target', creds={'user': 'pass'}, log=False)
+        host = UnixHost(ip='10.0.0.1', element='target', creds={'user': 'pass'}, log=False)
         assert not host._connections.has_tunnel
 
         host.hop = 'some_hop'
@@ -326,7 +326,7 @@ class TestRebuildConnections:
 
     def test_rebuild_removes_tunnel(self):
         host = UnixHost(
-            ip='10.0.0.1', ne='target', creds={'user': 'pass'},
+            ip='10.0.0.1', element='target', creds={'user': 'pass'},
             hop='some_hop', log=False,
         )
         assert host._connections.has_tunnel
@@ -632,16 +632,16 @@ class TestCycleDetection:
         """
         from otto.configmodule.lab import Lab
 
-        host_a = UnixHost(ip='10.0.0.1', ne='hostA', creds={'user': 'pass'}, hop='hostb', log=False)
-        host_b = UnixHost(ip='10.0.0.2', ne='hostB', creds={'user': 'pass'}, hop='hosta', log=False)
+        host_a = UnixHost(ip='10.0.0.1', element='hostA', creds={'user': 'pass'}, hop='hostb', log=False)
+        host_b = UnixHost(ip='10.0.0.2', element='hostB', creds={'user': 'pass'}, hop='hosta', log=False)
 
         # Capture the transport built at construction time (with _lab=None).
         transport_a = host_a._connections._hop
 
         # Wire both hosts into a lab AFTER construction (production ordering).
         lab = Lab(name="cycle_test")
-        lab.addHost(host_a)
-        lab.addHost(host_b)
+        lab.add_host(host_a)
+        lab.add_host(host_b)
 
         # The transport was built before wiring; it must still detect the cycle.
         with pytest.raises(ValueError, match="Circular hop detected"):
@@ -656,7 +656,7 @@ class TestCycleDetection:
         With the eager bug (lab = self._lab at build time), the closure holds
         None forever and get_tunnel() raises "no lab back-reference".
         With the lazy fix (lab = self._lab inside _create_tunnel), it resolves
-        correctly after addHost wires self._lab.
+        correctly after add_host wires self._lab.
         """
         from otto.configmodule.lab import Lab
 
@@ -666,8 +666,8 @@ class TestCycleDetection:
         # _build_hop_transport does `from asyncssh import connect as _ssh_connect`
         # at call time — patching asyncssh.connect makes the import pick up the mock.
         with patch('asyncssh.connect', AsyncMock(return_value=mock_ssh_conn)):
-            jumpbox = UnixHost(ip='10.10.0.1', ne='jumpbox', creds={'admin': 'secret'}, log=False)
-            target = UnixHost(ip='10.10.0.2', ne='target', creds={'user': 'pass'}, hop='jumpbox', log=False)
+            jumpbox = UnixHost(ip='10.10.0.1', element='jumpbox', creds={'admin': 'secret'}, log=False)
+            target = UnixHost(ip='10.10.0.2', element='target', creds={'user': 'pass'}, hop='jumpbox', log=False)
 
             # Capture the transport built at __post_init__ time — _lab was None then.
             transport = target._connections._hop
@@ -675,8 +675,8 @@ class TestCycleDetection:
 
             # Wire both hosts into a lab AFTER construction (production ordering).
             lab = Lab(name="lazy_test")
-            lab.addHost(jumpbox)
-            lab.addHost(target)
+            lab.add_host(jumpbox)
+            lab.add_host(target)
 
             # Drive the transport — must NOT raise "no lab back-reference" if lazy.
             result = await transport.get_tunnel()
@@ -693,7 +693,7 @@ class TestStandaloneHostHopResolution:
 
     @pytest.mark.asyncio
     async def test_standalone_host_resolves_hop_from_active_context_lab(self):
-        """A host constructed standalone (not addHost'd) with a hop must resolve the
+        """A host constructed standalone (not add_host'd) with a hop must resolve the
         hop target from the active OttoContext's lab (FD-model), not raise.
 
         Regression test for: _create_tunnel raising "no lab back-reference" when
@@ -706,18 +706,18 @@ class TestStandaloneHostHopResolution:
 
         with patch('asyncssh.connect', AsyncMock(return_value=mock_ssh_conn)):
             # Build the hop TARGET and add it to a Lab.
-            jumpbox = UnixHost(ip='10.20.0.1', ne='jumpbox', creds={'admin': 'secret'}, log=False)
+            jumpbox = UnixHost(ip='10.20.0.1', element='jumpbox', creds={'admin': 'secret'}, log=False)
             lab = Lab(name="fd_model_test")
-            lab.addHost(jumpbox)
+            lab.add_host(jumpbox)
 
             # Install the lab in an active OttoContext so try_get_context() returns it.
             ctx = OttoContext(lab=lab)
             token = set_context(ctx)
             try:
-                # Build the host-under-test STANDALONE — do NOT addHost it.
+                # Build the host-under-test STANDALONE — do NOT add_host it.
                 # Its _lab remains None; the hop target must come from the active context.
                 standalone = UnixHost(
-                    ip='10.20.0.2', ne='target', creds={'user': 'pass'},
+                    ip='10.20.0.2', element='target', creds={'user': 'pass'},
                     hop='jumpbox', log=False,
                 )
                 assert standalone._lab is None, "standalone host must have no lab back-reference"

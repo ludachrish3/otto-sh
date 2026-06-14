@@ -30,7 +30,7 @@ from .formatters import (
 
 # Matches the timestamp directory names that ``create_output_dir`` writes:
 # ``YYYYMMDD_HHMMSS_mmm`` optionally followed by ``_<subcommand>``. Used by
-# ``removeOldLogs`` as a fail-safe so that a misconfigured ``xdir`` (e.g.
+# ``remove_old_logs`` as a fail-safe so that a misconfigured ``xdir`` (e.g.
 # accidentally pointing at a project root) can't lead to rmtree'ing
 # unrelated subdirectories — only otto-created log dirs are candidates.
 _LOG_DIR_NAME_RE = re.compile(r'^\d{8}_\d{6}_\d{3}(_.+)?$')
@@ -86,7 +86,7 @@ class OttoLogger(Logger):
     def keep_seconds(self, value: float) -> None:
         self._keep_seconds = value
 
-    def _commandToDirName(self,
+    def _command_to_dir_name(self,
         command: str,
     ) -> str:
 
@@ -107,10 +107,10 @@ class OttoLogger(Logger):
         # %f provides microseconds, so slicing off the last 3 digits gives milliseconds
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
 
-        command = self._commandToDirName(command)
+        command = self._command_to_dir_name(command)
 
         if subcommand is not None:
-            subcommand = f'_{self._commandToDirName(subcommand)}'
+            subcommand = f'_{self._command_to_dir_name(subcommand)}'
         else:
             subcommand = ''
 
@@ -131,11 +131,11 @@ class OttoLogger(Logger):
             self._output_dir_atexit_registered = True
 
         if self._keep_seconds is not None:
-            self.removeOldLogs(self._keep_seconds)
+            self.remove_old_logs(self._keep_seconds)
 
-        self._addLogHandlers()
+        self._add_log_handlers()
 
-    def _addLogHandlers(self):
+    def _add_log_handlers(self):
         """Wrap existing and new handlers in a QueueListener for non-blocking I/O."""
 
         existing_handlers = list(self.handlers)
@@ -155,7 +155,7 @@ class OttoLogger(Logger):
         self._listener.start()
         atexit.register(self._listener.stop)
 
-    def removeOldLogs(self,
+    def remove_old_logs(self,
         seconds: float,
     ):
         """
@@ -215,7 +215,7 @@ class OttoLogger(Logger):
         self._rich_logging = flag
 
 
-def initOttoLogger(
+def init_otto_logger(
     xdir: Path,
     log_level: str,
     keep_days: float,
@@ -230,7 +230,7 @@ def initOttoLogger(
         log_level (str): _description_
     """
 
-    logger = getOttoLogger()
+    logger = get_otto_logger()
 
     logger.setLevel(log_level)
     is_debug = log_level == 'DEBUG'
@@ -263,7 +263,7 @@ def initOttoLogger(
     return logger
 
 
-def getOttoLogger(
+def get_otto_logger(
     name: Optional[str] = None,
 ) -> OttoLogger:
     """

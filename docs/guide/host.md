@@ -124,7 +124,7 @@ For persistent hop configuration, set the `hop` field in `hosts.json`
 ```json
 {
     "ip": "10.10.200.12",
-    "ne": "target",
+    "element": "target",
     "board": "seed",
     "hop": "jumpbox_seed",
     "creds": { "admin": "secret" }
@@ -180,7 +180,7 @@ auto-detection isn't appropriate for a particular host:
 ```json
 {
     "ip": "10.10.200.12",
-    "ne": "target",
+    "element": "target",
     "board": "seed",
     "transfer": "nc",
     "nc_options": {
@@ -236,7 +236,7 @@ connect timeout:
 ```json
 {
     "ip": "10.10.200.12",
-    "ne": "target",
+    "element": "target",
     "creds": { "admin": "secret" },
     "ssh_options": {
         "port": 2222,
@@ -337,7 +337,7 @@ Add an optional ``toolchain`` object to the host entry in ``hosts.json``:
 ```json
 {
     "ip": "10.10.200.12",
-    "ne": "target",
+    "element": "target",
     "board": "arm-board",
     "creds": { "admin": "secret" },
     "toolchain": {
@@ -430,8 +430,8 @@ from the CLI can also be done inside instructions and test suites:
 ```
 
 File transfers work the same way -- `put` and `get` map to
-{meth}`~otto.host.unixHost.UnixHost.put` and
-{meth}`~otto.host.unixHost.UnixHost.get`:
+{meth}`~otto.host.unix_host.UnixHost.put` and
+{meth}`~otto.host.unix_host.UnixHost.get`:
 
 ```python
 from pathlib import Path
@@ -451,8 +451,8 @@ status, msg = await host.get(
 
 ```{note}
 File transfer methods are only available on
-{class}`~otto.host.unixHost.UnixHost` instances, not
-{class}`~otto.host.localHost.LocalHost`.  The doctest above uses
+{class}`~otto.host.unix_host.UnixHost` instances, not
+{class}`~otto.host.local_host.LocalHost`.  The doctest above uses
 `run` which is available on all host types.
 `EmbeddedHost` provides its own console/tftp transfer; see {doc}`embedded`.
 ```

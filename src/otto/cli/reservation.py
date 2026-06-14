@@ -12,14 +12,14 @@ Both reuse the top-level ``--lab`` option — no redundant flags here.
 import typer
 from rich import print as rprint
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..reservations import (
     MissingReservationError,
     check_reservations,
     required_resources,
 )
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 reservation_app = typer.Typer(
     name='reservation',

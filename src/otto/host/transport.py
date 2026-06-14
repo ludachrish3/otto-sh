@@ -21,9 +21,9 @@ from typing import Protocol
 from asyncssh import SSHClientConnection
 from asyncssh.listener import SSHListener
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 class HopTransport(Protocol):

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from otto.host.dockerHost import DockerContainerHost
+from otto.host.docker_host import DockerContainerHost
 from otto.utils import CommandStatus, Status
 
 
@@ -53,7 +53,7 @@ def _build_fake_ssh_remote_host():
     `_make_session`; the fake ConnectionManager keeps the test offline.
     """
     from otto.host.connections import ConnectionManager
-    from otto.host.unixHost import UnixHost
+    from otto.host.unix_host import UnixHost
 
     class FakeConnections(ConnectionManager):
         def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
@@ -71,7 +71,7 @@ def _build_fake_ssh_remote_host():
     return UnixHost(
         ip="10.0.0.1",
         creds={"root": "x"},
-        ne="fake_ne",
+        element="fake_ne",
         term="ssh",
         _connection_factory=FakeConnections,
     )
@@ -152,7 +152,7 @@ async def test_run_rejects_non_ssh_remote_parent():
 @pytest.mark.asyncio
 async def test_run_rejects_localhost_parent():
     """run() requires a UnixHost parent — LocalHost is rejected."""
-    from otto.host.localHost import LocalHost
+    from otto.host.local_host import LocalHost
     h = DockerContainerHost(
         parent=LocalHost(),
         container_id="abc123",
@@ -220,7 +220,7 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos())
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
     result = await h.oneshot("echo hi")
@@ -236,7 +236,7 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
 async def test_placeholder_no_repo_raises(monkeypatch):
     """No configured repo to auto-start -> clear 'not running' error."""
     h = _make_container(container_id="")
-    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos(repo_name=None))
+    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos(repo_name=None))
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.oneshot("echo hi")
@@ -248,7 +248,7 @@ async def test_placeholder_auto_up_failure_raises(monkeypatch):
     h = _make_container(container_id="")
     compose_up = AsyncMock(side_effect=RuntimeError("compose boom"))
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos())
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.oneshot("echo hi")
@@ -265,7 +265,7 @@ async def test_concurrent_access_triggers_single_auto_up(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos())
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
     await asyncio.gather(h.oneshot("echo a"), h.oneshot("echo b"))
@@ -285,7 +285,7 @@ async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.getRepos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos())
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
     status, _ = await h.put([f], Path("/tmp"))

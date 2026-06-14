@@ -14,14 +14,14 @@ import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..params import options_params
 from ..utils import (
     CommandStatus,
     async_typer_command,
 )
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 P = ParamSpec("P")
 
@@ -37,8 +37,8 @@ run_app = typer.Typer(
 def list_instructions_callback(value: bool) -> None:
     if not value:
         return
-    from ..configmodule import getRepos  # lazy import — avoids circular dependency
-    panels = [repo.getInstructionsPanel() for repo in getRepos()]
+    from ..configmodule import get_repos  # lazy import — avoids circular dependency
+    panels = [repo.get_instructions_panel() for repo in get_repos()]
     table = Table(show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1))
     for _ in panels:
         table.add_column(ratio=1)

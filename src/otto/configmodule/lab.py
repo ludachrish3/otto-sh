@@ -25,7 +25,7 @@ class Lab():
     hosts: dict[str, Host] = field(default_factory=dict)
     """Host objects, keyed by unique host id."""
 
-    def addHost(self,
+    def add_host(self,
         host: Host,
     ) -> None:
         """Add a Host object to the `Lab`'s dictionary of hosts.
@@ -41,7 +41,7 @@ class Lab():
                 f"but this key already exists in {self.name}'s known hosts."
             ) from None
 
-        from ..host.remoteHost import RemoteHost  # lazy import avoids a module-load cycle
+        from ..host.remote_host import RemoteHost  # lazy import avoids a module-load cycle
         if isinstance(host, RemoteHost):
             host._lab = self
 
@@ -51,7 +51,7 @@ class Lab():
         other: 'Lab',
     ) -> 'Lab':
 
-        from ..host.remoteHost import RemoteHost
+        from ..host.remote_host import RemoteHost
         self.name = f"{self.name}_{other.name}"
         self.resources = self.resources.union(other.resources)
         for host in other.hosts.values():
@@ -61,7 +61,7 @@ class Lab():
 
         return self
 
-def _getIndividualLab(
+def _get_individual_lab(
     labname: str,
     search_paths: list[Path] | None = None,
     defaults: dict[str, dict[str, Any]] | None = None,
@@ -125,7 +125,7 @@ def load_lab(
         case _:
             labnameList = labnames
 
-    labs = [_getIndividualLab(name, search_paths, defaults=defaults) for name in labnameList]
+    labs = [_get_individual_lab(name, search_paths, defaults=defaults) for name in labnameList]
     lab = labs[0]
     for additionalLab in labs[1:]:
         lab += additionalLab

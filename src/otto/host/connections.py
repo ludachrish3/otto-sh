@@ -31,7 +31,7 @@ import asyncssh
 from asyncssh import SFTPClient, SSHClientConnection
 from asyncssh import connect as ssh_connect
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
 
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 TermType = Literal['ssh', 'telnet']
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 class TunneledFtpClient(aioftp.Client):

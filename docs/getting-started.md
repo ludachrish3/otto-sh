@@ -252,13 +252,13 @@ The settings file tells otto where to find your code:
 name = "my_project"
 version = "1.0.0"
 
-labs  = ["${sutDir}/../lab_data"]
-libs  = ["${sutDir}/pylib"]
-tests = ["${sutDir}/tests"]
+labs  = ["${sut_dir}/../lab_data"]
+libs  = ["${sut_dir}/pylib"]
+tests = ["${sut_dir}/tests"]
 init  = ["my_instructions"]
 ```
 
-`${sutDir}` is automatically replaced with the repository root directory at
+`${sut_dir}` is automatically replaced with the repository root directory at
 load time.
 
 | Field | Purpose |
@@ -331,9 +331,9 @@ import typer
 
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import all_hosts
-from otto.logger import getOttoLogger
+from otto.logger import get_otto_logger
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 @instruction()

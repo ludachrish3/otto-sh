@@ -16,7 +16,7 @@ from datetime import timedelta
 
 import pytest
 
-from otto.host.localHost import LocalHost
+from otto.host.local_host import LocalHost
 from otto.monitor.collector import MetricCollector, MonitorTarget
 from otto.monitor.parsers import MetricDataPoint, MetricParser
 

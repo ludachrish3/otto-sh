@@ -3,13 +3,13 @@ from pathlib import Path
 from typing import Any
 
 from ..configmodule.lab import Lab
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from .factory import (
     create_host_from_dict,
     validate_host_dict,
 )
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 HOSTS_FILENAME = "hosts.json"
 
@@ -93,7 +93,7 @@ class JsonFileLabRepository:
         for idx, host_data in enumerate(matching):
             try:
                 host = create_host_from_dict(host_data, defaults=defaults)
-                lab.addHost(host)
+                lab.add_host(host)
                 lab.resources.update(host.resources)
             except Exception as e:
                 logger.error(

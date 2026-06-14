@@ -27,13 +27,13 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from .collector import MetricCollector
 from .events import VALID_DASH_STYLES
 
 _STATIC_DIR = Path(__file__).parent / 'static'
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 # Suppress the ASGI log from uvicorn because it clutters up the output on exit.
 class SuppressASGIWarning(Filter):

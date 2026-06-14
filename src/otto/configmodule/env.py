@@ -34,28 +34,28 @@ DEFAULT_LOG_RETENTION_DAYS = 30
 class OttoEnv():
     """Otto environment variables"""
 
-    sutDirs: list[Path] = field(init=False)
+    sut_dirs: list[Path] = field(init=False)
 
     def __post_init__(self) -> None:
 
-        sutDirs = self.getEnvPaths(SUT_DIRS_ENV_VAR)
-        object.__setattr__(self, 'sutDirs', sutDirs)
+        sut_dirs = self.get_env_paths(SUT_DIRS_ENV_VAR)
+        object.__setattr__(self, 'sut_dirs', sut_dirs)
 
     @classmethod
-    def getEnvVar(cls,
-        varName: str,
+    def get_env_var(cls,
+        var_name: str,
         default: Any = None,
     ) -> Optional[str]:
 
-        return getenv(varName, default)
+        return getenv(var_name, default)
 
     @classmethod
-    def getEnvInt(cls,
-        varName: str,
+    def get_env_int(cls,
+        var_name: str,
         default: Optional[int] = None,
     ) -> Optional[int]:
 
-        value = cls.getEnvVar(varName=varName, default=default)
+        value = cls.get_env_var(var_name=var_name, default=default)
         if value is not None:
             value = int(value)
 
@@ -63,32 +63,32 @@ class OttoEnv():
 
 
     @classmethod
-    def getEnvPath(cls,
-        envVar: str,
+    def get_env_path(cls,
+        env_var: str,
         default: Optional[Path] = None,
-        mustExist: bool = True,
+        must_exist: bool = True,
     ) -> Optional[Path]:
 
-        path = cls.getEnvVar(envVar)
+        path = cls.get_env_var(env_var)
 
         if path is None:
             path = default
         else:
             path = Path(path)
 
-        cls.validatePath(path, mustExist=mustExist)
+        cls.validate_path(path, must_exist=must_exist)
 
         return path
 
     @classmethod
-    def getEnvPaths(cls,
-        envVar: str,
-        mustExist: bool = True,
+    def get_env_paths(cls,
+        env_var: str,
+        must_exist: bool = True,
     ) -> list[Path]:
 
         paths: list[Path] = []
 
-        pathStrings = cls.getEnvVar(envVar)
+        pathStrings = cls.get_env_var(env_var)
 
         if pathStrings is None:
             paths = []
@@ -96,14 +96,14 @@ class OttoEnv():
             paths = [Path(p) for p in _PATH_LIST_SEP.split(pathStrings) if p]
 
         for path in paths:
-            cls.validatePath(path, mustExist=mustExist)
+            cls.validate_path(path, must_exist=must_exist)
 
         return paths
 
     @classmethod
-    def validatePath(cls,
+    def validate_path(cls,
         path: Path | None,
-        mustExist: bool = True,
+        must_exist: bool = True,
     ) -> None:
 
         # The path is None, so return now to avoid checking
@@ -112,7 +112,7 @@ class OttoEnv():
             return
 
         path = Path(path)
-        if not mustExist or path.exists():
+        if not must_exist or path.exists():
             return
 
         raise FileNotFoundError(f'Path {path} does not exist')

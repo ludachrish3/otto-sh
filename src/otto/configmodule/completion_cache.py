@@ -4,9 +4,9 @@ Tab completion invokes ``otto`` just far enough to walk the Typer command
 tree. The expensive step during that walk is not parsing CLI args — it's the
 side effects in :mod:`otto.configmodule` that populate dynamic subcommands:
 
-- :meth:`Repo.importInitModules` — imports every user-defined instruction
+- :meth:`Repo.import_init_modules` — imports every user-defined instruction
   module so ``@run_app.command`` decorators can attach to ``run_app``.
-- :meth:`Repo.importTestFiles` — exec's every ``test_*.py`` so
+- :meth:`Repo.import_test_files` — exec's every ``test_*.py`` so
   ``@register_suite()`` decorators can populate ``_SUITE_REGISTRY``.
 
 Both execute arbitrary user code. For completion all we actually need is the
@@ -71,7 +71,7 @@ import types
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 
 if TYPE_CHECKING:
     from .repo import Repo
@@ -153,8 +153,8 @@ def _hash_file(h: 'hashlib._Hash', path: Path) -> None:
 def compute_fingerprint(repos: list['Repo']) -> str:
     """Stat-based sha256 of every file that contributes instruction/suite names."""
     h = hashlib.sha256()
-    for repo in sorted(repos, key=lambda r: str(r.sutDir)):
-        _hash_file(h, repo.sutDir / '.otto' / 'settings.toml')
+    for repo in sorted(repos, key=lambda r: str(r.sut_dir)):
+        _hash_file(h, repo.sut_dir / '.otto' / 'settings.toml')
 
         # Init-module files: resolve each `init` name under the configured
         # `libs` directories. Either a package directory or a plain .py file.
@@ -260,7 +260,7 @@ def _serialize_options(
     annotation form we don't know how to round-trip — that causes the
     command to be skipped entirely rather than cached with a half-signature.
     """
-    log = getOttoLogger()
+    log = get_otto_logger()
     try:
         sig = inspect.signature(callback)
     except (TypeError, ValueError) as e:  # pragma: no cover — paranoia
@@ -441,7 +441,7 @@ def write_cache(
 def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Read the currently-registered instructions and suites with options.
 
-    Must be called after :func:`applyRepoSettings` has finished populating
+    Must be called after :func:`apply_repo_settings` has finished populating
     ``run_app`` and ``_SUITE_REGISTRY``. Returns empty lists for any source
     that hasn't been loaded (e.g. no init modules → ``otto.cli.run`` never
     imported → no instructions).

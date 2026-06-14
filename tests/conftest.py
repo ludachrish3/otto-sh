@@ -24,13 +24,13 @@ import pytest_asyncio  # noqa: E402
 
 from otto.context import OttoContext, reset_context, set_context  # noqa: E402
 from otto.configmodule.lab import Lab  # noqa: E402
-from otto.host.localHost import LocalHost  # noqa: E402
-from otto.host.unixHost import UnixHost  # noqa: E402
-from otto.logger import getOttoLogger  # noqa: E402
+from otto.host.local_host import LocalHost  # noqa: E402
+from otto.host.unix_host import UnixHost  # noqa: E402
+from otto.logger import get_otto_logger  # noqa: E402
 from otto.storage.factory import create_host_from_dict  # noqa: E402
 from tests._loop_reaper import classify_loop_origin, reap_or_raise  # noqa: E402
 
-_logger = getOttoLogger()
+_logger = get_otto_logger()
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -370,14 +370,14 @@ def _reset_otto_logger_retention():
     retention setting across tests.
 
     ``keep_seconds`` is what makes the cov/reservation/docker group callbacks
-    prune old logs. A test that sets it (``initOttoLogger``, e.g.
+    prune old logs. A test that sets it (``init_otto_logger``, e.g.
     ``tests/unit/logger/test_logger.py``) must not leave it set for a later
     test in the same xdist worker — otherwise that test's CLI invocation prunes
     under a stale ``xdir``, the root cause of the ``test_cov`` ENOTDIR flakes.
     Reset to the clean default after every test.
     """
     yield
-    getOttoLogger().keep_seconds = None
+    get_otto_logger().keep_seconds = None
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +391,7 @@ def host_data(ne: str) -> dict[str, Any]:
     """Return the raw host dict for a given NE name from the lab JSON."""
     hosts = json.loads(_LAB_DATA.read_text())
     for host in hosts:
-        if host["ne"] == ne:
+        if host["element"] == ne:
             return host
     raise KeyError(f"NE {ne!r} not found in {_LAB_DATA}")
 
@@ -401,7 +401,7 @@ def make_host(ne: str, **kwargs: Any) -> UnixHost:
     data = host_data(ne)
     return UnixHost(
         ip=data["ip"],
-        ne=data["ne"],
+        element=data["element"],
         creds=data["creds"],
         board=data.get("board"),
         is_virtual=data.get("is_virtual", False),
@@ -461,7 +461,7 @@ EMBEDDED_BACKENDS: list[str] = list(_ZEPHYR_BACKEND_NE)
 def embedded_param_id(backend_id: str) -> str:
     """Descriptive test id for an embedded backend, derived from lab data.
 
-    Returns ``"{osName}-{osVersion}-{fs}"`` so a new entry in
+    Returns ``"{os_name}-{os_version}-{fs}"`` so a new entry in
     ``lab_data/tech1/hosts.json`` (e.g. a future Zephyr 4.x or a different
     RTOS) surfaces its identity in test output without test-code edits.
     Non-embedded backend ids pass through unchanged so the same helper can
@@ -470,8 +470,8 @@ def embedded_param_id(backend_id: str) -> str:
     if backend_id not in _ZEPHYR_BACKEND_NE:
         return backend_id
     data = host_data(_ZEPHYR_BACKEND_NE[backend_id])
-    osname = str(data.get("osName", "embedded"))
-    osver = str(data.get("osVersion", ""))
+    osname = str(data.get("os_name", "embedded"))
+    osver = str(data.get("os_version", ""))
     # Filesystem token from the declared `filesystem` variant — the source of
     # truth in lab data (``default_dest_dir`` is usually unset, defaulting to
     # the FS mount at construction time). Maps the lab string to a short tag.
@@ -573,10 +573,10 @@ async def hop_host(request):
     ne, hop_ne, term, transfer = request.param
     target_data = host_data(ne)
     hop_data = host_data(hop_ne)
-    hop_id = f"{hop_data['ne']}_{hop_data.get('board', 'seed')}"
+    hop_id = f"{hop_data['element']}_{hop_data.get('board', 'seed')}"
     h = UnixHost(
         ip=target_data["ip"],
-        ne=target_data["ne"],
+        element=target_data["element"],
         creds=target_data["creds"],
         board=target_data.get("board"),
         is_virtual=target_data.get("is_virtual", False),

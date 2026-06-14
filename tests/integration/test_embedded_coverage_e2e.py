@@ -68,15 +68,15 @@ def clean_sprout_cov():
 
     from otto.configmodule.lab import Lab
     from otto.context import OttoContext, set_context
-    from otto.host.unixHost import UnixHost
+    from otto.host.unix_host import UnixHost
     from otto.storage.factory import create_host_from_dict
     from otto.utils import Status
     from tests.conftest import host_data
 
     lab = Lab(name="embedded_cov_e2e")
     basil = host_data("basil")
-    lab.addHost(UnixHost(
-        ip=basil["ip"], ne=basil["ne"], creds=basil["creds"],
+    lab.add_host(UnixHost(
+        ip=basil["ip"], element=basil["element"], creds=basil["creds"],
         board=basil.get("board"), is_virtual=True, term="ssh",
         transfer="scp", log=False,
     ))

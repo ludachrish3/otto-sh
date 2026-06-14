@@ -2,13 +2,13 @@ name = "repo2"
 version = "1.0.4"
 lab_data_type = "json"
 labs = [
-    "${sutDir}/../lab_data/tech2",
+    "${sut_dir}/../lab_data/tech2",
 ]
 libs = [
-    "${sutDir}/pylib",
+    "${sut_dir}/pylib",
 ]
 tests = [
-    "${sutDir}/tests"
+    "${sut_dir}/tests"
 ]
 init = [
     'repo2_instructions',
@@ -19,10 +19,10 @@ registry_url = "docker.io"
 
 [[docker.images]]
 name = "worker"
-dockerfile = "${sutDir}/docker/Dockerfile"
-context = "${sutDir}/docker"
+dockerfile = "${sut_dir}/docker/Dockerfile"
+context = "${sut_dir}/docker"
 
 [[docker.composes]]
-path = "${sutDir}/docker/compose.yml"
+path = "${sut_dir}/docker/compose.yml"
 default_host = "grape_seed"
 services = ["worker"]

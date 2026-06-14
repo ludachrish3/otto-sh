@@ -26,18 +26,18 @@ registry_url = "docker.io"   # optional; default. Non-default registries
 
 [[docker.images]]
 name = "api"                              # short logical name
-dockerfile = "${sutDir}/docker/api.Dockerfile"
-context = "${sutDir}/docker"
+dockerfile = "${sut_dir}/docker/api.Dockerfile"
+context = "${sut_dir}/docker"
 
 [[docker.images]]
 name = "db"
-dockerfile = "${sutDir}/docker/db.Dockerfile"
-context = "${sutDir}/docker"
+dockerfile = "${sut_dir}/docker/db.Dockerfile"
+context = "${sut_dir}/docker"
 build_args = { VERSION = "1.2.3" }       # optional; influences hash
 target = "prod"                          # optional multi-stage target
 
 [[docker.composes]]
-path = "${sutDir}/docker/compose.yml"
+path = "${sut_dir}/docker/compose.yml"
 default_host = "pepper_seed"             # lab host id; CLI --on overrides
 services = ["api", "db"]                 # used for tab-completion only
 ```
@@ -47,7 +47,7 @@ services = ["api", "db"]                 # used for tab-completion only
 Mark hosts that can host containers:
 
 ```text
-{ "ne": "pepper", "board": "seed", "ip": "...", "creds": {...},
+{ "element": "pepper", "board": "seed", "ip": "...", "creds": {...},
   "docker_capable": true,
   "labs": ["veggies"] }
 ```

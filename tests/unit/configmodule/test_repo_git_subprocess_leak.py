@@ -1,6 +1,6 @@
-"""Regression tests for subprocess transport leaks in ``Repo.runGitCommand``.
+"""Regression tests for subprocess transport leaks in ``Repo.run_git_command``.
 
-``Repo.commit`` and ``Repo.description`` invoke :meth:`Repo.runGitCommand`
+``Repo.commit`` and ``Repo.description`` invoke :meth:`Repo.run_git_command`
 via synchronous property access wrapped in :func:`asyncio.run`.  The
 coroutine creates a temporary ``LocalHost`` that opens a persistent
 ``bash`` session.  If the ``LocalHost`` is not closed, its
@@ -82,9 +82,9 @@ class TestRepoGitSubprocessLeak:
         the user saw on Ctrl+C.
         """
         repo_path = Path(__file__).parent.parent.parent / 'repo1'
-        repo = Repo(sutDir=repo_path)
+        repo = Repo(sut_dir=repo_path)
 
-        _ = repo.commit  # triggers asyncio.run(setCommitHash())
+        _ = repo.commit  # triggers asyncio.run(set_commit_hash())
 
         # The asyncio.run loop is now closed.  Any BaseSubprocessTransport
         # still alive and bound to it is a leak that will fire
@@ -104,7 +104,7 @@ class TestRepoGitSubprocessLeak:
         path in ``Repo``).
         """
         repo_path = Path(__file__).parent.parent.parent / 'repo1'
-        repo = Repo(sutDir=repo_path)
+        repo = Repo(sut_dir=repo_path)
 
         _ = repo.description
 
@@ -124,7 +124,7 @@ class TestRepoGitSubprocessLeak:
         repo_path = Path(__file__).parent.parent.parent / 'repo1'
 
         for _ in range(3):
-            repo = Repo(sutDir=repo_path)
+            repo = Repo(sut_dir=repo_path)
             _ = repo.commit
             _ = repo.description
 

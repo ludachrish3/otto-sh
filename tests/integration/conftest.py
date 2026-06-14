@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 
 _LAB_DATA = Path(__file__).parent.parent / "lab_data" / "tech1" / "hosts.json"
 
@@ -41,7 +41,7 @@ async def _reap_orphan_docker_stacks() -> None:
     docker host so address-pool exhaustion can't accumulate across runs."""
     host = UnixHost(
         ip=_DOCKER_HOST_IP,
-        ne="pepper",
+        element="pepper",
         creds={"vagrant": "vagrant"},
         board="seed",
         is_virtual=True,
@@ -87,7 +87,7 @@ def reap_orphan_docker_stacks() -> None:
 def _host_data(ne: str) -> dict[str, Any]:
     hosts = json.loads(_LAB_DATA.read_text())
     for host in hosts:
-        if host["ne"] == ne:
+        if host["element"] == ne:
             return host
     raise KeyError(f"NE {ne!r} not found in {_LAB_DATA}")
 
@@ -98,7 +98,7 @@ async def carrot():
     data = _host_data("carrot")
     h = UnixHost(
         ip=data["ip"],
-        ne=data["ne"],
+        element=data["element"],
         creds=data["creds"],
         board=data.get("board"),
         is_virtual=True,
@@ -115,7 +115,7 @@ async def tomato():
     data = _host_data("tomato")
     h = UnixHost(
         ip=data["ip"],
-        ne=data["ne"],
+        element=data["element"],
         creds=data["creds"],
         board=data.get("board"),
         is_virtual=True,

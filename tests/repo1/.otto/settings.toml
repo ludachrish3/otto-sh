@@ -2,16 +2,16 @@ name = "repo1"
 version = "1.0.0"
 lab_data_type = "json"
 labs = [
-    "${sutDir}/../lab_data/tech1",
+    "${sut_dir}/../lab_data/tech1",
 ]
 libs = [
-    "${sutDir}/pylib",
+    "${sut_dir}/pylib",
     # Shared, third-party-style module providing the Zephyr 2.7 `zephyr-inline`
     # frame the `embedded` lab's sprout27 declares (see tests/custom_hosts).
-    "${sutDir}/../custom_hosts",
+    "${sut_dir}/../custom_hosts",
 ]
 tests = [
-    "${sutDir}/tests"
+    "${sut_dir}/tests"
 ]
 init = [
     'repo1_instructions',
@@ -20,30 +20,30 @@ init = [
 
 # Named OS profiles: bundle each Zephyr version's common attributes once so a
 # host entry only declares its identity + filesystem instead of repeating
-# osName / osVersion / command_frame / transfer / max_filename_len. The 2.7
+# os_name / os_version / command_frame / transfer / max_filename_len. The 2.7
 # profile names the `zephyr-inline` dialect (registered by the shared
 # custom_hosts module this repo pulls in via libs/init), proving a data-defined
 # profile can reference a code-registered command frame.
 [os_profiles."zephyr-3.7"]
 base = "embedded"
-osName = "Zephyr"
-osVersion = "3.7"
+os_name = "Zephyr"
+os_version = "3.7"
 command_frame = "zephyr"
 transfer = "console"
 max_filename_len = 32
 
 [os_profiles."zephyr-2.7"]
 base = "embedded"
-osName = "Zephyr"
-osVersion = "2.7"
+os_name = "Zephyr"
+os_version = "2.7"
 command_frame = "zephyr-inline"
 transfer = "console"
 max_filename_len = 32
 
 [os_profiles."zephyr-4.4"]
 base = "embedded"
-osName = "Zephyr"
-osVersion = "4.4"
+os_name = "Zephyr"
+os_version = "4.4"
 command_frame = "zephyr"
 transfer = "console"
 max_filename_len = 32
@@ -56,10 +56,10 @@ registry_url = "docker.io"
 
 [[docker.images]]
 name = "api"
-dockerfile = "${sutDir}/docker/Dockerfile"
-context = "${sutDir}/docker"
+dockerfile = "${sut_dir}/docker/Dockerfile"
+context = "${sut_dir}/docker"
 
 [[docker.composes]]
-path = "${sutDir}/docker/compose.yml"
+path = "${sut_dir}/docker/compose.yml"
 default_host = "pepper_seed"
 services = ["api"]

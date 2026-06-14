@@ -1051,7 +1051,7 @@ requires-dist = [
     { name = "sse-starlette", specifier = ">=3.3.3" },
     { name = "telnetlib3", specifier = ">=4.0.1" },
     { name = "tomli", specifier = ">=2.4.0" },
-    { name = "typer", specifier = ">=0.24.0" },
+    { name = "typer", specifier = ">=0.24.0,<0.26" },
     { name = "uvicorn", specifier = ">=0.42.0" },
 ]
 

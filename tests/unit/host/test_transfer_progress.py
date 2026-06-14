@@ -120,7 +120,7 @@ class TestBaseFileTransferIsAbstract:
 
     def test_missing_run_get_raises_type_error(self):
         class OnlyPut(BaseFileTransfer):
-            async def _run_put(self, srcFiles, destDir, progress_factory):
+            async def _run_put(self, src_files, dest_dir, progress_factory):
                 return Status.Success, ''
 
         with pytest.raises(TypeError, match='_run_get'):
@@ -128,7 +128,7 @@ class TestBaseFileTransferIsAbstract:
 
     def test_missing_run_put_raises_type_error(self):
         class OnlyGet(BaseFileTransfer):
-            async def _run_get(self, srcFiles, destDir, progress_factory):
+            async def _run_get(self, src_files, dest_dir, progress_factory):
                 return Status.Success, ''
 
         with pytest.raises(TypeError, match='_run_put'):
@@ -136,9 +136,9 @@ class TestBaseFileTransferIsAbstract:
 
     def test_both_hooks_present_instantiates(self):
         class Concrete(BaseFileTransfer):
-            async def _run_put(self, srcFiles, destDir, progress_factory):
+            async def _run_put(self, src_files, dest_dir, progress_factory):
                 return Status.Success, ''
-            async def _run_get(self, srcFiles, destDir, progress_factory):
+            async def _run_get(self, src_files, dest_dir, progress_factory):
                 return Status.Success, ''
 
         # No exception — both abstract methods supplied.
@@ -154,10 +154,10 @@ class TestBaseFileTransferProgressWiring:
         captured: dict[str, object] = {}
 
         class Spy(BaseFileTransfer):
-            async def _run_put(self, srcFiles, destDir, progress_factory):
+            async def _run_put(self, src_files, dest_dir, progress_factory):
                 captured['put_factory'] = progress_factory
                 return Status.Success, ''
-            async def _run_get(self, srcFiles, destDir, progress_factory):
+            async def _run_get(self, src_files, dest_dir, progress_factory):
                 captured['get_factory'] = progress_factory
                 return Status.Success, ''
 

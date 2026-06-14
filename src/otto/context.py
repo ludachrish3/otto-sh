@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
     from .configmodule.lab import Lab
     from .host import RunResult, UnixHost
-    from .host.remoteHost import RemoteHost
+    from .host.remote_host import RemoteHost
 
 T = TypeVar("T")
 
@@ -112,7 +112,7 @@ class OttoContext:
         **overrides: Any,
     ) -> "Iterator[RemoteHost]":
         from .configmodule.configmodule import _apply_option_overrides
-        from .host.dockerHost import DockerContainerHost
+        from .host.docker_host import DockerContainerHost
         for host in self.lab.hosts.values():
             if pattern is not None and not pattern.search(host.id):
                 continue

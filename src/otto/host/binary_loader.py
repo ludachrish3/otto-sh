@@ -28,7 +28,7 @@ class BinaryLoader(ABC):
 
     max_unload_rounds: ClassVar[int] = 16
     """Cap on the unload-to-eviction loop the host drives (see
-    :meth:`otto.host.embeddedHost.EmbeddedHost.unload`). Some loaders (LLEXT)
+    :meth:`otto.host.embedded_host.EmbeddedHost.unload`). Some loaders (LLEXT)
     refcount a resident binary, so one unload may decrement without evicting."""
 
     @abstractmethod

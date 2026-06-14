@@ -185,7 +185,7 @@ class TestCreateHostFromDict:
         data = {
             'ip': '10.0.0.1',
             'creds': {'admin': 'secret'},
-            'ne': 'lab',
+            'element': 'lab',
         }
         data.update(extra)
         return data

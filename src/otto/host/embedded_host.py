@@ -4,7 +4,7 @@ Embedded (bare-metal / RTOS) host class.
 An :class:`EmbeddedHost` is a network-reached target whose "OS" is a real-time
 kernel or bare-metal firmware rather than a POSIX system — Zephyr is the first
 concrete example. It is exposed through the *same* :class:`~otto.host.host.Host`
-API as :class:`~otto.host.unixHost.UnixHost` (``run``/``oneshot``/``send``/
+API as :class:`~otto.host.unix_host.UnixHost` (``run``/``oneshot``/``send``/
 ``expect``/``put``/``get``) so test code does not care whether a target is a
 Linux box or a microcontroller.
 
@@ -32,8 +32,8 @@ is supplied (fail loud). The frame is provided by:
 
 :class:`ZephyrHost` is the in-tree concrete class: it subclasses
 :class:`EmbeddedHost` and declares :class:`~otto.host.command_frame.ZephyrFrame`
-as the default ``command_frame`` (along with ``osType='zephyr'`` and
-``osName='Zephyr'``). Zephyr-specific framing and OS naming live on
+as the default ``command_frame`` (along with ``os_type='zephyr'`` and
+``os_name='Zephyr'``). Zephyr-specific framing and OS naming live on
 :class:`ZephyrHost`, not on the base class.
 
 File transfer (``get``/``put``) is delegated to
@@ -53,16 +53,16 @@ from typing import TYPE_CHECKING, Optional, cast
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .binary_loader import BinaryLoader
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .embedded_transfer import EmbeddedFileTransfer, EmbeddedTransferType
-from .host import Host, SuppressCommandOutput, isDryRun
+from .host import Host, SuppressCommandOutput, is_dry_run
 from .options import SnmpOptions, TelnetOptions
-from .remoteHost import OsType, RemoteHost
+from .remote_host import OsType, RemoteHost
 from .repeat import RepeatRunner
 from .session import (
     Expect,
@@ -72,7 +72,7 @@ from .session import (
 from .toolchain import Toolchain
 from .transfer import _acquire_shared_progress, make_rich_progress_handler
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 # Readiness-handshake ceiling for an embedded telnet console. The Zephyr shell
 # under QEMU can take a few seconds after the TCP connection opens before it
@@ -95,18 +95,18 @@ class EmbeddedHost(RemoteHost):
     ip: str
     """IP address of the host's telnet shell."""
 
-    ne: str = field(repr=False)
+    element: str = field(repr=False)
     """Network element to which this host belongs."""
 
-    osType: OsType = 'embedded'
+    os_type: OsType = 'embedded'
     """Default profile selector for a bare :class:`EmbeddedHost`. Subclasses
     (e.g. :class:`ZephyrHost`) override this to their registered name."""
 
-    osName: Optional[str] = None
+    os_name: Optional[str] = None
     """Kernel/OS name, or None. A bare ``embedded`` host carries no OS name;
     a concrete subclass (e.g. :class:`ZephyrHost`) sets it."""
 
-    osVersion: Optional[str] = None
+    os_version: Optional[str] = None
     """OS/kernel version string, or None if unspecified."""
 
     name: str = None  # type: ignore
@@ -119,7 +119,7 @@ class EmbeddedHost(RemoteHost):
     user: Optional[str] = None
     """User with which to log in, if the shell requires one. Usually unset."""
 
-    neId: Optional[int] = field(default=None, repr=False)
+    element_id: Optional[int] = field(default=None, repr=False)
     """Network element identifier to which this host belongs."""
 
     board: Optional[str] = field(default=None, repr=False)
@@ -218,7 +218,7 @@ class EmbeddedHost(RemoteHost):
     """Whether this host should log its output to stdout."""
 
     _lab: "Lab | None" = field(default=None, compare=False, repr=False, kw_only=True)
-    """Back-reference to the owning Lab, wired by Lab.addHost. Lets hop
+    """Back-reference to the owning Lab, wired by Lab.add_host. Lets hop
     resolution use self._lab.hosts[...] instead of ambient state."""
 
     id: str = field(init=False, repr=False)
@@ -241,9 +241,9 @@ class EmbeddedHost(RemoteHost):
 
     def __post_init__(self) -> None:
 
-        self.id = self._generateId()
+        self.id = self._generate_id()
         if self.name is None:
-            self.name = self._generateName()
+            self.name = self._generate_name()
 
         # Lab JSON serializes ``filesystem`` as a string; the storage factory
         # resolves it to a class instance for declared hosts, but a directly-
@@ -269,7 +269,7 @@ class EmbeddedHost(RemoteHost):
         if self.command_frame is None:
             raise ValueError(
                 f"EmbeddedHost {self.name!r} has no command_frame. A bare "
-                f"'embedded' host carries no shell-framing dialect. Set osType "
+                f"'embedded' host carries no shell-framing dialect. Set os_type "
                 f"to a profile that supplies one (e.g. \"zephyr\"), or pass an "
                 f"explicit command_frame."
             )
@@ -361,7 +361,7 @@ class EmbeddedHost(RemoteHost):
         only** — the embedded target has a single console, so concurrent
         ``run()`` calls would corrupt the session.
         """
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_result(cmd)
         return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
@@ -379,7 +379,7 @@ class EmbeddedHost(RemoteHost):
         :meth:`run`. It exists for API parity; use :meth:`run` for stateful
         workflows.
         """
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_result(cmd)
         return await self._session_mgr.run_cmd(cmd, timeout=timeout, log=log)
 
@@ -391,13 +391,13 @@ class EmbeddedHost(RemoteHost):
         RTOS shell backends do not accept concurrently. Prefer the default
         session via :meth:`run`.
         """
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] open_session({name!r})")
         return await self._session_mgr.open_session(name)
 
     async def send(self, text: str) -> None:
         """Send raw text to the host's persistent session."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] send({text!r})")
             return
         await self._session_mgr.send(text)
@@ -408,7 +408,7 @@ class EmbeddedHost(RemoteHost):
         timeout: float = 10.0,
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command("[DRY RUN] expect() skipped — pattern would never match without a live connection")
             return ""
         return await self._session_mgr.expect(pattern, timeout)
@@ -442,7 +442,7 @@ class EmbeddedHost(RemoteHost):
         """
         if not isinstance(src_files, list):
             src_files = [src_files]
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
@@ -468,7 +468,7 @@ class EmbeddedHost(RemoteHost):
         if not isinstance(src_files, list):
             src_files = [src_files]
         dest_dir = self._resolve_dest(dest_dir)
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
@@ -502,7 +502,7 @@ class EmbeddedHost(RemoteHost):
         declares no loader.
         """
         loader = self._require_loader()
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("LOAD", [file], Path(name))
         payload = file.read_bytes()
         cmd = loader.load_command(name, payload)
@@ -538,7 +538,7 @@ class EmbeddedHost(RemoteHost):
         ``(Status, str)``; fails loud (``ValueError``) if no loader is declared.
         """
         loader = self._require_loader()
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("UNLOAD", [], Path(name))
         cmd = loader.unload_command(name)
         last = ""
@@ -559,17 +559,17 @@ class ZephyrHost(EmbeddedHost):
 
     This is the worked example for shipping a host subclass: it re-declares the
     Zephyr-specific field defaults that :class:`EmbeddedHost` no longer assumes,
-    and is registered under ``osType: "zephyr"`` via
+    and is registered under ``os_type: "zephyr"`` via
     :func:`otto.host.os_profile.register_host_class`. External repositories
     register their own ``EmbeddedHost``/``UnixHost`` subclasses the same way
     (from an init module listed in ``.otto/settings.toml``), and may layer
     per-build ``OsProfile`` data bundles over them.
     """
 
-    osType: OsType = 'zephyr'
+    os_type: OsType = 'zephyr'
     """Profile selector recorded on the host. ``zephyr`` for this class."""
 
-    osName: Optional[str] = 'Zephyr'
+    os_name: Optional[str] = 'Zephyr'
     """Kernel/OS name — ``Zephyr`` for this class."""
 
     command_frame: CommandFrame = field(default_factory=ZephyrFrame)

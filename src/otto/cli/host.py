@@ -17,11 +17,11 @@ from rich import print as rprint
 from ..configmodule import all_hosts, get_host
 from ..host.connections import TermType
 from ..host.transfer import FileTransferType
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..utils import async_typer_command
 from .callbacks import list_hosts_callback
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
@@ -32,14 +32,14 @@ def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     ``--clear-autocomplete-cache``). Falls through to a live ``hosts.json``
     scan on cache miss so first-run completion still works.
     """
-    from ..configmodule import getCompletionNames, getRepos
+    from ..configmodule import get_completion_names, get_repos
     from ..configmodule.completion_cache import collect_host_ids
 
-    cached = getCompletionNames()
+    cached = get_completion_names()
     if cached is not None and isinstance(cached.get('hosts'), list):
         ids = cached['hosts']
     else:
-        ids = collect_host_ids(getRepos())
+        ids = collect_host_ids(get_repos())
 
     return sorted(h for h in ids if h.startswith(incomplete))
 

@@ -4,7 +4,7 @@
 extra host/shell capabilities — the kind of thing a vendor or a shared internal
 library would ship. Repos pull it in through ``settings.toml``::
 
-    libs = ["${sutDir}/../custom_hosts"]   # add this dir to PYTHONPATH
+    libs = ["${sut_dir}/../custom_hosts"]   # add this dir to PYTHONPATH
     init = ["custom_hosts"]                 # import at config load
 
 otto imports each ``init`` module at config load (after ``libs`` land on the

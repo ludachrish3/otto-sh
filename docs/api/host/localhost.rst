@@ -1,4 +1,4 @@
-host.localHost
+host.local_host
 ==============
 
-.. automodule:: otto.host.localHost
+.. automodule:: otto.host.local_host

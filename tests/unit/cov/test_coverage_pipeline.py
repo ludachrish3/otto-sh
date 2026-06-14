@@ -24,8 +24,8 @@ import pytest
 
 from otto.coverage.fetcher.remote import GcdaFetcher
 from otto.coverage.reporter import CoverageReporter, discover_gcda_dirs
-from otto.host.localHost import LocalHost
-from otto.host.unixHost import UnixHost
+from otto.host.local_host import LocalHost
+from otto.host.unix_host import UnixHost
 from otto.utils import Status
 
 from tests.unit.cov.conftest import configured_hosts

@@ -266,7 +266,7 @@ def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:
     """`otto host <TAB>` must complete host IDs from the configured hosts.json.
 
     The completer in ``otto.cli.host`` runs during completion before
-    ``applyRepoSettings()`` — this test proves host IDs reach the shell.
+    ``apply_repo_settings()`` — this test proves host IDs reach the shell.
     """
     _run_otto(['--help'], xdir=tmp_path)
 

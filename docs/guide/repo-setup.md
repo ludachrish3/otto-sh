@@ -12,9 +12,9 @@ Create `.otto/settings.toml` in your repo root:
 name = "my_project"
 version = "1.0.0"
 
-labs  = ["${sutDir}/../lab_data"]
-libs  = ["${sutDir}/pylib"]
-tests = ["${sutDir}/tests"]
+labs  = ["${sut_dir}/../lab_data"]
+libs  = ["${sut_dir}/pylib"]
+tests = ["${sut_dir}/tests"]
 init  = ["my_instructions", "my_shared_options"]
 
 # Optional: connection defaults applied to every host this repo touches.
@@ -25,7 +25,7 @@ keepalive_interval = 30
 
 ### Variable expansion
 
-`${sutDir}` is replaced with the absolute path to the repo root at load
+`${sut_dir}` is replaced with the absolute path to the repo root at load
 time.  Use it to keep paths relative and portable.  Expansion runs
 inside every settings table, including string values nested under
 `[host_defaults]`.
@@ -71,7 +71,7 @@ init
   (e.g. `"unix"`, `"zephyr"`, or a class registered by an `init` module)
   and may contain any default field values to bundle with that profile.
   Profiles are registered into the global OS-profile registry so lab-data
-  entries can select them by `osType` name.  See {doc}`os-profiles` for
+  entries can select them by `os_type` name.  See {doc}`os-profiles` for
   the full treatment.
 
 ## What happens at startup

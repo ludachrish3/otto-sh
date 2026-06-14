@@ -37,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"
 
 HOST_ID = "carrot_seed"
-# UnixHost._generateName returns "{ne} {board}" — the banner and every
+# UnixHost._generate_name returns "{ne} {board}" — the banner and every
 # log preamble written by _SessionLogFile use this, NOT the host id.
 HOST_NAME = "carrot seed"
 ROUND_TRIP_TOKEN = "otto_login_marker"

@@ -1,7 +1,7 @@
 from importlib.metadata import version
 
 
-def getVersion():
+def get_version():
     """Get `otto`'s package version."""
 
     return version('otto-sh')

@@ -144,8 +144,8 @@ for that host:
 ```json
 {
     "ip": "192.0.2.1",
-    "ne": "sprout",
-    "osType": "zephyr",
+    "element": "sprout",
+    "os_type": "zephyr",
     "snmp": {
         "address": "10.10.200.14",
         "port": 16101,

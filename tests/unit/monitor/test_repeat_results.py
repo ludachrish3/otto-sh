@@ -13,13 +13,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.host import RunResult
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
 
 
 @pytest.fixture
 def host():
-    h = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+    h = UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
     yield h
 
 

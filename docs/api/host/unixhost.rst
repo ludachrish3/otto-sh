@@ -1,4 +1,4 @@
-host.unixHost
+host.unix_host
 ===============
 
-.. automodule:: otto.host.unixHost
+.. automodule:: otto.host.unix_host

@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from ...host.localHost import LocalHost
+from ...host.local_host import LocalHost
 
 logger = logging.getLogger(__name__)
 

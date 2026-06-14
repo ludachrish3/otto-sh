@@ -24,7 +24,7 @@ from typer.testing import CliRunner
 
 from otto.cli.monitor import _load_historical, monitor_app
 from otto.host import RunResult
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.monitor.collector import MetricCollector
 from otto.monitor.factory import build_monitor_collector
 from otto.monitor.parsers import LoadParser, MemParser
@@ -37,7 +37,7 @@ runner = CliRunner()
 
 def _make_host(name: str = 'box') -> UnixHost:
     """Return a real UnixHost (no connection is made on construction)."""
-    return UnixHost(ip='10.0.0.1', ne=name, creds={'admin': 'secret'}, log=True)
+    return UnixHost(ip='10.0.0.1', element=name, creds={'admin': 'secret'}, log=True)
 
 
 def _close_coro(coro):

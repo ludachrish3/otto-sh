@@ -28,10 +28,10 @@ from telnetlib3 import (
 )
 from telnetlib3.telopt import DONT, ECHO, IAC, NAWS, SB, SE
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from .options import TelnetOptions
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 # Registry of TelnetClients that want SIGWINCH-driven NAWS updates. A single

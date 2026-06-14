@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from otto.host.localHost import LocalHost
+from otto.host.local_host import LocalHost
 from otto.host.toolchain import Toolchain
 from otto.host.toolchain_discovery import (
     _clang_toolchain,

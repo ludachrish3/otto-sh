@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from otto.host.host import isDryRun
-from otto.host.localHost import LocalHost
-from otto.host.unixHost import UnixHost
+from otto.host.host import is_dry_run
+from otto.host.local_host import LocalHost
+from otto.host.unix_host import UnixHost
 from otto.utils import Status
 from tests.conftest import active_context
 
@@ -15,7 +15,7 @@ from tests.conftest import active_context
 class TestGlobalDryRun:
 
     def test_global_flag_defaults_to_false(self):
-        assert isDryRun() is False
+        assert is_dry_run() is False
 
     # ── LocalHost ─────────────────────────────────────────────────────────
 
@@ -110,7 +110,7 @@ class TestGlobalDryRun:
     @pytest.mark.asyncio
     async def test_remotehost_run_returns_skipped(self):
         with active_context(dry_run=True):
-            host = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+            host = UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
             result = (await host.run("ls -la")).only
 
             assert result.status == Status.Skipped
@@ -122,7 +122,7 @@ class TestGlobalDryRun:
     @pytest.mark.asyncio
     async def test_remotehost_oneshot_returns_skipped(self):
         with active_context(dry_run=True):
-            host = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+            host = UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
             result = await host.oneshot("uname -a")
 
             assert result.status == Status.Skipped
@@ -132,7 +132,7 @@ class TestGlobalDryRun:
     @pytest.mark.asyncio
     async def test_remotehost_run_list_returns_all_skipped(self):
         with active_context(dry_run=True):
-            host = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+            host = UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
             result = await host.run(["cmd1", "cmd2", "cmd3"])
 
             assert len(result.statuses) == 3
@@ -143,14 +143,14 @@ class TestGlobalDryRun:
     @pytest.mark.asyncio
     async def test_remotehost_send_is_noop(self):
         with active_context(dry_run=True):
-            host = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+            host = UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
             await host.send("some text")
             assert host._connections._ssh_conn is None
 
     @pytest.mark.asyncio
     async def test_remotehost_expect_returns_empty(self):
         with active_context(dry_run=True):
-            host = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+            host = UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
             result = await host.expect("some_pattern")
 
             assert result == ""
@@ -159,7 +159,7 @@ class TestGlobalDryRun:
     @pytest.mark.asyncio
     async def test_remotehost_put_returns_skipped(self):
         with active_context(dry_run=True):
-            host = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+            host = UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
             files = [Path("/tmp/file1.txt"), Path("/tmp/file2.txt")]
             dest = Path("/remote/dest")
 
@@ -173,7 +173,7 @@ class TestGlobalDryRun:
     @pytest.mark.asyncio
     async def test_remotehost_get_returns_skipped(self):
         with active_context(dry_run=True):
-            host = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+            host = UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
             files = [Path("/remote/file.bin")]
             dest = Path("/local/dest")
 
@@ -185,7 +185,7 @@ class TestGlobalDryRun:
 
     def test_remotehost_start_repeat_is_noop(self):
         with active_context(dry_run=True):
-            host = UnixHost(ip='10.0.0.1', ne='box', creds={'user': 'pass'}, log=False)
+            host = UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
             host.start_repeat(
                 name="test", cmds=["uptime"], interval=timedelta(seconds=10),
             )

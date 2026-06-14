@@ -30,7 +30,7 @@ from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser
 from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
 
 if TYPE_CHECKING:
-    from ..host.remoteHost import RemoteHost
+    from ..host.remote_host import RemoteHost
     from ..utils import CommandStatus, Status
 
 

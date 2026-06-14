@@ -22,7 +22,9 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 DOCS_TABLE = REPO_ROOT / "docs" / "getting-started.md"
 
 # A dependency spec like ``aioftp>=0.27.2``: capture name and the >= floor.
-_SPEC_RE = re.compile(r"^\s*([A-Za-z0-9._-]+)\s*>=\s*([0-9][0-9A-Za-z.+!-]*)\s*$")
+# An optional trailing constraint (e.g. a ceiling, ``typer>=0.24.0,<0.26``) is
+# tolerated — the docs table tracks the >= floor, not the upper bound.
+_SPEC_RE = re.compile(r"^\s*([A-Za-z0-9._-]+)\s*>=\s*([0-9][0-9A-Za-z.+!-]*)\s*(?:,\s*[<>=!~].*)?$")
 
 # A docs table row like ``| `aioftp` | 0.27.2 | Async FTP... |``.
 _ROW_RE = re.compile(r"^\|\s*`([A-Za-z0-9._-]+)`\s*\|\s*([0-9][0-9A-Za-z.+!-]*)\s*\|")

@@ -17,7 +17,7 @@ from typing import (
 
 
 # TODO: add more complicated tag parsing later
-def splitOnCommas(
+def split_on_commas(
     values: list[str] | str
 ) -> list[str]:
     """Split a string or list of strings on commas into a flat list.
@@ -28,11 +28,11 @@ def splitOnCommas(
     Returns:
         A flat list of the individual values.
 
-    >>> splitOnCommas("a,b,c")
+    >>> split_on_commas("a,b,c")
     ['a', 'b', 'c']
-    >>> splitOnCommas(["a,b", "c,d"])
+    >>> split_on_commas(["a,b", "c,d"])
     ['a', 'b', 'c', 'd']
-    >>> splitOnCommas("single")
+    >>> split_on_commas("single")
     ['single']
     """
 
@@ -44,7 +44,7 @@ def splitOnCommas(
 
         case list():
             for value in values:
-                newValues = splitOnCommas(value)
+                newValues = split_on_commas(value)
                 allValues += newValues
 
             return allValues

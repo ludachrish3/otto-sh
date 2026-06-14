@@ -17,8 +17,8 @@ import pytest_asyncio
 from otto.configmodule.lab import Lab
 from otto.configmodule.repo import Repo
 from otto.docker import build_images, compose_down, compose_up, composed
-from otto.host.dockerHost import DockerContainerHost
-from otto.host.unixHost import UnixHost
+from otto.host.docker_host import DockerContainerHost
+from otto.host.unix_host import UnixHost
 from otto.utils import Status
 
 
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.xdist_group("docker_e2e")
 async def parent():
     h = UnixHost(
         ip="10.10.200.13",
-        ne="pepper",
+        element="pepper",
         creds={"vagrant": "vagrant"},
         board="seed",
         is_virtual=True,
@@ -48,7 +48,7 @@ async def parent():
 
 @pytest.fixture
 def repo1():
-    return Repo(sutDir=REPO1_DIR)
+    return Repo(sut_dir=REPO1_DIR)
 
 
 @pytest_asyncio.fixture

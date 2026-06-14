@@ -87,8 +87,8 @@ napoleon_use_ivar = True
 
 doctest_global_setup = """
 import asyncio
-from otto.utils import Status, CommandStatus, splitOnCommas
-from otto.host.localHost import LocalHost
+from otto.utils import Status, CommandStatus, split_on_commas
+from otto.host.local_host import LocalHost
 from otto.monitor.parsers import human_readable
 
 # Use a single persistent loop across all run() calls in a doctest block.

@@ -2,8 +2,8 @@ from .logger import (
     OttoLogger as OttoLogger,
 )
 from .logger import (
-    getOttoLogger as getOttoLogger,
+    get_otto_logger as get_otto_logger,
 )
 from .logger import (
-    initOttoLogger as initOttoLogger,
+    init_otto_logger as init_otto_logger,
 )

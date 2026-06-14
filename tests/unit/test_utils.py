@@ -12,7 +12,7 @@ import pytest
 
 from otto.host.connections import TermType
 from otto.host.transfer import FileTransferType
-from otto.utils import _get_literal_values, is_literal, splitOnCommas
+from otto.utils import _get_literal_values, is_literal, split_on_commas
 
 
 # ── _get_literal_values ─────────────────────────────────────────────────────
@@ -65,17 +65,17 @@ class TestIsLiteral:
         assert is_literal(val, TermType) is val
 
 
-# ── splitOnCommas ───────────────────────────────────────────────────────────
+# ── split_on_commas ───────────────────────────────────────────────────────────
 
 class TestSplitOnCommas:
     def test_string_input(self):
-        assert splitOnCommas("a,b,c") == ['a', 'b', 'c']
+        assert split_on_commas("a,b,c") == ['a', 'b', 'c']
 
     def test_list_input(self):
-        assert splitOnCommas(["a,b", "c,d"]) == ['a', 'b', 'c', 'd']
+        assert split_on_commas(["a,b", "c,d"]) == ['a', 'b', 'c', 'd']
 
     def test_single_value(self):
-        assert splitOnCommas("single") == ['single']
+        assert split_on_commas("single") == ['single']
 
     def test_empty_string(self):
-        assert splitOnCommas("") == ['']
+        assert split_on_commas("") == ['']

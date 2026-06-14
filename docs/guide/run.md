@@ -16,9 +16,9 @@ import typer
 
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import all_hosts
-from otto.logger import getOttoLogger
+from otto.logger import get_otto_logger
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 @instruction()
@@ -151,11 +151,11 @@ from typing import Annotated
 import typer
 
 from otto.cli.run import instruction
-from otto.logger import getOttoLogger
+from otto.logger import get_otto_logger
 
 from .options import RepoOptions
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 @dataclass

@@ -21,7 +21,7 @@ import aioftp
 import asyncssh
 
 from ..console import CONSOLE
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 
 if TYPE_CHECKING:
@@ -195,47 +195,47 @@ class BaseFileTransfer(ABC):
 
     async def put_files(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         show_progress: bool = True,
     ) -> tuple[Status, str]:
         status, err = validate_filename_lengths(
-            srcFiles, self._max_filename_len, self._name,
+            src_files, self._max_filename_len, self._name,
         )
         if not status.is_ok:
             return status, err
         if not show_progress:
-            return await self._run_put(srcFiles, destDir, None)
+            return await self._run_put(src_files, dest_dir, None)
         async with _acquire_shared_progress() as progress:
             return await self._run_put(
-                srcFiles, destDir,
+                src_files, dest_dir,
                 make_rich_progress_factory(progress, self._name),
             )
 
     async def get_files(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         show_progress: bool = True,
     ) -> tuple[Status, str]:
         status, err = validate_filename_lengths(
-            srcFiles, self._max_filename_len, self._name,
+            src_files, self._max_filename_len, self._name,
         )
         if not status.is_ok:
             return status, err
         if not show_progress:
-            return await self._run_get(srcFiles, destDir, None)
+            return await self._run_get(src_files, dest_dir, None)
         async with _acquire_shared_progress() as progress:
             return await self._run_get(
-                srcFiles, destDir,
+                src_files, dest_dir,
                 make_rich_progress_factory(progress, self._name),
             )
 
     @abstractmethod
     async def _run_put(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: 'TransferProgressFactory | None',
     ) -> tuple[Status, str]:
         """Backend-specific put implementation.
@@ -250,8 +250,8 @@ class BaseFileTransfer(ABC):
     @abstractmethod
     async def _run_get(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: 'TransferProgressFactory | None',
     ) -> tuple[Status, str]:
         """Backend-specific get implementation. Same progress contract as
@@ -299,7 +299,7 @@ _NC_BLOCK_SIZE = 8192
 # 12 MB/s link while keeping the overhead negligible.
 _NC_DRAIN_EVERY = 64
 
-_logger = getOttoLogger()
+_logger = get_otto_logger()
 
 # ---------------------------------------------------------------------------
 # Shell script templates for port-finding strategies
@@ -519,37 +519,37 @@ class FileTransfer(BaseFileTransfer):
 
     async def _run_get(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
         match self.transfer:
             case 'scp':
-                return await self._get_files_scp(srcFiles, destDir, progress_factory)
+                return await self._get_files_scp(src_files, dest_dir, progress_factory)
             case 'sftp':
-                return await self._get_files_sftp(srcFiles, destDir, progress_factory)
+                return await self._get_files_sftp(src_files, dest_dir, progress_factory)
             case 'ftp':
-                return await self._get_files_ftp(srcFiles, destDir, progress_factory)
+                return await self._get_files_ftp(src_files, dest_dir, progress_factory)
             case 'nc':
-                return await self._get_files_nc(srcFiles, destDir, progress_factory)
+                return await self._get_files_nc(src_files, dest_dir, progress_factory)
             case _:
                 raise ValueError(f'{self._name}: unsupported file_transfer "{self.transfer}"')
 
     async def _run_put(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
         match self.transfer:
             case 'scp':
-                return await self._put_files_scp(srcFiles, destDir, progress_factory)
+                return await self._put_files_scp(src_files, dest_dir, progress_factory)
             case 'sftp':
-                return await self._put_files_sftp(srcFiles, destDir, progress_factory)
+                return await self._put_files_sftp(src_files, dest_dir, progress_factory)
             case 'ftp':
-                return await self._put_files_ftp(srcFiles, destDir, progress_factory)
+                return await self._put_files_ftp(src_files, dest_dir, progress_factory)
             case 'nc':
-                return await self._put_files_nc(srcFiles, destDir, progress_factory)
+                return await self._put_files_nc(src_files, dest_dir, progress_factory)
             case _:
                 raise ValueError(f'{self._name}: unsupported file_transfer "{self.transfer}"')
 
@@ -559,49 +559,49 @@ class FileTransfer(BaseFileTransfer):
 
     async def _get_files_scp(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         ssh_conn = await self._connections.ssh()
 
         async def _get_one(src: Path) -> tuple[Status, str]:
             _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
-            _logger.debug(f"{self._name}: SCP get {src} -> {destDir}")
+            _logger.debug(f"{self._name}: SCP get {src} -> {dest_dir}")
             await asyncssh.scp(
                 (ssh_conn, str(src)),
-                destDir,
+                dest_dir,
                 progress_handler=_progress,
                 **self._scp_options._kwargs(),
             )
             return Status.Success, ''
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_get_one(src) for src in srcFiles), return_exceptions=True
+            *(_get_one(src) for src in src_files), return_exceptions=True
         )
         return _first_error(results)
 
     async def _put_files_scp(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         ssh_conn = await self._connections.ssh()
 
         async def _put_one(src: Path) -> tuple[Status, str]:
             _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
-            _logger.debug(f"{self._name}: SCP put {src} -> {destDir}")
+            _logger.debug(f"{self._name}: SCP put {src} -> {dest_dir}")
             await asyncssh.scp(
                 str(src),
-                (ssh_conn, str(destDir)),
+                (ssh_conn, str(dest_dir)),
                 progress_handler=_progress,
                 **self._scp_options._kwargs(),
             )
             return Status.Success, ''
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_put_one(src) for src in srcFiles), return_exceptions=True
+            *(_put_one(src) for src in src_files), return_exceptions=True
         )
         return _first_error(results)
 
@@ -611,47 +611,47 @@ class FileTransfer(BaseFileTransfer):
 
     async def _get_files_sftp(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         sftp_conn = await self._connections.sftp()
 
         async def _get_one(src: Path) -> tuple[Status, str]:
             _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
-            _logger.debug(f"{self._name}: SFTP get {src} -> {destDir}")
+            _logger.debug(f"{self._name}: SFTP get {src} -> {dest_dir}")
             await sftp_conn.get(
                 str(src),
-                str(destDir / src.name),
+                str(dest_dir / src.name),
                 progress_handler=_progress,
             )
             return Status.Success, ''
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_get_one(src) for src in srcFiles), return_exceptions=True
+            *(_get_one(src) for src in src_files), return_exceptions=True
         )
         return _first_error(results)
 
     async def _put_files_sftp(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         sftp_conn = await self._connections.sftp()
 
         async def _put_one(src: Path) -> tuple[Status, str]:
             _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
-            _logger.debug(f"{self._name}: SFTP put {src} -> {destDir}")
+            _logger.debug(f"{self._name}: SFTP put {src} -> {dest_dir}")
             await sftp_conn.put(
                 str(src),
-                str(destDir / src.name),
+                str(dest_dir / src.name),
                 progress_handler=_progress,
             )
             return Status.Success, ''
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_put_one(src) for src in srcFiles), return_exceptions=True
+            *(_put_one(src) for src in src_files), return_exceptions=True
         )
         return _first_error(results)
 
@@ -661,8 +661,8 @@ class FileTransfer(BaseFileTransfer):
 
     async def _get_files_ftp(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         # FTP transfers are sequential: aioftp.Client uses a single control
@@ -673,8 +673,8 @@ class FileTransfer(BaseFileTransfer):
         async with self._ftp_lock:
             ftp_conn = await self._connections.ftp()
             try:
-                for src in srcFiles:
-                    dst = destDir / src.name
+                for src in src_files:
+                    dst = dest_dir / src.name
                     _logger.debug(f"{self._name}: FTP get {src} -> {dst}")
                     if progress_factory is None:
                         await ftp_conn.download(str(src), str(dst))
@@ -701,16 +701,16 @@ class FileTransfer(BaseFileTransfer):
 
     async def _put_files_ftp(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         # Sequential for the same reason as _get_files_ftp (single data channel).
         async with self._ftp_lock:
             ftp_conn = await self._connections.ftp()
             try:
-                for src in srcFiles:
-                    dst = destDir / src.name
+                for src in src_files:
+                    dst = dest_dir / src.name
                     _logger.debug(f"{self._name}: FTP put {src} -> {dst}")
                     if progress_factory is None:
                         await ftp_conn.upload(str(src), str(dst))
@@ -1063,25 +1063,25 @@ class FileTransfer(BaseFileTransfer):
 
     async def _get_files_nc(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         if self._connections.has_tunnel:
-            return await self._get_files_nc_tunneled(srcFiles, destDir, progress_factory)
-        await self._warmup_for_transfer(len(srcFiles))
+            return await self._get_files_nc_tunneled(src_files, dest_dir, progress_factory)
+        await self._warmup_for_transfer(len(src_files))
         local_ip = self._get_local_ip()
 
         # Pre-fetch remote file sizes through `_control_run` — same control-
         # plane path as the port/listener probes (telnet: serialized onto a
         # warm pooled session; ssh: direct exec).
         sizes: dict[Path, int] = {}
-        for src in srcFiles:
+        for src in src_files:
             stat_result = await self._control_run(f'stat -c %s {src}')
             sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
 
         async def _get_one(src: Path) -> tuple[Status, str]:
-            dst = destDir / src.name
+            dst = dest_dir / src.name
             total = sizes[src]
             handler = progress_factory() if progress_factory is not None else None
             _logger.debug(f"{self._name}: NC get {src} -> {dst}")
@@ -1134,15 +1134,15 @@ class FileTransfer(BaseFileTransfer):
                 await server.wait_closed()
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_get_one(src) for src in srcFiles),
+            *(_get_one(src) for src in src_files),
             return_exceptions=True,
         )
         return _first_error(results)
 
     async def _get_files_nc_tunneled(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         """Netcat GET through an SSH hop using a reversed-listener approach.
@@ -1151,16 +1151,16 @@ class FileTransfer(BaseFileTransfer):
         sends file data.  Otto connects through an SSH port forward and
         reads the data — same tunnel mechanics as PUT, reversed data flow.
         """
-        await self._warmup_for_transfer(len(srcFiles))
+        await self._warmup_for_transfer(len(src_files))
         # Pre-fetch remote file sizes through `_control_run` — see
         # `_get_files_nc` for the rationale.
         sizes: dict[Path, int] = {}
-        for src in srcFiles:
+        for src in src_files:
             stat_result = await self._control_run(f'stat -c %s {src}')
             sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
 
         async def _get_one(src: Path) -> tuple[Status, str]:
-            dst = destDir / src.name
+            dst = dest_dir / src.name
             total = sizes[src]
             handler = progress_factory() if progress_factory is not None else None
             _logger.debug(f"{self._name}: NC get (tunneled) {src} -> {dst}")
@@ -1232,7 +1232,7 @@ class FileTransfer(BaseFileTransfer):
                 self._release_port(port)
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_get_one(src) for src in srcFiles),
+            *(_get_one(src) for src in src_files),
             return_exceptions=True,
         )
         return _first_error(results)
@@ -1270,14 +1270,14 @@ class FileTransfer(BaseFileTransfer):
 
     async def _put_files_nc(
         self,
-        srcFiles: list[Path],
-        destDir: Path,
+        src_files: list[Path],
+        dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
         # Fire strategy-probe + pool-warming concurrently so the
         # first-transfer handshakes don't stack up serially on the critical
         # path. On a warm host this is a no-op.
-        await self._warmup_for_transfer(len(srcFiles))
+        await self._warmup_for_transfer(len(src_files))
 
         async def _attempt(src: Path, dst: Path) -> tuple[Status, str]:
             # Use an ephemeral port on the remote side so multiple host objects
@@ -1410,7 +1410,7 @@ class FileTransfer(BaseFileTransfer):
                 self._release_port(port)
 
         async def _put_one(src: Path) -> tuple[Status, str]:
-            dst = destDir / src.name
+            dst = dest_dir / src.name
             _logger.debug(f"{self._name}: NC put {src} -> {dst}")
             result = await _attempt(src, dst)
             if not result[0].is_ok:
@@ -1422,7 +1422,7 @@ class FileTransfer(BaseFileTransfer):
             return result
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_put_one(src) for src in srcFiles),
+            *(_put_one(src) for src in src_files),
             return_exceptions=True,
         )
         r = _first_error(results)

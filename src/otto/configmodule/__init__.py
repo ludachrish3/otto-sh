@@ -34,23 +34,23 @@ from .repo import (
     Repo,
 )
 from .repo import (
-    applyRepoSettings as applyRepoSettings,
+    apply_repo_settings as apply_repo_settings,
 )
 from .repo import (
-    getRepos as _getRepos,
+    get_repos as _getRepos,
 )
 from .version import (
     Version as Version,
 )
 
 _env = OttoEnv()
-_repos = _getRepos(_env.sutDirs)
+_repos = _getRepos(_env.sut_dirs)
 
 # ---------------------------------------------------------------------------
 # Completion fast path (Phase B of the tab-completion speedup).
 #
 # When otto is being invoked by shell completion (_OTTO_COMPLETE is set), the
-# expensive side effects in applyRepoSettings() — importing every user init
+# expensive side effects in apply_repo_settings() — importing every user init
 # module and exec'ing every test file — produce no output the completer
 # needs beyond the *names* of the instructions and suites they register. If
 # a valid fingerprinted cache exists for the current set of SUT dirs, we
@@ -70,15 +70,15 @@ from .completion_cache import (
 )
 
 
-# Defined BEFORE applyRepoSettings() below: that call exec's user/test files at
-# import time, and those files may `from otto.configmodule import getRepos`. If
-# these accessors were defined later (after applyRepoSettings) the import would
+# Defined BEFORE apply_repo_settings() below: that call exec's user/test files at
+# import time, and those files may `from otto.configmodule import get_repos`. If
+# these accessors were defined later (after apply_repo_settings) the import would
 # hit a partially-initialized module → circular ImportError.
-def getRepos() -> list[Repo]:
+def get_repos() -> list[Repo]:
     return _repos
 
 
-def getEnv() -> OttoEnv:
+def get_env() -> OttoEnv:
     return _env
 
 
@@ -91,7 +91,7 @@ if _completion_names is None:
     # Slow path: either a normal invocation or a completion cache miss.
     # Repos' settings must be applied before getting the Lab object.
     # Repo settings define where the lab definitions are, among other things.
-    applyRepoSettings(_repos)
+    apply_repo_settings(_repos)
 
     # Refresh the cache so the next completion can take the fast path.
     # Safe no-op if OTTO_XDIR isn't set.
@@ -105,7 +105,7 @@ if _completion_names is None:
         pass
 
 
-def getCompletionNames() -> dict[str, Any] | None:
+def get_completion_names() -> dict[str, Any] | None:
     """Return cached instruction/suite/host data when the completion fast
     path is active, else ``None``.
 

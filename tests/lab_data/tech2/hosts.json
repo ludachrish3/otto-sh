@@ -1,7 +1,7 @@
 [
     {
         "ip": "10.10.200.11",
-        "ne": "orange",
+        "element": "orange",
         "board": "seed",
         "creds": {
             "vagrant": "vagrant",
@@ -16,7 +16,7 @@
     },
     {
         "ip": "10.10.200.12",
-        "ne": "apple",
+        "element": "apple",
         "board": "seed",
         "creds": {
             "vagrant": "vagrant",
@@ -32,7 +32,7 @@
     },
     {
         "ip": "10.10.200.13",
-        "ne": "grape",
+        "element": "grape",
         "board": "seed",
         "docker_capable": true,
         "creds": {

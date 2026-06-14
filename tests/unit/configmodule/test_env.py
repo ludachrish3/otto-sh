@@ -12,7 +12,7 @@ from otto.configmodule.env import (
 
 
 @pytest.fixture(autouse=True, scope='function')
-def clearEnv(monkeypatch):
+def clear_env(monkeypatch):
     """Clear the environment variables Otto cares about before every test"""
 
     monkeypatch.delenv(SUT_DIRS_ENV_VAR, None)
@@ -22,7 +22,7 @@ def test_env_not_set() -> None:
 
     env = OttoEnv()
 
-    assert env.sutDirs == []
+    assert env.sut_dirs == []
 
 
 def test_env_lab_value() -> None:
@@ -48,7 +48,7 @@ def test_env_sutdirs_set_to_one_path_that_exists(monkeypatch, tmpdir) -> None:
     monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{tmpdir}')
     env = OttoEnv()
 
-    assert env.sutDirs == [tmpdir]
+    assert env.sut_dirs == [tmpdir]
 
 
 def test_env_sutdirs_set_to_one_path_that_does_not_exist(monkeypatch, tmpdir) -> None:
@@ -67,7 +67,7 @@ def test_env_sutdirs_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factor
     monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{sutDir1},{sutDir2}')
     env = OttoEnv()
 
-    assert env.sutDirs == [sutDir1, sutDir2]
+    assert env.sut_dirs == [sutDir1, sutDir2]
 
 
 def test_env_sutdirs_set_to_multiple_paths_one_does_not_exist(monkeypatch, tmpdir) -> None:

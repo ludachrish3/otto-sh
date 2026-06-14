@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Optional, cast
 
-from ..host.remoteHost import RemoteHost
+from ..host.remote_host import RemoteHost
 from .collector import MetricCollector, MonitorTarget
 from .parsers import get_host_parsers
 from .snmp import SnmpClient, SnmpSource, SnmpVersion

@@ -15,6 +15,10 @@ select = [
     "E501",
     "I",
     "D",
+    "N802",
+    "N803",
+    "N815",
+    "N816",
 ]
 ignore = [
     "D100", # Missing docstring in public module // TODO: Stop ignoring this when ready to document modules

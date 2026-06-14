@@ -50,10 +50,10 @@ def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None
     from unittest.mock import MagicMock
 
     fake_repo = MagicMock()
-    fake_repo.sutDir = tmp_path / 'sut'
-    fake_repo.sutDir.mkdir()
-    (fake_repo.sutDir / '.otto').mkdir()
-    (fake_repo.sutDir / '.otto' / 'settings.toml').write_text('')
+    fake_repo.sut_dir = tmp_path / 'sut'
+    fake_repo.sut_dir.mkdir()
+    (fake_repo.sut_dir / '.otto').mkdir()
+    (fake_repo.sut_dir / '.otto' / 'settings.toml').write_text('')
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []

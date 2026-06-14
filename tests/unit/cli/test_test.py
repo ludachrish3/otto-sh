@@ -140,7 +140,7 @@ class TestRunSuiteInternals:
         class _FakeSuite:
             __name__ = '_FakeSuite'
 
-        with patch('otto.cli.test.getRepos', return_value=[]), \
+        with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest') as mock_pytest, \
              self._patch_parent_ctx({}):
@@ -161,7 +161,7 @@ class TestRunSuiteInternals:
         class _FakeSuite3:
             __name__ = '_FakeSuite3'
 
-        with patch('otto.cli.test.getRepos', return_value=[]), \
+        with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest') as mock_pytest, \
              self._patch_parent_ctx({}):
@@ -181,7 +181,7 @@ class TestRunSuiteInternals:
         class _FakeSuite4:
             __name__ = '_FakeSuite4'
 
-        with patch('otto.cli.test.getRepos', return_value=[]), \
+        with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest') as mock_pytest, \
              self._patch_parent_ctx({'markers': 'not integration'}):
@@ -211,7 +211,7 @@ class TestRunSuiteInternals:
         class _FakeMonSuite:
             __name__ = '_FakeMonSuite'
 
-        with patch('otto.cli.test.getRepos', return_value=[]), \
+        with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest'), \
              patch('otto.cli.test.OttoPlugin', _CapturingPlugin), \
@@ -244,7 +244,7 @@ class TestRunSuiteInternals:
             __name__ = '_FakeMonSuite2'
 
         out = tmp_path / 'somewhere.db'
-        with patch('otto.cli.test.getRepos', return_value=[]), \
+        with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest'), \
              patch('otto.cli.test.OttoPlugin', _CapturingPlugin), \
@@ -644,7 +644,7 @@ class TestRunCoverageDestination:
         from otto.cli.test import _run_coverage
 
         repo = MagicMock()
-        repo.sutDir = log_dir
+        repo.sut_dir = log_dir
         repo.name = 'repo'
 
         fetcher_instance = MagicMock()
@@ -718,7 +718,7 @@ class TestRunCoverageEmbedded:
 
         from otto.cli.test import _run_coverage
         from otto.host import UnixHost
-        from otto.host.embeddedHost import ZephyrHost
+        from otto.host.embedded_host import ZephyrHost
         from otto.host.toolchain import Toolchain
 
         cov_dir = tmp_path / 'cov'
@@ -728,13 +728,13 @@ class TestRunCoverageEmbedded:
 
         repo = MagicMock()
         repo.name = 'repo3'
-        repo.sutDir = tmp_path / 'repo3'  # NOT what sut_dir should resolve to
+        repo.sut_dir = tmp_path / 'repo3'  # NOT what sut_dir should resolve to
 
         hop = MagicMock(spec=UnixHost)
         hop.id = 'basil_seed'  # a Unix hop, produces no coverage
 
         sprout_cov = ZephyrHost(
-            ip='192.0.2.33', ne='sprout_cov', transfer='console',
+            ip='192.0.2.33', element='sprout_cov', transfer='console',
             toolchain=Toolchain(
                 sysroot=Path('/opt/sdk/arm-zephyr-eabi'),
                 gcov=Path('bin/arm-zephyr-eabi-gcov'),
@@ -770,11 +770,11 @@ class TestRunCoverageEmbedded:
         from pathlib import Path
 
         from otto.cli.test import _run_coverage
-        from otto.host.embeddedHost import ZephyrHost
+        from otto.host.embedded_host import ZephyrHost
         from otto.host.toolchain import Toolchain
 
         host = ZephyrHost(
-            ip='192.0.2.33', ne='sprout_cov', transfer='console',
+            ip='192.0.2.33', element='sprout_cov', transfer='console',
             toolchain=Toolchain(
                 sysroot=Path('/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi'),
                 gcov=Path('bin/arm-zephyr-eabi-gcov'),
@@ -788,7 +788,7 @@ class TestRunCoverageEmbedded:
 
         repo = MagicMock()
         repo.name = 'repo3'
-        repo.sutDir = tmp_path / 'repo3'
+        repo.sut_dir = tmp_path / 'repo3'
 
         embedded_collect = AsyncMock(
             return_value={'sprout_cov': cov_dir / 'sprout_cov'},
@@ -819,10 +819,10 @@ class TestRunCoverageEmbedded:
         from pathlib import Path
 
         from otto.cli import test as test_mod
-        from otto.host.embeddedHost import ZephyrHost
+        from otto.host.embedded_host import ZephyrHost
         from otto.host.toolchain import Toolchain
 
-        host = ZephyrHost(ip='192.0.2.33', ne='sprout_cov', transfer='console')
+        host = ZephyrHost(ip='192.0.2.33', element='sprout_cov', transfer='console')
         # No toolchain configured -> default Toolchain() -> discovery fallback.
         cov_dir = tmp_path / 'cov'
         cov_dir.mkdir()
@@ -831,7 +831,7 @@ class TestRunCoverageEmbedded:
 
         repo = MagicMock()
         repo.name = 'repo3'
-        repo.sutDir = tmp_path / 'repo3'
+        repo.sut_dir = tmp_path / 'repo3'
 
         embedded_collect = AsyncMock(
             return_value={'sprout_cov': cov_dir / 'sprout_cov'},
@@ -920,7 +920,7 @@ class TestRunCoverageEmbedded:
         assert embedded_collect.await_args.kwargs.get('pattern') is None
 
     def test_per_version_source_roots_recorded(self, tmp_path):
-        """Two embedded hosts of different osVersion each record their own build_dir
+        """Two embedded hosts of different os_version each record their own build_dir
         as a per-host source root in the meta (multi-Zephyr-version coverage).
         """
         import asyncio
@@ -928,7 +928,7 @@ class TestRunCoverageEmbedded:
         from pathlib import Path
 
         from otto.cli.test import _run_coverage
-        from otto.host.embeddedHost import ZephyrHost
+        from otto.host.embedded_host import ZephyrHost
         from otto.host.toolchain import Toolchain
 
         cov_dir = tmp_path / 'cov'
@@ -940,16 +940,16 @@ class TestRunCoverageEmbedded:
 
         repo = MagicMock()
         repo.name = 'repo3'
-        repo.sutDir = tmp_path / 'repo3'
+        repo.sut_dir = tmp_path / 'repo3'
 
         sprout = ZephyrHost(
-            ip='192.0.2.33', ne='sprout', transfer='console', osVersion='3.7',
+            ip='192.0.2.33', element='sprout', transfer='console', os_version='3.7',
             toolchain=Toolchain(
                 sysroot=Path('/opt/sdk37/arm-zephyr-eabi'),
                 gcov=Path('bin/arm-zephyr-eabi-gcov'), lcov=Path('/usr/bin/lcov')),
         )
         sprout44 = ZephyrHost(
-            ip='192.0.2.34', ne='sprout44', transfer='console', osVersion='4.4',
+            ip='192.0.2.34', element='sprout44', transfer='console', os_version='4.4',
             toolchain=Toolchain(
                 sysroot=Path('/opt/sdk44/gnu/arm-zephyr-eabi'),
                 gcov=Path('bin/arm-zephyr-eabi-gcov'), lcov=Path('/usr/bin/lcov')),
@@ -1079,7 +1079,7 @@ class TestRunSuiteReport:
 
         repo = MagicMock()
         repo.tests = [log_dir]
-        repo.sutDir = log_dir
+        repo.sut_dir = log_dir
         repo.name = 'repo'
 
         import click as _click
@@ -1096,7 +1096,7 @@ class TestRunSuiteReport:
         mock_logger = MagicMock()
         mock_logger.output_dir = log_dir
 
-        with patch('otto.cli.test.getRepos', return_value=[repo]), \
+        with patch('otto.cli.test.get_repos', return_value=[repo]), \
              patch('otto.cli.test.logger', mock_logger), \
              patch('otto.cli.test.pytest.main'), \
              patch('otto.cli.test._run_coverage', new=AsyncMock()), \

@@ -26,8 +26,8 @@ from otto.docker.compose import (
     get_user_compose_project,
     register_declared_container_hosts,
 )
-from otto.host.dockerHost import DockerContainerHost
-from otto.host.unixHost import UnixHost
+from otto.host.docker_host import DockerContainerHost
+from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
 
 
@@ -69,21 +69,21 @@ def _make_repo(tmp: Path, *, name: str = "repo1", services: tuple = ("api",), de
         f"\n"
         f"[[docker.images]]\n"
         f"name = \"api\"\n"
-        f"dockerfile = \"${{sutDir}}/docker/Dockerfile\"\n"
-        f"context = \"${{sutDir}}/docker\"\n"
+        f"dockerfile = \"${{sut_dir}}/docker/Dockerfile\"\n"
+        f"context = \"${{sut_dir}}/docker\"\n"
         f"\n"
         f"[[docker.composes]]\n"
-        f"path = \"${{sutDir}}/docker/compose.yml\"\n"
+        f"path = \"${{sut_dir}}/docker/compose.yml\"\n"
         f"default_host = \"{default_host}\"\n"
         f"services = {services_toml}\n"
     )
-    return Repo(sutDir=sut)
+    return Repo(sut_dir=sut)
 
 
 def _capable_host(host_id: str = "pepper_seed", ne: str = "pepper") -> UnixHost:
     return UnixHost(
         ip="10.10.200.13",
-        ne=ne,
+        element=ne,
         creds={"vagrant": "vagrant"},
         board="seed",
         docker_capable=True,
@@ -143,7 +143,7 @@ def test_resolve_parent_rejects_non_capable(tmp_path):
     lab = _make_lab()
     # Add a host that is NOT docker_capable.
     other = _wire_parent_mock(UnixHost(
-        ip="1.2.3.4", ne="other", creds={"u": "p"}, board="seed", docker_capable=False,
+        ip="1.2.3.4", element="other", creds={"u": "p"}, board="seed", docker_capable=False,
     ))
     lab.hosts[other.id] = other
     with pytest.raises(ValueError, match="not docker_capable"):

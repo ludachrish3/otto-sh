@@ -30,9 +30,9 @@ from dataclasses import (
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..logger import getOttoLogger
+from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
-from .host import BaseHost, Host, isDryRun
+from .host import BaseHost, Host, is_dry_run
 from .repeat import RepeatRunner
 
 if TYPE_CHECKING:
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
 
-logger = getOttoLogger()
+logger = get_otto_logger()
 
 
 @dataclass(slots=True)
@@ -125,7 +125,7 @@ class DockerContainerHost(BaseHost):
         :meth:`__post_init__` and :meth:`rebuild_connections`."""
 
         def _make_session() -> ShellSession:
-            from .unixHost import UnixHost
+            from .unix_host import UnixHost
             if not (isinstance(self.parent, UnixHost) and self.parent.term == 'ssh'):
                 term = getattr(self.parent, 'term', None)
                 raise NotImplementedError(
@@ -167,7 +167,7 @@ class DockerContainerHost(BaseHost):
         ``com.docker.compose.service={self.service}``. If found, cache the
         id on ``self``. If not, auto-start the stack via :func:`compose_up`
         and re-resolve. ``compose_up`` is reached only on real-access paths
-        — every dry-run path short-circuits on :func:`isDryRun` before
+        — every dry-run path short-circuits on :func:`is_dry_run` before
         calling this method.
         """
         if self.container_id:
@@ -203,7 +203,7 @@ class DockerContainerHost(BaseHost):
         image rebuild — a missing image fails fast with an actionable error.
         """
         from ..configmodule import get_lab as _get_lab
-        from ..configmodule import getRepos as _getRepos
+        from ..configmodule import get_repos as _getRepos
         from ..docker.compose import compose_up
 
         logger.info(
@@ -259,7 +259,7 @@ class DockerContainerHost(BaseHost):
         ``docker exec``. ``run()`` is the stateful counterpart that
         preserves shell state across calls.
         """
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_result(cmd)
         return await self._oneshot_via_parent(cmd, timeout, log=log)
 
@@ -294,21 +294,21 @@ class DockerContainerHost(BaseHost):
         matching :class:`LocalHost` and :class:`UnixHost`. Requires an
         SSH-based :class:`UnixHost` parent.
         """
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_result(cmd)
         await self._ensure_running()
         return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
     async def open_session(self, name: str) -> 'HostSession':
         """Open a named persistent shell session inside the container."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] open_session({name!r})")
         await self._ensure_running()
         return await self._session_mgr.open_session(name)
 
     async def send(self, text: str) -> None:
         """Send raw text to the container's persistent session."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command(f"[DRY RUN] send({text!r})")
             return
         await self._ensure_running()
@@ -320,7 +320,7 @@ class DockerContainerHost(BaseHost):
         timeout: float = 10.0,
     ) -> str:
         """Wait for a pattern in the container's session output stream."""
-        if isDryRun():
+        if is_dry_run():
             self._log_command("[DRY RUN] expect() skipped — pattern would never match without a live session")
             return ""
         await self._ensure_running()
@@ -334,7 +334,7 @@ class DockerContainerHost(BaseHost):
         """Open an interactive shell inside the container via the parent's SSH conn."""
         # Importing here to keep this module importable without asyncssh.
         from .interact import run_ssh_login
-        from .unixHost import UnixHost
+        from .unix_host import UnixHost
 
         if not isinstance(self.parent, UnixHost):
             raise NotImplementedError(
@@ -377,7 +377,7 @@ class DockerContainerHost(BaseHost):
         cleaned up unconditionally so a failed transfer doesn't leak.
         """
         files = src_files if isinstance(src_files, list) else [src_files]
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("PUT", files, dest_dir)
         await self._ensure_running()
 
@@ -414,7 +414,7 @@ class DockerContainerHost(BaseHost):
         staging dir on the parent, then ``parent.get`` to the local dir.
         """
         files = src_files if isinstance(src_files, list) else [src_files]
-        if isDryRun():
+        if is_dry_run():
             return self._dry_run_transfer("GET", files, dest_dir)
         await self._ensure_running()
 

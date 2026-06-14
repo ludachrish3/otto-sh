@@ -235,7 +235,7 @@ async def _delete_remote(host, path: Path) -> Status:
     the result hides real regressions (e.g. a future ``fs rm`` shape
     change on a new RTOS).
     """
-    from otto.host.embeddedHost import EmbeddedHost
+    from otto.host.embedded_host import EmbeddedHost
     if isinstance(host, EmbeddedHost):
         result = (await host.run(f"fs rm {path}")).only
     else:

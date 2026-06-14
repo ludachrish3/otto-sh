@@ -3,7 +3,7 @@ Unit tests for the main CLI entry-point argument parsing.
 
 Tests cover:
   - Eager options that exit before the main callback (--version, --list-labs)
-  - Global options forwarded to initOttoLogger (--verbose, --log-level, --log-days, --xdir)
+  - Global options forwarded to init_otto_logger (--verbose, --log-level, --log-days, --xdir)
   - Lab-loading arguments (--lab, --show-lab, --list-hosts)
   - Validation of numeric constraints (--log-days min=0)
   - --field / --debug toggle
@@ -18,7 +18,7 @@ import pytest
 from typer.testing import CliRunner
 
 from otto.cli.main import app
-from otto.logger import getOttoLogger
+from otto.logger import get_otto_logger
 
 runner = CliRunner()
 
@@ -47,12 +47,12 @@ def main_mocks(tmp_path):
 
     with (
         patch.dict(os.environ, clean_env, clear=True),
-        patch('otto.cli.main.initOttoLogger') as p_logger,
-        patch('otto.cli.main.getRepos', return_value=[]),
+        patch('otto.cli.main.init_otto_logger') as p_logger,
+        patch('otto.cli.main.get_repos', return_value=[]),
         patch('otto.cli.main.load_lab', return_value=mock_lab) as p_getlab,
     ):
         yield {
-            'initOttoLogger': p_logger,
+            'init_otto_logger': p_logger,
             'load_lab': p_getlab,
             'lab': mock_lab,
             'config': mock_config,
@@ -95,7 +95,7 @@ class TestEagerOptions:
         assert 'otto' in result.output.lower() or 'OTTO' in result.output
 
     def test_list_labs_exits_zero(self):
-        # getRepos() returns [] in test env; just verifies the flag is accepted
+        # get_repos() returns [] in test env; just verifies the flag is accepted
         result = runner.invoke(app, ['--list-labs'])
         assert result.exit_code == 0
 
@@ -126,11 +126,11 @@ class TestArgumentValidation:
 # ── Logger arguments ──────────────────────────────────────────────────────────
 
 class TestLoggerArguments:
-    """Verify that parsed CLI values flow through initOttoLogger to real logger state.
+    """Verify that parsed CLI values flow through init_otto_logger to real logger state.
 
-    initOttoLogger runs for real here.  Assertions check observable logger
+    init_otto_logger runs for real here.  Assertions check observable logger
     state (level, xdir, rich_logging) and the I/O-boundary mocks
-    (RichHandler constructor args, removeOldLogs call args).
+    (RichHandler constructor args, remove_old_logs call args).
     """
 
     def test_verbose_default_is_false(self, real_main_mocks):
@@ -165,59 +165,59 @@ class TestLoggerArguments:
 
     def test_rich_log_file_default_is_false(self, real_main_mocks):
         _invoke([])
-        assert getOttoLogger().rich_logging is False
+        assert get_otto_logger().rich_logging is False
 
     def test_rich_log_file_true(self, real_main_mocks):
         _invoke(['--rich-log-file'])
-        assert getOttoLogger().rich_logging is True
+        assert get_otto_logger().rich_logging is True
 
     def test_rich_log_file_explicit_false(self, real_main_mocks):
         _invoke(['--no-rich-log-file'])
-        assert getOttoLogger().rich_logging is False
+        assert get_otto_logger().rich_logging is False
 
     def test_log_level_default_is_info(self, real_main_mocks):
         _invoke([])
-        assert getOttoLogger().level == logging.INFO
+        assert get_otto_logger().level == logging.INFO
 
     def test_log_level_custom(self, real_main_mocks):
         _invoke(['--log-level', 'DEBUG'])
-        assert getOttoLogger().level == logging.DEBUG
+        assert get_otto_logger().level == logging.DEBUG
 
     def test_log_level_custom_lower_case(self, real_main_mocks):
         _invoke(['--log-level', 'debug'])
-        assert getOttoLogger().level == logging.DEBUG
+        assert get_otto_logger().level == logging.DEBUG
 
     def test_log_days_default(self, real_main_mocks):
         _invoke([])
-        assert getOttoLogger().keep_seconds == 30 * 24 * 60 * 60
+        assert get_otto_logger().keep_seconds == 30 * 24 * 60 * 60
 
     def test_log_days_custom(self, real_main_mocks):
         _invoke(['--log-days', '14'])
-        assert getOttoLogger().keep_seconds == 14 * 24 * 60 * 60
+        assert get_otto_logger().keep_seconds == 14 * 24 * 60 * 60
 
     def test_xdir_from_env(self, real_main_mocks):
         # real_main_mocks pre-sets OTTO_XDIR to tmp_path; the callback should
         # pick that up without an explicit --xdir on the command line.
         _invoke([])
-        assert getOttoLogger().xdir == real_main_mocks['tmp_path']
+        assert get_otto_logger().xdir == real_main_mocks['tmp_path']
 
     def test_xdir_custom_path(self, real_main_mocks, tmp_path):
         custom_xdir = tmp_path / 'custom_xdir'
         custom_xdir.mkdir()
         _invoke(['--xdir', str(custom_xdir)])
-        assert getOttoLogger().xdir == custom_xdir
+        assert get_otto_logger().xdir == custom_xdir
 
     def test_xdir_default_when_neither_flag_nor_env(self, real_main_mocks, monkeypatch):
         """--xdir is optional: with neither flag nor OTTO_XDIR it defaults to CWD.
 
-        The CWD default is safe because ``removeOldLogs`` only rmtree's entries
+        The CWD default is safe because ``remove_old_logs`` only rmtree's entries
         matching otto's timestamped log-dir name pattern (see logger.py), so a
         CWD-pointed xdir can no longer walk foreign trees at startup.
         """
         monkeypatch.delenv('OTTO_XDIR', raising=False)
         result = _invoke([])
         assert result.exit_code == 0
-        assert getOttoLogger().xdir == Path()
+        assert get_otto_logger().xdir == Path()
 
 
 # ── Lab loading ───────────────────────────────────────────────────────────────
@@ -307,6 +307,6 @@ class TestDryRunMode:
 
     def test_dry_run_sets_context_flag(self, main_mocks):
         """--dry-run should enable dry_run on the active OttoContext."""
-        from otto.host.host import isDryRun
+        from otto.host.host import is_dry_run
         _invoke(['--dry-run'])
-        assert isDryRun() is True
+        assert is_dry_run() is True

@@ -42,7 +42,7 @@ Add a `[reservations]` section to your repo's `.otto/settings.toml`:
 backend = "json"
 
 [reservations.json]
-path = "${sutDir}/.otto/reservations.json"
+path = "${sut_dir}/.otto/reservations.json"
 ```
 
 Create the file the `path` setting points at:
@@ -97,7 +97,7 @@ Two common layouts work well:
   some other tool.  Good when reservations change frequently throughout
   the day and PR overhead would feel absurd.
 
-Relative paths are resolved against the repo root.  `${sutDir}` expands
+Relative paths are resolved against the repo root.  `${sut_dir}` expands
 to the repo root too, so either works.
 
 ## Overriding the default user

@@ -19,11 +19,11 @@ def _make_repo(tmp: Path, *, name: str, default_host: str) -> Repo:
         f"name = \"{name}\"\n"
         f"version = \"1.0.0\"\n"
         f"\n[[docker.composes]]\n"
-        f"path = \"${{sutDir}}/docker/compose.yml\"\n"
+        f"path = \"${{sut_dir}}/docker/compose.yml\"\n"
         f"default_host = \"{default_host}\"\n"
         f"services = [\"svc\"]\n"
     )
-    return Repo(sutDir=sut)
+    return Repo(sut_dir=sut)
 
 
 def test_select_repos_filters_by_lab_applicability(tmp_path):
@@ -43,7 +43,7 @@ def test_select_repos_filters_by_lab_applicability(tmp_path):
     fake_cfg = MagicMock()
     fake_cfg.lab = lab
 
-    with patch.object(docker_cli, "getRepos", return_value=[repo_in_lab, repo_out_of_lab]), \
+    with patch.object(docker_cli, "get_repos", return_value=[repo_in_lab, repo_out_of_lab]), \
          patch.object(docker_cli, "get_lab", return_value=fake_cfg.lab):
         selected = docker_cli._select_repos(repo_name=None)
 
@@ -69,7 +69,7 @@ def test_select_repos_on_does_not_override_lab_filter(tmp_path):
     fake_cfg = MagicMock()
     fake_cfg.lab = lab
 
-    with patch.object(docker_cli, "getRepos", return_value=[repo]), \
+    with patch.object(docker_cli, "get_repos", return_value=[repo]), \
          patch.object(docker_cli, "get_lab", return_value=fake_cfg.lab):
         selected = docker_cli._select_repos(repo_name=None, on="pepper_seed")
 

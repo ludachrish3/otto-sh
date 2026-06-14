@@ -19,7 +19,7 @@ import typer
 from typer.testing import CliRunner
 
 from otto.cli.run import instruction, run_app
-from otto.host.unixHost import UnixHost
+from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
 
 runner = CliRunner()

@@ -228,7 +228,7 @@ class CoverageReporter:
         2. Auto-discovery from ``.gcno`` files in the source root
         3. ``None`` (merger will use its own defaults)
         """
-        from ..host.localHost import LocalHost
+        from ..host.local_host import LocalHost
         from ..host.toolchain_discovery import discover_toolchain_from_gcno
 
         result: list[Toolchain | None] = []
@@ -271,7 +271,7 @@ class CoverageReporter:
         Returns:
             A populated :class:`CoverageStore` with all coverage data.
         """
-        from ..host.localHost import LocalHost
+        from ..host.local_host import LocalHost
 
         localhost = LocalHost()
         work_dir = self.output_dir / "_work"
