@@ -236,15 +236,20 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.md')    \
                 $(shell find src/otto -name '*.py') \
 
-docs: docs-html doctest ## Build HTML docs and run doctests
+docs: docs-lint docs-html doctest ## Build HTML docs and run doctests
+
+docs-lint: ## Fast RST structural lint (doc8) — catches title/underline desync without a full sphinx build
+	uv run doc8 docs/
 
 docs-html: docs/_build/html/index.html ## Build HTML docs only (warnings are errors)
 
+# -E (fresh env, no stale doctrees) + -a (write all) make a local build match
+# CI's clean build, so incremental state can't mask or invent a warning.
 docs/_build/html/index.html: $(SPHINX_SRCS)
-	uv run sphinx-build -W -b html docs/ docs/_build/html
+	uv run sphinx-build -E -a -W -b html docs/ docs/_build/html
 
 doctest: ## Run Sphinx doctests
-	uv run sphinx-build -b doctest docs/ docs/_build/doctest
+	uv run sphinx-build -E -b doctest docs/ docs/_build/doctest
 
 clean: ## Remove all generated artifacts
 	@rm -rf dist

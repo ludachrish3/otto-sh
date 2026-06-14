@@ -114,5 +114,8 @@ def typecheck(session: nox.Session) -> None:
 @nox_uv.session(uv_groups=["dev"])
 def docs(session: nox.Session) -> None:
     """Build HTML docs (warnings as errors) and run Sphinx doctests."""
-    session.run("sphinx-build", "-W", "-b", "html", "docs/", "docs/_build/html")
-    session.run("sphinx-build", "-b", "doctest", "docs/", "docs/_build/doctest")
+    # Fast RST structural pre-check (title/underline, etc.) before the slow build.
+    session.run("doc8", "docs/")
+    # -E (fresh env) + -a (write all) so the build matches a clean checkout.
+    session.run("sphinx-build", "-E", "-a", "-W", "-b", "html", "docs/", "docs/_build/html")
+    session.run("sphinx-build", "-E", "-b", "doctest", "docs/", "docs/_build/doctest")
