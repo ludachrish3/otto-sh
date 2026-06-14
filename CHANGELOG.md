@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-06-14
+
+### Added
+
+- explicit OttoContext runtime + deterministic host lifecycle
+
+
+### Dependencies
+
+- bump ruff from 0.15.16 to 0.15.17
+- bump ty from 0.0.45 to 0.0.49
+- bump asyncssh from 2.23.0 to 2.23.1
+
+
+### Documentation
+
+- add library-usage to user-guide toctree
+
+
+### Fixed
+
+- stop nightly stability flake — uncharge the 2s retry backoff from tight test budgets
+
+
+### Maintenance
+
+- save specs and designs
+
+
 ## [0.4.1] - 2026-06-13
 
 ### Added
@@ -268,7 +297,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/ludachrish3/otto-sh/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ludachrish3/otto-sh/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ludachrish3/otto-sh/compare/v0.3.6...v0.4.0
 [0.3.6]: https://github.com/ludachrish3/otto-sh/compare/v0.3.5...v0.3.6
