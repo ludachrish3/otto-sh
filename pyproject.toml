@@ -54,7 +54,7 @@ dependencies = [
     "sse-starlette>=3.3.3",
     "telnetlib3>=4.0.1",
     "tomli>=2.4.0",
-    "typer>=0.24.0,<0.26",
+    "typer>=0.24.0,<0.27",
     "uvicorn>=0.42.0",
 ]
 
