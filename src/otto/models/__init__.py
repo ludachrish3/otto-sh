@@ -10,6 +10,12 @@ carries the ``Spec`` suffix.
 """
 
 from .base import OttoModel
+from .host import (
+    EmbeddedHostSpec,
+    HostSpec,
+    ToolchainSpec,
+    UnixHostSpec,
+)
 from .options import (
     FtpOptionsSpec,
     LocalPortForwardSpec,
@@ -37,4 +43,8 @@ __all__ = [
     "LocalPortForwardSpec",
     "RemotePortForwardSpec",
     "SocksForwardSpec",
+    "ToolchainSpec",
+    "HostSpec",
+    "UnixHostSpec",
+    "EmbeddedHostSpec",
 ]
