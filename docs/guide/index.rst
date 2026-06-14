@@ -18,3 +18,4 @@ These guides cover otto's CLI commands and project configuration in detail.
    reservations
    coverage
    cli-reference
+   library-usage
