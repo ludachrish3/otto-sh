@@ -177,6 +177,8 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `asyncssh` | 2.22.0 | SSH connections to remote hosts |
 | `fastapi` | 0.135.1 | Monitor dashboard web server |
 | `jinja2` | 3.1.0 | HTML templating for coverage reports |
+| `pydantic` | 2.6 | Boundary validation models for lab JSON, host records, and settings |
+| `pydantic-settings` | 2.2 | Environment-variable settings (`OTTO_*`) |
 | `pysnmp` | 7.1.0 | Async SNMP manager for separate-channel host monitoring |
 | `pytest` | 9.0.1 | Test runner; otto imports user test files at runtime |
 | `pytest-asyncio` | 1.4.0 | Async test support for pytest |
@@ -196,7 +198,7 @@ extensions** that require platform-specific wheels:
 | ------- | ------------ | ----- |
 | `cryptography` | asyncssh | SSH encryption; links against OpenSSL |
 | `cffi` | cryptography | C FFI bindings |
-| `pydantic-core` | fastapi → pydantic | Rust-based data validation |
+| `pydantic-core` | pydantic | Rust-based data validation |
 
 Dev dependencies (pytest, sphinx, ruff, pyinstrument, etc.) are declared
 in the `[dependency-groups] dev` section of `pyproject.toml` and are **not**
