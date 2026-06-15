@@ -98,11 +98,13 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'otto.models'`.
 Create `src/otto/models/__init__.py`:
 
 ```python
-"""Pydantic boundary models — the leaf validation layer for external data
+"""Pydantic boundary models — the validation layer for external data
 (lab JSON, settings.toml, OTTO_* env, monitor import/export).
 
-This package imports nothing from otto's runtime layers; runtime modules import
-*from* here. Each model mirroring a runtime type carries the ``Spec`` suffix.
+These spec models depend on the runtime data modules they validate and build
+(``otto.host.options``, ``otto.host.transfer``); those runtime modules do not
+import from here, so the dependency runs one way (models -> runtime data) with
+no cycle. Each model mirroring a runtime type carries the ``Spec`` suffix.
 """
 
 from .base import OttoModel
@@ -922,7 +924,18 @@ def test_spec_fields_subset_of_runtime(spec_cls, runtime_cls):
     )
 
 
-@pytest.mark.parametrize("spec_cls,runtime_cls", OPTION_SPEC_RUNTIME_PAIRS)
+# The three SSH forward specs are required-field value objects (no sensible
+# defaults) — always nested inside SshOptionsSpec, and their to_runtime() is
+# already covered by the explicit forward tests in Task 3. The no-arg
+# "default builds runtime" check only applies to the fully-defaulted option
+# specs, so exclude the forwards here (they stay in the subset guard above).
+_FORWARD_SPECS = (LocalPortForwardSpec, RemotePortForwardSpec, SocksForwardSpec)
+_DEFAULT_CONSTRUCTIBLE_PAIRS = [
+    (s, r) for s, r in OPTION_SPEC_RUNTIME_PAIRS if s not in _FORWARD_SPECS
+]
+
+
+@pytest.mark.parametrize("spec_cls,runtime_cls", _DEFAULT_CONSTRUCTIBLE_PAIRS)
 def test_default_spec_builds_runtime(spec_cls, runtime_cls):
     assert isinstance(spec_cls().to_runtime(), runtime_cls)
 ```
@@ -957,11 +970,13 @@ Drives the drift guard so the duplicated field lists cannot silently diverge."""
 Replace the body of `src/otto/models/__init__.py` to re-export the specs:
 
 ```python
-"""Pydantic boundary models — the leaf validation layer for external data
+"""Pydantic boundary models — the validation layer for external data
 (lab JSON, settings.toml, OTTO_* env, monitor import/export).
 
-This package imports nothing from otto's runtime layers; runtime modules import
-*from* here. Each model mirroring a runtime type carries the ``Spec`` suffix.
+These spec models depend on the runtime data modules they validate and build
+(``otto.host.options``, ``otto.host.transfer``); those runtime modules do not
+import from here, so the dependency runs one way (models -> runtime data) with
+no cycle. Each model mirroring a runtime type carries the ``Spec`` suffix.
 """
 
 from .base import OttoModel

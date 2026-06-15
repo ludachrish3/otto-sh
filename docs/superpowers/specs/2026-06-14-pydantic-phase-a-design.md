@@ -73,8 +73,14 @@ is intrinsic to `model_validate`.
 | `src/otto/host/options.py` | **unchanged** runtime `*Options` dataclasses |
 | `src/otto/storage/factory.py` | collapses to: merge → `Spec.model_validate` → `spec.build(cls)` |
 
-Dependency direction is clean: `models/` is a leaf (imports nothing from otto's
-runtime); `storage`, `configmodule`, `monitor` import from `models`.
+Dependency direction is acyclic: a `*Spec` builds its runtime twin, so
+`models/` imports the runtime *data* modules it validates/builds (`host.options`,
+`host.transfer`, and later the `command_frame`/`filesystem`/`os_profile`
+registries) — and those runtime modules do **not** import from `models/`, so the
+dependency runs one way (`models → runtime data`) with no cycle. The
+orchestration layers (`storage.factory`, `configmodule`, `monitor`) import their
+specs from `models/`. (`models/` is *not* a pure leaf — the two-type split means
+each spec must reach the runtime class it constructs.)
 
 ---
 
