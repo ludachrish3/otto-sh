@@ -43,7 +43,7 @@ def build_monitor_collector(
         snmp = host.snmp
         if snmp is not None:
             client = SnmpClient(
-                address=snmp.address or host.ip,
+                address=host.address_for(snmp.address or host.ip),
                 port=snmp.port,
                 community=snmp.community,
                 version=cast(SnmpVersion, snmp.version),

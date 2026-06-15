@@ -1,6 +1,7 @@
 """Tests for the Options dataclasses and their JSON/factory integration."""
 
 import pytest
+from pydantic import ValidationError
 
 from otto.host.options import (
     FtpOptions,
@@ -14,7 +15,6 @@ from otto.host.options import (
     TelnetOptions,
 )
 from otto.storage.factory import create_host_from_dict
-
 
 # ---------------------------------------------------------------------------
 # SshOptions
@@ -266,11 +266,13 @@ class TestCreateHostFromDict:
         assert host.scp_options.preserve is True
         assert host.sftp_options.env == {'FOO': 'bar'}
 
-    def test_post_connect_ignored_in_dict(self):
-        # JSON can't carry callables; factory must drop the key cleanly.
-        host = create_host_from_dict(self._minimal(ssh_options={
-            'port': 2222,
-            'post_connect': 'not_a_callable',
-        }))
-        assert host.ssh_options.port == 2222
-        assert host.ssh_options.post_connect is None
+    def test_post_connect_rejected_in_dict(self):
+        # JSON can't carry callables; ``post_connect`` is a runtime-only field
+        # the SshOptionsSpec deliberately omits. Under the Phase A 2b spec path
+        # (``extra='forbid'``) such a misplaced key now raises a pydantic
+        # ValidationError instead of being silently dropped.
+        with pytest.raises(ValidationError):
+            create_host_from_dict(self._minimal(ssh_options={
+                'port': 2222,
+                'post_connect': 'not_a_callable',
+            }))

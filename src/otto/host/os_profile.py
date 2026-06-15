@@ -53,9 +53,12 @@ specific defaults, and is registered under ``"zephyr"`` at module load.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..logger import get_otto_logger
+
+if TYPE_CHECKING:
+    from ..models.host import HostSpec
 
 logger = get_otto_logger()
 
@@ -71,6 +74,10 @@ Built-ins: ``unix`` (:class:`~otto.host.unix_host.UnixHost`), ``embedded``
 # Registry of host-class name -> class, mirroring ``_OS_PROFILES`` /
 # ``command_frame._FRAME_CLASSES``. Populated for built-ins at module load.
 _HOST_CLASSES: dict[str, type] = {}
+
+# Registry of host-class name -> its boundary HostSpec subclass, populated for
+# built-ins at module load alongside ``_HOST_CLASSES``.
+_HOST_SPECS: dict[str, type[HostSpec]] = {}
 
 
 @dataclass(frozen=True)
@@ -115,19 +122,38 @@ def _all_slots(cls: type) -> frozenset[str]:
     return frozenset(names)
 
 
-def register_host_class(name: str, cls: type) -> None:
-    """Register a host class so lab data can select it by ``os_type``.
+def register_host_class(
+    name: str, cls: type, spec: type[HostSpec] | None = None,
+) -> None:
+    """Register a host class (and its boundary spec) so lab data can select it
+    by ``os_type``.
 
-    Mirrors :func:`otto.host.command_frame.register_command_frame`. Call from
-    an init module listed in ``.otto/settings.toml`` to ship a custom host
-    subclass. Registering a class also registers a trivial same-named
-    :class:`OsProfile` (``base=name``, empty ``defaults``), so ``os_type: name``
-    resolves with no extra config. Re-registering replaces the prior class.
+    Mirrors :func:`otto.host.command_frame.register_command_frame`. Call from an
+    init module listed in ``.otto/settings.toml`` to ship a custom host
+    subclass. otto registers its own built-ins through this same call.
+
+    Parameters
+    ----------
+    name : str
+        The ``os_type`` selector to register under.
+    cls : type
+        A :class:`~otto.host.remote_host.RemoteHost` subclass.
+    spec : type | None
+        The :class:`~otto.models.host.HostSpec` subclass that validates this
+        class's lab-dict shape. When ``None``, defaults to the spec registered
+        for the nearest base class in *cls*'s MRO — so a subclass that adds no
+        fields needs none; add fields → register a ``HostSpec`` subclass.
+
+    Registering a class also registers a trivial same-named :class:`OsProfile`
+    (``base=name``, empty ``defaults``), so ``os_type: name`` resolves with no
+    extra config. Re-registering replaces the prior class and spec.
 
     Raises
     ------
     ValueError
-        If *cls* is not a :class:`~otto.host.remote_host.RemoteHost` subclass.
+        If *cls* is not a ``RemoteHost`` subclass; if *spec* is given but is not
+        a ``HostSpec`` subclass; or if *spec* is ``None`` and no base class of
+        *cls* has a registered spec.
     """
     from .remote_host import RemoteHost
     if not (isinstance(cls, type) and issubclass(cls, RemoteHost)):
@@ -135,13 +161,51 @@ def register_host_class(name: str, cls: type) -> None:
             f"register_host_class({name!r}): cls must be a RemoteHost "
             f"subclass, got {cls!r}"
         )
+    if spec is None:
+        spec = _nearest_registered_spec(cls)
+        if spec is None:
+            raise ValueError(
+                f"register_host_class({name!r}): no spec given and no base "
+                f"class of {cls.__name__} has a registered spec. Pass spec=."
+            )
+    else:
+        from ..models.host import HostSpec
+        if not (isinstance(spec, type) and issubclass(spec, HostSpec)):
+            raise ValueError(
+                f"register_host_class({name!r}): spec must be a HostSpec "
+                f"subclass, got {spec!r}"
+            )
     if name in _BUILTIN_NAMES and name in _HOST_CLASSES:
         logger.warning(
             f"register_host_class: overriding built-in host class {name!r}"
         )
     _HOST_CLASSES[name] = cls
+    _HOST_SPECS[name] = spec
     # Auto-register a selector profile so os_type:<name> works immediately.
     _OS_PROFILES[name] = OsProfile(name=name, base=name, defaults={})
+
+
+def _nearest_registered_spec(cls: type) -> type[HostSpec] | None:
+    """Return the spec registered for the nearest base of *cls* in its MRO."""
+    by_class = {_HOST_CLASSES[n]: _HOST_SPECS[n] for n in _HOST_SPECS}
+    for base in cls.__mro__:
+        if base in by_class:
+            return by_class[base]
+    return None
+
+
+def build_host_spec(name: str) -> type[HostSpec]:
+    """Return the :class:`~otto.models.host.HostSpec` subclass registered under
+    host-class *name* (raising on miss).
+    """
+    try:
+        return _HOST_SPECS[name]
+    except KeyError:
+        known = ', '.join(sorted(_HOST_SPECS))
+        raise ValueError(
+            f"No host spec registered for {name!r}. Registered: {known}. "
+            f"Add one via register_host_class()."
+        ) from None
 
 
 def build_host_class(name: str) -> type:
@@ -271,13 +335,17 @@ _BUILTIN_NAMES: frozenset[str] = frozenset(('unix', 'embedded', 'zephyr'))
 
 
 def _register_builtin_host_classes() -> None:
-    """Register the built-in host classes. Imported lazily to avoid an import
-    cycle (the host modules do not import this one at module top)."""
-    from .unix_host import UnixHost
+    """Register the built-in host classes and their boundary specs.
+
+    Imported lazily to avoid an import cycle (the host/spec modules do not
+    import this one at module top).
+    """
+    from ..models.host import EmbeddedHostSpec, UnixHostSpec
     from .embedded_host import EmbeddedHost, ZephyrHost
-    register_host_class('unix', UnixHost)
-    register_host_class('embedded', EmbeddedHost)
-    register_host_class('zephyr', ZephyrHost)
+    from .unix_host import UnixHost
+    register_host_class('unix', UnixHost, UnixHostSpec)
+    register_host_class('embedded', EmbeddedHost, EmbeddedHostSpec)
+    register_host_class('zephyr', ZephyrHost, EmbeddedHostSpec)
 
 
 _register_builtin_host_classes()

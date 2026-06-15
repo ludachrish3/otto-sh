@@ -26,6 +26,7 @@ def restore_registry():
     """
     saved_profiles = dict(os_profile._OS_PROFILES)
     saved_classes = dict(os_profile._HOST_CLASSES)
+    saved_specs = dict(os_profile._HOST_SPECS)
     try:
         yield
     finally:
@@ -33,6 +34,8 @@ def restore_registry():
         os_profile._OS_PROFILES.update(saved_profiles)
         os_profile._HOST_CLASSES.clear()
         os_profile._HOST_CLASSES.update(saved_classes)
+        os_profile._HOST_SPECS.clear()
+        os_profile._HOST_SPECS.update(saved_specs)
 
 
 class TestBuiltins:
@@ -142,6 +145,60 @@ class TestHostClassRegistry:
         with pytest.raises(ValueError, match='Unknown host class') as exc:
             build_host_class('does-not-exist')
         assert 'unix' in str(exc.value)
+
+
+class TestHostSpecRegistry:
+    def test_builtins_carry_their_specs(self):
+        from otto.host.os_profile import build_host_spec
+        from otto.models.host import EmbeddedHostSpec, UnixHostSpec
+        assert build_host_spec("unix") is UnixHostSpec
+        assert build_host_spec("embedded") is EmbeddedHostSpec
+        assert build_host_spec("zephyr") is EmbeddedHostSpec  # adds no fields
+
+    def test_register_with_explicit_spec(self):
+        from otto.host.embedded_host import EmbeddedHost
+        from otto.host.os_profile import build_host_spec, register_host_class
+        from otto.models.host import EmbeddedHostSpec
+
+        class MyHost(EmbeddedHost):
+            pass
+
+        register_host_class("myos", MyHost, EmbeddedHostSpec)
+        assert build_host_spec("myos") is EmbeddedHostSpec
+
+    def test_register_defaults_spec_via_mro(self):
+        from otto.host.embedded_host import EmbeddedHost
+        from otto.host.os_profile import build_host_spec, register_host_class
+        from otto.models.host import EmbeddedHostSpec
+
+        class MyHost(EmbeddedHost):
+            pass
+
+        register_host_class("myos2", MyHost)  # no spec -> nearest base spec
+        assert build_host_spec("myos2") is EmbeddedHostSpec
+
+    def test_register_rejects_non_hostspec_spec(self):
+        from otto.host.os_profile import register_host_class
+        from otto.host.unix_host import UnixHost
+        with pytest.raises(ValueError, match="HostSpec"):
+            register_host_class("bad", UnixHost, dict)  # dict is not a HostSpec
+
+    def test_register_no_spec_and_no_base_spec_raises(self):
+        # A direct RemoteHost subclass: no base in its MRO has a registered
+        # spec, and none was passed -> fail loud rather than store None.
+        from otto.host.os_profile import register_host_class
+        from otto.host.remote_host import RemoteHost
+
+        class BareRemoteHost(RemoteHost):
+            pass
+
+        with pytest.raises(ValueError, match="no spec given"):
+            register_host_class("bare", BareRemoteHost)
+
+    def test_build_host_spec_unknown_raises(self):
+        from otto.host.os_profile import build_host_spec
+        with pytest.raises(ValueError, match="No host spec"):
+            build_host_spec("nope")
 
 
 def test_custom_subclass_with_data_bundle_composes():

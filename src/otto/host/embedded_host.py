@@ -211,6 +211,10 @@ class EmbeddedHost(RemoteHost):
     resources: set[str] = field(default_factory=set[str])
     """Names of resources required to use this host."""
 
+    interfaces: dict[str, str] = field(default_factory=dict, repr=False)
+    """Named secondary interface addresses (see :attr:`RemoteHost.interfaces`).
+    Resolve with :meth:`address_for`."""
+
     log: bool = field(default=True, repr=False)
     """Whether this host should log its output to stdout and log files."""
 

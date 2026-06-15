@@ -10,15 +10,19 @@ host registries at build time.
 
 from __future__ import annotations
 
+from ipaddress import ip_address
 from pathlib import Path
 from typing import Any
 
+from pydantic import field_validator
+
 from ..host.binary_loader import build_binary_loader
-from ..host.command_frame import build_command_frame
-from ..host.embedded_filesystem import build_filesystem
+from ..host.command_frame import _FRAME_CLASSES, build_command_frame
+from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
 from ..host.embedded_host import EmbeddedHost
 from ..host.embedded_transfer import EmbeddedTransferType
 from ..host.host import FileTransferType, TermType
+from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain
 from ..host.unix_host import UnixHost
 from .base import OttoModel
@@ -72,15 +76,41 @@ class HostSpec(OttoModel):
     default_dest_dir: Path = Path()
     max_filename_len: int = 255
     resources: set[str] = set()
+    interfaces: dict[str, str] = {}
     log: bool = True
     log_stdout: bool = True  # common: both UnixHost and EmbeddedHost declare it
     telnet_options: TelnetOptionsSpec = TelnetOptionsSpec()
     snmp: SnmpOptionsSpec | None = None
     toolchain: ToolchainSpec = ToolchainSpec()
+    command_frame: str | None = None
 
     # Lab membership — validated (so a `lab`/`labs` typo errors) but NOT a host
     # constructor argument; the repository uses it to filter hosts into a Lab.
     labs: list[str] = []
+
+    @field_validator("interfaces")
+    @classmethod
+    def _validate_interface_addresses(cls, v: dict[str, str]) -> dict[str, str]:
+        # Validate only; runtime keeps the raw string form (like ``ip``), so we
+        # return the originals rather than the parsed ip_address objects.
+        for name, addr in v.items():
+            try:
+                ip_address(addr)
+            except ValueError:
+                raise ValueError(
+                    f"interface {name!r} address {addr!r} is not a valid IP"
+                ) from None
+        return v
+
+    @field_validator("command_frame")
+    @classmethod
+    def _validate_command_frame_name(cls, v: str | None) -> str | None:
+        if v is not None and v not in _FRAME_CLASSES:
+            known = ", ".join(sorted(_FRAME_CLASSES))
+            raise ValueError(
+                f"command_frame {v!r} is not a registered frame. Known: {known}"
+            )
+        return v
 
     def _common_host_kwargs(self) -> dict[str, Any]:
         """Build constructor kwargs for the common fields the spec *explicitly set*.
@@ -97,13 +127,30 @@ class HostSpec(OttoModel):
             kw["default_dest_dir"] = Path(self.default_dest_dir)
         if "resources" in s:
             kw["resources"] = set(self.resources)
+        if "interfaces" in s:
+            kw["interfaces"] = dict(self.interfaces)
         if "telnet_options" in s:
             kw["telnet_options"] = self.telnet_options.to_runtime()
         if "snmp" in s:
             kw["snmp"] = self.snmp.to_runtime() if self.snmp is not None else None
         if "toolchain" in s:
             kw["toolchain"] = self.toolchain.to_runtime()
+        if "command_frame" in s and self.command_frame is not None:
+            kw["command_frame"] = build_command_frame(self.command_frame)
         return kw
+
+    def to_host(self, cls: Any = None) -> RemoteHost:
+        """Build the runtime host this spec describes.
+
+        Overridden by the concrete family specs (:class:`UnixHostSpec`,
+        :class:`EmbeddedHostSpec`), each of which knows the runtime class to
+        construct. The abstract base carries the contract so the storage
+        factory can call ``spec.to_host(cls)`` against a ``HostSpec`` reference.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement to_host(); use a "
+            f"concrete host spec (UnixHostSpec / EmbeddedHostSpec)."
+        )
 
 
 class UnixHostSpec(HostSpec):
@@ -137,8 +184,17 @@ class EmbeddedHostSpec(HostSpec):
     os_type: str = "embedded"
     transfer: EmbeddedTransferType = "console"
     filesystem: str | None = None
-    command_frame: str | None = None
     loader: str | None = None
+
+    @field_validator("filesystem")
+    @classmethod
+    def _validate_filesystem_name(cls, v: str | None) -> str | None:
+        if v is not None and v not in _FILESYSTEM_CLASSES:
+            known = ", ".join(sorted(_FILESYSTEM_CLASSES))
+            raise ValueError(
+                f"filesystem {v!r} is not a registered filesystem. Known: {known}"
+            )
+        return v
 
     def to_host(self, cls: type[EmbeddedHost] = EmbeddedHost) -> EmbeddedHost:
         kw = self._common_host_kwargs()
@@ -147,8 +203,6 @@ class EmbeddedHostSpec(HostSpec):
             kw["transfer"] = self.transfer
         if "filesystem" in s and self.filesystem is not None:
             kw["filesystem"] = build_filesystem(self.filesystem)
-        if "command_frame" in s and self.command_frame is not None:
-            kw["command_frame"] = build_command_frame(self.command_frame)
         if "loader" in s and self.loader is not None:
             kw["loader"] = build_binary_loader(self.loader)
         return cls(**kw)

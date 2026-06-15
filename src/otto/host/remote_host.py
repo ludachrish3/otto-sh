@@ -143,6 +143,12 @@ class RemoteHost(BaseHost):
     front with a clear message instead of letting the device produce an
     opaque error like ``-ENOENT`` or ``File name too long``."""
 
+    interfaces: dict[str, str]
+    """Named secondary interface addresses, keyed by interface name (e.g.
+    ``{"mgmt": "10.0.0.5", "data": "192.168.1.5"}``). The *primary* address
+    stays :attr:`ip`; this map is additive and optional (empty by default).
+    Resolve a name (or pass a literal through) with :meth:`address_for`."""
+
     # --- Connection-state contract ---------------------------------------
     # Concrete subclasses supply these as real ``@dataclass`` fields (a
     # ``ConnectionManager`` and a ``SessionManager``). Declared here as bare
@@ -220,6 +226,21 @@ class RemoteHost(BaseHost):
             return ''
 
         return f"{self.slot}"
+
+    ####################
+    #  Addressing
+    ####################
+
+    def address_for(self, name_or_literal: str) -> str:
+        """Resolve an interface *name* to its address, or pass a literal through.
+
+        If *name_or_literal* is a key in :attr:`interfaces`, return that
+        interface's address; otherwise return the value unchanged (it is taken
+        to be a literal address such as :attr:`ip` or an explicit IP). This lets
+        a host's ``snmp.address`` name a secondary interface without otto having
+        to distinguish names from literals.
+        """
+        return self.interfaces.get(name_or_literal, name_or_literal)
 
     ####################
     #  Hop transport

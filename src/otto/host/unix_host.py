@@ -61,6 +61,7 @@ from ..utils import (
     Status,
     is_literal,
 )
+from .command_frame import CommandFrame, build_command_frame
 from .connections import (
     ConnectionManager,
     TermType,
@@ -193,6 +194,15 @@ class UnixHost(RemoteHost):
     """Connection options for netcat file transfers (nc executable, port
     strategy, listener check, etc.)."""
 
+    command_frame: Optional[CommandFrame] = None
+    """Shell-framing dialect for this host's bash console. ``None`` (the
+    default) lets the :class:`~otto.host.session.SessionManager` use its
+    built-in :class:`~otto.host.command_frame.BashFrame`, preserving the
+    historical behavior exactly. Lab data may name a registered frame by string
+    (resolved in ``__post_init__``); a profile or subclass may supply an
+    instance. Promoted to a common field in Phase A so any host can declare its
+    dialect — see :attr:`EmbeddedHost.command_frame`."""
+
     snmp: Optional[SnmpOptions] = field(default=None, repr=False)
     """Optional SNMP polling config (lab ``snmp`` block). When set, otto's
     monitor collects this host's metrics over SNMP instead of running shell
@@ -204,6 +214,10 @@ class UnixHost(RemoteHost):
 
     resources: set[str] = field(default_factory=set[str])
     """Names of resources required to use this host."""
+
+    interfaces: dict[str, str] = field(default_factory=dict, repr=False)
+    """Named secondary interface addresses (see :attr:`RemoteHost.interfaces`).
+    Resolve with :meth:`address_for`."""
 
     log: bool = field(default=True, repr=False)
     """Determines whether this host should log its output to stdout and log files.
@@ -252,6 +266,11 @@ class UnixHost(RemoteHost):
         if not isinstance(self.default_dest_dir, Path):
             self.default_dest_dir = Path(self.default_dest_dir)
 
+        # Lab JSON declares the frame dialect by name; coerce a string to the
+        # registered instance. None is left as-is (SessionManager applies bash).
+        if isinstance(self.command_frame, str):
+            self.command_frame = build_command_frame(self.command_frame)
+
         hop_transport = self._build_hop_transport() if self.hop else None
 
         factory = self._connection_factory or ConnectionManager
@@ -273,6 +292,7 @@ class UnixHost(RemoteHost):
             name=self.name,
             log_command=self._log_command,
             log_output=self._log_output,
+            command_frame=self.command_frame,
         )
         self._file_transfer = FileTransfer(
             connections=self._connections,
@@ -321,6 +341,7 @@ class UnixHost(RemoteHost):
             name=self.name,
             log_command=self._log_command,
             log_output=self._log_output,
+            command_frame=self.command_frame,
         )
         self._file_transfer = FileTransfer(
             connections=self._connections,

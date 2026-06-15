@@ -30,6 +30,39 @@ class TestBuildMonitorCollector:
         # the relay endpoint, not the host's telnet ip
         assert collector._targets[0].snmp.client.address == '10.10.200.14'
 
+    def test_snmp_address_resolves_named_interface(self):
+        # snmp.address names a secondary interface -> resolved via address_for
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
+            'command_frame': 'zephyr',
+            'interfaces': {'mgmt': '10.9.9.9', 'data': '192.168.5.5'},
+            'snmp': {'address': 'mgmt', 'port': 16101, 'oids': ['1.3.6.1.2.1.1.3.0']},
+        })
+        collector = build_monitor_collector([host])
+        assert collector._targets[0].snmp.client.address == '10.9.9.9'
+
+    def test_snmp_address_literal_passes_through(self):
+        # snmp.address is a literal IP (not an interface name) -> unchanged
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
+            'command_frame': 'zephyr',
+            'interfaces': {'mgmt': '10.9.9.9'},
+            'snmp': {'address': '203.0.113.5', 'port': 16101, 'oids': ['1.3.6.1.2.1.1.3.0']},
+        })
+        collector = build_monitor_collector([host])
+        assert collector._targets[0].snmp.client.address == '203.0.113.5'
+
+    def test_snmp_address_defaults_to_host_ip(self):
+        # snmp.address omitted -> falls back to host.ip (a literal, unchanged)
+        host = create_host_from_dict({
+            'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
+            'command_frame': 'zephyr',
+            'interfaces': {'mgmt': '10.9.9.9'},
+            'snmp': {'port': 16101, 'oids': ['1.3.6.1.2.1.1.3.0']},
+        })
+        collector = build_monitor_collector([host])
+        assert collector._targets[0].snmp.client.address == '192.0.2.1'
+
     def test_host_without_snmp_is_shell_target(self):
         host = create_host_from_dict({
             'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from otto.host import os_profile
 from otto.host.command_frame import ZephyrFrame
@@ -74,38 +75,41 @@ class TestCreateHostFromDict:
         assert isinstance(host.resources, set)
         assert host.resources == {'orange', 'tomato'}
 
-    def test_missing_ip_raises_typeerror(self):
-        """Test that missing ip field raises ValueError."""
+    def test_missing_ip_raises_validationerror(self):
+        """Missing required ``ip`` field is caught by the spec validator."""
         host_data = {
             'element': 'orange',
             'creds': {'vagrant': 'vagrant'},
         }
-        with pytest.raises(TypeError) as exc_info:
+        with pytest.raises(ValidationError) as exc_info:
             create_host_from_dict(host_data)
 
         assert 'ip' in str(exc_info.value)
+        assert 'Field required' in str(exc_info.value)
 
-    def test_missing_creds_raises_typeerror(self):
-        """Test that missing creds field raises ValueError."""
+    def test_missing_creds_raises_validationerror(self):
+        """Missing required ``creds`` field is caught by the spec validator."""
         host_data = {
             'ip': '10.10.200.11',
             'element': 'orange',
         }
-        with pytest.raises(TypeError) as exc_info:
+        with pytest.raises(ValidationError) as exc_info:
             create_host_from_dict(host_data)
 
         assert 'creds' in str(exc_info.value)
+        assert 'Field required' in str(exc_info.value)
 
-    def test_missing_ne_raises_valueerror(self):
-        """Test that missing ne field raises ValueError."""
+    def test_missing_ne_raises_validationerror(self):
+        """Missing required ``element`` field is caught by the spec validator."""
         host_data = {
             'ip': '10.10.200.11',
             'creds': {'vagrant': 'vagrant'},
         }
-        with pytest.raises(TypeError) as exc_info:
+        with pytest.raises(ValidationError) as exc_info:
             create_host_from_dict(host_data)
 
         assert 'element' in str(exc_info.value)
+        assert 'Field required' in str(exc_info.value)
 
     def test_optional_fields(self):
         """Test that optional fields are handled correctly."""
@@ -301,12 +305,14 @@ class TestRepoLevelOptionDefaults:
         assert host.telnet_options.cols == 200
 
     def test_unknown_field_in_defaults_table_raises(self):
-        """Typos inside an options sub-table fail loudly via the builder."""
-        with pytest.raises(TypeError):
+        """Typos inside an options sub-table fail loudly via the spec validator."""
+        with pytest.raises(ValidationError) as exc_info:
             create_host_from_dict(
                 self._base_host(),
                 defaults={'ssh_options': {'totally_unknown_field': 1}},
             )
+        assert 'totally_unknown_field' in str(exc_info.value)
+        assert 'Extra inputs are not permitted' in str(exc_info.value)
 
     def test_empty_defaults_dict_is_a_noop(self):
         """An empty defaults dict matches today's behavior."""
@@ -711,3 +717,41 @@ class TestSnmpBlock:
         assert host.snmp.address is None
         assert host.snmp.community == 'public'  # field default
         assert host.snmp.version == '2c'        # field default
+
+
+class TestMergeAndValidation:
+    """The collapsed factory: precedence merge + pydantic ``extra='forbid'``."""
+
+    def test_create_merges_options_per_key_across_layers(self):
+        # repo default (lowest) < profile default < host (highest), per-key.
+        repo_defaults = {"ssh_options": {"port": 22, "connect_timeout": 1.0}}
+        host = create_host_from_dict(
+            {
+                "ip": "10.0.0.1", "element": "carrot", "creds": {"u": "p"},
+                "ssh_options": {"port": 2222},  # host overrides only 'port'
+            },
+            defaults=repo_defaults,
+        )
+        assert host.ssh_options.port == 2222              # host wins
+        assert host.ssh_options.connect_timeout == 1.0    # repo default survives
+
+    def test_create_stamps_os_type_selector(self):
+        host = create_host_from_dict(
+            {"ip": "10.0.0.1", "element": "c", "creds": {"u": "p"}}
+        )
+        assert host.os_type == "unix"  # absent os_type -> default selector stamped
+
+    def test_validate_rejects_typo_with_pydantic_error(self):
+        with pytest.raises(ValidationError):
+            validate_host_dict(
+                {"ip": "10.0.0.1", "element": "c", "creds": {"u": "p"}, "lab": ["x"]}
+            )  # 'lab' is a typo for 'labs'
+
+    def test_validate_rejects_misplaced_ssh_options_on_embedded(self):
+        with pytest.raises(ValidationError):
+            validate_host_dict(
+                {
+                    "ip": "192.0.2.1", "element": "dut", "os_type": "embedded",
+                    "command_frame": "zephyr", "ssh_options": {"port": 22},
+                }
+            )
