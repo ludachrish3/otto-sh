@@ -23,8 +23,10 @@ from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any, Optional, Protocol
 
 import aiosqlite
+from pydantic import ValidationError
 
 from ..host.host import RunResult
+from ..models import EventRecord, MetricPoint, MetricRecord
 from .events import MonitorEvent
 from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser
 from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
@@ -166,12 +168,12 @@ class MetricCollector:
 
         # All series keyed by "hostname/label" — e.g. "router1/CPU %" for regular
         # metrics or "router1/proc/python" for per-process CPU.  Each point is a
-        # (timestamp, value, metadata_or_None) triple so that every series shares
-        # exactly one data structure regardless of its type.
+        # ``MetricPoint`` so that every series shares exactly one data structure
+        # regardless of its type.
         # Series are created lazily in _process_host_results() as data arrives,
         # so multi-series parsers (which produce labels not known until parse() runs)
         # are handled naturally without upfront enumeration.
-        self._series: dict[str, deque[tuple[datetime, float, dict[str, Any] | None]]] = {}
+        self._series: dict[str, deque[MetricPoint]] = {}
         self._chart_map: dict[str, str] = {}  # series_label → chart_key
 
         self._events: list[MonitorEvent] = []
@@ -431,7 +433,8 @@ class MetricCollector:
         key = f'{host_name}/{label}'
         if key not in self._series:
             self._series[key] = deque()
-        self._series[key].append((ts, dp.value, dp.meta))
+        # Hot path: model_construct skips validation (the values are otto's own).
+        self._series[key].append(MetricPoint.model_construct(ts=ts, value=dp.value, meta=dp.meta))
         self._chart_map[label] = view.chart
         await self._db_write_point(ts, host_name, label, dp.value)
         msg: dict[str, Any] = {
@@ -537,10 +540,10 @@ class MetricCollector:
     # Data access
     # ------------------------------------------------------------------
 
-    def get_series(self) -> dict[str, list[tuple[datetime, float, dict[str, Any] | None]]]:
+    def get_series(self) -> dict[str, list[MetricPoint]]:
         """Return a snapshot of all series (metrics and per-process).
 
-        Format: ``{"hostname/label": [(ts, value, meta), ...]}``
+        Format: ``{"hostname/label": [MetricPoint(ts, value, meta), ...]}``
         """
         return {key: list(pts) for key, pts in self._series.items()}
 
@@ -641,35 +644,33 @@ class MetricCollector:
             data = json.load(f)
         for point in data.get('metrics', []):
             try:
-                ts    = datetime.fromisoformat(point['timestamp'])
-                host  = point.get('host', '')
-                label = point['label']
-                value = float(point['value'])
-                key   = f'{host}/{label}' if host else label
-                meta  = point.get('meta') or None
-                if key not in collector._series:
-                    collector._series[key] = deque()
-                collector._series[key].append((ts, value, meta))
-            except (KeyError, ValueError):
+                rec = MetricRecord.model_validate(point)
+            except ValidationError:
                 continue
+            key = f'{rec.host}/{rec.label}' if rec.host else rec.label
+            if key not in collector._series:
+                collector._series[key] = deque()
+            collector._series[key].append(
+                MetricPoint.model_validate({'ts': rec.timestamp, 'value': rec.value, 'meta': rec.meta})
+            )
         for label, chart in data.get('chart_map', {}).items():
             collector._chart_map[label] = chart
         for ev in data.get('events', []):
             try:
-                end_ts_str = ev.get('end_timestamp')
-                event = MonitorEvent(
-                    timestamp=datetime.fromisoformat(ev['timestamp']),
-                    label=ev.get('label', ''),
-                    source=ev.get('source', 'manual'),
-                    color=ev.get('color', '#888888'),
-                    dash=ev.get('dash', 'dash'),
-                    id=ev.get('id', collector._next_event_id),
-                    end_timestamp=datetime.fromisoformat(end_ts_str) if end_ts_str else None,
-                )
-                collector._next_event_id = max(collector._next_event_id, event.id) + 1
-                collector._events.append(event)
-            except (KeyError, ValueError):
+                rec = EventRecord.model_validate(ev)
+            except ValidationError:
                 continue
+            event = MonitorEvent(
+                timestamp=rec.timestamp,
+                label=rec.label,
+                source=rec.source,
+                color=rec.color,
+                dash=rec.dash,
+                id=rec.id if rec.id is not None else collector._next_event_id,
+                end_timestamp=rec.end_timestamp,
+            )
+            collector._next_event_id = max(collector._next_event_id, event.id) + 1
+            collector._events.append(event)
         return collector
 
     @classmethod
@@ -692,16 +693,15 @@ class MetricCollector:
             )
             async for row in await conn.execute(query):
                 try:
-                    ts    = datetime.fromisoformat(row['ts'])
-                    host  = row['host'] if has_host else ''
-                    label = row['label']
-                    value = float(row['value'])
-                    key   = f'{host}/{label}' if host else label
-                    if key not in collector._series:
-                        collector._series[key] = deque()
-                    collector._series[key].append((ts, value, None))
-                except (KeyError, ValueError):
+                    rec = MetricRecord.model_validate(dict(row))
+                except ValidationError:
                     continue
+                key = f'{rec.host}/{rec.label}' if rec.host else rec.label
+                if key not in collector._series:
+                    collector._series[key] = deque()
+                collector._series[key].append(
+                    MetricPoint.model_validate({'ts': rec.timestamp, 'value': rec.value, 'meta': None})
+                )
             event_cols = {row[1] async for row in await conn.execute('PRAGMA table_info(events)')}
             has_end_ts = 'end_ts' in event_cols
             events_query = (
@@ -711,19 +711,18 @@ class MetricCollector:
             )
             async for row in await conn.execute(events_query):
                 try:
-                    end_ts_val = row['end_ts'] if has_end_ts else None
-                    event = MonitorEvent(
-                        timestamp=datetime.fromisoformat(row['ts']),
-                        label=row['label'],
-                        source=row['source'],
-                        color=row['color'],
-                        dash=row['dash'],
-                        id=row['id'],
-                        end_timestamp=datetime.fromisoformat(end_ts_val) if end_ts_val else None,
-                    )
-                    collector._events.append(event)
-                except (KeyError, ValueError):
+                    rec = EventRecord.model_validate(dict(row))
+                except ValidationError:
                     continue
+                collector._events.append(MonitorEvent(
+                    timestamp=rec.timestamp,
+                    label=rec.label,
+                    source=rec.source,
+                    color=rec.color,
+                    dash=rec.dash,
+                    id=rec.id if rec.id is not None else collector._next_event_id,
+                    end_timestamp=rec.end_timestamp,
+                ))
             if collector._events:
                 collector._next_event_id = max(e.id for e in collector._events) + 1
         return collector
@@ -743,16 +742,12 @@ class MetricCollector:
         for key, pts in self._series.items():
             host  = key.split('/')[0] if '/' in key else ''
             label = key.split('/', 1)[1] if '/' in key else key
-            for ts, value, meta in pts:
-                record: dict[str, Any] = {
-                    'timestamp': ts.isoformat(),
-                    'host':  host,
-                    'label': label,
-                    'value': value,
-                }
-                if meta:
-                    record['meta'] = meta
-                metrics.append(record)
+            for pt in pts:
+                metrics.append(
+                    MetricRecord(
+                        timestamp=pt.ts, host=host, label=label, value=pt.value, meta=pt.meta
+                    ).model_dump(mode='json', exclude_none=True)
+                )
         return json.dumps(
             {
                 'metrics':   metrics,

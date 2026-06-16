@@ -483,7 +483,7 @@ class OttoSuite(Generic[TOptions]):
         if self._monitor_collector is None:
             return {}
         return {
-            key: [(ts, v) for ts, v, _ in pts]
+            key: [(pt.ts, pt.value) for pt in pts]
             for key, pts in self._monitor_collector.get_series().items()
         }
 

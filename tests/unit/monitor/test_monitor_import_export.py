@@ -19,8 +19,9 @@ from pathlib import Path
 
 import pytest
 
+from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
-from otto.monitor.parsers import TopCpuParser, LoadParser
+from otto.monitor.parsers import LoadParser, TopCpuParser
 
 pytestmark = pytest.mark.asyncio
 
@@ -60,7 +61,7 @@ async def _make_live_collector() -> MetricCollector:
         if key not in collector._series:
             collector._series[key] = deque()
         for ts, val in values:
-            collector._series[key].append((ts, val, meta))
+            collector._series[key].append(MetricPoint(ts=ts, value=val, meta=meta))
         collector._chart_map[label] = chart
 
     # Single-series: overall CPU usage
@@ -121,10 +122,10 @@ def _assert_collectors_equal(original: MetricCollector, loaded: MetricCollector)
         loaded_pts = loaded_series[key]
         assert len(loaded_pts) == len(orig_pts), \
             f'Point count mismatch for series {key!r}: {len(orig_pts)} → {len(loaded_pts)}'
-        for (ots, oval, ometa), (lts, lval, lmeta) in zip(orig_pts, loaded_pts):
-            assert lts   == ots,                     f'Timestamp mismatch in {key!r}'
-            assert lval  == pytest.approx(oval),     f'Value mismatch in {key!r}'
-            assert lmeta == ometa,                   f'Meta mismatch in {key!r}'
+        for op, lp in zip(orig_pts, loaded_pts):
+            assert lp.ts    == op.ts,                  f'Timestamp mismatch in {key!r}'
+            assert lp.value == pytest.approx(op.value), f'Value mismatch in {key!r}'
+            assert lp.meta  == op.meta,                 f'Meta mismatch in {key!r}'
 
     assert loaded.get_chart_map() == original.get_chart_map(), \
         'chart_map mismatch after import'
@@ -167,7 +168,7 @@ class TestExportImportRoundTrip:
         loaded = MetricCollector.from_json(path)
 
         pts = loaded.get_series()[f'{HOST}/Overall CPU']
-        assert [v for _, v, _ in pts] == pytest.approx([10.5, 12.3, 9.8])
+        assert [p.value for p in pts] == pytest.approx([10.5, 12.3, 9.8])
 
     async def test_multi_series_load_values_preserved(self, tmp_path):
         original = await _make_live_collector()
@@ -176,9 +177,9 @@ class TestExportImportRoundTrip:
         loaded = MetricCollector.from_json(path)
 
         series = loaded.get_series()
-        assert [v for _, v, _ in series[f'{HOST}/Load (1m)']]  == pytest.approx([0.52, 0.61, 0.48])
-        assert [v for _, v, _ in series[f'{HOST}/Load (5m)']]  == pytest.approx([0.58, 0.57, 0.55])
-        assert [v for _, v, _ in series[f'{HOST}/Load (15m)']] == pytest.approx([0.59, 0.60, 0.58])
+        assert [p.value for p in series[f'{HOST}/Load (1m)']]  == pytest.approx([0.52, 0.61, 0.48])
+        assert [p.value for p in series[f'{HOST}/Load (5m)']]  == pytest.approx([0.58, 0.57, 0.55])
+        assert [p.value for p in series[f'{HOST}/Load (15m)']] == pytest.approx([0.59, 0.60, 0.58])
 
     async def test_timestamps_preserved(self, tmp_path):
         original = await _make_live_collector()
@@ -187,7 +188,7 @@ class TestExportImportRoundTrip:
         loaded = MetricCollector.from_json(path)
 
         pts = loaded.get_series()[f'{HOST}/Overall CPU']
-        assert [ts for ts, _, _ in pts] == [T0, T1, T2]
+        assert [p.ts for p in pts] == [T0, T1, T2]
 
     async def test_proc_series_meta_preserved(self, tmp_path):
         original = await _make_live_collector()
@@ -196,7 +197,7 @@ class TestExportImportRoundTrip:
         loaded = MetricCollector.from_json(path)
 
         pts = loaded.get_series()[f'{HOST}/proc/1234']
-        _, _, meta = pts[0]
+        meta = pts[0].meta
         assert meta is not None
         assert meta['User']    == 'root'
         assert meta['Command'] == 'python3 script.py'
@@ -301,3 +302,51 @@ class TestDoubleExportIdempotency:
 
         # After three cycles all data must still be intact
         _assert_collectors_equal(await _make_live_collector(), collector)
+
+
+class TestImportValidation:
+    """from_json validates rows via the row models: malformed rows skip,
+    unknown keys are tolerated (forward-compatible read-back).
+    """
+
+    def _write(self, tmp_path, payload):
+        import json
+        p = tmp_path / 'data.json'
+        p.write_text(json.dumps(payload))
+        return str(p)
+
+    async def test_malformed_metric_row_is_skipped(self, tmp_path):
+        path = self._write(tmp_path, {
+            'metrics': [
+                {'timestamp': '2024-03-01T10:00:00', 'host': 'h', 'label': 'CPU', 'value': 10.0},
+                {'timestamp': '2024-03-01T10:00:01', 'host': 'h', 'label': 'CPU'},  # no value
+                {'host': 'h', 'label': 'CPU', 'value': 99.0},                        # no timestamp
+            ],
+            'events': [],
+        })
+        loaded = MetricCollector.from_json(path)
+        pts = loaded.get_series()['h/CPU']
+        assert [p.value for p in pts] == [10.0]  # only the valid row survives
+
+    async def test_unknown_metric_key_tolerated(self, tmp_path):
+        path = self._write(tmp_path, {
+            'metrics': [
+                {'timestamp': '2024-03-01T10:00:00', 'host': 'h', 'label': 'CPU',
+                 'value': 10.0, 'future_col': 'ignored'},
+            ],
+            'events': [],
+        })
+        loaded = MetricCollector.from_json(path)
+        assert loaded.get_series()['h/CPU'][0].value == 10.0
+
+    async def test_malformed_event_row_is_skipped(self, tmp_path):
+        path = self._write(tmp_path, {
+            'metrics': [],
+            'events': [
+                {'timestamp': '2024-03-01T10:00:00', 'label': 'ok'},
+                {'label': 'no timestamp'},  # required timestamp missing → skip
+            ],
+        })
+        loaded = MetricCollector.from_json(path)
+        evs = loaded.get_events()
+        assert [e.label for e in evs] == ['ok']

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.host import UnixHost
+from otto.models import MetricPoint
 from otto.suite.plugin import OttoPlugin
 
 
@@ -387,7 +388,7 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
                 await asyncio.sleep(0.01)
                 real_collector._series.setdefault(
                     'host1/cpu', deque()
-                ).append((datetime.now(), 42.0, None))
+                ).append(MetricPoint(ts=datetime.now(), value=42.0, meta=None))
         except asyncio.CancelledError:
             raise
 

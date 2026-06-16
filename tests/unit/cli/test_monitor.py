@@ -247,7 +247,7 @@ class TestLoadHistorical:
         series = collector.get_series()
         assert 'router1/CPU %' in series
         assert len(series['router1/CPU %']) == 1
-        _, value, _ = series['router1/CPU %'][0]
+        value = series['router1/CPU %'][0].value
         assert value == 42.0
 
     @pytest.mark.asyncio
@@ -276,7 +276,7 @@ class TestLoadHistorical:
         collector = await _load_historical(db_file)
         series = collector.get_series()
         assert 'host1/CPU %' in series
-        _, value, _ = series['host1/CPU %'][0]
+        value = series['host1/CPU %'][0].value
         assert value == 55.0
 
 
@@ -393,15 +393,15 @@ class TestCollectorLiveRun:
         series = collector.get_series()
         # MemParser produces "Memory Usage" keyed by chart name
         assert 'router1/Memory Usage' in series
-        _, mem_value, mem_meta = series['router1/Memory Usage'][0]
-        assert abs(mem_value - 62.5) < 0.1  # 10B / 16B = 62.5%
-        assert mem_meta is not None
+        mem_pt = series['router1/Memory Usage'][0]
+        assert abs(mem_pt.value - 62.5) < 0.1  # 10B / 16B = 62.5%
+        assert mem_pt.meta is not None
 
         # LoadParser produces three load average series
         assert 'router1/Load (1m)' in series
         assert 'router1/Load (5m)' in series
         assert 'router1/Load (15m)' in series
-        _, load_1m, _ = series['router1/Load (1m)'][0]
+        load_1m = series['router1/Load (1m)'][0].value
         assert abs(load_1m - 0.52) < 0.01
 
     @pytest.mark.asyncio

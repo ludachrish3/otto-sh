@@ -48,4 +48,9 @@ class MetricPoint:
 
 ## Status
 
-Deferred. The lower-effort fix (strip metadata in the `getMonitorResults` wrapper) is already in place. Revisit if a third element gets added to the point shape, or if the pair-vs-triple drift happens again.
+**Done** — implemented in Pydantic Phase A Plan 4 (`models/monitor.py` `MetricPoint`,
+`MetricCollector._series: deque[MetricPoint]`, `get_series() -> dict[str, list[MetricPoint]]`,
+`get_monitor_results` metadata-strip wrapper removed). `MetricPoint` is a pydantic
+`OttoModel` (not a stdlib dataclass) — the hot live-append path uses
+`MetricPoint.model_construct(...)`; the JSON/SQLite import path validates via the
+`MetricRecord`/`EventRecord` row models. Kept as a record of the motivation.

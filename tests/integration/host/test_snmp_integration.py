@@ -58,7 +58,7 @@ def _series_by_label(collector) -> dict[str, float]:
     out: dict[str, float] = {}
     for key, points in collector.get_series().items():
         if "/" in key and points:
-            out[key.split("/", 1)[1]] = points[-1][1]
+            out[key.split("/", 1)[1]] = points[-1].value
     return out
 
 

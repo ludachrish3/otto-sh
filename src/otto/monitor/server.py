@@ -23,11 +23,11 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 
 from ..logger import get_otto_logger
+from ..models.base import OttoModel
 from .collector import MetricCollector
 from .events import VALID_DASH_STYLES
 
@@ -42,13 +42,13 @@ class SuppressASGIWarning(Filter):
 
 getLogger("uvicorn.error").addFilter(SuppressASGIWarning())
 
-class _EventBody(BaseModel):
+class _EventBody(OttoModel):
     label: str
     color: str = '#888888'
     dash:  str = 'dash'
 
 
-class _EventUpdateBody(BaseModel):
+class _EventUpdateBody(OttoModel):
     label: str | None = None
     color: str | None = None
     dash:  str | None = None
@@ -72,10 +72,7 @@ def _build_app(collector: MetricCollector) -> FastAPI:
     async def data() -> JSONResponse: # type: ignore[reportUnusedFunction]
         payload: dict[str, Any] = {
             'series': {
-                label: [
-                    {'ts': ts.isoformat(), 'value': value, **({'meta': meta} if meta is not None else {})}
-                    for ts, value, meta in pts
-                ]
+                label: [pt.model_dump(mode='json', exclude_none=True) for pt in pts]
                 for label, pts in collector.get_series().items()
             },
             'events':    [e.to_dict() for e in collector.get_events()],

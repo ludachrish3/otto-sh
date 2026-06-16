@@ -31,6 +31,9 @@ import logging
 from dataclasses import dataclass
 from typing import Literal, SupportsInt
 
+from pydantic import ConfigDict
+
+from ..models.base import OttoModel
 from .parsers import MetricDataPoint
 
 logger = logging.getLogger('otto')
@@ -60,8 +63,7 @@ SnmpVersion = Literal['1', '2c']
 # Presentation layer — SnmpMetric descriptor (the SNMP analog of MetricParser)
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True, slots=True)
-class SnmpMetric:
+class SnmpMetric(OttoModel):
     """How a single OID's value is interpreted and charted.
 
     Mirrors the presentation attributes :class:`~otto.monitor.parsers.MetricParser`
@@ -71,8 +73,13 @@ class SnmpMetric:
     a CPU OID reported in centi-percent → ``scale=0.01`` for percent).
 
     These are deliberately *not* sourced from lab data — graphing stays in the
-    monitor module.
+    monitor module. ``frozen=True``: a descriptor is an immutable, low-volume
+    value object shared across ticks; the registry only ever replaces, never
+    mutates. Built and registered through the public path
+    (:func:`register_snmp_metric`) for first- and third-party descriptors alike.
     """
+
+    model_config = ConfigDict(frozen=True)
 
     oid:       str
     label:     str
@@ -91,31 +98,12 @@ class SnmpMetric:
 # ---------------------------------------------------------------------------
 # Built-in descriptor registry
 # ---------------------------------------------------------------------------
+# otto registers its own built-ins through the SAME register_snmp_metric() entry
+# point a third party uses — one validation path for first- and third-party
+# descriptors, mirroring the host-class registry decision. (See the Phase A
+# design, "SNMP-metric registration symmetry".)
 
-def _default_metrics() -> dict[str, SnmpMetric]:
-    """Built-in descriptors: standard sysUpTime + otto-enterprise CPU/heap/threads.
-
-    The enterprise OIDs are scalars served by otto's Zephyr agent; the standard
-    ``sysUpTime`` works against any compliant agent (net-snmp, routers, …).
-    """
-    return {
-        m.oid: m
-        for m in (
-            SnmpMetric(OID_SYS_UPTIME, 'Uptime', chart='Uptime',
-                       y_title='Uptime', unit='s', scale=0.01),
-            SnmpMetric(f'{_OTTO_BASE}.1.1.0', 'Overall CPU', chart='CPU',
-                       y_title='Usage %', unit='%', tab='cpu', tab_label='CPU', scale=0.01),
-            SnmpMetric(f'{_OTTO_BASE}.1.2.0', 'Heap Used', chart='Memory Usage',
-                       y_title='Memory', unit='B', tab='memory', tab_label='Memory'),
-            SnmpMetric(f'{_OTTO_BASE}.1.3.0', 'Heap Free', chart='Memory Usage',
-                       y_title='Memory', unit='B', tab='memory', tab_label='Memory'),
-            SnmpMetric(f'{_OTTO_BASE}.1.4.0', 'Threads', chart='Threads',
-                       y_title='Count', unit=''),
-        )
-    }
-
-
-_SNMP_METRICS: dict[str, SnmpMetric] = _default_metrics()
+_SNMP_METRICS: dict[str, SnmpMetric] = {}
 
 
 def register_snmp_metric(metric: SnmpMetric) -> None:
@@ -127,6 +115,30 @@ def register_snmp_metric(metric: SnmpMetric) -> None:
     :func:`otto.host.command_frame.register_command_frame`.
     """
     _SNMP_METRICS[metric.oid] = metric
+
+
+def _register_builtin_metrics() -> None:
+    """Register the built-in descriptors via the public path.
+
+    Standard ``sysUpTime`` works against any compliant agent (net-snmp, routers,
+    …); the enterprise OIDs are scalars served by otto's Zephyr agent.
+    """
+    for metric in (
+        SnmpMetric(oid=OID_SYS_UPTIME, label='Uptime', chart='Uptime',
+                   y_title='Uptime', unit='s', scale=0.01),
+        SnmpMetric(oid=f'{_OTTO_BASE}.1.1.0', label='Overall CPU', chart='CPU',
+                   y_title='Usage %', unit='%', tab='cpu', tab_label='CPU', scale=0.01),
+        SnmpMetric(oid=f'{_OTTO_BASE}.1.2.0', label='Heap Used', chart='Memory Usage',
+                   y_title='Memory', unit='B', tab='memory', tab_label='Memory'),
+        SnmpMetric(oid=f'{_OTTO_BASE}.1.3.0', label='Heap Free', chart='Memory Usage',
+                   y_title='Memory', unit='B', tab='memory', tab_label='Memory'),
+        SnmpMetric(oid=f'{_OTTO_BASE}.1.4.0', label='Threads', chart='Threads',
+                   y_title='Count', unit=''),
+    ):
+        register_snmp_metric(metric)
+
+
+_register_builtin_metrics()
 
 
 def get_snmp_metric(oid: str) -> SnmpMetric | None:

@@ -4,6 +4,7 @@ import sys
 import types
 
 import pytest
+from pydantic import ValidationError
 
 from otto.monitor import snmp
 from otto.monitor.snmp import (
@@ -34,15 +35,15 @@ def clean_registry():
 
 class TestSnmpMetric:
     def test_scale_applied(self):
-        m = SnmpMetric('1.2.3', 'CPU', chart='CPU', unit='%', scale=0.01)
+        m = SnmpMetric(oid='1.2.3', label='CPU', chart='CPU', unit='%', scale=0.01)
         assert m.to_point(4250).value == 42.5
 
     def test_unit_scale_is_identity(self):
-        m = SnmpMetric('1.2.3', 'Heap', chart='Memory', unit='B')
+        m = SnmpMetric(oid='1.2.3', label='Heap', chart='Memory', unit='B')
         assert m.to_point(8192).value == 8192.0
 
     def test_rounds_to_two_places(self):
-        m = SnmpMetric('1.2.3', 'X', chart='X', scale=1 / 3)
+        m = SnmpMetric(oid='1.2.3', label='X', chart='X', scale=1 / 3)
         assert m.to_point(1).value == 0.33
 
 
@@ -68,13 +69,28 @@ class TestRegistry:
         assert m.scale == 1.0
 
     def test_register_overrides(self, clean_registry):
-        register_snmp_metric(SnmpMetric('9.9.9', 'Custom', chart='Widgets', unit='w'))
+        register_snmp_metric(SnmpMetric(oid='9.9.9', label='Custom', chart='Widgets', unit='w'))
         m = resolve_snmp_metric('9.9.9')
         assert m.label == 'Custom' and m.chart == 'Widgets' and m.unit == 'w'
 
     def test_register_restored_after_fixture(self):
         # The override from the previous test must not leak.
         assert get_snmp_metric('9.9.9') is None
+
+    def test_builtins_registered_through_public_path(self):
+        # Every built-in descriptor must be retrievable via the same getter a
+        # third-party registration would populate — i.e. _register_builtin_metrics()
+        # used register_snmp_metric(), not a private dict literal.
+        from otto.monitor.snmp import _OTTO_BASE, OID_SYS_UPTIME
+        for oid in (OID_SYS_UPTIME, f'{_OTTO_BASE}.1.1.0', f'{_OTTO_BASE}.1.2.0',
+                    f'{_OTTO_BASE}.1.3.0', f'{_OTTO_BASE}.1.4.0'):
+            assert get_snmp_metric(oid) is not None, f'built-in {oid} not registered'
+
+    def test_snmp_metric_is_frozen(self):
+        m = get_snmp_metric(OID_SYS_UPTIME)
+        assert m is not None
+        with pytest.raises(ValidationError):
+            m.scale = 2.0  # frozen → mutation rejected
 
 
 # ---------------------------------------------------------------------------

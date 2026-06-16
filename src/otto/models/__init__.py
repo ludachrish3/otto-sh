@@ -28,6 +28,11 @@ from .host import (
     ToolchainSpec,
     UnixHostSpec,
 )
+from .monitor import (
+    EventRecord,
+    MetricPoint,
+    MetricRecord,
+)
 from .options import (
     FtpOptionsSpec,
     LocalPortForwardSpec,
@@ -79,4 +84,7 @@ __all__ = [
     "ReservationEntry",
     "ReservationFile",
     "SettingsModel",
+    "MetricPoint",
+    "MetricRecord",
+    "EventRecord",
 ]

@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
 from otto.monitor.events import MonitorEvent
 from otto.monitor.parsers import TopCpuParser, MemParser
@@ -63,7 +64,7 @@ async def _inject_point(
     from collections import deque
     if key not in collector._series:
         collector._series[key] = deque()
-    collector._series[key].append((ts, value, None))
+    collector._series[key].append(MetricPoint(ts=ts, value=value, meta=None))
     await collector._db_write_point(ts, host, label, value)
 
 
@@ -335,7 +336,7 @@ class TestFromSqlite:
         series = collector.get_series()
         assert 'router1/CPU %' in series
         assert 'router1/Memory %' in series
-        _, value, _ = series['router1/CPU %'][0]
+        value = series['router1/CPU %'][0].value
         assert value == pytest.approx(33.3)
 
     @pytest.mark.asyncio
@@ -435,7 +436,7 @@ class TestJsonRoundTrip:
         loaded = MetricCollector.from_json(path)
         series = loaded.get_series()
         assert 'host1/CPU %' in series
-        _, value, _ = series['host1/CPU %'][0]
+        value = series['host1/CPU %'][0].value
         assert value == pytest.approx(77.7)
 
     @pytest.mark.asyncio

@@ -412,7 +412,11 @@ the spike report.
 
 - **Pydantic Phase B** — converting `RepoOptions` / suite `Options` to pydantic,
   the pydantic→Typer bridge, and the **Typer 0.26 triage** (post-freeze by
-  default, conditional on the spike).
+  default, conditional on the spike). Fold in here (Phase B-adjacent, post-freeze):
+  collapsing the **pure-data, otto-owned two-type splits** (the forward types, and any
+  no-seam option specs) into single frozen pydantic models — deferred because it touches
+  the async consumers Phase A leaves alone; see
+  [todo/collapse-pure-data-spec-runtime-types.md](../../../todo/collapse-pure-data-spec-runtime-types.md).
 - `transfer.py` per-backend split, test-tree restructure, registry public API
   (separate workstream #4).
 - Behavior-class registry symmetry (frames/filesystems/parsers) — see the

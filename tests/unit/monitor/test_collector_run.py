@@ -249,7 +249,7 @@ class TestSnmpCollection:
         series = collector.get_series()
         # sysUpTime (1/100 s) scaled to seconds by the descriptor: 12345 -> 123.45
         assert 'sprout/Uptime' in series, f'series: {list(series)}'
-        assert series['sprout/Uptime'][0][1] == 123.45
+        assert series['sprout/Uptime'][0].value == 123.45
         assert client.calls >= 2          # initial + at least one loop tick
         host.run.assert_not_called()      # no shell, no core-count probe
 
