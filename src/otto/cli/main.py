@@ -13,12 +13,12 @@ import typer
 
 from ..configmodule import (
     get_completion_names,
+    get_env,
     get_repos,
     load_lab,
 )
 from ..configmodule.env import (
     DEFAULT_LOG_RETENTION_DAYS,
-    FIELD_DEFAULT_ENV_VAR,
     FIELD_PRODUCT_ENV_VAR,
     LAB_ENV_VAR,
     LOG_DAYS_ENV_VAR,
@@ -26,7 +26,6 @@ from ..configmodule.env import (
     LOG_RICH_ENV_VAR,
     SUT_DIRS_ENV_VAR,
     XDIR_ENV_VAR,
-    OttoEnv,
 )
 from ..logger import init_otto_logger
 from ..utils import (
@@ -40,8 +39,10 @@ __version__ = get_version()
 # Uncomment the line below to remove rich help menu formatting globally
 #typer.core.HAS_RICH = False
 
-_field_default = OttoEnv.get_env_var(FIELD_DEFAULT_ENV_VAR) is not None
-"""Determines the default for debug or field. If this variable is set to anything at all, then field is the default."""
+_field_default = get_env().field_default is not None
+"""Determines the default for debug or field. If OTTO_FIELD_DEFAULT is set to
+anything at all, then field is the default. Read once at import via the startup
+env singleton (get_env())."""
 
 DESCRIPTION = f'''
 O.T.T.O. (Our Trusty Testing Orchestrator)

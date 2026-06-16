@@ -7,7 +7,7 @@ from otto.configmodule.env import (
     LOG_DAYS_ENV_VAR,
     SUT_DIRS_ENV_VAR,
     XDIR_ENV_VAR,
-    OttoEnv,
+    load_otto_env,
 )
 
 
@@ -20,7 +20,7 @@ def clear_env(monkeypatch):
 
 def test_env_not_set() -> None:
 
-    env = OttoEnv()
+    env = load_otto_env()
 
     assert env.sut_dirs == []
 
@@ -46,7 +46,7 @@ def test_env_log_days_value() -> None:
 def test_env_sutdirs_set_to_one_path_that_exists(monkeypatch, tmpdir) -> None:
 
     monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{tmpdir}')
-    env = OttoEnv()
+    env = load_otto_env()
 
     assert env.sut_dirs == [tmpdir]
 
@@ -56,7 +56,7 @@ def test_env_sutdirs_set_to_one_path_that_does_not_exist(monkeypatch, tmpdir) ->
     monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{tmpdir}_typo')
 
     with pytest.raises(FileNotFoundError):
-        OttoEnv()
+        load_otto_env()
 
 
 def test_env_sutdirs_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factory) -> None:
@@ -65,7 +65,7 @@ def test_env_sutdirs_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factor
     sutDir2 = tmpdir_factory.mktemp('dir2')
 
     monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{sutDir1},{sutDir2}')
-    env = OttoEnv()
+    env = load_otto_env()
 
     assert env.sut_dirs == [sutDir1, sutDir2]
 
@@ -75,7 +75,7 @@ def test_env_sutdirs_set_to_multiple_paths_one_does_not_exist(monkeypatch, tmpdi
     monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{tmpdir},{tmpdir}_typo')
 
     with pytest.raises(FileNotFoundError):
-        OttoEnv()
+        load_otto_env()
 
 
 def test_env_xdir_value() -> None:

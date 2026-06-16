@@ -19,7 +19,6 @@ import asyncio
 import contextlib
 import getpass
 import json
-import os
 import shlex
 from typing import Any, AsyncIterator, Optional
 
@@ -29,6 +28,7 @@ from ..host.docker_host import DockerContainerHost
 from ..host.host import Host
 from ..host.unix_host import UnixHost
 from ..logger import get_otto_logger
+from ..models.settings import OttoEnvSettings
 from ..utils import Status
 
 logger = get_otto_logger()
@@ -69,7 +69,9 @@ def get_user_compose_project(repo_name: str, suffix: Optional[str] = None) -> st
     or ``OTTO_COMPOSE_SUFFIX`` if set in the environment. Lowercase only —
     compose project names must be lowercase.
     """
-    raw_suffix = suffix or os.environ.get("OTTO_COMPOSE_SUFFIX") or _safe_username()
+    # Fresh OttoEnvSettings() (not the get_env() singleton) so OTTO_COMPOSE_SUFFIX
+    # is re-read each call — callers/tests set it per-invocation.
+    raw_suffix = suffix or OttoEnvSettings().compose_suffix or _safe_username()
     return f"otto-{repo_name}-{raw_suffix}".lower()
 
 

@@ -140,7 +140,8 @@ class TestHostDefaultsParsing:
 
     def test_sutdir_expansion_in_host_defaults(self, tmp_path):
         """``${sut_dir}`` is expanded inside ``[host_defaults]`` strings, like
-        every other repo settings table."""
+        every other repo settings table.
+        """
         sut = _write_repo(tmp_path, textwrap.dedent('''
             [host_defaults.ssh_options]
             known_hosts = "${sut_dir}/known_hosts"
@@ -152,7 +153,8 @@ class TestHostDefaultsParsing:
 @pytest.fixture
 def restore_profiles():
     """Snapshot/restore the global os-profile registry around a test, since
-    ``Repo.parse_settings`` registers data profiles into module-global state."""
+    ``Repo.parse_settings`` registers data profiles into module-global state.
+    """
     from otto.host import os_profile
     saved = dict(os_profile._OS_PROFILES)
     try:
@@ -196,7 +198,9 @@ class TestOsProfilesParsing:
             [os_profiles.broken]
             os_name = "Zephyr"
         '''))
-        with pytest.raises(ValueError, match="missing the required 'base'"):
+        # pydantic.ValidationError (a ValueError subclass) now fires for the
+        # missing required 'base' field; the error location names the field.
+        with pytest.raises(ValueError, match=r'os_profiles\.broken\.base'):
             Repo(sut_dir=sut)
 
     def test_invalid_base_raises(self, tmp_path, restore_profiles):
@@ -204,7 +208,9 @@ class TestOsProfilesParsing:
             [os_profiles.broken]
             base = "windows"
         '''))
-        with pytest.raises(ValueError, match='base'):
+        # _register_os_profiles wraps register_os_profile's rejection of an
+        # unregistered base host class.
+        with pytest.raises(ValueError, match='base must name a registered host class'):
             Repo(sut_dir=sut)
 
     def test_unknown_default_field_raises(self, tmp_path, restore_profiles):
@@ -232,7 +238,8 @@ class TestOsProfilesParsing:
 class TestOsProfilesIntegration:
     """End-to-end: the repo1 fixture's ``[os_profiles]`` tables flow through
     settings parse → registry → factory, including a data-defined profile that
-    references a *code-registered* command frame."""
+    references a *code-registered* command frame.
+    """
 
     def test_repo1_profile_resolves_code_registered_frame(self, restore_profiles):
         import sys

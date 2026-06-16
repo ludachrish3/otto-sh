@@ -82,8 +82,19 @@ def build_backend(
         If a third-party backend's construction fails for backend reasons
         (network, bad credentials, etc.).
     """
-    backend_name = settings.get("backend", "none")
-    url = settings.get("url")
+    from pydantic import ValidationError
+
+    from ..models.settings import ReservationConfigSpec
+
+    try:
+        cfg = ReservationConfigSpec.model_validate(settings)
+    except ValidationError as e:
+        # Keep build_backend's documented exception surface (ValueError for a
+        # malformed [reservations] config) and give a contextual message rather
+        # than a raw pydantic dump.
+        raise ValueError(f"Invalid [reservations] settings: {e}") from e
+    backend_name = cfg.backend
+    url = cfg.url
 
     if backend_name == "none":
         return NullReservationBackend()

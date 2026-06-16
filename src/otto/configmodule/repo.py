@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from rich.text import Text
 
     from ..host.os_profile import OsProfile
+    from ..models.settings import OsProfileSpec
 
 logger = get_otto_logger()
 
@@ -423,217 +424,52 @@ class Repo():
         return settingsText
 
     def parse_settings(self) -> None:
-        """Parse the settings TOML file in the repo's `.otto` directory."""
+        """Parse + validate the repo's ``.otto/settings.toml`` via SettingsModel."""
+        # ``otto.models``'s package __init__ boots otto.host first to avoid an
+        # import cycle (os_profile's eager registration ↔ models.host); see the
+        # note in src/otto/models/__init__.py. So this import is safe here.
+        from ..models.settings import SettingsModel
 
         settingsText = self.read_settings()
-        self.settings = tomli.loads(settingsText)
+        self.settings = tomli.loads(settingsText)  # raw — coverage/reservation read it
 
-        self.labs  = [ Path(self._expand_string(lab)) for lab in self.settings.get('labs',  []) ]
-        # Lab *names* (not paths, no var expansion). Empty when unset — the
-        # repo declares nothing, which enforcement (deferred) must treat as
-        # "undeclared", not as allow-all.
+        expanded = self._expand_recursive(self.settings)
+        model = SettingsModel.model_validate(expanded)
+
+        self.name = model.name
+        self.version = Version(model.version)
+        self.labs = list(model.labs)
+        # valid_labs are lab *names*, not paths — populate from the raw dict so
+        # they are NOT ${sut_dir}-expanded (the model still validates them as a
+        # list[str]). Preserves the pre-pydantic behavior.
         self.valid_labs = list(self.settings.get('valid_labs', []))
-        self.libs  = [ Path(self._expand_string(lib)) for lib in self.settings.get('libs',  []) ]
-        self.tests = [ Path(self._expand_string(dir)) for dir in self.settings.get('tests', []) ]
-        self.init  = [      self._expand_string(mod)  for mod in self.settings.get('init',  []) ]
+        self.libs = list(model.libs)
+        self.tests = list(model.tests)
+        self.init = list(model.init)
+        self.host_defaults = {k: dict(v) for k, v in model.host_defaults.items()}
+        self.os_profiles = self._register_os_profiles(model.os_profiles)
+        self.docker_settings = model.docker.to_runtime()
 
-        self.host_defaults = self._parse_host_defaults(self.settings.get('host_defaults', {}))
-
-        self.os_profiles = self._parse_os_profiles(self.settings.get('os_profiles', {}))
-
-        self.docker_settings = self._parse_docker_settings(self.settings.get('docker', {}))
-
-        try:
-            self.name = self._expand_string(self.settings['name'])
-            self.version = Version(self._expand_string(self.settings['version']))
-        except KeyError as e:
-            errorStr = f"{TOML_SETTINGS_PATH} does not specify a required field: {e}"
-            logger.critical(errorStr)
-            raise KeyError(errorStr) from e
-
-    def _parse_host_defaults(self,
-        raw: dict[str, Any],
-    ) -> dict[str, dict[str, Any]]:
-        """Validate, expand, and normalize the ``[host_defaults]`` TOML table.
-
-        The table groups option-default sub-tables by ``*_options`` key
-        (mirroring the host-dict shape consumed by
-        :func:`otto.storage.factory.create_host_from_dict`). Unknown keys
-        raise ``ValueError`` so typos don't silently no-op.
-        """
-        from ..storage.factory import OPTIONS_KEYS
-
-        if not raw:
-            return {}
-
-        if not isinstance(raw, dict):
-            raise ValueError(
-                f"{TOML_SETTINGS_PATH}: [host_defaults] must be a table, "
-                f"got {type(raw).__name__}"
-            )
-
-        unknown = set(raw) - OPTIONS_KEYS
-        if unknown:
-            raise ValueError(
-                f"{TOML_SETTINGS_PATH}: unknown [host_defaults] sub-table(s): "
-                f"{sorted(unknown)}. Valid keys are: {sorted(OPTIONS_KEYS)}"
-            )
-
-        result: dict[str, dict[str, Any]] = {}
-        for opt_key, table in raw.items():
-            if not isinstance(table, dict):
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [host_defaults.{opt_key}] must be a "
-                    f"table, got {type(table).__name__}"
-                )
-            result[opt_key] = self._expand_recursive(table)
-        return result
-
-    def _parse_os_profiles(self,
-        raw: dict[str, Any],
+    def _register_os_profiles(
+        self, profiles: dict[str, 'OsProfileSpec'],
     ) -> dict[str, 'OsProfile']:
-        """Validate, expand, and register the ``[os_profiles]`` TOML table.
-
-        Each ``[os_profiles.<name>]`` sub-table needs a ``base`` key naming
-        a registered host class (e.g. ``'unix'``, ``'embedded'``, ``'zephyr'``,
-        or a custom class registered via :func:`otto.host.os_profile.register_host_class`)
-        that selects the host class to build; the remaining keys are default
-        field values bundled with the profile (with ``${sut_dir}`` expanded).
-        Every profile is registered into the global os-profile registry so
-        lab-data entries can select it by name in the ``os_type`` field.
-
-        This runs at settings-parse time, *before* init modules are imported,
-        so a code ``register_os_profile`` call in an ``init`` module (imported
-        later) overrides a data table of the same name — last writer wins.
-
-        Unknown ``base`` values and unknown default field names raise
-        ``ValueError`` so typos don't silently no-op.
+        """Register each validated os-profile into the global registry and
+        return the built profiles, keyed by name. Runs at settings-parse time,
+        before init modules import, so a code registration can override a data
+        table of the same name (last writer wins).
         """
         from ..host.os_profile import build_os_profile, register_os_profile
 
-        if not raw:
-            return {}
-
-        if not isinstance(raw, dict):
-            raise ValueError(
-                f"{TOML_SETTINGS_PATH}: [os_profiles] must be a table, "
-                f"got {type(raw).__name__}"
-            )
-
         result: dict[str, OsProfile] = {}
-        for name, table in raw.items():
-            if not isinstance(table, dict):
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [os_profiles.{name}] must be a "
-                    f"table, got {type(table).__name__}"
-                )
-            if 'base' not in table:
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [os_profiles.{name}] is missing the "
-                    f"required 'base' key (the name of a registered host class, "
-                    f"e.g. 'unix', 'embedded', 'zephyr')"
-                )
-            expanded = self._expand_recursive(table)
-            base = expanded.pop('base')
+        for name, prof in profiles.items():
             try:
-                register_os_profile(name, base, expanded)
+                register_os_profile(name, prof.base, prof.defaults)
             except ValueError as e:
                 raise ValueError(
                     f"{TOML_SETTINGS_PATH}: [os_profiles.{name}]: {e}"
                 ) from e
             result[name] = build_os_profile(name)
         return result
-
-    def _parse_docker_settings(self,
-        raw: dict[str, Any],
-    ) -> DockerSettings:
-        """Validate and normalize the ``[docker]`` TOML table.
-
-        Defaults are applied when keys are absent so projects only need to
-        specify what differs. ``${sut_dir}`` is expanded in path-shaped values.
-        Unknown top-level keys raise ``ValueError`` so typos don't silently
-        no-op; sub-tables (images, composes) only validate the fields they
-        consume.
-        """
-        if not raw:
-            return DockerSettings()
-
-        if not isinstance(raw, dict):
-            raise ValueError(
-                f"{TOML_SETTINGS_PATH}: [docker] must be a table, "
-                f"got {type(raw).__name__}"
-            )
-
-        allowed = {'registry_url', 'images', 'composes'}
-        unknown = set(raw) - allowed
-        if unknown:
-            raise ValueError(
-                f"{TOML_SETTINGS_PATH}: unknown [docker] key(s): {sorted(unknown)}. "
-                f"Valid keys are: {sorted(allowed)}"
-            )
-
-        registry_url = self._expand_string(raw.get('registry_url', 'docker.io'))
-
-        images: list[DockerImage] = []
-        for idx, entry in enumerate(raw.get('images', []) or []):
-            if not isinstance(entry, dict):
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [[docker.images]][{idx}] must be a table"
-                )
-            try:
-                name = entry['name']
-                dockerfile = entry['dockerfile']
-                context = entry['context']
-            except KeyError as e:
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [[docker.images]][{idx}] missing required key {e}"
-                ) from e
-            build_args_raw = entry.get('build_args', {}) or {}
-            if not isinstance(build_args_raw, dict):
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [[docker.images]][{idx}].build_args "
-                    f"must be a table, got {type(build_args_raw).__name__}"
-                )
-            images.append(DockerImage(
-                name=self._expand_string(name),
-                dockerfile=Path(self._expand_string(dockerfile)),
-                context=Path(self._expand_string(context)),
-                target=self._expand_string(entry['target']) if entry.get('target') else None,
-                build_args=tuple(
-                    (self._expand_string(k), self._expand_string(str(v)))
-                    for k, v in sorted(build_args_raw.items())
-                ),
-            ))
-
-        composes: list[DockerCompose] = []
-        for idx, entry in enumerate(raw.get('composes', []) or []):
-            if not isinstance(entry, dict):
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [[docker.composes]][{idx}] must be a table"
-                )
-            try:
-                path = entry['path']
-            except KeyError as e:
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [[docker.composes]][{idx}] missing required key {e}"
-                ) from e
-            services_raw = entry.get('services', []) or []
-            if not isinstance(services_raw, list) or not all(isinstance(s, str) for s in services_raw):
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [[docker.composes]][{idx}].services "
-                    f"must be a list of strings"
-                )
-            composes.append(DockerCompose(
-                path=Path(self._expand_string(path)),
-                default_host=self._expand_string(entry['default_host']) if entry.get('default_host') else None,
-                services=tuple(services_raw),
-            ))
-
-        return DockerSettings(
-            registry_url=registry_url,
-            images=tuple(images),
-            composes=tuple(composes),
-        )
 
     @property
     def reservation_settings(self) -> dict[str, Any]:

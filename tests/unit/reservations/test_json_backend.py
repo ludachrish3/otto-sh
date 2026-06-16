@@ -127,17 +127,17 @@ class TestErrors:
         f = tmp_path / "list.json"
         f.write_text("[1, 2, 3]")
         backend = JsonReservationBackend(path=f)
-        with pytest.raises(ReservationBackendError, match="must be an object"):
+        with pytest.raises(ReservationBackendError, match="Invalid reservation file"):
             backend.get_reserved_resources("alice")
 
     def test_unsupported_version_raises(self, tmp_path):
         backend = _make_backend(tmp_path, {"version": 99, "reservations": []})
-        with pytest.raises(ReservationBackendError, match="unsupported version"):
+        with pytest.raises(ReservationBackendError, match="Invalid reservation file"):
             backend.get_reserved_resources("alice")
 
     def test_reservations_not_list_raises(self, tmp_path):
         backend = _make_backend(tmp_path, {"version": 1, "reservations": "nope"})
-        with pytest.raises(ReservationBackendError, match="must be a list"):
+        with pytest.raises(ReservationBackendError, match="Invalid reservation file"):
             backend.get_reserved_resources("alice")
 
     def test_entry_missing_user_raises(self, tmp_path):
@@ -145,7 +145,7 @@ class TestErrors:
             "version": 1,
             "reservations": [{"resources": ["x"]}],
         })
-        with pytest.raises(ReservationBackendError, match="missing string 'user'"):
+        with pytest.raises(ReservationBackendError, match="Invalid reservation file"):
             backend.get_reserved_resources("alice")
 
     def test_resources_not_string_list_raises(self, tmp_path):
@@ -153,7 +153,7 @@ class TestErrors:
             "version": 1,
             "reservations": [{"user": "a", "resources": [1, 2]}],
         })
-        with pytest.raises(ReservationBackendError, match="list of strings"):
+        with pytest.raises(ReservationBackendError, match="Invalid reservation file"):
             backend.get_reserved_resources("alice")
 
     def test_bad_expires_raises(self, tmp_path):
@@ -161,5 +161,5 @@ class TestErrors:
             "version": 1,
             "reservations": [{"user": "a", "resources": ["x"], "expires": "not-a-date"}],
         })
-        with pytest.raises(ReservationBackendError, match="Invalid 'expires'"):
+        with pytest.raises(ReservationBackendError, match="Invalid reservation file"):
             backend.get_reserved_resources("alice")

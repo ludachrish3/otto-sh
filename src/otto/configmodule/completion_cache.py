@@ -78,7 +78,6 @@ if TYPE_CHECKING:
 
 
 COMPLETION_ENV_VAR = '_OTTO_COMPLETE'
-XDIR_ENV_VAR = 'OTTO_XDIR'
 CACHE_FILENAME = 'completion_cache.json'
 
 # Bump when the on-disk schema changes in a way older readers can't parse.
@@ -119,10 +118,15 @@ def _cache_path() -> Path | None:
     stable per-user location, so we skip caching entirely and fall back to
     the slow path every time.
     """
-    xdir = os.environ.get(XDIR_ENV_VAR)
-    if not xdir:
+    # Function-local import: this module is loaded early during configmodule
+    # bootstrap, so defer the models import to call time. A fresh
+    # OttoEnvSettings() re-reads OTTO_XDIR each call (tests monkeypatch it).
+    from ..models.settings import OttoEnvSettings
+
+    xdir = OttoEnvSettings().xdir  # Path | None ("" normalized to None)
+    if xdir is None:
         return None
-    return Path(xdir) / '.otto' / CACHE_FILENAME
+    return xdir / '.otto' / CACHE_FILENAME
 
 
 def clear_cache() -> bool:

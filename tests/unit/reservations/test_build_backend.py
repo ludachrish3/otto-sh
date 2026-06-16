@@ -31,6 +31,15 @@ class TestNoneBackend:
         assert isinstance(backend, NullReservationBackend)
 
 
+class TestEnvelopeValidation:
+
+    def test_non_string_backend_raises_contextual_value_error(self, tmp_path):
+        # A malformed envelope is reported as a ValueError with context, not a
+        # raw pydantic ValidationError dump.
+        with pytest.raises(ValueError, match=r"Invalid \[reservations\] settings"):
+            build_backend({"backend": 3}, tmp_path)
+
+
 class TestJsonBackend:
 
     def test_absolute_path(self, tmp_path):

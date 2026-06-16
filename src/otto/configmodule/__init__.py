@@ -1,4 +1,7 @@
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from ..models.settings import OttoEnvSettings
 
 from .configmodule import (
     all_hosts as all_hosts,
@@ -16,7 +19,7 @@ from .configmodule import (
     run_on_all_hosts as run_on_all_hosts,
 )
 from .env import (
-    OttoEnv as OttoEnv,
+    load_otto_env as load_otto_env,
 )
 from .lab import (
     load_lab as load_lab,
@@ -43,7 +46,7 @@ from .version import (
     Version as Version,
 )
 
-_env = OttoEnv()
+_env = load_otto_env()
 _repos = _getRepos(_env.sut_dirs)
 
 # ---------------------------------------------------------------------------
@@ -78,7 +81,7 @@ def get_repos() -> list[Repo]:
     return _repos
 
 
-def get_env() -> OttoEnv:
+def get_env() -> "OttoEnvSettings":
     return _env
 
 
