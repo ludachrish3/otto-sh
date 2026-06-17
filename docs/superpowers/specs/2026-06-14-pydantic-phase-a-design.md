@@ -363,10 +363,83 @@ host specs and SNMP metric descriptors. The same asymmetry in the
 
 ## 6. JSON Schema export
 
-The `HostSpec` / family specs and `SettingsModel` export JSON Schema for editor
-autocomplete on `hosts.json` and `settings.toml`. Add a generation entry point
-(a `make schema` target or a script under `scripts/`) and a snapshot test that
-fails if the committed schema drifts from the models.
+The boundary models export JSON Schema for editor autocomplete on the
+user-edited files: `hosts.json`, `settings.toml`, and the reservations JSON.
+
+**Ship the generator, not the artifact.** The build backend is `uv_build`
+(uv's native Rust backend), which has no Python build-hook/plugin system, so
+schema files cannot be baked into the wheel at build time. Rather than commit
+generated files (which can silently drift from the models and need a snapshot
+test to police), otto ships the *generator* as a first-class command,
+`otto schema export`. Any installed otto version emits a schema matching its
+own models — options can never drift from source because there is no stored
+artifact. A `make schema` target wraps the command for local use; the default
+output directory (`schemas/`) is git-ignored, not committed.
+
+**What it emits** (into `--out DIR`, default `schemas/`):
+
+- `unix-host.schema.json`, `embedded-host.schema.json` — one self-contained
+  schema per *distinct* concrete host spec, from `model_json_schema()`. Each
+  carries `additionalProperties: false` (from `extra='forbid'`) so a typo'd key
+  is flagged.
+- `hosts.schema.json` — the file-level schema for the whole `hosts.json` array.
+  `hosts.json` is a JSON array whose element type is chosen by `os_type` through
+  the runtime registry, not a pydantic discriminated union (and `os_type` names
+  are many-to-one over spec classes: `unix → UnixHostSpec`,
+  `embedded`/`zephyr → EmbeddedHostSpec`). So this wrapper is **assembled from
+  the registry**, not from a single model, via
+  `pydantic.json_schema.models_json_schema(...)` for a shared, deduped `$defs`:
+  a self-contained `{type: array, items: {anyOf: [<each distinct spec $ref>],
+  discriminator: {propertyName: os_type, mapping: {<every registered os_type> →
+  its spec's $def}}}}`. **`anyOf`, not `oneOf`**: a minimal host that omits
+  `os_type` (it defaults to `unix`) and carries only fields common to both specs
+  validates against *both*, which `oneOf` ("exactly one") rejects — verified
+  against the real `tests/lab_data` fixtures. `anyOf` (match ≥1) accepts the
+  ambiguous-but-valid host while still failing a typo'd/unknown key (matches no
+  branch). The tradeoff: a field valid on the *other* os_type's spec passes
+  here (cross-branch bleed); that is acceptable — the schema's job is editor
+  autocomplete + gross typo-catching, and runtime `extra='forbid'` still
+  enforces exact per-`os_type` correctness at load. `discriminator` stays as an
+  editor hint. Editors bind this one file to validate the entire host list.
+  Deriving it from the registry means a third party that registers a new host
+  class is reflected automatically.
+- `settings.schema.json` — `SettingsModel.model_json_schema()`.
+- `reservations.schema.json` — `ReservationFile.model_json_schema()`.
+
+**Source of truth for host types.** The generator reads the registry through a
+new public accessor on `otto.host.os_profile` (e.g. `registered_host_specs() ->
+dict[str, type[HostSpec]]`) rather than reaching into `_HOST_SPECS`, keeping the
+private registry private (ties to `todo/registry_builtin_registration_symmetry.md`).
+
+**Custom host types are first-class.** A user who registers a custom host class
++ spec (`register_host_class('myos', MyHost, MySpec)` from an init module listed
+in `.otto/settings.toml`) gets a schema for it for free: the registry-driven
+generator emits one per-distinct-spec file (named from the spec class, so the
+many-to-one `os_type → spec` collapse holds) **and** adds the custom `os_type`
+to the `hosts.schema.json` `anyOf` + discriminator mapping. For this to work the
+command must first run the normal project bootstrap so those registrations have
+fired: `otto schema export` resolves the repo and runs
+`Repo.apply_settings()` (`add_libs_to_pythonpath()` + `import_init_modules()`)
+by default. A `--builtins-only` flag skips config resolution and emits just the
+in-tree specs, so the command still works outside any project. Note this covers
+custom *fields declared on a spec* — arbitrary undeclared keys remain rejected
+(`extra='forbid'` → `additionalProperties: false`); free-form passthrough is a
+deliberate non-goal of the boundary models.
+
+**Test (correctness, not snapshot).** Because nothing is committed there is
+nothing to snapshot. Instead the generated `hosts.schema.json` is validated for
+*correctness* with the `jsonschema` library against real fixtures: the sample
+`tests/lab_data/*/hosts.json` must pass, and an array carrying an unknown host
+key must fail (proving `additionalProperties: false` flows through). Structural
+assertions cover the discriminator mapping (every registered `os_type` present,
+pointing at the right `$def`) and the per-spec / settings / reservations docs.
+
+**Docs.** A user-guide page documents `otto schema export` and how to wire the
+emitted files into the two common editors — **VS Code** (`json.schemas`
+`fileMatch` for the JSON files; the *Even Better TOML* `schema.associations`
+for `settings.toml`) and **Neovim** (the `jsonls` LSP `schemas` list; a
+TOML-LSP `schema.associations` for settings) — with the caveat that schemas
+reflect the installed otto version, so regenerate after upgrading.
 
 ---
 
@@ -448,7 +521,10 @@ all supported Pythons (3.10–3.14) before merge — the outcome doc notes
 - **Monitor:** `MetricPoint` round-trip + `model_construct` hot path; DB
   import/export row validation; `SnmpMetric` built-in registration through the
   public path.
-- **Schema:** JSON Schema export snapshot test.
+- **Schema:** `otto schema export` correctness — generated `hosts.schema.json`
+  validates the real `tests/lab_data/*/hosts.json` (and rejects an unknown key)
+  via `jsonschema`; discriminator-mapping + per-spec/settings/reservations
+  structural assertions; CLI writes the five files to `--out`.
 - **Gates:** `make test` (full suite incl. live VM tiers — **do not kill
   mid-run**); `make coverage` (single-process, ≥ 90% gate); `make nox` (all
   Pythons); `ty` 0 diagnostics; ruff clean.

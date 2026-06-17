@@ -39,3 +39,6 @@ docs/_build
 
 # Claude files
 .claude
+
+# Generated JSON Schema (otto schema export default output)
+/schemas/

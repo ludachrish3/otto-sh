@@ -52,6 +52,13 @@ it was *already* converting a registry's value type to pydantic (host specs, SNM
 descriptors). Folding these behavior-class registries in would blur a focused
 "pydantic boundary" workstream into a general registry refactor.
 
+## Public read accessor
+
+Plan 6 (JSON Schema export) added `os_profile.registered_host_specs(builtins_only=False)`
+as the public read accessor over the private `_HOST_SPECS` registry. A future
+registry-hygiene pass should keep and extend this function rather than re-expose
+the private dict directly.
+
 ## Status
 
 Deferred — picked up after Phase A as a standalone hygiene pass (no contract

@@ -209,6 +209,20 @@ def build_host_spec(name: str) -> type[HostSpec]:
         ) from None
 
 
+def registered_host_specs(*, builtins_only: bool = False) -> dict[str, type[HostSpec]]:
+    """Return a shallow copy of the ``os_type`` → :class:`HostSpec` subclass registry.
+
+    Names are many-to-one (``embedded`` and ``zephyr`` both resolve to
+    :class:`EmbeddedHostSpec`). Used by the JSON Schema exporter; also reflects
+    custom classes loaded via init modules. With *builtins_only*, restrict the
+    result to the in-tree built-in types (``unix`` / ``embedded`` / ``zephyr``),
+    excluding anything registered via init modules.
+    """
+    if builtins_only:
+        return {n: s for n, s in _HOST_SPECS.items() if n in _BUILTIN_NAMES}
+    return dict(_HOST_SPECS)
+
+
 def build_host_class(name: str) -> type:
     """Return the host class registered under *name* (raising on miss)."""
     try:

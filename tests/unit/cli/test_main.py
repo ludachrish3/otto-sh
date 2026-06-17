@@ -110,6 +110,12 @@ class TestArgumentValidation:
         result = runner.invoke(app, [], env={'OTTO_LAB': ''})
         assert result.exit_code != 0
 
+    def test_lab_needing_path_without_lab_reports_missing_option(self):
+        """A non-lab-free invocation without --lab errors with the clear message."""
+        result = runner.invoke(app, ['--show-lab'], env={'OTTO_LAB': ''})
+        assert result.exit_code != 0
+        assert "Missing option '--lab'" in result.output
+
     def test_negative_log_days_rejected(self, main_mocks):
         result = _invoke(['--log-days', '-1'])
         assert result.exit_code == 2
@@ -121,6 +127,22 @@ class TestArgumentValidation:
     def test_positive_log_days_accepted(self, main_mocks):
         result = _invoke(['--log-days', '7'])
         assert result.exit_code == 0
+
+
+# ── Lab-free subcommands ──────────────────────────────────────────────────────
+
+class TestLabFreeSubcommands:
+    """`otto schema` introspects otto itself and must run without a lab."""
+
+    def test_schema_export_runs_without_lab(self, tmp_path):
+        out = tmp_path / 'schemas'
+        result = runner.invoke(
+            app,
+            ['schema', 'export', '--out', str(out), '--builtins-only'],
+            env={'OTTO_LAB': ''},
+        )
+        assert result.exit_code == 0, result.output
+        assert (out / 'hosts.schema.json').is_file()
 
 
 # ── Logger arguments ──────────────────────────────────────────────────────────

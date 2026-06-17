@@ -96,6 +96,7 @@ dev = [
     "pytest-repeat>=0.9.4",
     "pytest-xdist>=3.8.0",
     "hypothesis>=6.131.0",
+    "jsonschema>=4.0",
     "ruff>=0.14.7",
     "sphinx>=8.0",
     "sphinx-autodoc-typehints>=2.0",

@@ -19,3 +19,4 @@ These guides cover otto's CLI commands and project configuration in detail.
    coverage
    cli-reference
    library-usage
+   editor-schemas

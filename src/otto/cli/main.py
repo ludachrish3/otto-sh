@@ -121,7 +121,7 @@ def main(
             metavar='COMMA SEPARATED LIST',
             help='Name of lab(s) to reserve and use.'
         )
-    ],
+    ] = [],
 
     xdir: Annotated[Path,
         typer.Option('--xdir', '-x',
@@ -229,6 +229,23 @@ def main(
 ):
     if ctx.resilient_parsing:
         return
+
+    # Lab-free utility subcommands (e.g. `otto schema`) need none of the
+    # lab / reservation / context bootstrap below — and forcing `--lab` on them
+    # would be nonsensical. Skip the whole callback body for them; the
+    # subcommand runs on its own.
+    if ctx.invoked_subcommand in _LAB_FREE_SUBCOMMANDS:
+        return
+
+    # `--lab` is no longer a hard-required Typer option (so lab-free subcommands
+    # can run without it); enforce it here — before any banner/logger side
+    # effects — for everything that does need a lab.
+    if not labs:
+        import click
+
+        raise click.UsageError(
+            "Missing option '--lab' / '-l' (env var: 'OTTO_LAB').", ctx=ctx
+        )
 
     from rich import print as rprint
     from rich.align import Align
@@ -364,7 +381,13 @@ _SUBCOMMAND_MODULES: dict[str, tuple[str, str]] = {
     'host':        ('.host',        'host_app'),
     'docker':      ('.docker',      'docker_app'),
     'reservation': ('.reservation', 'reservation_app'),
+    'schema':      ('.schema',      'schema_app'),
 }
+
+# Subcommands that introspect otto itself rather than operate on a lab. The
+# top-level callback skips its lab / reservation bootstrap (and the `--lab`
+# requirement) for these.
+_LAB_FREE_SUBCOMMANDS: frozenset[str] = frozenset({'schema'})
 
 
 def _requested_subcommands() -> set[str]:

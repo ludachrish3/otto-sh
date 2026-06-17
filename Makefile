@@ -231,6 +231,9 @@ qemu-restart: ## Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), th
 typecheck: ## Run ty type checker (advisory during trial; not wired into `all`)
 	uv run ty check
 
+schema: ## Generate JSON Schema for hosts.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
+	uv run otto schema export --out schemas
+
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \
                 $(shell find docs -name '*.md')    \
