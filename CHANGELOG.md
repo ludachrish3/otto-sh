@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2026-06-17
+
+### Added
+
+- otto schema export — JSON Schema for hosts.json / settings.toml / reservations
+- pydantic monitor records — MetricPoint + import/export rows + frozen SnmpMetric
+- pydantic settings boundary — SettingsModel + docker/os-profile/reservation specs + OttoEnvSettings (Phase A plan 3)
+- integrate host specs — registry carries spec, factory collapse, command_frame, interfaces (Phase A 2b)
+- host spec models (HostSpec/Unix/EmbeddedHostSpec) — Phase A plan 2a
+- pydantic boundary layer + option two-type split (Phase A, plan 1)
+
+
+### Changed
+
+- snake_case sweep — element vocab, os_* fields, host filenames, API
+
+
+### Documentation
+
+- list pydantic + pydantic-settings in getting-started dep table
+
+
+### Fixed
+
+- extend RST title underlines broken by the WS#2 rename
+
+
+### Maintenance
+
+- record plan progress
+- registry factory integration
+- save some plans
+- saving claude's plans
+
+
 ## [0.4.2] - 2026-06-14
 
 ### Added
@@ -297,7 +332,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/ludachrish3/otto-sh/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ludachrish3/otto-sh/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ludachrish3/otto-sh/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ludachrish3/otto-sh/compare/v0.3.6...v0.4.0
