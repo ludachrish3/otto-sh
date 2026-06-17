@@ -463,7 +463,37 @@ placement.
    in `cli/run.py`, `register_suite` in `suite/register.py`), not the state
    layer — confirming Phase B can absorb it.
 
-Default assumption pending the result: **Phase B is fully post-freeze.**
+### Result (2026-06-16) — RESOLVED
+
+Full report: [`2026-06-16-pydantic-phase-a-7-spike-report.md`](2026-06-16-pydantic-phase-a-7-spike-report.md).
+Both probes ran; the default assumption is confirmed.
+
+1. **Hinge → YES (drop-in).** `pydantic.dataclasses.dataclass` satisfies otto's
+   structural contract verbatim (`is_dataclass` True, `dataclasses.fields` /
+   `get_type_hints(include_extras=True)` / `options_params()` all work unchanged).
+   A user upgrades **only their own** `Options` to `@pydantic.dataclasses.dataclass`
+   — even subclassing a stdlib base — and gets `ValidationError` on bad input, with
+   no otto change and no change to the `class Options(Base)` pattern. The migration
+   is therefore backward-compatible and opt-in; **no base-class decision is pulled
+   pre-freeze.** (A pydantic `BaseModel` would *not* be a drop-in — `is_dataclass`
+   is False — so the drop-in path specifically requires `pydantic.dataclasses`.)
+2. **Typer 0.26 → break is in the option / CLI-wiring layer, not the state layer.**
+   Under `typer 0.26.7` / `click 8.3.1`, 25 of ~320 cli/suite unit tests fail; the
+   load-bearing cluster (18) is parent-runner option forwarding via the Typer
+   `Context.obj` handoff (`cli/test.py` sets `ctx.obj[...]` at `@suite_app.callback()`,
+   suite subcommands read it back — empty under 0.26). The synthesized-signature
+   machinery this section flagged (`options_params` / `_wrap_with_options` /
+   `register_suite`) **still works** under 0.26 — it is *not* the break. The
+   remaining ~7 are thin typer/click API drift (`typer.Exit` →
+   `typer._click.exceptions.Exit`; click 8.2+ CliRunner stdout/stderr split),
+   test-level and orthogonal.
+
+**Result: confirmed — Phase B is fully post-freeze.** The hinge is open (opt-in
+migration), and the typer bump lives in the very option-expansion layer Phase B
+rewrites, so it rides with Phase B (which should also re-home the parent-runner
+options off the fragile `ctx.obj` handoff). The thin API adaptations are test-level
+and may land independently at any time. No change to the Phase A → freeze → Phase B
+sequencing is warranted.
 
 ---
 

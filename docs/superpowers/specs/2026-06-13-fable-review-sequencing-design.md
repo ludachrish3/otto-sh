@@ -140,6 +140,18 @@ question that decides Phase B's placement and to read its scope:
 The spike informs, it does not implement. Default assumption pending its result: Phase B is
 fully post-freeze.
 
+**Result (2026-06-16) — RESOLVED, default confirmed.** Both probes ran (report:
+[pydantic-phase-a-7-spike-report.md](pydantic-phase-a-7-spike-report.md)). (1) Hinge =
+**yes, drop-in**: `pydantic.dataclasses.dataclass` keeps otto's stdlib-dataclass contract
+(`is_dataclass` / `dataclasses.fields` / `options_params()` unchanged), so the `Options`
+move is backward-compatible and opt-in — no base-class decision is pulled pre-freeze.
+(2) Typer 0.26 break is in the **option / CLI-wiring layer**, not the state layer:
+under `typer 0.26.7` / `click 8.3.1` the load-bearing cluster (18 failures) is parent-runner
+option forwarding via the Typer `Context.obj` handoff in `cli/test.py` — while the
+synthesized-signature machinery (`options_params` / `_wrap_with_options` / `register_suite`)
+**still works** under 0.26 (so the precise fragility is `ctx.obj` propagation, not the
+parameter expansion). **Phase B stays fully post-freeze** and absorbs the Typer triage.
+
 ---
 
 ## Decision record: Typer/Click triage moves out of item #1
