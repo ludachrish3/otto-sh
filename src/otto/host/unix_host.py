@@ -48,7 +48,6 @@ from dataclasses import (
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
-    Any,
     Optional,
     cast,
 )
@@ -59,12 +58,12 @@ if TYPE_CHECKING:
 from ..utils import (
     CommandStatus,
     Status,
-    is_literal,
 )
 from .command_frame import CommandFrame, build_command_frame
 from .connections import (
     ConnectionManager,
-    TermType,
+    TermContext,
+    build_term_backend,
 )
 from .host import (
     Host,
@@ -92,7 +91,8 @@ from .telnet import TelnetClient
 from .toolchain import Toolchain
 from .transfer import (
     FileTransfer,
-    FileTransferType,
+    TransferContext,
+    build_transfer_backend,
 )
 
 
@@ -143,7 +143,7 @@ class UnixHost(RemoteHost):
     sw_version: Optional[str] = None
     """Software version description."""
 
-    term: TermType = 'ssh'
+    term: str = 'ssh'
     """Protocol used to issue terminal commands."""
 
     is_virtual: bool = False
@@ -154,7 +154,7 @@ class UnixHost(RemoteHost):
     and the configured user can talk to it). Containers declared by projects
     are scheduled onto docker-capable hosts; non-capable hosts are skipped."""
 
-    transfer: FileTransferType = 'scp'
+    transfer: str = 'scp'
     """Protocol used to transfer files."""
 
     default_dest_dir: Path = field(default_factory=Path)
@@ -271,21 +271,7 @@ class UnixHost(RemoteHost):
         if isinstance(self.command_frame, str):
             self.command_frame = build_command_frame(self.command_frame)
 
-        hop_transport = self._build_hop_transport() if self.hop else None
-
-        factory = self._connection_factory or ConnectionManager
-        self._connections = factory(
-            ip=self.ip,
-            creds=self.creds,
-            user=self.user,
-            term=self.term,
-            name=self.name,
-            hop=hop_transport,
-            ssh_options=self.ssh_options,
-            telnet_options=self.telnet_options,
-            sftp_options=self.sftp_options,
-            ftp_options=self.ftp_options,
-        )
+        self._connections = self._build_connections()
         self._repeater = RepeatRunner(run_cmds=self.run)
         self._session_mgr = SessionManager(
             connections=self._connections,
@@ -294,16 +280,7 @@ class UnixHost(RemoteHost):
             log_output=self._log_output,
             command_frame=self.command_frame,
         )
-        self._file_transfer = FileTransfer(
-            connections=self._connections,
-            name=self.name,
-            transfer=self.transfer,
-            nc_options=self.nc_options,
-            scp_options=self.scp_options,
-            get_local_ip=lambda: self._get_local_ip(),
-            exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
-            max_filename_len=self.max_filename_len,
-        )
+        self._file_transfer = self._build_file_transfer()
 
     @property
     def _creds(self) -> tuple[str, str]:
@@ -321,10 +298,25 @@ class UnixHost(RemoteHost):
         new event loop (e.g. after ``pytest.main()`` returns and coverage
         collection starts in a fresh ``asyncio.run()``).
         """
-        hop_transport = self._build_hop_transport() if self.hop else None
+        self._connections = self._build_connections()
+        self._session_mgr = SessionManager(
+            connections=self._connections,
+            name=self.name,
+            log_command=self._log_command,
+            log_output=self._log_output,
+            command_frame=self.command_frame,
+        )
+        self._file_transfer = self._build_file_transfer()
 
-        factory = self._connection_factory or ConnectionManager
-        self._connections = factory(
+    def _build_connections(self) -> ConnectionManager:
+        """Construct the connection backend for the current ``term`` via the
+        registry + ``create`` seam, honoring the ``_connection_factory`` test
+        override. Shared by ``__post_init__`` / ``rebuild_connections`` and
+        ``set_term_type`` so a custom term backend builds the right class rather
+        than a string swap on the existing instance.
+        """
+        hop_transport = self._build_hop_transport() if self.hop else None
+        term_ctx = TermContext(
             ip=self.ip,
             creds=self.creds,
             user=self.user,
@@ -336,37 +328,58 @@ class UnixHost(RemoteHost):
             sftp_options=self.sftp_options,
             ftp_options=self.ftp_options,
         )
-        self._session_mgr = SessionManager(
-            connections=self._connections,
-            name=self.name,
-            log_command=self._log_command,
-            log_output=self._log_output,
-            command_frame=self.command_frame,
-        )
-        self._file_transfer = FileTransfer(
-            connections=self._connections,
-            name=self.name,
-            transfer=self.transfer,
-            nc_options=self.nc_options,
-            scp_options=self.scp_options,
-            get_local_ip=lambda: self._get_local_ip(),
-            exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
-            max_filename_len=self.max_filename_len,
-        )
+        conn_cls = self._connection_factory or build_term_backend(self.term)
+        return conn_cls.create(term_ctx)
 
-    def set_term_type(self,
-        term: Any,
-    ):
-        if is_literal(term, TermType): # type: ignore
-            self.term = term
-            self._connections.term = term
+    def _build_file_transfer(self) -> FileTransfer:
+        """Construct the transfer backend for the current ``transfer`` via the
+        registry + ``create`` seam, against the current ``self._connections``.
+        Shared by ``__post_init__`` / ``rebuild_connections`` and
+        ``set_transfer_type`` so a custom transfer backend builds the right class
+        rather than a string swap on the existing instance.
+        """
+        return cast(FileTransfer, build_transfer_backend(self.transfer).create(
+            TransferContext(
+                transfer=self.transfer,
+                host_name=self.name,
+                connections=self._connections,
+                nc_options=self.nc_options,
+                scp_options=self.scp_options,
+                get_local_ip=lambda: self._get_local_ip(),
+                exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
+                max_filename_len=self.max_filename_len,
+            )
+        ))
 
-    def set_transfer_type(self,
-        transfer: Any,
-    ):
-        if is_literal(transfer, FileTransferType): # type: ignore
-            self.transfer = transfer
-            self._file_transfer.transfer = transfer
+    def set_term_type(self, term: str) -> None:
+        from .connections import _TERM_BACKENDS
+
+        if term not in _TERM_BACKENDS:
+            known = ", ".join(sorted(_TERM_BACKENDS))
+            raise ValueError(f"Unknown term backend {term!r}. Known: {known}")
+        self.term = term
+        # Built-in ssh/telnet share one ConnectionManager that switches on this
+        # string, so an in-place update suffices and preserves the live session.
+        # A custom term backend is a different class that would need a full
+        # reconnect — the post-freeze connection refactor (design §11), not here.
+        self._connections.term = term
+
+    def set_transfer_type(self, transfer: str) -> None:
+        from .transfer import _TRANSFER_BACKENDS
+
+        cls = _TRANSFER_BACKENDS.get(transfer)
+        if cls is None or "unix" not in cls.host_families:
+            known = ", ".join(
+                n for n, c in sorted(_TRANSFER_BACKENDS.items())
+                if "unix" in c.host_families
+            )
+            raise ValueError(
+                f"{transfer!r} is not a valid unix transfer backend. Known: {known}"
+            )
+        self.transfer = transfer
+        # Rebuild through the registry so a custom transfer backend instantiates
+        # the right class; the live connection is preserved (transfer borrows it).
+        self._file_transfer = self._build_file_transfer()
 
     def _get_local_ip(self) -> str:
         """Return the local IP address used to reach this host, via OS routing lookup.

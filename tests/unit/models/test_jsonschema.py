@@ -96,3 +96,46 @@ def test_builtins_only_excludes_custom_specs(monkeypatch):
     assert set(builtins['hosts']['items']['discriminator']['mapping']) == {
         'unix', 'embedded', 'zephyr'
     }
+
+
+class TestSelectorEnums:
+    def test_unix_host_schema_has_registry_enums(self):
+        from otto.models.jsonschema import build_schemas
+
+        props = build_schemas()["unix-host"]["properties"]
+        assert props["term"]["enum"] == ["ssh", "telnet"]
+        assert props["transfer"]["enum"] == ["ftp", "nc", "scp", "sftp"]
+
+    def test_embedded_host_schema_has_registry_enums(self):
+        from otto.models.jsonschema import build_schemas
+
+        props = build_schemas()["embedded-host"]["properties"]
+        assert props["transfer"]["enum"] == ["console", "tftp"]
+        assert "term" not in props  # embedded has no term field
+
+    def test_hosts_array_defs_carry_enums(self):
+        from otto.models.jsonschema import build_schemas
+
+        defs = build_schemas()["hosts"]["$defs"]
+        unix_def = next(
+            d for d in defs.values()
+            if isinstance(d, dict) and "term" in d.get("properties", {})
+        )
+        assert unix_def["properties"]["transfer"]["enum"] == ["ftp", "nc", "scp", "sftp"]
+
+    def test_custom_unix_transfer_appears_in_enum(self):
+        from otto.host import transfer as xfer_mod
+        from otto.host.transfer import FileTransfer
+        from otto.models.jsonschema import build_schemas
+
+        class XmodemTransfer(FileTransfer):
+            host_families = frozenset({"unix"})
+
+        saved = dict(xfer_mod._TRANSFER_BACKENDS)
+        xfer_mod._TRANSFER_BACKENDS["xmodem"] = XmodemTransfer
+        try:
+            props = build_schemas()["unix-host"]["properties"]
+            assert "xmodem" in props["transfer"]["enum"]
+        finally:
+            xfer_mod._TRANSFER_BACKENDS.clear()
+            xfer_mod._TRANSFER_BACKENDS.update(saved)

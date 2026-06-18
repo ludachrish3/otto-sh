@@ -10,9 +10,14 @@ from typing import Literal, Union
 
 import pytest
 
-from otto.host.connections import TermType
-from otto.host.transfer import FileTransferType
 from otto.utils import _get_literal_values, is_literal, split_on_commas
+
+# Sample Literal aliases used purely as fixtures for the utility functions
+# below. The host term/transfer selectors are now plain ``str`` (the registries
+# own validation), so these local Literals stand in to exercise
+# ``_get_literal_values`` / ``is_literal`` without coupling to host types.
+TermLiteral = Literal['ssh', 'telnet']
+FileTransferLiteral = Literal['scp', 'sftp', 'ftp', 'nc']
 
 
 # ── _get_literal_values ─────────────────────────────────────────────────────
@@ -33,11 +38,11 @@ class TestGetLiteralValues:
 
     def test_term_type(self):
         """Regression test for the match-on-special-form bug."""
-        assert _get_literal_values(TermType) == ['ssh', 'telnet']
+        assert _get_literal_values(TermLiteral) == ['ssh', 'telnet']
 
     def test_file_transfer_type(self):
         """Regression test for the match-on-special-form bug."""
-        assert _get_literal_values(FileTransferType) == ['scp', 'sftp', 'ftp', 'nc']
+        assert _get_literal_values(FileTransferLiteral) == ['scp', 'sftp', 'ftp', 'nc']
 
     @pytest.mark.parametrize("bad_type", [int, str, list[str]])
     def test_non_literal_raises_value_error(self, bad_type):
@@ -50,19 +55,19 @@ class TestGetLiteralValues:
 class TestIsLiteral:
     @pytest.mark.parametrize("value", ['ssh', 'telnet'])
     def test_valid_term_type(self, value):
-        assert is_literal(value, TermType) == value
+        assert is_literal(value, TermLiteral) == value
 
     @pytest.mark.parametrize("value", ['scp', 'sftp', 'ftp', 'nc'])
     def test_valid_file_transfer_type(self, value):
-        assert is_literal(value, FileTransferType) == value
+        assert is_literal(value, FileTransferLiteral) == value
 
     def test_invalid_value_raises_type_error(self):
         with pytest.raises(TypeError, match="not a valid value"):
-            is_literal('bogus', TermType)
+            is_literal('bogus', TermLiteral)
 
     def test_return_value_is_same_object(self):
         val = 'ssh'
-        assert is_literal(val, TermType) is val
+        assert is_literal(val, TermLiteral) is val
 
 
 # ── split_on_commas ───────────────────────────────────────────────────────────

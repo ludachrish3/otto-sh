@@ -22,7 +22,9 @@ from typing import Any
 
 from pydantic.json_schema import models_json_schema
 
+from ..host.connections import _TERM_BACKENDS
 from ..host.os_profile import registered_host_specs
+from ..host.transfer import _TRANSFER_BACKENDS
 from .host import HostSpec
 from .settings import ReservationFile, SettingsModel
 
@@ -57,6 +59,29 @@ def _decorate(doc: dict[str, Any], stem: str, title: str) -> dict[str, Any]:
     }
 
 
+def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> None:
+    """Add registry-derived ``enum`` constraints to the term/transfer selector
+    properties of a host spec's schema, in place.
+
+    The schema is generated after init modules load, so the enum includes
+    custom per-repo backends as well as the built-ins — strictly better than the
+    old static ``Literal``. Transfer is filtered to the spec's host family via
+    ``_transfer_host_family``. No-op for a spec that declares neither field.
+    """
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return
+    if "term" in props:
+        props["term"] = {**props["term"], "enum": sorted(_TERM_BACKENDS)}
+    if "transfer" in props:
+        family = getattr(spec_cls, "_transfer_host_family", None)
+        names = sorted(
+            n for n, c in _TRANSFER_BACKENDS.items()
+            if family is None or family in c.host_families
+        )
+        props["transfer"] = {**props["transfer"], "enum": names}
+
+
 def _host_array_schema(distinct: list[type[HostSpec]],
                        names: dict[str, type[HostSpec]]) -> dict[str, Any]:
     """Build the ``hosts.json`` array schema.
@@ -68,6 +93,10 @@ def _host_array_schema(distinct: list[type[HostSpec]],
         [(s, 'validation') for s in distinct],
         ref_template='#/$defs/{model}',
     )
+    for s in distinct:
+        key = defs_map[(s, 'validation')]['$ref'].rsplit('/', 1)[-1]
+        if key in top['$defs']:
+            _inject_selector_enums(top['$defs'][key], s)
     return {
         'type': 'array',
         'items': {
@@ -97,7 +126,9 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
     docs: dict[str, dict[str, Any]] = {}
     for spec in distinct:
         stem = _stem(spec)
-        docs[stem] = _decorate(spec.model_json_schema(), stem, f'otto {stem}')
+        doc = spec.model_json_schema()
+        _inject_selector_enums(doc, spec)
+        docs[stem] = _decorate(doc, stem, f'otto {stem}')
 
     docs['hosts'] = _decorate(
         _host_array_schema(distinct, names), 'hosts', 'otto hosts.json'

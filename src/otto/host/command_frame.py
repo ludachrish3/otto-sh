@@ -344,12 +344,10 @@ class ZephyrSerialFrame(ZephyrFrame):
 
 
 # Registry of dialect name -> frame class, mirroring
-# ``embedded_filesystem._FILESYSTEM_CLASSES``.
-_FRAME_CLASSES: dict[str, type[CommandFrame]] = {
-    BashFrame.type_name: BashFrame,
-    ZephyrFrame.type_name: ZephyrFrame,
-    ZephyrSerialFrame.type_name: ZephyrSerialFrame,
-}
+# ``embedded_filesystem._FILESYSTEM_CLASSES``. Seeded empty here and populated
+# by ``_register_builtin_frames()`` at module end, so otto's own built-ins
+# travel the same ``register_command_frame`` path third parties use.
+_FRAME_CLASSES: dict[str, type[CommandFrame]] = {}
 
 
 def register_command_frame(type_name: str, cls: type[CommandFrame]) -> None:
@@ -392,3 +390,16 @@ def build_command_frame(type_name: str) -> CommandFrame:
             f"Custom frames can be added via register_command_frame()."
         ) from None
     return cls()
+
+
+def _register_builtin_frames() -> None:
+    """Register otto's built-in frames through the public path, so first-party
+    and third-party registrations travel the same code (mirrors
+    ``os_profile._register_builtin_host_classes``).
+    """
+    register_command_frame(BashFrame.type_name, BashFrame)
+    register_command_frame(ZephyrFrame.type_name, ZephyrFrame)
+    register_command_frame(ZephyrSerialFrame.type_name, ZephyrSerialFrame)
+
+
+_register_builtin_frames()

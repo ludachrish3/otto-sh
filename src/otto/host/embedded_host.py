@@ -59,7 +59,7 @@ from .binary_loader import BinaryLoader
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
-from .embedded_transfer import EmbeddedFileTransfer, EmbeddedTransferType
+from .embedded_transfer import EmbeddedFileTransfer
 from .host import Host, SuppressCommandOutput, is_dry_run
 from .options import SnmpOptions, TelnetOptions
 from .remote_host import OsType, RemoteHost
@@ -70,7 +70,12 @@ from .session import (
     SessionManager,
 )
 from .toolchain import Toolchain
-from .transfer import _acquire_shared_progress, make_rich_progress_handler
+from .transfer import (
+    TransferContext,
+    _acquire_shared_progress,
+    build_transfer_backend,
+    make_rich_progress_handler,
+)
 
 logger = get_otto_logger()
 
@@ -131,7 +136,7 @@ class EmbeddedHost(RemoteHost):
     is_virtual: bool = False
     """Determines whether a host is a VM/emulator (e.g. QEMU) or not."""
 
-    transfer: EmbeddedTransferType = 'console'
+    transfer: str = 'console'
     """File-transfer backend. ``console`` (default) drives the device shell's
     ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
 
@@ -311,13 +316,15 @@ class EmbeddedHost(RemoteHost):
             command_frame=self.command_frame,
             init_timeout=_EMBEDDED_INIT_TIMEOUT,
         )
-        self._file_transfer = EmbeddedFileTransfer(
-            transfer=self.transfer,
-            name=self.name,
-            exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),
-            filesystem=self.filesystem,
-            max_filename_len=self.max_filename_len,
-        )
+        self._file_transfer = cast(EmbeddedFileTransfer, build_transfer_backend(self.transfer).create(
+            TransferContext(
+                transfer=self.transfer,
+                host_name=self.name,
+                exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),
+                filesystem=self.filesystem,
+                max_filename_len=self.max_filename_len,
+            )
+        ))
 
     ####################
     #  Connection

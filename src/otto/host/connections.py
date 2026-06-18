@@ -24,7 +24,8 @@ transport with a test double — no monkeypatching of library functions needed.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Literal, Optional
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional
 
 import aioftp
 import asyncssh
@@ -38,7 +39,26 @@ from .telnet import TelnetClient
 if TYPE_CHECKING:
     from .transport import HopTransport
 
-TermType = Literal['ssh', 'telnet']
+
+@dataclass(frozen=True)
+class TermContext:
+    """Construction inputs a UnixHost provides to build its connection backend
+    via :meth:`ConnectionManager.create`. The frozen public seam for custom
+    term backends; carries only what the built-in already receives at its call
+    site (no new coupling).
+    """
+
+    ip: str
+    creds: dict[str, str]
+    user: str | None
+    term: str
+    name: str
+    hop: "HopTransport | None" = None
+    ssh_options: SshOptions | None = None
+    telnet_options: TelnetOptions | None = None
+    sftp_options: SftpOptions | None = None
+    ftp_options: FtpOptions | None = None
+
 
 logger = get_otto_logger()
 
@@ -119,7 +139,7 @@ class ConnectionManager:
         ip: str,
         creds: dict[str, str],
         user: Optional[str],
-        term: TermType,
+        term: str,
         name: str,
         hop: HopTransport | None = None,
         ssh_options: SshOptions | None = None,
@@ -154,11 +174,34 @@ class ConnectionManager:
         self._ftp_lock = asyncio.Lock()
         self._telnet_lock = asyncio.Lock()
 
+    @classmethod
+    def create(cls, ctx: "TermContext") -> "ConnectionManager":
+        """Build a connection backend from a :class:`TermContext`.
+
+        The uniform construction seam (WS#4): a host calls
+        ``build_term_backend(name).create(ctx)`` for built-in and custom
+        backends alike. The built-in's ``create`` runs today's exact
+        construction — internals untouched, only the call site moves here.
+        """
+        return cls(
+            ip=ctx.ip,
+            creds=ctx.creds,
+            user=ctx.user,
+            term=ctx.term,
+            name=ctx.name,
+            hop=ctx.hop,
+            ssh_options=ctx.ssh_options,
+            telnet_options=ctx.telnet_options,
+            sftp_options=ctx.sftp_options,
+            ftp_options=ctx.ftp_options,
+        )
+
     @property
     def telnet_options(self) -> TelnetOptions:
         """Expose the stored ``TelnetOptions`` so callers that build their
         own ``TelnetClient`` (e.g. ``SessionManager.open_session``) can
-        honor the same configuration."""
+        honor the same configuration.
+        """
         return self._telnet_options
 
     @property
@@ -180,11 +223,11 @@ class ConnectionManager:
         return self._ip
 
     @property
-    def term(self) -> TermType:
+    def term(self) -> str:
         return self._term
 
     @term.setter
-    def term(self, value: TermType) -> None:
+    def term(self, value: str) -> None:
         self._term = value
 
     @property
@@ -408,3 +451,50 @@ class ConnectionManager:
         # leaked by unrelated tests — firing their ``__del__`` and letting
         # pytest's ``[unraisable]`` plugin escalate those warnings into a flake
         # on whatever test happens to be calling ``close()``.
+
+
+# Registry of term-protocol name -> ConnectionManager(-compatible) class.
+# UnixHost-only; embedded hosts reach their console over a fixed telnet bridge
+# that WS#4 does not model as a term backend. ``build_*`` returns the class so
+# the host can call ``.create(ctx)`` on it.
+_TERM_BACKENDS: dict[str, type[ConnectionManager]] = {}
+
+
+def register_term_backend(name: str, cls: type[ConnectionManager]) -> None:
+    """Make a custom connection backend available to lab data under *name*.
+
+    Call from an init module listed in ``.otto/settings.toml`` — the same
+    pattern :func:`otto.host.command_frame.register_command_frame` follows.
+    Once registered, a host's ``term`` field can select it by name.
+    """
+    _TERM_BACKENDS[name] = cls
+
+
+def build_term_backend(name: str) -> type[ConnectionManager]:
+    """Return the connection-backend class registered under *name*.
+
+    Raises
+    ------
+    ValueError
+        If *name* is not registered; the message lists the registered names.
+    """
+    try:
+        return _TERM_BACKENDS[name]
+    except KeyError:
+        known = ", ".join(sorted(_TERM_BACKENDS))
+        raise ValueError(
+            f"Unknown term backend {name!r}. Registered backends: {known}. "
+            f"Custom backends can be added via register_term_backend()."
+        ) from None
+
+
+def _register_builtin_term_backends() -> None:
+    """Register otto's built-in term backends through the public path, so
+    first-party and third-party registrations travel the same code (mirrors
+    ``os_profile._register_builtin_host_classes``).
+    """
+    register_term_backend("ssh", ConnectionManager)
+    register_term_backend("telnet", ConnectionManager)
+
+
+_register_builtin_term_backends()

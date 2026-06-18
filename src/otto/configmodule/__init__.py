@@ -64,6 +64,7 @@ _repos = _getRepos(_env.sut_dirs)
 # afterward, keeping it fresh for the next completion.
 # ---------------------------------------------------------------------------
 from .completion_cache import (
+    collect_backend_names,
     collect_current_commands,
     collect_docker_capable_host_ids,
     collect_host_ids,
@@ -101,8 +102,13 @@ if _completion_names is None:
     _instructions, _suites = collect_current_commands()
     _host_ids = collect_host_ids(_repos)
     _docker_host_ids = collect_docker_capable_host_ids(_repos)
+    _backends = collect_backend_names()
     try:
-        write_cache(_repos, _instructions, _suites, _host_ids, _docker_host_ids)
+        write_cache(
+            _repos, _instructions, _suites, _host_ids, _docker_host_ids,
+            term_backends=_backends['term_backends'],
+            transfer_backends=_backends['transfer_backends'],
+        )
     except OSError:
         # Cache writes are best-effort — never block real work on them.
         pass
@@ -119,5 +125,12 @@ def get_completion_names() -> dict[str, Any] | None:
       Typer stubs from them.
     - ``hosts``: a plain list of host-ID strings. :mod:`otto.cli.host`'s
       ``host_id`` completer prefers this over live ``hosts.json`` parsing.
+    - ``term_backends``: a ``list[str]`` of registered term backend names.
+      :mod:`otto.cli.host`'s ``--term`` completer prefers this over the live
+      registry.
+    - ``transfer_backends``: a list of
+      ``{"name": str, "host_families": [str, ...]}`` dicts for registered
+      transfer backends. :mod:`otto.cli.host`'s ``--transfer`` completer
+      prefers this over the live registry.
     """
     return _completion_names

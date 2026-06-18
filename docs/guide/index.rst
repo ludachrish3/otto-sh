@@ -14,6 +14,7 @@ These guides cover otto's CLI commands and project configuration in detail.
    embedded
    os-profiles
    extending-embedded
+   extending-backends
    docker
    reservations
    coverage

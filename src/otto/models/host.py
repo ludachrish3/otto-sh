@@ -12,18 +12,18 @@ from __future__ import annotations
 
 from ipaddress import ip_address
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import field_validator
 
 from ..host.binary_loader import build_binary_loader
 from ..host.command_frame import _FRAME_CLASSES, build_command_frame
+from ..host.connections import _TERM_BACKENDS
 from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
 from ..host.embedded_host import EmbeddedHost
-from ..host.embedded_transfer import EmbeddedTransferType
-from ..host.host import FileTransferType, TermType
 from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain
+from ..host.transfer import _TRANSFER_BACKENDS
 from ..host.unix_host import UnixHost
 from .base import OttoModel
 from .options import (
@@ -54,6 +54,21 @@ _COMMON_PLAIN_FIELDS = (
     "user", "element_id", "board", "slot", "hop", "is_virtual",
     "max_filename_len", "log", "log_stdout",
 )
+
+
+def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
+    """Validate a transfer selector against the registry and host-family applicability."""
+    if v not in _TRANSFER_BACKENDS:
+        known = ", ".join(sorted(_TRANSFER_BACKENDS))
+        raise ValueError(
+            f"transfer {v!r} is not a registered transfer backend. Known: {known}"
+        )
+    if family not in _TRANSFER_BACKENDS[v].host_families:
+        fam = ", ".join(sorted(_TRANSFER_BACKENDS[v].host_families))
+        raise ValueError(
+            f"transfer {v!r} is not valid on {host_label} (it serves: {fam})."
+        )
+    return v
 
 
 class HostSpec(OttoModel):
@@ -157,14 +172,31 @@ class UnixHostSpec(HostSpec):
     creds: dict[str, str]  # override: required for a Unix host (SSH/telnet login)
     hw_version: str | None = None
     sw_version: str | None = None
-    term: TermType = "ssh"
+    term: str = "ssh"
     docker_capable: bool = False
-    transfer: FileTransferType = "scp"
+    transfer: str = "scp"
     ssh_options: SshOptionsSpec = SshOptionsSpec()
     sftp_options: SftpOptionsSpec = SftpOptionsSpec()
     scp_options: ScpOptionsSpec = ScpOptionsSpec()
     ftp_options: FtpOptionsSpec = FtpOptionsSpec()
     nc_options: NcOptionsSpec = NcOptionsSpec()
+
+    _transfer_host_family: ClassVar[str] = "unix"
+
+    @field_validator("term")
+    @classmethod
+    def _validate_term_name(cls, v: str) -> str:
+        if v not in _TERM_BACKENDS:
+            known = ", ".join(sorted(_TERM_BACKENDS))
+            raise ValueError(
+                f"term {v!r} is not a registered term backend. Known: {known}"
+            )
+        return v
+
+    @field_validator("transfer")
+    @classmethod
+    def _validate_unix_transfer_name(cls, v: str) -> str:
+        return _validate_transfer_for_family(v, cls._transfer_host_family, "a unix host")
 
     def to_host(self, cls: type[UnixHost] = UnixHost) -> UnixHost:
         kw = self._common_host_kwargs()
@@ -182,9 +214,18 @@ class UnixHostSpec(HostSpec):
 
 class EmbeddedHostSpec(HostSpec):
     os_type: str = "embedded"
-    transfer: EmbeddedTransferType = "console"
+    transfer: str = "console"
     filesystem: str | None = None
     loader: str | None = None
+
+    _transfer_host_family: ClassVar[str] = "embedded"
+
+    @field_validator("transfer")
+    @classmethod
+    def _validate_embedded_transfer_name(cls, v: str) -> str:
+        return _validate_transfer_for_family(
+            v, cls._transfer_host_family, "an embedded host"
+        )
 
     @field_validator("filesystem")
     @classmethod

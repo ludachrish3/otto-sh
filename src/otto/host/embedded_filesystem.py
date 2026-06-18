@@ -81,7 +81,8 @@ class EmbeddedFileSystem(ABC):
 
         Equivalent to ``mount is not None`` — every FS with a mount path
         supports ``fs read`` / ``fs write``; a :class:`NoFileSystem` host
-        does not."""
+        does not.
+        """
         return self.mount is not None
 
     @property
@@ -90,7 +91,8 @@ class EmbeddedFileSystem(ABC):
 
         Defaults to ``supports_transfer`` because every Zephyr ``fs`` shell
         with a mount also exposes ``fs statvfs``. Override to ``False`` on
-        a custom filesystem that lacks the statvfs subcommand."""
+        a custom filesystem that lacks the statvfs subcommand.
+        """
         return self.supports_transfer
 
     # -- Command-formation hooks -------------------------------------------------
@@ -126,7 +128,8 @@ class EmbeddedFileSystem(ABC):
         """Render the command that reports filesystem usage stats, or
         ``None`` when the filesystem cannot serve one (no FS, no statvfs
         builtin). The default returns ``None`` when there is no mount and
-        ``fs statvfs <mount>`` otherwise."""
+        ``fs statvfs <mount>`` otherwise.
+        """
         if not self.supports_disk_metric or self.mount is None:
             return None
         return f'fs statvfs {self.mount}'
@@ -167,11 +170,10 @@ class LittleFsFileSystem(EmbeddedFileSystem):
     mount = '/lfs'
 
 
-_FILESYSTEM_CLASSES: dict[str, type[EmbeddedFileSystem]] = {
-    NoFileSystem.type_name: NoFileSystem,
-    FatRamFileSystem.type_name: FatRamFileSystem,
-    LittleFsFileSystem.type_name: LittleFsFileSystem,
-}
+# Seeded empty here and populated by ``_register_builtin_filesystems()`` at
+# module end, so otto's own built-ins travel the same ``register_filesystem``
+# path third parties use.
+_FILESYSTEM_CLASSES: dict[str, type[EmbeddedFileSystem]] = {}
 
 
 def register_filesystem(type_name: str, cls: type[EmbeddedFileSystem]) -> None:
@@ -221,3 +223,12 @@ def build_filesystem(type_name: str) -> EmbeddedFileSystem:
             f"Custom types can be added via register_filesystem()."
         ) from None
     return cls()
+
+
+def _register_builtin_filesystems() -> None:
+    register_filesystem(NoFileSystem.type_name, NoFileSystem)
+    register_filesystem(FatRamFileSystem.type_name, FatRamFileSystem)
+    register_filesystem(LittleFsFileSystem.type_name, LittleFsFileSystem)
+
+
+_register_builtin_filesystems()

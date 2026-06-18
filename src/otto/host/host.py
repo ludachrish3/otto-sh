@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Awaitable,
-    Literal,
     Optional,
     Protocol,
     cast,
@@ -31,9 +30,6 @@ from ..utils import (
 if TYPE_CHECKING:
     from .repeat import RepeatRunner
     from .session import Expect, HostSession
-
-TermType = Literal['ssh', 'telnet']
-FileTransferType = Literal['scp', 'sftp', 'ftp', 'nc']
 
 logger = getLogger('otto')
 

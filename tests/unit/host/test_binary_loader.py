@@ -64,3 +64,9 @@ class TestRegistry:
 
         with pytest.raises(ValueError, match="doesn't match"):
             register_binary_loader("wrong-name", Mismatch)
+
+
+def test_builtins_registered_via_public_path():
+    from otto.host import binary_loader as bl
+
+    assert len(bl._LOADER_CLASSES) >= 1  # at least the built-in loader(s)

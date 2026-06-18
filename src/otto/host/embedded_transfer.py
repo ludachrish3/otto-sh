@@ -44,15 +44,17 @@ import os
 import re
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .transfer import (
     BaseFileTransfer,
+    TransferContext,
     TransferProgressFactory,
     TransferProgressHandler,
+    register_transfer_backend,
 )
 
 
@@ -65,7 +67,8 @@ def _label_errno(retcode: int) -> str:
     name and human-readable description. Positive retcodes are rendered
     unchanged (no errno mapping applies). Unknown negative codes fall
     back to ``-N`` so the message stays readable on an unrecognized
-    value rather than throwing."""
+    value rather than throwing.
+    """
     if retcode >= 0:
         return str(retcode)
     code = -retcode
@@ -75,10 +78,6 @@ def _label_errno(retcode: int) -> str:
     return f"{retcode} (-{name}, {os.strerror(code)})"
 
 logger = get_otto_logger()
-
-EmbeddedTransferType = Literal['console', 'tftp']
-"""File-transfer backend for an embedded host. ``console`` uses the device
-shell's ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
 
 # Bytes per `fs write` invocation. Each byte costs three characters of hex
 # ("XX ") on the command line, so the chunk size must stay within the target's
@@ -117,9 +116,11 @@ class EmbeddedFileTransfer(BaseFileTransfer):
     testable against a fake shell with no real connection.
     """
 
+    host_families = frozenset({"embedded"})
+
     def __init__(
         self,
-        transfer: EmbeddedTransferType,
+        transfer: str,
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
         filesystem: EmbeddedFileSystem | None = None,
@@ -140,6 +141,17 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         # silently accepted by ``_ensure_mounted``.
         self._mount_done = False
 
+    @classmethod
+    def create(cls, ctx: "TransferContext") -> "EmbeddedFileTransfer":
+        assert ctx.exec_cmd is not None
+        return cls(
+            transfer=ctx.transfer,
+            name=ctx.host_name,
+            exec_cmd=ctx.exec_cmd,
+            filesystem=ctx.filesystem,
+            max_filename_len=ctx.max_filename_len,
+        )
+
     # ------------------------------------------------------------------
     # BaseFileTransfer hooks
     # ------------------------------------------------------------------
@@ -154,7 +166,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
 
         ``_console_get_one`` reads the file in a single ``fs read`` command,
         so per-byte progress isn't feasible; the handler is invoked once at
-        completion to satisfy the "files complete to 100%" contract."""
+        completion to satisfy the "files complete to 100%" contract.
+        """
         if self.transfer == 'tftp':
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
@@ -180,7 +193,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         ``_console_put_one`` writes in 32-byte chunks (``_WRITE_CHUNK``), so
         the handler is invoked after each chunk for genuine per-byte
         progress — much finer than asyncssh's 256 KB SCP block, fitting the
-        slowness of console transfer."""
+        slowness of console transfer.
+        """
         if self.transfer == 'tftp':
             raise NotImplementedError(
                 "TFTP transfer for embedded hosts is not yet implemented"
@@ -208,7 +222,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         ``fs read`` is a single monolithic command — no chunk loop — so the
         progress handler is invoked exactly once at completion (signalling
         file done at 100%). Per-byte progress for GET would require chunked
-        ``fs read <path> <offset> <length>``; deferred."""
+        ``fs read <path> <offset> <length>``; deferred.
+        """
         src_path = src.as_posix()
         read_cmd = self._filesystem.read_command(src_path)
         logger.debug(f"{self._name}: {read_cmd} -> {dest_dir}")
@@ -244,7 +259,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         Emits a progress event after each successful 32-byte chunk write,
         plus a final event at file completion (``bytes_done == bytes_total``).
         Empty files emit a single ``(0, 0)`` event so the bar appears and
-        immediately completes."""
+        immediately completes.
+        """
         data = src.read_bytes()
         dest_path = (dest_dir / src.name).as_posix()
         src_str = str(src)
@@ -302,7 +318,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         """Best-effort removal of a half-written destination file after a
         mid-transfer failure. Errors are swallowed: the caller is already
         returning the real put failure, and the cleanup is purely an
-        attempt to leave the device's filesystem recoverable for retry."""
+        attempt to leave the device's filesystem recoverable for retry.
+        """
         try:
             await self._exec_cmd(self._filesystem.rm_command(dest_path), timeout=_RM_TIMEOUT)
         except Exception as exc:
@@ -385,3 +402,17 @@ class EmbeddedFileTransfer(BaseFileTransfer):
                 )
             out.extend(chunks[offset])
         return bytes(out)
+
+
+def _register_builtin_embedded_transfers() -> None:
+    """Register the embedded transfer protocols into the shared transfer
+    registry (transfer.py ``_TRANSFER_BACKENDS``) — one namespace for all
+    families. ``tftp`` is reserved (raises NotImplementedError on use) but
+    registered so the namespace welcomes it as a single cross-family entry
+    once implemented.
+    """
+    register_transfer_backend("console", EmbeddedFileTransfer)
+    register_transfer_backend("tftp", EmbeddedFileTransfer)
+
+
+_register_builtin_embedded_transfers()

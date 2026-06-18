@@ -7,13 +7,28 @@ constructing the backing dict at import, while **third-party** entries go throug
 a `register_*()` function. Storage is shared, but the *insertion path* differs —
 otto's own built-ins never exercise the registration entry point users rely on.
 
-Known instances:
+Known instances (remaining):
 
 | Registry | Built-ins loaded by | Third-party entry point |
 | --- | --- | --- |
-| Command frames | `_FRAME_CLASSES = { ... }` literal ([src/otto/host/command_frame.py](../src/otto/host/command_frame.py#L348)) | `register_command_frame()` |
-| Embedded filesystems | `_FILESYSTEM_CLASSES = { ... }` literal ([src/otto/host/embedded_filesystem.py](../src/otto/host/embedded_filesystem.py#L170)) | `register_filesystem()` |
 | Monitor shell parsers | `DEFAULT_PARSERS = { ... }` literal ([src/otto/monitor/parsers.py](../src/otto/monitor/parsers.py#L318)) | `register_host_parsers()` |
+
+The monitor-parser case has a **different shape**: `register_host_parsers` is
+host-scoped and instance-valued (no `register_X(type_name, cls)` path), so
+converting it would require a NEW public function — widening the frozen public
+surface — and is intentionally deferred.
+
+### Resolved (WS#4)
+
+The three `register_X(type_name, cls)` class registries now register their
+built-ins through their own public path (empty seed dict + a
+`_register_builtin_*()` bootstrap call at module end):
+
+| Registry | Built-ins now loaded by | Third-party entry point |
+| --- | --- | --- |
+| Command frames | `_register_builtin_frames()` → `register_command_frame()` ([src/otto/host/command_frame.py](../src/otto/host/command_frame.py)) | `register_command_frame()` |
+| Embedded filesystems | `_register_builtin_filesystems()` → `register_filesystem()` ([src/otto/host/embedded_filesystem.py](../src/otto/host/embedded_filesystem.py)) | `register_filesystem()` |
+| Binary loaders | `_register_builtin_loaders()` → `register_binary_loader()` ([src/otto/host/binary_loader.py](../src/otto/host/binary_loader.py)) | `register_binary_loader()` |
 
 ## Why fix it
 
@@ -61,6 +76,7 @@ the private dict directly.
 
 ## Status
 
-Deferred — picked up after Phase A as a standalone hygiene pass (no contract
-impact; the `register_*` signatures and names are unchanged, so it is
-semver-internal and can land post-freeze).
+Partially resolved (WS#4): the three `register_X(type_name, cls)` class
+registries (command frames, embedded filesystems, binary loaders) now register
+built-ins through their public path; only the host-scoped monitor-parser case
+remains.

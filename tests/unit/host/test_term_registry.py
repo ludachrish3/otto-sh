@@ -1,0 +1,77 @@
+"""Term backend registry + ConnectionManager.create construction seam (WS#4)."""
+
+import pytest
+
+from otto.host import connections as conn_mod
+from otto.host.connections import (
+    ConnectionManager,
+    TermContext,
+    build_term_backend,
+    register_term_backend,
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_term_registry():
+    """Snapshot/restore the global term registry around each test so a custom
+    registration never leaks into the next test.
+    """
+    saved = dict(conn_mod._TERM_BACKENDS)
+    try:
+        yield
+    finally:
+        conn_mod._TERM_BACKENDS.clear()
+        conn_mod._TERM_BACKENDS.update(saved)
+
+
+class TestBuiltins:
+    def test_ssh_and_telnet_registered_to_connection_manager(self):
+        assert build_term_backend("ssh") is ConnectionManager
+        assert build_term_backend("telnet") is ConnectionManager
+
+
+class TestRegistry:
+    def test_unknown_raises_with_known_list(self):
+        with pytest.raises(ValueError, match="Unknown term backend"):
+            build_term_backend("nope")
+        # known names are listed so a typo is diagnosable
+        try:
+            build_term_backend("nope")
+        except ValueError as e:
+            assert "ssh" in str(e) and "telnet" in str(e)
+
+    def test_register_and_build_custom(self):
+        class CustomTerm(ConnectionManager):
+            pass
+
+        register_term_backend("myterm", CustomTerm)
+        assert build_term_backend("myterm") is CustomTerm
+
+
+class TestCreate:
+    def test_create_constructs_connection_manager(self):
+        ctx = TermContext(
+            ip="10.0.0.5", creds={"root": "x"}, user="root",
+            term="ssh", name="h1",
+        )
+        cm = ConnectionManager.create(ctx)
+        assert isinstance(cm, ConnectionManager)
+        assert cm.ip == "10.0.0.5"
+        assert cm.term == "ssh"
+
+
+class TestSetTypeOverrides:
+    def test_set_term_type_accepts_registered(self):
+        from otto.host.unix_host import UnixHost
+
+        h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", term="ssh")
+        h.set_term_type("telnet")
+        assert h.term == "telnet"
+
+    def test_set_term_type_rejects_unregistered(self):
+        from otto.host.unix_host import UnixHost
+
+        h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", term="ssh")
+        with pytest.raises((ValueError, TypeError)):
+            h.set_term_type("bogus")
+        assert h.term == "ssh"  # unchanged

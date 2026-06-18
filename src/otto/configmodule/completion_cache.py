@@ -20,7 +20,7 @@ Cache location
 ``$OTTO_XDIR/.otto/completion_cache.json``. If ``OTTO_XDIR`` is not set,
 caching is disabled and completion always falls through to the slow path.
 
-Cache schema (version 3)
+Cache schema (version 5)
 ------------------------
 
 Single flat map, keyed by fingerprint hex digest. Each entry records both the
@@ -29,7 +29,7 @@ stale entries without trusting the mtimes on-disk::
 
     {
         "<fingerprint>": {
-            "schema_version": 3,
+            "schema_version": 5,
             "generated_at": 1745000000,
             "instructions": [
                 {"name": "install",
@@ -42,7 +42,11 @@ stale entries without trusting the mtimes on-disk::
                 {"name": "TestDevice", "options": [...]},
                 ...
             ],
-            "hosts": ["carrot_seed", "tomato_seed", ...]
+            "hosts": ["carrot_seed", "tomato_seed", ...],
+            "docker_hosts": ["carrot_seed", ...],
+            "term_backends": ["ssh", "telnet", ...],
+            "transfer_backends": [{"name": "scp", "host_families": ["unix"]},
+                                  ...]
         }
     }
 
@@ -81,7 +85,7 @@ COMPLETION_ENV_VAR = '_OTTO_COMPLETE'
 CACHE_FILENAME = 'completion_cache.json'
 
 # Bump when the on-disk schema changes in a way older readers can't parse.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 HOSTS_FILENAME = 'hosts.json'
 
@@ -329,9 +333,12 @@ def read_cache(repos: list['Repo']) -> dict[str, Any] | None:
     or TTL expired. In every case the caller should fall back to the slow
     path.
 
-    On success returns a dict with ``instructions``, ``suites``, and
-    ``hosts`` keys. The first two are lists of ``{"name": str,
-    "options": [...]}`` dicts; ``hosts`` is a plain list of host-ID strings.
+    On success returns a dict with ``instructions``, ``suites``, ``hosts``,
+    ``docker_hosts``, ``term_backends``, and ``transfer_backends`` keys. The
+    first two are lists of ``{"name": str, "options": [...]}`` dicts; ``hosts``
+    and ``docker_hosts`` are plain lists of host-ID strings; ``term_backends``
+    is a list of backend-name strings and ``transfer_backends`` a list of
+    ``{"name": str, "host_families": [str, ...]}`` dicts.
     """
     if not repos:
         return None
@@ -361,16 +368,22 @@ def read_cache(repos: list['Repo']) -> dict[str, Any] | None:
     suites = entry.get('suites')
     hosts = entry.get('hosts')
     docker_hosts = entry.get('docker_hosts', [])
+    term_backends = entry.get('term_backends', [])
+    transfer_backends = entry.get('transfer_backends', [])
     if (not isinstance(instructions, list)
             or not isinstance(suites, list)
             or not isinstance(hosts, list)
-            or not isinstance(docker_hosts, list)):
+            or not isinstance(docker_hosts, list)
+            or not isinstance(term_backends, list)
+            or not isinstance(transfer_backends, list)):
         return None
     return {
         'instructions': instructions,
         'suites': suites,
         'hosts': hosts,
         'docker_hosts': docker_hosts,
+        'term_backends': term_backends,
+        'transfer_backends': transfer_backends,
     }
 
 
@@ -380,6 +393,8 @@ def write_cache(
     suites: list[dict[str, Any]],
     hosts: list[str],
     docker_hosts: list[str] | None = None,
+    term_backends: list[str] | None = None,
+    transfer_backends: list[dict[str, Any]] | None = None,
 ) -> None:
     """Write (or update) the entry for the current fingerprint.
 
@@ -417,6 +432,8 @@ def write_cache(
         'suites': suites,
         'hosts': hosts,
         'docker_hosts': docker_hosts or [],
+        'term_backends': term_backends or [],
+        'transfer_backends': transfer_backends or [],
     }
 
     tmp = tempfile.NamedTemporaryFile(
@@ -492,6 +509,26 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
         })
 
     return instructions, suites
+
+
+def collect_backend_names() -> dict[str, Any]:
+    """Snapshot the registered term + transfer backend names for completion.
+
+    Call after ``apply_repo_settings`` / ``import_init_modules`` so custom
+    per-repo backends are present. Built-ins are always present (registered at
+    module import). Each transfer backend carries its ``host_families`` so the
+    completer can filter by family (e.g. unix-only for ``otto host --transfer``).
+    """
+    from ..host.connections import _TERM_BACKENDS
+    from ..host.transfer import _TRANSFER_BACKENDS
+
+    return {
+        "term_backends": sorted(_TERM_BACKENDS),
+        "transfer_backends": [
+            {"name": name, "host_families": sorted(cls.host_families)}
+            for name, cls in sorted(_TRANSFER_BACKENDS.items())
+        ],
+    }
 
 
 def collect_docker_capable_host_ids(repos: list['Repo']) -> list[str]:

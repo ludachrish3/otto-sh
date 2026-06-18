@@ -119,3 +119,40 @@ def test_clear_cache_removes_existing(tmp_path: Path, monkeypatch) -> None:
     path.write_text('{}')
     assert cc.clear_cache() is True
     assert not path.exists()
+
+
+def test_collect_backend_names_includes_builtins():
+    from otto.configmodule import completion_cache as cc
+
+    snap = cc.collect_backend_names()
+    assert "ssh" in snap["term_backends"] and "telnet" in snap["term_backends"]
+    by_name = {e["name"]: e["host_families"] for e in snap["transfer_backends"]}
+    assert by_name["scp"] == ["unix"]
+    assert by_name["console"] == ["embedded"]
+
+
+def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch) -> None:
+    from unittest.mock import MagicMock
+
+    from otto.configmodule import completion_cache as cc
+
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    fake_repo = MagicMock()
+    fake_repo.sut_dir = tmp_path / "sut"
+    fake_repo.sut_dir.mkdir()
+    (fake_repo.sut_dir / ".otto").mkdir()
+    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    fake_repo.init = []
+    fake_repo.libs = []
+    fake_repo.tests = []
+    fake_repo.labs = []
+
+    cc.write_cache(
+        [fake_repo], instructions=[], suites=[], hosts=[],
+        term_backends=["ssh", "telnet"],
+        transfer_backends=[{"name": "scp", "host_families": ["unix"]}],
+    )
+    out = cc.read_cache([fake_repo])
+    assert out is not None
+    assert out["term_backends"] == ["ssh", "telnet"]
+    assert out["transfer_backends"] == [{"name": "scp", "host_families": ["unix"]}]

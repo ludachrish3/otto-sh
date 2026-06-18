@@ -16,15 +16,14 @@ and the embedded monitor's disk parser all rely on:
 import pytest
 
 from otto.host.embedded_filesystem import (
+    _FILESYSTEM_CLASSES,
     EmbeddedFileSystem,
     FatRamFileSystem,
     LittleFsFileSystem,
     NoFileSystem,
-    _FILESYSTEM_CLASSES,
     build_filesystem,
     register_filesystem,
 )
-
 
 # ---------------------------------------------------------------------------
 # Built-in variants
@@ -43,7 +42,8 @@ class TestBuiltinVariants:
 
     def test_fat_ram_mounts_at_ram_with_explicit_mount_cmd(self):
         """FAT on 3.7 LTS does not auto-mount via ``zephyr,fstab``; otto
-        issues ``fs mount fat /RAM:`` before the first transfer."""
+        issues ``fs mount fat /RAM:`` before the first transfer.
+        """
         fs = FatRamFileSystem()
         assert fs.type_name == 'fat-ram'
         assert fs.mount == '/RAM:'
@@ -68,7 +68,8 @@ class TestCommandHooks:
     """The hooks below are the seam projects override to support a vendor FS
     with different command syntax. Pinning the stock-Zephyr default values
     here is what makes the seam a real contract rather than an internal
-    convention."""
+    convention.
+    """
 
     def test_read_command_renders_fs_read(self):
         assert FatRamFileSystem().read_command('/RAM:/x.bin') == 'fs read /RAM:/x.bin'
@@ -76,7 +77,8 @@ class TestCommandHooks:
     def test_write_command_uses_dash_o_offset(self):
         """Zephyr 3.7's ``fs write`` requires ``-o <offset>`` for a positional
         offset — see :mod:`otto.host.embedded_transfer` for the live-shell
-        gotcha. The default hook must emit that form."""
+        gotcha. The default hook must emit that form.
+        """
         cmd = FatRamFileSystem().write_command('/RAM:/x.bin', 32, '41 42 43')
         assert cmd == 'fs write /RAM:/x.bin -o 32 41 42 43'
 
@@ -95,7 +97,8 @@ class TestCommandHooks:
 
     def test_statvfs_command_is_none_when_disk_metric_unsupported(self):
         """``NoFileSystem`` cannot serve a disk metric, so the embedded
-        monitor's disk parser uses ``None`` to skip the host cleanly."""
+        monitor's disk parser uses ``None`` to skip the host cleanly.
+        """
         assert NoFileSystem().statvfs_command() is None
 
 
@@ -115,7 +118,8 @@ class TestRegistry:
 
     def test_build_filesystem_unknown_type_lists_registered_types(self):
         """An unknown type_name surfaces the registered set in the error
-        message — a typo like ``'fatram'`` should be obvious from the diff."""
+        message — a typo like ``'fatram'`` should be obvious from the diff.
+        """
         with pytest.raises(ValueError) as excinfo:
             build_filesystem('fatram')
         msg = str(excinfo.value)
@@ -125,7 +129,8 @@ class TestRegistry:
     def test_register_filesystem_adds_a_custom_subclass(self):
         """A project can register a subclass and have lab data instantiate
         it via :func:`build_filesystem` — the same path the storage factory
-        uses."""
+        uses.
+        """
         class VendorFs(EmbeddedFileSystem):
             type_name = 'vendor-fs-roundtrip-test'
             mount = '/vfs'
@@ -141,7 +146,8 @@ class TestRegistry:
 
     def test_register_filesystem_rejects_type_name_mismatch(self):
         """Mismatched key and ``cls.type_name`` is a likely bug; surface it
-        rather than letting the host load with the wrong identifier."""
+        rather than letting the host load with the wrong identifier.
+        """
         class MismatchedFs(EmbeddedFileSystem):
             type_name = 'declared-name'
             mount = '/m'
@@ -157,7 +163,8 @@ class TestRegistry:
 class TestCustomCommandSyntax:
     """A project subclass can override individual command-formation hooks
     to target a non-stock Zephyr shell. Show that the seam composes — only
-    the overridden method changes; the others inherit the stock defaults."""
+    the overridden method changes; the others inherit the stock defaults.
+    """
 
     def test_subclass_can_override_one_command_in_isolation(self):
         class VendorFs(EmbeddedFileSystem):
@@ -173,3 +180,9 @@ class TestCustomCommandSyntax:
         # Inherited (stock):
         assert fs.write_command('/vfs/x', 0, '41') == 'fs write /vfs/x -o 0 41'
         assert fs.statvfs_command() == 'fs statvfs /vfs'
+
+
+def test_builtins_registered_via_public_path():
+    from otto.host import embedded_filesystem as efs
+
+    assert set(efs._FILESYSTEM_CLASSES) >= {"none", "fat-ram", "littlefs"}

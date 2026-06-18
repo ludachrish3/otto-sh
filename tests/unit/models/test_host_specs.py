@@ -268,3 +268,67 @@ def test_registered_pairs_drift_guard():
             f"spec-only={sorted(spec_fields - init_fields)}, "
             f"runtime-only={sorted(init_fields - spec_fields)}"
         )
+
+
+class TestSelectorValidation:
+    def test_builtin_term_and_transfer_accepted(self):
+        from otto.models.host import EmbeddedHostSpec, UnixHostSpec
+
+        u = UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"},
+                         term="telnet", transfer="sftp")
+        assert u.term == "telnet" and u.transfer == "sftp"
+        em = EmbeddedHostSpec(ip="10.0.0.2", element="e", transfer="console")
+        assert em.transfer == "console"
+
+    def test_unknown_term_raises(self):
+        from pydantic import ValidationError
+
+        from otto.models.host import UnixHostSpec
+
+        with pytest.raises(ValidationError, match="not a registered term backend"):
+            UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"}, term="nope")
+
+    def test_unknown_unix_transfer_raises(self):
+        from pydantic import ValidationError
+
+        from otto.models.host import UnixHostSpec
+
+        with pytest.raises(ValidationError, match="not a registered transfer backend"):
+            UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"},
+                         transfer="frobnicate")
+
+    def test_unix_rejects_embedded_only_transfer(self):
+        from pydantic import ValidationError
+
+        from otto.models.host import UnixHostSpec
+
+        with pytest.raises(ValidationError, match="not valid on a unix host"):
+            UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"},
+                         transfer="console")
+
+    def test_embedded_rejects_unix_only_transfer(self):
+        from pydantic import ValidationError
+
+        from otto.models.host import EmbeddedHostSpec
+
+        with pytest.raises(ValidationError, match="not valid on an embedded host"):
+            EmbeddedHostSpec(ip="10.0.0.2", element="e", transfer="scp")
+
+    def test_cross_family_backend_validates_on_both(self):
+        from otto.host import transfer as xfer_mod
+        from otto.host.transfer import FileTransfer
+        from otto.models.host import EmbeddedHostSpec, UnixHostSpec
+
+        class DualTransfer(FileTransfer):
+            host_families = frozenset({"unix", "embedded"})
+
+        saved = dict(xfer_mod._TRANSFER_BACKENDS)
+        xfer_mod._TRANSFER_BACKENDS["dual"] = DualTransfer
+        try:
+            assert UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"},
+                                transfer="dual").transfer == "dual"
+            assert EmbeddedHostSpec(ip="10.0.0.2", element="e",
+                                    transfer="dual").transfer == "dual"
+        finally:
+            xfer_mod._TRANSFER_BACKENDS.clear()
+            xfer_mod._TRANSFER_BACKENDS.update(saved)

@@ -79,9 +79,10 @@ class LlextHexLoader(BinaryLoader):
         return "No such extension" in output
 
 
-_LOADER_CLASSES: dict[str, type[BinaryLoader]] = {
-    LlextHexLoader.type_name: LlextHexLoader,
-}
+# Seeded empty here and populated by ``_register_builtin_loaders()`` at module
+# end, so otto's own built-ins travel the same ``register_binary_loader`` path
+# third parties use.
+_LOADER_CLASSES: dict[str, type[BinaryLoader]] = {}
 
 
 def register_binary_loader(type_name: str, cls: type[BinaryLoader]) -> None:
@@ -109,3 +110,10 @@ def build_binary_loader(type_name: str) -> BinaryLoader:
             f"Custom loaders can be added via register_binary_loader()."
         ) from None
     return cls()
+
+
+def _register_builtin_loaders() -> None:
+    register_binary_loader(LlextHexLoader.type_name, LlextHexLoader)
+
+
+_register_builtin_loaders()

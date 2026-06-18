@@ -14,6 +14,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -26,6 +27,7 @@ from ..utils import CommandStatus, Status
 
 if TYPE_CHECKING:
     from .connections import ConnectionManager
+    from .embedded_filesystem import EmbeddedFileSystem
     from .options import NcOptions, ScpOptions
 from rich.progress import (
     BarColumn,
@@ -132,7 +134,27 @@ async def _acquire_shared_progress() -> AsyncIterator[Progress]:
             _shared_progress = None
 
 
-FileTransferType = Literal['scp', 'sftp', 'ftp', 'nc']
+@dataclass(frozen=True)
+class TransferContext:
+    """Construction inputs a host provides to build its transfer backend via
+    :meth:`BaseFileTransfer.create`. The frozen public seam for custom transfer
+    backends. Carries the union of what any family's built-ins receive at their
+    call sites; a unix backend reads the unix fields, an embedded backend the
+    embedded ones. Selector validation (host-family applicability) runs before
+    construction, so a backend never sees a ctx missing the fields it needs.
+    """
+
+    transfer: str
+    host_name: str
+    max_filename_len: int = 255
+    exec_cmd: "Callable[..., Coroutine[Any, Any, CommandStatus]] | None" = None
+    # unix-family fields
+    connections: "ConnectionManager | None" = None
+    nc_options: "NcOptions | None" = None
+    scp_options: "ScpOptions | None" = None
+    get_local_ip: "Callable[[], str] | None" = None
+    # embedded-family fields
+    filesystem: "EmbeddedFileSystem | None" = None
 
 
 def validate_filename_lengths(
@@ -188,6 +210,28 @@ class BaseFileTransfer(ABC):
     (``TestTransferProgressContract``) verifies the factory is actually
     invoked, not just that the methods exist.
     """
+
+    host_families: frozenset[str] = frozenset()
+    """Host families this backend serves: a subset of ``{'unix', 'embedded'}``.
+    Subclasses declare it; the spec field_validator rejects a backend on a host
+    of the wrong family. A backend with an empty set can never validate and is
+    rejected at registration."""
+
+    @classmethod
+    def create(cls, ctx: "TransferContext") -> "BaseFileTransfer":
+        """Build a transfer backend from a :class:`TransferContext`.
+
+        The uniform construction seam (WS#4). Concrete backends override this to
+        run their exact construction against the ctx fields they need. Not an
+        ``abstractmethod`` deliberately: only registered built-ins are ever
+        constructed through ``create``, and test doubles that subclass
+        ``BaseFileTransfer`` only to exercise the progress contract must not be
+        forced to implement it.
+        """
+        raise NotImplementedError(
+            f"{cls.__name__} does not implement create(); a registered transfer "
+            f"backend must override create(cls, ctx)."
+        )
 
     def __init__(self, name: str, max_filename_len: int = 255) -> None:
         self._name = name
@@ -255,7 +299,8 @@ class BaseFileTransfer(ABC):
         progress_factory: 'TransferProgressFactory | None',
     ) -> tuple[Status, str]:
         """Backend-specific get implementation. Same progress contract as
-        :meth:`_run_put`."""
+        :meth:`_run_put`.
+        """
 
 
 NcPortStrategy = Literal['auto', 'ss', 'netstat', 'python', 'proc', 'custom']
@@ -443,11 +488,13 @@ class FileTransfer(BaseFileTransfer):
     on ``self.transfer``.
     """
 
+    host_families = frozenset({"unix"})
+
     def __init__(
         self,
         connections: 'ConnectionManager',
         name: str,
-        transfer: FileTransferType,
+        transfer: str,
         nc_options: 'NcOptions',
         scp_options: 'ScpOptions',
         get_local_ip: Callable[[], str],
@@ -483,6 +530,24 @@ class FileTransfer(BaseFileTransfer):
         # "Connect first" or stuck data channels. FTP is inherently sequential
         # at the protocol layer, so this lock just enforces that.
         self._ftp_lock = asyncio.Lock()
+
+    @classmethod
+    def create(cls, ctx: "TransferContext") -> "FileTransfer":
+        assert ctx.connections is not None
+        assert ctx.exec_cmd is not None
+        assert ctx.get_local_ip is not None
+        assert ctx.nc_options is not None
+        assert ctx.scp_options is not None
+        return cls(
+            connections=ctx.connections,
+            name=ctx.host_name,
+            transfer=ctx.transfer,
+            nc_options=ctx.nc_options,
+            scp_options=ctx.scp_options,
+            get_local_ip=ctx.get_local_ip,
+            exec_cmd=ctx.exec_cmd,
+            max_filename_len=ctx.max_filename_len,
+        )
 
     @property
     def _nc_exec(self) -> str:
@@ -1441,3 +1506,56 @@ def _first_error(
         if not result[0].is_ok:
             return result
     return Status.Success, ''
+
+
+# Unified registry of transfer-protocol name -> backend class, spanning BOTH
+# host families. ``EmbeddedFileTransfer`` registers ``console``/``tftp`` into
+# this same dict (see embedded_transfer.py), so one namespace holds every
+# transfer protocol and a future cross-family protocol (tftp) is a single
+# entry. ``build_*`` returns the class so the host can call ``.create(ctx)``.
+_TRANSFER_BACKENDS: dict[str, type[BaseFileTransfer]] = {}
+
+
+def register_transfer_backend(name: str, cls: type[BaseFileTransfer]) -> None:
+    """Make a custom transfer backend available to lab data under *name*.
+
+    Call from an init module listed in ``.otto/settings.toml``. The backend
+    must declare a non-empty :attr:`BaseFileTransfer.host_families`; otherwise
+    it could never validate against any host and is rejected here.
+    """
+    if not cls.host_families:
+        raise ValueError(
+            f"register_transfer_backend({name!r}): cls.host_families is empty; "
+            f"a transfer backend must declare at least one host family "
+            f"(e.g. frozenset({{'unix'}}))."
+        )
+    _TRANSFER_BACKENDS[name] = cls
+
+
+def build_transfer_backend(name: str) -> type[BaseFileTransfer]:
+    """Return the transfer-backend class registered under *name*.
+
+    Raises
+    ------
+    ValueError
+        If *name* is not registered; the message lists the registered names.
+    """
+    try:
+        return _TRANSFER_BACKENDS[name]
+    except KeyError:
+        known = ", ".join(sorted(_TRANSFER_BACKENDS))
+        raise ValueError(
+            f"Unknown transfer backend {name!r}. Registered backends: {known}. "
+            f"Custom backends can be added via register_transfer_backend()."
+        ) from None
+
+
+def _register_builtin_transfer_backends() -> None:
+    """Register otto's built-in unix transfer backends through the public path.
+    Embedded's ``console``/``tftp`` register themselves in embedded_transfer.py.
+    """
+    for name in ("scp", "sftp", "ftp", "nc"):
+        register_transfer_backend(name, FileTransfer)
+
+
+_register_builtin_transfer_backends()

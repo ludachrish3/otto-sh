@@ -143,7 +143,8 @@ class TestZephyrSerialFrame:
     """The 3.7 dialect for a serial/UART shell behind a ``-serial telnet:``
     bridge: identical framing to ZephyrFrame, but the handshake disables the
     shell's input echo (the bridge swallows otto's ``IAC DONT ECHO``, so unlike
-    the in-guest telnet backend the UART shell never turns echo off itself)."""
+    the in-guest telnet backend the UART shell never turns echo off itself).
+    """
 
     frame = ZephyrSerialFrame()
 
@@ -198,3 +199,12 @@ class TestRegistry:
 
     def test_is_a_command_frame(self):
         assert isinstance(build_command_frame("bash"), CommandFrame)
+
+
+def test_builtins_registered_via_public_path():
+    from otto.host import command_frame as cf
+
+    # The seed dict starts empty and is populated by _register_builtin_frames()
+    # through register_command_frame — the same path third parties use.
+    assert set(cf._FRAME_CLASSES) >= {"bash", "zephyr", "zephyr-serial"}
+    assert cf.build_command_frame("bash").type_name == "bash"
