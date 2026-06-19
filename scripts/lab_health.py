@@ -187,9 +187,14 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
 
 def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
     """Restart the QEMU + SNMP-relay units on every hop that fronts a guest."""
+    # Select embedded guests by credential shape (no own ``creds`` — they
+    # borrow the hop's), exactly like ``_is_ssh_host``/``_print_report``. Keying
+    # on ``os_type == "embedded"`` here silently matched nothing once the lab
+    # data moved to ``os_type: "zephyr"`` (commit 41cf70c) — the same trap
+    # ``_is_ssh_host`` documents.
     hop_ids = sorted({
         h["hop"] for h in hosts
-        if h.get("os_type") == "embedded" and h.get("hop")
+        if not _is_ssh_host(h) and h.get("hop")
     })
     if not hop_ids:
         print("No embedded guests with a hop in the lab; nothing to restart.")
