@@ -37,7 +37,7 @@ as the default ``command_frame`` (along with ``os_type='zephyr'`` and
 :class:`ZephyrHost`, not on the base class.
 
 File transfer (``get``/``put``) is delegated to
-:class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`, which speaks the
+:class:`~otto.host.transfer.EmbeddedFileTransfer`, which speaks the
 device shell only (the ``console`` backend uses Zephyr's ``fs`` commands).
 The interactive bridge (``_interact``) currently raises
 :class:`NotImplementedError`.
@@ -59,7 +59,7 @@ from .binary_loader import BinaryLoader
 from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
-from .embedded_transfer import EmbeddedFileTransfer
+from .transfer import EmbeddedFileTransfer
 from .host import Host, SuppressCommandOutput, is_dry_run
 from .options import SnmpOptions, TelnetOptions
 from .remote_host import OsType, RemoteHost
@@ -446,7 +446,7 @@ class EmbeddedHost(RemoteHost):
     ) -> tuple[Status, str]:
         """Transfer files from the embedded host to the local machine.
 
-        Delegates to :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`,
+        Delegates to :class:`~otto.host.transfer.EmbeddedFileTransfer`,
         which speaks the device shell (the ``console`` backend uses Zephyr's
         ``fs`` commands). Transfers are sequential — an embedded target has a
         single console.
@@ -466,7 +466,7 @@ class EmbeddedHost(RemoteHost):
     ) -> tuple[Status, str]:
         """Transfer files from the local machine to the embedded host.
 
-        Delegates to :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`
+        Delegates to :class:`~otto.host.transfer.EmbeddedFileTransfer`
         (the ``console`` backend writes via Zephyr's chunked ``fs write``).
         Transfers are sequential — an embedded target has a single console.
 

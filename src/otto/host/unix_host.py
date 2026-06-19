@@ -90,7 +90,7 @@ from .session import (
 from .telnet import TelnetClient
 from .toolchain import Toolchain
 from .transfer import (
-    FileTransfer,
+    UnixFileTransfer,
     TransferContext,
     build_transfer_backend,
 )
@@ -252,7 +252,7 @@ class UnixHost(RemoteHost):
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages persistent shell sessions for this host."""
 
-    _file_transfer: FileTransfer = field(init=False, repr=False)
+    _file_transfer: UnixFileTransfer = field(init=False, repr=False)
     """Handles all file transfer protocols for this host."""
 
     def __post_init__(self):
@@ -331,14 +331,14 @@ class UnixHost(RemoteHost):
         conn_cls = self._connection_factory or build_term_backend(self.term)
         return conn_cls.create(term_ctx)
 
-    def _build_file_transfer(self) -> FileTransfer:
+    def _build_file_transfer(self) -> UnixFileTransfer:
         """Construct the transfer backend for the current ``transfer`` via the
         registry + ``create`` seam, against the current ``self._connections``.
         Shared by ``__post_init__`` / ``rebuild_connections`` and
         ``set_transfer_type`` so a custom transfer backend builds the right class
         rather than a string swap on the existing instance.
         """
-        return cast(FileTransfer, build_transfer_backend(self.transfer).create(
+        return cast(UnixFileTransfer, build_transfer_backend(self.transfer).create(
             TransferContext(
                 transfer=self.transfer,
                 host_name=self.name,

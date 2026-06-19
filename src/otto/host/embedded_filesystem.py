@@ -10,7 +10,7 @@ module is otto's typed representation of that fact.
 Each subclass is a small, stateless value object: it carries the mount path,
 the optional ``fs mount …`` command needed to bring the FS up, and the
 command-formation hooks (``read_command``, ``write_command``, etc.) that
-:class:`~otto.host.embedded_transfer.EmbeddedFileTransfer` and the embedded
+:class:`~otto.host.transfer.EmbeddedFileTransfer` and the embedded
 monitor's disk parser call when they need to drive the device shell. The
 defaults assume the stock Zephyr ``fs`` shell; a custom filesystem can
 override any subset of the hooks.
@@ -107,7 +107,7 @@ class EmbeddedFileSystem(ABC):
         *hexbytes* is the already-space-separated lower-case hex of the
         chunk (e.g. ``"41 42 43"``). Zephyr 3.7's ``fs write`` requires the
         ``-o <offset>`` flag for positional offset (live-verified, see
-        :mod:`otto.host.embedded_transfer`); a vendor FS that uses a
+        :mod:`otto.host.transfer`); a vendor FS that uses a
         positional offset can override this method.
         """
         return f'fs write {path} -o {offset} {hexbytes}'

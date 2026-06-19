@@ -125,10 +125,10 @@ class TestSelectorEnums:
 
     def test_custom_unix_transfer_appears_in_enum(self):
         from otto.host import transfer as xfer_mod
-        from otto.host.transfer import FileTransfer
+        from otto.host.transfer import UnixFileTransfer
         from otto.models.jsonschema import build_schemas
 
-        class XmodemTransfer(FileTransfer):
+        class XmodemTransfer(UnixFileTransfer):
             host_families = frozenset({"unix"})
 
         saved = dict(xfer_mod._TRANSFER_BACKENDS)

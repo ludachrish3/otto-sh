@@ -5,7 +5,7 @@ import pytest
 from otto.host import connections as conn_mod
 from otto.host import transfer as xfer_mod
 from otto.host.connections import ConnectionManager
-from otto.host.transfer import FileTransfer, register_transfer_backend
+from otto.host.transfer import NcFileTransfer, ScpFileTransfer, SftpFileTransfer, register_transfer_backend
 from otto.host.unix_host import UnixHost
 
 
@@ -26,7 +26,7 @@ def test_unix_host_builds_registered_transfer_backend():
     """A custom transfer backend registered at runtime is the one the host builds."""
     built = {}
 
-    class RecordingTransfer(FileTransfer):
+    class RecordingTransfer(NcFileTransfer):
         host_families = frozenset({"unix"})
 
         @classmethod
@@ -62,7 +62,7 @@ def test_connection_factory_override_still_wins():
 # ---------------------------------------------------------------------------
 
 
-class XmodemTransfer(FileTransfer):
+class XmodemTransfer(NcFileTransfer):
     """A distinct unix transfer backend class for the rebuild tests."""
 
     host_families = frozenset({"unix"})
@@ -71,7 +71,7 @@ class XmodemTransfer(FileTransfer):
 def test_set_transfer_type_rebuilds_to_custom_backend():
     register_transfer_backend("xmodem", XmodemTransfer)
     h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", transfer="scp")
-    assert type(h._file_transfer) is FileTransfer  # built-in to start
+    assert type(h._file_transfer) is ScpFileTransfer  # built-in to start
 
     h.set_transfer_type("xmodem")
 
@@ -83,8 +83,7 @@ def test_set_transfer_type_rebuilds_to_custom_backend():
 def test_set_transfer_type_switches_among_builtins():
     h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", transfer="scp")
     h.set_transfer_type("sftp")
-    assert type(h._file_transfer) is FileTransfer
-    assert h._file_transfer.transfer == "sftp"
+    assert type(h._file_transfer) is SftpFileTransfer
     assert h.transfer == "sftp"
 
 

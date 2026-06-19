@@ -12,7 +12,7 @@ import pytest
 from asyncssh import SSHClientConnection
 
 from otto.host.connections import ConnectionManager
-from otto.host.options import NcOptions, ScpOptions
+from otto.host.options import NcOptions
 from otto.host.unix_host import UnixHost
 from otto.host.transport import SshHopTransport
 
@@ -347,7 +347,7 @@ class TestNetcatGetThroughHop:
         """Netcat GET through a hop uses SSH port forwarding (reversed-listener approach)."""
         from pathlib import Path
 
-        from otto.host.transfer import FileTransfer
+        from otto.host.transfer import NcFileTransfer
         from otto.utils import CommandStatus, Status
 
         mock_connections = MagicMock(spec=ConnectionManager)
@@ -370,7 +370,7 @@ class TestNetcatGetThroughHop:
 
         mock_exec = AsyncMock(side_effect=mock_exec)
 
-        ft = FileTransfer(
+        ft = NcFileTransfer(
             connections=mock_connections,
             name='test',
             transfer='nc',
@@ -382,14 +382,13 @@ class TestNetcatGetThroughHop:
                 listener_check='ss',
                 listener_cmd=None,
             ),
-            scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
             exec_cmd=mock_exec,
         )
 
         with (
             patch.object(ft, '_wait_for_remote_listener', new_callable=AsyncMock) as mock_wait,
-            patch('otto.host.transfer._connect_with_retry', new_callable=AsyncMock) as mock_connect,
+            patch('otto.host.transfer.nc._connect_with_retry', new_callable=AsyncMock) as mock_connect,
         ):
             # Mock reader that returns file data then EOF.
             mock_reader = AsyncMock()
@@ -418,7 +417,7 @@ class TestNetcatGetThroughHop:
         """Without a hop, netcat GET uses asyncio.start_server (remote connects back)."""
         from pathlib import Path
 
-        from otto.host.transfer import FileTransfer
+        from otto.host.transfer import NcFileTransfer
         from otto.utils import CommandStatus, Status
 
         mock_connections = MagicMock(spec=ConnectionManager)
@@ -434,7 +433,7 @@ class TestNetcatGetThroughHop:
 
         mock_exec = AsyncMock(side_effect=mock_exec)
 
-        ft = FileTransfer(
+        ft = NcFileTransfer(
             connections=mock_connections,
             name='test',
             transfer='nc',
@@ -446,7 +445,6 @@ class TestNetcatGetThroughHop:
                 listener_check='ss',
                 listener_cmd=None,
             ),
-            scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
             exec_cmd=mock_exec,
         )
@@ -490,7 +488,7 @@ class TestNetcatPutThroughHop:
     @pytest.mark.asyncio
     async def test_nc_put_uses_forward_port_when_tunneled(self):
         """Netcat PUT through a hop uses SSH port forwarding to reach the remote listener."""
-        from otto.host.transfer import FileTransfer
+        from otto.host.transfer import NcFileTransfer
         from pathlib import Path
         import tempfile
 
@@ -510,7 +508,7 @@ class TestNetcatPutThroughHop:
             CommandStatus(command='nc -l ...', output='', status=Status.Success, retcode=0),
         ])
 
-        ft = FileTransfer(
+        ft = NcFileTransfer(
             connections=mock_connections,
             name='test',
             transfer='nc',
@@ -522,7 +520,6 @@ class TestNetcatPutThroughHop:
                 listener_check='ss',
                 listener_cmd=None,
             ),
-            scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
             exec_cmd=mock_exec,
         )
@@ -535,7 +532,7 @@ class TestNetcatPutThroughHop:
         try:
             with (
                 patch.object(ft, '_wait_for_remote_listener', new_callable=AsyncMock),
-                patch('otto.host.transfer._connect_with_retry', new_callable=AsyncMock) as mock_connect,
+                patch('otto.host.transfer.nc._connect_with_retry', new_callable=AsyncMock) as mock_connect,
             ):
                 mock_writer = MagicMock()
                 mock_writer.write = MagicMock()
@@ -559,7 +556,7 @@ class TestNetcatPutThroughHop:
     @pytest.mark.asyncio
     async def test_nc_put_without_tunnel_connects_directly(self):
         """Without a hop, netcat PUT connects directly to the target IP."""
-        from otto.host.transfer import FileTransfer
+        from otto.host.transfer import NcFileTransfer
         from pathlib import Path
         import tempfile
 
@@ -575,7 +572,7 @@ class TestNetcatPutThroughHop:
             CommandStatus(command='nc -l ...', output='', status=Status.Success, retcode=0),
         ])
 
-        ft = FileTransfer(
+        ft = NcFileTransfer(
             connections=mock_connections,
             name='test',
             transfer='nc',
@@ -587,7 +584,6 @@ class TestNetcatPutThroughHop:
                 listener_check='ss',
                 listener_cmd=None,
             ),
-            scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
             exec_cmd=mock_exec,
         )
@@ -597,7 +593,7 @@ class TestNetcatPutThroughHop:
             tmp_path = Path(tmp.name)
 
         try:
-            with patch('otto.host.transfer._connect_with_retry', new_callable=AsyncMock) as mock_connect:
+            with patch('otto.host.transfer.nc._connect_with_retry', new_callable=AsyncMock) as mock_connect:
                 mock_writer = MagicMock()
                 mock_writer.write = MagicMock()
                 mock_writer.drain = AsyncMock()

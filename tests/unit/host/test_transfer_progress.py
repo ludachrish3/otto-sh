@@ -15,7 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import otto.host.transfer as transfer_mod
+import otto.host.transfer.progress as transfer_mod
 from otto.host.transfer import BaseFileTransfer, _acquire_shared_progress
 from otto.utils import Status
 

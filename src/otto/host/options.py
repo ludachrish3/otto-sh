@@ -468,7 +468,7 @@ class TftpOptions:
     **Reserved.** TFTP is the deferred ``tftp`` embedded-transfer backend — a
     faster alternative to console ``fs`` transfer for targets whose firmware
     has a TFTP client. The backend itself is not yet implemented
-    (:class:`~otto.host.embedded_transfer.EmbeddedFileTransfer` raises
+    (:class:`~otto.host.transfer.EmbeddedFileTransfer` raises
     :class:`NotImplementedError` for ``tftp``); this dataclass exists so lab
     data and the host API can name the option table now, without a later
     breaking change when the backend lands.

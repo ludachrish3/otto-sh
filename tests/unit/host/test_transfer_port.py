@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.host.connections import ConnectionManager
-from otto.host.options import NcOptions, ScpOptions
-from otto.host.transfer import FileTransfer
+from otto.host.options import NcOptions
+from otto.host.transfer import NcFileTransfer
 from otto.utils import CommandStatus, Status
 
 
@@ -20,13 +20,13 @@ def make_ft(
     nc_port: int = 9000,
     exec_cmd: AsyncMock | None = None,
     term: str = 'ssh',
-) -> FileTransfer:
-    """Build a FileTransfer with mocked dependencies for strategy tests."""
+) -> NcFileTransfer:
+    """Build a NcFileTransfer with mocked dependencies for strategy tests."""
     mock_connections = MagicMock(spec=ConnectionManager)
     mock_connections.has_tunnel = False
     mock_connections.ip = '10.0.0.1'
     mock_connections.term = term
-    return FileTransfer(
+    return NcFileTransfer(
         connections=mock_connections,
         name='test',
         transfer='nc',
@@ -38,7 +38,6 @@ def make_ft(
             listener_check=nc_listener_check,  # type: ignore[arg-type]
             listener_cmd=nc_listener_cmd,
         ),
-        scp_options=ScpOptions(),
         get_local_ip=lambda: '127.0.0.1',
         exec_cmd=exec_cmd or AsyncMock(),
     )
@@ -496,7 +495,7 @@ class TestWarmupForTransfer:
         mock_connections.ip = '10.0.0.1'
         mock_connections.term = 'telnet'
 
-        ft = FileTransfer(
+        ft = NcFileTransfer(
             connections=mock_connections,
             name='test',
             transfer='nc',
@@ -508,7 +507,6 @@ class TestWarmupForTransfer:
                 listener_check='auto',
                 listener_cmd=None,
             ),
-            scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
             exec_cmd=AsyncMock(side_effect=mock_exec),
         )
@@ -542,7 +540,7 @@ class TestWarmupForTransfer:
         mock_connections.ip = '10.0.0.1'
         mock_connections.term = 'telnet'
 
-        ft = FileTransfer(
+        ft = NcFileTransfer(
             connections=mock_connections,
             name='test',
             transfer='nc',
@@ -554,7 +552,6 @@ class TestWarmupForTransfer:
                 listener_check='auto',
                 listener_cmd=None,
             ),
-            scp_options=ScpOptions(),
             get_local_ip=lambda: '127.0.0.1',
             exec_cmd=AsyncMock(side_effect=mock_exec),
         )

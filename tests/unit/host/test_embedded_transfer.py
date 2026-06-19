@@ -1,7 +1,7 @@
 """
-Unit tests for EmbeddedFileTransfer — console file transfer for embedded hosts.
+Unit tests for ConsoleFileTransfer — console file transfer for embedded hosts.
 
-The tests drive the real :class:`EmbeddedFileTransfer` against a
+The tests drive the real :class:`ConsoleFileTransfer` against a
 ``FakeZephyrFs`` double: an in-memory model of a Zephyr target's ``fs`` shell
 that interprets ``fs read``/``fs write``/``fs rm`` and renders ``fs read``
 output in the device's real hexdump format. No connection is involved, so the
@@ -18,12 +18,14 @@ from otto.host.embedded_filesystem import (
     FatRamFileSystem,
     NoFileSystem,
 )
-from otto.host.embedded_transfer import (
+from otto.host.transfer.console import (
     _NO_FILESYSTEM_MSG,
     _WRITE_CHUNK,
-    EmbeddedFileTransfer,
+    ConsoleFileTransfer,
     _label_errno,
 )
+from otto.host.transfer.embedded_base import EmbeddedFileTransfer
+from otto.host.transfer.tftp import TftpFileTransfer
 from otto.utils import CommandStatus, Status
 
 # A Zephyr filesystem mount path — the destination directory for `put`.
@@ -108,9 +110,8 @@ class FakeZephyrFs:
 def _console_transfer(
     fake: FakeZephyrFs,
     filesystem: EmbeddedFileSystem | None = None,
-) -> EmbeddedFileTransfer:
-    return EmbeddedFileTransfer(
-        transfer='console',
+) -> ConsoleFileTransfer:
+    return ConsoleFileTransfer(
         name='sprout',
         exec_cmd=fake.exec_cmd,
         filesystem=filesystem or FatRamFileSystem(),
@@ -372,8 +373,8 @@ class TestGet:
             )
             return CommandStatus(cmd, dump, Status.Success, 0)
 
-        xfer = EmbeddedFileTransfer(
-            transfer='console', name='sprout',
+        xfer = ConsoleFileTransfer(
+            name='sprout',
             exec_cmd=gappy_exec, filesystem=FatRamFileSystem(),
         )
         status, err = await xfer.get_files([RAM / 'x.bin'], tmp_path)
@@ -623,8 +624,8 @@ class TestMaxFilenameLen:
         self, tmp_path,
     ):
         fake = FakeZephyrFs()
-        xfer = EmbeddedFileTransfer(
-            transfer='console', name='sprout',
+        xfer = ConsoleFileTransfer(
+            name='sprout',
             exec_cmd=fake.exec_cmd, filesystem=FatRamFileSystem(),
             max_filename_len=12,
         )
@@ -642,8 +643,8 @@ class TestMaxFilenameLen:
     @pytest.mark.asyncio
     async def test_get_rejects_over_limit_basename(self, tmp_path):
         fake = FakeZephyrFs()
-        xfer = EmbeddedFileTransfer(
-            transfer='console', name='sprout',
+        xfer = ConsoleFileTransfer(
+            name='sprout',
             exec_cmd=fake.exec_cmd, filesystem=FatRamFileSystem(),
             max_filename_len=12,
         )
@@ -656,8 +657,8 @@ class TestMaxFilenameLen:
         """A name exactly at the limit must be accepted — off-by-one matters
         because the existing contract test uses ``contract.bin`` (12 chars)."""
         fake = FakeZephyrFs()
-        xfer = EmbeddedFileTransfer(
-            transfer='console', name='sprout',
+        xfer = ConsoleFileTransfer(
+            name='sprout',
             exec_cmd=fake.exec_cmd, filesystem=FatRamFileSystem(),
             max_filename_len=12,
         )
@@ -702,15 +703,13 @@ class TestTftp:
 
     @pytest.mark.asyncio
     async def test_get_raises_not_implemented(self, tmp_path):
-        fake = FakeZephyrFs()
-        xfer = EmbeddedFileTransfer(transfer='tftp', name='sprout', exec_cmd=fake.exec_cmd)
+        xfer = TftpFileTransfer(name='sprout')
         with pytest.raises(NotImplementedError):
             await xfer.get_files([RAM / 'f'], tmp_path)
 
     @pytest.mark.asyncio
     async def test_put_raises_not_implemented(self, tmp_path):
-        fake = FakeZephyrFs()
-        xfer = EmbeddedFileTransfer(transfer='tftp', name='sprout', exec_cmd=fake.exec_cmd)
+        xfer = TftpFileTransfer(name='sprout')
         src = tmp_path / 'f'
         src.write_bytes(b'data')
         with pytest.raises(NotImplementedError):
@@ -724,18 +723,18 @@ class TestTftp:
 class TestDecodeHexdump:
 
     def test_empty(self):
-        assert EmbeddedFileTransfer._decode_hexdump('') == b''
+        assert ConsoleFileTransfer._decode_hexdump('') == b''
 
     def test_partial_last_line(self):
         data = b'0123456789ABCDEF' + b'GHIJ'  # 16 + 4
-        assert EmbeddedFileTransfer._decode_hexdump(_hexdump(data)) == data
+        assert ConsoleFileTransfer._decode_hexdump(_hexdump(data)) == data
 
     def test_no_tab_fixed_column_fallback(self):
         """A hexdump with no tab gutter still decodes via the fixed hex field."""
         chunk = b'hello'
         hex_field = ''.join(f'{b:02X} ' for b in chunk) + '   ' * (16 - len(chunk))
         line = f'00000000  {hex_field}hello'
-        assert EmbeddedFileTransfer._decode_hexdump(line) == chunk
+        assert ConsoleFileTransfer._decode_hexdump(line) == chunk
 
     def test_gap_raises_value_error(self):
         dump = (
@@ -743,4 +742,4 @@ class TestDecodeHexdump:
             '00000020  42\tB'  # should be 00000010
         )
         with pytest.raises(ValueError, match='gap or overlap'):
-            EmbeddedFileTransfer._decode_hexdump(dump)
+            ConsoleFileTransfer._decode_hexdump(dump)

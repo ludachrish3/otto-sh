@@ -1,42 +1,6 @@
-"""
-Console file transfer for embedded hosts.
+"""Console file transfer backend for embedded hosts.
 
-:class:`~otto.host.unix_host.UnixHost`'s :class:`~otto.host.transfer.FileTransfer`
-dispatches ``scp``/``sftp``/``ftp``/``netcat`` — none of which exist on a
-bare-metal/RTOS target. :class:`EmbeddedFileTransfer` is the embedded analogue:
-it speaks only the device's own shell, and an :class:`~otto.host.embedded_host.
-EmbeddedHost` delegates ``get``/``put`` to it exactly as ``UnixHost`` delegates
-to ``FileTransfer``.
-
-Backends
---------
-The backend is a *typed, declared-per-host* choice (the host's ``transfer``
-field), never a fixed mechanism: embedded systems share no universal file
-transfer protocol, so otto standardizes on a pluggable backend instead. Adding
-a future backend (YMODEM, MCUmgr, a vendor mechanism) is then additive.
-
-- ``console`` (default) — the Zephyr ``fs`` shell. ``get`` runs ``fs read`` and
-  decodes the hexdump; ``put`` runs chunked ``fs write`` calls. Requires the
-  target firmware to enable ``CONFIG_FILE_SYSTEM_SHELL`` over a mounted
-  filesystem, and the host's ``filesystem`` field in lab data to declare a
-  real FS (not :class:`~otto.host.embedded_filesystem.NoFileSystem`). When the
-  declaration is ``none``, ``get``/``put`` short-circuit with a clear error
-  (:data:`_NO_FILESYSTEM_MSG`) before any shell command runs.
-- ``tftp`` — reserved (see :class:`~otto.host.options.TftpOptions`); the body
-  raises :class:`NotImplementedError` (deferred).
-
-Why console transfer is slow
-----------------------------
-Every byte crosses the shell as ~3 characters of hex text (``fs write``) or is
-read back inside a hexdump (``fs read``), one bounded command at a time. That
-is fine for test artifacts and configuration files — kilobytes — but it is not
-a path for firmware images; use TFTP (once implemented) for bulk data.
-
-``show_progress`` drives the same shared Rich progress bar as the Unix
-transfers: ``put`` reports genuine per-chunk progress (one event per 32-byte
-``fs write`` — finer than asyncssh's 256 KB SCP block), and ``get`` reports a
-single completion event at 100% because ``fs read`` is monolithic (per-byte GET
-progress would need chunked ``fs read <path> <off> <len>``; deferred).
+Registers ``console`` into the shared transfer registry on import.
 """
 
 import errno
@@ -46,16 +10,12 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
-from ..logger import get_otto_logger
-from ..utils import CommandStatus, Status
-from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
-from .transfer import (
-    BaseFileTransfer,
-    TransferContext,
-    TransferProgressFactory,
-    TransferProgressHandler,
-    register_transfer_backend,
-)
+from ...logger import get_otto_logger
+from ...utils import CommandStatus, Status
+from ..embedded_filesystem import EmbeddedFileSystem, NoFileSystem
+from .base import TransferContext, TransferProgressFactory, TransferProgressHandler
+from .embedded_base import EmbeddedFileTransfer
+from .registry import register_transfer_backend
 
 
 def _label_errno(retcode: int) -> str:
@@ -105,10 +65,10 @@ _WRITE_TIMEOUT = 15.0
 _RM_TIMEOUT = 10.0
 
 
-class EmbeddedFileTransfer(BaseFileTransfer):
+class ConsoleFileTransfer(EmbeddedFileTransfer):
     """File transfer for an embedded host, over the device shell only.
 
-    Subclasses :class:`~otto.host.transfer.BaseFileTransfer`, inheriting
+    Subclasses :class:`~otto.host.transfer.EmbeddedFileTransfer`, inheriting
     its ``put_files`` / ``get_files`` API (filename-length validation,
     shared Rich progress acquisition). Implements the abstract
     ``_run_put`` / ``_run_get`` against the device's ``fs`` shell. The
@@ -116,36 +76,30 @@ class EmbeddedFileTransfer(BaseFileTransfer):
     testable against a fake shell with no real connection.
     """
 
-    host_families = frozenset({"embedded"})
+    # Narrow the inherited _exec_cmd type: console transfer always requires
+    # a live exec callable, never None.
+    _exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]]
 
     def __init__(
         self,
-        transfer: str,
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
         filesystem: EmbeddedFileSystem | None = None,
         max_filename_len: int = 255,
+        transfer: str | None = None,
     ) -> None:
-        super().__init__(name=name, max_filename_len=max_filename_len)
-        self.transfer = transfer
-        self._exec_cmd = exec_cmd
-        # The host's on-device filesystem variant. Source of truth for the
-        # mount command, the no-FS short-circuit (``supports_transfer``),
-        # and the command-formation hooks (``read_command`` etc.) that this
-        # class drives. ``None`` is accepted for backward compatibility with
-        # callers that pre-date the EmbeddedFileSystem refactor and is
-        # treated as :class:`NoFileSystem`.
-        self._filesystem: EmbeddedFileSystem = filesystem or NoFileSystem()
-        # ``_mount_done`` makes ``_ensure_mounted`` idempotent within a host's
-        # lifetime; a "already mounted" error from the real ``fs mount`` is
-        # silently accepted by ``_ensure_mounted``.
-        self._mount_done = False
+        super().__init__(
+            name=name,
+            exec_cmd=exec_cmd,
+            filesystem=filesystem,
+            max_filename_len=max_filename_len,
+            transfer=transfer,
+        )
 
     @classmethod
-    def create(cls, ctx: "TransferContext") -> "EmbeddedFileTransfer":
+    def create(cls, ctx: "TransferContext") -> "ConsoleFileTransfer":
         assert ctx.exec_cmd is not None
         return cls(
-            transfer=ctx.transfer,
             name=ctx.host_name,
             exec_cmd=ctx.exec_cmd,
             filesystem=ctx.filesystem,
@@ -168,10 +122,6 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         so per-byte progress isn't feasible; the handler is invoked once at
         completion to satisfy the "files complete to 100%" contract.
         """
-        if self.transfer == 'tftp':
-            raise NotImplementedError(
-                "TFTP transfer for embedded hosts is not yet implemented"
-            ) from None
         if not self._filesystem.supports_transfer:
             return Status.Error, _NO_FILESYSTEM_MSG
         await self._ensure_mounted()
@@ -195,10 +145,6 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         progress — much finer than asyncssh's 256 KB SCP block, fitting the
         slowness of console transfer.
         """
-        if self.transfer == 'tftp':
-            raise NotImplementedError(
-                "TFTP transfer for embedded hosts is not yet implemented"
-            ) from None
         if not self._filesystem.supports_transfer:
             return Status.Error, _NO_FILESYSTEM_MSG
         await self._ensure_mounted()
@@ -404,15 +350,4 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         return bytes(out)
 
 
-def _register_builtin_embedded_transfers() -> None:
-    """Register the embedded transfer protocols into the shared transfer
-    registry (transfer.py ``_TRANSFER_BACKENDS``) — one namespace for all
-    families. ``tftp`` is reserved (raises NotImplementedError on use) but
-    registered so the namespace welcomes it as a single cross-family entry
-    once implemented.
-    """
-    register_transfer_backend("console", EmbeddedFileTransfer)
-    register_transfer_backend("tftp", EmbeddedFileTransfer)
-
-
-_register_builtin_embedded_transfers()
+register_transfer_backend("console", ConsoleFileTransfer)

@@ -566,7 +566,7 @@ class TestNotConnectedFileTransfer:
         with patch.object(h, '_get_local_ip', return_value='127.0.0.1'):
             with patch.object(h, 'oneshot', new_callable=AsyncMock,
                               side_effect=mock_oneshot):
-                with patch('otto.host.transfer.asyncio.start_server',
+                with patch('otto.host.transfer.nc.asyncio.start_server',
                            side_effect=fake_start_server):
                     status, _ = await h.get([Path('/remote/file.txt')], Path('/tmp'))
         assert status == Status.Error
@@ -580,7 +580,7 @@ class TestNotConnectedFileTransfer:
         src.write_bytes(b'data')
         with patch.object(h, 'oneshot', new_callable=AsyncMock,
                           side_effect=RuntimeError("not connected")):
-            with patch('otto.host.transfer._connect_with_retry',
+            with patch('otto.host.transfer.nc._connect_with_retry',
                        AsyncMock(side_effect=ConnectionError("nc listener not ready"))):
                 status, _ = await h.put([src], Path('/tmp'))
         assert status == Status.Error
@@ -601,7 +601,7 @@ class TestSshFileTransfer:
     @pytest.mark.asyncio
     async def test_scp_get_success(self, host: UnixHost):
         host._connections._ssh_conn = self._mock_ssh_conn()
-        with patch('otto.host.transfer.asyncssh.scp', new_callable=AsyncMock) as mock_scp:
+        with patch('otto.host.transfer.scp.asyncssh.scp', new_callable=AsyncMock) as mock_scp:
             status, msg = await host.get([Path('/etc/hostname')], Path('/tmp'), show_progress=False)
         assert status == Status.Success
         assert msg == ''
@@ -612,7 +612,7 @@ class TestSshFileTransfer:
         src = tmp_path / 'upload.txt'
         src.write_text('hello')
         host._connections._ssh_conn = self._mock_ssh_conn()
-        with patch('otto.host.transfer.asyncssh.scp', new_callable=AsyncMock) as mock_scp:
+        with patch('otto.host.transfer.scp.asyncssh.scp', new_callable=AsyncMock) as mock_scp:
             status, msg = await host.put([src], Path('/tmp'), show_progress=False)
         assert status == Status.Success
         mock_scp.assert_called_once()
@@ -719,7 +719,7 @@ class TestNcFileTransfer:
 
         with patch.object(h, 'oneshot', AsyncMock(side_effect=mock_oneshot)) as mock_os:
             with patch.object(h, '_get_local_ip', return_value='127.0.0.1'):
-                with patch('otto.host.transfer.asyncio.start_server',
+                with patch('otto.host.transfer.nc.asyncio.start_server',
                            side_effect=fake_start_server):
                     status, msg = await h.get(
                         [Path('/remote/file.txt')], dest, show_progress=False
@@ -768,7 +768,7 @@ class TestNcFileTransfer:
         mock_reader = AsyncMock(spec=asyncio.StreamReader)
 
         with patch.object(h, 'oneshot', AsyncMock(side_effect=mock_oneshot)):
-            with patch('otto.host.transfer._connect_with_retry',
+            with patch('otto.host.transfer.nc._connect_with_retry',
                        AsyncMock(return_value=(mock_reader, mock_writer))):
                 status, msg = await h.put([src], Path('/tmp'), show_progress=False)
 
@@ -816,7 +816,7 @@ class TestNcFileTransfer:
 
         assert h.log is True
         with patch.object(h, 'oneshot', AsyncMock(side_effect=oneshot_capturing_log)):
-            with patch('otto.host.transfer._connect_with_retry',
+            with patch('otto.host.transfer.nc._connect_with_retry',
                        AsyncMock(return_value=(mock_reader, mock_writer))):
                 status, _ = await h.put([src], Path('/tmp'), show_progress=False)
 
@@ -863,7 +863,7 @@ class TestNcFileTransfer:
         assert h.log is True
         with patch.object(h, 'oneshot', AsyncMock(side_effect=oneshot_capturing_log)):
             with patch.object(h, '_get_local_ip', return_value='127.0.0.1'):
-                with patch('otto.host.transfer.asyncio.start_server',
+                with patch('otto.host.transfer.nc.asyncio.start_server',
                            side_effect=fake_start_server):
                     status, _ = await h.get(
                         [Path('/remote/file.txt')], dest, show_progress=False

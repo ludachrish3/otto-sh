@@ -26,9 +26,9 @@ def test_transfer_completer_offers_unix_protocols_only():
 
 def test_transfer_completer_surfaces_custom_unix_backend():
     from otto.host import transfer as xfer_mod
-    from otto.host.transfer import FileTransfer
+    from otto.host.transfer import NcFileTransfer
 
-    class XmodemTransfer(FileTransfer):
+    class XmodemTransfer(NcFileTransfer):
         host_families = frozenset({"unix"})
 
     saved = dict(xfer_mod._TRANSFER_BACKENDS)

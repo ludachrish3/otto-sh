@@ -10,7 +10,7 @@ from .connections import register_term_backend as register_term_backend
 from .docker_host import DockerContainerHost as DockerContainerHost
 from .embedded_host import EmbeddedHost as EmbeddedHost
 from .embedded_host import ZephyrHost as ZephyrHost
-from .embedded_transfer import EmbeddedFileTransfer as EmbeddedFileTransfer
+from .transfer import EmbeddedFileTransfer as EmbeddedFileTransfer
 from .host import Host as Host
 from .host import HostFilter as HostFilter
 from .host import RunResult as RunResult

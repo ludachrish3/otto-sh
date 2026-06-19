@@ -316,10 +316,10 @@ class TestSelectorValidation:
 
     def test_cross_family_backend_validates_on_both(self):
         from otto.host import transfer as xfer_mod
-        from otto.host.transfer import FileTransfer
+        from otto.host.transfer import UnixFileTransfer
         from otto.models.host import EmbeddedHostSpec, UnixHostSpec
 
-        class DualTransfer(FileTransfer):
+        class DualTransfer(UnixFileTransfer):
             host_families = frozenset({"unix", "embedded"})
 
         saved = dict(xfer_mod._TRANSFER_BACKENDS)

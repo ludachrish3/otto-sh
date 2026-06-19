@@ -1,339 +1,30 @@
-"""
-File transfer utilities for UnixHost.
+"""Unix/SSH-based file transfer backends (netcat) for UnixHost.
 
-Defines the canonical TransferProgressHandler callback type used across all
-transfer protocols (SCP, SFTP, FTP, netcat).  Rich (or any other progress
-reporting library) lives only in make_rich_progress_handler — changing
-Rich's API requires touching nothing else in the transfer stack.
-
-Callback signature mirrors asyncssh's progress_handler so that SCP and SFTP
-can forward it directly without any adaptation layer.
+Registers ``nc`` into the shared transfer registry on import.
 """
 
 import asyncio
-from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Callable, Coroutine
-from contextlib import asynccontextmanager, suppress
-from dataclasses import dataclass
+from collections.abc import Callable, Coroutine
+from contextlib import suppress
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import aioftp
-import asyncssh
-
-from ..console import CONSOLE
-from ..logger import get_otto_logger
-from ..utils import CommandStatus, Status
-
 if TYPE_CHECKING:
-    from .connections import ConnectionManager
-    from .embedded_filesystem import EmbeddedFileSystem
-    from .options import NcOptions, ScpOptions
-from rich.progress import (
-    BarColumn,
-    DownloadColumn,
-    Progress,
-    TaskID,
-    TextColumn,
-    TimeRemainingColumn,
-    TransferSpeedColumn,
+    from ..connections import ConnectionManager
+    from ..options import NcOptions
+
+from ...logger import get_otto_logger
+from ...utils import CommandStatus, Status
+from .base import (
+    NcListenerCheck,
+    NcPortStrategy,
+    TransferContext,
+    TransferProgressFactory,
+    _first_error,
+    validate_filename_lengths,
 )
-
-# (src_path, dst_path, bytes_done, bytes_total)
-# Mirrors asyncssh's progress_handler signature exactly.
-TransferProgressHandler = Callable[[str, str, int, int], None]
-
-# Factory that creates a fresh, isolated TransferProgressHandler per file.
-# Used for concurrent transfers so each coroutine has independent progress state.
-TransferProgressFactory = Callable[[], TransferProgressHandler]
-
-
-def make_rich_progress_handler(progress: Progress, host_name: str) -> TransferProgressHandler:
-    """Return a TransferProgressHandler that drives the given Rich Progress bar.
-
-    One task is created per source file, detected by a change in *src_path*.
-    The caller is responsible for the Progress context (entering and exiting it).
-
-    Example::
-
-        with make_transfer_progress() as progress:
-            handler = make_rich_progress_handler(progress, host_name=host.hostname)
-            status, err = await host.get(files, dest, progress_handler=handler)
-    """
-    current_src: str | None = None
-    task_id: TaskID | None = None
-
-    def handler(src: str, dst: str, bytes_done: int, bytes_total: int) -> None:
-        nonlocal current_src, task_id
-        if src != current_src:
-            current_src = src
-            description = f"[green]{host_name}[/] {Path(src).name}"
-            task_id = progress.add_task(description, total=bytes_total)
-        assert task_id is not None
-        progress.update(task_id, completed=bytes_done)
-
-    return handler
-
-
-def make_rich_progress_factory(progress: Progress, host_name: str) -> TransferProgressFactory:
-    """Return a factory that creates a fresh TransferProgressHandler per file.
-
-    Each call to the returned factory produces an independent handler with its
-    own closure state, so concurrent transfers don't share progress tracking.
-
-    Example::
-
-        with make_transfer_progress() as progress:
-            factory = make_rich_progress_factory(progress, host_name=host.name)
-            status, err = await host.put(files, dest)
-    """
-    def factory() -> TransferProgressHandler:
-        return make_rich_progress_handler(progress, host_name)
-    return factory
-
-
-def make_transfer_progress() -> Progress:
-    """Return a pre-configured Rich Progress suited for file transfers."""
-    return Progress(
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        DownloadColumn(),
-        TransferSpeedColumn(),
-        TimeRemainingColumn(elapsed_when_finished=True),
-        console=CONSOLE,
-    )
-
-
-# Rich's Live isn't meant to run multiple instances on the same console — two
-# Lives rendering simultaneously produce overlapping cursor escapes and ghost
-# rows. Concurrent host transfers (e.g. `asyncio.gather(host_a.put(...),
-# host_b.get(...))`) used to hit exactly that. Instead we share one
-# Progress across every in-flight transfer: the first caller to enter starts
-# the Live, subsequent callers just attach a task, and the last caller to
-# leave stops the Live and drops the singleton. Single-threaded asyncio makes
-# the naive ref-count safe without a lock.
-_shared_progress: Progress | None = None
-_shared_progress_refs: int = 0
-
-
-@asynccontextmanager
-async def _acquire_shared_progress() -> AsyncIterator[Progress]:
-    """Yield a process-wide Progress, creating/destroying the Live on demand."""
-    global _shared_progress, _shared_progress_refs
-    if _shared_progress is None:
-        _shared_progress = make_transfer_progress()
-        _shared_progress.start()
-    progress = _shared_progress
-    _shared_progress_refs += 1
-    try:
-        yield progress
-    finally:
-        _shared_progress_refs -= 1
-        if _shared_progress_refs == 0:
-            progress.stop()
-            _shared_progress = None
-
-
-@dataclass(frozen=True)
-class TransferContext:
-    """Construction inputs a host provides to build its transfer backend via
-    :meth:`BaseFileTransfer.create`. The frozen public seam for custom transfer
-    backends. Carries the union of what any family's built-ins receive at their
-    call sites; a unix backend reads the unix fields, an embedded backend the
-    embedded ones. Selector validation (host-family applicability) runs before
-    construction, so a backend never sees a ctx missing the fields it needs.
-    """
-
-    transfer: str
-    host_name: str
-    max_filename_len: int = 255
-    exec_cmd: "Callable[..., Coroutine[Any, Any, CommandStatus]] | None" = None
-    # unix-family fields
-    connections: "ConnectionManager | None" = None
-    nc_options: "NcOptions | None" = None
-    scp_options: "ScpOptions | None" = None
-    get_local_ip: "Callable[[], str] | None" = None
-    # embedded-family fields
-    filesystem: "EmbeddedFileSystem | None" = None
-
-
-def validate_filename_lengths(
-    files: list[Path], limit: int, host_name: str,
-) -> tuple[Status, str]:
-    """Reject files whose basename exceeds the host's filesystem cap.
-
-    Shared by :class:`FileTransfer` (Unix) and :class:`~otto.host.
-    embedded_transfer.EmbeddedFileTransfer` (embedded) so every backend
-    surfaces the same self-explaining error. Without this guard the
-    failure modes are:
-
-    - Unix SCP/SFTP/FTP: server returns ``File name too long`` (errno 36),
-      mid-transfer, after the local file is already read.
-    - Embedded FAT (8.3, no LFN) or LittleFS over ``NAME_MAX``: device
-      fails ``fs_open`` with ``-ENOENT``, giving no hint that the *name*
-      was the problem.
-
-    Returns ``(Status.Success, '')`` when every basename fits.
-    """
-    for path in files:
-        name = path.name
-        if len(name) > limit:
-            return Status.Error, (
-                f"filename {name!r} ({len(name)} chars) exceeds the "
-                f"{limit}-character basename limit for host "
-                f"{host_name!r}. The target filesystem cannot open longer "
-                f"names — rename the file or raise the firmware/filesystem "
-                f"limit (``CONFIG_FS_FATFS_MAX_LFN`` for FAT, "
-                f"``CONFIG_FS_LITTLEFS_NAME_MAX`` for LittleFS; ``NAME_MAX`` "
-                f"on POSIX)."
-            )
-    return Status.Success, ''
-
-
-class BaseFileTransfer(ABC):
-    """Shared API + progress plumbing for any file-transfer backend.
-
-    The public ``put_files`` / ``get_files`` surface (filename-length
-    validation, shared Rich progress acquisition) is owned by this base.
-    Concrete backends (Unix's :class:`FileTransfer`, embedded's
-    :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`, and any
-    future ones such as TFTP) implement two abstract methods —
-    ``_run_put`` and ``_run_get`` — both of which receive a
-    :data:`TransferProgressFactory` and are responsible for invoking it
-    at least once per source file, terminating with
-    ``bytes_done == bytes_total`` to mark completion.
-
-    The progress-bar capability is enforced at the *type system* level:
-    ``abc.abstractmethod`` refuses to instantiate a subclass that omits
-    either method, so a new backend cannot be defined without supplying a
-    way to report progress. The runtime contract test
-    (``TestTransferProgressContract``) verifies the factory is actually
-    invoked, not just that the methods exist.
-    """
-
-    host_families: frozenset[str] = frozenset()
-    """Host families this backend serves: a subset of ``{'unix', 'embedded'}``.
-    Subclasses declare it; the spec field_validator rejects a backend on a host
-    of the wrong family. A backend with an empty set can never validate and is
-    rejected at registration."""
-
-    @classmethod
-    def create(cls, ctx: "TransferContext") -> "BaseFileTransfer":
-        """Build a transfer backend from a :class:`TransferContext`.
-
-        The uniform construction seam (WS#4). Concrete backends override this to
-        run their exact construction against the ctx fields they need. Not an
-        ``abstractmethod`` deliberately: only registered built-ins are ever
-        constructed through ``create``, and test doubles that subclass
-        ``BaseFileTransfer`` only to exercise the progress contract must not be
-        forced to implement it.
-        """
-        raise NotImplementedError(
-            f"{cls.__name__} does not implement create(); a registered transfer "
-            f"backend must override create(cls, ctx)."
-        )
-
-    def __init__(self, name: str, max_filename_len: int = 255) -> None:
-        self._name = name
-        self._max_filename_len = max_filename_len
-
-    async def put_files(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        show_progress: bool = True,
-    ) -> tuple[Status, str]:
-        status, err = validate_filename_lengths(
-            src_files, self._max_filename_len, self._name,
-        )
-        if not status.is_ok:
-            return status, err
-        if not show_progress:
-            return await self._run_put(src_files, dest_dir, None)
-        async with _acquire_shared_progress() as progress:
-            return await self._run_put(
-                src_files, dest_dir,
-                make_rich_progress_factory(progress, self._name),
-            )
-
-    async def get_files(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        show_progress: bool = True,
-    ) -> tuple[Status, str]:
-        status, err = validate_filename_lengths(
-            src_files, self._max_filename_len, self._name,
-        )
-        if not status.is_ok:
-            return status, err
-        if not show_progress:
-            return await self._run_get(src_files, dest_dir, None)
-        async with _acquire_shared_progress() as progress:
-            return await self._run_get(
-                src_files, dest_dir,
-                make_rich_progress_factory(progress, self._name),
-            )
-
-    @abstractmethod
-    async def _run_put(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        progress_factory: 'TransferProgressFactory | None',
-    ) -> tuple[Status, str]:
-        """Backend-specific put implementation.
-
-        For each src file the implementation must call
-        ``progress_factory()`` (if not ``None``) to obtain a fresh
-        :data:`TransferProgressHandler`, then invoke that handler as bytes
-        complete — at minimum once with ``bytes_done == bytes_total`` so
-        the file's progress bar reaches 100%.
-        """
-
-    @abstractmethod
-    async def _run_get(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        progress_factory: 'TransferProgressFactory | None',
-    ) -> tuple[Status, str]:
-        """Backend-specific get implementation. Same progress contract as
-        :meth:`_run_put`.
-        """
-
-
-NcPortStrategy = Literal['auto', 'ss', 'netstat', 'python', 'proc', 'custom']
-"""Strategy for finding free ports on the remote host for netcat transfers.
-
-Available strategies:
-
-- ``'auto'`` (default) — try each built-in strategy in order (ss → netstat →
-  python → proc) and cache the first one that succeeds.
-- ``'ss'`` — parse ``ss -tln`` output to find unused ports.
-- ``'netstat'`` — parse ``netstat -tln`` output (fallback for hosts without ss).
-- ``'python'`` — bind a socket to port 0 via a ``python``/``python3`` one-liner
-  and let the OS assign a free port.
-- ``'proc'`` — read ``/proc/net/tcp`` directly (Linux-only, always available as
-  a last resort).
-- ``'custom'`` — run the shell command specified in ``nc_port_cmd``; the command
-  must print a free port number to stdout.
-"""
-
-NcListenerCheck = Literal['auto', 'ss', 'netstat', 'proc', 'custom']
-"""Strategy for checking if a remote nc listener is ready.
-
-Available strategies:
-
-- ``'auto'`` (default) — probe for ss, then netstat, falling back to proc.
-  The first tool found is cached and reused for subsequent checks.
-- ``'ss'`` — check for a LISTEN socket via ``ss -tln sport = :<port>``.
-- ``'netstat'`` — grep ``netstat -tln`` output for the port.
-- ``'proc'`` — scan ``/proc/net/tcp`` for LISTEN state (0A) on the port
-  (Linux-only, always available as a last resort).
-- ``'custom'`` — run the shell command specified in ``nc_listener_cmd`` with a
-  ``{port}`` placeholder. Must exit 0 when the port is listening.
-"""
+from .registry import register_transfer_backend
+from .unix_base import UnixFileTransfer
 
 _NC_BLOCK_SIZE = 8192
 
@@ -455,37 +146,16 @@ async def _connect_with_retry(
             await asyncio.sleep(retry_interval)
 
 
-async def _ftp_size(ftp_conn: aioftp.Client, path: str) -> int:
-    """Return remote file size via the SIZE command, or 0 if unsupported.
-
-    Avoids `aioftp.Client.stat()`, whose MLST→LIST fallback leaks a passive
-    StreamWriter on servers that 500 MLSD (e.g. vsftpd).
-    """
-    try:
-        _code, info = await ftp_conn.command(f"SIZE {path}", "213")
-        return int(info[0].strip()) if info else 0
-    except Exception:
-        return 0
-
-
-def _make_sftp_progress(
-    handler: TransferProgressHandler,
-) -> Callable[[bytes, bytes, int, int], None]:
-    """Wrap Otto's str-path TransferProgressHandler into asyncssh's bytes-path type."""
-    def adapted(src: bytes, dst: bytes, done: int, total: int) -> None:
-        handler(src.decode(), dst.decode(), done, total)
-    return adapted
-
-
-class FileTransfer(BaseFileTransfer):
-    """Handles all file-transfer protocols (SCP, SFTP, FTP, netcat) for a UnixHost.
+class NcFileTransfer(UnixFileTransfer):
+    """Handles netcat file transfers for a UnixHost.
 
     Receives injectable callables for open_session and oneshot so it can be tested
     without real connections.
 
-    Inherits ``put_files`` / ``get_files`` from :class:`BaseFileTransfer`;
-    implements the abstract ``_run_put`` / ``_run_get`` as protocol dispatch
-    on ``self.transfer``.
+    Inherits ``put_files`` / ``get_files`` from :class:`BaseFileTransfer` and
+    unix scaffolding (``_connections``, ``_exec_cmd``, ``_warmup_for_transfer``)
+    from :class:`UnixFileTransfer`; implements the abstract ``_run_put`` /
+    ``_run_get`` as direct calls to ``_put_files_nc`` / ``_get_files_nc``.
     """
 
     host_families = frozenset({"unix"})
@@ -496,18 +166,19 @@ class FileTransfer(BaseFileTransfer):
         name: str,
         transfer: str,
         nc_options: 'NcOptions',
-        scp_options: 'ScpOptions',
         get_local_ip: Callable[[], str],
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
         max_filename_len: int = 255,
     ) -> None:
-        super().__init__(name=name, max_filename_len=max_filename_len)
-        self._connections = connections
+        super().__init__(
+            connections=connections,
+            name=name,
+            exec_cmd=exec_cmd,
+            max_filename_len=max_filename_len,
+        )
         self.transfer = transfer
         self._nc_options = nc_options
-        self._scp_options = scp_options
         self._get_local_ip = get_local_ip
-        self._exec_cmd = exec_cmd
         self._resolved_port_strategy: NcPortStrategy | None = None
         self._resolved_listener_check: NcListenerCheck | None = None
         self._reserved_ports: set[int] = set()
@@ -524,26 +195,18 @@ class FileTransfer(BaseFileTransfer):
         # Serializes concurrent `prepare()` calls so the compound strategy
         # probe runs exactly once per host lifetime.
         self._prepare_lock = asyncio.Lock()
-        # Serializes all FTP ops on the shared aioftp.Client. The client uses
-        # one control connection with one data channel per transfer; concurrent
-        # callers stomp on each other's STOR/RETR exchanges, surfacing as
-        # "Connect first" or stuck data channels. FTP is inherently sequential
-        # at the protocol layer, so this lock just enforces that.
-        self._ftp_lock = asyncio.Lock()
 
     @classmethod
-    def create(cls, ctx: "TransferContext") -> "FileTransfer":
+    def create(cls, ctx: "TransferContext") -> "NcFileTransfer":
         assert ctx.connections is not None
         assert ctx.exec_cmd is not None
         assert ctx.get_local_ip is not None
         assert ctx.nc_options is not None
-        assert ctx.scp_options is not None
         return cls(
             connections=ctx.connections,
             name=ctx.host_name,
             transfer=ctx.transfer,
             nc_options=ctx.nc_options,
-            scp_options=ctx.scp_options,
             get_local_ip=ctx.get_local_ip,
             exec_cmd=ctx.exec_cmd,
             max_filename_len=ctx.max_filename_len,
@@ -588,17 +251,7 @@ class FileTransfer(BaseFileTransfer):
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
-        match self.transfer:
-            case 'scp':
-                return await self._get_files_scp(src_files, dest_dir, progress_factory)
-            case 'sftp':
-                return await self._get_files_sftp(src_files, dest_dir, progress_factory)
-            case 'ftp':
-                return await self._get_files_ftp(src_files, dest_dir, progress_factory)
-            case 'nc':
-                return await self._get_files_nc(src_files, dest_dir, progress_factory)
-            case _:
-                raise ValueError(f'{self._name}: unsupported file_transfer "{self.transfer}"')
+        return await self._get_files_nc(src_files, dest_dir, progress_factory)
 
     async def _run_put(
         self,
@@ -606,195 +259,7 @@ class FileTransfer(BaseFileTransfer):
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
     ) -> tuple[Status, str]:
-        match self.transfer:
-            case 'scp':
-                return await self._put_files_scp(src_files, dest_dir, progress_factory)
-            case 'sftp':
-                return await self._put_files_sftp(src_files, dest_dir, progress_factory)
-            case 'ftp':
-                return await self._put_files_ftp(src_files, dest_dir, progress_factory)
-            case 'nc':
-                return await self._put_files_nc(src_files, dest_dir, progress_factory)
-            case _:
-                raise ValueError(f'{self._name}: unsupported file_transfer "{self.transfer}"')
-
-    # ------------------------------------------------------------------
-    # SCP
-    # ------------------------------------------------------------------
-
-    async def _get_files_scp(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
-        ssh_conn = await self._connections.ssh()
-
-        async def _get_one(src: Path) -> tuple[Status, str]:
-            _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
-            _logger.debug(f"{self._name}: SCP get {src} -> {dest_dir}")
-            await asyncssh.scp(
-                (ssh_conn, str(src)),
-                dest_dir,
-                progress_handler=_progress,
-                **self._scp_options._kwargs(),
-            )
-            return Status.Success, ''
-
-        results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_get_one(src) for src in src_files), return_exceptions=True
-        )
-        return _first_error(results)
-
-    async def _put_files_scp(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
-        ssh_conn = await self._connections.ssh()
-
-        async def _put_one(src: Path) -> tuple[Status, str]:
-            _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
-            _logger.debug(f"{self._name}: SCP put {src} -> {dest_dir}")
-            await asyncssh.scp(
-                str(src),
-                (ssh_conn, str(dest_dir)),
-                progress_handler=_progress,
-                **self._scp_options._kwargs(),
-            )
-            return Status.Success, ''
-
-        results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_put_one(src) for src in src_files), return_exceptions=True
-        )
-        return _first_error(results)
-
-    # ------------------------------------------------------------------
-    # SFTP
-    # ------------------------------------------------------------------
-
-    async def _get_files_sftp(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
-        sftp_conn = await self._connections.sftp()
-
-        async def _get_one(src: Path) -> tuple[Status, str]:
-            _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
-            _logger.debug(f"{self._name}: SFTP get {src} -> {dest_dir}")
-            await sftp_conn.get(
-                str(src),
-                str(dest_dir / src.name),
-                progress_handler=_progress,
-            )
-            return Status.Success, ''
-
-        results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_get_one(src) for src in src_files), return_exceptions=True
-        )
-        return _first_error(results)
-
-    async def _put_files_sftp(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
-        sftp_conn = await self._connections.sftp()
-
-        async def _put_one(src: Path) -> tuple[Status, str]:
-            _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
-            _logger.debug(f"{self._name}: SFTP put {src} -> {dest_dir}")
-            await sftp_conn.put(
-                str(src),
-                str(dest_dir / src.name),
-                progress_handler=_progress,
-            )
-            return Status.Success, ''
-
-        results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
-            *(_put_one(src) for src in src_files), return_exceptions=True
-        )
-        return _first_error(results)
-
-    # ------------------------------------------------------------------
-    # FTP
-    # ------------------------------------------------------------------
-
-    async def _get_files_ftp(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
-        # FTP transfers are sequential: aioftp.Client uses a single control
-        # connection with one data channel per transfer, so concurrent ops on
-        # the same client are not supported.  _ftp_lock serializes external
-        # callers so concurrent host.get() invocations queue rather than
-        # collide on the shared client.
-        async with self._ftp_lock:
-            ftp_conn = await self._connections.ftp()
-            try:
-                for src in src_files:
-                    dst = dest_dir / src.name
-                    _logger.debug(f"{self._name}: FTP get {src} -> {dst}")
-                    if progress_factory is None:
-                        await ftp_conn.download(str(src), str(dst))
-                    else:
-                        handler = progress_factory()
-                        # Use SIZE rather than aioftp's `stat()`: stat() falls back
-                        # to LIST when MLST is unsupported (e.g. vsftpd returns 500),
-                        # but `Client.get_stream` opens the passive data connection
-                        # *before* sending MLSD — when MLSD then 500s, the suppressed
-                        # StatusCodeError leaves the data StreamWriter unreferenced.
-                        # Python 3.11+ surfaces that as a ResourceWarning that pytest's
-                        # unraisable plugin escalates into a test failure.
-                        total = await _ftp_size(ftp_conn, str(src))
-                        bytes_done = 0
-                        async with ftp_conn.download_stream(str(src)) as stream:
-                            with open(dst, 'wb') as f:
-                                async for block in stream.iter_by_block():
-                                    f.write(block)
-                                    bytes_done += len(block)
-                                    handler(str(src), str(dst), bytes_done, total)
-                return Status.Success, ''
-            except Exception as e:
-                return Status.Error, str(e)
-
-    async def _put_files_ftp(
-        self,
-        src_files: list[Path],
-        dest_dir: Path,
-        progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
-        # Sequential for the same reason as _get_files_ftp (single data channel).
-        async with self._ftp_lock:
-            ftp_conn = await self._connections.ftp()
-            try:
-                for src in src_files:
-                    dst = dest_dir / src.name
-                    _logger.debug(f"{self._name}: FTP put {src} -> {dst}")
-                    if progress_factory is None:
-                        await ftp_conn.upload(str(src), str(dst))
-                    else:
-                        handler = progress_factory()
-                        total = src.stat().st_size
-                        bytes_done = 0
-                        async with ftp_conn.upload_stream(str(dst)) as stream:
-                            with open(src, 'rb') as f:
-                                while True:
-                                    block = f.read(aioftp.DEFAULT_BLOCK_SIZE)
-                                    if not block:
-                                        break
-                                    await stream.write(block)
-                                    bytes_done += len(block)
-                                    handler(str(src), str(dst), bytes_done, total)
-                return Status.Success, ''
-            except Exception as e:
-                return Status.Error, str(e)
+        return await self._put_files_nc(src_files, dest_dir, progress_factory)
 
     # ------------------------------------------------------------------
     # Netcat
@@ -857,29 +322,6 @@ class FileTransfer(BaseFileTransfer):
                     f"'{listener_choice}' via probe"
                 )
 
-    async def _warmup_for_transfer(self, file_count: int) -> None:
-        """Probe strategies and pre-open exec sessions for the upcoming nc
-        listeners — all concurrently.
-
-        Without this, the first transfer on a cold telnet host pays its
-        handshakes serially: strategy-probe → (per-file) exec-session-open.
-        By firing them together we collapse wall-clock cost from ~N
-        handshakes to ~max(handshakes).
-
-        `file_count` sessions are pre-opened on telnet so each concurrent
-        `nc -l` can pull a warm session from the pool. On SSH the exec path
-        uses channels over the live connection, so no pool warming is needed
-        and we just run `prepare()`.
-
-        Safe to call multiple times; `prepare()` is idempotent and extra
-        `_exec_cmd('true')` calls are cheap on warm sessions.
-        """
-        tasks: list[Coroutine[Any, Any, Any]] = [self.prepare()]
-        if self._connections.term == 'telnet':
-            for _ in range(max(file_count, 1)):
-                tasks.append(self._exec_cmd('true'))
-        await asyncio.gather(*tasks, return_exceptions=True)
-
     async def _control_run(self, cmd: str) -> CommandStatus:
         """Run an nc control-plane command on the warmest available runner.
 
@@ -888,7 +330,7 @@ class FileTransfer(BaseFileTransfer):
         oneshot exec path the ``nc -l`` listeners use.
 
         On telnet, ``_control_lock`` serializes these calls so they reuse a
-        single warm pooled session rather than fanning out and each paying a
+        single warm pooled session instead of fanning out and each paying a
         cold auth handshake. It is an economy measure, not a correctness one:
         the telnet oneshot pool already hands *concurrent* callers distinct
         sessions, so there is no shared-stdin corruption to guard against.
@@ -1496,66 +938,4 @@ class FileTransfer(BaseFileTransfer):
         return r
 
 
-def _first_error(
-    results: list[tuple[Status, str] | BaseException],
-) -> tuple[Status, str]:
-    """Return the first error from a list of gather results, or (Success, '') if all passed."""
-    for result in results:
-        if isinstance(result, BaseException):
-            return Status.Error, str(result)
-        if not result[0].is_ok:
-            return result
-    return Status.Success, ''
-
-
-# Unified registry of transfer-protocol name -> backend class, spanning BOTH
-# host families. ``EmbeddedFileTransfer`` registers ``console``/``tftp`` into
-# this same dict (see embedded_transfer.py), so one namespace holds every
-# transfer protocol and a future cross-family protocol (tftp) is a single
-# entry. ``build_*`` returns the class so the host can call ``.create(ctx)``.
-_TRANSFER_BACKENDS: dict[str, type[BaseFileTransfer]] = {}
-
-
-def register_transfer_backend(name: str, cls: type[BaseFileTransfer]) -> None:
-    """Make a custom transfer backend available to lab data under *name*.
-
-    Call from an init module listed in ``.otto/settings.toml``. The backend
-    must declare a non-empty :attr:`BaseFileTransfer.host_families`; otherwise
-    it could never validate against any host and is rejected here.
-    """
-    if not cls.host_families:
-        raise ValueError(
-            f"register_transfer_backend({name!r}): cls.host_families is empty; "
-            f"a transfer backend must declare at least one host family "
-            f"(e.g. frozenset({{'unix'}}))."
-        )
-    _TRANSFER_BACKENDS[name] = cls
-
-
-def build_transfer_backend(name: str) -> type[BaseFileTransfer]:
-    """Return the transfer-backend class registered under *name*.
-
-    Raises
-    ------
-    ValueError
-        If *name* is not registered; the message lists the registered names.
-    """
-    try:
-        return _TRANSFER_BACKENDS[name]
-    except KeyError:
-        known = ", ".join(sorted(_TRANSFER_BACKENDS))
-        raise ValueError(
-            f"Unknown transfer backend {name!r}. Registered backends: {known}. "
-            f"Custom backends can be added via register_transfer_backend()."
-        ) from None
-
-
-def _register_builtin_transfer_backends() -> None:
-    """Register otto's built-in unix transfer backends through the public path.
-    Embedded's ``console``/``tftp`` register themselves in embedded_transfer.py.
-    """
-    for name in ("scp", "sftp", "ftp", "nc"):
-        register_transfer_backend(name, FileTransfer)
-
-
-_register_builtin_transfer_backends()
+register_transfer_backend("nc", NcFileTransfer)

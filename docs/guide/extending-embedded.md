@@ -148,7 +148,7 @@ truth for:
   (for filesystems Zephyr can't auto-mount via `zephyr,fstab`);
 - the **command-formation hooks** (`read_command`, `write_command`,
   `rm_command`, `trunc_command`, `ls_command`, `statvfs_command`) that
-  {class}`~otto.host.embedded_transfer.EmbeddedFileTransfer` and the embedded
+  {class}`~otto.host.transfer.EmbeddedFileTransfer` and the embedded
   monitor's disk parser drive when they talk to the device.
 
 The three built-ins — `NoFileSystem` (`none`), `FatRamFileSystem` (`fat-ram`),

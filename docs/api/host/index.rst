@@ -13,7 +13,6 @@ local and remote machines.
    localhost
    dockerhost
    transfer
-   embedded_transfer
    embedded_filesystem
    session
    connections

@@ -169,14 +169,16 @@ class TestNotImplemented:
 class TestFileTransfer:
 
     def test_console_backend_by_default(self, host: EmbeddedHost):
+        from otto.host.transfer import ConsoleFileTransfer
         assert host.transfer == 'console'
-        assert host._file_transfer.transfer == 'console'
+        assert isinstance(host._file_transfer, ConsoleFileTransfer)
 
     def test_transfer_backend_is_configurable(self):
+        from otto.host.transfer import TftpFileTransfer
         host = ZephyrHost(ip='192.0.2.1', element='sprout', log=False, transfer='tftp')
         host._connections = None  # type: ignore[assignment]  # avoid __del__ churn
         assert host.transfer == 'tftp'
-        assert host._file_transfer.transfer == 'tftp'
+        assert isinstance(host._file_transfer, TftpFileTransfer)
 
     @pytest.mark.asyncio
     async def test_get_dry_run_skips(self, host: EmbeddedHost, tmp_path):

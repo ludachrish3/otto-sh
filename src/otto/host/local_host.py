@@ -30,8 +30,8 @@ class LocalFileTransfer(BaseFileTransfer):
 
     Concrete :class:`~otto.host.transfer.BaseFileTransfer` so the ABC's
     progress contract holds uniformly across every backend in the host
-    fleet (Unix's :class:`~otto.host.transfer.FileTransfer`, embedded's
-    :class:`~otto.host.embedded_transfer.EmbeddedFileTransfer`, and this
+    fleet (Unix's :class:`~otto.host.transfer.UnixFileTransfer`, embedded's
+    :class:`~otto.host.transfer.EmbeddedFileTransfer`, and this
     one). Per-file completion is the granularity — ``shutil.copy2`` is a
     single blocking C call with no progress hook, the analogue of an
     embedded ``fs read``.

@@ -27,10 +27,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import otto.host.transfer as transfer_mod
+import otto.host.transfer.nc as transfer_mod
 from otto.host.connections import ConnectionManager
-from otto.host.options import NcOptions, ScpOptions
-from otto.host.transfer import FileTransfer
+from otto.host.options import NcOptions
+from otto.host.transfer import NcFileTransfer
 from otto.utils import CommandStatus, Status
 
 
@@ -72,12 +72,12 @@ def _make_ft(
     has_tunnel: bool = False,
     term: str = 'ssh',
     listener_timeout: float = 30.0,
-) -> FileTransfer:
+) -> NcFileTransfer:
     mock_connections = MagicMock(spec=ConnectionManager)
     mock_connections.has_tunnel = has_tunnel
     mock_connections.ip = '10.0.0.1'
     mock_connections.term = term
-    return FileTransfer(
+    return NcFileTransfer(
         connections=mock_connections,
         name='tomato',
         transfer='nc',
@@ -90,7 +90,6 @@ def _make_ft(
             listener_cmd=None,
             listener_timeout=listener_timeout,
         ),
-        scp_options=ScpOptions(),
         get_local_ip=lambda: '127.0.0.1',
         exec_cmd=exec_cmd,
     )
@@ -115,9 +114,9 @@ class TestNcPutDrain:
         ft = _make_ft(exec_cmd)
 
         with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(FileTransfer, '_wait_for_remote_listener',
+             patch.object(NcFileTransfer, '_wait_for_remote_listener',
                           new=AsyncMock(return_value=None)), \
-             patch.object(FileTransfer, '_verify_nc_dest_size',
+             patch.object(NcFileTransfer, '_verify_nc_dest_size',
                           new=AsyncMock(return_value=None)):
             status, msg = await ft._put_files_nc([src], tmp_path / 'dst')
 
@@ -163,9 +162,9 @@ class TestNcPutDrain:
             return handler
 
         with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(FileTransfer, '_wait_for_remote_listener',
+             patch.object(NcFileTransfer, '_wait_for_remote_listener',
                           new=AsyncMock(return_value=None)), \
-             patch.object(FileTransfer, '_verify_nc_dest_size',
+             patch.object(NcFileTransfer, '_verify_nc_dest_size',
                           new=AsyncMock(return_value=None)):
             status, _ = await ft._put_files_nc([src], tmp_path / 'dst', factory)
 
@@ -203,8 +202,8 @@ class TestNcPutListenerWait:
         exec_cmd = AsyncMock(return_value=_ok('9000\n'))
         ft = _make_ft(exec_cmd, has_tunnel=False)
 
-        with patch.object(FileTransfer, '_wait_for_remote_listener', new=fake_wait), \
-             patch.object(FileTransfer, '_verify_nc_dest_size',
+        with patch.object(NcFileTransfer, '_wait_for_remote_listener', new=fake_wait), \
+             patch.object(NcFileTransfer, '_verify_nc_dest_size',
                           new=AsyncMock(return_value=None)), \
              patch.object(transfer_mod, '_connect_with_retry', new=fake_connect):
             status, msg = await ft._put_files_nc([src], tmp_path / 'dst')
@@ -300,8 +299,8 @@ class TestNcPutListenerWait:
         exec_cmd = AsyncMock(return_value=_ok('9000\n'))
         ft = _make_ft(exec_cmd, has_tunnel=False)
 
-        with patch.object(FileTransfer, '_wait_for_remote_listener', new=slow_wait), \
-             patch.object(FileTransfer, '_verify_nc_dest_size',
+        with patch.object(NcFileTransfer, '_wait_for_remote_listener', new=slow_wait), \
+             patch.object(NcFileTransfer, '_verify_nc_dest_size',
                           new=AsyncMock(return_value=None)), \
              patch.object(transfer_mod, '_connect_with_retry', new=gated_connect):
             status, msg = await ft._put_files_nc([src], tmp_path / 'dst')
@@ -375,9 +374,9 @@ class TestNcPutOrphanedListener:
         ft = _make_ft(exec_cmd, listener_timeout=0.1)
 
         with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(FileTransfer, '_wait_for_remote_listener',
+             patch.object(NcFileTransfer, '_wait_for_remote_listener',
                           new=AsyncMock(return_value=None)), \
-             patch.object(FileTransfer, '_verify_nc_dest_size',
+             patch.object(NcFileTransfer, '_verify_nc_dest_size',
                           new=AsyncMock(return_value=None)):
             status, msg = await asyncio.wait_for(
                 ft._put_files_nc([src], tmp_path / 'dst'), timeout=5.0,
@@ -400,9 +399,9 @@ class TestNcPutOrphanedListener:
         ft = _make_ft(exec_cmd, listener_timeout=30.0)
 
         with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(FileTransfer, '_wait_for_remote_listener',
+             patch.object(NcFileTransfer, '_wait_for_remote_listener',
                           new=AsyncMock(return_value=None)), \
-             patch.object(FileTransfer, '_verify_nc_dest_size',
+             patch.object(NcFileTransfer, '_verify_nc_dest_size',
                           new=AsyncMock(return_value=None)):
             await ft._put_files_nc([src], tmp_path / 'dst')
 
@@ -452,7 +451,7 @@ class TestNcPutCancellation:
         # after listen_task is spawned but before any sender connects — the
         # window the fix targets.
         with patch.object(ft, '_reap_nc_listener', new=fake_reap), \
-             patch.object(FileTransfer, '_wait_for_remote_listener',
+             patch.object(NcFileTransfer, '_wait_for_remote_listener',
                           new=AsyncMock(side_effect=block_forever)):
             task = asyncio.create_task(ft._put_files_nc([src], tmp_path / 'dst'))
             await asyncio.wait_for(listener_started.wait(), timeout=2.0)
