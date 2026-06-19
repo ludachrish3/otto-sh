@@ -228,6 +228,34 @@ class TestInstructionOptions:
         assert isinstance(captured['opts'], _Opts)
         assert captured['opts'].name == 'hello'
 
+    def test_instruction_pydantic_options_reject_bad_value(self):
+        """An @options instruction surfaces a validation failure as a clean CLI
+        error (exit 2 + field name), via the same build_options helper the suite
+        path uses — confirming the instruction wiring catches typer.BadParameter.
+        """
+        import pydantic
+
+        from otto import options
+        from otto.cli import run as run_module
+
+        @options
+        class _ValOpts:
+            count: Annotated[int, typer.Option(help='positive')] = \
+                pydantic.Field(default=1, gt=0)
+
+        @instruction('_unit_test_opts_validate', options=_ValOpts)
+        async def _opts_validate(opts: _ValOpts) -> CommandStatus:
+            return CommandStatus('test', '', Status.Success, 0)
+
+        mock_logger = MagicMock()
+        with patch.object(run_module, 'logger', mock_logger):
+            result = runner.invoke(
+                run_app, ['_unit_test_opts_validate', '--count', '-5'],
+            )
+
+        assert result.exit_code == 2, result.output
+        assert 'count' in result.stderr
+
     def test_instruction_with_inherited_options(self):
         """Parent + child dataclass fields both appear as CLI options."""
         from otto.cli import run as run_module

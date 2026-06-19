@@ -363,17 +363,19 @@ with {func}`@register_suite() <otto.suite.register.register_suite>`.
 Create `tests/test_example.py`:
 
 ```python
-from dataclasses import dataclass
 from typing import Annotated
 
 import typer
+from pydantic import Field
 
+from otto import options
 from otto.suite import OttoSuite, register_suite
 
 
-@dataclass
+@options
 class _Options:
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
+    retries: Annotated[int, typer.Option(help="Connection retries (>= 0).")] = Field(default=3, ge=0)
 
 
 @register_suite()
@@ -394,6 +396,13 @@ otto --lab my_lab test TestExample
 otto --lab my_lab test TestExample --firmware 2.1
 otto test --list-suites               # see all registered suites
 ```
+
+`@options` (`from otto import options`) is a re-export of
+`pydantic.dataclasses.dataclass`: a drop-in for `@dataclass` that validates your
+fields. `otto test TestExample --retries -1` fails with a clean CLI error instead
+of being silently accepted. A plain `@dataclass` still works — validation is
+opt-in per Options class. The same `@options` classes work with
+`@instruction(options=...)` for `otto run` subcommands.
 
 ## Monitoring hosts
 

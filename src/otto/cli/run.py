@@ -15,7 +15,7 @@ from rich import print as rprint
 from rich.table import Table
 
 from ..logger import get_otto_logger
-from ..params import options_params
+from ..params import build_options, options_params
 from ..utils import (
     CommandStatus,
     async_typer_command,
@@ -203,7 +203,7 @@ def _wrap_with_options(
     async def wrapper(**kw: Any) -> Any:
         # Split kwargs: dataclass fields vs. remaining params
         opts_kw = {k: kw.pop(k) for k in list(kw) if k in opts_field_names}
-        opts_instance = opts_cls(**opts_kw)
+        opts_instance = build_options(opts_cls, opts_kw)
         kw[opts_param_name] = opts_instance
         return await func(**kw)
 

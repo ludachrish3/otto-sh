@@ -103,29 +103,37 @@ class OttoSuite(Generic[TOptions]):
 
     Inheriting repo-wide options
     ----------------------------
-    Create a shared base dataclass in your pylib and inherit from it to share
-    common options across multiple suites::
+    Create a shared base in your pylib and inherit from it to share common
+    options across multiple suites. Decorate Options classes with ``@options``
+    (``from otto import options`` — a re-export of
+    ``pydantic.dataclasses.dataclass``) to get validation for free::
 
         # pylib/my_suites/options.py
-        @dataclass
+        from otto import options
+        from pydantic import Field
+
+        @options
         class RepoOptions:
             lab_env: Annotated[str, typer.Option(
                 help="Lab environment to target.",
             )] = "staging"
 
         # tests/test_device.py
-        @dataclass
+        @options
         class _Opts(RepoOptions):                 # inherits --lab-env
-            firmware: Annotated[str, typer.Option(
-                help="Firmware version to validate.",
-            )] = "latest"
+            retries: Annotated[int, typer.Option(
+                help="Connection retries (must be >= 0).",
+            )] = Field(default=3, ge=0)
 
         @register_suite()
         class TestDevice(OttoSuite[_Opts]):
             Options = _Opts
 
-    Both ``--lab-env`` and ``--firmware`` appear in
-    ``otto test TestDevice --help``.
+    Both ``--lab-env`` and ``--retries`` appear in
+    ``otto test TestDevice --help``. ``@options`` is a drop-in for ``@dataclass``
+    that adds validation: ``--retries -1`` now fails with a clean CLI error
+    instead of being silently accepted. A plain ``@dataclass`` still works —
+    validation is simply opt-in per Options class.
 
     The *same* ``RepoOptions`` dataclass may also be passed to
     ``@instruction(options=...)`` so that ``otto run`` subcommands expose

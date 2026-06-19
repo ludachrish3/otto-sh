@@ -19,7 +19,7 @@ from typing import Any, get_type_hints
 import pytest
 import typer
 
-from ..params import options_params
+from ..params import build_options, options_params
 
 # ---------------------------------------------------------------------------
 # Module-level registry — populated by @register_suite() as test files are
@@ -81,11 +81,13 @@ def register_suite(*args: Any, **kwargs: Any):
 
     Usage::
 
+        from otto import options
+
         @register_suite()
         class TestMyDevice(OttoSuite):
             \"\"\"Run device validation tests.\"\"\"
 
-            @dataclass
+            @options
             class Options(RepoOptions):
                 firmware: str = "latest"
                 check_interfaces: bool = True
@@ -124,7 +126,7 @@ def register_suite(*args: Any, **kwargs: Any):
         def runner(**kw: Any) -> None:
             ctx = kw.pop('ctx')
             opts_instance = (
-                _opts_cls(**kw)
+                build_options(_opts_cls, kw)
                 if (_opts_cls is not None and dataclasses.is_dataclass(_opts_cls))
                 else None
             )
