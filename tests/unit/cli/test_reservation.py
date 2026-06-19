@@ -16,8 +16,10 @@ from otto.reservations import (
     ResolvedIdentity,
 )
 
-# typer.Exit is actually click.exceptions.Exit at runtime
-_Exit = click.exceptions.Exit
+# Catch what the production code raises: typer.Exit. Under typer >= 0.26 this is
+# typer's own vendored exception (typer._click.exceptions.Exit), which is NOT the
+# real click.exceptions.Exit — so catch the typer alias, not click's class.
+_Exit = typer.Exit
 
 
 def _make_ctx(meta: dict) -> typer.Context:

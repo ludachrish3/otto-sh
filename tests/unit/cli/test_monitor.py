@@ -227,10 +227,10 @@ class TestLoadHistorical:
 
     @pytest.mark.asyncio
     async def test_unsupported_extension_raises_exit(self, tmp_path):
-        import click
+        import typer
         txt_file = tmp_path / 'data.txt'
         txt_file.write_text('garbage')
-        with pytest.raises(click.exceptions.Exit):
+        with pytest.raises(typer.Exit):
             await _load_historical(txt_file)
 
     @pytest.mark.asyncio

@@ -112,8 +112,9 @@ either limit is reached first.
 
 import re
 import shutil
+from dataclasses import dataclass as _dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Optional, cast
+from typing import TYPE_CHECKING, Annotated, Any, Optional
 
 if TYPE_CHECKING:
     from ..suite.plugin import StabilityCollector
@@ -130,6 +131,33 @@ from ..suite.plugin import OttoPlugin
 from ..suite.register import _SUITE_REGISTRY, OttoOptionsPlugin
 
 logger = get_otto_logger()
+
+RUN_OPTIONS_KEY = "otto_test_run_options"
+
+
+@_dataclass(frozen=True)
+class TestRunOptions:
+    """Shared ``otto test`` run options, set by the suite_app callback and read
+    by ``run_suite``. Stored in Typer ``ctx.meta`` (shared across the whole
+    context chain by click's design) rather than ``ctx.obj`` (whose
+    parent->subcommand propagation broke under click 8.3).
+    """
+    markers: str = ""
+    iterations: int = 0
+    duration: int = 0
+    threshold: float = 100.0
+    results: str = ""
+    cov: bool = False
+    cov_dir: Optional[Path] = None
+    cov_clean: bool = True  # matches the --cov-clean CLI default
+    cov_report: bool = False
+    cov_report_dir: Optional[Path] = None
+    overwrite_cov_report_dir: bool = False
+    project_name: str = "Coverage Report"
+    monitor: bool = False
+    monitor_interval: float = 5.0
+    monitor_output: Optional[Path] = None
+    monitor_hosts: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -153,49 +181,38 @@ def run_suite(
     suite_class: type,
     suite_file: str,
     opts_instance: object | None,
+    ctx: typer.Context,
 ) -> None:
     """Execute a registered suite via pytest.main().
 
     Runner options (``--markers``, ``--iterations``, ``--duration``,
     ``--threshold``, ``--results``) and coverage options (``--cov`` /
-    ``--cov-clean``) are read from the parent Typer context set by the
-    ``otto test`` callback.
+    ``--cov-clean``) are read from the ``TestRunOptions`` the ``otto test``
+    callback stored in ``ctx.meta[RUN_OPTIONS_KEY]``. The context is passed in
+    by the suite runner (Typer injects it), so this function never reaches into
+    a global context stack.
     """
     import asyncio
 
-    # Read runner/coverage flags from the parent Typer context.
-    # Walk up the context chain (child → parent) to find the dict set by the
-    # ``otto test`` callback; ``find_root()`` would overshoot to the top-level
-    # ``otto`` app which does not carry these flags.
-    import click
-    parent_opts: dict[str, object] = {}
-    try:
-        ctx = click.get_current_context(silent=True)
-        while ctx is not None:
-            if isinstance(ctx.obj, dict) and 'cov' in ctx.obj:
-                parent_opts = ctx.obj
-                break
-            ctx = ctx.parent
-    except RuntimeError:
-        pass
-    markers    = str(parent_opts.get('markers', ''))
-    iterations = int(cast(int, parent_opts.get('iterations', 0)))
-    duration   = int(cast(int, parent_opts.get('duration', 0)))
-    threshold  = float(cast(float, parent_opts.get('threshold', 100.0)))
-    results    = str(parent_opts.get('results', ''))
-    cov: bool = bool(parent_opts.get('cov', False))
-    cov_dir_override: Optional[Path] = cast(Optional[Path], parent_opts.get('cov_dir'))
-    cov_clean: bool = bool(parent_opts.get('cov_clean', False))
-    cov_report: bool = bool(parent_opts.get('cov_report', False))
-    cov_report_dir: Optional[Path] = cast(Optional[Path],
-                                          parent_opts.get('cov_report_dir'))
-    overwrite_cov_report_dir: bool = bool(
-        parent_opts.get('overwrite_cov_report_dir', False))
-    project_name: str = str(parent_opts.get('project_name', 'Coverage Report'))
-    monitor: bool = bool(parent_opts.get('monitor', False))
-    monitor_interval: float = float(cast(float, parent_opts.get('monitor_interval', 5.0)))
-    monitor_output: Optional[Path] = cast(Optional[Path], parent_opts.get('monitor_output'))
-    monitor_hosts: Optional[str] = cast(Optional[str], parent_opts.get('monitor_hosts'))
+    stored = ctx.meta.get(RUN_OPTIONS_KEY)
+    opts = stored if isinstance(stored, TestRunOptions) else TestRunOptions()
+
+    markers = opts.markers
+    iterations = opts.iterations
+    duration = opts.duration
+    threshold = opts.threshold
+    results = opts.results
+    cov = opts.cov
+    cov_dir_override = opts.cov_dir
+    cov_clean = opts.cov_clean
+    cov_report = opts.cov_report
+    cov_report_dir = opts.cov_report_dir
+    overwrite_cov_report_dir = opts.overwrite_cov_report_dir
+    project_name = opts.project_name
+    monitor = opts.monitor
+    monitor_interval = opts.monitor_interval
+    monitor_output = opts.monitor_output
+    monitor_hosts = opts.monitor_hosts
 
     repos = get_repos()
     sut_test_dirs = [path for repo in repos for path in repo.tests]
@@ -468,7 +485,6 @@ def main(
 ) -> None:
     if ctx.resilient_parsing:
         return
-    ctx.ensure_object(dict)
 
     if cov_dir is not None:
         _prepare_empty_dir(cov_dir, overwrite=overwrite_cov_dir,
@@ -479,23 +495,26 @@ def main(
         _prepare_empty_dir(cov_report_dir, overwrite=overwrite_cov_report_dir,
                            flag_name='--cov-report-dir')
 
-    ctx.obj['markers'] = markers
-    ctx.obj['iterations'] = iterations
-    ctx.obj['duration'] = duration
-    ctx.obj['threshold'] = threshold
-    ctx.obj['results'] = results
-    ctx.obj['cov'] = cov or cov_dir is not None or cov_report_effective
-    ctx.obj['cov_dir'] = cov_dir
-    ctx.obj['cov_clean'] = cov_clean
-    ctx.obj['cov_report'] = cov_report_effective
-    ctx.obj['cov_report_dir'] = cov_report_dir
-    ctx.obj['overwrite_cov_report_dir'] = overwrite_cov_report_dir
-    ctx.obj['project_name'] = project_name
     monitor_effective = monitor or monitor_output is not None or monitor_hosts is not None
-    ctx.obj['monitor'] = monitor_effective
-    ctx.obj['monitor_interval'] = monitor_interval
-    ctx.obj['monitor_output'] = monitor_output
-    ctx.obj['monitor_hosts'] = monitor_hosts
+
+    ctx.meta[RUN_OPTIONS_KEY] = TestRunOptions(
+        markers=markers,
+        iterations=iterations,
+        duration=duration,
+        threshold=threshold,
+        results=results,
+        cov=cov or cov_dir is not None or cov_report_effective,
+        cov_dir=cov_dir,
+        cov_clean=cov_clean,
+        cov_report=cov_report_effective,
+        cov_report_dir=cov_report_dir,
+        overwrite_cov_report_dir=overwrite_cov_report_dir,
+        project_name=project_name,
+        monitor=monitor_effective,
+        monitor_interval=monitor_interval,
+        monitor_output=monitor_output,
+        monitor_hosts=monitor_hosts,
+    )
     if ctx.invoked_subcommand is not None:
         logger.create_output_dir('test', ctx.invoked_subcommand)
         from ..reservations import gate

@@ -103,8 +103,16 @@ def register_suite(*args: Any, **kwargs: Any):
         opts_cls   = getattr(suite_class, 'Options', None)
         suite_file = inspect.getfile(suite_class)
 
-        # Build the full parameter list for the Typer command
-        params: list[inspect.Parameter] = []
+        # Build the full parameter list for the Typer command. The leading
+        # ``ctx`` is injected by Typer (recognised by its ``typer.Context``
+        # annotation — not exposed as a CLI option) so the runner can read the
+        # shared run options the ``otto test`` callback stored in ``ctx.meta``.
+        params: list[inspect.Parameter] = [
+            inspect.Parameter(
+                'ctx', inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=typer.Context,
+            )
+        ]
         if opts_cls is not None and dataclasses.is_dataclass(opts_cls):
             params.extend(_options_params(opts_cls))
 
@@ -114,6 +122,7 @@ def register_suite(*args: Any, **kwargs: Any):
         _suite_file = suite_file
 
         def runner(**kw: Any) -> None:
+            ctx = kw.pop('ctx')
             opts_instance = (
                 _opts_cls(**kw)
                 if (_opts_cls is not None and dataclasses.is_dataclass(_opts_cls))
@@ -122,7 +131,7 @@ def register_suite(*args: Any, **kwargs: Any):
 
             # Lazy import — cli/test.py is fully loaded by the time any command runs
             from ..cli.test import run_suite  # noqa: PLC0415
-            run_suite(_suite_cls, _suite_file, opts_instance)
+            run_suite(_suite_cls, _suite_file, opts_instance, ctx)
 
         setattr(runner, '__signature__', inspect.Signature(params))
         runner.__name__ = suite_class.__name__

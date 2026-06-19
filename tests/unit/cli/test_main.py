@@ -114,7 +114,8 @@ class TestArgumentValidation:
         """A non-lab-free invocation without --lab errors with the clear message."""
         result = runner.invoke(app, ['--show-lab'], env={'OTTO_LAB': ''})
         assert result.exit_code != 0
-        assert "Missing option '--lab'" in result.output
+        # click 8.2+ (Typer 0.26) routes usage errors to stderr, not stdout.
+        assert "Missing option '--lab'" in result.stderr
 
     def test_negative_log_days_rejected(self, main_mocks):
         result = _invoke(['--log-days', '-1'])

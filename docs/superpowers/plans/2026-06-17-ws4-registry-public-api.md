@@ -1689,3 +1689,22 @@ Report the full staged diff summary to the controller for the final holistic rev
 - **Placeholder scan:** none — every code step shows the code; doc step describes exact content + example.
 - **Type consistency:** `build_term_backend`/`build_transfer_backend` return the **class** (host calls `.create`); `build_command_frame` returns an instance (unchanged) — deliberately different, called out in Tasks 1/2. `TransferContext.transfer` is the selector string; `host_name` is the host name (the two `name`s are disambiguated). `create(cls, ctx)` signature identical across `ConnectionManager` / `BaseFileTransfer` / `FileTransfer` / `EmbeddedFileTransfer`.
 - **Green-between-tasks:** `Literal`s live until every consumer is migrated (Task 6), then deleted (Task 7) — no red window. Retrofit (Task 8) is behavior-invariant. Verified the only `_connection_factory` doubles (`test_docker_host`, `test_hop`) accept `**kwargs`, so `create(ctx)` is drop-in.
+
+---
+
+## Outcome — as built (2026-06-17)
+
+Executed subagent-driven (fresh implementer + spec-review + quality-review per task, then a final holistic review) and committed by Chris as **`b093f6d`** (*"feat(host): registry public API for term/transfer backends (WS#4)"*), 33 files. Final gate: **1825 unit tests pass (90% coverage)**, `ty` clean, `make docs` clean (53 doctests); the holistic review returned **READY TO MERGE** after tracing a custom backend end-to-end through all six surfaces (register → validate → construct → complete → cache → schema-enum). The live `make coverage` (lab VMs + Zephyr bed) and `make nox` (5 Pythons) were run by Chris.
+
+### As-built deviations from the task steps above
+
+The step text above predates a few execution-time decisions; the **committed code is the source of truth**. The deviations:
+
+- **`cast(<Literal>, ctx.<selector>)` bridges in the `create()` methods (Tasks 1–3).** While the `Literal`s were kept alive (additive phase), `create()` passed the widened `str` ctx field into a still-`Literal`-typed `__init__`, so `ty` required a `cast` (`cast(TermType, ctx.term)`, etc.). These were **removed in Task 7** when the `Literal`s were retired and the params widened to `str`. (The Task-5 `cast(FileTransfer/EmbeddedFileTransfer, …)` *construction* casts are unrelated — `BaseFileTransfer`→narrow-type — and remain.)
+- **Four `# type: ignore` on the `unix_host` setter assignments (Task 6),** for the same `str`→`Literal` reason; **removed in Task 7**.
+- **Task 8 also retrofitted `binary_loader`** (not in the symmetry todo's original table) and **trimmed** `todo/registry_builtin_registration_symmetry.md` rather than deleting it — the monitor shell parsers have a different shape (host-scoped, instance-valued `register_host_parsers`), so converting them would widen the frozen public surface and is intentionally deferred.
+- **Post-review fix (folded into the same commit): `set_transfer_type` now rebuilds the transfer backend via the registry + `create()`** — extracting `_build_connections()` / `_build_file_transfer()` helpers, which also DRY `__post_init__` / `rebuild_connections`. The previous in-place `self._file_transfer.transfer = transfer` only worked for switching among protocols served by the one built-in `FileTransfer` instance; for a *custom* backend it left the wrong class in place. **`set_term_type` was deliberately left as the in-place ssh/telnet swap** — rebuilding it clobbers the live session (it broke two CLI tests), and full custom-*term* support is the post-freeze connection refactor (design §11).
+
+### Process note
+
+A subagent's `git stash` + `git stash pop` (used to inspect a pre-change baseline) silently **un-staged** two earlier tasks' files — content intact on disk, dropped from the index. Caught with a per-task `git diff --stat` drift check and re-`git add`. Capture review baselines with `git stash create` (non-destructive) instead.

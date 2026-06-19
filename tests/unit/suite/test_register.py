@@ -63,7 +63,7 @@ class TestRegisterSuiteDecorator:
 
         assert isinstance(_SuiteB, type)
 
-    def test_suite_without_options_has_no_params(self):
+    def test_suite_without_options_has_only_injected_ctx(self):
         @register_suite()
         class _SuiteNoOpts:
             pass
@@ -71,7 +71,9 @@ class TestRegisterSuiteDecorator:
         _, sub_app = _SUITE_REGISTRY[-1]
         cmd = sub_app.registered_commands[0]
         sig = inspect.signature(cmd.callback)
-        assert set(sig.parameters) == set()
+        # Only the Typer-injected context param remains; no CLI option params.
+        assert set(sig.parameters) == {'ctx'}
+        assert sig.parameters['ctx'].annotation is typer.Context
 
     def test_suite_with_options_includes_option_fields(self):
         @register_suite()
@@ -213,7 +215,7 @@ class TestRunnerInvocation:
 
         captured: dict[str, object] = {}
 
-        def fake_run_suite(suite_class, suite_file, opts_instance):
+        def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
             captured['opts'] = opts_instance
             captured['suite_class'] = suite_class
 
@@ -235,7 +237,7 @@ class TestRunnerInvocation:
         app = _make_app_with_suite(_SuiteDefaults)
         captured: dict[str, object] = {}
 
-        def fake_run_suite(suite_class, suite_file, opts_instance):
+        def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
             captured['opts'] = opts_instance
 
         with patch('otto.cli.test.run_suite', fake_run_suite):
@@ -246,8 +248,8 @@ class TestRunnerInvocation:
         assert opts is not None
         assert opts.count == 7  # type: ignore[union-attr]
 
-    def test_runner_called_with_three_args(self):
-        """The runner closure invokes run_suite with exactly (suite_cls, file, opts)."""
+    def test_runner_called_with_four_args(self):
+        """The runner invokes run_suite with (suite_cls, file, opts, ctx)."""
         @register_suite()
         class _SuiteArity:
             pass
@@ -255,17 +257,19 @@ class TestRunnerInvocation:
         app = _make_app_with_suite(_SuiteArity)
         captured: dict[str, object] = {}
 
-        def fake_run_suite(suite_class, suite_file, opts_instance):
-            captured['args'] = (suite_class, suite_file, opts_instance)
+        def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
+            captured['args'] = (suite_class, suite_file, opts_instance, ctx)
 
         with patch('otto.cli.test.run_suite', fake_run_suite):
             result = runner.invoke(app, ['_SuiteArity'])
 
         assert result.exit_code == 0
         args = captured['args']
-        assert isinstance(args, tuple) and len(args) == 3
+        assert isinstance(args, tuple) and len(args) == 4
         assert args[0] is _SuiteArity
         assert args[2] is None  # no Options dataclass
+        # 4th arg is the Typer-injected context (carries ctx.meta run options).
+        assert args[3] is not None and hasattr(args[3], 'meta')
 
 
 # ── OttoOptionsPlugin ─────────────────────────────────────────────────────────

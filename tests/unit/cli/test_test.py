@@ -9,7 +9,7 @@ Tests verify:
   - ``run_suite`` calls ``pytest.main`` with the correct arguments
   - Type enforcement: Typer rejects invalid values before pytest runs
   - Defaults are applied when suite options are omitted
-  - Parent-callback options (``--iterations`` etc.) thread through ``ctx.obj``
+  - Parent-callback options (``--iterations`` etc.) thread through ``ctx.meta``
     into ``run_suite``
 """
 
@@ -120,15 +120,15 @@ class TestRunSuiteInternals:
     """
 
     @staticmethod
-    def _patch_parent_ctx(parent_opts: dict):
-        """Return a context manager that makes click.get_current_context()
-        yield a fake ctx whose ``.obj`` is ``parent_opts`` (with a 'cov' key
-        so run_suite's lookup loop recognises it).
+    def _fake_parent_ctx(parent_opts: dict):
+        """Build a fake Typer context whose ``.meta`` carries a
+        ``TestRunOptions`` from ``parent_opts``; pass it to ``run_suite``
+        (which reads its options from ``ctx.meta``).
         """
+        from otto.cli.test import RUN_OPTIONS_KEY, TestRunOptions
         fake_ctx = MagicMock()
-        fake_ctx.obj = {'cov': False, 'cov_clean': False, **parent_opts}
-        fake_ctx.parent = None
-        return patch('click.get_current_context', return_value=fake_ctx)
+        fake_ctx.meta = {RUN_OPTIONS_KEY: TestRunOptions(**parent_opts)}
+        return fake_ctx
 
     def test_pytest_main_called_with_suite_file(self, tmp_path):
         import otto.cli.test as test_module
@@ -142,9 +142,8 @@ class TestRunSuiteInternals:
 
         with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
-             patch('otto.cli.test.pytest') as mock_pytest, \
-             self._patch_parent_ctx({}):
-            run_suite(_FakeSuite, fake_file, None)
+             patch('otto.cli.test.pytest') as mock_pytest:
+            run_suite(_FakeSuite, fake_file, None, self._fake_parent_ctx({}))
 
         mock_pytest.main.assert_called_once()
         args_list = mock_pytest.main.call_args[0][0]
@@ -163,9 +162,8 @@ class TestRunSuiteInternals:
 
         with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
-             patch('otto.cli.test.pytest') as mock_pytest, \
-             self._patch_parent_ctx({}):
-            run_suite(_FakeSuite3, 'fake.py', None)
+             patch('otto.cli.test.pytest') as mock_pytest:
+            run_suite(_FakeSuite3, 'fake.py', None, self._fake_parent_ctx({}))
 
         args_list = mock_pytest.main.call_args[0][0]
         junit_arg = next((a for a in args_list if '--junitxml' in a), None)  # pytest's own flag
@@ -183,9 +181,9 @@ class TestRunSuiteInternals:
 
         with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
-             patch('otto.cli.test.pytest') as mock_pytest, \
-             self._patch_parent_ctx({'markers': 'not integration'}):
-            run_suite(_FakeSuite4, 'fake.py', None)
+             patch('otto.cli.test.pytest') as mock_pytest:
+            run_suite(_FakeSuite4, 'fake.py', None,
+                      self._fake_parent_ctx({'markers': 'not integration'}))
 
         args_list = mock_pytest.main.call_args[0][0]
         assert '-m' in args_list
@@ -214,14 +212,13 @@ class TestRunSuiteInternals:
         with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest'), \
-             patch('otto.cli.test.OttoPlugin', _CapturingPlugin), \
-             self._patch_parent_ctx({
-                 'monitor': True,
-                 'monitor_interval': 2.0,
-                 'monitor_output': None,
-                 'monitor_hosts': 'router',
-             }):
-            run_suite(_FakeMonSuite, 'fake.py', None)
+             patch('otto.cli.test.OttoPlugin', _CapturingPlugin):
+            run_suite(_FakeMonSuite, 'fake.py', None, self._fake_parent_ctx({
+                'monitor': True,
+                'monitor_interval': 2.0,
+                'monitor_output': None,
+                'monitor_hosts': 'router',
+            }))
 
         assert captured.get('monitor') is True
         assert captured.get('monitor_interval') == 2.0
@@ -247,12 +244,11 @@ class TestRunSuiteInternals:
         with patch('otto.cli.test.get_repos', return_value=[]), \
              patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest'), \
-             patch('otto.cli.test.OttoPlugin', _CapturingPlugin), \
-             self._patch_parent_ctx({
-                 'monitor': True,
-                 'monitor_output': out,
-             }):
-            run_suite(_FakeMonSuite2, 'fake.py', None)
+             patch('otto.cli.test.OttoPlugin', _CapturingPlugin):
+            run_suite(_FakeMonSuite2, 'fake.py', None, self._fake_parent_ctx({
+                'monitor': True,
+                'monitor_output': out,
+            }))
 
         assert captured.get('monitor_output') == out
 
@@ -301,7 +297,7 @@ class TestTypeEnforcement:
         app = _make_isolated_app(_DefaultSuite)
         captured: dict[str, object] = {}
 
-        def fake_run_suite(suite_class, suite_file, opts_instance):
+        def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
             captured['opts'] = opts_instance
 
         with patch('otto.cli.test.run_suite', fake_run_suite):
@@ -383,28 +379,29 @@ class TestHelpContent:
         assert 'iterations' in output_lower
 
 
-# ── Parent-callback runner options thread through ctx.obj ────────────────────
+# ── Parent-callback runner options thread through ctx.meta ───────────────────
 
 class TestParentRunnerOptionsCtx:
-    """Verify ``--markers``, ``--iterations`` etc. reach run_suite via ctx.obj.
+    """Verify ``--markers``, ``--iterations`` etc. reach run_suite via ctx.meta.
 
     These options live on ``suite_app``'s callback, so the full CLI path is
-    exercised to check wiring: CLI → callback sets ctx.obj → runner closure →
+    exercised to check wiring: CLI → callback sets ctx.meta → runner closure →
     run_suite reads parent context.
     """
 
     def _capture_ctx(self, cli_args: list[str], suite_name: str) -> dict:
-        import click as _click
+        import dataclasses
+
+        from otto.cli.test import RUN_OPTIONS_KEY
 
         captured: dict = {}
 
         def fake_run_suite(*_args, **_kwargs):
-            ctx = _click.get_current_context(silent=True)
-            while ctx is not None:
-                if isinstance(ctx.obj, dict) and 'cov' in ctx.obj:
-                    captured.update(ctx.obj)
-                    return
-                ctx = ctx.parent
+            ctx = _args[3] if len(_args) > 3 else None  # run_suite is called positionally
+            if ctx is not None:
+                opts = ctx.meta.get(RUN_OPTIONS_KEY)
+                if opts is not None:
+                    captured.update(dataclasses.asdict(opts))
 
         mock_logger = MagicMock()
         with patch('otto.cli.test.run_suite', fake_run_suite), \
@@ -532,8 +529,6 @@ def _capture_cov_ctx(cli_args: list[str]) -> tuple[int, dict, str]:
     command aborts before the subcommand is reached (e.g. during option
     validation).
     """
-    import click as _click
-
     # Attach the suite's sub-app to the real ``suite_app`` the first time
     # this helper runs. ``suite_app.registered_groups`` is initialised at
     # module load from the registry snapshot; later @register_suite() calls
@@ -545,15 +540,18 @@ def _capture_cov_ctx(cli_args: list[str]) -> tuple[int, dict, str]:
                 _CovCtxSuite._otto_attached = True  # type: ignore[attr-defined]
                 break
 
+    import dataclasses
+
+    from otto.cli.test import RUN_OPTIONS_KEY
+
     captured: dict = {}
 
     def fake_run_suite(*_args, **_kwargs):
-        ctx = _click.get_current_context(silent=True)
-        while ctx is not None:
-            if isinstance(ctx.obj, dict) and 'cov' in ctx.obj:
-                captured.update(ctx.obj)
-                return
-            ctx = ctx.parent
+        ctx = _args[3] if len(_args) > 3 else None  # run_suite is called positionally
+        if ctx is not None:
+            opts = ctx.meta.get(RUN_OPTIONS_KEY)
+            if opts is not None:
+                captured.update(dataclasses.asdict(opts))
 
     mock_logger = MagicMock()
     with patch('otto.cli.test.run_suite', fake_run_suite), \
@@ -1075,14 +1073,12 @@ class TestRunSuiteReport:
     """
 
     def _invoke(self, *, parent_opts, log_dir):
-        from otto.cli.test import run_suite
+        from otto.cli.test import RUN_OPTIONS_KEY, TestRunOptions, run_suite
 
         repo = MagicMock()
         repo.tests = [log_dir]
         repo.sut_dir = log_dir
         repo.name = 'repo'
-
-        import click as _click
 
         mock_store = MagicMock()
         mock_store.overall_pct.return_value = 50.0
@@ -1090,8 +1086,8 @@ class TestRunSuiteReport:
         mock_run_report = AsyncMock(return_value=mock_store)
 
         class _FakeCtx:
-            obj = parent_opts
-            parent = None
+            def __init__(self):
+                self.meta = {RUN_OPTIONS_KEY: TestRunOptions(**parent_opts)}
 
         mock_logger = MagicMock()
         mock_logger.output_dir = log_dir
@@ -1102,12 +1098,10 @@ class TestRunSuiteReport:
              patch('otto.cli.test._run_coverage', new=AsyncMock()), \
              patch('otto.cli.test._cov_clean_remotes', new=AsyncMock()), \
              patch('otto.coverage.reporter.run_coverage_report',
-                   new=mock_run_report), \
-             patch.object(_click, 'get_current_context',
-                          return_value=_FakeCtx()):
+                   new=mock_run_report):
             class _FakeSuite:
                 pass
-            run_suite(_FakeSuite, str(log_dir / 'fake.py'), None)
+            run_suite(_FakeSuite, str(log_dir / 'fake.py'), None, _FakeCtx())
 
         return mock_run_report
 

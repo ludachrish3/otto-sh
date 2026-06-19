@@ -241,11 +241,13 @@ def main(
     # can run without it); enforce it here — before any banner/logger side
     # effects — for everything that does need a lab.
     if not labs:
-        import click
-
-        raise click.UsageError(
-            "Missing option '--lab' / '-l' (env var: 'OTTO_LAB').", ctx=ctx
+        # Use Typer's own echo/Exit rather than ``click.UsageError``: Typer >= 0.26
+        # vendors its own click fork, so a *real* ``click.UsageError`` is not caught
+        # by Typer's error handler and would escape uncaught (exit 1, no message).
+        typer.echo(
+            "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').", err=True
         )
+        raise typer.Exit(code=2)
 
     from rich import print as rprint
     from rich.align import Align

@@ -278,9 +278,17 @@ def _serialize_options(
         )
         return None
 
+    import typer  # lazy: this runs at cache-seed time, not at module import
+
     options: list[dict[str, Any]] = []
     for pname, param in sig.parameters.items():
         ann = param.annotation
+        # The suite runner carries a Typer-injected ``ctx: typer.Context``
+        # parameter (used to read run options from ``ctx.meta``). It is not a CLI
+        # option and has no ``Annotated[...]`` metadata, so skip it rather than
+        # treating the whole command as un-cacheable.
+        if ann is typer.Context:
+            continue
         if get_origin(ann) is not Annotated:
             log.debug(
                 f'completion-cache: skipping option {command_name}.{pname!r} — '
