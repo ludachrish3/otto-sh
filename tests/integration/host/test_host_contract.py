@@ -26,7 +26,9 @@ from unittest.mock import patch
 
 import pytest
 
-import otto.host.transfer as transfer_mod
+# The progress factory lives in (and is read by BaseFileTransfer's lazy import
+# from) otto.host.transfer.progress; patch it there, not on the package re-export.
+import otto.host.transfer.progress as transfer_mod
 from otto.utils import Status
 
 from tests.conftest import EMBEDDED_BACKENDS, remote_name
