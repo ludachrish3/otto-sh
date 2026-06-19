@@ -14,7 +14,7 @@ COVERAGE_TARGET ?= coverage
 COVERAGE_THRESHOLD := 90
 # CI runs unit tests only (integration/hops markers need Vagrant VMs that
 # don't exist in GitHub Actions), so the achievable threshold is lower.
-CI_COVERAGE_THRESHOLD := 80
+CI_COVERAGE_THRESHOLD := 85
 
 # Iteration count for `make repeat`. Override on the command line:
 #   make repeat COUNT=50
