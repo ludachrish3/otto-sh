@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.5] - 2026-06-19
+
+### Added
+
+- @options decorator + first-class pydantic Options validation
+- support Typer 0.26 — re-home runner options via public Context injection
+
+
+### Changed
+
+- split transfer.py into a per-backend transfer/ package
+- collapse pure-data forward types into frozen pydantic dataclasses
+
+
+### Fixed
+
+- qemu-restart selects embedded guests by creds shape, not os_type
+
+
 ## [0.4.4] - 2026-06-18
 
 ### Added
@@ -339,7 +358,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/ludachrish3/otto-sh/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/ludachrish3/otto-sh/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/ludachrish3/otto-sh/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ludachrish3/otto-sh/compare/v0.4.1...v0.4.2
