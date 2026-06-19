@@ -1,5 +1,7 @@
 """Tests for the Options dataclasses and their JSON/factory integration."""
 
+import dataclasses
+
 import pytest
 from pydantic import ValidationError
 
@@ -15,6 +17,21 @@ from otto.host.options import (
     TelnetOptions,
 )
 from otto.storage.factory import create_host_from_dict
+
+
+def test_local_port_forward_validates_and_is_frozen():
+    # positional construction still works (back-compat)
+    fwd = LocalPortForward("localhost", 8080, "web", 80)
+    assert fwd.listen_port == 8080
+
+    # frozen: a frozen pydantic dataclass raises FrozenInstanceError on assignment
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        fwd.listen_port = 9090  # type: ignore[misc]
+
+    # validates: a non-numeric port is rejected
+    with pytest.raises(ValidationError):
+        LocalPortForward("localhost", "not-a-port", "web", 80)
+
 
 # ---------------------------------------------------------------------------
 # SshOptions

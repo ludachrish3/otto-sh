@@ -74,6 +74,34 @@ autodoc_default_options = {
 }
 autodoc_typehints = 'signature'
 
+# ``pydantic.dataclasses.dataclass`` (the SSH port-forward value types in
+# otto.host.options) synthesizes an ``__init__`` annotated with the
+# pydantic-internal ``PydanticDataclass`` protocol. Resolving that protocol
+# requires pydantic's own ``TYPE_CHECKING`` block, which imports from
+# ``_typeshed`` (a stubs-only module, absent at runtime); sphinx-autodoc-typehints
+# runs that guarded block to resolve forward references, it aborts on the missing
+# ``_typeshed``, and ``PydanticDataclass`` stays unresolved. The extension already
+# falls back to the raw annotations, so the only fallout is two benign WARNINGs —
+# and the synthesized ``__init__`` signature would be useless to render either way.
+# Our ``-W`` build promotes those WARNINGs to errors, so drop exactly them (and
+# nothing else) at the sphinx-autodoc-typehints logger before they are counted.
+import logging as _logging  # noqa: E402
+
+
+class _PydanticDataclassTypehintFilter(_logging.Filter):
+    def filter(self, record: _logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        is_forward_ref = (
+            "Cannot resolve forward reference" in msg and "PydanticDataclass" in msg
+        )
+        is_guarded_import = "Failed guarded type import" in msg and "_typeshed" in msg
+        return not (is_forward_ref or is_guarded_import)
+
+
+_logging.getLogger("sphinx.sphinx_autodoc_typehints").addFilter(
+    _PydanticDataclassTypehintFilter()
+)
+
 # -- napoleon -----------------------------------------------------------------
 
 napoleon_google_docstring = True

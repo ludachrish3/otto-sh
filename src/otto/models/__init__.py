@@ -35,13 +35,10 @@ from .monitor import (
 )
 from .options import (
     FtpOptionsSpec,
-    LocalPortForwardSpec,
     NcOptionsSpec,
-    RemotePortForwardSpec,
     ScpOptionsSpec,
     SftpOptionsSpec,
     SnmpOptionsSpec,
-    SocksForwardSpec,
     SshOptionsSpec,
     TelnetOptionsSpec,
     TftpOptionsSpec,
@@ -68,9 +65,6 @@ __all__ = [
     "NcOptionsSpec",
     "SnmpOptionsSpec",
     "TftpOptionsSpec",
-    "LocalPortForwardSpec",
-    "RemotePortForwardSpec",
-    "SocksForwardSpec",
     "ToolchainSpec",
     "HostSpec",
     "UnixHostSpec",

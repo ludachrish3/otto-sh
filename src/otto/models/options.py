@@ -18,38 +18,6 @@ from ..host.transfer import NcListenerCheck, NcPortStrategy
 from .base import OttoModel
 
 
-class LocalPortForwardSpec(OttoModel):
-    listen_host: str
-    listen_port: int
-    dest_host: str
-    dest_port: int
-
-    def to_runtime(self) -> rt.LocalPortForward:
-        return rt.LocalPortForward(
-            self.listen_host, self.listen_port, self.dest_host, self.dest_port
-        )
-
-
-class RemotePortForwardSpec(OttoModel):
-    listen_host: str
-    listen_port: int
-    dest_host: str
-    dest_port: int
-
-    def to_runtime(self) -> rt.RemotePortForward:
-        return rt.RemotePortForward(
-            self.listen_host, self.listen_port, self.dest_host, self.dest_port
-        )
-
-
-class SocksForwardSpec(OttoModel):
-    listen_host: str
-    listen_port: int
-
-    def to_runtime(self) -> rt.SocksForward:
-        return rt.SocksForward(self.listen_host, self.listen_port)
-
-
 class SshOptionsSpec(OttoModel):
     port: int = 22
     known_hosts: Any = None
@@ -63,9 +31,9 @@ class SshOptionsSpec(OttoModel):
     encryption_algs: list[str] | None = None
     server_host_key_algs: list[str] | None = None
     compression_algs: list[str] | None = None
-    local_forwards: list[LocalPortForwardSpec] = []
-    remote_forwards: list[RemotePortForwardSpec] = []
-    socks_forwards: list[SocksForwardSpec] = []
+    local_forwards: list[rt.LocalPortForward] = []
+    remote_forwards: list[rt.RemotePortForward] = []
+    socks_forwards: list[rt.SocksForward] = []
     extra: dict[str, Any] = {}
 
     def to_runtime(self) -> rt.SshOptions:
@@ -82,9 +50,9 @@ class SshOptionsSpec(OttoModel):
             encryption_algs=self.encryption_algs,
             server_host_key_algs=self.server_host_key_algs,
             compression_algs=self.compression_algs,
-            local_forwards=[f.to_runtime() for f in self.local_forwards],
-            remote_forwards=[f.to_runtime() for f in self.remote_forwards],
-            socks_forwards=[f.to_runtime() for f in self.socks_forwards],
+            local_forwards=list(self.local_forwards),
+            remote_forwards=list(self.remote_forwards),
+            socks_forwards=list(self.socks_forwards),
             extra=dict(self.extra),
         )
 
@@ -235,9 +203,6 @@ class TftpOptionsSpec(OttoModel):
 
 
 OPTION_SPEC_RUNTIME_PAIRS: list[tuple[type[OttoModel], type]] = [
-    (LocalPortForwardSpec, rt.LocalPortForward),
-    (RemotePortForwardSpec, rt.RemotePortForward),
-    (SocksForwardSpec, rt.SocksForward),
     (SshOptionsSpec, rt.SshOptions),
     (TelnetOptionsSpec, rt.TelnetOptions),
     (SftpOptionsSpec, rt.SftpOptions),

@@ -20,13 +20,10 @@ from otto.models.base import OttoModel
 from otto.models.options import (
     OPTION_SPEC_RUNTIME_PAIRS,
     FtpOptionsSpec,
-    LocalPortForwardSpec,
     NcOptionsSpec,
-    RemotePortForwardSpec,
     ScpOptionsSpec,
     SftpOptionsSpec,
     SnmpOptionsSpec,
-    SocksForwardSpec,
     SshOptionsSpec,
     TelnetOptionsSpec,
     TftpOptionsSpec,
@@ -48,27 +45,33 @@ def test_otto_model_accepts_known_fields():
     assert _Sample(x=5).x == 5
 
 
-def test_local_forward_spec_builds_runtime():
-    spec = LocalPortForwardSpec(
-        listen_host="127.0.0.1", listen_port=8080,
-        dest_host="10.0.0.1", dest_port=80,
-    )
-    rt = spec.to_runtime()
-    assert isinstance(rt, LocalPortForward)
-    assert rt == LocalPortForward("127.0.0.1", 8080, "10.0.0.1", 80)
+def test_local_port_forward_from_dict_and_positional():
+    fwd = LocalPortForward(**{
+        "listen_host": "127.0.0.1", "listen_port": 8080,
+        "dest_host": "10.0.0.1", "dest_port": 80,
+    })
+    assert fwd == LocalPortForward("127.0.0.1", 8080, "10.0.0.1", 80)
 
 
-def test_remote_forward_spec_builds_runtime():
-    spec = RemotePortForwardSpec(
-        listen_host="0.0.0.0", listen_port=2222,
-        dest_host="127.0.0.1", dest_port=22,
-    )
-    assert spec.to_runtime() == RemotePortForward("0.0.0.0", 2222, "127.0.0.1", 22)
+def test_remote_port_forward_from_dict_and_positional():
+    fwd = RemotePortForward(**{
+        "listen_host": "0.0.0.0", "listen_port": 2222,
+        "dest_host": "127.0.0.1", "dest_port": 22,
+    })
+    assert fwd == RemotePortForward("0.0.0.0", 2222, "127.0.0.1", 22)
 
 
-def test_socks_forward_spec_builds_runtime():
-    spec = SocksForwardSpec(listen_host="127.0.0.1", listen_port=1080)
-    assert spec.to_runtime() == SocksForward("127.0.0.1", 1080)
+def test_socks_forward_from_dict_and_positional():
+    assert SocksForward(listen_host="127.0.0.1", listen_port=1080) == \
+        SocksForward("127.0.0.1", 1080)
+
+
+def test_forward_rejects_unknown_key():
+    with pytest.raises(ValidationError):
+        LocalPortForward(**{  # type: ignore[call-arg]
+            "listen_host": "x", "listen_port": 1,
+            "dest_host": "y", "dest_port": 2, "bogus": 3,
+        })
 
 
 def test_ssh_spec_defaults_match_runtime_defaults():
@@ -201,15 +204,10 @@ def test_spec_fields_subset_of_runtime(spec_cls, runtime_cls):
     )
 
 
-# The three SSH forward specs are required-field value objects (no sensible
-# defaults) — always nested inside SshOptionsSpec, and their to_runtime() is
-# already covered by the explicit forward tests above. The no-arg
-# "default builds runtime" check only applies to the fully-defaulted option
-# specs, so exclude the forwards here (they stay in the subset guard above).
-_FORWARD_SPECS = (LocalPortForwardSpec, RemotePortForwardSpec, SocksForwardSpec)
-_DEFAULT_CONSTRUCTIBLE_PAIRS = [
-    (s, r) for s, r in OPTION_SPEC_RUNTIME_PAIRS if s not in _FORWARD_SPECS
-]
+# The forward value objects collapsed into frozen pydantic dataclasses
+# (no separate *Spec), so OPTION_SPEC_RUNTIME_PAIRS now contains only the
+# fully-defaulted option-table specs — all of which build a runtime with no args.
+_DEFAULT_CONSTRUCTIBLE_PAIRS = OPTION_SPEC_RUNTIME_PAIRS
 
 
 @pytest.mark.parametrize("spec_cls,runtime_cls", _DEFAULT_CONSTRUCTIBLE_PAIRS)

@@ -27,10 +27,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ConfigDict
+from pydantic.dataclasses import dataclass as pydantic_dataclass
+
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
     from .transfer import NcListenerCheck, NcPortStrategy
+
+
+_FORWARD_CONFIG = ConfigDict(extra="forbid")
 
 
 # ---------------------------------------------------------------------------
@@ -38,7 +44,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(slots=True, frozen=True)
+@pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
 class LocalPortForward:
     """An SSH local port forward: listen locally, send to host:port via the remote."""
     listen_host: str
@@ -47,7 +53,7 @@ class LocalPortForward:
     dest_port: int
 
 
-@dataclass(slots=True, frozen=True)
+@pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
 class RemotePortForward:
     """An SSH remote port forward: listen on the remote, send to host:port locally."""
     listen_host: str
@@ -56,7 +62,7 @@ class RemotePortForward:
     dest_port: int
 
 
-@dataclass(slots=True, frozen=True)
+@pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
 class SocksForward:
     """A dynamic SOCKS forward listening on the given local address."""
     listen_host: str
