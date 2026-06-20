@@ -145,9 +145,6 @@ dev:
 build: ## Build the project with uv
 	uv build
 
-test: ## Run tests (use TESTS= to filter). JUnit XML lands in reports/junit/test/.
-	uv run pytest -k '$(TESTS)' $(call junitxml,test)
-
 coverage: ## Run the pinned-Python suite and enforce the coverage gate (excludes heavy `stability` tests — those run via `make stability`). JUnit XML lands in reports/junit/coverage/.
 	$(TIMEOUT_CMD) uv run pytest -m "not stability" --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
 
@@ -272,7 +269,6 @@ help: ## Show this help message
 	@printf '  \033[36m%-31s\033[0m %s\n' 'nox-{unit,unix,embedded}'       'multi-Python matrix        (nox = all envs)'
 	@printf '  \033[36m%-31s\033[0m %s\n' 'coverage-{unit,unix,embedded}'  'pinned Python + coverage   (coverage = all, gated)'
 	@printf '  \033[36m%-31s\033[0m %s\n' 'stability-{unit,unix,embedded}' 'pinned pytest-repeat soak  (stability = all tiers)'
-	@printf '  \033[36m%-31s\033[0m %s\n' 'test TESTS=<kw>' 'filter any run by keyword'
 	@printf '  \033[36m%-31s\033[0m %s\n' 'repeat'          'soak the full unit suite (pytest-repeat)'
 	@printf '\n\033[1mOther targets\033[0m\n'
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
