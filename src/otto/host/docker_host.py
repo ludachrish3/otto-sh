@@ -40,6 +40,7 @@ from .repeat import RepeatRunner
 if TYPE_CHECKING:
     import re
 
+from .power import PowerController
 from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
 
 logger = get_otto_logger()
@@ -104,6 +105,9 @@ class DockerContainerHost(PosixPrivilege, BaseHost):
     products: list[Product] = field(default_factory=list, repr=False)
     """Software-under-test deployed to this host. Default empty. See
     :attr:`~otto.host.host.BaseHost.products`."""
+
+    power_control: 'PowerController | None' = field(default=None, repr=False)
+    """Always None — LocalHost/DockerContainerHost are not power-controlled."""
 
     _repeater: RepeatRunner = field(init=False, repr=False)
     """Periodic-task runner. Required by :class:`BaseHost`."""

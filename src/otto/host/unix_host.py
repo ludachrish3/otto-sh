@@ -82,6 +82,7 @@ from .options import (
     SshOptions,
     TelnetOptions,
 )
+from .power import PowerController, power_control_from_spec
 from .privilege import PosixPrivilege
 from .remote_host import OsType, RemoteHost
 from .repeat import RepeatRunner
@@ -226,6 +227,12 @@ class UnixHost(PosixPrivilege, RemoteHost):
     """Software-under-test deployed to this host. Default empty. See
     :attr:`~otto.host.host.BaseHost.products`."""
 
+    power_control: 'PowerController | None' = None
+    """Pluggable power backend. Lab data declares it by string (a config-free
+    controller type) or a ``[power]`` table (``{type, on_cmd, off_cmd, ...}``);
+    ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
+    fail loud. See :attr:`~otto.host.host.BaseHost.power_control`."""
+
     log: bool = field(default=True, repr=False)
     """Determines whether this host should log its output to stdout and log files.
     Setting this field to `False` effectively sets `log_stdout` to False as well."""
@@ -290,6 +297,8 @@ class UnixHost(PosixPrivilege, RemoteHost):
         # registered instance. None is left as-is (SessionManager applies bash).
         if isinstance(self.command_frame, str):
             self.command_frame = build_command_frame(self.command_frame)
+
+        self.power_control = power_control_from_spec(self.power_control)
 
         self._connections = self._build_connections()
         self._repeater = RepeatRunner(run_cmds=self.run)
@@ -671,3 +680,15 @@ class UnixHost(PosixPrivilege, RemoteHost):
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
+
+    ####################
+    #  Power / reboot
+    ####################
+
+    async def _soft_reboot(self) -> tuple[Status, str]:
+        await self.run("reboot", sudo=True, timeout=10.0)
+        return Status.Success, ""
+
+    async def shutdown(self) -> tuple[Status, str]:
+        await self.run("shutdown -h now", sudo=True, timeout=10.0)
+        return Status.Success, ""

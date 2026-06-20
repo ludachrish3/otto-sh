@@ -59,6 +59,7 @@ from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .binary_loader import BinaryLoader
 from .command_frame import CommandFrame, ZephyrFrame
+from .power import PowerController, power_control_from_spec
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .transfer import EmbeddedFileTransfer
@@ -226,6 +227,12 @@ class EmbeddedHost(RemoteHost):
     """Software-under-test deployed to this host. Default empty. See
     :attr:`~otto.host.host.BaseHost.products`."""
 
+    power_control: 'PowerController | None' = None
+    """Pluggable power backend. Lab data declares it by string (a config-free
+    controller type) or a ``[power]`` table (``{type, on_cmd, off_cmd, ...}``);
+    ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
+    fail loud. See :attr:`~otto.host.host.BaseHost.power_control`."""
+
     log: bool = field(default=True, repr=False)
     """Whether this host should log its output to stdout and log files."""
 
@@ -277,6 +284,8 @@ class EmbeddedHost(RemoteHost):
         if isinstance(self.loader, str):
             from .binary_loader import build_binary_loader
             self.loader = build_binary_loader(self.loader)
+
+        self.power_control = power_control_from_spec(self.power_control)
 
         # A bare 'embedded' host carries no shell-framing dialect. Fail loud
         # rather than silently inheriting one, so a misconfigured non-Zephyr
@@ -592,3 +601,11 @@ class ZephyrHost(EmbeddedHost):
 
     command_frame: CommandFrame = field(default_factory=ZephyrFrame)
     """Stock Zephyr ``retval`` shell framing (3.7 / 4.4 LTS)."""
+
+    ####################
+    #  Power / reboot
+    ####################
+
+    async def _soft_reboot(self) -> tuple[Status, str]:
+        await self.run("kernel reboot cold", timeout=10.0)
+        return Status.Success, ""

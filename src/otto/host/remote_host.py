@@ -35,8 +35,10 @@ if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
     from ..configmodule.lab import Lab
+    from ..utils import CommandStatus
     from .connections import ConnectionManager
     from .options import SnmpOptions
+    from .power import PowerController
     from .product import Product
     from .session import SessionManager
 
@@ -154,6 +156,9 @@ class RemoteHost(BaseHost):
     """Software-under-test deployed to this host (see
     :attr:`~otto.host.host.BaseHost.products`)."""
 
+    power_control: PowerController | None
+    """Pluggable power backend (see :attr:`~otto.host.host.BaseHost.power_control`)."""
+
     # --- Connection-state contract ---------------------------------------
     # Concrete subclasses supply these as real ``@dataclass`` fields (a
     # ``ConnectionManager`` and a ``SessionManager``). Declared here as bare
@@ -163,6 +168,9 @@ class RemoteHost(BaseHost):
     _session_mgr: SessionManager
     _lab: Lab | None
 
+    async def verify_connection(self) -> 'CommandStatus':  # pragma: no cover
+        raise NotImplementedError from None
+
     ####################
     #  Connection state / lifecycle
     ####################
@@ -171,6 +179,14 @@ class RemoteHost(BaseHost):
     def _connected(self) -> bool:
         """Whether the host has any current connections or live sessions."""
         return self._session_mgr.has_live_sessions or self._connections.connected
+
+    async def is_reachable(self, timeout: float = 10.0) -> bool:
+        """Probe by attempting a connection (no command), bounded by *timeout*."""
+        try:
+            result = await asyncio.wait_for(self.verify_connection(), timeout)
+        except Exception:
+            return False
+        return result.status.is_ok
 
     ####################
     #  Dest dir resolution

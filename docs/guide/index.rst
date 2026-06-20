@@ -13,6 +13,7 @@ These guides cover otto's CLI commands and project configuration in detail.
    host
    host-privilege
    host-products
+   host-power
    embedded
    os-profiles
    extending-embedded

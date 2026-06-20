@@ -52,7 +52,7 @@ class ToolchainSpec(OttoModel):
 _COMMON_PLAIN_FIELDS = (
     "ip", "element", "creds", "name", "os_type", "os_name", "os_version",
     "user", "element_id", "board", "slot", "hop", "is_virtual",
-    "max_filename_len", "log", "log_stdout",
+    "max_filename_len", "log", "log_stdout", "products", "power_control",
 )
 
 
@@ -98,6 +98,17 @@ class HostSpec(OttoModel):
     snmp: SnmpOptionsSpec | None = None
     toolchain: ToolchainSpec = ToolchainSpec()
     command_frame: str | None = None
+
+    # DI fields shared by both host families (kept in lock-step with the runtime
+    # host __init__ by the drift guard in tests/unit/models/test_host_specs.py).
+    # ``power_control`` takes the lab-data ``[power]`` form — a controller
+    # type-name string or a table dict — and the runtime host's __post_init__
+    # coerces it via power_control_from_spec. ``products`` is normally populated
+    # programmatically (DI) and defaults empty; it is typed ``list[Any]`` because
+    # ``Product`` is an ABC pydantic cannot build a schema for. Both pass straight
+    # through _common_host_kwargs when explicitly set.
+    products: list[Any] = []
+    power_control: dict[str, Any] | str | None = None
 
     # Lab membership — validated (so a `lab`/`labs` typo errors) but NOT a host
     # constructor argument; the repository uses it to filter hosts into a Lab.

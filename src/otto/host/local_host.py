@@ -14,6 +14,7 @@ from pathlib import Path
 from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .host import BaseHost, is_dry_run
+from .power import PowerController
 from .privilege import PosixPrivilege
 from .product import Product
 from .repeat import RepeatRunner
@@ -84,6 +85,9 @@ class LocalHost(PosixPrivilege, BaseHost):
 
     products: list[Product] = field(default_factory=list, repr=False)
     """Software-under-test deployed to this host. Default empty."""
+
+    power_control: 'PowerController | None' = field(default=None, repr=False)
+    """Always None — LocalHost/DockerContainerHost are not power-controlled."""
 
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages persistent shell sessions for this host."""
@@ -258,6 +262,14 @@ class LocalHost(PosixPrivilege, BaseHost):
         return await self._file_transfer.put_files(
             src_files, dest_dir, show_progress,
         )
+
+    ####################
+    #  Power / reachability
+    ####################
+
+    async def is_reachable(self, timeout: float = 10.0) -> bool:
+        """Return ``True`` — the local machine is always reachable."""
+        return True
 
     ####################
     #  Cleanup

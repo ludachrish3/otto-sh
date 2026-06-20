@@ -26,6 +26,12 @@ from .os_profile import get_host_class as get_host_class
 from .os_profile import get_os_profile as get_os_profile
 from .os_profile import register_host_class as register_host_class
 from .os_profile import register_os_profile as register_os_profile
+from .power import CommandPowerController as CommandPowerController
+from .power import PowerController as PowerController
+from .power import PowerState as PowerState
+from .power import build_power_controller as build_power_controller
+from .power import power_control_from_spec as power_control_from_spec
+from .power import register_power_controller as register_power_controller
 from .product import FileProduct as FileProduct
 from .product import Product as Product
 from .remote_host import OsType as OsType

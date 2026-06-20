@@ -29,6 +29,7 @@ from ..utils import (
 )
 
 if TYPE_CHECKING:
+    from .power import PowerController
     from .product import Product
     from .repeat import RepeatRunner
     from .session import Expect, HostSession
@@ -196,11 +197,17 @@ class Host(Protocol):
     id: str
     """Unique identifier for this host."""
 
+    name: str
+    """Human-readable name for this host."""
+
     resources: set[str]
     """Resources required to reserve this host."""
 
     products: list['Product']
     """Software-under-test deployed to this host (default empty)."""
+
+    power_control: 'PowerController | None'
+    """Pluggable power backend, or None when this host can't be power-controlled."""
 
     async def _interact(self) -> None:
         ...
@@ -257,6 +264,18 @@ class Host(Protocol):
     ) -> tuple[Status, str]:
         ...
 
+    async def power(self, state: str | None = None) -> tuple[Status, str]: ...
+
+    async def reboot(self, hard: bool = False, wait: bool = False, timeout: float = 600.0) -> tuple[Status, str]: ...
+
+    async def shutdown(self) -> tuple[Status, str]: ...
+
+    async def is_reachable(self, timeout: float = 10.0) -> bool: ...
+
+    async def wait_until_up(self, timeout: float, interval: float = 2.0) -> bool: ...
+
+    async def wait_until_down(self, timeout: float, interval: float = 2.0) -> bool: ...
+
     async def close(self) -> None:
         ...
 
@@ -282,6 +301,7 @@ class BaseHost(ABC):
     log: bool
     resources: set[str]
     products: list['Product']
+    power_control: 'PowerController | None'
     _repeater: 'RepeatRunner'
 
     ####################
@@ -541,6 +561,106 @@ class BaseHost(ABC):
     async def is_uninstalled(self) -> bool:
         """Inverse of :meth:`is_installed`."""
         return not await self.is_installed()
+
+    ####################
+    #  Power / reboot
+    ####################
+
+    def _require_power_control(self) -> 'PowerController':
+        if self.power_control is None:
+            raise ValueError(
+                f"Host {self.name!r} has no power_control configured. Set a "
+                f"power backend (lab '[power]' table or power_control=) before "
+                f"calling power()/reboot(hard=True)."
+            )
+        return self.power_control
+
+    async def power(self, state: str | None = None) -> tuple[Status, str]:
+        """Power this host ``'on'``/``'off'``, or toggle when *state* is None.
+
+        Toggling reads the controller's :meth:`~otto.host.power.PowerController.status`;
+        if the controller can't report state, pass an explicit ``state``.
+        """
+        from .power import PowerState
+        controller = self._require_power_control()
+        if state == "on":
+            return await controller.on(cast('Host', self))
+        if state == "off":
+            return await controller.off(cast('Host', self))
+        if state is None:
+            current = await controller.status(cast('Host', self))
+            if current is None:
+                raise ValueError(
+                    f"power(toggle) on {self.name!r} needs a controller that "
+                    f"reports status; pass state='on' or 'off'."
+                )
+            if current is PowerState.ON:
+                return await controller.off(cast('Host', self))
+            return await controller.on(cast('Host', self))
+        raise ValueError(f"invalid power state {state!r}; expected 'on', 'off', or None")
+
+    async def _soft_reboot(self) -> tuple[Status, str]:
+        """Issue the in-shell reboot command. Per-family override; default raises."""
+        raise NotImplementedError(
+            f"soft reboot is not supported on '{self.__class__.__name__}'"
+        ) from None
+
+    async def reboot(
+        self, hard: bool = False, wait: bool = False, timeout: float = 600.0
+    ) -> tuple[Status, str]:
+        """Reboot this host.
+
+        ``hard=False`` (default) issues the in-shell reboot command
+        (:meth:`_soft_reboot`); ``hard=True`` power-cycles via the
+        :class:`~otto.host.power.PowerController`. When *wait*, block on
+        :meth:`wait_until_up` (up to *timeout*, default 10 minutes); if the
+        host is still unreachable when *timeout* expires, the result is
+        downgraded to :attr:`~otto.utils.Status.Failed`.
+        """
+        if hard:
+            status, msg = await self._require_power_control().cycle(cast('Host', self))
+        else:
+            status, msg = await self._soft_reboot()
+        if status.is_ok and wait and not await self.wait_until_up(timeout):
+            return Status.Failed, (
+                f"{self.name!r} did not become reachable within {timeout}s after reboot"
+            )
+        return status, msg
+
+    async def shutdown(self) -> tuple[Status, str]:
+        """Power this host off from its own shell (distinct from external
+        ``power('off')``). Per-family override; default raises.
+        """
+        raise NotImplementedError(
+            f"shutdown is not supported on '{self.__class__.__name__}'"
+        ) from None
+
+    async def is_reachable(self, timeout: float = 10.0) -> bool:
+        """Whether this host answers a lightweight connection probe.
+
+        Per-family override; default raises (no generic probe).
+        """
+        raise NotImplementedError(
+            f"is_reachable is not supported on '{self.__class__.__name__}'"
+        ) from None
+
+    async def wait_until_up(self, timeout: float, interval: float = 2.0) -> bool:
+        """Poll :meth:`is_reachable` until reachable or *timeout*. Returns success."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if await self.is_reachable():
+                return True
+            await asyncio.sleep(interval)
+        return False
+
+    async def wait_until_down(self, timeout: float, interval: float = 2.0) -> bool:
+        """Poll :meth:`is_reachable` until *not* reachable or *timeout*."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            if not await self.is_reachable():
+                return True
+            await asyncio.sleep(interval)
+        return False
 
     ####################
     #  Repeat commands

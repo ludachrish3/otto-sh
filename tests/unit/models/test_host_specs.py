@@ -250,6 +250,26 @@ def test_unix_spec_omits_command_frame_when_unset():
     assert spec.to_host().command_frame is None
 
 
+def test_spec_power_control_coerces_through_to_host():
+    """A lab-data ``[power]`` table on the spec builds a runtime controller."""
+    from otto.host.power import CommandPowerController
+    spec = UnixHostSpec(
+        ip="10.0.0.1", element="lab", creds={"u": "p"},
+        power_control={"type": "command", "on_cmd": "on {name}",
+                       "off_cmd": "off {name}", "controller": "hyp"},
+    )
+    host = spec.to_host()
+    assert isinstance(host.power_control, CommandPowerController)
+    assert host.power_control.controller == "hyp"
+
+
+def test_spec_power_control_and_products_default_unset():
+    """Unset power_control/products fall through to the runtime host defaults."""
+    host = UnixHostSpec(ip="10.0.0.1", element="lab", creds={"u": "p"}).to_host()
+    assert host.power_control is None
+    assert host.products == []
+
+
 def test_registered_pairs_drift_guard():
     """Every registered (host_class, spec) pair has matching field sets — the
     same bidirectional check as HOST_SPEC_RUNTIME_PAIRS, but sourced from the
