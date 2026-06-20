@@ -54,6 +54,9 @@ dependencies = [
     "pytest-timeout>=2.3.1",
     "rich>=15.0.0",
     "sse-starlette>=3.3.3",
+    # Imported directly in monitor/server.py (starlette.requests.Request);
+    # declared explicitly rather than relying on the transitive fastapi/sse-starlette pull.
+    "starlette>=0.52.1",
     "telnetlib3>=4.0.1",
     "tomli>=2.4.0",
     "typer>=0.26",
