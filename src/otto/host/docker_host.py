@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .host import BaseHost, Host, is_dry_run
+from .privilege import PosixPrivilege
 from .product import Product
 from .repeat import RepeatRunner
 
@@ -45,7 +46,7 @@ logger = get_otto_logger()
 
 
 @dataclass(slots=True)
-class DockerContainerHost(BaseHost):
+class DockerContainerHost(PosixPrivilege, BaseHost):
     """A Docker container exposed as a first-class otto host.
 
     Construction is normally done by :mod:`otto.docker.compose` after a
@@ -311,13 +312,14 @@ class DockerContainerHost(BaseHost):
         await self._ensure_running()
         return await self._session_mgr.open_session(name)
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, log: bool = True) -> None:
         """Send raw text to the container's persistent session."""
         if is_dry_run():
-            self._log_command(f"[DRY RUN] send({text!r})")
+            if log:
+                self._log_command(f"[DRY RUN] send({text!r})")
             return
         await self._ensure_running()
-        await self._session_mgr.send(text)
+        await self._session_mgr.send(text, log=log)
 
     async def expect(
         self,

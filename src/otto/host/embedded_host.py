@@ -412,12 +412,13 @@ class EmbeddedHost(RemoteHost):
             self._log_command(f"[DRY RUN] open_session({name!r})")
         return await self._session_mgr.open_session(name)
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, log: bool = True) -> None:
         """Send raw text to the host's persistent session."""
         if is_dry_run():
-            self._log_command(f"[DRY RUN] send({text!r})")
+            if log:
+                self._log_command(f"[DRY RUN] send({text!r})")
             return
-        await self._session_mgr.send(text)
+        await self._session_mgr.send(text, log=log)
 
     async def expect(
         self,

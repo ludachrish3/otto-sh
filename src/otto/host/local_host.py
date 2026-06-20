@@ -14,6 +14,7 @@ from pathlib import Path
 from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .host import BaseHost, is_dry_run
+from .privilege import PosixPrivilege
 from .product import Product
 from .repeat import RepeatRunner
 from .session import (
@@ -68,7 +69,7 @@ logger = get_otto_logger()
 @dataclass(
     slots=True,
 )
-class LocalHost(BaseHost):
+class LocalHost(PosixPrivilege, BaseHost):
 
     name: str = field(default='localhost', init=False)
 
@@ -199,12 +200,13 @@ class LocalHost(BaseHost):
             self._log_command(f"[DRY RUN] open_session({name!r})")
         return await self._session_mgr.open_session(name)
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, log: bool = True) -> None:
         """Send raw text to the host's persistent session."""
         if is_dry_run():
-            self._log_command(f"[DRY RUN] send({text!r})")
+            if log:
+                self._log_command(f"[DRY RUN] send({text!r})")
             return
-        await self._session_mgr.send(text)
+        await self._session_mgr.send(text, log=log)
 
     async def expect(
         self,

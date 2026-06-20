@@ -6,6 +6,7 @@ from abc import ABC
 from collections.abc import Callable, Sequence
 from dataclasses import (
     dataclass,
+    replace,
 )
 from datetime import datetime, timedelta
 from logging import (
@@ -212,6 +213,7 @@ class Host(Protocol):
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = None,
         log: bool = True,
+        sudo: bool = False,
     ) -> RunResult:
         ...
 
@@ -229,6 +231,7 @@ class Host(Protocol):
 
     async def send(self,
         text: str,
+        log: bool = True,
     ) -> None:
         ...
 
@@ -297,6 +300,44 @@ class BaseHost(ABC):
         return (Status.Skipped, f"[DRY RUN] {action}: {file_names} -> {dest}")
 
     ####################
+    #  Privilege
+    ####################
+
+    def _elevate(self, cmd: str) -> tuple[str, list['Expect']]:
+        """Return *(wrapped_cmd, extra_expects)* to run *cmd* with elevation.
+
+        Default raises — only posix-shell hosts (via the ``PosixPrivilege``
+        mixin) can elevate. Embedded/RTOS hosts have no ``sudo``."""
+        raise NotImplementedError(
+            f"sudo/elevation is not supported on '{self.__class__.__name__}'"
+        ) from None
+
+    async def switch_user(self, user: str = "", password: str | None = None) -> None:
+        """Switch the persistent session to another user via ``su``.
+
+        Default raises — only posix-shell hosts (via ``PosixPrivilege``) support
+        ``su``."""
+        raise NotImplementedError(
+            f"su/switch_user is not supported on '{self.__class__.__name__}'"
+        ) from None
+
+    def as_user(self, user: str = "root", password: str | None = None):
+        """Async context manager to run a block as *user*.
+
+        Default raises — only posix-shell hosts (via ``PosixPrivilege``) support
+        ``su``-based user switching."""
+        raise NotImplementedError(
+            f"as_user is not supported on '{self.__class__.__name__}'"
+        ) from None
+
+    def _apply_sudo(self, sc: 'ShellCommand') -> 'ShellCommand':
+        """Rewrite a ``ShellCommand`` to run under sudo, merging in the
+        password ``Expect`` ahead of any caller-supplied expects."""
+        wrapped, extra = self._elevate(sc.cmd)
+        base = _normalize_expects(sc.expects) or []
+        return replace(sc, cmd=wrapped, expects=extra + base)
+
+    ####################
     #  Command execution
     ####################
 
@@ -320,6 +361,7 @@ class BaseHost(ABC):
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = None,
         log: bool = True,
+        sudo: bool = False,
     ) -> RunResult:
         """Execute one or more commands on the host via the persistent shell session.
 
@@ -340,6 +382,9 @@ class BaseHost(ABC):
                 the remaining budget; when exhausted, remaining commands are skipped
                 with ``Status.Error``. :attr:`ShellCommand.timeout` caps the per-command
                 value but is still bounded by the remaining budget.
+            sudo: If ``True``, each command is rewritten through :meth:`_elevate` before
+                execution. Hosts that do not support elevation (e.g. embedded/RTOS) raise
+                :exc:`NotImplementedError` — see :meth:`_elevate`.
 
         Returns:
             :class:`RunResult` with the aggregate :class:`Status` and a list of
@@ -351,6 +396,8 @@ class BaseHost(ABC):
         default_expects = _normalize_expects(expects)
         if isinstance(cmds, (str, ShellCommand)):
             resolved = [_resolve_command(cmds, default_expects, timeout, log)]
+            if sudo:
+                resolved = [self._apply_sudo(sc) for sc in resolved]
             single = resolved[0]
             result = await self._run_one(
                 single.cmd,
@@ -362,6 +409,8 @@ class BaseHost(ABC):
             return RunResult(status=status, statuses=[result])
 
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
+        if sudo:
+            resolved = [self._apply_sudo(sc) for sc in resolved]
 
         async def _run_sc(sc: ShellCommand, t: float | None) -> CommandStatus:
             return await self._run_one(
@@ -396,6 +445,7 @@ class BaseHost(ABC):
 
     async def send(self,
         text: str,
+        log: bool = True,
     ) -> None:
         raise NotImplementedError from None
 

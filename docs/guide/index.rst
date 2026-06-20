@@ -11,6 +11,7 @@ These guides cover otto's CLI commands and project configuration in detail.
    test
    monitor
    host
+   host-privilege
    host-products
    embedded
    os-profiles

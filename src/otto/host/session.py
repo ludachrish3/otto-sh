@@ -905,9 +905,10 @@ class HostSession:
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, log: bool = True) -> None:
         """Send raw text to this session's stdin. See :meth:`UnixHost.send`."""
-        self._log_command(text.rstrip())
+        if log:
+            self._log_command(text.rstrip())
         await self._session.send(text)
 
     async def expect(
@@ -1328,9 +1329,10 @@ class SessionManager:
             self._named_sessions[name] = host_session
             return host_session
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, log: bool = True) -> None:
         await self._ensure_session()
-        self._log_command(text.rstrip())
+        if log:
+            self._log_command(text.rstrip())
         assert self._session is not None
         await self._session.send(text)
 

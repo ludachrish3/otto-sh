@@ -296,7 +296,7 @@ class TestDelegation:
     async def test_send_delegates(self, host: EmbeddedHost):
         host._session_mgr = AsyncMock()
         await host.send('help\r')
-        host._session_mgr.send.assert_awaited_once_with('help\r')
+        host._session_mgr.send.assert_awaited_once_with('help\r', log=True)
 
     @pytest.mark.asyncio
     async def test_expect_delegates(self, host: EmbeddedHost):

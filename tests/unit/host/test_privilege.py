@@ -1,0 +1,192 @@
+"""Unit tests for host privilege elevation (sudo / su / as_user)."""
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from otto.utils import CommandStatus, Status
+
+
+@pytest.mark.asyncio
+async def test_embedded_run_sudo_raises():
+    from otto.host.embedded_host import ZephyrHost
+    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    with pytest.raises(NotImplementedError, match="sudo"):
+        await host.run("ls", sudo=True)
+
+
+@pytest.mark.asyncio
+async def test_run_without_sudo_is_unchanged():
+    from otto.host.local_host import LocalHost
+    host = LocalHost()
+    captured = {}
+
+    async def fake_run_one(cmd, expects=None, timeout=None, log=True):
+        captured["cmd"] = cmd
+        return CommandStatus(cmd, "", Status.Success, 0)
+
+    with patch.object(host, "_run_one", new=fake_run_one):
+        await host.run("id")
+    assert captured["cmd"] == "id"  # no wrapping
+
+
+def _capture_run_one(host):
+    captured = {}
+
+    async def fake_run_one(cmd, expects=None, timeout=None, log=True):
+        captured["cmd"] = cmd
+        captured["expects"] = expects
+        return CommandStatus(cmd, "", Status.Success, 0)
+
+    return captured, fake_run_one
+
+
+@pytest.mark.asyncio
+async def test_unix_run_sudo_wraps_and_injects_password_expect():
+    from otto.host.unix_host import UnixHost
+    host = UnixHost(ip="10.0.0.1", element="box", creds={"admin": "secret"},
+                    user="admin", log=False)
+    captured, fake = _capture_run_one(host)
+    with patch.object(host, "_run_one", new=fake):
+        await host.run("apt update", sudo=True)
+    assert captured["cmd"] == "sudo -S -p 'otto-sudo:' apt update"
+    assert ("otto-sudo:", "secret\n") in captured["expects"]
+
+
+@pytest.mark.asyncio
+async def test_localhost_sudo_wraps_without_password_expect():
+    from otto.host.local_host import LocalHost
+    host = LocalHost()
+    captured, fake = _capture_run_one(host)
+    with patch.object(host, "_run_one", new=fake):
+        await host.run("id", sudo=True)
+    assert captured["cmd"] == "sudo -S -p 'otto-sudo:' id"
+    assert captured["expects"] == []  # passwordless: no injected expect
+
+
+@pytest.mark.asyncio
+async def test_sudo_preserves_caller_expects():
+    from otto.host.unix_host import UnixHost
+    host = UnixHost(ip="10.0.0.1", element="box", creds={"admin": "secret"},
+                    user="admin", log=False)
+    captured, fake = _capture_run_one(host)
+    with patch.object(host, "_run_one", new=fake):
+        await host.run("rm -i x", expects=("remove.*\\?", "y\n"), sudo=True)
+    # password expect first, caller's expect preserved after
+    assert captured["expects"][0] == ("otto-sudo:", "secret\n")
+    assert ("remove.*\\?", "y\n") in captured["expects"]
+
+
+@pytest.mark.asyncio
+async def test_switch_user_sends_su_and_password():
+    from unittest.mock import AsyncMock
+    from otto.host.unix_host import UnixHost
+    host = UnixHost(ip="10.0.0.1", element="box",
+                    creds={"admin": "secret", "root": "rootpw"}, user="admin", log=False)
+    host._session_mgr = AsyncMock()
+    await host.switch_user("root")
+    host._session_mgr.send.assert_any_await("su root\n", log=True)
+    host._session_mgr.send.assert_any_await("rootpw\n", log=False)
+
+
+@pytest.mark.asyncio
+async def test_switch_user_default_is_root_no_user_arg():
+    from unittest.mock import AsyncMock
+    from otto.host.unix_host import UnixHost
+    host = UnixHost(ip="10.0.0.1", element="box", creds={"admin": "secret"},
+                    user="admin", log=False)
+    host._session_mgr = AsyncMock()
+    host._session_mgr.expect.return_value = "Password:"
+    await host.switch_user()  # default root, no creds entry for root → no password sent
+    host._session_mgr.send.assert_any_await("su\n", log=True)
+
+
+@pytest.mark.asyncio
+async def test_embedded_switch_user_raises():
+    from otto.host.embedded_host import ZephyrHost
+    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    with pytest.raises(NotImplementedError, match="su"):
+        await host.switch_user("root")
+
+
+@pytest.mark.asyncio
+async def test_as_user_switches_then_exits():
+    from unittest.mock import AsyncMock
+    from otto.host.unix_host import UnixHost
+    host = UnixHost(ip="10.0.0.1", element="box",
+                    creds={"admin": "secret", "root": "rootpw"}, user="admin", log=False)
+    host._session_mgr = AsyncMock()
+    async with host.as_user("root"):
+        pass
+    sent = [c.args[0] for c in host._session_mgr.send.await_args_list]
+    assert "su root\n" in sent      # entered
+    assert "exit\n" in sent         # returned
+    assert sent.index("su root\n") < sent.index("exit\n")
+
+
+@pytest.mark.asyncio
+async def test_embedded_as_user_raises():
+    from otto.host.embedded_host import ZephyrHost
+    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    with pytest.raises(NotImplementedError, match="as_user|su"):
+        async with host.as_user("root"):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_switch_user_password_not_logged(caplog):
+    """Regression: su password must NOT appear in logs (transport-level seam).
+
+    Mocks at the ShellSession (transport) level so SessionManager._log_command
+    executes normally — proves the log=False guard in the actual code path, not
+    a mock that skips the logging seam entirely.
+    """
+    import logging
+    from otto.host.session import ShellSession
+    from otto.host.unix_host import UnixHost
+
+    host = UnixHost(
+        ip="10.0.0.1",
+        element="box",
+        creds={"admin": "secret", "root": "rootpw"},
+        user="admin",
+        log=True,
+    )
+
+    # Mock at the transport layer: give the SessionManager a live-looking
+    # ShellSession so _ensure_session's fast-path fires and no real connect
+    # is attempted. send/expect on the transport are AsyncMocks.
+    mock_transport = MagicMock(spec=ShellSession)
+    mock_transport.alive = True
+    mock_transport.send = AsyncMock()
+    mock_transport.expect = AsyncMock(return_value="Password:")
+    host._session_mgr._session = mock_transport
+
+    with caplog.at_level(logging.INFO, logger="otto"):
+        await host.switch_user("root")
+
+    # The su command line must be logged (proves suppression is surgical).
+    assert "su root" in caplog.text
+    # The password must NOT appear in the logs.
+    assert "rootpw" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_switch_user_quotes_special_char_username():
+    """switch_user shlex-quotes usernames that contain shell-special characters."""
+    from otto.host.unix_host import UnixHost
+
+    host = UnixHost(
+        ip="10.0.0.1",
+        element="box",
+        creds={"admin": "secret"},
+        user="admin",
+        log=False,
+    )
+    # Replace the session manager with an AsyncMock to capture what was sent.
+    host._session_mgr = AsyncMock()
+
+    await host.switch_user("od d")  # space in username — must be shell-quoted
+
+    # The first send must be the shlex-quoted su command.
+    first_call = host._session_mgr.send.await_args_list[0]
+    assert first_call.args[0] == "su 'od d'\n"

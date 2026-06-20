@@ -82,6 +82,7 @@ from .options import (
     SshOptions,
     TelnetOptions,
 )
+from .privilege import PosixPrivilege
 from .remote_host import OsType, RemoteHost
 from .repeat import RepeatRunner
 from .session import (
@@ -99,7 +100,7 @@ from .transfer import (
 
 
 @dataclass(slots=True)
-class UnixHost(RemoteHost):
+class UnixHost(PosixPrivilege, RemoteHost):
     """
     Unix host accessed via SSH or Telnet, with bash as the remote shell.
     """
@@ -260,6 +261,19 @@ class UnixHost(RemoteHost):
 
     _file_transfer: UnixFileTransfer = field(init=False, repr=False)
     """Handles all file transfer protocols for this host."""
+
+    ####################
+    #  Privilege
+    ####################
+
+    def _sudo_password(self) -> str | None:
+        """The login user's password, used for ``sudo -S``."""
+        _user, password = self._connections.credentials
+        return password or None
+
+    def _user_password(self, user: str) -> str | None:
+        """Password for ``su <user>`` from this host's creds, if present."""
+        return self.creds.get(user)
 
     def __post_init__(self):
 
@@ -602,12 +616,13 @@ class UnixHost(RemoteHost):
             self._log_command(f"[DRY RUN] open_session({name!r})")
         return await self._session_mgr.open_session(name)
 
-    async def send(self, text: str) -> None:
+    async def send(self, text: str, log: bool = True) -> None:
         """Send raw text to the host's persistent session."""
         if is_dry_run():
-            self._log_command(f"[DRY RUN] send({text!r})")
+            if log:
+                self._log_command(f"[DRY RUN] send({text!r})")
             return
-        await self._session_mgr.send(text)
+        await self._session_mgr.send(text, log=log)
 
     async def expect(
         self,
