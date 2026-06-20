@@ -1,5 +1,14 @@
 # Host-declared `term` / `transfer` lists (completion narrowing)
 
+> **Superseded (2026-06-20).** This idea is now designed, with a fuller
+> mechanism, in
+> `docs/superpowers/specs/2026-06-20-host-capability-resolution-design.md`:
+> the lab declares `valid_terms`/`valid_transfers` (a closed menu), the active
+> `term`/`transfer` resolves from product `[host_preferences]`, and per-instance
+> selection rides the `get_host(..., term=/transfer=)` override-copy seam.
+> Completion narrowing to a host's declared menu (the original ask below) falls
+> out of that work. Kept for history; see also `todo/host-preferences-end-state.md`.
+
 Far-future feature. Today the `otto host --term` / `--transfer` completers
 offer *every* registered backend (filtered only by host family for transfer).
 A host could instead declare which backends it actually supports, and the
