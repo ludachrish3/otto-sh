@@ -427,10 +427,12 @@ class TestOsTypeDispatch:
         assert 'docker_capable' in str(exc_info.value)
 
     def test_embedded_transfer_backend_honored(self):
-        """An embedded host's ``transfer`` value flows through the factory."""
+        """An embedded host's ``transfer`` pin flows through the factory when
+        the backend is listed in the host's ``valid_transfers`` menu."""
         host = create_host_from_dict({
             'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
             'command_frame': 'zephyr',
+            'valid_transfers': ['console', 'tftp'],
             'transfer': 'tftp',
         })
         assert isinstance(host, EmbeddedHost)
@@ -562,10 +564,13 @@ class TestValidateOsType:
             })
 
     def test_validate_embedded_invalid_transfer_raises(self):
+        """An embedded host with a unix-only backend in its ``valid_transfers``
+        menu is rejected at validation time (menu is validated on model_validate,
+        not at to_host time)."""
         with pytest.raises(ValueError) as exc_info:
             validate_host_dict({
                 'ip': '192.0.2.1', 'element': 'sprout', 'os_type': 'embedded',
-                'transfer': 'scp',
+                'valid_transfers': ['scp'],
             })
         assert 'transfer' in str(exc_info.value)
 

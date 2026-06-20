@@ -60,26 +60,32 @@ def _decorate(doc: dict[str, Any], stem: str, title: str) -> dict[str, Any]:
 
 
 def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> None:
-    """Add registry-derived ``enum`` constraints to the term/transfer selector
-    properties of a host spec's schema, in place.
+    """Add registry-derived ``enum`` constraints to the ``valid_terms`` /
+    ``valid_transfers`` menu-array items of a host spec's schema, in place.
 
     The schema is generated after init modules load, so the enum includes
     custom per-repo backends as well as the built-ins — strictly better than the
-    old static ``Literal``. Transfer is filtered to the spec's host family via
-    ``_transfer_host_family``. No-op for a spec that declares neither field.
+    old static ``Literal``. Transfer items are filtered to the spec's host family
+    via ``_transfer_host_family``. No-op for a spec that declares neither field.
+    The scalar ``term``/``transfer`` pins are nullable optional strings; their
+    schema is left as pydantic generates it.
     """
     props = schema.get("properties")
     if not isinstance(props, dict):
         return
-    if "term" in props:
-        props["term"] = {**props["term"], "enum": sorted(_TERM_BACKENDS)}
-    if "transfer" in props:
+    if "valid_terms" in props:
+        items = dict(props["valid_terms"].get("items") or {})
+        items["enum"] = sorted(_TERM_BACKENDS)
+        props["valid_terms"] = {**props["valid_terms"], "items": items}
+    if "valid_transfers" in props:
         family = getattr(spec_cls, "_transfer_host_family", None)
         names = sorted(
             n for n, c in _TRANSFER_BACKENDS.items()
             if family is None or family in c.host_families
         )
-        props["transfer"] = {**props["transfer"], "enum": names}
+        items = dict(props["valid_transfers"].get("items") or {})
+        items["enum"] = names
+        props["valid_transfers"] = {**props["valid_transfers"], "items": items}
 
 
 def _host_array_schema(distinct: list[type[HostSpec]],

@@ -175,7 +175,8 @@ class TestFileTransfer:
 
     def test_transfer_backend_is_configurable(self):
         from otto.host.transfer import TftpFileTransfer
-        host = ZephyrHost(ip='192.0.2.1', element='sprout', log=False, transfer='tftp')
+        host = ZephyrHost(ip='192.0.2.1', element='sprout', log=False,
+                          transfer='tftp', valid_transfers=['tftp'])
         host._connections = None  # type: ignore[assignment]  # avoid __del__ churn
         assert host.transfer == 'tftp'
         assert isinstance(host._file_transfer, TftpFileTransfer)

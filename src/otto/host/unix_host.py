@@ -85,6 +85,7 @@ from .options import (
 from .file_ops import PosixFileOps
 from .power import PowerController, power_control_from_spec
 from .privilege import PosixPrivilege
+from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .remote_host import OsType, RemoteHost
 from .repeat import RepeatRunner
 from .session import (
@@ -161,6 +162,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     transfer: str = 'scp'
     """Protocol used to transfer files."""
+
+    valid_terms: list[str] = field(default_factory=lambda: ['ssh', 'telnet'])
+    """Closed menu of term backends this host supports (active is ``term``)."""
+
+    valid_transfers: list[str] = field(default_factory=lambda: ['scp', 'sftp', 'ftp', 'nc'])
+    """Closed menu of transfer backends this host supports (active is ``transfer``)."""
 
     default_dest_dir: Path = field(default_factory=Path)
     """Default landing directory for ``put`` / ``get`` when the caller
@@ -300,6 +307,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             self.command_frame = build_command_frame(self.command_frame)
 
         self.power_control = power_control_from_spec(self.power_control)
+
+        TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
+        TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
 
         self._connections = self._build_connections()
         self._repeater = RepeatRunner(run_cmds=self.run)

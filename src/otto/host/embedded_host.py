@@ -59,6 +59,7 @@ from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .binary_loader import BinaryLoader
 from .command_frame import CommandFrame, ZephyrFrame
+from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .power import PowerController, power_control_from_spec
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
@@ -139,9 +140,19 @@ class EmbeddedHost(RemoteHost):
     is_virtual: bool = False
     """Determines whether a host is a VM/emulator (e.g. QEMU) or not."""
 
+    term: str = 'telnet'
+    """Active session transport. Embedded hosts speak telnet today; the command
+    frame is transport-independent, so this is not a hard coupling."""
+
     transfer: str = 'console'
     """File-transfer backend. ``console`` (default) drives the device shell's
     ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
+
+    valid_terms: list[str] = field(default_factory=lambda: ['telnet'])
+    """Closed menu of term backends this host supports (active is ``term``)."""
+
+    valid_transfers: list[str] = field(default_factory=lambda: ['console'])
+    """Closed menu of transfer backends this host supports (active is ``transfer``)."""
 
     filesystem: EmbeddedFileSystem = field(default_factory=NoFileSystem)
     """On-device filesystem variant — e.g. :class:`FatRamFileSystem`,
@@ -309,6 +320,9 @@ class EmbeddedHost(RemoteHost):
 
         hop_transport = self._build_hop_transport() if self.hop else None
 
+        TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
+        TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
+
         # An RTOS telnet shell has no login step — force ``login=False`` so the
         # connection never blocks waiting for a ``login:`` prompt that the
         # device will never send.
@@ -317,7 +331,7 @@ class EmbeddedHost(RemoteHost):
             ip=self.ip,
             creds=self.creds,
             user=self.user,
-            term='telnet',
+            term=self.term,
             name=self.name,
             hop=hop_transport,
             telnet_options=replace(self.telnet_options, login=False, single_client_console=True),

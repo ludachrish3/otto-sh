@@ -37,7 +37,7 @@ def test_unix_host_builds_registered_transfer_backend():
     xfer_mod._TRANSFER_BACKENDS["recording"] = RecordingTransfer
 
     h = UnixHost(ip="10.0.0.9", creds={"root": "x"}, element="e",
-                 transfer="recording")
+                 transfer="recording", valid_transfers=["recording"])
     assert isinstance(h._file_transfer, RecordingTransfer)
     assert built["name"] == "recording"
 

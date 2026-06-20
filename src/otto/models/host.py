@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 from pydantic import field_validator
 
 from ..host.binary_loader import build_binary_loader
+from ..host.capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from ..host.command_frame import _FRAME_CLASSES, build_command_frame
 from ..host.connections import _TERM_BACKENDS
 from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
@@ -69,6 +70,29 @@ def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
             f"transfer {v!r} is not valid on {host_label} (it serves: {fam})."
         )
     return v
+
+
+def _coerce_menu(v: object) -> object:
+    """Normalize a scalar menu value to a 1-element list (before-validator)."""
+    return [v] if isinstance(v, str) else v
+
+
+def _validate_term_menu(v: list[str]) -> list[str]:
+    if not v:
+        raise ValueError("valid_terms must be a non-empty list of term backends")
+    for t in v:
+        if t not in _TERM_BACKENDS:
+            known = ", ".join(sorted(_TERM_BACKENDS))
+            raise ValueError(
+                f"term {t!r} is not a registered term backend. Known: {known}"
+            )
+    return v
+
+
+def _validate_transfer_menu(v: list[str], family: str, label: str) -> list[str]:
+    if not v:
+        raise ValueError("valid_transfers must be a non-empty list of transfer backends")
+    return [_validate_transfer_for_family(t, family, label) for t in v]
 
 
 class HostSpec(OttoModel):
@@ -183,9 +207,11 @@ class UnixHostSpec(HostSpec):
     creds: dict[str, str]  # override: required for a Unix host (SSH/telnet login)
     hw_version: str | None = None
     sw_version: str | None = None
-    term: str = "ssh"
+    valid_terms: list[str] = ["ssh", "telnet"]
+    valid_transfers: list[str] = ["scp", "sftp", "ftp", "nc"]
+    term: str | None = None       # optional active pin; resolved at to_host
+    transfer: str | None = None   # optional active pin; resolved at to_host
     docker_capable: bool = False
-    transfer: str = "scp"
     ssh_options: SshOptionsSpec = SshOptionsSpec()
     sftp_options: SftpOptionsSpec = SftpOptionsSpec()
     scp_options: ScpOptionsSpec = ScpOptionsSpec()
@@ -194,26 +220,29 @@ class UnixHostSpec(HostSpec):
 
     _transfer_host_family: ClassVar[str] = "unix"
 
-    @field_validator("term")
+    @field_validator("valid_terms", "valid_transfers", mode="before")
     @classmethod
-    def _validate_term_name(cls, v: str) -> str:
-        if v not in _TERM_BACKENDS:
-            known = ", ".join(sorted(_TERM_BACKENDS))
-            raise ValueError(
-                f"term {v!r} is not a registered term backend. Known: {known}"
-            )
-        return v
+    def _coerce_unix_menus(cls, v: object) -> object:
+        return _coerce_menu(v)
 
-    @field_validator("transfer")
+    @field_validator("valid_terms")
     @classmethod
-    def _validate_unix_transfer_name(cls, v: str) -> str:
-        return _validate_transfer_for_family(v, cls._transfer_host_family, "a unix host")
+    def _validate_unix_valid_terms(cls, v: list[str]) -> list[str]:
+        return _validate_term_menu(v)
+
+    @field_validator("valid_transfers")
+    @classmethod
+    def _validate_unix_valid_transfers(cls, v: list[str]) -> list[str]:
+        return _validate_transfer_menu(v, cls._transfer_host_family, "a unix host")
 
     def to_host(self, cls: type[UnixHost] = UnixHost) -> UnixHost:
         kw = self._common_host_kwargs()
         s = self.model_fields_set
-        for n in ("hw_version", "sw_version", "term",
-                  "docker_capable", "transfer"):
+        kw["valid_terms"] = list(self.valid_terms)
+        kw["valid_transfers"] = list(self.valid_transfers)
+        kw["term"] = TERM_RESOLVER.resolve_active(self.valid_terms, pin=self.term)
+        kw["transfer"] = TRANSFER_RESOLVER.resolve_active(self.valid_transfers, pin=self.transfer)
+        for n in ("hw_version", "sw_version", "docker_capable"):
             if n in s:
                 kw[n] = getattr(self, n)
         for n in ("ssh_options", "sftp_options", "scp_options",
@@ -225,18 +254,29 @@ class UnixHostSpec(HostSpec):
 
 class EmbeddedHostSpec(HostSpec):
     os_type: str = "embedded"
-    transfer: str = "console"
+    valid_terms: list[str] = ["telnet"]
+    valid_transfers: list[str] = ["console"]
+    term: str | None = None
+    transfer: str | None = None
     filesystem: str | None = None
     loader: str | None = None
 
     _transfer_host_family: ClassVar[str] = "embedded"
 
-    @field_validator("transfer")
+    @field_validator("valid_terms", "valid_transfers", mode="before")
     @classmethod
-    def _validate_embedded_transfer_name(cls, v: str) -> str:
-        return _validate_transfer_for_family(
-            v, cls._transfer_host_family, "an embedded host"
-        )
+    def _coerce_embedded_menus(cls, v: object) -> object:
+        return _coerce_menu(v)
+
+    @field_validator("valid_terms")
+    @classmethod
+    def _validate_embedded_valid_terms(cls, v: list[str]) -> list[str]:
+        return _validate_term_menu(v)
+
+    @field_validator("valid_transfers")
+    @classmethod
+    def _validate_embedded_valid_transfers(cls, v: list[str]) -> list[str]:
+        return _validate_transfer_menu(v, cls._transfer_host_family, "an embedded host")
 
     @field_validator("filesystem")
     @classmethod
@@ -251,8 +291,10 @@ class EmbeddedHostSpec(HostSpec):
     def to_host(self, cls: type[EmbeddedHost] = EmbeddedHost) -> EmbeddedHost:
         kw = self._common_host_kwargs()
         s = self.model_fields_set
-        if "transfer" in s:
-            kw["transfer"] = self.transfer
+        kw["valid_terms"] = list(self.valid_terms)
+        kw["valid_transfers"] = list(self.valid_transfers)
+        kw["term"] = TERM_RESOLVER.resolve_active(self.valid_terms, pin=self.term)
+        kw["transfer"] = TRANSFER_RESOLVER.resolve_active(self.valid_transfers, pin=self.transfer)
         if "filesystem" in s and self.filesystem is not None:
             kw["filesystem"] = build_filesystem(self.filesystem)
         if "loader" in s and self.loader is not None:

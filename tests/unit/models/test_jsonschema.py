@@ -103,15 +103,24 @@ class TestSelectorEnums:
         from otto.models.jsonschema import build_schemas
 
         props = build_schemas()["unix-host"]["properties"]
-        assert props["term"]["enum"] == ["ssh", "telnet"]
-        assert props["transfer"]["enum"] == ["ftp", "nc", "scp", "sftp"]
+        # Enum lives on the menu-array items, not the nullable pin scalars.
+        assert props["valid_terms"]["items"]["enum"] == ["ssh", "telnet"]
+        assert props["valid_transfers"]["items"]["enum"] == ["ftp", "nc", "scp", "sftp"]
+        # Scalar pins are present but have no injected enum (nullable optional).
+        assert "term" in props
+        assert "enum" not in props["term"]
 
     def test_embedded_host_schema_has_registry_enums(self):
         from otto.models.jsonschema import build_schemas
 
         props = build_schemas()["embedded-host"]["properties"]
-        assert props["transfer"]["enum"] == ["console", "tftp"]
-        assert "term" not in props  # embedded has no term field
+        # Enum lives on the menu-array items; transfers are family-filtered to
+        # embedded-only backends; terms show all registered term backends.
+        assert props["valid_transfers"]["items"]["enum"] == ["console", "tftp"]
+        assert props["valid_terms"]["items"]["enum"] == ["ssh", "telnet"]
+        # Scalar pin is present but has no injected enum.
+        assert "term" in props
+        assert "enum" not in props["term"]
 
     def test_hosts_array_defs_carry_enums(self):
         from otto.models.jsonschema import build_schemas
@@ -119,9 +128,14 @@ class TestSelectorEnums:
         defs = build_schemas()["hosts"]["$defs"]
         unix_def = next(
             d for d in defs.values()
-            if isinstance(d, dict) and "term" in d.get("properties", {})
+            if isinstance(d, dict) and "valid_transfers" in d.get("properties", {})
+            and d["properties"]["valid_transfers"]["items"].get("enum") == [
+                "ftp", "nc", "scp", "sftp"
+            ]
         )
-        assert unix_def["properties"]["transfer"]["enum"] == ["ftp", "nc", "scp", "sftp"]
+        assert unix_def["properties"]["valid_transfers"]["items"]["enum"] == [
+            "ftp", "nc", "scp", "sftp"
+        ]
 
     def test_custom_unix_transfer_appears_in_enum(self):
         from otto.host import transfer as xfer_mod
@@ -135,7 +149,7 @@ class TestSelectorEnums:
         xfer_mod._TRANSFER_BACKENDS["xmodem"] = XmodemTransfer
         try:
             props = build_schemas()["unix-host"]["properties"]
-            assert "xmodem" in props["transfer"]["enum"]
+            assert "xmodem" in props["valid_transfers"]["items"]["enum"]
         finally:
             xfer_mod._TRANSFER_BACKENDS.clear()
             xfer_mod._TRANSFER_BACKENDS.update(saved)

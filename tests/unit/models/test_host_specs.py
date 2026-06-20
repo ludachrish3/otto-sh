@@ -290,65 +290,49 @@ def test_registered_pairs_drift_guard():
         )
 
 
-class TestSelectorValidation:
-    def test_builtin_term_and_transfer_accepted(self):
-        from otto.models.host import EmbeddedHostSpec, UnixHostSpec
+class TestMenuValidation:
+    def test_unix_default_menus(self):
+        spec = UnixHostSpec(ip="10.0.0.1", element="x", creds={"u": "p"})
+        assert spec.valid_terms == ["ssh", "telnet"]
+        assert spec.valid_transfers == ["scp", "sftp", "ftp", "nc"]
+        assert spec.term is None and spec.transfer is None
 
-        u = UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"},
-                         term="telnet", transfer="sftp")
-        assert u.term == "telnet" and u.transfer == "sftp"
-        em = EmbeddedHostSpec(ip="10.0.0.2", element="e", transfer="console")
-        assert em.transfer == "console"
+    def test_embedded_default_menus(self):
+        spec = EmbeddedHostSpec(ip="10.0.0.1", element="x")
+        assert spec.valid_terms == ["telnet"]
+        assert spec.valid_transfers == ["console"]
 
-    def test_unknown_term_raises(self):
-        from pydantic import ValidationError
+    def test_scalar_coerces_to_one_element_menu(self):
+        spec = UnixHostSpec(
+            ip="10.0.0.1", element="x", creds={"u": "p"},
+            valid_terms="ssh", valid_transfers="scp",
+        )
+        assert spec.valid_terms == ["ssh"]
+        assert spec.valid_transfers == ["scp"]
 
-        from otto.models.host import UnixHostSpec
+    def test_list_menu_preserved_in_order(self):
+        spec = UnixHostSpec(
+            ip="10.0.0.1", element="x", creds={"u": "p"},
+            valid_transfers=["nc", "scp"],
+        )
+        assert spec.valid_transfers == ["nc", "scp"]
 
-        with pytest.raises(ValidationError, match="not a registered term backend"):
-            UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"}, term="nope")
+    def test_unknown_term_in_menu_raises(self):
+        with pytest.raises(ValueError, match="not a registered term backend"):
+            UnixHostSpec(ip="1.1.1.1", element="x", creds={"u": "p"}, valid_terms=["bogus"])
 
-    def test_unknown_unix_transfer_raises(self):
-        from pydantic import ValidationError
+    def test_unknown_unix_transfer_in_menu_raises(self):
+        with pytest.raises(ValueError, match="not a registered transfer backend"):
+            UnixHostSpec(ip="1.1.1.1", element="x", creds={"u": "p"}, valid_transfers=["bogus"])
 
-        from otto.models.host import UnixHostSpec
+    def test_unix_rejects_embedded_only_transfer_in_menu(self):
+        with pytest.raises(ValueError, match="not valid on a unix host"):
+            UnixHostSpec(ip="1.1.1.1", element="x", creds={"u": "p"}, valid_transfers=["console"])
 
-        with pytest.raises(ValidationError, match="not a registered transfer backend"):
-            UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"},
-                         transfer="frobnicate")
+    def test_embedded_rejects_unix_only_transfer_in_menu(self):
+        with pytest.raises(ValueError, match="not valid on an embedded host"):
+            EmbeddedHostSpec(ip="1.1.1.1", element="x", valid_transfers=["scp"])
 
-    def test_unix_rejects_embedded_only_transfer(self):
-        from pydantic import ValidationError
-
-        from otto.models.host import UnixHostSpec
-
-        with pytest.raises(ValidationError, match="not valid on a unix host"):
-            UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"},
-                         transfer="console")
-
-    def test_embedded_rejects_unix_only_transfer(self):
-        from pydantic import ValidationError
-
-        from otto.models.host import EmbeddedHostSpec
-
-        with pytest.raises(ValidationError, match="not valid on an embedded host"):
-            EmbeddedHostSpec(ip="10.0.0.2", element="e", transfer="scp")
-
-    def test_cross_family_backend_validates_on_both(self):
-        from otto.host import transfer as xfer_mod
-        from otto.host.transfer import UnixFileTransfer
-        from otto.models.host import EmbeddedHostSpec, UnixHostSpec
-
-        class DualTransfer(UnixFileTransfer):
-            host_families = frozenset({"unix", "embedded"})
-
-        saved = dict(xfer_mod._TRANSFER_BACKENDS)
-        xfer_mod._TRANSFER_BACKENDS["dual"] = DualTransfer
-        try:
-            assert UnixHostSpec(ip="10.0.0.1", element="e", creds={"root": "x"},
-                                transfer="dual").transfer == "dual"
-            assert EmbeddedHostSpec(ip="10.0.0.2", element="e",
-                                    transfer="dual").transfer == "dual"
-        finally:
-            xfer_mod._TRANSFER_BACKENDS.clear()
-            xfer_mod._TRANSFER_BACKENDS.update(saved)
+    def test_empty_menu_rejected(self):
+        with pytest.raises(ValueError, match="must be a non-empty"):
+            UnixHostSpec(ip="1.1.1.1", element="x", creds={"u": "p"}, valid_transfers=[])
