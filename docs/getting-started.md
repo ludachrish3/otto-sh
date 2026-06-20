@@ -185,6 +185,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `pytest-timeout` | 2.3.1 | Per-test timeouts for `otto test` (`@pytest.mark.timeout`) |
 | `rich` | 15.0.0 | Terminal formatting, panels, and tables |
 | `sse-starlette` | 3.3.3 | Server-sent events for live dashboard updates |
+| `starlette` | 0.52.1 | ASGI request types used directly by the monitor server |
 | `telnetlib3` | 4.0.1 | Async Telnet client for telnet-based hosts |
 | `tomli` | 2.4.0 | TOML parser for `.otto/settings.toml` |
 | `typer` | 0.26 | CLI framework (builds `otto run`, `otto test`, etc.) |
