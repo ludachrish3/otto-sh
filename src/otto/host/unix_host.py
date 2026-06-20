@@ -55,6 +55,8 @@ from typing import (
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
+from .product import Product
+
 from ..utils import (
     CommandStatus,
     Status,
@@ -218,6 +220,10 @@ class UnixHost(RemoteHost):
     interfaces: dict[str, str] = field(default_factory=dict, repr=False)
     """Named secondary interface addresses (see :attr:`RemoteHost.interfaces`).
     Resolve with :meth:`address_for`."""
+
+    products: list['Product'] = field(default_factory=list)
+    """Software-under-test deployed to this host. Default empty. See
+    :attr:`~otto.host.host.BaseHost.products`."""
 
     log: bool = field(default=True, repr=False)
     """Determines whether this host should log its output to stdout and log files.

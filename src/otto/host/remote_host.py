@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from ..configmodule.lab import Lab
     from .connections import ConnectionManager
     from .options import SnmpOptions
+    from .product import Product
     from .session import SessionManager
 
 logger = get_otto_logger()
@@ -148,6 +149,10 @@ class RemoteHost(BaseHost):
     ``{"mgmt": "10.0.0.5", "data": "192.168.1.5"}``). The *primary* address
     stays :attr:`ip`; this map is additive and optional (empty by default).
     Resolve a name (or pass a literal through) with :meth:`address_for`."""
+
+    products: list[Product]
+    """Software-under-test deployed to this host (see
+    :attr:`~otto.host.host.BaseHost.products`)."""
 
     # --- Connection-state contract ---------------------------------------
     # Concrete subclasses supply these as real ``@dataclass`` fields (a

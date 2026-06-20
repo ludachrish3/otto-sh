@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .host import BaseHost, Host, is_dry_run
+from .product import Product
 from .repeat import RepeatRunner
 
 if TYPE_CHECKING:
@@ -98,6 +99,10 @@ class DockerContainerHost(BaseHost):
     """Reservation tags. Containers participate in the same reservation
     system as UnixHosts; the compose module typically copies the parent's
     tags so concurrent test runs serialize through reservations."""
+
+    products: list[Product] = field(default_factory=list, repr=False)
+    """Software-under-test deployed to this host. Default empty. See
+    :attr:`~otto.host.host.BaseHost.products`."""
 
     _repeater: RepeatRunner = field(init=False, repr=False)
     """Periodic-task runner. Required by :class:`BaseHost`."""

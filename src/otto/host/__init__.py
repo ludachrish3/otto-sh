@@ -25,6 +25,8 @@ from .os_profile import get_host_class as get_host_class
 from .os_profile import get_os_profile as get_os_profile
 from .os_profile import register_host_class as register_host_class
 from .os_profile import register_os_profile as register_os_profile
+from .product import FileProduct as FileProduct
+from .product import Product as Product
 from .remote_host import OsType as OsType
 from .remote_host import RemoteHost as RemoteHost
 from .session import Expect as Expect

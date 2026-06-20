@@ -53,6 +53,8 @@ from typing import TYPE_CHECKING, Optional, cast
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
+from .product import Product
+
 from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .binary_loader import BinaryLoader
@@ -219,6 +221,10 @@ class EmbeddedHost(RemoteHost):
     interfaces: dict[str, str] = field(default_factory=dict, repr=False)
     """Named secondary interface addresses (see :attr:`RemoteHost.interfaces`).
     Resolve with :meth:`address_for`."""
+
+    products: list['Product'] = field(default_factory=list)
+    """Software-under-test deployed to this host. Default empty. See
+    :attr:`~otto.host.host.BaseHost.products`."""
 
     log: bool = field(default=True, repr=False)
     """Whether this host should log its output to stdout and log files."""

@@ -28,6 +28,7 @@ from ..utils import (
 )
 
 if TYPE_CHECKING:
+    from .product import Product
     from .repeat import RepeatRunner
     from .session import Expect, HostSession
 
@@ -197,6 +198,9 @@ class Host(Protocol):
     resources: set[str]
     """Resources required to reserve this host."""
 
+    products: list['Product']
+    """Software-under-test deployed to this host (default empty)."""
+
     async def _interact(self) -> None:
         ...
 
@@ -253,6 +257,16 @@ class Host(Protocol):
     async def close(self) -> None:
         ...
 
+    async def stage(self) -> tuple[Status, str]: ...
+
+    async def install(self, stage_only: bool = False) -> tuple[Status, str]: ...
+
+    async def uninstall(self) -> tuple[Status, str]: ...
+
+    async def is_installed(self) -> bool: ...
+
+    async def is_uninstalled(self) -> bool: ...
+
     async def __aenter__(self) -> "Host": ...
 
     async def __aexit__(self, *exc: object) -> None: ...
@@ -264,6 +278,7 @@ class BaseHost(ABC):
     name: str
     log: bool
     resources: set[str]
+    products: list['Product']
     _repeater: 'RepeatRunner'
 
     ####################
@@ -414,6 +429,68 @@ class BaseHost(ABC):
 
     async def __aexit__(self, *exc: object) -> None:
         await self.close()
+
+    ####################
+    #  Product lifecycle
+    ####################
+
+    async def stage(self) -> tuple[Status, str]:
+        """Stage every product onto this host (transfer/place, no install).
+
+        Iterates :attr:`products` in declaration order, returning the first
+        non-ok ``(Status, str)``; an empty list is a successful no-op.
+        """
+        for product in self.products:
+            status, msg = await product.stage(cast('Host', self))
+            if not status.is_ok:
+                return status, msg
+        return Status.Success, ""
+
+    async def install(self, stage_only: bool = False) -> tuple[Status, str]:
+        """Stage, then install every product.
+
+        Calls :meth:`stage` first; returns early if ``stage_only`` is set or the
+        stage step failed. Otherwise installs each product in declaration order,
+        short-circuiting on the first failure. Projects may override for
+        cross-product ordering/dependencies.
+        """
+        status, msg = await self.stage()
+        if stage_only or not status.is_ok:
+            return status, msg
+        for product in self.products:
+            status, msg = await product.install(cast('Host', self))
+            if not status.is_ok:
+                return status, msg
+        return Status.Success, ""
+
+    async def uninstall(self) -> tuple[Status, str]:
+        """Uninstall every product (best-effort).
+
+        Attempts every product even if one fails, returning the first non-ok
+        result seen (so cleanup is not abandoned halfway).
+        """
+        first_error: tuple[Status, str] | None = None
+        for product in self.products:
+            status, msg = await product.uninstall(cast('Host', self))
+            if not status.is_ok and first_error is None:
+                first_error = (status, msg)
+        return first_error if first_error is not None else (Status.Success, "")
+
+    async def is_installed(self) -> bool:
+        """True iff there is at least one product and all report installed.
+
+        An empty :attr:`products` list is **not installed** (avoids the
+        vacuous-truth surprise of ``all([])``)."""
+        if not self.products:
+            return False
+        for product in self.products:
+            if not await product.is_installed(cast('Host', self)):
+                return False
+        return True
+
+    async def is_uninstalled(self) -> bool:
+        """Inverse of :meth:`is_installed`."""
+        return not await self.is_installed()
 
     ####################
     #  Repeat commands

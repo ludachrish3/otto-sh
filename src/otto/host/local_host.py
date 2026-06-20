@@ -14,6 +14,7 @@ from pathlib import Path
 from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
 from .host import BaseHost, is_dry_run
+from .product import Product
 from .repeat import RepeatRunner
 from .session import (
     Expect,
@@ -79,6 +80,9 @@ class LocalHost(BaseHost):
 
     resources: set[str] = field(default_factory=set, repr=False)
     """Resources required to reserve this host — always empty for LocalHost."""
+
+    products: list[Product] = field(default_factory=list, repr=False)
+    """Software-under-test deployed to this host. Default empty."""
 
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages persistent shell sessions for this host."""
