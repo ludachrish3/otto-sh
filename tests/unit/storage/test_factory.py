@@ -755,3 +755,38 @@ class TestMergeAndValidation:
                     "command_frame": "zephyr", "ssh_options": {"port": 22},
                 }
             )
+
+
+class TestProductProviders:
+    @pytest.fixture(autouse=True)
+    def _isolate_provider_registry(self):
+        from otto.host import product as product_mod
+        saved = list(product_mod._PRODUCT_PROVIDERS)
+        try:
+            yield
+        finally:
+            product_mod._PRODUCT_PROVIDERS[:] = saved
+
+    def test_provider_products_attached_at_ingest(self):
+        from types import SimpleNamespace
+
+        from otto.host.product import register_product_provider
+
+        register_product_provider(
+            lambda host: [SimpleNamespace(name="myapp")]
+            if host.os_type == "unix" else None
+        )
+        host = create_host_from_dict({
+            'ip': '10.10.200.11',
+            'element': 'orange',
+            'creds': {'vagrant': 'vagrant'},
+        })
+        assert [p.name for p in host.products] == ["myapp"]
+
+    def test_no_provider_means_empty_products(self):
+        host = create_host_from_dict({
+            'ip': '10.10.200.12',
+            'element': 'lemon',
+            'creds': {'vagrant': 'vagrant'},
+        })
+        assert host.products == []

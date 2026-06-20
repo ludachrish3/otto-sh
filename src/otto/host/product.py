@@ -11,20 +11,30 @@ It is intentionally **not** a pydantic model — that would force every project
 product into pydantic and diverge from the sibling host strategies
 (:class:`CommandFrame`, :class:`BinaryLoader`, :class:`EmbeddedFileSystem`).
 Concrete subclasses pick their own data representation (``@dataclass`` or an
-``OttoModel``). A lab-data declaration path (a ``ProductSpec`` boundary model +
-``register_product`` registry) is a documented future follow-on.
+``OttoModel``).
+
+Products are **behavior**, so they are customized in code, not lab data: a
+product repo registers a :func:`register_product_provider` callback from a
+``.otto`` init module, and otto applies it to each host as it is ingested (see
+:func:`apply_product_providers`). Lab data stays product-agnostic and evolves
+independently of product code; declaring products *in* lab data is deliberately
+**not** supported.
 """
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..logger import get_otto_logger
 from ..utils import Status
 
 if TYPE_CHECKING:
     from .host import Host
+
+logger = get_otto_logger()
 
 
 class Product(ABC):
@@ -82,3 +92,50 @@ class FileProduct(Product):
 
     async def stage(self, host: "Host") -> tuple[Status, str]:
         return await host.put(self.artifact, self.dest_dir)
+
+
+ProductProvider = Callable[["Host"], Iterable[Product] | None]
+"""A function that, given a host, returns the products it should carry.
+
+Registered from a ``.otto`` init module via :func:`register_product_provider`
+and run once per lab-ingested host. All product knowledge stays in product-repo
+code; lab data never names a product."""
+
+_PRODUCT_PROVIDERS: list[ProductProvider] = []
+
+
+def register_product_provider(provider: ProductProvider) -> None:
+    """Register a function that decides which products a host carries.
+
+    Call from an init module listed in ``.otto/settings.toml`` — the same
+    extension hook the other host strategies use. The provider runs once per
+    lab-ingested host; inspect the host's product-agnostic attributes
+    (``element``, ``element_id``, ``os_type``, ``id``, ``ip``, ``resources``)
+    and return the products that host should carry (or ``None``/``[]`` for
+    none). Behavior lives in code; lab data stays product-agnostic.
+    """
+    _PRODUCT_PROVIDERS.append(provider)
+
+
+def apply_product_providers(host: "Host") -> None:
+    """Run every registered provider against *host*, attaching their products.
+
+    Called at the single lab-ingest chokepoint
+    (:func:`otto.storage.factory.create_host_from_dict`). Providers run in
+    registration order and their results are concatenated onto
+    ``host.products``. A product whose :attr:`Product.name` already appears on
+    the host is skipped (deduplication guards two overlapping providers). A
+    provider that raises propagates — a misconfigured provider fails ingest
+    loudly.
+    """
+    seen = {p.name for p in host.products}
+    for provider in _PRODUCT_PROVIDERS:
+        for product in provider(host) or ():
+            if product.name in seen:
+                logger.debug(
+                    "product provider: skipping duplicate %r on host %s",
+                    product.name, host.id,
+                )
+                continue
+            host.products.append(product)
+            seen.add(product.name)

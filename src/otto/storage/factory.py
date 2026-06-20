@@ -7,6 +7,7 @@ from ..host.os_profile import (
     get_os_profile,
     registered_profile_names,
 )
+from ..host.product import apply_product_providers
 from ..host.remote_host import RemoteHost
 from ..models.host import HostSpec
 
@@ -89,7 +90,9 @@ def create_host_from_dict(
     merged = _merge_host_dict(host_data, defaults, profile, spec_cls)
     merged['os_type'] = selector
     spec = spec_cls.model_validate(merged)
-    return spec.to_host(cls)
+    host = spec.to_host(cls)
+    apply_product_providers(host)
+    return host
 
 
 def validate_host_dict(host_data: dict[str, Any]) -> None:

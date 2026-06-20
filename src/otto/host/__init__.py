@@ -35,6 +35,8 @@ from .power import power_control_from_spec as power_control_from_spec
 from .power import register_power_controller as register_power_controller
 from .product import FileProduct as FileProduct
 from .product import Product as Product
+from .product import ProductProvider as ProductProvider
+from .product import register_product_provider as register_product_provider
 from .remote_host import OsType as OsType
 from .remote_host import RemoteHost as RemoteHost
 from .session import Expect as Expect

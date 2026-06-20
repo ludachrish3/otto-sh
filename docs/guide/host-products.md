@@ -38,6 +38,29 @@ the project-specific halves:
 With no products, `stage`/`install`/`uninstall` are successful no-ops and
 `is_installed()` is `False`.
 
-> **Future:** declaring products in lab data (a `ProductSpec` boundary model +
-> `register_product` registry) is a planned follow-on; today products are
-> injected in code.
+## Registering products from a product repo
+
+Products are **behavior**, so they're customized in code — never declared in lab
+data. Lab data stays product-agnostic so it can evolve independently of product
+code: reverting a product's behavior must never force a lab change. A product
+repo registers its products from a `.otto` init module, and otto applies them to
+each host as it is ingested from lab data:
+
+    from pathlib import Path
+    from otto.host import register_product_provider
+
+    def _provide(host):
+        if host.os_type == "unix":
+            return [MyApp(artifact=Path("dist/myapp.tgz"), dest_dir=Path("/opt"))]
+        return None
+
+    register_product_provider(_provide)
+
+The provider runs once per lab-ingested host. Key on product-agnostic host
+attributes (`element`, `element_id`, `os_type`, `id`, `ip`, `resources`) to
+decide which hosts get which products; source any per-host parameters (versions,
+artifact paths) from your own product-repo config. Providers aggregate in
+registration order and dedupe by `Product.name`.
+
+Code-constructed hosts (`UnixHost(..., products=[...])`) keep their explicit
+list; providers apply only to hosts built from lab data.
