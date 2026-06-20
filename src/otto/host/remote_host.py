@@ -44,6 +44,27 @@ if TYPE_CHECKING:
 
 logger = get_otto_logger()
 
+
+def make_host_id(
+    element: str,
+    element_id: int | None,
+    board: str | None,
+    slot: int | None,
+) -> str:
+    """Compose a host's ``id`` from its identity fields — the single source of
+    the id format, called by ``RemoteHost._generate_id`` and by host_preferences
+    selector matching (so a selector regex matches the same string a built host
+    reports). ``element_id`` renders as its number; ``board``/``slot`` lower-case
+    with a ``_`` join.
+    """
+    element_id_str = "" if element_id is None else f"{element_id}"
+    ne = f"{element.lower()}{element_id_str}"
+    if board is None:
+        return ne
+    slot_str = "" if slot is None else f"{slot}"
+    return f"{ne}_{board.lower()}{slot_str}"
+
+
 OsType = str
 """Profile selector recorded on a host (the ``os_type`` field).
 
@@ -224,13 +245,7 @@ class RemoteHost(BaseHost):
         return f"{self.element}{self._element_id_str} {self.board}{self._slot_str}"
 
     def _generate_id(self) -> str:
-
-        neStr = f"{self.element.lower()}{self._element_id_str}"
-
-        if self.board is None:
-            return neStr
-
-        return f"{neStr}_{self.board.lower()}{self._slot_str}"
+        return make_host_id(self.element, self.element_id, self.board, self.slot)
 
     @property
     def _element_id_str(self) -> str:

@@ -42,6 +42,25 @@ Open questions to resolve when picked up:
 - Confirm multi-repo precedence ("last repo in `OTTO_SUT_DIRS` wins") holds
   uniformly across selections and values.
 
+## Follow-ups surfaced during Phase 2 (term-family + host_preferences)
+
+- **Restore the term family check when the override-copy seam lands.** Phase 2's
+  spec validator now rejects a term applied to a family it doesn't serve (e.g.
+  `ssh` on an embedded host), but the in-place `UnixHost.set_term_type` checks
+  only registry membership — not `_TERM_FAMILIES` — whereas `set_transfer_type`
+  already enforces `"unix" in cls.host_families`. §9 of the capability spec plans
+  to *remove* both setters in favor of the override-copy seam, which resolves the
+  asymmetry automatically; but the seam's `__post_init__` rebuild MUST run the
+  same family validation the spec validator does, so a runtime protocol switch
+  can't escape the family constraint that lab-data load enforces. If the setters
+  are kept for any reason, add the `_TERM_FAMILIES` check to `set_term_type` to
+  mirror `set_transfer_type`.
+- **Embedded preference-path test gap** (low priority): the embedded
+  `EmbeddedHostSpec.to_host(preferences=)` + factory-flatten-for-embedded path is
+  byte-identical to the unix path but untested at any level (unix is fully
+  tested). A single embedded factory case (`os_type="embedded"`,
+  `command_frame="zephyr"`, `preferences={".*": {"transfer": ["tftp"]}}`) closes it.
+
 ## Related
 
 - `docs/superpowers/specs/2026-06-20-host-capability-resolution-design.md` (§8, §12)

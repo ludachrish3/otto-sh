@@ -1,5 +1,6 @@
 from typing import Any
 
+from ..host.capability import select_preferences
 from ..host.os_profile import (
     build_host_class,
     build_host_spec,
@@ -8,7 +9,7 @@ from ..host.os_profile import (
     registered_profile_names,
 )
 from ..host.product import apply_product_providers
-from ..host.remote_host import RemoteHost
+from ..host.remote_host import RemoteHost, make_host_id
 from ..models.host import HostSpec
 
 # Names of the per-protocol option tables accepted on host dicts and as
@@ -61,6 +62,7 @@ def _merge_host_dict(
 def create_host_from_dict(
     host_data: dict[str, Any],
     defaults: dict[str, dict[str, Any]] | None = None,
+    preferences: dict[str, dict[str, list[str]]] | None = None,
 ) -> RemoteHost:
     """Create the appropriate :class:`RemoteHost` subclass from a host dict.
 
@@ -74,6 +76,11 @@ def create_host_from_dict(
     Field precedence, highest to lowest: the host's own value; the profile's
     ``defaults``; repo-level ``*_options`` defaults (options only); the runtime
     class's stock default.
+
+    ``preferences`` — the nested ``{selector: {capability: [...]}}`` table; the
+    factory matches each host's ``id`` and forwards the resulting flat
+    per-capability lists to ``to_host``. ``validate_host_dict`` does not build a
+    host and needs no change.
 
     Raises
     ------
@@ -90,7 +97,13 @@ def create_host_from_dict(
     merged = _merge_host_dict(host_data, defaults, profile, spec_cls)
     merged['os_type'] = selector
     spec = spec_cls.model_validate(merged)
-    host = spec.to_host(cls)
+    flat_prefs: dict[str, list[str]] | None = None
+    if preferences:
+        host_id = make_host_id(
+            spec.element, spec.element_id, spec.board, spec.slot
+        )
+        flat_prefs = select_preferences(preferences, host_id)
+    host = spec.to_host(cls, preferences=flat_prefs)
     apply_product_providers(host)
     return host
 

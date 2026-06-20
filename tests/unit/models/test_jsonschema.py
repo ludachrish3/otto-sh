@@ -114,10 +114,11 @@ class TestSelectorEnums:
         from otto.models.jsonschema import build_schemas
 
         props = build_schemas()["embedded-host"]["properties"]
-        # Enum lives on the menu-array items; transfers are family-filtered to
-        # embedded-only backends; terms show all registered term backends.
+        # Enum lives on the menu-array items; both axes are family-filtered to
+        # embedded-applicable backends — transfers to console/tftp, terms to
+        # telnet only (ssh serves unix).
         assert props["valid_transfers"]["items"]["enum"] == ["console", "tftp"]
-        assert props["valid_terms"]["items"]["enum"] == ["ssh", "telnet"]
+        assert props["valid_terms"]["items"]["enum"] == ["telnet"]
         # Scalar pin is present but has no injected enum.
         assert "term" in props
         assert "enum" not in props["term"]
@@ -128,10 +129,8 @@ class TestSelectorEnums:
         defs = build_schemas()["hosts"]["$defs"]
         unix_def = next(
             d for d in defs.values()
-            if isinstance(d, dict) and "valid_transfers" in d.get("properties", {})
-            and d["properties"]["valid_transfers"]["items"].get("enum") == [
-                "ftp", "nc", "scp", "sftp"
-            ]
+            if isinstance(d, dict)
+            and d.get("properties", {}).get("os_type", {}).get("default") == "unix"
         )
         assert unix_def["properties"]["valid_transfers"]["items"]["enum"] == [
             "ftp", "nc", "scp", "sftp"

@@ -47,6 +47,9 @@ def test_embedded_defaults_active():
 
 def test_embedded_connection_uses_self_term_not_hardcoded():
     # The ConnectionManager is built with the host's own term, defaulting to telnet.
+    # ZephyrHost (not a bare EmbeddedHost): EmbeddedHost requires a command_frame,
+    # and ZephyrHost supplies the built-in "zephyr" frame, so it constructs without
+    # an explicit frame argument.
     h = ZephyrHost(ip="192.0.2.1", element="d", log=False)
     assert h.term == "telnet"
     assert h._connections.term == "telnet"
@@ -63,3 +66,15 @@ def test_host_id_and_name_render_element_id():
     h2 = UnixHost(ip="1.1.1.1", creds={"root": "x"}, element="solo")
     assert h2.id == "solo"
     assert h2.name == "solo"
+
+
+def test_make_host_id_matches_built_host_id():
+    from otto.host.remote_host import make_host_id
+    from otto.host.unix_host import UnixHost
+
+    assert make_host_id("Test", 5, "BoardX", 2) == "test5_boardx2"
+    assert make_host_id("solo", None, None, None) == "solo"
+
+    h = UnixHost(ip="1.1.1.1", creds={"root": "x"}, element="Test",
+                 element_id=5, board="BoardX", slot=2)
+    assert make_host_id("Test", 5, "BoardX", 2) == h.id

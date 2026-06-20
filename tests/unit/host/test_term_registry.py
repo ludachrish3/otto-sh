@@ -13,21 +13,28 @@ from otto.host.connections import (
 
 @pytest.fixture(autouse=True)
 def _isolate_term_registry():
-    """Snapshot/restore the global term registry around each test so a custom
-    registration never leaks into the next test.
+    """Snapshot/restore the global term registry (names + families) around each
+    test so a custom registration never leaks into the next test.
     """
     saved = dict(conn_mod._TERM_BACKENDS)
+    saved_fams = dict(conn_mod._TERM_FAMILIES)
     try:
         yield
     finally:
         conn_mod._TERM_BACKENDS.clear()
         conn_mod._TERM_BACKENDS.update(saved)
+        conn_mod._TERM_FAMILIES.clear()
+        conn_mod._TERM_FAMILIES.update(saved_fams)
 
 
 class TestBuiltins:
     def test_ssh_and_telnet_registered_to_connection_manager(self):
         assert build_term_backend("ssh") is ConnectionManager
         assert build_term_backend("telnet") is ConnectionManager
+
+    def test_builtin_term_families(self):
+        assert conn_mod._TERM_FAMILIES["ssh"] == frozenset({"unix"})
+        assert conn_mod._TERM_FAMILIES["telnet"] == frozenset({"unix", "embedded"})
 
 
 class TestRegistry:
@@ -44,8 +51,16 @@ class TestRegistry:
         class CustomTerm(ConnectionManager):
             pass
 
-        register_term_backend("myterm", CustomTerm)
+        register_term_backend("myterm", CustomTerm, host_families=frozenset({"unix"}))
         assert build_term_backend("myterm") is CustomTerm
+        assert conn_mod._TERM_FAMILIES["myterm"] == frozenset({"unix"})
+
+    def test_register_rejects_empty_families(self):
+        class CustomTerm(ConnectionManager):
+            pass
+
+        with pytest.raises(ValueError, match="host_families is empty"):
+            register_term_backend("bad", CustomTerm, host_families=frozenset())
 
 
 class TestCreate:

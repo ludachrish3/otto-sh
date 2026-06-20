@@ -283,8 +283,20 @@ def main(
         for opt_key, table in repo.host_defaults.items():
             merged_host_defaults.setdefault(opt_key, {}).update(table)
 
-    # Pass search paths and merged defaults to load_lab
-    lab = load_lab(labs, search_paths=lab_search_paths, defaults=merged_host_defaults)
+    # Reduce repos' [host_preferences] tables in OTTO_SUT_DIRS order; later
+    # repos overlay earlier ones per (selector, capability) — a capability's
+    # ordered list is atomic, so the last repo to set selector+capability wins it.
+    merged_host_preferences: dict[str, dict[str, list[str]]] = {}
+    for repo in repos:
+        for selector, caps in repo.host_preferences.items():
+            dest = merged_host_preferences.setdefault(selector, {})
+            for cap, order in caps.items():
+                dest[cap] = list(order)
+
+    # Pass search paths and merged defaults/preferences to load_lab
+    lab = load_lab(labs, search_paths=lab_search_paths,
+                   defaults=merged_host_defaults,
+                   preferences=merged_host_preferences)
 
     # Synthesize placeholder Docker container hosts from each repo's
     # `[docker]` settings. They appear in `--list-hosts` and tab-completion

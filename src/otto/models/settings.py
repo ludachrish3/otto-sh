@@ -174,6 +174,12 @@ _HOST_DEFAULT_OPTION_SPECS: dict[str, type[OttoModel]] = {
     "nc_options": NcOptionsSpec,
 }
 
+# Capability names accepted inside a [host_preferences."<selector>"] table. Each
+# names a menu-style host field (term/transfer) whose value is an ordered list of
+# preferred backends; the resolver intersects the list with each host's menu at
+# build time. Extend this set when a new menu-style capability gains a resolver.
+_HOST_PREFERENCE_CAPABILITIES: frozenset[str] = frozenset({"term", "transfer"})
+
 
 class SettingsModel(OttoModel):
     """Boundary model for a repo's ``.otto/settings.toml`` (post ``${sut_dir}``
@@ -198,6 +204,7 @@ class SettingsModel(OttoModel):
 
     # structured sub-tables
     host_defaults: dict[str, dict[str, Any]] = {}
+    host_preferences: dict[str, dict[str, list[str]]] = {}
     os_profiles: dict[str, OsProfileSpec] = {}
     docker: DockerSettingsSpec = DockerSettingsSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()
@@ -235,6 +242,37 @@ class SettingsModel(OttoModel):
             validated = spec_cls.model_validate(table)
             result[key] = validated.model_dump(exclude_unset=True)
         return result
+
+    @field_validator("host_preferences")
+    @classmethod
+    def _validate_host_preferences(
+        cls, v: dict[str, dict[str, list[str]]]
+    ) -> dict[str, dict[str, list[str]]]:
+        """Validate each ``[host_preferences."<selector>"]`` table: the selector
+        key must be a compilable Python regex (matched with ``re.fullmatch``
+        against the host ``id`` at build time), and each inner key must name a
+        known menu-style capability. Entry *values* are intentionally NOT checked
+        against the backend registry here — this model is parsed before the repo's
+        ``init`` modules load (``init`` is listed in this same settings file), so a
+        custom backend would not yet be registered. An unregistered or out-of-menu
+        entry is skipped leniently at resolution (a preference, not a demand).
+        """
+        known = ", ".join(sorted(_HOST_PREFERENCE_CAPABILITIES))
+        for selector, caps in v.items():
+            try:
+                re.compile(selector)
+            except re.error as e:
+                raise ValueError(
+                    f"[host_preferences] selector {selector!r} is not a valid "
+                    f"regular expression: {e}"
+                ) from None
+            for cap in caps:
+                if cap not in _HOST_PREFERENCE_CAPABILITIES:
+                    raise ValueError(
+                        f"unknown [host_preferences] capability {cap!r} under "
+                        f"selector {selector!r}. Valid: {known}"
+                    )
+        return v
 
 
 # ---------------------------------------------------------------------------

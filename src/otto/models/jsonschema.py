@@ -22,7 +22,7 @@ from typing import Any
 
 from pydantic.json_schema import models_json_schema
 
-from ..host.connections import _TERM_BACKENDS
+from ..host.connections import _TERM_FAMILIES
 from ..host.os_profile import registered_host_specs
 from ..host.transfer import _TRANSFER_BACKENDS
 from .host import HostSpec
@@ -65,20 +65,25 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
 
     The schema is generated after init modules load, so the enum includes
     custom per-repo backends as well as the built-ins — strictly better than the
-    old static ``Literal``. Transfer items are filtered to the spec's host family
-    via ``_transfer_host_family``. No-op for a spec that declares neither field.
+    old static ``Literal``. Both axes are filtered to the spec's host family via
+    ``_host_family`` (terms through ``_TERM_FAMILIES``, transfers through each
+    backend's ``host_families``). No-op for a spec that declares neither field.
     The scalar ``term``/``transfer`` pins are nullable optional strings; their
     schema is left as pydantic generates it.
     """
     props = schema.get("properties")
     if not isinstance(props, dict):
         return
+    family = getattr(spec_cls, "_host_family", None)
     if "valid_terms" in props:
+        names = sorted(
+            n for n, fams in _TERM_FAMILIES.items()
+            if family is None or family in fams
+        )
         items = dict(props["valid_terms"].get("items") or {})
-        items["enum"] = sorted(_TERM_BACKENDS)
+        items["enum"] = names
         props["valid_terms"] = {**props["valid_terms"], "items": items}
     if "valid_transfers" in props:
-        family = getattr(spec_cls, "_transfer_host_family", None)
         names = sorted(
             n for n, c in _TRANSFER_BACKENDS.items()
             if family is None or family in c.host_families

@@ -762,6 +762,54 @@ class TestMergeAndValidation:
             )
 
 
+def test_create_host_from_dict_applies_selector_scoped_preference():
+    from otto.storage.factory import create_host_from_dict
+
+    host = create_host_from_dict(
+        {"ip": "1.1.1.1", "element": "e", "creds": {"root": "x"},
+         "valid_transfers": ["scp", "sftp"]},
+        preferences={".*": {"transfer": ["sftp"]}},
+    )
+    assert host.transfer == "sftp"
+
+
+def test_create_host_from_dict_preference_out_of_menu_skipped():
+    from otto.storage.factory import create_host_from_dict
+
+    host = create_host_from_dict(
+        {"ip": "1.1.1.1", "element": "e", "creds": {"root": "x"},
+         "valid_transfers": ["scp"]},
+        preferences={".*": {"transfer": ["sftp"]}},
+    )
+    assert host.transfer == "scp"  # sftp not in menu -> menu[0]
+
+
+def test_create_host_from_dict_selector_not_matching_is_inert():
+    from otto.storage.factory import create_host_from_dict
+
+    host = create_host_from_dict(
+        {"ip": "1.1.1.1", "element": "e", "creds": {"root": "x"},
+         "valid_transfers": ["scp", "sftp"]},
+        preferences={"zephyr.*": {"transfer": ["sftp"]}},  # id "e" not matched
+    )
+    assert host.transfer == "scp"  # no selector match -> menu[0]
+
+
+def test_create_host_from_dict_applies_preference_to_embedded_host():
+    from otto.storage.factory import create_host_from_dict
+
+    # Embedded path: EmbeddedHostSpec.to_host(preferences=) + the factory's
+    # flatten-for-embedded path (the unix tests above cover the unix branch).
+    # Default transfer menu[0] is console; tftp is in the menu and preferred.
+    host = create_host_from_dict(
+        {"ip": "192.0.2.1", "element": "sprout", "os_type": "embedded",
+         "command_frame": "zephyr", "valid_transfers": ["console", "tftp"]},
+        preferences={".*": {"transfer": ["tftp"]}},
+    )
+    assert isinstance(host, EmbeddedHost)
+    assert host.transfer == "tftp"  # preference (in menu) beats menu[0] console
+
+
 class TestProductProviders:
     @pytest.fixture(autouse=True)
     def _isolate_provider_registry(self):

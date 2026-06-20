@@ -7,6 +7,7 @@ stateless apart from the field name it carries for error messages.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 
@@ -49,3 +50,21 @@ class CapabilityResolver:
 
 TERM_RESOLVER = CapabilityResolver("term")
 TRANSFER_RESOLVER = CapabilityResolver("transfer")
+
+
+def select_preferences(
+    table: dict[str, dict[str, list[str]]], host_id: str
+) -> dict[str, list[str]]:
+    """Reduce a nested ``{selector: {capability: [...]}}`` preference table to a
+    flat ``{capability: [...]}`` for one host, by the definition-order cascade:
+    walk selectors in insertion (file) order and, for each whose regex
+    ``re.fullmatch``es *host_id*, overlay its capabilities (later matches win
+    per-capability). A selector matching nothing is skipped; lists are copied so
+    the caller never aliases the table.
+    """
+    effective: dict[str, list[str]] = {}
+    for selector, caps in table.items():
+        if re.fullmatch(selector, host_id):
+            for cap, order in caps.items():
+                effective[cap] = list(order)
+    return effective

@@ -8,9 +8,10 @@ registers a class from an `init` module listed in `.otto/settings.toml`, so the
 registration runs before any lab data loads. The two seams are:
 
 - {func}`~otto.host.connections.register_term_backend` — the **connection** for
-  a unix host (`term` in lab data). The built-ins are `ssh` and `telnet`, both
-  {class}`~otto.host.connections.ConnectionManager`. This axis is UnixHost-only;
-  embedded hosts reach their target through their own console session.
+  a host (`term` in lab data). The built-ins are `ssh` and `telnet`, both
+  {class}`~otto.host.connections.ConnectionManager`. Each term declares the host
+  families it serves (see below): `ssh` serves `{'unix'}`, `telnet` serves
+  `{'unix', 'embedded'}` (embedded hosts reach their console over telnet).
 - {func}`~otto.host.transfer.register_transfer_backend` — the **file transfer**
   backend (`transfer` in lab data), which spans both host families. The built-ins are
   the unix protocols `scp` / `sftp` / `ftp` / `nc` and the embedded `console`
@@ -21,24 +22,24 @@ For the lab-data fields that select them (`term`, `transfer`), see
 
 ## `host_families` applicability
 
-A transfer backend declares which host families it serves with a class
-attribute, {class}`~otto.host.transfer.BaseFileTransfer`'s `host_families` — a
-`frozenset[str]` subset of `{'unix', 'embedded'}`. The unix built-ins declare
-`{'unix'}`, the embedded ones `{'embedded'}`, and a genuinely cross-family
-protocol (a future TFTP) would declare `{'unix', 'embedded'}`.
+A backend declares which host families it serves. For a **transfer** backend
+this is the class attribute {class}`~otto.host.transfer.BaseFileTransfer`'s
+`host_families` — a `frozenset[str]` subset of `{'unix', 'embedded'}`. For a
+**term** backend, where ssh/telnet share a single `ConnectionManager` class, the
+families are recorded per registered name (the `host_families` keyword on
+{func}`~otto.host.connections.register_term_backend`): `ssh` serves `{'unix'}`,
+`telnet` serves `{'unix', 'embedded'}`.
 
-This is not advisory. The host spec's `field_validator` checks two things
-before the host is constructed: that the `transfer` selector is **registered**,
-and that the host's family is **in** the backend's `host_families`. A misapplied
-selector — say `console` on a unix host — fails with a clear error naming the
-families the backend actually serves, rather than blowing up mid-transfer. A
-backend registered with an **empty** `host_families` can never validate on any
-host, so {func}`~otto.host.transfer.register_transfer_backend` rejects it at
+This is not advisory. The host spec's `field_validator` checks two things for
+every entry in `valid_terms` / `valid_transfers` before the host is constructed:
+that the selector is **registered**, and that the host's family is **in** the
+backend's families. A misapplied selector — `console` on a unix host, or `ssh`
+on an embedded host — fails with a clear error naming the families the backend
+actually serves, rather than blowing up at connect time. A backend registered
+with **empty** families can never validate on any host, so both
+`register_transfer_backend` and `register_term_backend` reject it at
 registration time rather than letting it sit in the registry as a latent dead
 end.
-
-The connection seam has no applicability axis: `term` backends are UnixHost-only
-by construction, so there is nothing to scope.
 
 ## The `create(ctx)` construction contract
 
@@ -115,7 +116,10 @@ A custom `term` backend follows the same shape against
 {class}`~otto.host.connections.ConnectionManager` and
 {class}`~otto.host.connections.TermContext`, registered via
 {func}`~otto.host.connections.register_term_backend` and selected with
-`"term": "..."`.
+`"term": "..."`. Because ssh/telnet share one `ConnectionManager` class, a
+term's `host_families` is passed as a keyword to `register_term_backend(name,
+cls, host_families=frozenset({"unix"}))` rather than declared as a class
+attribute the way a transfer backend does.
 
 ## See also
 

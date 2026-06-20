@@ -32,6 +32,7 @@ class JsonFileLabRepository:
         name: str,
         search_paths: list[Path],
         defaults: dict[str, dict[str, Any]] | None = None,
+        preferences: dict[str, dict[str, list[str]]] | None = None,
     ) -> Lab:
         """
         Load a lab by filtering hosts from hosts.json files.
@@ -48,6 +49,10 @@ class JsonFileLabRepository:
         defaults : dict[str, dict[str, Any]] | None
             Optional repo-level option defaults forwarded to the host
             factory; merged per-key beneath each host's own ``*_options``.
+        preferences : dict[str, dict[str, list[str]]] | None
+            The nested ``{selector: {capability: [...]}}`` product-preference
+            table forwarded to the factory, which matches each host's ``id``
+            and applies the result. ``None`` reproduces today's behavior.
 
         Returns
         -------
@@ -92,7 +97,9 @@ class JsonFileLabRepository:
 
         for idx, host_data in enumerate(matching):
             try:
-                host = create_host_from_dict(host_data, defaults=defaults)
+                host = create_host_from_dict(
+                    host_data, defaults=defaults, preferences=preferences
+                )
                 lab.add_host(host)
                 lab.resources.update(host.resources)
             except Exception as e:

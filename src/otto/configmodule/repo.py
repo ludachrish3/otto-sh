@@ -176,6 +176,15 @@ class Repo():
     ``telnet_options``, etc.); values are dicts whose keys correspond to
     fields on the matching options dataclass."""
 
+    host_preferences: dict[str, dict[str, list[str]]] = field(
+        default_factory=dict[str, dict[str, list[str]]],
+        init=False,
+    )
+    """Per-selector product preferences: ``{regex_selector: {capability: [ordered
+    backends]}}``. The factory matches each host's ``id`` against the selectors
+    (definition-order cascade) and feeds the resulting per-capability lists to the
+    resolver, which intersects each with the host's menu."""
+
     os_profiles: dict[str, 'OsProfile'] = field(
         default_factory=dict,
         init=False,
@@ -447,6 +456,10 @@ class Repo():
         self.tests = list(model.tests)
         self.init = list(model.init)
         self.host_defaults = {k: dict(v) for k, v in model.host_defaults.items()}
+        self.host_preferences = {
+            sel: {cap: list(order) for cap, order in caps.items()}
+            for sel, caps in model.host_preferences.items()
+        }
         self.os_profiles = self._register_os_profiles(model.os_profiles)
         self.docker_settings = model.docker.to_runtime()
 

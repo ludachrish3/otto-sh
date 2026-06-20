@@ -19,7 +19,7 @@ from pydantic import field_validator
 from ..host.binary_loader import build_binary_loader
 from ..host.capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from ..host.command_frame import _FRAME_CLASSES, build_command_frame
-from ..host.connections import _TERM_BACKENDS
+from ..host.connections import _TERM_BACKENDS, _TERM_FAMILIES
 from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
 from ..host.embedded_host import EmbeddedHost
 from ..host.remote_host import RemoteHost
@@ -72,21 +72,30 @@ def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
     return v
 
 
+def _validate_term_for_family(v: str, family: str, host_label: str) -> str:
+    """Validate a term selector against the registry and host-family applicability."""
+    if v not in _TERM_BACKENDS:
+        known = ", ".join(sorted(_TERM_BACKENDS))
+        raise ValueError(
+            f"term {v!r} is not a registered term backend. Known: {known}"
+        )
+    if family not in _TERM_FAMILIES[v]:
+        fam = ", ".join(sorted(_TERM_FAMILIES[v]))
+        raise ValueError(
+            f"term {v!r} is not valid on {host_label} (it serves: {fam})."
+        )
+    return v
+
+
 def _coerce_menu(v: object) -> object:
     """Normalize a scalar menu value to a 1-element list (before-validator)."""
     return [v] if isinstance(v, str) else v
 
 
-def _validate_term_menu(v: list[str]) -> list[str]:
+def _validate_term_menu(v: list[str], family: str, label: str) -> list[str]:
     if not v:
         raise ValueError("valid_terms must be a non-empty list of term backends")
-    for t in v:
-        if t not in _TERM_BACKENDS:
-            known = ", ".join(sorted(_TERM_BACKENDS))
-            raise ValueError(
-                f"term {t!r} is not a registered term backend. Known: {known}"
-            )
-    return v
+    return [_validate_term_for_family(t, family, label) for t in v]
 
 
 def _validate_transfer_menu(v: list[str], family: str, label: str) -> list[str]:
@@ -189,7 +198,8 @@ class HostSpec(OttoModel):
             kw["command_frame"] = build_command_frame(self.command_frame)
         return kw
 
-    def to_host(self, cls: Any = None) -> RemoteHost:
+    def to_host(self, cls: Any = None, *,
+                preferences: dict[str, list[str]] | None = None) -> RemoteHost:
         """Build the runtime host this spec describes.
 
         Overridden by the concrete family specs (:class:`UnixHostSpec`,
@@ -218,7 +228,7 @@ class UnixHostSpec(HostSpec):
     ftp_options: FtpOptionsSpec = FtpOptionsSpec()
     nc_options: NcOptionsSpec = NcOptionsSpec()
 
-    _transfer_host_family: ClassVar[str] = "unix"
+    _host_family: ClassVar[str] = "unix"
 
     @field_validator("valid_terms", "valid_transfers", mode="before")
     @classmethod
@@ -228,20 +238,27 @@ class UnixHostSpec(HostSpec):
     @field_validator("valid_terms")
     @classmethod
     def _validate_unix_valid_terms(cls, v: list[str]) -> list[str]:
-        return _validate_term_menu(v)
+        return _validate_term_menu(v, cls._host_family, "a unix host")
 
     @field_validator("valid_transfers")
     @classmethod
     def _validate_unix_valid_transfers(cls, v: list[str]) -> list[str]:
-        return _validate_transfer_menu(v, cls._transfer_host_family, "a unix host")
+        return _validate_transfer_menu(v, cls._host_family, "a unix host")
 
-    def to_host(self, cls: type[UnixHost] = UnixHost) -> UnixHost:
+    def to_host(self, cls: type[UnixHost] = UnixHost, *,
+                preferences: dict[str, list[str]] | None = None) -> UnixHost:
         kw = self._common_host_kwargs()
         s = self.model_fields_set
+        prefs = preferences or {}
         kw["valid_terms"] = list(self.valid_terms)
         kw["valid_transfers"] = list(self.valid_transfers)
-        kw["term"] = TERM_RESOLVER.resolve_active(self.valid_terms, pin=self.term)
-        kw["transfer"] = TRANSFER_RESOLVER.resolve_active(self.valid_transfers, pin=self.transfer)
+        # Active selection precedence: an explicit lab pin (self.term/.transfer)
+        # wins; else the first product preference present in the menu; else the
+        # menu's first entry. Out-of-menu preferences are skipped by the resolver.
+        kw["term"] = TERM_RESOLVER.resolve_active(
+            self.valid_terms, pin=self.term, preference=prefs.get("term"))
+        kw["transfer"] = TRANSFER_RESOLVER.resolve_active(
+            self.valid_transfers, pin=self.transfer, preference=prefs.get("transfer"))
         for n in ("hw_version", "sw_version", "docker_capable"):
             if n in s:
                 kw[n] = getattr(self, n)
@@ -261,7 +278,7 @@ class EmbeddedHostSpec(HostSpec):
     filesystem: str | None = None
     loader: str | None = None
 
-    _transfer_host_family: ClassVar[str] = "embedded"
+    _host_family: ClassVar[str] = "embedded"
 
     @field_validator("valid_terms", "valid_transfers", mode="before")
     @classmethod
@@ -271,12 +288,12 @@ class EmbeddedHostSpec(HostSpec):
     @field_validator("valid_terms")
     @classmethod
     def _validate_embedded_valid_terms(cls, v: list[str]) -> list[str]:
-        return _validate_term_menu(v)
+        return _validate_term_menu(v, cls._host_family, "an embedded host")
 
     @field_validator("valid_transfers")
     @classmethod
     def _validate_embedded_valid_transfers(cls, v: list[str]) -> list[str]:
-        return _validate_transfer_menu(v, cls._transfer_host_family, "an embedded host")
+        return _validate_transfer_menu(v, cls._host_family, "an embedded host")
 
     @field_validator("filesystem")
     @classmethod
@@ -288,13 +305,19 @@ class EmbeddedHostSpec(HostSpec):
             )
         return v
 
-    def to_host(self, cls: type[EmbeddedHost] = EmbeddedHost) -> EmbeddedHost:
+    def to_host(self, cls: type[EmbeddedHost] = EmbeddedHost, *,
+                preferences: dict[str, list[str]] | None = None) -> EmbeddedHost:
         kw = self._common_host_kwargs()
         s = self.model_fields_set
+        prefs = preferences or {}
         kw["valid_terms"] = list(self.valid_terms)
         kw["valid_transfers"] = list(self.valid_transfers)
-        kw["term"] = TERM_RESOLVER.resolve_active(self.valid_terms, pin=self.term)
-        kw["transfer"] = TRANSFER_RESOLVER.resolve_active(self.valid_transfers, pin=self.transfer)
+        # Same precedence as UnixHostSpec.to_host: pin -> product preference
+        # present in the menu -> menu[0].
+        kw["term"] = TERM_RESOLVER.resolve_active(
+            self.valid_terms, pin=self.term, preference=prefs.get("term"))
+        kw["transfer"] = TRANSFER_RESOLVER.resolve_active(
+            self.valid_transfers, pin=self.transfer, preference=prefs.get("transfer"))
         if "filesystem" in s and self.filesystem is not None:
             kw["filesystem"] = build_filesystem(self.filesystem)
         if "loader" in s and self.loader is not None:

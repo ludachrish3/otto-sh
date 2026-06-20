@@ -296,6 +296,41 @@ def test_settings_validates_every_in_tree_fixture():
         SettingsModel.model_validate(tomllib.loads(raw))
 
 
+def test_settings_host_preferences_accepted():
+    m = SettingsModel.model_validate({
+        **_minimal(),
+        "host_preferences": {
+            ".*": {"transfer": ["sftp", "scp"], "term": ["ssh"]},
+            "zephyr.*": {"transfer": ["console"]},
+        },
+    })
+    assert m.host_preferences == {
+        ".*": {"transfer": ["sftp", "scp"], "term": ["ssh"]},
+        "zephyr.*": {"transfer": ["console"]},
+    }
+
+
+def test_settings_host_preferences_defaults_empty():
+    m = SettingsModel.model_validate(_minimal())
+    assert m.host_preferences == {}
+
+
+def test_settings_host_preferences_rejects_unknown_capability():
+    with pytest.raises(ValueError, match=r"unknown \[host_preferences\] capability 'transfre'"):
+        SettingsModel.model_validate({
+            **_minimal(),
+            "host_preferences": {".*": {"transfre": ["scp"]}},
+        })
+
+
+def test_settings_host_preferences_rejects_bad_selector_regex():
+    with pytest.raises(ValueError, match=r"not a valid regular expression"):
+        SettingsModel.model_validate({
+            **_minimal(),
+            "host_preferences": {"[unclosed": {"transfer": ["scp"]}},
+        })
+
+
 def test_host_default_option_keys_match_factory_options_keys():
     from otto.models.settings import _HOST_DEFAULT_OPTION_SPECS
     from otto.storage.factory import OPTIONS_KEYS

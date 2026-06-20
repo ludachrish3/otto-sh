@@ -16,6 +16,7 @@ class LabRepository(Protocol):
         name: str,
         search_paths: list[Path],
         defaults: dict[str, dict[str, Any]] | None = None,
+        preferences: dict[str, dict[str, list[str]]] | None = None,
     ) -> Lab:
         """
         Load a lab by name from the repository.
@@ -31,6 +32,10 @@ class LabRepository(Protocol):
             factory. Backends should pass this through unchanged; the
             factory handles per-key merging beneath each host's own
             ``*_options``. ``None`` reproduces today's behavior.
+        preferences : dict[str, dict[str, list[str]]] | None
+            The nested ``{selector: {capability: [...]}}`` product-preference
+            table forwarded to the factory, which matches each host's ``id``
+            and applies the result. ``None`` reproduces today's behavior.
 
         Returns
         -------

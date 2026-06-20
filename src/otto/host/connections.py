@@ -453,21 +453,42 @@ class ConnectionManager:
         # on whatever test happens to be calling ``close()``.
 
 
-# Registry of term-protocol name -> ConnectionManager(-compatible) class.
-# UnixHost-only; embedded hosts reach their console over a fixed telnet bridge
-# that WS#4 does not model as a term backend. ``build_*`` returns the class so
-# the host can call ``.create(ctx)`` on it.
+# Registry of term-protocol name -> ConnectionManager(-compatible) class, plus
+# the host families each registered name applies to. Unlike the transfer
+# registry — where each backend is a distinct class carrying its own
+# ``host_families`` ClassVar — ssh and telnet share the single
+# ``ConnectionManager`` class, so a term's applicable families cannot live on
+# the class. They are stored per-registered-name in ``_TERM_FAMILIES`` instead.
+# ``build_*`` returns the class so the host can call ``.create(ctx)`` on it.
 _TERM_BACKENDS: dict[str, type[ConnectionManager]] = {}
+_TERM_FAMILIES: dict[str, frozenset[str]] = {}
 
 
-def register_term_backend(name: str, cls: type[ConnectionManager]) -> None:
+def register_term_backend(
+    name: str, cls: type[ConnectionManager], *, host_families: frozenset[str]
+) -> None:
     """Make a custom connection backend available to lab data under *name*.
 
     Call from an init module listed in ``.otto/settings.toml`` — the same
     pattern :func:`otto.host.command_frame.register_command_frame` follows.
     Once registered, a host's ``term`` field can select it by name.
+
+    *host_families* is the non-empty set of host families this term serves — a
+    ``frozenset`` subset of ``{'unix', 'embedded'}``. Because ssh/telnet share
+    one ``ConnectionManager`` class, the families are passed here rather than
+    read from a class attribute (the transfer registry reads
+    ``cls.host_families``). The host spec validator rejects a term applied to a
+    family it does not serve (e.g. ``ssh`` on an embedded host); an empty
+    *host_families* could never validate on any host, so it is rejected here.
     """
+    if not host_families:
+        raise ValueError(
+            f"register_term_backend({name!r}): host_families is empty; "
+            f"a term backend must declare at least one host family "
+            f"(e.g. frozenset({{'unix'}}))."
+        )
     _TERM_BACKENDS[name] = cls
+    _TERM_FAMILIES[name] = host_families
 
 
 def build_term_backend(name: str) -> type[ConnectionManager]:
@@ -493,8 +514,10 @@ def _register_builtin_term_backends() -> None:
     first-party and third-party registrations travel the same code (mirrors
     ``os_profile._register_builtin_host_classes``).
     """
-    register_term_backend("ssh", ConnectionManager)
-    register_term_backend("telnet", ConnectionManager)
+    register_term_backend("ssh", ConnectionManager, host_families=frozenset({"unix"}))
+    register_term_backend(
+        "telnet", ConnectionManager, host_families=frozenset({"unix", "embedded"})
+    )
 
 
 _register_builtin_term_backends()

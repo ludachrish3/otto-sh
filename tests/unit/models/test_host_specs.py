@@ -336,3 +336,45 @@ class TestMenuValidation:
     def test_empty_menu_rejected(self):
         with pytest.raises(ValueError, match="must be a non-empty"):
             UnixHostSpec(ip="1.1.1.1", element="x", creds={"u": "p"}, valid_transfers=[])
+
+    def test_embedded_rejects_unix_only_term_in_menu(self):
+        with pytest.raises(ValueError, match=r"term 'ssh' is not valid on an embedded host"):
+            EmbeddedHostSpec(ip="1.1.1.1", element="e", command_frame="zephyr",
+                             valid_terms=["ssh"])
+
+    def test_unix_accepts_telnet_term(self):
+        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
+                            valid_terms=["telnet"])
+        assert spec.valid_terms == ["telnet"]
+
+    def test_embedded_accepts_telnet_term(self):
+        spec = EmbeddedHostSpec(ip="1.1.1.1", element="e", command_frame="zephyr",
+                                valid_terms=["telnet"])
+        assert spec.valid_terms == ["telnet"]
+
+
+class TestPreferenceResolution:
+    def test_preference_in_menu_becomes_active(self):
+        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
+                            valid_transfers=["scp", "sftp"])
+        host = spec.to_host(preferences={"transfer": ["sftp"]})
+        assert host.transfer == "sftp"
+
+    def test_preference_out_of_menu_is_skipped(self):
+        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
+                            valid_transfers=["scp", "nc"])
+        host = spec.to_host(preferences={"transfer": ["sftp", "nc"]})
+        # sftp not in menu -> skipped; nc is the first preference in the menu
+        assert host.transfer == "nc"
+
+    def test_pin_beats_preference(self):
+        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
+                            valid_transfers=["scp", "sftp"], transfer="scp")
+        host = spec.to_host(preferences={"transfer": ["sftp"]})
+        assert host.transfer == "scp"
+
+    def test_no_preference_uses_menu_first(self):
+        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
+                            valid_terms=["telnet", "ssh"])
+        host = spec.to_host()
+        assert host.term == "telnet"
