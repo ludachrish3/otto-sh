@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
+from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run
 from .privilege import PosixPrivilege
 from .product import Product
@@ -47,7 +48,7 @@ logger = get_otto_logger()
 
 
 @dataclass(slots=True)
-class DockerContainerHost(PosixPrivilege, BaseHost):
+class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     """A Docker container exposed as a first-class otto host.
 
     Construction is normally done by :mod:`otto.docker.compose` after a

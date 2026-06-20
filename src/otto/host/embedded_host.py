@@ -48,7 +48,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, NoReturn, Optional, cast
 
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
@@ -499,6 +499,52 @@ class EmbeddedHost(RemoteHost):
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
+
+    ####################
+    #  File operations
+    ####################
+
+    async def exists(self, path: "str | Path") -> bool:
+        """Return ``True`` when *path* exists on the device (via ``fs ls``)."""
+        result = await self._run_one(self.filesystem.ls_command(str(path)))
+        return result.status.is_ok
+
+    async def ls(self, path: "str | Path" = ".", all: bool = False) -> list[str]:
+        """List entry names in *path* via the device ``fs ls`` former."""
+        result = await self._run_one(self.filesystem.ls_command(str(path)))
+        if not result.status.is_ok:
+            return []
+        return [line for line in result.output.splitlines() if line]
+
+    async def rm(
+        self, path: "str | Path", recursive: bool = False, force: bool = False
+    ) -> tuple[Status, str]:
+        """Remove *path* via the device ``fs rm`` former (flags ignored)."""
+        result = await self._run_one(self.filesystem.rm_command(str(path)))
+        return result.status, result.output
+
+    def _no_fileop(self, name: str) -> NoReturn:
+        raise NotImplementedError(
+            f"{name}() is not supported on embedded host {self.name!r}; the "
+            f"device shell has no equivalent. Use get()/put() for reads/writes."
+        ) from None
+
+    async def mkdir(self, path: "str | Path", parents: bool = True) -> tuple[Status, str]:
+        self._no_fileop("mkdir")
+
+    async def cp(self, src: "str | Path", dst: "str | Path",
+                 recursive: bool = False) -> tuple[Status, str]:
+        self._no_fileop("cp")
+
+    async def mv(self, src: "str | Path", dst: "str | Path") -> tuple[Status, str]:
+        self._no_fileop("mv")
+
+    async def read_file(self, path: "str | Path") -> str:
+        self._no_fileop("read_file")
+
+    async def write_file(self, path: "str | Path", data: str,
+                         append: bool = False) -> tuple[Status, str]:
+        self._no_fileop("write_file")
 
     ####################
     #  Binary load

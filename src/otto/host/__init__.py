@@ -19,6 +19,7 @@ from .host import SuppressCommandOutput as SuppressCommandOutput
 from .host import is_dry_run as is_dry_run
 from .local_host import LocalHost as LocalHost
 from .os_profile import OsProfile as OsProfile
+from .file_ops import PosixFileOps as PosixFileOps
 from .privilege import PosixPrivilege as PosixPrivilege
 from .os_profile import build_host_class as build_host_class
 from .os_profile import build_os_profile as build_os_profile

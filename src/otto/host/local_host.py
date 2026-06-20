@@ -13,6 +13,7 @@ from pathlib import Path
 
 from ..logger import get_otto_logger
 from ..utils import CommandStatus, Status
+from .file_ops import PosixFileOps
 from .host import BaseHost, is_dry_run
 from .power import PowerController
 from .privilege import PosixPrivilege
@@ -70,7 +71,7 @@ logger = get_otto_logger()
 @dataclass(
     slots=True,
 )
-class LocalHost(PosixPrivilege, BaseHost):
+class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     name: str = field(default='localhost', init=False)
 

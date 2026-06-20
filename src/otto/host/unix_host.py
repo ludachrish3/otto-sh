@@ -82,6 +82,7 @@ from .options import (
     SshOptions,
     TelnetOptions,
 )
+from .file_ops import PosixFileOps
 from .power import PowerController, power_control_from_spec
 from .privilege import PosixPrivilege
 from .remote_host import OsType, RemoteHost
@@ -101,7 +102,7 @@ from .transfer import (
 
 
 @dataclass(slots=True)
-class UnixHost(PosixPrivilege, RemoteHost):
+class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """
     Unix host accessed via SSH or Telnet, with bash as the remote shell.
     """
