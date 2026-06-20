@@ -50,3 +50,16 @@ def test_embedded_connection_uses_self_term_not_hardcoded():
     h = ZephyrHost(ip="192.0.2.1", element="d", log=False)
     assert h.term == "telnet"
     assert h._connections.term == "telnet"
+
+
+def test_host_id_and_name_render_element_id():
+    from otto.host.unix_host import UnixHost
+
+    h = UnixHost(ip="1.1.1.1", creds={"root": "x"}, element="Test",
+                 element_id=5, board="BoardX", slot=2)
+    assert h.id == "test5_boardx2"      # element_id is the NUMBER; id is lower-cased
+    assert h.name == "Test5 BoardX2"    # original case, space-joined name
+
+    h2 = UnixHost(ip="1.1.1.1", creds={"root": "x"}, element="solo")
+    assert h2.id == "solo"
+    assert h2.name == "solo"

@@ -238,7 +238,7 @@ class RemoteHost(BaseHost):
         if self.element_id is None:
             return ''
 
-        return f"{self.element}"
+        return f"{self.element_id}"
 
     @property
     def _slot_str(self) -> str:
