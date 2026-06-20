@@ -1,5 +1,7 @@
 """UnixHost / EmbeddedHost build their backends through the registry + create (WS#4)."""
 
+import dataclasses
+
 import pytest
 
 from otto.host import connections as conn_mod
@@ -56,9 +58,11 @@ def test_connection_factory_override_still_wins():
 
 
 # ---------------------------------------------------------------------------
-# set_transfer_type / set_term_type rebuild the backend via create() so a
-# *custom* backend swap instantiates the right CLASS, not just a string swap on
-# the existing instance (the latent footgun WS#4's custom backends expose).
+# Switching a host's active protocol goes through the override-copy seam
+# (dataclasses.replace -> __post_init__), which rebuilds the backend via the
+# registry create() seam so a *custom* backend swap instantiates the right
+# CLASS. The menu (valid_transfers/valid_terms) is enforced: the target must
+# be listed in the host's menu, and the copy is insulated from the original.
 # ---------------------------------------------------------------------------
 
 
@@ -68,42 +72,49 @@ class XmodemTransfer(NcFileTransfer):
     host_families = frozenset({"unix"})
 
 
-def test_set_transfer_type_rebuilds_to_custom_backend():
+def test_transfer_override_rebuilds_to_custom_backend():
     register_transfer_backend("xmodem", XmodemTransfer)
-    h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", transfer="scp")
+    # xmodem must be in the menu to be selectable
+    h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e",
+                 valid_transfers=["scp", "xmodem"], transfer="scp")
     assert type(h._file_transfer) is ScpFileTransfer  # built-in to start
 
-    h.set_transfer_type("xmodem")
+    switched = dataclasses.replace(h, transfer="xmodem")
 
-    # Rebuilt to the custom CLASS — not a FileTransfer with a swapped string.
-    assert isinstance(h._file_transfer, XmodemTransfer)
-    assert h.transfer == "xmodem"
+    # Rebuilt to the custom CLASS on the copy — not a string swap.
+    assert isinstance(switched._file_transfer, XmodemTransfer)
+    assert switched.transfer == "xmodem"
+    # original is untouched (insulation)
+    assert h.transfer == "scp"
+    assert type(h._file_transfer) is ScpFileTransfer
 
 
-def test_set_transfer_type_switches_among_builtins():
+def test_transfer_override_switches_among_builtins():
     h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", transfer="scp")
-    h.set_transfer_type("sftp")
-    assert type(h._file_transfer) is SftpFileTransfer
-    assert h.transfer == "sftp"
+    switched = dataclasses.replace(h, transfer="sftp")
+    assert type(switched._file_transfer) is SftpFileTransfer
+    assert switched.transfer == "sftp"
 
 
-def test_set_transfer_type_preserves_the_connection():
+def test_override_copy_has_its_own_connection():
     h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", transfer="scp")
-    conn_before = h._connections
-    h.set_transfer_type("sftp")
-    # Transfer-only rebuild: the live connection object is untouched.
-    assert h._connections is conn_before
+    switched = dataclasses.replace(h, transfer="sftp")
+    # The override copy is insulated: it builds its own connection rather than
+    # sharing the original's live one.
+    assert switched._connections is not h._connections
 
 
-def test_set_term_type_switches_builtin():
+def test_term_override_switches_builtin():
     h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", term="ssh")
-    h.set_term_type("telnet")
-    assert h.term == "telnet"
-    assert h._connections.term == "telnet"
+    switched = dataclasses.replace(h, term="telnet")
+    assert switched.term == "telnet"
+    assert switched._connections.term == "telnet"
+    assert h.term == "ssh"  # original untouched
 
 
-def test_set_transfer_type_rejects_embedded_only_backend():
+def test_transfer_override_rejects_out_of_menu_backend():
     h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", transfer="scp")
-    with pytest.raises(ValueError, match="not a valid unix transfer backend"):
-        h.set_transfer_type("console")
-    assert h.transfer == "scp"  # unchanged
+    # console is not in the unix default menu -> validate_choice fails loud
+    with pytest.raises(ValueError):
+        dataclasses.replace(h, transfer="console")
+    assert h.transfer == "scp"  # original unchanged

@@ -1,5 +1,6 @@
 """Unit tests for the JSON Schema generation module."""
 
+import pytest
 import otto.host.os_profile as op
 from otto.models import EmbeddedHostSpec, UnixHostSpec
 from otto.models.host import HostSpec
@@ -103,9 +104,13 @@ class TestSelectorEnums:
         from otto.models.jsonschema import build_schemas
 
         props = build_schemas()["unix-host"]["properties"]
-        # Enum lives on the menu-array items, not the nullable pin scalars.
-        assert props["valid_terms"]["items"]["enum"] == ["ssh", "telnet"]
-        assert props["valid_transfers"]["items"]["enum"] == ["ftp", "nc", "scp", "sftp"]
+        # Menu fields accept scalar-or-list; the registry enum rides both branches.
+        vt = props["valid_terms"]
+        assert vt["anyOf"][0]["enum"] == ["ssh", "telnet"]            # scalar
+        assert vt["anyOf"][1]["items"]["enum"] == ["ssh", "telnet"]   # array
+        vx = props["valid_transfers"]
+        assert vx["anyOf"][0]["enum"] == ["ftp", "nc", "scp", "sftp"]
+        assert vx["anyOf"][1]["items"]["enum"] == ["ftp", "nc", "scp", "sftp"]
         # Scalar pins are present but have no injected enum (nullable optional).
         assert "term" in props
         assert "enum" not in props["term"]
@@ -114,12 +119,12 @@ class TestSelectorEnums:
         from otto.models.jsonschema import build_schemas
 
         props = build_schemas()["embedded-host"]["properties"]
-        # Enum lives on the menu-array items; both axes are family-filtered to
-        # embedded-applicable backends — transfers to console/tftp, terms to
-        # telnet only (ssh serves unix).
-        assert props["valid_transfers"]["items"]["enum"] == ["console", "tftp"]
-        assert props["valid_terms"]["items"]["enum"] == ["telnet"]
-        # Scalar pin is present but has no injected enum.
+        vx = props["valid_transfers"]
+        assert vx["anyOf"][0]["enum"] == ["console", "tftp"]
+        assert vx["anyOf"][1]["items"]["enum"] == ["console", "tftp"]
+        vt = props["valid_terms"]
+        assert vt["anyOf"][0]["enum"] == ["telnet"]
+        assert vt["anyOf"][1]["items"]["enum"] == ["telnet"]
         assert "term" in props
         assert "enum" not in props["term"]
 
@@ -132,7 +137,7 @@ class TestSelectorEnums:
             if isinstance(d, dict)
             and d.get("properties", {}).get("os_type", {}).get("default") == "unix"
         )
-        assert unix_def["properties"]["valid_transfers"]["items"]["enum"] == [
+        assert unix_def["properties"]["valid_transfers"]["anyOf"][1]["items"]["enum"] == [
             "ftp", "nc", "scp", "sftp"
         ]
 
@@ -148,7 +153,19 @@ class TestSelectorEnums:
         xfer_mod._TRANSFER_BACKENDS["xmodem"] = XmodemTransfer
         try:
             props = build_schemas()["unix-host"]["properties"]
-            assert "xmodem" in props["valid_transfers"]["items"]["enum"]
+            assert "xmodem" in props["valid_transfers"]["anyOf"][1]["items"]["enum"]
         finally:
             xfer_mod._TRANSFER_BACKENDS.clear()
             xfer_mod._TRANSFER_BACKENDS.update(saved)
+
+    def test_menu_property_accepts_scalar_and_list(self):
+        import jsonschema
+        from otto.models.jsonschema import build_schemas
+
+        vt_schema = build_schemas()["unix-host"]["properties"]["valid_transfers"]
+        jsonschema.validate("scp", vt_schema)             # scalar OK
+        jsonschema.validate(["scp", "sftp"], vt_schema)   # list OK
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate("bogus", vt_schema)       # out-of-enum scalar
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(["bogus"], vt_schema)     # out-of-enum in list

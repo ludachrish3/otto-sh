@@ -44,17 +44,13 @@ Open questions to resolve when picked up:
 
 ## Follow-ups surfaced during Phase 2 (term-family + host_preferences)
 
-- **Restore the term family check when the override-copy seam lands.** Phase 2's
-  spec validator now rejects a term applied to a family it doesn't serve (e.g.
-  `ssh` on an embedded host), but the in-place `UnixHost.set_term_type` checks
-  only registry membership — not `_TERM_FAMILIES` — whereas `set_transfer_type`
-  already enforces `"unix" in cls.host_families`. §9 of the capability spec plans
-  to *remove* both setters in favor of the override-copy seam, which resolves the
-  asymmetry automatically; but the seam's `__post_init__` rebuild MUST run the
-  same family validation the spec validator does, so a runtime protocol switch
-  can't escape the family constraint that lab-data load enforces. If the setters
-  are kept for any reason, add the `_TERM_FAMILIES` check to `set_term_type` to
-  mirror `set_transfer_type`.
+- ~~**Restore the term family check when the override-copy seam lands.**~~ **RESOLVED
+  by Phase 3 (cap-resolution-p3-override-seam).** `UnixHost.set_term_type` and
+  `set_transfer_type` have been removed. The only way to switch a host's active
+  protocol is `dataclasses.replace(host, term=…/transfer=…)`, which goes through
+  `__post_init__` and enforces the menu (`valid_terms`/`valid_transfers`) — the
+  same family-validated list the spec validator populated at lab-data load. The
+  asymmetry between the two former setters is gone.
 - **Embedded preference-path test gap** (low priority): the embedded
   `EmbeddedHostSpec.to_host(preferences=)` + factory-flatten-for-embedded path is
   byte-identical to the unix path but untested at any level (unix is fully

@@ -73,20 +73,3 @@ class TestCreate:
         assert isinstance(cm, ConnectionManager)
         assert cm.ip == "10.0.0.5"
         assert cm.term == "ssh"
-
-
-class TestSetTypeOverrides:
-    def test_set_term_type_accepts_registered(self):
-        from otto.host.unix_host import UnixHost
-
-        h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", term="ssh")
-        h.set_term_type("telnet")
-        assert h.term == "telnet"
-
-    def test_set_term_type_rejects_unregistered(self):
-        from otto.host.unix_host import UnixHost
-
-        h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", term="ssh")
-        with pytest.raises((ValueError, TypeError)):
-            h.set_term_type("bogus")
-        assert h.term == "ssh"  # unchanged

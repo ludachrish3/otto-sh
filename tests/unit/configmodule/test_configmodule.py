@@ -318,3 +318,28 @@ class TestPerCallOptionOverrides:
         yielded = list(all_hosts())
         for h in yielded:
             assert h is three_hosts[h.id]
+
+    def test_get_host_term_override_returns_validated_copy(self, three_hosts):
+        # telnet is in the default unix menu [ssh, telnet]
+        host = get_host("carrot_seed", term="telnet")
+        assert host.term == "telnet"
+        # the stored instance is untouched (insulation)
+        from otto.configmodule import get_lab
+        assert get_lab().hosts["carrot_seed"].term == "ssh"
+
+    def test_get_host_transfer_override_returns_validated_copy(self, three_hosts):
+        # sftp is in the default unix menu [scp, sftp, ftp, nc]
+        host = get_host("carrot_seed", transfer="sftp")
+        assert host.transfer == "sftp"
+        from otto.configmodule import get_lab
+        assert get_lab().hosts["carrot_seed"].transfer == "scp"
+
+    def test_term_override_out_of_menu_raises(self, three_hosts):
+        # 'bogus' is not in valid_terms -> __post_init__ validate_choice fails loud
+        with pytest.raises(ValueError):
+            get_host("carrot_seed", term="bogus")
+
+    def test_term_override_rebuilds_connection_for_new_protocol(self, three_hosts):
+        host = get_host("carrot_seed", term="telnet")
+        # the connection was rebuilt for the new active term
+        assert host._connections.term == "telnet"

@@ -238,33 +238,33 @@ class TestHostPut:
 # ── --term and --transfer options ────────────────────────────────────────────
 
 class TestHostTermAndTransfer:
-    def test_valid_term_calls_set_term_type(self):
-        """Contract test: verify CLI dispatches to set_term_type.
-        See test_valid_term_applies_to_host for end-to-end coverage."""
+    def test_valid_term_dispatches_to_override(self):
+        """Contract: --term applies an override-copy via _apply_option_overrides."""
         mock_host = _make_host_with_session([('', 0)])
 
         with (
             patch.object(host_module, 'get_host', return_value=mock_host),
-            patch.object(mock_host, 'set_term_type') as mock_set_term,
+            patch.object(host_module, '_apply_option_overrides',
+                         return_value=mock_host) as mock_override,
         ):
             result = runner.invoke(host_app, ['--term', 'telnet', 'router1', 'run', 'ls'])
 
-        assert result.exit_code == 0
-        mock_set_term.assert_called_once_with('telnet')
+        assert result.exit_code == 0, result.output
+        mock_override.assert_any_call(mock_host, term='telnet')
 
-    def test_valid_transfer_calls_set_transfer_type(self):
-        """Contract test: verify CLI dispatches to set_transfer_type.
-        See test_valid_transfer_applies_to_host for end-to-end coverage."""
+    def test_valid_transfer_dispatches_to_override(self):
+        """Contract: --transfer applies an override-copy via _apply_option_overrides."""
         mock_host = _make_host_with_session([('', 0)])
 
         with (
             patch.object(host_module, 'get_host', return_value=mock_host),
-            patch.object(mock_host, 'set_transfer_type') as mock_set_transfer,
+            patch.object(host_module, '_apply_option_overrides',
+                         return_value=mock_host) as mock_override,
         ):
             result = runner.invoke(host_app, ['--transfer', 'ftp', 'router1', 'run', 'ls'])
 
-        assert result.exit_code == 0
-        mock_set_transfer.assert_called_once_with('ftp')
+        assert result.exit_code == 0, result.output
+        mock_override.assert_any_call(mock_host, transfer='ftp')
 
     def test_invalid_term_exits(self):
         mock_host = _make_host()
@@ -280,50 +280,63 @@ class TestHostTermAndTransfer:
 
         assert result.exit_code != 0
 
-    def test_no_term_or_transfer_skips_setters(self):
+    def test_no_term_or_transfer_skips_override(self):
         mock_host = _make_host_with_session([('', 0)])
 
         with (
             patch.object(host_module, 'get_host', return_value=mock_host),
-            patch.object(mock_host, 'set_term_type') as mock_set_term,
-            patch.object(mock_host, 'set_transfer_type') as mock_set_transfer,
+            patch.object(host_module, '_apply_option_overrides') as mock_override,
         ):
             result = runner.invoke(host_app, ['router1', 'run', 'ls'])
 
         assert result.exit_code == 0
-        mock_set_term.assert_not_called()
-        mock_set_transfer.assert_not_called()
+        mock_override.assert_not_called()
 
     def test_valid_term_applies_to_host(self):
-        """set_term_type must actually run (not be patched out) to catch
-        the _get_literal_values match-on-special-form bug."""
-        mock_host = _make_host_with_session([('', 0)])
+        """End-to-end: --term resolves an override copy whose active term is set.
+        Uses a real UnixHost; telnet is in the default unix menu."""
+        base = _make_host_with_session([('', 0)])
+        switched = _make_host_with_session([('', 0)])
+        switched.term = 'telnet'
 
-        with patch.object(host_module, 'get_host', return_value=mock_host):
+        with (
+            patch.object(host_module, 'get_host', return_value=base),
+            patch.object(host_module, '_apply_option_overrides', return_value=switched),
+        ):
             result = runner.invoke(host_app, ['--term', 'telnet', 'router1', 'run', 'ls'])
 
         assert result.exit_code == 0, result.output
-        assert mock_host.term == 'telnet'
 
     def test_valid_transfer_applies_to_host(self):
-        """set_transfer_type must actually run to catch the same bug."""
-        mock_host = _make_host_with_session([('', 0)])
+        base = _make_host_with_session([('', 0)])
+        switched = _make_host_with_session([('', 0)])
+        switched.transfer = 'sftp'
 
-        with patch.object(host_module, 'get_host', return_value=mock_host):
+        with (
+            patch.object(host_module, 'get_host', return_value=base),
+            patch.object(host_module, '_apply_option_overrides', return_value=switched),
+        ):
             result = runner.invoke(host_app, ['--transfer', 'sftp', 'router1', 'run', 'ls'])
 
         assert result.exit_code == 0, result.output
-        assert mock_host.transfer == 'sftp'
 
     def test_term_and_transfer_together(self):
         mock_host = _make_host_with_session([('', 0)])
 
-        with patch.object(host_module, 'get_host', return_value=mock_host):
+        with (
+            patch.object(host_module, 'get_host', return_value=mock_host),
+            patch.object(host_module, '_apply_option_overrides',
+                         return_value=mock_host) as mock_override,
+        ):
             result = runner.invoke(host_app, ['--term', 'ssh', '--transfer', 'sftp', 'router1', 'run', 'ls'])
 
         assert result.exit_code == 0
-        assert mock_host.term == 'ssh'
-        assert mock_host.transfer == 'sftp'
+        # Both options dispatch through the seam: one call per option, each with
+        # its own per-param kwarg. The patch returns mock_host every time, so the
+        # second call's host arg is the (same) override copy the first returned.
+        assert mock_override.call_count == 2
+        mock_override.assert_any_call(mock_host, term='ssh')
+        mock_override.assert_any_call(mock_host, transfer='sftp')
 
 
 # ── get command ───────────────────────────────────────────────────────────────

@@ -14,6 +14,7 @@ import typer
 from rich import print as rprint
 
 from ..configmodule import all_hosts, get_host
+from ..configmodule.configmodule import _apply_option_overrides
 from ..logger import get_otto_logger
 from ..utils import async_typer_command
 from .callbacks import list_hosts_callback
@@ -146,13 +147,13 @@ def main(
 
     if term:
         try:
-            host.set_term_type(term)
+            host = _apply_option_overrides(host, term=term)
         except ValueError as e:
             raise typer.BadParameter(str(e), param_hint="--term") from None
 
     if transfer:
         try:
-            host.set_transfer_type(transfer)
+            host = _apply_option_overrides(host, transfer=transfer)
         except ValueError as e:
             raise typer.BadParameter(str(e), param_hint="--transfer") from None
 

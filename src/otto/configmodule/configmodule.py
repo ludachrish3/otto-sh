@@ -34,6 +34,8 @@ logger = get_otto_logger()
 def _apply_option_overrides(
     host: 'RemoteHost',
     *,
+    term: str | None = None,
+    transfer: str | None = None,
     ssh_options: 'SshOptions | None' = None,
     telnet_options: 'TelnetOptions | None' = None,
     sftp_options: 'SftpOptions | None' = None,
@@ -65,10 +67,21 @@ def _apply_option_overrides(
     When no applicable overrides are supplied, the original *host* is
     returned unchanged so identity (``host is host``) is preserved for
     non-override callers.
+
+    ``term`` / ``transfer`` switch the host's *active* protocol. Each is
+    validated against the host's menu (``valid_terms`` / ``valid_transfers``)
+    by the copy's ``__post_init__`` — a value outside the menu raises a
+    fail-loud ``ValueError`` naming the menu — and the copy's connection /
+    file-transfer backend is rebuilt for the chosen protocol via the registry
+    ``create()`` seam. Switching to a value not in the menu is rejected; to
+    select a custom backend it must be listed in the host's menu. This is the
+    only supported way to change a host's active protocol.
     """
     candidates: dict[str, Any] = {
         k: v
         for k, v in (
+            ('term', term),
+            ('transfer', transfer),
             ('ssh_options', ssh_options),
             ('telnet_options', telnet_options),
             ('sftp_options', sftp_options),
@@ -94,6 +107,8 @@ def all_hosts(
     pattern: re.Pattern[str] | None = None,
     *,
     include_containers: bool = False,
+    term: str | None = None,
+    transfer: str | None = None,
     ssh_options: 'SshOptions | None' = None,
     telnet_options: 'TelnetOptions | None' = None,
     sftp_options: 'SftpOptions | None' = None,
@@ -118,6 +133,7 @@ def all_hosts(
             are yielded.
         include_containers: When ``True``, also yield
             :class:`DockerContainerHost` entries. Defaults to ``False``.
+        term, transfer: optional active-protocol override; see :func:`_apply_option_overrides`.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides. When
             supplied, each yielded host is a fresh
@@ -147,6 +163,8 @@ def all_hosts(
     yield from get_context().all_hosts(
         pattern,
         include_containers=include_containers,
+        term=term,
+        transfer=transfer,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
         sftp_options=sftp_options,
@@ -161,6 +179,8 @@ async def do_for_all_hosts(
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,
     include_containers: bool = False,
+    term: str | None = None,
+    transfer: str | None = None,
     ssh_options: 'SshOptions | None' = None,
     telnet_options: 'TelnetOptions | None' = None,
     sftp_options: 'SftpOptions | None' = None,
@@ -180,6 +200,7 @@ async def do_for_all_hosts(
             When ``False``, execute serially.
         include_containers: Forwarded to :func:`all_hosts`. When
             ``False`` (default), container hosts are excluded.
+        term, transfer: optional active-protocol override; see :func:`_apply_option_overrides`.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides
             forwarded to :func:`all_hosts`. See its docstring for
@@ -205,6 +226,8 @@ async def do_for_all_hosts(
         pattern=pattern,
         concurrent=concurrent,
         include_containers=include_containers,
+        term=term,
+        transfer=transfer,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
         sftp_options=sftp_options,
@@ -222,6 +245,8 @@ async def run_on_all_hosts(
     timeout: float | None = None,
     *,
     include_containers: bool = False,
+    term: str | None = None,
+    transfer: str | None = None,
     ssh_options: 'SshOptions | None' = None,
     telnet_options: 'TelnetOptions | None' = None,
     sftp_options: 'SftpOptions | None' = None,
@@ -242,6 +267,7 @@ async def run_on_all_hosts(
         timeout: Per-host timeout forwarded to ``run``.
         include_containers: Forwarded to :func:`do_for_all_hosts`. When
             ``False`` (default), container hosts are excluded.
+        term, transfer: optional active-protocol override; see :func:`_apply_option_overrides`.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides
             forwarded to :func:`do_for_all_hosts`.
@@ -260,6 +286,8 @@ async def run_on_all_hosts(
         concurrent=concurrent,
         timeout=timeout,
         include_containers=include_containers,
+        term=term,
+        transfer=transfer,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
         sftp_options=sftp_options,
@@ -272,6 +300,8 @@ async def run_on_all_hosts(
 def get_host(
     host_id: str,
     *,
+    term: str | None = None,
+    transfer: str | None = None,
     ssh_options: 'SshOptions | None' = None,
     telnet_options: 'TelnetOptions | None' = None,
     sftp_options: 'SftpOptions | None' = None,
@@ -283,6 +313,7 @@ def get_host(
 
     Args:
         host_id: Unique host id (as produced by ``UnixHost.id``).
+        term, transfer: optional active-protocol override; see :func:`_apply_option_overrides`.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides.
             Each non-``None`` argument **replaces** the corresponding
@@ -299,6 +330,8 @@ def get_host(
     from ..context import get_context
     return get_context().get_host(
         host_id,
+        term=term,
+        transfer=transfer,
         ssh_options=ssh_options,
         telnet_options=telnet_options,
         sftp_options=sftp_options,

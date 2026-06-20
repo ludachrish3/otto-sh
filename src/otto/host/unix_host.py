@@ -351,9 +351,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     def _build_connections(self) -> ConnectionManager:
         """Construct the connection backend for the current ``term`` via the
         registry + ``create`` seam, honoring the ``_connection_factory`` test
-        override. Shared by ``__post_init__`` / ``rebuild_connections`` and
-        ``set_term_type`` so a custom term backend builds the right class rather
-        than a string swap on the existing instance.
+        override. Shared by ``__post_init__`` / ``rebuild_connections``
+        (and the override-copy seam, via ``dataclasses.replace``) so a custom
+        term backend builds the right class.
         """
         hop_transport = self._build_hop_transport() if self.hop else None
         term_ctx = TermContext(
@@ -374,9 +374,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     def _build_file_transfer(self) -> UnixFileTransfer:
         """Construct the transfer backend for the current ``transfer`` via the
         registry + ``create`` seam, against the current ``self._connections``.
-        Shared by ``__post_init__`` / ``rebuild_connections`` and
-        ``set_transfer_type`` so a custom transfer backend builds the right class
-        rather than a string swap on the existing instance.
+        Shared by ``__post_init__`` / ``rebuild_connections``
+        (and the override-copy seam, via ``dataclasses.replace``) so a custom
+        transfer backend builds the right class.
         """
         return cast(UnixFileTransfer, build_transfer_backend(self.transfer).create(
             TransferContext(
@@ -390,36 +390,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 max_filename_len=self.max_filename_len,
             )
         ))
-
-    def set_term_type(self, term: str) -> None:
-        from .connections import _TERM_BACKENDS
-
-        if term not in _TERM_BACKENDS:
-            known = ", ".join(sorted(_TERM_BACKENDS))
-            raise ValueError(f"Unknown term backend {term!r}. Known: {known}")
-        self.term = term
-        # Built-in ssh/telnet share one ConnectionManager that switches on this
-        # string, so an in-place update suffices and preserves the live session.
-        # A custom term backend is a different class that would need a full
-        # reconnect — the post-freeze connection refactor (design §11), not here.
-        self._connections.term = term
-
-    def set_transfer_type(self, transfer: str) -> None:
-        from .transfer import _TRANSFER_BACKENDS
-
-        cls = _TRANSFER_BACKENDS.get(transfer)
-        if cls is None or "unix" not in cls.host_families:
-            known = ", ".join(
-                n for n, c in sorted(_TRANSFER_BACKENDS.items())
-                if "unix" in c.host_families
-            )
-            raise ValueError(
-                f"{transfer!r} is not a valid unix transfer backend. Known: {known}"
-            )
-        self.transfer = transfer
-        # Rebuild through the registry so a custom transfer backend instantiates
-        # the right class; the live connection is preserved (transfer borrows it).
-        self._file_transfer = self._build_file_transfer()
 
     def _get_local_ip(self) -> str:
         """Return the local IP address used to reach this host, via OS routing lookup.

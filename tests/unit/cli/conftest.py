@@ -5,12 +5,12 @@ Mock boundary rule: mock at I/O, not at business logic.
 - **Mock**: network I/O (asyncssh, telnetlib3, aioftp), lab data lookups
   (``get_host``, ``all_hosts``), logger side-effects (``create_output_dir``),
   and ``asyncio.run`` for commands that start event loops.
-- **Do NOT mock**: validation functions (``is_literal``), setter methods
-  (``set_term_type``, ``set_transfer_type``), data transformation, or anything
+- **Do NOT mock**: validation functions (``is_literal``), the override-copy
+  seam (``_apply_option_overrides``), data transformation, or anything
   in ``utils.py``.
 - **Contract tests** that verify the CLI called the right method may patch
   business logic, but pair them with an integration test that lets real
-  code run.  Name pairs clearly (e.g. ``test_*_calls_set_term_type`` +
+  code run.  Name pairs clearly (e.g. ``test_*_applies_overrides`` +
   ``test_*_applies_to_host``).
 
 Litmus test: "If the function I am patching had a bug, would my test

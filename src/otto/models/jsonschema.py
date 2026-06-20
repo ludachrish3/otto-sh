@@ -59,9 +59,28 @@ def _decorate(doc: dict[str, Any], stem: str, title: str) -> dict[str, Any]:
     }
 
 
+def _scalar_or_list_with_enum(prop: dict[str, Any], names: list[str]) -> dict[str, Any]:
+    """Rebuild a menu property's schema to accept a scalar **or** an array of the
+    registry-derived enum names, preserving the field's other metadata.
+
+    The model coerces a scalar to a one-element list (``_coerce_menu``), so a lab
+    author may write ``valid_transfers = "scp"`` or ``["scp", "sftp"]``; the
+    generated schema mirrors both, each branch carrying the same ``enum``.
+    """
+    meta = {k: v for k, v in prop.items() if k not in ("type", "items", "anyOf")}
+    return {
+        **meta,
+        "anyOf": [
+            {"type": "string", "enum": names},
+            {"type": "array", "items": {"type": "string", "enum": names}},
+        ],
+    }
+
+
 def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> None:
-    """Add registry-derived ``enum`` constraints to the ``valid_terms`` /
-    ``valid_transfers`` menu-array items of a host spec's schema, in place.
+    """Rewrite the ``valid_terms`` / ``valid_transfers`` menu fields to a
+    scalar-or-list ``anyOf`` carrying the registry-derived ``enum`` on both
+    branches, in place.
 
     The schema is generated after init modules load, so the enum includes
     custom per-repo backends as well as the built-ins — strictly better than the
@@ -80,17 +99,13 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
             n for n, fams in _TERM_FAMILIES.items()
             if family is None or family in fams
         )
-        items = dict(props["valid_terms"].get("items") or {})
-        items["enum"] = names
-        props["valid_terms"] = {**props["valid_terms"], "items": items}
+        props["valid_terms"] = _scalar_or_list_with_enum(props["valid_terms"], names)
     if "valid_transfers" in props:
         names = sorted(
             n for n, c in _TRANSFER_BACKENDS.items()
             if family is None or family in c.host_families
         )
-        items = dict(props["valid_transfers"].get("items") or {})
-        items["enum"] = names
-        props["valid_transfers"] = {**props["valid_transfers"], "items": items}
+        props["valid_transfers"] = _scalar_or_list_with_enum(props["valid_transfers"], names)
 
 
 def _host_array_schema(distinct: list[type[HostSpec]],
