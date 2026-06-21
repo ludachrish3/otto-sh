@@ -161,17 +161,25 @@ def test_embedded_spec_rejects_unix_only_field():
         EmbeddedHostSpec(ip="192.0.2.1", element="dut", docker_capable=True)
 
 
+# Runtime host init fields applied by overridable repo logic (NOT lab data) —
+# intentionally absent from the hosts.json spec, so the drift guard skips them.
+# ``products`` is user product data, independent of lab data; it is attached to
+# hosts by repo logic, never declared in hosts.json.
+_NON_SPEC_RUNTIME_FIELDS = frozenset({"products"})
+
+
 @pytest.mark.parametrize("spec_cls,runtime_cls", HOST_SPEC_RUNTIME_PAIRS)
 def test_host_spec_fields_match_runtime_init(spec_cls, runtime_cls):
     """Bidirectional: every spec field maps to a constructor param AND every
-    public init field of the runtime class is exposed by the spec. ``labs`` is
-    the only allowed spec-only field (lab membership, not a host arg).
+    lab-data init field of the runtime class is exposed by the spec. ``labs`` is
+    spec-only (lab membership, not a host arg); ``_NON_SPEC_RUNTIME_FIELDS`` are
+    runtime-only (repo-logic-applied, not lab data).
     """
     spec_fields = set(spec_cls.model_fields) - {"labs"}
     init_fields = {
         f.name for f in dataclasses.fields(runtime_cls)
         if f.init and not f.name.startswith("_")
-    }
+    } - _NON_SPEC_RUNTIME_FIELDS
     assert spec_fields == init_fields, (
         f"{spec_cls.__name__} <-> {runtime_cls.__name__} field mismatch — "
         f"spec-only={sorted(spec_fields - init_fields)}, "
@@ -263,11 +271,21 @@ def test_spec_power_control_coerces_through_to_host():
     assert host.power_control.controller == "hyp"
 
 
-def test_spec_power_control_and_products_default_unset():
-    """Unset power_control/products fall through to the runtime host defaults."""
+def test_spec_unset_power_control_defaults_none():
+    """Unset power_control falls through to the runtime host default; products is
+    not a spec field, so the host keeps its own empty default.
+    """
     host = UnixHostSpec(ip="10.0.0.1", element="lab", creds={"u": "p"}).to_host()
     assert host.power_control is None
     assert host.products == []
+
+
+def test_spec_rejects_products_as_lab_data():
+    """``products`` is repo-logic-applied, not lab data — hosts.json must not
+    declare it (extra='forbid' rejects the key).
+    """
+    with pytest.raises(ValidationError):
+        UnixHostSpec(ip="10.0.0.1", element="lab", creds={"u": "p"}, products=[])
 
 
 def test_registered_pairs_drift_guard():
@@ -282,7 +300,7 @@ def test_registered_pairs_drift_guard():
         init_fields = {
             f.name for f in dataclasses.fields(runtime_cls)
             if f.init and not f.name.startswith("_")
-        }
+        } - _NON_SPEC_RUNTIME_FIELDS
         assert spec_fields == init_fields, (
             f"{name}: {spec_cls.__name__} <-> {runtime_cls.__name__} mismatch — "
             f"spec-only={sorted(spec_fields - init_fields)}, "

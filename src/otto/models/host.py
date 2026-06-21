@@ -53,7 +53,7 @@ class ToolchainSpec(OttoModel):
 _COMMON_PLAIN_FIELDS = (
     "ip", "element", "creds", "name", "os_type", "os_name", "os_version",
     "user", "element_id", "board", "slot", "hop", "is_virtual",
-    "max_filename_len", "log", "log_stdout", "products", "power_control",
+    "max_filename_len", "log", "log_stdout", "power_control",
 )
 
 
@@ -132,15 +132,14 @@ class HostSpec(OttoModel):
     toolchain: ToolchainSpec = ToolchainSpec()
     command_frame: str | None = None
 
-    # DI fields shared by both host families (kept in lock-step with the runtime
-    # host __init__ by the drift guard in tests/unit/models/test_host_specs.py).
-    # ``power_control`` takes the lab-data ``[power]`` form — a controller
-    # type-name string or a table dict — and the runtime host's __post_init__
-    # coerces it via power_control_from_spec. ``products`` is normally populated
-    # programmatically (DI) and defaults empty; it is typed ``list[Any]`` because
-    # ``Product`` is an ABC pydantic cannot build a schema for. Both pass straight
-    # through _common_host_kwargs when explicitly set.
-    products: list[Any] = []
+    # ``power_control`` is lab-infrastructure data (which controller host runs
+    # the on/off/status commands, and the commands themselves), so it is a spec
+    # field: it takes the lab-data ``[power]`` form — a controller type-name
+    # string or a table dict — and the runtime host's __post_init__ coerces it
+    # via power_control_from_spec. Passed straight through _common_host_kwargs
+    # when set. (``products`` is deliberately NOT a spec field: it is user product
+    # data, independent of lab data, attached to hosts by repo logic — the drift
+    # guard's _NON_SPEC_RUNTIME_FIELDS excludes it.)
     power_control: dict[str, Any] | str | None = None
 
     # Lab membership — validated (so a `lab`/`labs` typo errors) but NOT a host
