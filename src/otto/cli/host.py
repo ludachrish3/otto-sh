@@ -18,6 +18,7 @@ from ..configmodule.configmodule import _apply_option_overrides
 from ..logger import get_otto_logger
 from ..utils import async_typer_command
 from .callbacks import list_hosts_callback
+from .expose import HostGroup
 
 logger = get_otto_logger()
 
@@ -84,6 +85,7 @@ def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:
 host_app = typer.Typer(
     name='host',
     help='Run commands and transfer files on lab hosts.',
+    cls=HostGroup,
     context_settings={
         'help_option_names': ['-h', '--help'],
     },

@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 from .product import Product
 
 from ..logger import get_otto_logger
-from ..utils import CommandStatus, Status
+from ..utils import CommandStatus, Status, cli_exposed
 from .binary_loader import BinaryLoader
 from .command_frame import CommandFrame, ZephyrFrame
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
@@ -518,11 +518,13 @@ class EmbeddedHost(RemoteHost):
     #  File operations
     ####################
 
+    @cli_exposed
     async def exists(self, path: "str | Path") -> bool:
         """Return ``True`` when *path* exists on the device (via ``fs ls``)."""
         result = await self._run_one(self.filesystem.ls_command(str(path)))
         return result.status.is_ok
 
+    @cli_exposed
     async def ls(self, path: "str | Path" = ".", all: bool = False) -> list[str]:
         """List entry names in *path* via the device ``fs ls`` former."""
         result = await self._run_one(self.filesystem.ls_command(str(path)))
@@ -530,6 +532,7 @@ class EmbeddedHost(RemoteHost):
             return []
         return [line for line in result.output.splitlines() if line]
 
+    @cli_exposed
     async def rm(
         self, path: "str | Path", recursive: bool = False, force: bool = False
     ) -> tuple[Status, str]:

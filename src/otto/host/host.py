@@ -26,6 +26,7 @@ from typing import (
 from ..utils import (
     CommandStatus,
     Status,
+    cli_exposed,
 )
 
 if TYPE_CHECKING:
@@ -504,6 +505,7 @@ class BaseHost(ABC):
     #  Product lifecycle
     ####################
 
+    @cli_exposed
     async def stage(self) -> tuple[Status, str]:
         """Stage every product onto this host (transfer/place, no install).
 
@@ -516,6 +518,7 @@ class BaseHost(ABC):
                 return status, msg
         return Status.Success, ""
 
+    @cli_exposed
     async def install(self, stage_only: bool = False) -> tuple[Status, str]:
         """Stage, then install every product.
 
@@ -533,6 +536,7 @@ class BaseHost(ABC):
                 return status, msg
         return Status.Success, ""
 
+    @cli_exposed
     async def uninstall(self) -> tuple[Status, str]:
         """Uninstall every product (best-effort).
 
@@ -546,6 +550,7 @@ class BaseHost(ABC):
                 first_error = (status, msg)
         return first_error if first_error is not None else (Status.Success, "")
 
+    @cli_exposed
     async def is_installed(self) -> bool:
         """True iff there is at least one product and all report installed.
 
@@ -558,6 +563,7 @@ class BaseHost(ABC):
                 return False
         return True
 
+    @cli_exposed
     async def is_uninstalled(self) -> bool:
         """Inverse of :meth:`is_installed`."""
         return not await self.is_installed()
@@ -575,6 +581,7 @@ class BaseHost(ABC):
             )
         return self.power_control
 
+    @cli_exposed
     async def power(self, state: str | None = None) -> tuple[Status, str]:
         """Power this host ``'on'``/``'off'``, or toggle when *state* is None.
 
@@ -605,6 +612,7 @@ class BaseHost(ABC):
             f"soft reboot is not supported on '{self.__class__.__name__}'"
         ) from None
 
+    @cli_exposed
     async def reboot(
         self, hard: bool = False, wait: bool = False, timeout: float = 600.0
     ) -> tuple[Status, str]:
@@ -627,6 +635,7 @@ class BaseHost(ABC):
             )
         return status, msg
 
+    @cli_exposed
     async def shutdown(self) -> tuple[Status, str]:
         """Power this host off from its own shell (distinct from external
         ``power('off')``). Per-family override; default raises.

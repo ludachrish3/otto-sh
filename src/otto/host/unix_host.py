@@ -55,18 +55,19 @@ from typing import (
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
-from .product import Product
-
 from ..utils import (
     CommandStatus,
     Status,
+    cli_exposed,
 )
+from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .command_frame import CommandFrame, build_command_frame
 from .connections import (
     ConnectionManager,
     TermContext,
     build_term_backend,
 )
+from .file_ops import PosixFileOps
 from .host import (
     Host,
     SuppressCommandOutput,
@@ -82,10 +83,9 @@ from .options import (
     SshOptions,
     TelnetOptions,
 )
-from .file_ops import PosixFileOps
 from .power import PowerController, power_control_from_spec
 from .privilege import PosixPrivilege
-from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
+from .product import Product
 from .remote_host import OsType, RemoteHost
 from .repeat import RepeatRunner
 from .session import (
@@ -96,8 +96,8 @@ from .session import (
 from .telnet import TelnetClient
 from .toolchain import Toolchain
 from .transfer import (
-    UnixFileTransfer,
     TransferContext,
+    UnixFileTransfer,
     build_transfer_backend,
 )
 
@@ -670,6 +670,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         await self.run("reboot", sudo=True, timeout=10.0)
         return Status.Success, ""
 
+    @cli_exposed
     async def shutdown(self) -> tuple[Status, str]:
         await self.run("shutdown -h now", sudo=True, timeout=10.0)
         return Status.Success, ""

@@ -82,6 +82,20 @@ def async_typer_command(f: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, R
         return asyncio.run(_run())
     return wrapper
 
+def cli_exposed(fn=None, *, name: str | None = None, help: str | None = None):
+    """Mark a host coroutine method for auto-exposure as an ``otto host``
+    subcommand. ``name`` defaults to the method name with underscores dashed.
+
+    Usable bare (``@cli_exposed``) or called (``@cli_exposed(name=..., help=...)``).
+    """
+    def deco(f):
+        f.__cli_exposed__ = True
+        f.__cli_name__ = name or f.__name__.replace("_", "-")
+        f.__cli_help__ = help
+        return f
+    return deco(fn) if fn is not None else deco
+
+
 T = TypeVar("T")
 def is_literal(value: Any, literal_type: Type[T]) -> T:
     """Raise a TypeError if value is not a valid member of the Literal type."""
