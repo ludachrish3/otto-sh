@@ -167,23 +167,16 @@ class Repo():
     tests: list[Path] = field(default_factory=list[Path], init=False)
     """Directories that contain test suites."""
 
-    host_defaults: dict[str, dict[str, Any]] = field(
-        default_factory=dict[str, dict[str, Any]],
+    host_preferences: dict[str, dict[str, Any]] = field(
+        default_factory=dict,
         init=False,
     )
-    """Per-protocol option defaults applied to every host loaded under this
-    repo's labs. Keys are ``*_options`` table names (``ssh_options``,
-    ``telnet_options``, etc.); values are dicts whose keys correspond to
-    fields on the matching options dataclass."""
-
-    host_preferences: dict[str, dict[str, list[str]]] = field(
-        default_factory=dict[str, dict[str, list[str]]],
-        init=False,
-    )
-    """Per-selector product preferences: ``{regex_selector: {capability: [ordered
-    backends]}}``. The factory matches each host's ``id`` against the selectors
-    (definition-order cascade) and feeds the resulting per-capability lists to the
-    resolver, which intersects each with the host's menu."""
+    """Unified per-selector product preferences:
+    ``{regex_selector: {capability: [ordered backends] | option_table: {key: val}}}``.
+    The factory matches each host's ``id`` against the selectors
+    (definition-order cascade) and partitions the result into capability
+    selections (forwarded to the resolver) and option-value defaults (applied
+    per-key, product-wins)."""
 
     os_profiles: dict[str, 'OsProfile'] = field(
         default_factory=dict,
@@ -455,10 +448,12 @@ class Repo():
         self.libs = list(model.libs)
         self.tests = list(model.tests)
         self.init = list(model.init)
-        self.host_defaults = {k: dict(v) for k, v in model.host_defaults.items()}
         self.host_preferences = {
-            sel: {cap: list(order) for cap, order in caps.items()}
-            for sel, caps in model.host_preferences.items()
+            sel: {
+                k: (list(v) if isinstance(v, list) else dict(v))
+                for k, v in entries.items()
+            }
+            for sel, entries in model.host_preferences.items()
         }
         self.os_profiles = self._register_os_profiles(model.os_profiles)
         self.docker_settings = model.docker.to_runtime()

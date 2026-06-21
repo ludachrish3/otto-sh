@@ -367,11 +367,20 @@ class TestPreferenceResolution:
         # sftp not in menu -> skipped; nc is the first preference in the menu
         assert host.transfer == "nc"
 
-    def test_pin_beats_preference(self):
+    def test_preference_beats_pin(self):
+        # Product preference now wins over the lab pin when the preference is in menu.
         spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
                             valid_transfers=["scp", "sftp"], transfer="scp")
         host = spec.to_host(preferences={"transfer": ["sftp"]})
-        assert host.transfer == "scp"
+        assert host.transfer == "sftp"
+
+    def test_pin_still_validated_when_preference_overrides(self):
+        # A bad lab pin is still fail-loud even when a preference would override it.
+        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
+                            valid_transfers=["scp", "sftp"], transfer="nc")
+        import pytest
+        with pytest.raises(ValueError, match="transfer 'nc' is not in"):
+            spec.to_host(preferences={"transfer": ["sftp"]})
 
     def test_no_preference_uses_menu_first(self):
         spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},

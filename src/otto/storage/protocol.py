@@ -15,8 +15,7 @@ class LabRepository(Protocol):
     def load_lab(self,
         name: str,
         search_paths: list[Path],
-        defaults: dict[str, dict[str, Any]] | None = None,
-        preferences: dict[str, dict[str, list[str]]] | None = None,
+        preferences: dict[str, dict[str, Any]] | None = None,
     ) -> Lab:
         """
         Load a lab by name from the repository.
@@ -27,15 +26,10 @@ class LabRepository(Protocol):
             Name of the lab to load
         search_paths : list[Path]
             Directories to search for the lab data
-        defaults : dict[str, dict[str, Any]] | None
-            Optional repo-level option defaults forwarded to the host
-            factory. Backends should pass this through unchanged; the
-            factory handles per-key merging beneath each host's own
-            ``*_options``. ``None`` reproduces today's behavior.
-        preferences : dict[str, dict[str, list[str]]] | None
-            The nested ``{selector: {capability: [...]}}`` product-preference
-            table forwarded to the factory, which matches each host's ``id``
-            and applies the result. ``None`` reproduces today's behavior.
+        preferences : dict[str, dict[str, Any]] | None
+            The unified ``{selector: {capability: [...] | option_table: {key: val}}}``
+            product-preference table forwarded to the factory, which matches each
+            host's ``id`` and applies the result. ``None`` reproduces today's behavior.
 
         Returns
         -------

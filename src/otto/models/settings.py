@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .base import OttoModel
@@ -162,9 +162,9 @@ class ReservationFile(OttoModel):
 # duplicated (not imported) so models/ stays free of the configmodule bootstrap.
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+")
 
-# The six per-protocol option tables accepted under [host_defaults], each mapped
-# to the spec that validates it. Keys mirror storage.factory.OPTIONS_KEYS (a
-# drift test keeps them in lockstep).
+# The six per-protocol option tables accepted under [host_preferences."<selector>"],
+# each mapped to the spec that validates it. Keys mirror storage.factory.OPTIONS_KEYS
+# (a drift test keeps them in lockstep).
 _HOST_DEFAULT_OPTION_SPECS: dict[str, type[OttoModel]] = {
     "ssh_options": SshOptionsSpec,
     "telnet_options": TelnetOptionsSpec,
@@ -203,11 +203,21 @@ class SettingsModel(OttoModel):
     init: list[str] = []
 
     # structured sub-tables
-    host_defaults: dict[str, dict[str, Any]] = {}
-    host_preferences: dict[str, dict[str, list[str]]] = {}
+    host_preferences: dict[str, dict[str, Any]] = {}
     os_profiles: dict[str, OsProfileSpec] = {}
     docker: DockerSettingsSpec = DockerSettingsSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_legacy_host_defaults(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "host_defaults" in data:
+            raise ValueError(
+                "[host_defaults] was removed; declare option values under "
+                '[host_preferences."<selector>".<opt>], e.g. '
+                '[host_preferences.".*".ssh_options].'
+            )
+        return data
 
     @field_validator("version")
     @classmethod
@@ -222,43 +232,24 @@ class SettingsModel(OttoModel):
             )
         return v
 
-    @field_validator("host_defaults")
-    @classmethod
-    def _validate_host_defaults_partial(
-        cls, v: dict[str, dict[str, Any]]
-    ) -> dict[str, dict[str, Any]]:
-        """Validate each ``*_options`` sub-table against its spec (catching
-        typos + type errors) but keep only the user-set keys, so the downstream
-        per-key precedence merge in storage.factory still applies its defaults.
-        """
-        result: dict[str, dict[str, Any]] = {}
-        for key, table in v.items():
-            spec_cls = _HOST_DEFAULT_OPTION_SPECS.get(key)
-            if spec_cls is None:
-                known = ", ".join(sorted(_HOST_DEFAULT_OPTION_SPECS))
-                raise ValueError(
-                    f"unknown [host_defaults] sub-table {key!r}. Valid: {known}"
-                )
-            validated = spec_cls.model_validate(table)
-            result[key] = validated.model_dump(exclude_unset=True)
-        return result
-
     @field_validator("host_preferences")
     @classmethod
     def _validate_host_preferences(
-        cls, v: dict[str, dict[str, list[str]]]
-    ) -> dict[str, dict[str, list[str]]]:
-        """Validate each ``[host_preferences."<selector>"]`` table: the selector
-        key must be a compilable Python regex (matched with ``re.fullmatch``
-        against the host ``id`` at build time), and each inner key must name a
-        known menu-style capability. Entry *values* are intentionally NOT checked
-        against the backend registry here — this model is parsed before the repo's
-        ``init`` modules load (``init`` is listed in this same settings file), so a
-        custom backend would not yet be registered. An unregistered or out-of-menu
-        entry is skipped leniently at resolution (a preference, not a demand).
+        cls, v: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """Validate each ``[host_preferences."<selector>"]`` block. The selector
+        must be a compilable regex (``re.fullmatch`` against the host ``id``).
+        Inner keys partition by name: a capability (``term``/``transfer``) takes
+        an ordered ``list[str]``; an option table (``ssh_options`` …) takes a dict
+        validated against its spec (only user-set keys kept, so the factory's
+        per-key merge still applies stock defaults). Capability *values* are not
+        registry-checked here (custom backends register after settings parse —
+        an out-of-menu entry is skipped leniently at resolution).
         """
-        known = ", ".join(sorted(_HOST_PREFERENCE_CAPABILITIES))
-        for selector, caps in v.items():
+        cap_known = ", ".join(sorted(_HOST_PREFERENCE_CAPABILITIES))
+        opt_known = ", ".join(sorted(_HOST_DEFAULT_OPTION_SPECS))
+        out: dict[str, dict[str, Any]] = {}
+        for selector, entries in v.items():
             try:
                 re.compile(selector)
             except re.error as e:
@@ -266,13 +257,30 @@ class SettingsModel(OttoModel):
                     f"[host_preferences] selector {selector!r} is not a valid "
                     f"regular expression: {e}"
                 ) from None
-            for cap in caps:
-                if cap not in _HOST_PREFERENCE_CAPABILITIES:
-                    raise ValueError(
-                        f"unknown [host_preferences] capability {cap!r} under "
-                        f"selector {selector!r}. Valid: {known}"
+            validated: dict[str, Any] = {}
+            for key, val in entries.items():
+                if key in _HOST_PREFERENCE_CAPABILITIES:
+                    if not isinstance(val, list) or not all(
+                        isinstance(x, str) for x in val
+                    ):
+                        raise ValueError(
+                            f"[host_preferences] capability {key!r} under selector "
+                            f"{selector!r} must be a list of backend names"
+                        )
+                    validated[key] = list(val)
+                elif key in _HOST_DEFAULT_OPTION_SPECS:
+                    spec_cls = _HOST_DEFAULT_OPTION_SPECS[key]
+                    validated[key] = spec_cls.model_validate(val).model_dump(
+                        exclude_unset=True
                     )
-        return v
+                else:
+                    raise ValueError(
+                        f"unknown [host_preferences] key {key!r} under selector "
+                        f"{selector!r}. Valid selections: {cap_known}. "
+                        f"Valid option tables: {opt_known}."
+                    )
+            out[selector] = validated
+        return out
 
 
 # ---------------------------------------------------------------------------

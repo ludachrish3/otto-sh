@@ -24,6 +24,18 @@ def _write_repo(tmp_path: Path, settings_body: str) -> Path:
     (otto_dir / 'settings.toml').write_text(f'{base}\n{settings_body}\n')
     return tmp_path
 
+
+def _repo_with_settings(tmp_path: Path, settings_body: str) -> 'Repo':
+    """Materialize a minimal SUT repo and return the parsed Repo.
+
+    Accepts raw TOML (including ``name``/``version``) — no base prepended.
+    """
+    import textwrap as _textwrap
+    otto_dir = tmp_path / '.otto'
+    otto_dir.mkdir(parents=True, exist_ok=True)
+    (otto_dir / 'settings.toml').write_text(_textwrap.dedent(settings_body))
+    return Repo(sut_dir=tmp_path)
+
 @pytest.fixture(autouse=False, scope='function')
 def default_mock_repo():
 
@@ -92,62 +104,68 @@ class TestValidLabsParsing:
         assert repo.valid_labs == ['embedded', 'veggies']
 
 
-class TestHostDefaultsParsing:
-    """Tests for ``[host_defaults]`` parsing in ``Repo.parse_settings``."""
+def test_repo_parses_unified_host_preferences(tmp_path):
+    repo = _repo_with_settings(tmp_path, """
+        name = "p"
+        version = "1.0.0"
+        [host_preferences.".*"]
+        term = ["telnet"]
+        ssh_options = { connect_timeout = 5.0 }
+    """)
+    assert repo.host_preferences[".*"]["term"] == ["telnet"]
+    assert repo.host_preferences[".*"]["ssh_options"] == {"connect_timeout": 5.0}
+    assert not hasattr(repo, "host_defaults")
+
+
+class TestHostPreferencesParsing:
+    """Tests for unified ``[host_preferences]`` parsing in ``Repo.parse_settings``."""
 
     def test_absent_section_yields_empty_dict(self, tmp_path):
         sut = _write_repo(tmp_path, '')
         repo = Repo(sut_dir=sut)
-        assert repo.host_defaults == {}
+        assert repo.host_preferences == {}
 
-    def test_empty_section_yields_empty_dict(self, tmp_path):
-        sut = _write_repo(tmp_path, '[host_defaults]')
-        repo = Repo(sut_dir=sut)
-        assert repo.host_defaults == {}
-
-    def test_single_protocol_default(self, tmp_path):
+    def test_selections_and_option_tables_parsed(self, tmp_path):
         sut = _write_repo(tmp_path, textwrap.dedent('''
-            [host_defaults.ssh_options]
+            [host_preferences.".*"]
+            term = ["telnet"]
+
+            [host_preferences.".*".ssh_options]
             port = 2222
             connect_timeout = 5.0
         '''))
         repo = Repo(sut_dir=sut)
-        assert repo.host_defaults == {
-            'ssh_options': {'port': 2222, 'connect_timeout': 5.0},
+        assert repo.host_preferences[".*"]["term"] == ["telnet"]
+        assert repo.host_preferences[".*"]["ssh_options"] == {
+            'port': 2222, 'connect_timeout': 5.0,
         }
 
-    def test_multiple_protocol_defaults(self, tmp_path):
+    def test_legacy_host_defaults_rejected(self, tmp_path):
         sut = _write_repo(tmp_path, textwrap.dedent('''
             [host_defaults.ssh_options]
-            connect_timeout = 5.0
-
-            [host_defaults.telnet_options]
-            cols = 200
+            port = 2222
         '''))
-        repo = Repo(sut_dir=sut)
-        assert repo.host_defaults == {
-            'ssh_options': {'connect_timeout': 5.0},
-            'telnet_options': {'cols': 200},
-        }
+        with pytest.raises(ValueError, match=r'\[host_defaults\] was removed'):
+            Repo(sut_dir=sut)
 
-    def test_unknown_options_table_raises(self, tmp_path):
+    def test_unknown_preference_key_raises(self, tmp_path):
         sut = _write_repo(tmp_path, textwrap.dedent('''
-            [host_defaults.bogus_options]
-            x = 1
+            [host_preferences.".*"]
+            bogus_options = { x = 1 }
         '''))
         with pytest.raises(ValueError, match='unknown'):
             Repo(sut_dir=sut)
 
-    def test_sutdir_expansion_in_host_defaults(self, tmp_path):
-        """``${sut_dir}`` is expanded inside ``[host_defaults]`` strings, like
+    def test_sutdir_expansion_in_host_preferences(self, tmp_path):
+        """``${sut_dir}`` is expanded inside ``[host_preferences]`` strings, like
         every other repo settings table.
         """
         sut = _write_repo(tmp_path, textwrap.dedent('''
-            [host_defaults.ssh_options]
+            [host_preferences.".*".ssh_options]
             known_hosts = "${sut_dir}/known_hosts"
         '''))
         repo = Repo(sut_dir=sut)
-        assert repo.host_defaults['ssh_options']['known_hosts'] == f'{sut}/known_hosts'
+        assert repo.host_preferences[".*"]["ssh_options"]["known_hosts"] == f'{sut}/known_hosts'
 
 
 @pytest.fixture

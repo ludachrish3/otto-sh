@@ -5,6 +5,7 @@ from otto.host.capability import (
     TERM_RESOLVER,
     TRANSFER_RESOLVER,
     CapabilityResolver,
+    select_option_defaults,
     select_preferences,
 )
 
@@ -46,9 +47,24 @@ def test_resolve_active_preference_all_out_of_menu_falls_to_first():
     assert r.resolve_active(["scp", "nc"], preference=["sftp", "ftp"]) == "scp"
 
 
-def test_resolve_active_pin_beats_preference():
+def test_resolve_active_preference_beats_pin():
     r = CapabilityResolver("transfer")
-    assert r.resolve_active(["scp", "nc"], pin="scp", preference=["nc"]) == "scp"
+    # Product preference now wins over the lab pin, as long as it is in the menu.
+    assert r.resolve_active(["scp", "nc"], pin="scp", preference=["nc"]) == "nc"
+
+
+def test_resolve_active_pin_still_validated_when_preference_overrides():
+    # A malformed lab pin (outside its own menu) is still fail-loud even when a
+    # preference would override it.
+    r = CapabilityResolver("transfer")
+    with pytest.raises(ValueError, match="transfer 'rsh' is not in"):
+        r.resolve_active(["scp", "nc"], pin="rsh", preference=["nc"])
+
+
+def test_resolve_active_falls_back_to_validated_pin():
+    # No in-menu preference -> the validated pin is used.
+    r = CapabilityResolver("term")
+    assert r.resolve_active(["ssh", "telnet"], pin="telnet", preference=["rsh"]) == "telnet"
 
 
 def test_module_singletons_carry_field_names():
@@ -89,3 +105,29 @@ class TestSelectPreferences:
     def test_fullmatch_not_search(self):
         # "test" only matches the whole id; it does NOT match "test1"
         assert select_preferences({"test": {"transfer": ["x"]}}, "test1") == {}
+
+
+class TestSelectOptionDefaults:
+    def test_empty_table_is_empty(self):
+        assert select_option_defaults({}, "test1") == {}
+
+    def test_dict_entries_returned_lists_ignored(self):
+        table = {".*": {"transfer": ["nc"], "ssh_options": {"port": 22}}}
+        assert select_option_defaults(table, "anything") == {"ssh_options": {"port": 22}}
+
+    def test_per_key_merge_across_matching_selectors(self):
+        table = {
+            ".*": {"ssh_options": {"connect_timeout": 5.0}},
+            "router.*": {"ssh_options": {"port": 2222}},
+        }
+        assert select_option_defaults(table, "router1") == {
+            "ssh_options": {"connect_timeout": 5.0, "port": 2222}
+        }
+        assert select_option_defaults(table, "test1") == {
+            "ssh_options": {"connect_timeout": 5.0}
+        }
+
+
+def test_select_preferences_ignores_option_tables():
+    table = {".*": {"transfer": ["nc"], "ssh_options": {"port": 22}}}
+    assert select_preferences(table, "anything") == {"transfer": ["nc"]}

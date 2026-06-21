@@ -250,25 +250,63 @@ def test_settings_paths_coerce_to_path_lists():
     assert m.valid_labs == ["embedded"]
 
 
-def test_settings_host_defaults_validated_but_kept_partial():
+def test_host_preferences_accepts_selections_and_option_tables():
     m = SettingsModel.model_validate({
-        **_minimal(),
-        "host_defaults": {"ssh_options": {"port": 2222}},
+        "name": "p", "version": "1.0.0",
+        "host_preferences": {
+            ".*": {"term": ["telnet"], "ssh_options": {"connect_timeout": 5.0}},
+            "router.*": {"telnet_options": {"port": 9023}},
+        },
     })
-    assert m.host_defaults == {"ssh_options": {"port": 2222}}
+    assert m.host_preferences[".*"]["term"] == ["telnet"]
+    assert m.host_preferences[".*"]["ssh_options"] == {"connect_timeout": 5.0}
+    assert m.host_preferences["router.*"]["telnet_options"] == {"port": 9023}
 
 
-def test_settings_host_defaults_rejects_unknown_subtable():
-    with pytest.raises(ValidationError):
-        SettingsModel.model_validate({**_minimal(), "host_defaults": {"sssh_options": {}}})
-
-
-def test_settings_host_defaults_rejects_bad_option_field():
-    with pytest.raises(ValidationError):
+def test_host_preferences_unknown_inner_key_raises():
+    with pytest.raises(ValueError, match="unknown .host_preferences. key 'bogus'"):
         SettingsModel.model_validate({
-            **_minimal(),
-            "host_defaults": {"ssh_options": {"prot": 22}},  # typo: port
+            "name": "p", "version": "1.0.0",
+            "host_preferences": {".*": {"bogus": ["x"]}},
         })
+
+
+def test_host_preferences_bad_selector_regex_raises():
+    with pytest.raises(ValueError, match="is not a valid regular expression"):
+        SettingsModel.model_validate({
+            "name": "p", "version": "1.0.0",
+            "host_preferences": {"[": {"term": ["ssh"]}},
+        })
+
+
+def test_host_preferences_option_table_typo_raises():
+    with pytest.raises(ValueError):
+        SettingsModel.model_validate({
+            "name": "p", "version": "1.0.0",
+            "host_preferences": {".*": {"ssh_options": {"not_a_real_key": 1}}},
+        })
+
+
+def test_host_preferences_capability_must_be_list():
+    with pytest.raises(ValueError, match="must be a list"):
+        SettingsModel.model_validate({
+            "name": "p", "version": "1.0.0",
+            "host_preferences": {".*": {"term": "telnet"}},
+        })
+
+
+def test_legacy_host_defaults_rejected_with_migration_message():
+    with pytest.raises(ValueError, match=r"\[host_defaults\] was removed"):
+        SettingsModel.model_validate({
+            "name": "p", "version": "1.0.0",
+            "host_defaults": {"ssh_options": {"port": 22}},
+        })
+
+
+def test_settings_schema_exposes_host_preferences_not_host_defaults():
+    schema = SettingsModel.model_json_schema()
+    assert "host_preferences" in schema["properties"]
+    assert "host_defaults" not in schema["properties"]
 
 
 def test_settings_builds_docker_and_os_profiles():
@@ -316,7 +354,7 @@ def test_settings_host_preferences_defaults_empty():
 
 
 def test_settings_host_preferences_rejects_unknown_capability():
-    with pytest.raises(ValueError, match=r"unknown \[host_preferences\] capability 'transfre'"):
+    with pytest.raises(ValueError, match=r"unknown \[host_preferences\] key 'transfre'"):
         SettingsModel.model_validate({
             **_minimal(),
             "host_preferences": {".*": {"transfre": ["scp"]}},

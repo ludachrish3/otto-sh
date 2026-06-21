@@ -252,9 +252,10 @@ class UnixHostSpec(HostSpec):
         prefs = preferences or {}
         kw["valid_terms"] = list(self.valid_terms)
         kw["valid_transfers"] = list(self.valid_transfers)
-        # Active selection precedence: an explicit lab pin (self.term/.transfer)
-        # wins; else the first product preference present in the menu; else the
-        # menu's first entry. Out-of-menu preferences are skipped by the resolver.
+        # Active selection precedence: the first product preference present in
+        # the menu wins; else the lab pin (self.term/.transfer, validated against
+        # the menu); else the menu's first entry. Out-of-menu preferences are
+        # skipped by the resolver.
         kw["term"] = TERM_RESOLVER.resolve_active(
             self.valid_terms, pin=self.term, preference=prefs.get("term"))
         kw["transfer"] = TRANSFER_RESOLVER.resolve_active(

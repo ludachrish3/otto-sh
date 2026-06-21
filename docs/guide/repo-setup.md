@@ -17,10 +17,11 @@ libs  = ["${sut_dir}/pylib"]
 tests = ["${sut_dir}/tests"]
 init  = ["my_instructions", "my_shared_options"]
 
-# Optional: connection defaults applied to every host this repo touches.
-[host_defaults.ssh_options]
-connect_timeout = 5.0
-keepalive_interval = 30
+# Optional: product preferences applied to every host this repo touches.
+# Selector = Python regex matched against the host id; ".*" = all hosts.
+# Values win over hosts.json; CLI --term/--transfer win over everything.
+[host_preferences.".*"]
+ssh_options = { connect_timeout = 5.0, keepalive_interval = 30 }
 ```
 
 ### Variable expansion
@@ -28,7 +29,7 @@ keepalive_interval = 30
 `${sut_dir}` is replaced with the absolute path to the repo root at load
 time.  Use it to keep paths relative and portable.  Expansion runs
 inside every settings table, including string values nested under
-`[host_defaults]`.
+`[host_preferences]`.
 
 ### Field reference
 
@@ -60,10 +61,16 @@ init
   These modules must be importable from one of the `libs` directories.
   Defaults to `[]`.
 
-\[host_defaults\]
-: Optional table of per-protocol option defaults applied to every host
-  loaded from this repo's `labs`.  See {ref}`host-defaults` in
-  {doc}`lab-config` for the full schema and precedence rules.
+\[host_preferences\]
+: Optional table of product-wide selector-scoped preferences.  Each
+  sub-table key is a Python regex matched against host ids; inner keys
+  are `term`, `transfer` (ordered backend lists) or `*_options` tables
+  (per-key option values that win over `hosts.json`).  See
+  {ref}`host-preferences` in {doc}`lab-config` for the full schema and
+  precedence rules.
+
+  > **Migration note:** `[host_defaults]` was removed; its option
+  > tables move under `[host_preferences."<selector>".<opt>]`.
 
 \[os_profiles\]
 : Optional table of named OS-profile bundles.  Each `[os_profiles.<name>]`

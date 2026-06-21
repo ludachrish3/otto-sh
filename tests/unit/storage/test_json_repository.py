@@ -302,8 +302,11 @@ class TestJsonFileLabRepository:
         assert labs == []
 
 
-class TestLoadLabWithDefaults:
-    """End-to-end tests for the ``defaults=`` parameter on ``load_lab``."""
+class TestLoadLabWithPreferences:
+    """End-to-end tests for the unified ``preferences=`` parameter on ``load_lab``.
+    (Formerly tested the removed ``defaults=`` parameter; updated to the unified
+    [host_preferences] path in Task 2.)
+    """
 
     def _hosts(self, tmp_path):
         _hosts_file(tmp_path, [
@@ -318,20 +321,23 @@ class TestLoadLabWithDefaults:
         ])
 
     def test_defaults_apply_during_load(self, tmp_path):
-        """Repo defaults are merged into hosts during ``load_lab``."""
+        """Product preferences (option tables) are merged into hosts during ``load_lab``.
+        With the Task-2 product-wins flip, the preference connect_timeout wins
+        over the host value, but port is host-only so it is preserved.
+        """
         self._hosts(tmp_path)
         repo = JsonFileLabRepository()
         lab = repo.load_lab(
             "testlab",
             [tmp_path],
-            defaults={'ssh_options': {'connect_timeout': 99.0, 'port': 2222}},
+            preferences={".*": {"ssh_options": {"connect_timeout": 99.0}}},
         )
         host = next(iter(lab.hosts.values()))
-        assert host.ssh_options.port == 9000        # host wins
-        assert host.ssh_options.connect_timeout == 99.0  # default fills in
+        assert host.ssh_options.port == 9000        # host-only key preserved
+        assert host.ssh_options.connect_timeout == 99.0  # preferences wins
 
     def test_defaults_none_unchanged_behavior(self, tmp_path):
-        """``defaults=None`` matches today's behavior."""
+        """``preferences=None`` matches today's behavior."""
         self._hosts(tmp_path)
         repo = JsonFileLabRepository()
         lab = repo.load_lab("testlab", [tmp_path])

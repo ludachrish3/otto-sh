@@ -105,9 +105,10 @@ the SNMP section of {doc}`monitor`.
 ### Per-protocol option tables
 
 Each of the following keys accepts an object that overrides individual
-protocol fields.  They merge per-key with repo-level `[host_defaults]`; the
-host's own values win.  See {doc}`host` for the full connection-options
-reference.
+protocol fields.  They merge per-key with hardcoded dataclass defaults;
+product `[host_preferences]` values are then applied on top (product wins
+over the host's own values).  See {doc}`host` for the full
+connection-options reference.
 
 | Key | Protocol |
 |-----|----------|
@@ -186,49 +187,65 @@ Two real entries from the test fixture — one Unix host and one Zephyr host:
 ]
 ```
 
-(host-defaults)=
+(host-preferences)=
 
-## Repo-level host defaults
+## Product host preferences
 
-Most labs share a common set of connection conventions — a non-standard SSH
-port, a longer connect timeout, an alternate `nc` binary, etc.  Restating
-those values on every host entry is repetitive and error-prone.  Move the
-shared values into `[host_defaults]` in `.otto/settings.toml` and let the
-per-host `*_options` tables override only the values that genuinely differ.
+Most products share a common set of connection conventions — a non-standard
+SSH port, a longer connect timeout, an alternate `nc` binary, preferred
+terminal or transfer backend.  Restating those values on every host entry is
+repetitive and error-prone.  Move the shared values into
+`[host_preferences]` in `.otto/settings.toml`.
+
+> **Migration note:** `[host_defaults]` was removed; its option tables move
+> under `[host_preferences."<selector>".<opt>]`.
+
+The `[host_preferences]` block is a map whose keys are **Python regexes**
+matched (`re.fullmatch`) against each host's **id** (e.g. `carrot_seed`,
+`router_seed_2`).  Under each selector, two kinds of values are allowed:
+
+- **Selection lists** (`term`, `transfer`) — an ordered list of preferred
+  backends.  Otto picks the first entry that is in the host's lab-defined
+  `valid_term` / `valid_transfer` menu; out-of-menu entries are skipped.
+- **Option tables** (`ssh_options`, `telnet_options`, `sftp_options`,
+  `scp_options`, `ftp_options`, `nc_options`) — per-key value overrides.
 
 ```toml
 # .otto/settings.toml
 
-[host_defaults.ssh_options]
-port = 2222
-connect_timeout = 5.0
-keepalive_interval = 30
+# Selector = Python regex matched against host id (".*" = all hosts).
+# Selections (term/transfer) are ordered preferences gated by each host's
+# lab menu; option tables are per-key values that win over hosts.json.
+[host_preferences.".*"]
+term = ["telnet"]
+transfer = ["nc"]
+ssh_options = { connect_timeout = 5.0, keepalive_interval = 30 }
+telnet_options = { cols = 200, echo_negotiation_timeout = 1.0 }
+nc_options = { exec_name = "ncat", port_strategy = "proc" }
 
-[host_defaults.telnet_options]
-cols = 200
-echo_negotiation_timeout = 1.0
-
-[host_defaults.nc_options]
-exec_name = "ncat"
-port_strategy = "proc"
+# Narrower selectors overlay specific host groups.
+[host_preferences."router.*"]
+telnet_options = { port = 9023 }
 ```
 
-Valid sub-table names are exactly the per-host option keys:
-`ssh_options`, `telnet_options`, `sftp_options`, `scp_options`,
-`ftp_options`, `nc_options`.  Unknown keys raise at startup so typos
-fail loudly instead of silently no-opping.
+Valid option-table names are: `ssh_options`, `telnet_options`,
+`sftp_options`, `scp_options`, `ftp_options`, `nc_options`.  Unknown keys
+raise at startup so typos fail loudly instead of silently no-opping.
 
 **Precedence (lowest to highest):**
 
 1. The hardcoded dataclass defaults in `otto.host.options`.
-2. `[host_defaults]` from each repo, applied in `OTTO_SUT_DIRS` order.
-   When the same field appears in two repos, the later repo wins.
-3. The host's own `*_options` table in `hosts.json`.
+2. The host's own `*_options` table and `term`/`transfer` pin in
+   `hosts.json` (the `valid_*` menu hard-gates selections).
+3. `[host_preferences]` from each repo — product values **win over**
+   `hosts.json`.  Repos are applied in `OTTO_SUT_DIRS` order (later repo
+   wins); within a repo, selectors are applied in definition order (later
+   selector wins on the same key).
+4. CLI `--term` / `--transfer` — final word, applied at invocation time.
 
-Merging happens **per key** at every layer.  Setting only `port` on a host
-still inherits `connect_timeout` from the repo default; setting only
-`connect_timeout` in the repo default still inherits `port` from the
-dataclass default.
+Merging happens **per key** at every option-table layer.  Setting only
+`port` on a host in `hosts.json` still inherits `connect_timeout` from the
+product preference, and so on down to the dataclass default.
 
 The merge is performed at host construction time, so the resulting host
 carries the fully-resolved `*_options` instances — nothing has to be

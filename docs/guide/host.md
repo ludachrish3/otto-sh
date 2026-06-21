@@ -209,18 +209,22 @@ the host entry:
 | ``ftp_options``   | FTP transfers (aioftp)         |
 | ``nc_options``    | Netcat transfers               |
 
-The same six tables are recognized in three places, layered from least
+The same six tables are recognized in four places, layered from least
 to most specific:
 
 1. **Hardcoded defaults** in `otto.host.options` — what you get when no
    `*_options` is supplied anywhere.
-2. **Repo-level `[host_defaults]`** in `.otto/settings.toml` — applied
-   to every host the repo touches.  See {ref}`host-defaults`.
-3. **Per-host `*_options`** in `hosts.json` — overrides for a single
-   host.
+2. **Per-host `*_options`** in `hosts.json` — the lab's own values for
+   a single host.
+3. **Product `[host_preferences]`** in `.otto/settings.toml` — applied
+   to every host whose id matches the selector regex.  Product values
+   **win over** `hosts.json`.  See {ref}`host-preferences`.
+4. **CLI `--term` / `--transfer`** — final word, applied at invocation
+   time.
 
-Merging is **per key** between layers.  A host that sets only `port`
-still inherits `connect_timeout` from the repo default, and so on.  The
+Merging is **per key** between layers (1)–(3).  A host that sets only
+`port` in `hosts.json` still inherits `connect_timeout` from the
+product preference, and so on down to the dataclass default.  The
 fully resolved options are baked into the `UnixHost` at construction
 time.
 

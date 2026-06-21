@@ -246,7 +246,10 @@ class TestToolchainDeserialization:
 
 
 class TestRepoLevelOptionDefaults:
-    """Tests for the ``defaults=`` parameter on ``create_host_from_dict``."""
+    """Tests for option-value defaults via unified ``preferences=`` on
+    ``create_host_from_dict``.  (Formerly tested the removed ``defaults=``
+    parameter; updated to the unified [host_preferences] path in Task 2.)
+    """
 
     def _base_host(self, **extra):
         data = {
@@ -258,48 +261,48 @@ class TestRepoLevelOptionDefaults:
         return data
 
     def test_defaults_none_reproduces_today_behavior(self):
-        """``defaults=None`` is bit-for-bit identical to the prior signature."""
+        """``preferences=None`` is bit-for-bit identical to omitting the arg."""
         before = create_host_from_dict(self._base_host())
-        after = create_host_from_dict(self._base_host(), defaults=None)
+        after = create_host_from_dict(self._base_host(), preferences=None)
         assert before.ssh_options == after.ssh_options
         assert before.telnet_options == after.telnet_options
 
     def test_defaults_only_applied_when_host_has_no_options(self):
-        """A repo default fills in fields the host did not specify."""
+        """A preferences option table fills in fields the host did not specify."""
         host = create_host_from_dict(
             self._base_host(),
-            defaults={'ssh_options': {'connect_timeout': 99.0, 'port': 2222}},
+            preferences={".*": {"ssh_options": {"connect_timeout": 99.0, "port": 2222}}},
         )
         assert host.ssh_options.connect_timeout == 99.0
         assert host.ssh_options.port == 2222
 
     def test_host_overrides_default_per_key(self):
-        """Per-key merge: host wins for keys it sets, default fills the rest."""
+        """Per-key merge: preferences win for keys they set (product-wins flip)."""
         host = create_host_from_dict(
             self._base_host(ssh_options={'port': 9000}),
-            defaults={'ssh_options': {'connect_timeout': 99.0, 'port': 2222}},
+            preferences={".*": {"ssh_options": {"connect_timeout": 99.0, "port": 2222}}},
         )
-        assert host.ssh_options.port == 9000          # host wins
-        assert host.ssh_options.connect_timeout == 99.0  # inherited from default
+        assert host.ssh_options.port == 2222          # product (preferences) wins
+        assert host.ssh_options.connect_timeout == 99.0  # preferences fill the rest
 
     def test_defaults_for_one_protocol_dont_affect_another(self):
-        """An ``ssh_options`` default doesn't leak into ``telnet_options``."""
+        """An ``ssh_options`` preference doesn't leak into ``telnet_options``."""
         host = create_host_from_dict(
             self._base_host(),
-            defaults={'ssh_options': {'connect_timeout': 99.0}},
+            preferences={".*": {"ssh_options": {"connect_timeout": 99.0}}},
         )
         # telnet_options is untouched — its dataclass defaults apply.
         from otto.host.options import TelnetOptions
         assert host.telnet_options == TelnetOptions()
 
     def test_defaults_apply_across_multiple_protocols(self):
-        """Multiple ``[host_defaults.<key>]`` tables are honored simultaneously."""
+        """Multiple option tables under a selector are honored simultaneously."""
         host = create_host_from_dict(
             self._base_host(),
-            defaults={
-                'ssh_options': {'connect_timeout': 99.0},
-                'telnet_options': {'cols': 200},
-            },
+            preferences={".*": {
+                "ssh_options": {"connect_timeout": 99.0},
+                "telnet_options": {"cols": 200},
+            }},
         )
         assert host.ssh_options.connect_timeout == 99.0
         assert host.telnet_options.cols == 200
@@ -309,15 +312,15 @@ class TestRepoLevelOptionDefaults:
         with pytest.raises(ValidationError) as exc_info:
             create_host_from_dict(
                 self._base_host(),
-                defaults={'ssh_options': {'totally_unknown_field': 1}},
+                preferences={".*": {"ssh_options": {"totally_unknown_field": 1}}},
             )
         assert 'totally_unknown_field' in str(exc_info.value)
         assert 'Extra inputs are not permitted' in str(exc_info.value)
 
     def test_empty_defaults_dict_is_a_noop(self):
-        """An empty defaults dict matches today's behavior."""
+        """An empty preferences dict matches today's behavior."""
         before = create_host_from_dict(self._base_host())
-        after = create_host_from_dict(self._base_host(), defaults={})
+        after = create_host_from_dict(self._base_host(), preferences={})
         assert before.ssh_options == after.ssh_options
         assert before.telnet_options == after.telnet_options
 
@@ -480,7 +483,10 @@ class TestOsProfileDispatch:
         assert host.os_type == 'custom-nix'
 
     def test_options_three_layer_precedence(self, restore_profiles):
-        """Per-key: host > profile > repo-default for an ``*_options`` table."""
+        """Per-key precedence: product (preferences) > host > profile for
+        ``*_options`` tables. This is the Task-2 value-flip: product wins over
+        host, host wins over profile.
+        """
         register_os_profile('nix-ssh', base='unix', defaults={
             'ssh_options': {'connect_timeout': 50.0, 'port': 3333},
         })
@@ -489,11 +495,11 @@ class TestOsProfileDispatch:
                 'ip': '10.10.200.11', 'element': 'orange', 'creds': {'v': 'v'},
                 'os_type': 'nix-ssh', 'ssh_options': {'port': 9000},
             },
-            defaults={'ssh_options': {'connect_timeout': 99.0, 'keepalive_interval': 42.0}},
+            preferences={".*": {"ssh_options": {"connect_timeout": 99.0, "keepalive_interval": 42.0}}},
         )
-        assert host.ssh_options.port == 9000               # host wins
-        assert host.ssh_options.connect_timeout == 50.0    # profile beats repo-default
-        assert host.ssh_options.keepalive_interval == 42.0  # repo-default fills the gap
+        assert host.ssh_options.port == 9000               # host beats profile (no pref for port)
+        assert host.ssh_options.connect_timeout == 99.0    # product (preferences) wins
+        assert host.ssh_options.keepalive_interval == 42.0  # preferences fills the gap
 
     def test_embedded_profile_coerces_frame_and_filesystem_strings(self, restore_profiles):
         register_os_profile('zephyr-fat', base='embedded', defaults={
@@ -728,17 +734,17 @@ class TestMergeAndValidation:
     """The collapsed factory: precedence merge + pydantic ``extra='forbid'``."""
 
     def test_create_merges_options_per_key_across_layers(self):
-        # repo default (lowest) < profile default < host (highest), per-key.
-        repo_defaults = {"ssh_options": {"port": 22, "connect_timeout": 1.0}}
+        # preferences (highest) > host > profile (lowest), per-key.
+        # With the Task-2 flip: product preferences win over the host.
         host = create_host_from_dict(
             {
                 "ip": "10.0.0.1", "element": "carrot", "creds": {"u": "p"},
-                "ssh_options": {"port": 2222},  # host overrides only 'port'
+                "ssh_options": {"port": 2222, "connect_timeout": 1.0},
             },
-            defaults=repo_defaults,
+            preferences={".*": {"ssh_options": {"connect_timeout": 9.0}}},
         )
-        assert host.ssh_options.port == 2222              # host wins
-        assert host.ssh_options.connect_timeout == 1.0    # repo default survives
+        assert host.ssh_options.port == 2222              # host wins (no pref for port)
+        assert host.ssh_options.connect_timeout == 9.0    # preferences win over host
 
     def test_create_stamps_os_type_selector(self):
         host = create_host_from_dict(
@@ -843,3 +849,50 @@ class TestProductProviders:
             'creds': {'vagrant': 'vagrant'},
         })
         assert host.products == []
+
+
+# ---------------------------------------------------------------------------
+# Task 2: unified [host_preferences] value defaults + the two flips
+# ---------------------------------------------------------------------------
+
+
+def test_value_default_applied_from_preferences():
+    h = create_host_from_dict(
+        {"os_type": "unix", "element": "carrot", "ip": "1.1.1.1",
+         "creds": {"u": "p"}, "valid_terms": ["ssh"], "valid_transfers": ["scp"]},
+        preferences={".*": {"ssh_options": {"connect_timeout": 9.0}}},
+    )
+    assert h.ssh_options.connect_timeout == 9.0
+
+
+def test_product_value_overrides_host_value_per_key():
+    # The flip: product [host_preferences] value wins over the host's own option.
+    h = create_host_from_dict(
+        {"os_type": "unix", "element": "carrot", "ip": "1.1.1.1",
+         "creds": {"u": "p"}, "valid_terms": ["ssh"], "valid_transfers": ["scp"],
+         "ssh_options": {"connect_timeout": 1.0, "port": 2222}},
+        preferences={".*": {"ssh_options": {"connect_timeout": 9.0}}},
+    )
+    assert h.ssh_options.connect_timeout == 9.0   # product wins
+    assert h.ssh_options.port == 2222              # host-only key preserved
+
+
+def test_selection_preference_overrides_lab_pin():
+    # The flip: product selection wins over the lab term pin, still menu-gated.
+    h = create_host_from_dict(
+        {"os_type": "unix", "element": "carrot", "ip": "1.1.1.1",
+         "creds": {"u": "p"}, "term": "ssh",
+         "valid_terms": ["ssh", "telnet"], "valid_transfers": ["scp"]},
+        preferences={".*": {"term": ["telnet"]}},
+    )
+    assert h.term == "telnet"
+
+
+def test_embedded_preference_path():
+    # Closes the known embedded preference-path gap.
+    h = create_host_from_dict(
+        {"os_type": "embedded", "element": "d", "ip": "192.0.2.1",
+         "command_frame": "zephyr", "valid_transfers": ["console", "tftp"]},
+        preferences={".*": {"transfer": ["tftp"]}},
+    )
+    assert h.transfer == "tftp"

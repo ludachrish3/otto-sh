@@ -7,21 +7,24 @@ constructor of each class reproduces otto's historical behavior, so
 dropping an options object onto an existing `UnixHost` never changes
 how it connects.
 
-Options can be set in three places, layered lowest-to-highest:
+Options can be set in four places, layered lowest-to-highest:
 
-1. **Repo-wide defaults** in `.otto/settings.toml` under
-   `[host_defaults.<protocol>_options]` — applied to every host the
-   repo touches.  Best for conventions shared across the whole
-   product.
-2. **Per-host overrides** in `hosts.json` under the matching
-   `*_options` table.  Best for the specific exceptions a host needs.
-3. **Per-call overrides** passed to `get_host()` / `all_hosts()` —
+1. **Hardcoded dataclass defaults** in `otto.host.options` — what you
+   get when nothing else is configured.
+2. **Per-host values** in `hosts.json` under the matching `*_options`
+   table — the lab's own definition of what the host needs.
+3. **Product preferences** in `.otto/settings.toml` under
+   `[host_preferences."<selector>".<protocol>_options]` — applied to
+   every host whose id matches the selector regex.  Product values **win
+   over** the host's own `hosts.json` values.  Best for conventions
+   shared across the whole product.
+4. **Per-call overrides** passed to `get_host()` / `all_hosts()` —
    transient, scoped to a single lookup.  Best for one-off test-time
    tuning that shouldn't pollute the lab definition.
 
-Merging between (1) and (2) is per-key, so each layer fills in only the
-fields it sets.  Layer (3) **replaces** the matching `*_options` field
-on the returned host wholesale, so the caller is responsible for
+Merging between layers (1)–(3) is per-key, so each layer fills in only
+the fields it sets.  Layer (4) **replaces** the matching `*_options`
+field on the returned host wholesale, so the caller is responsible for
 constructing the full options instance they want.
 
 This cookbook collects the recipes you actually reach for: pushing a
@@ -33,31 +36,40 @@ transient override at a call site.
 For the reference table of every field, see the
 {ref}`connection options section in the host guide <connection-options>`.
 
-## Repo-wide defaults
+## Product-wide preferences
 
-When every host in a lab needs the same handful of tweaks (a longer
+When every host in a product needs the same handful of tweaks (a longer
 SSH connect timeout, a larger telnet column count, an alternate `nc`
-binary), set them once in `.otto/settings.toml` and let `hosts.json`
-stay focused on what's actually different per host:
+binary), set them once in `.otto/settings.toml` under
+`[host_preferences]` and let `hosts.json` stay focused on what's
+actually different per host.
+
+The selector (e.g. `".*"`) is a Python regex matched against the host
+**id**; `".*"` applies to all hosts.  Option tables under each selector
+are per-key overrides that **win over** any value in `hosts.json`.
+
+> **Migration note:** `[host_defaults]` was removed; its option tables
+> move under `[host_preferences."<selector>".<opt>]`.
 
 ```toml
 # .otto/settings.toml
 
-[host_defaults.ssh_options]
-connect_timeout = 5.0
-keepalive_interval = 30
+# Selector = regex matched against host id; ".*" = all hosts.
+# Option tables (ssh_options, …) win over hosts.json values per-key.
+[host_preferences.".*"]
+ssh_options = { connect_timeout = 5.0, keepalive_interval = 30 }
+telnet_options = { cols = 200 }
+nc_options = { exec_name = "ncat", port_strategy = "proc" }
 
-[host_defaults.telnet_options]
-cols = 200
-
-[host_defaults.nc_options]
-exec_name = "ncat"
-port_strategy = "proc"
+# A narrower selector can overlay specific host groups.
+[host_preferences."router.*"]
+telnet_options = { port = 9023 }
 ```
 
-Per-host `*_options` tables in `hosts.json` are merged on top
-**per-key**, so a host that only needs to override `port` keeps the
-repo's `connect_timeout`:
+Per-host `*_options` tables in `hosts.json` are merged per-key with
+the hardcoded defaults first, then the product preferences layer is
+applied on top.  A host that sets only `port` in `hosts.json` still
+picks up `connect_timeout` from the product preference:
 
 ```json
 {
@@ -73,9 +85,10 @@ The resolved `SshOptions` for this host has `port=2222`,
 `connect_timeout=5.0`, and `keepalive_interval=30`.
 
 When several repos are loaded simultaneously (`OTTO_SUT_DIRS=...`),
-their `[host_defaults]` tables are reduced in list order — later repos
-overlay earlier ones field-by-field.  This makes one repo a "base"
-for shared conventions and others its overlays.
+their `[host_preferences]` selectors are applied in list order — later
+repos overlay earlier ones.  Within a repo, selectors are applied in
+definition order (later selector wins on the same key).  This makes one
+repo a "base" for shared conventions and others its overlays.
 
 ## Non-standard SSH port
 

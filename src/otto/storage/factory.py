@@ -1,6 +1,6 @@
 from typing import Any
 
-from ..host.capability import select_preferences
+from ..host.capability import select_option_defaults, select_preferences
 from ..host.os_profile import (
     build_host_class,
     build_host_spec,
@@ -12,8 +12,8 @@ from ..host.product import apply_product_providers
 from ..host.remote_host import RemoteHost, make_host_id
 from ..models.host import HostSpec
 
-# Names of the per-protocol option tables accepted on host dicts and as
-# repo-level ``[host_defaults.<key>]`` tables. Kept here (and imported by
+# Names of the per-protocol option tables accepted on host dicts and in
+# ``[host_preferences."<selector>"]`` blocks. Kept here (and imported by
 # ``configmodule.repo``) as the canonical option-key set.
 OPTIONS_KEYS: frozenset[str] = frozenset({
     'ssh_options',
@@ -27,30 +27,29 @@ OPTIONS_KEYS: frozenset[str] = frozenset({
 
 def _merge_host_dict(
     host_data: dict[str, Any],
-    defaults: dict[str, dict[str, Any]] | None,
+    option_defaults: dict[str, dict[str, Any]] | None,
     profile: Any,
     spec_cls: type[HostSpec],
 ) -> dict[str, Any]:
-    """Precedence-merge profile defaults, repo defaults, and host fields into a
-    single dict (the M1 merge), ready for ``spec_cls.model_validate``.
+    """Precedence-merge profile defaults, host fields, and product option
+    defaults into one dict for ``spec_cls.model_validate``.
 
-    Scalars: host field > profile default. ``*_options`` tables: per-key
-    host > profile > repo-default. Only option keys the target spec actually
-    declares are merged, so a repo-wide ``ssh_options`` default is never
-    injected onto a host family that has no such field.
+    Scalars: host > profile. ``*_options`` tables, per key, lowest→highest:
+    profile default < host field < product ``[host_preferences]`` value. Only
+    option keys the target spec declares are merged.
     """
     merged: dict[str, Any] = {**profile.defaults, **host_data}
 
-    defaults = defaults or {}
+    option_defaults = option_defaults or {}
     opt_keys = OPTIONS_KEYS & set(spec_cls.model_fields)
     for key in opt_keys:
-        d = defaults.get(key)
         p = profile.defaults.get(key)
         h = host_data.get(key)
+        d = option_defaults.get(key)
         table: dict[str, Any] = {
-            **(d if isinstance(d, dict) else {}),
             **(p if isinstance(p, dict) else {}),
             **(h if isinstance(h, dict) else {}),
+            **(d if isinstance(d, dict) else {}),
         }
         if table:
             merged[key] = table
@@ -61,48 +60,34 @@ def _merge_host_dict(
 
 def create_host_from_dict(
     host_data: dict[str, Any],
-    defaults: dict[str, dict[str, Any]] | None = None,
-    preferences: dict[str, dict[str, list[str]]] | None = None,
+    preferences: dict[str, dict[str, Any]] | None = None,
 ) -> RemoteHost:
     """Create the appropriate :class:`RemoteHost` subclass from a host dict.
 
-    ``os_type`` names a registered :class:`~otto.host.os_profile.OsProfile`,
-    which selects the base host class and carries a bundle of default field
-    values. The profile's base resolves to a ``(host_class, host_spec)`` pair;
-    the merged dict (host > profile > repo defaults, per-key for ``*_options``)
-    is validated once by the spec (``extra='forbid'``, typed, with field-name
-    suggestions on typos) and the spec builds the runtime host.
-
-    Field precedence, highest to lowest: the host's own value; the profile's
-    ``defaults``; repo-level ``*_options`` defaults (options only); the runtime
-    class's stock default.
-
-    ``preferences`` — the nested ``{selector: {capability: [...]}}`` table; the
-    factory matches each host's ``id`` and forwards the resulting flat
-    per-capability lists to ``to_host``. ``validate_host_dict`` does not build a
-    host and needs no change.
-
-    Raises
-    ------
-    ValueError
-        If ``os_type`` names no registered profile.
-    pydantic.ValidationError
-        If a field is missing, mistyped, misplaced, or unknown (a subclass of
-        ``ValueError``).
+    ``os_type`` selects the profile / class / spec. ``preferences`` is the unified
+    ``{selector: {capability_list | option_table}}`` table; for each host the
+    factory cascades it by ``id`` into capability selections (forwarded to
+    ``to_host``) and option-value defaults (merged per-key, product-wins). With
+    ``preferences=None`` the result is identical to a bare host dict.
     """
     selector = host_data.get('os_type', 'unix')
     profile = build_os_profile(selector)
     cls = build_host_class(profile.base)
     spec_cls = build_host_spec(profile.base)
-    merged = _merge_host_dict(host_data, defaults, profile, spec_cls)
-    merged['os_type'] = selector
-    spec = spec_cls.model_validate(merged)
+
     flat_prefs: dict[str, list[str]] | None = None
+    option_defaults: dict[str, dict[str, Any]] | None = None
     if preferences:
         host_id = make_host_id(
-            spec.element, spec.element_id, spec.board, spec.slot
+            host_data['element'], host_data.get('element_id'),
+            host_data.get('board'), host_data.get('slot'),
         )
         flat_prefs = select_preferences(preferences, host_id)
+        option_defaults = select_option_defaults(preferences, host_id)
+
+    merged = _merge_host_dict(host_data, option_defaults, profile, spec_cls)
+    merged['os_type'] = selector
+    spec = spec_cls.model_validate(merged)
     host = spec.to_host(cls, preferences=flat_prefs)
     apply_product_providers(host)
     return host

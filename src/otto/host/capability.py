@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from typing import Any
 
 
 class CapabilityResolver:
@@ -35,16 +36,19 @@ class CapabilityResolver:
     ) -> str:
         """Resolve the active selection from *menu*.
 
-        Precedence: an explicit *pin* (validated against the menu) wins; else the
-        first *preference* entry that is in the menu; else the menu's first entry.
-        *menu* is assumed non-empty (the spec validator guarantees this).
+        Precedence: the first *preference* entry that is in the menu wins; else an
+        explicit *pin*; else the menu's first entry. A set *pin* is always
+        validated against the menu (fail-loud on malformed lab data) even when a
+        preference overrides it. *menu* is assumed non-empty (the spec validator
+        guarantees this).
         """
-        if pin is not None:
-            return self.validate_choice(menu, pin)
+        validated_pin = self.validate_choice(menu, pin) if pin is not None else None
         if preference:
             for choice in preference:
                 if choice in menu:
                     return choice
+        if validated_pin is not None:
+            return validated_pin
         return menu[0]
 
 
@@ -53,18 +57,36 @@ TRANSFER_RESOLVER = CapabilityResolver("transfer")
 
 
 def select_preferences(
-    table: dict[str, dict[str, list[str]]], host_id: str
+    table: dict[str, dict[str, list[str] | dict[str, Any]]], host_id: str
 ) -> dict[str, list[str]]:
-    """Reduce a nested ``{selector: {capability: [...]}}`` preference table to a
-    flat ``{capability: [...]}`` for one host, by the definition-order cascade:
-    walk selectors in insertion (file) order and, for each whose regex
-    ``re.fullmatch``es *host_id*, overlay its capabilities (later matches win
-    per-capability). A selector matching nothing is skipped; lists are copied so
-    the caller never aliases the table.
+    """Reduce a unified ``{selector: {key: list|dict}}`` table to the flat
+    capability **selections** ``{capability: [...]}`` for one host. Only
+    list-valued entries (selections) are considered; dict-valued entries
+    (option tables) are ignored here. Definition-order cascade: later matching
+    selectors replace a capability's list. Lists are copied.
     """
     effective: dict[str, list[str]] = {}
-    for selector, caps in table.items():
+    for selector, entries in table.items():
         if re.fullmatch(selector, host_id):
-            for cap, order in caps.items():
-                effective[cap] = list(order)
+            for key, val in entries.items():
+                if isinstance(val, list):
+                    effective[key] = list(val)
+    return effective
+
+
+def select_option_defaults(
+    table: dict[str, dict[str, Any]], host_id: str
+) -> dict[str, dict[str, Any]]:
+    """Reduce a unified ``{selector: {key: list|dict}}`` table to the per-host
+    option-value **defaults** ``{option_table: {key: value}}``. Only dict-valued
+    entries (option tables) are considered; list-valued entries (selections) are
+    ignored here. Definition-order cascade: later matching selectors merge
+    **per key** into each option table. Tables are copied.
+    """
+    effective: dict[str, dict[str, Any]] = {}
+    for selector, entries in table.items():
+        if re.fullmatch(selector, host_id):
+            for key, val in entries.items():
+                if isinstance(val, dict):
+                    effective.setdefault(key, {}).update(val)
     return effective
