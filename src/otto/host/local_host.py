@@ -10,9 +10,10 @@ from errno import (
     ERANGE,
 )
 from pathlib import Path
+from typing import Annotated
 
 from ..logger import get_otto_logger
-from ..utils import CommandStatus, Status
+from ..utils import Arg, CommandStatus, Exclude, Status, cli_exposed
 from .file_ops import PosixFileOps
 from .host import BaseHost, is_dry_run
 from .power import PowerController
@@ -228,11 +229,12 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     #  File transfer
     ####################
 
+    @cli_exposed(success="Download complete.")
     async def get(
         self,
-        src_files: list[Path] | Path,
+        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Remote file(s) to download.")],
         dest_dir: Path,
-        show_progress: bool = True,
+        show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
         """Copy files to dest_dir on the local filesystem.
 
@@ -247,11 +249,12 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             src_files, dest_dir, show_progress,
         )
 
+    @cli_exposed(success="Transfer complete.")
     async def put(
         self,
-        src_files: list[Path] | Path,
+        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")],
         dest_dir: Path,
-        show_progress: bool = True,
+        show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
         """Copy files to dest_dir on the local filesystem.
 

@@ -13,8 +13,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Iterable
-from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable
 
 import typer
 
@@ -34,56 +33,53 @@ def collect_exposed_methods(cls: type) -> dict[str, str]:
     return out
 
 
-def _coerce(value: str, annotation: Any) -> Any:
-    if annotation is bool:
-        return value.lower() in ("1", "true", "yes", "on")
-    if annotation is int:
-        return int(value)
-    if annotation is Path:
-        return Path(value)
-    return value
-
-
-def bind_cli_args(method: Callable, raw_args: list[str]) -> list:  # ty: ignore[missing-type-argument]
-    """Coerce *raw_args* positionally against *method*'s parameter annotations.
-
-    *method* is the **bound** method (``self`` already excluded by binding).
-    """
-    params = list(inspect.signature(method).parameters.values())
-    return [_coerce(value, p.annotation) for value, p in zip(raw_args, params)]
-
-
-def _render_result(result: Any) -> None:
+def _render_result(result: Any, success: str | None = None) -> None:
     """Render a host-method result and signal failure via exit code.
 
     The lifecycle/file-op verbs return ``tuple[Status, str]``; query verbs return
     ``bool``/``list``/``str``. Only a failing ``(Status, str)`` tuple is an error.
+    A ``RunResult``-like object (non-tuple with ``.status.is_ok``) means output was
+    already streamed — just signal failure if needed.
     """
-    import typer
     from rich import print as rprint
+
+    # RunResult and similar: status-only (output already streamed during run)
+    if not isinstance(result, tuple) and hasattr(result, "status") \
+            and hasattr(result.status, "is_ok"):
+        if not result.status.is_ok:
+            raise typer.Exit(1)
+        return
 
     if isinstance(result, tuple) and len(result) == 2 and hasattr(result[0], "is_ok"):
         status, msg = result
         if msg:
             rprint(msg)
+        elif success and status.is_ok:
+            rprint(f"[green]{success}[/green]")
         if not status.is_ok:
             raise typer.Exit(1)
         return
+
     if result is None:
         rprint("[green]done[/green]")
     else:
         rprint(result)
 
 
-def make_method_command(attr_name: str) -> Callable:  # ty: ignore[missing-type-argument]
-    """Build the async Typer command body dispatching to ``host.<attr_name>``."""
-    import typer
+def make_method_command(attr_name: str, sample_func: Callable) -> Callable:  # ty: ignore[missing-type-argument]
+    """Build the async Typer command body dispatching to ``host.<attr_name>``.
+
+    *sample_func* is the unbound method used to derive the CLI signature
+    (via :func:`~otto.cli.param_synth.build_cli_binding`); the bound method on the
+    resolved host is what actually runs.
+    """
     from rich import print as rprint
 
-    async def _cmd(
-        ctx: typer.Context,
-        args: Annotated[Optional[list[str]], typer.Argument(help="Positional arguments for the host method.")] = None,
-    ) -> None:
+    from .param_synth import build_cli_binding
+
+    binding = build_cli_binding(sample_func)
+
+    async def _cmd(ctx: "typer.Context", **kw: Any) -> None:
         host = ctx.obj
         method = getattr(host, attr_name, None)
         if method is None or not callable(method):
@@ -92,12 +88,40 @@ def make_method_command(attr_name: str) -> Callable:  # ty: ignore[missing-type-
                 f"support {attr_name!r}."
             )
             raise typer.Exit(1)
+        call_kw = dict(binding.excluded)
+        for name, value in kw.items():
+            conv = binding.converters.get(name)
+            call_kw[name] = conv(value) if conv is not None else value
+        # Filter only excluded-default keys to the params the concrete method accepts;
+        # CLI-sourced keys (kw) are always kept so unexpected ones raise a loud TypeError.
+        # The binding is built from the first-registered sample_func; a different
+        # host class may implement the same verb without some internal params
+        # (e.g. DockerContainerHost.put has no show_progress).
         try:
-            result = await method(*bind_cli_args(method, args or []))
+            method_sig = inspect.signature(method)
+        except (ValueError, TypeError):
+            method_sig = None
+        if method_sig is not None and any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in method_sig.parameters.values()
+        ):
+            pass  # **kwargs — forward everything
+        elif method_sig is not None:
+            accepted = set(method_sig.parameters)
+            call_kw = {k: v for k, v in call_kw.items() if k in kw or k in accepted}
+        success = getattr(method, "__cli_success__", None)
+        try:
+            result = await method(**call_kw)
         finally:
             await host.close()
-        _render_result(result)
+        _render_result(result, success)
 
+    ctx_param = inspect.Parameter(
+        "ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=typer.Context
+    )
+    _cmd.__signature__ = inspect.Signature([ctx_param, *(  # ty: ignore[unresolved-attribute]
+        p.replace(kind=inspect.Parameter.KEYWORD_ONLY) for p in binding.params
+    )])
     return _cmd
 
 
@@ -125,11 +149,12 @@ def exposed_cli_names(cls: type | None) -> set[str]:
     return set(collect_exposed_methods(cls)) if cls is not None else set()
 
 
-def iter_exposed_verbs() -> Iterable[tuple[str, str, str]]:
-    """Yield ``(cli_name, attr_name, help)`` across all registered host classes.
+def iter_exposed_verbs() -> Iterable[tuple[str, str, str, Callable[..., Any]]]:
+    """Yield ``(cli_name, attr_name, help, sample_func)`` across all registered host classes.
 
     First registration of a cli-name wins; help comes from ``__cli_help__`` or the
-    method docstring's first line.
+    method docstring's first line.  ``sample_func`` is the unbound method used to
+    derive the CLI signature via :func:`~otto.cli.param_synth.build_cli_binding`.
     """
     from ..host.os_profile import _HOST_CLASSES
 
@@ -146,16 +171,16 @@ def iter_exposed_verbs() -> Iterable[tuple[str, str, str]]:
             help_text = getattr(fn, "__cli_help__", None) or (
                 (fn.__doc__ or "").strip().splitlines() or [""]
             )[0]
-            yield cli_name, attr_name, help_text
+            yield cli_name, attr_name, help_text, fn
 
 
-def _synthesize_command(cli_name: str, attr_name: str, help_text: str) -> Any:
+def _synthesize_command(cli_name: str, attr_name: str, help_text: str, sample_func: Callable[..., Any]) -> Any:
     """Build a vendored-click ``Command`` for *cli_name* via a throwaway Typer
     (the Typer-native way to convert a function — no hand-written click types).
     """
     from ..utils import async_typer_command  # noqa: PLC0415
 
-    cmd_fn = make_method_command(attr_name)
+    cmd_fn = make_method_command(attr_name, sample_func)
     tmp = typer.Typer()
     tmp.command(name=cli_name, help=help_text or None)(async_typer_command(cmd_fn))
     converted: Any = typer.main.get_command(tmp)
@@ -176,10 +201,10 @@ def _make_host_group() -> type[TyperGroup]:
         def _ensure_dynamic(self) -> None:
             if not hasattr(self, "_dynamic_names"):
                 self._dynamic_names = set()
-            for cli_name, attr_name, help_text in iter_exposed_verbs():
+            for cli_name, attr_name, help_text, sample_func in iter_exposed_verbs():
                 if cli_name in self.commands:
                     continue
-                self.add_command(_synthesize_command(cli_name, attr_name, help_text), cli_name)
+                self.add_command(_synthesize_command(cli_name, attr_name, help_text, sample_func), cli_name)
                 self._dynamic_names.add(cli_name)
 
         def _class_for(self, ctx: Any) -> type | None:

@@ -28,10 +28,10 @@ from dataclasses import (
     field,
 )
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 from ..logger import get_otto_logger
-from ..utils import CommandStatus, Status
+from ..utils import Arg, CommandStatus, Status, cli_exposed
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run
 from .privilege import PosixPrivilege
@@ -377,9 +377,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Per-container staging directory on the parent filesystem."""
         return Path(f"/tmp/otto-docker-stage/{container_id}")
 
+    @cli_exposed(success="Transfer complete.")
     async def put(
         self,
-        src_files: 'list[Path] | Path',
+        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")],
         dest_dir: Path,
     ) -> tuple[Status, str]:
         """Upload local files into the container.
@@ -415,9 +416,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         finally:
             await self.parent.oneshot(f"rm -rf {shlex.quote(str(stage))}")
 
+    @cli_exposed(success="Download complete.")
     async def get(
         self,
-        src_files: 'list[Path] | Path',
+        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Remote file(s) to download.")],
         dest_dir: Path,
     ) -> tuple[Status, str]:
         """Download files from the container to the local machine.

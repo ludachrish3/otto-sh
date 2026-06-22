@@ -118,6 +118,11 @@ class TestHostHelp:
         result = runner.invoke(host_app, ['--help'])
         assert 'run' in result.output
 
+    def test_login_and_run_exposed_in_help(self):
+        result = runner.invoke(host_app, ['--help'])
+        assert 'login' in result.output
+        assert 'run' in result.output
+
     def test_put_listed_in_help(self):
         result = runner.invoke(host_app, ['--help'])
         assert 'put' in result.output
@@ -208,7 +213,12 @@ class TestHostPut:
         src_file.write_text("hello")
 
         mock_host = _make_host()
-        mock_host.put = AsyncMock(return_value=(Status.Success, "ok"))
+        # Return empty msg so _render_result falls through to the @cli_exposed
+        # success= string ("Transfer complete.").  The dynamic path reads the
+        # success string from __cli_success__ on the bound method, so we must
+        # preserve that marker on the AsyncMock.
+        mock_host.put = AsyncMock(return_value=(Status.Success, ""))
+        mock_host.put.__cli_success__ = "Transfer complete."
         mock_host.close = AsyncMock()
 
         with patch.object(host_module, 'get_host', return_value=mock_host):
@@ -231,7 +241,8 @@ class TestHostPut:
             result = runner.invoke(host_app, ['router1', 'put', str(src_file), '/tmp/dest'])
 
         assert result.exit_code == 1
-        assert 'Transfer failed' in result.output
+        # Dynamic path prints the error message from the tuple, not a "Transfer failed:" prefix.
+        assert 'permission denied' in result.output
         mock_host.close.assert_awaited_once()
 
 
@@ -344,7 +355,12 @@ class TestHostTermAndTransfer:
 class TestHostGet:
     def test_get_success(self, tmp_path):
         mock_host = _make_host()
-        mock_host.get = AsyncMock(return_value=(Status.Success, "ok"))
+        # Return empty msg so _render_result falls through to the @cli_exposed
+        # success= string ("Download complete.").  The dynamic path reads the
+        # success string from __cli_success__ on the bound method, so we must
+        # preserve that marker on the AsyncMock.
+        mock_host.get = AsyncMock(return_value=(Status.Success, ""))
+        mock_host.get.__cli_success__ = "Download complete."
         mock_host.close = AsyncMock()
 
         with patch.object(host_module, 'get_host', return_value=mock_host):
@@ -364,7 +380,8 @@ class TestHostGet:
             result = runner.invoke(host_app, ['router1', 'get', '/remote/file.txt', str(tmp_path)])
 
         assert result.exit_code == 1
-        assert 'Transfer failed' in result.output
+        # Dynamic path prints the error message from the tuple, not a "Transfer failed:" prefix.
+        assert 'not found' in result.output
         mock_host.close.assert_awaited_once()
 
 

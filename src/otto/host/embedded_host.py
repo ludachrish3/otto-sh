@@ -48,7 +48,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn, Optional, cast
+from typing import TYPE_CHECKING, Annotated, NoReturn, Optional, cast
 
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
@@ -56,7 +56,7 @@ if TYPE_CHECKING:
 from .product import Product
 
 from ..logger import get_otto_logger
-from ..utils import CommandStatus, Status, cli_exposed
+from ..utils import Arg, CommandStatus, Exclude, Status, cli_exposed
 from .binary_loader import BinaryLoader
 from .command_frame import CommandFrame, ZephyrFrame
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
@@ -468,11 +468,12 @@ class EmbeddedHost(RemoteHost):
     #  File transfer
     ####################
 
+    @cli_exposed(success="Download complete.")
     async def get(
         self,
-        src_files: list[Path] | Path,
+        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Remote file(s) to download.")],
         dest_dir: Path,
-        show_progress: bool = True,
+        show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
         """Transfer files from the embedded host to the local machine.
 
@@ -488,11 +489,12 @@ class EmbeddedHost(RemoteHost):
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
 
+    @cli_exposed(success="Transfer complete.")
     async def put(
         self,
-        src_files: list[Path] | Path,
+        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")],
         dest_dir: Path,
-        show_progress: bool = True,
+        show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
         """Transfer files from the local machine to the embedded host.
 
@@ -525,7 +527,7 @@ class EmbeddedHost(RemoteHost):
         return result.status.is_ok
 
     @cli_exposed
-    async def ls(self, path: "str | Path" = ".", all: bool = False) -> list[str]:
+    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:
         """List entry names in *path* via the device ``fs ls`` former."""
         result = await self._run_one(self.filesystem.ls_command(str(path)))
         if not result.status.is_ok:

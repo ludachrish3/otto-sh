@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import asyncio
 import functools
+from dataclasses import dataclass
 from enum import Enum
 from typing import (
     Any,
@@ -82,16 +85,50 @@ def async_typer_command(f: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, R
         return asyncio.run(_run())
     return wrapper
 
-def cli_exposed(fn=None, *, name: str | None = None, help: str | None = None):
+@dataclass(frozen=True)
+class Arg:
+    """CLI overlay: force a parameter to a positional argument.
+
+    ``variadic=True`` makes it a space-separated list of ``elem_type`` (used for
+    Python-union list params Typer can't read, e.g. ``str | Sequence[...]``).
+    ``elem_type`` also overrides the CLI type for a scalar union. Imports no typer.
+    """
+    variadic: bool = False
+    elem_type: type | None = None
+    name: str | None = None
+    help: str | None = None
+
+
+@dataclass(frozen=True)
+class Opt:
+    """CLI overlay: force a parameter to a ``--option``. Imports no typer."""
+    elem_type: type | None = None
+    name: str | None = None
+    help: str | None = None
+
+
+class _Exclude:
+    """Sentinel: drop a parameter from the CLI (filled with its default)."""
+    __slots__ = ()
+
+
+Exclude = _Exclude()
+
+
+def cli_exposed(fn=None, *, name: str | None = None, help: str | None = None,
+                success: str | None = None):
     """Mark a host coroutine method for auto-exposure as an ``otto host``
     subcommand. ``name`` defaults to the method name with underscores dashed.
+    ``success`` is an optional message printed on a successful ``(Status, "")``
+    result (e.g. "Transfer complete.").
 
-    Usable bare (``@cli_exposed``) or called (``@cli_exposed(name=..., help=...)``).
+    Usable bare (``@cli_exposed``) or called (``@cli_exposed(name=..., ...)``).
     """
     def deco(f):
         f.__cli_exposed__ = True
         f.__cli_name__ = name or f.__name__.replace("_", "-")
         f.__cli_help__ = help
+        f.__cli_success__ = success
         return f
     return deco(fn) if fn is not None else deco
 

@@ -1,13 +1,10 @@
 """
 otto host — run commands, transfer files, and log in to lab hosts.
 
-Commands:
-    otto host <host_id> run <commands...>
-    otto host <host_id> put <src...> <dest>
-    otto host <host_id> get <src...> <dest>
+Commands are synthesised dynamically from ``@cli_exposed`` methods on the
+resolved host's class — see :mod:`otto.cli.expose`.
 """
 
-from pathlib import Path
 from typing import Annotated, Optional
 
 import typer
@@ -16,7 +13,6 @@ from rich import print as rprint
 from ..configmodule import all_hosts, get_host
 from ..configmodule.configmodule import _apply_option_overrides
 from ..logger import get_otto_logger
-from ..utils import async_typer_command
 from .callbacks import list_hosts_callback
 from .expose import HostGroup
 
@@ -160,75 +156,3 @@ def main(
             raise typer.BadParameter(str(e), param_hint="--transfer") from None
 
     ctx.obj = host
-
-
-async def _run(
-    ctx: typer.Context,
-    commands: Annotated[list[str], typer.Argument(help="Commands to execute on the host.")],
-) -> None:
-    """Execute one or more commands on a remote host."""
-    host = ctx.obj
-    try:
-        result = await host.run(commands)
-        if not result.status.is_ok:
-            raise typer.Exit(1)
-    finally:
-        await host.close()
-
-
-async def _put(
-    ctx: typer.Context,
-    src: Annotated[list[Path], typer.Argument(help="Local file(s) to upload.")],
-    dest: Annotated[Path, typer.Argument(help="Remote destination directory.")],
-) -> None:
-    """Upload files to a remote host."""
-    host = ctx.obj
-    try:
-        status, msg = await host.put(src, dest)
-        if not status.is_ok:
-            rprint(f"[red]Transfer failed:[/red] {msg}")
-            raise typer.Exit(1)
-        rprint(f"[green]Transfer complete.[/green]")
-    finally:
-        await host.close()
-
-
-async def _get(
-    ctx: typer.Context,
-    src: Annotated[list[str], typer.Argument(help="Remote file path(s) to download.")],
-    dest: Annotated[Path, typer.Argument(help="Local destination directory.")],
-) -> None:
-    """Download files from a remote host."""
-    host = ctx.obj
-    try:
-        src_paths = [Path(s) for s in src]
-        status, msg = await host.get(src_paths, dest)
-        if not status.is_ok:
-            rprint(f"[red]Transfer failed:[/red] {msg}")
-            raise typer.Exit(1)
-        rprint(f"[green]Download complete.[/green]")
-    finally:
-        await host.close()
-
-
-async def _login(
-    ctx: typer.Context,
-) -> None:
-    """Open an interactive shell on a remote host.
-
-    Stdin/stdout are bridged to the remote terminal in raw mode, and
-    the remote output stream is simultaneously recorded to the normal
-    ``otto.log`` for the invocation. Press ``Ctrl+]`` to disconnect
-    locally; ``exit``/``logout`` also ends the session normally.
-    """
-    host = ctx.obj
-    try:
-        await host.interact()
-    finally:
-        await host.close()
-
-
-host_app.command(name="run")(async_typer_command(_run))
-host_app.command(name="put")(async_typer_command(_put))
-host_app.command(name="get")(async_typer_command(_get))
-host_app.command(name="login")(async_typer_command(_login))

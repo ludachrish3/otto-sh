@@ -17,8 +17,9 @@ from __future__ import annotations
 import base64
 import shlex
 from pathlib import Path
+from typing import Annotated
 
-from ..utils import Status, cli_exposed
+from ..utils import Arg, Status, cli_exposed
 
 
 class PosixFileOps:
@@ -37,7 +38,7 @@ class PosixFileOps:
         return result.status.is_ok
 
     @cli_exposed
-    async def ls(self, path: "str | Path" = ".", all: bool = False) -> list[str]:
+    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:
         """List entry names in *path* (``ls -1``; *all* adds ``-A`` for dotfiles)."""
         flags = "-1A" if all else "-1"
         result = await self.oneshot(f"ls {flags} {self._q(path)}")  # ty: ignore[unresolved-attribute]

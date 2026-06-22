@@ -17,6 +17,7 @@ from logging import (
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Awaitable,
     Optional,
     Protocol,
@@ -24,7 +25,10 @@ from typing import (
 )
 
 from ..utils import (
+    Arg,
     CommandStatus,
+    Exclude,
+    Opt,
     Status,
     cli_exposed,
 )
@@ -33,7 +37,11 @@ if TYPE_CHECKING:
     from .power import PowerController
     from .product import Product
     from .repeat import RepeatRunner
-    from .session import Expect, HostSession
+    from .session import HostSession
+
+# Runtime type alias — mirrored from session.Expect so get_type_hints can resolve
+# it without a circular import (session.py imports from host.py at module level).
+Expect = tuple[str | re.Pattern[str], str]
 
 logger = getLogger('otto')
 
@@ -367,21 +375,28 @@ class BaseHost(ABC):
             f"The '{self.__class__.__name__}' class does not support interactive sessions"
         ) from None
 
+    @cli_exposed(name="login")
     async def interact(self) -> None:
         """Open an interactive shell bridged to the local terminal.
 
         Subclasses implement :meth:`_interact` to do the actual protocol
         work. This wrapper exists so CLI and SDK callers have a single
         public entry point.
+
+        stdin and stdout are bridged directly to the remote terminal and the
+        session is recorded to the otto log. Press ``Ctrl+]`` to disconnect
+        locally without ending the remote session; type ``exit`` or ``logout``
+        to end the session normally.
         """
         await self._interact()
 
+    @cli_exposed
     async def run(
         self,
-        cmds: str | ShellCommand | Sequence[str | ShellCommand],
-        expects: Expect | list[Expect] | None = None,
-        timeout: float | None = None,
-        log: bool = True,
+        cmds: Annotated[str | ShellCommand | Sequence[str | ShellCommand], Arg(variadic=True, elem_type=str, help='Command(s) to run.')],
+        expects: Annotated[Expect | list[Expect] | None, Exclude] = None,
+        timeout: Annotated[float | None, Opt(help='Per-command/cumulative timeout (seconds).')] = None,
+        log: Annotated[bool, Exclude] = True,
         sudo: bool = False,
     ) -> RunResult:
         """Execute one or more commands on the host via the persistent shell session.
@@ -582,7 +597,7 @@ class BaseHost(ABC):
         return self.power_control
 
     @cli_exposed
-    async def power(self, state: str | None = None) -> tuple[Status, str]:
+    async def power(self, state: 'Annotated[str | None, Arg()]' = None) -> tuple[Status, str]:
         """Power this host ``'on'``/``'off'``, or toggle when *state* is None.
 
         Toggling reads the controller's :meth:`~otto.host.power.PowerController.status`;

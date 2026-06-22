@@ -210,32 +210,123 @@ from `creds` when present, or pass `password=` explicitly. Embedded hosts raise
 ## Methods as CLI verbs
 
 Any host coroutine method decorated with `@cli_exposed` is automatically an
-`otto host` subcommand, scoped to the host's class:
+`otto host` subcommand, scoped to the host's class.  This includes all four
+core commands — `run`, `put`, `get`, and `login` — as well as every capability
+verb listed above.  They all share the same signature-driven synthesizer with
+no special casing.
 
-    otto host <host_id> reboot true        # host.reboot(hard=True)
-    otto host <host_id> power on            # host.power("on")
-    otto host <host_id> install             # host.install()
-    otto host <host_id> ls /var/log         # host.ls("/var/log")
+Example invocations:
+
+```text
+otto host <id> run "systemctl restart x" "journalctl -n5"
+otto host <id> run --sudo --timeout 30 "apt-get update"
+otto host <id> put a.txt b.txt /tmp/
+otto host <id> get /var/log/syslog /tmp/
+otto host <id> login
+otto host <id> reboot --hard --wait
+otto host <id> install --stage-only
+otto host <id> ls /var/log --all
+otto host <id> power on
+```
 
 The menu is **class-scoped**: `otto host <id> --help` lists only the verbs defined on
 that host's class. A unix host shows the file-ops verbs (`mkdir`, `cp`, `read-file`, …);
 an embedded host shows `exists`/`ls`/`rm` but not the file-ops it doesn't implement.
 
-This works for **project-defined** methods too — register a host subclass with a
-`@cli_exposed` method and it appears under `otto host` for that class's hosts, with no
+### Authoring CLI-exposed methods
+
+`@cli_exposed` is importable from `otto.utils`. Add it to any `async def` method on a
+host subclass and it appears in the `otto host` menu for that class's hosts with no
 extra wiring:
 
-    from otto.utils import cli_exposed
+```python
+from otto.utils import cli_exposed
+from otto.host import UnixHost
 
-    class MyHost(UnixHost):
-        @cli_exposed(help="Flash firmware to the board")
-        async def flash_firmware(self, image: Path):
-            ...
+class MyHost(UnixHost):
+    @cli_exposed(help="Flash firmware to the board")
+    async def flash_firmware(self, image: Path) -> tuple[Status, str]:
+        ...
+```
 
-    # → otto host <my-host-id> flash-firmware ./build/app.bin
+```text
+otto host <my-host-id> flash-firmware ./build/app.bin
+```
 
-Arguments are passed positionally and coerced from the method's annotations
-(`bool`: the strings `1`, `true`, `yes`, `on` (case-insensitive) map to `True`;
-**everything else maps to `False`** — there is no rejection of unrecognised values;
-`Path`/`int` are converted). A verb returning `(Status, str)` exits non-zero when
-the status is not OK.
+A verb returning `(Status, str)` exits non-zero when the status is not OK.
+
+### Parameter inference rules
+
+The synthesizer reads the method's type annotations and builds the Typer
+command automatically:
+
+| Parameter shape | CLI form |
+| --- | --- |
+| No default value | positional argument |
+| Has a default value | `--option` |
+| `bool` (with default) | `--flag / --no-flag` pair |
+| `list[T]` with no default | space-separated positional variadic |
+| `list[T]` option | `--opt a,b,c` (comma-separated) |
+| `dict[str, T]` option | `--opt K=V,K2=V2` (comma-separated key=value) |
+
+At most **one** parameter per verb may be a positional variadic.
+
+`bool` flag strings — the strings `1`, `true`, `yes`, `on` (case-insensitive)
+map to `True`; everything else maps to `False`.  `Path`/`int`/`float` are
+coerced from strings automatically.
+
+### Overriding inference with `Annotated[...]` markers
+
+Import `Arg`, `Opt`, and `Exclude` from `otto.utils` to override the defaults:
+
+```python
+from typing import Annotated
+from otto.utils import Arg, Opt, Exclude, cli_exposed
+```
+
+**`Arg(variadic=True, type=T)`** — make a union-typed (or otherwise
+Typer-incompatible) list a space-separated positional variadic.  `type`
+specifies the element type the CLI receives; the method gets a `list[T]`.
+Used by `run` (`cmds`), `put` (`src_files`), and `get` (`src_files`):
+
+```python
+cmds: Annotated[str | Sequence[str], Arg(variadic=True, type=str)]
+```
+
+**`Arg()`** — keep a *defaulted* scalar positional (prevents it from becoming
+an `--option`).  Used by `power` (`state`) and `ls` (`path`), where passing
+the value positionally is natural:
+
+```python
+state: Annotated[str | None, Arg()] = None     # otto host <id> power on
+path:  Annotated[str | Path, Arg()] = "."       # otto host <id> ls /var/log
+```
+
+**`Opt(...)`** — force a parameter to an `--option` regardless of whether it
+has a default.  Used by `run`'s `timeout`:
+
+```python
+timeout: Annotated[float | None, Opt(help='Timeout in seconds.')] = None
+```
+
+**`Exclude`** — drop a parameter from the CLI entirely; the method receives its
+default value.  Use this for SDK-only parameters that make no sense as CLI
+flags — `run`'s `expects` and `log` are the canonical examples:
+
+```python
+expects: Annotated[Expect | None, Exclude] = None
+log:     Annotated[bool, Exclude] = True
+```
+
+### Per-verb summary
+
+| Verb | Positional args | Notable options | Notes |
+| --- | --- | --- | --- |
+| `run` | `COMMANDS...` (variadic) | `--sudo`, `--timeout SECS` | `expects`/`log` excluded from CLI |
+| `put` | `SRC... DEST` (variadic src + positional dest) | — | `show_progress` excluded |
+| `get` | `SRC... DEST` (variadic src + positional dest) | — | `show_progress` excluded |
+| `login` | — | — | Opens interactive shell |
+| `reboot` | — | `--hard / --no-hard`, `--wait / --no-wait`, `--timeout SECS` | |
+| `install` | — | `--stage-only / --no-stage-only` | |
+| `power` | `STATE` (optional positional) | — | `on`/`off`/omit to toggle |
+| `ls` | `PATH` (optional positional, default `.`) | `--all / --no-all` | |

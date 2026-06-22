@@ -93,17 +93,26 @@ Use `otto test <Suite> --help` to see them.
 
 ## otto host
 
-Run commands, transfer files, and log in to lab hosts.
+Run commands, transfer files, log in, and invoke capability verbs on lab hosts.
 
 ```text
-otto host <HOST_ID> run <COMMANDS...>
+otto host <HOST_ID> run [--sudo] [--timeout SECS] <COMMANDS...>
 otto host <HOST_ID> put <SRC...> <DEST>
 otto host <HOST_ID> get <SRC...> <DEST>
 otto host <HOST_ID> login
+otto host <HOST_ID> reboot [--hard] [--wait] [--timeout SECS]
+otto host <HOST_ID> install [--stage-only]
+otto host <HOST_ID> power [STATE]
+otto host <HOST_ID> ls [PATH] [--all]
 otto host --list-hosts
 ```
 
 ### Subcommands
+
+All `otto host` subcommands are synthesized from `@cli_exposed` host methods
+using the same signature-driven mechanism — `run`, `put`, `get`, and `login`
+included.  The full set varies by host class; run `otto host <HOST_ID> --help`
+to see what is available for a specific host.
 
 | Subcommand | Description |
 | ---------- | ----------- |
@@ -111,12 +120,70 @@ otto host --list-hosts
 | `put` | Upload local files to the host |
 | `get` | Download files from the host |
 | `login` | Open an interactive shell session on the host |
+| `reboot` | Reboot the host (soft or hard power-cycle) |
+| `shutdown` | Power off the host from its own shell |
+| `power` | Turn the host on/off or toggle (requires a power controller) |
+| `stage` | Stage products onto the host without installing |
+| `install` | Stage then install products |
+| `uninstall` | Uninstall products |
+| `is-installed` | Exit 0 if all products are installed |
+| `is-uninstalled` | Exit 0 if no products are installed |
+| `exists` | Exit 0 if a path exists on the host |
+| `ls` | List directory contents on the host |
+| `mkdir` | Create a directory on the host |
+| `rm` | Remove a path on the host |
+| `cp` | Copy a path on the host |
+| `mv` | Move/rename a path on the host |
+| `read-file` | Print a file's text contents |
+| `write-file` | Write text to a file on the host |
 
-In addition to these four built-in subcommands, `otto host` exposes **capability
-verbs** — host methods marked `@cli_exposed` — that vary by host class (for
-example `power`, `reboot`, `stage`, `install`, `ls`, `read-file`). Run
-`otto host <HOST_ID> --help` to see the verbs available for a specific host.
-See {doc}`host/capabilities` for the full inventory and class-scoping rules.
+See {doc}`host/capabilities` for class-scoping rules and which verbs each host
+type exposes.
+
+### `run` options
+
+```text
+otto host <HOST_ID> run [OPTIONS] COMMANDS...
+```
+
+| Option | Description |
+| ------ | ----------- |
+| `COMMANDS...` | One or more shell commands (space-separated, each quoted as needed) |
+| `--sudo / --no-sudo` | Run every command through `sudo` |
+| `--timeout SECS` | Cumulative timeout in seconds across all commands |
+
+### `put` / `get` arguments
+
+```text
+otto host <HOST_ID> put SRC... DEST
+otto host <HOST_ID> get SRC... DEST
+```
+
+`SRC...` is one or more source paths (space-separated); `DEST` is the
+destination directory.  For `put`, sources are local paths; for `get`, sources
+are remote paths.
+
+### `reboot` options
+
+```text
+otto host <HOST_ID> reboot [--hard] [--wait] [--timeout SECS]
+```
+
+| Option | Default | Description |
+| ------ | ------- | ----------- |
+| `--hard / --no-hard` | `--no-hard` | Power-cycle via the power controller instead of an in-shell reboot |
+| `--wait / --no-wait` | `--no-wait` | Block until the host is reachable again after reboot |
+| `--timeout SECS` | `600.0` | Maximum seconds to wait when `--wait` is set |
+
+### `install` options
+
+```text
+otto host <HOST_ID> install [--stage-only]
+```
+
+| Option | Description |
+| ------ | ----------- |
+| `--stage-only / --no-stage-only` | Transfer products but skip the install step |
 
 ### Host-level options
 

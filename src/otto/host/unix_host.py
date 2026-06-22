@@ -48,6 +48,7 @@ from dataclasses import (
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Optional,
     cast,
 )
@@ -56,7 +57,9 @@ if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
 from ..utils import (
+    Arg,
     CommandStatus,
+    Exclude,
     Status,
     cli_exposed,
 )
@@ -629,11 +632,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     #  File transfer
     ####################
 
+    @cli_exposed(success="Download complete.")
     async def get(
         self,
-        src_files: list[Path] | Path,
+        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Remote file(s) to download.")],
         dest_dir: Path,
-        show_progress: bool = True,
+        show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
         """Transfer files from remote host to the local machine."""
         if not isinstance(src_files, list):
@@ -647,11 +651,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     # The main use case is lists of products or tools. These are the same binaries, and
     # go to multiple hosts. It would be most efficient if they could all be done in a
     # single asyncio.gather() rather than multiple.
+    @cli_exposed(success="Transfer complete.")
     async def put(
         self,
-        src_files: list[Path] | Path,
+        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")],
         dest_dir: Path,
-        show_progress: bool = True,
+        show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
         """Transfer files from local machine to remote host."""
         if not isinstance(src_files, list):
