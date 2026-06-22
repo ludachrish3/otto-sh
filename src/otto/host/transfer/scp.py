@@ -12,8 +12,6 @@ if TYPE_CHECKING:
     from ..connections import ConnectionManager
     from ..options import ScpOptions
 
-import asyncssh
-
 from ...logger import get_otto_logger
 from ...utils import CommandStatus, Status
 from .base import (
@@ -83,6 +81,8 @@ class ScpFileTransfer(UnixFileTransfer):
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
+        import asyncssh
+
         ssh_conn = await self._connections.ssh()
 
         async def _get_one(src: Path) -> tuple[Status, str]:
@@ -107,6 +107,8 @@ class ScpFileTransfer(UnixFileTransfer):
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
+        import asyncssh
+
         ssh_conn = await self._connections.ssh()
 
         async def _put_one(src: Path) -> tuple[Status, str]:

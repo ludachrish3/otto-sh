@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Protocol
-
-from asyncssh import SSHClientConnection
-from asyncssh.listener import SSHListener
+from typing import TYPE_CHECKING, Protocol
 
 from ..logger import get_otto_logger
+
+if TYPE_CHECKING:
+    from asyncssh import SSHClientConnection
+    from asyncssh.listener import SSHListener
 
 logger = get_otto_logger()
 

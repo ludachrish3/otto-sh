@@ -12,6 +12,8 @@ Key features:
 - Per-command timeout with Ctrl+C recovery
 """
 
+from __future__ import annotations
+
 import asyncio
 import re
 import uuid
@@ -19,13 +21,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
-import asyncssh
-from asyncssh import SSHClientConnection
-
 from .command_frame import BashFrame, CommandFrame, SessionMarkers
 from .telnet import TelnetClient
 
 if TYPE_CHECKING:
+    from asyncssh import SSHClientConnection
+
     from .connections import ConnectionManager
 
 from ..logger import get_otto_logger
@@ -570,6 +571,8 @@ class SshSession(ShellSession):
         self._open_cmd: str | None = None
 
     async def _open(self) -> None:
+        import asyncssh
+
         assert self._conn is not None, "SshSession._conn must be set before _open()"
         if self._open_cmd is not None:
             self._process = await self._conn.create_process(
@@ -1171,6 +1174,8 @@ class SessionManager:
             self._log_command(cmd)
         match self._connections.term:
             case 'ssh':
+                import asyncssh
+
                 ssh_conn = await self._connections.ssh()
                 process = await ssh_conn.create_process(
                     cmd, stderr=asyncssh.STDOUT, stdin=asyncssh.DEVNULL,

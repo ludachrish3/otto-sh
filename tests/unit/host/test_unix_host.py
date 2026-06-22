@@ -601,7 +601,7 @@ class TestSshFileTransfer:
     @pytest.mark.asyncio
     async def test_scp_get_success(self, host: UnixHost):
         host._connections._ssh_conn = self._mock_ssh_conn()
-        with patch('otto.host.transfer.scp.asyncssh.scp', new_callable=AsyncMock) as mock_scp:
+        with patch('asyncssh.scp', new_callable=AsyncMock) as mock_scp:
             status, msg = await host.get([Path('/etc/hostname')], Path('/tmp'), show_progress=False)
         assert status == Status.Success
         assert msg == ''
@@ -612,7 +612,7 @@ class TestSshFileTransfer:
         src = tmp_path / 'upload.txt'
         src.write_text('hello')
         host._connections._ssh_conn = self._mock_ssh_conn()
-        with patch('otto.host.transfer.scp.asyncssh.scp', new_callable=AsyncMock) as mock_scp:
+        with patch('asyncssh.scp', new_callable=AsyncMock) as mock_scp:
             status, msg = await host.put([src], Path('/tmp'), show_progress=False)
         assert status == Status.Success
         mock_scp.assert_called_once()

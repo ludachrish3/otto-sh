@@ -23,15 +23,21 @@ from typing import (
 )
 from weakref import WeakSet
 
-from telnetlib3 import (
-    open_connection as open_telnet_connection,
-)
-from telnetlib3.telopt import DONT, ECHO, IAC, NAWS, SB, SE
-
 from ..logger import get_otto_logger
 from .options import TelnetOptions
 
 logger = get_otto_logger()
+
+
+async def open_telnet_connection(*args: Any, **kwargs: Any) -> Any:
+    """Lazy, patchable wrapper around :func:`telnetlib3.open_connection`.
+
+    Kept as a module-level seam (tests monkeypatch it) while deferring the
+    heavy ``telnetlib3`` import to connect-time — see
+    ``tests/unit/host/test_lazy_network_imports.py``.
+    """
+    from telnetlib3 import open_connection
+    return await open_connection(*args, **kwargs)
 
 
 # Registry of TelnetClients that want SIGWINCH-driven NAWS updates. A single
@@ -144,6 +150,7 @@ class TelnetClient():
                 what they type. Non-interactive callers (the default) get
                 ``DONT ECHO`` so command echoes don't mix with captured output.
         """
+        from telnetlib3.telopt import DONT, ECHO
 
         port = self.connect_port if self.connect_port is not None else self.options.port
         # Detailed entry log so a future-embedded-OS bring-up has the
@@ -208,6 +215,8 @@ class TelnetClient():
         """
         if self.writer is None:
             return
+        from telnetlib3.telopt import IAC, NAWS, SB, SE
+
         payload = struct.pack('>HH', max(0, cols), max(0, rows))
         # Double any 0xFF (IAC) bytes inside the payload per telnet framing.
         payload = payload.replace(IAC, IAC + IAC)

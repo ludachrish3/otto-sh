@@ -112,7 +112,7 @@ async def test_concurrent_ftp_opens_one_client(monkeypatch):
         instances.append(client)
         return client
 
-    monkeypatch.setattr('otto.host.connections.aioftp.Client', fake_client_factory)
+    monkeypatch.setattr('aioftp.Client', fake_client_factory)
 
     cm = ConnectionManager(
         ip='1.2.3.4', creds={'u': 'p'}, user=None,

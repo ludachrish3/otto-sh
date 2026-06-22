@@ -25,18 +25,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
-
-import aioftp
-import asyncssh
-from asyncssh import SFTPClient, SSHClientConnection
-from asyncssh import connect as ssh_connect
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..logger import get_otto_logger
 from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
 
 if TYPE_CHECKING:
+    import aioftp
+    from asyncssh import SFTPClient, SSHClientConnection
+
     from .transport import HopTransport
 
 
@@ -63,48 +61,93 @@ class TermContext:
 logger = get_otto_logger()
 
 
-class TunneledFtpClient(aioftp.Client):
-    """aioftp Client that routes FTP data connections through an SSH hop.
+_tunneled_ftp_client_cls: type | None = None
 
-    FTP passive mode announces dynamic data ports via PASV responses.
-    This subclass intercepts each *data* connection attempt and creates
-    a corresponding SSH port forward so the data flows through the
-    tunnel alongside the control connection.
 
-    The control connection (port 21) is already forwarded by
-    ``ConnectionManager`` before ``connect()`` is called, so the tunnel
-    override is only activated after the control connection is established.
+def _build_tunneled_ftp_client_cls() -> type:
+    """Build (once) the ``aioftp.Client`` subclass that routes FTP data
+    connections through an SSH hop.
+
+    Defined lazily — and cached — so merely importing this module does not pull
+    in the heavy ``aioftp`` package. ``aioftp`` is only needed when an FTP
+    connection is actually opened (or the class is introspected by a test). See
+    ``tests/unit/host/test_lazy_network_imports.py``. The cached class is also
+    surfaced as the module attribute ``TunneledFtpClient`` via ``__getattr__``,
+    so ``from otto.host.connections import TunneledFtpClient`` and
+    ``isinstance(...)`` checks remain stable.
     """
+    global _tunneled_ftp_client_cls
+    if _tunneled_ftp_client_cls is not None:
+        return _tunneled_ftp_client_cls
 
-    def __init__(self, hop: HopTransport, dest_host: str, **kwargs):  # type: ignore[no-untyped-def]
-        super().__init__(**kwargs)
-        self._hop = hop
-        self._dest_host = dest_host
-        self._tunnel_data = False
+    import aioftp
 
-    async def connect(self, host: str, port: int = aioftp.DEFAULT_PORT) -> list[str]:  # type: ignore[override]
-        # Control connection is already forwarded — connect normally.
-        info = await super().connect(host, port)
-        # Enable tunnel override for subsequent PASV data connections.
-        self._tunnel_data = True
-        return info
+    class TunneledFtpClient(aioftp.Client):
+        """aioftp Client that routes FTP data connections through an SSH hop.
 
-    async def _open_connection(self, host, port):  # type: ignore[no-untyped-def, override]
-        if not self._tunnel_data:
-            return await super()._open_connection(host, port)
-        # Open a direct SSH channel to the FTP server's data port instead of
-        # opening a local listener and connecting through it. The listener
-        # approach (via ``forward_local_port``) leaves both the listener and
-        # the local-side accept socket in ``HopTransport._port_forwards``;
-        # those linger until the hop closes, and the local socket pair
-        # (127.0.0.1:X → 127.0.0.1:Y) hits asyncio's ``__del__`` after the
-        # test ends, raising ``ResourceWarning`` which pytest's
-        # ``[unraisable]`` plugin escalates into a flake on the *next* test.
-        # ``conn.open_connection`` returns ``(SSHReader, SSHWriter)`` (duck-
-        # compatible with asyncio's stream pair) tied directly to the SSH
-        # channel — closes cleanly when aioftp closes the writer.
-        conn = await self._hop.get_tunnel()
-        return await conn.open_connection(self._dest_host, port)
+        FTP passive mode announces dynamic data ports via PASV responses.
+        This subclass intercepts each *data* connection attempt and creates
+        a corresponding SSH port forward so the data flows through the
+        tunnel alongside the control connection.
+
+        The control connection (port 21) is already forwarded by
+        ``ConnectionManager`` before ``connect()`` is called, so the tunnel
+        override is only activated after the control connection is established.
+        """
+
+        def __init__(self, hop: HopTransport, dest_host: str, **kwargs):  # type: ignore[no-untyped-def]
+            super().__init__(**kwargs)
+            self._hop = hop
+            self._dest_host = dest_host
+            self._tunnel_data = False
+
+        async def connect(self, host: str, port: int = aioftp.DEFAULT_PORT) -> list[str]:  # type: ignore[override]
+            # Control connection is already forwarded — connect normally.
+            info = await super().connect(host, port)
+            # Enable tunnel override for subsequent PASV data connections.
+            self._tunnel_data = True
+            return info
+
+        async def _open_connection(self, host, port):  # type: ignore[no-untyped-def, override]
+            if not self._tunnel_data:
+                return await super()._open_connection(host, port)
+            # Open a direct SSH channel to the FTP server's data port instead of
+            # opening a local listener and connecting through it. The listener
+            # approach (via ``forward_local_port``) leaves both the listener and
+            # the local-side accept socket in ``HopTransport._port_forwards``;
+            # those linger until the hop closes, and the local socket pair
+            # (127.0.0.1:X → 127.0.0.1:Y) hits asyncio's ``__del__`` after the
+            # test ends, raising ``ResourceWarning`` which pytest's
+            # ``[unraisable]`` plugin escalates into a flake on the *next* test.
+            # ``conn.open_connection`` returns ``(SSHReader, SSHWriter)`` (duck-
+            # compatible with asyncio's stream pair) tied directly to the SSH
+            # channel — closes cleanly when aioftp closes the writer.
+            conn = await self._hop.get_tunnel()
+            return await conn.open_connection(self._dest_host, port)
+
+    _tunneled_ftp_client_cls = TunneledFtpClient
+    return _tunneled_ftp_client_cls
+
+
+def __getattr__(name: str) -> Any:
+    # PEP 562: expose ``TunneledFtpClient`` as a module attribute without
+    # importing aioftp at module load. Triggered by
+    # ``from otto.host.connections import TunneledFtpClient`` and any
+    # ``otto.host.connections.TunneledFtpClient`` access.
+    if name == "TunneledFtpClient":
+        return _build_tunneled_ftp_client_cls()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+async def ssh_connect(*args: Any, **kwargs: Any) -> Any:
+    """Lazy, patchable wrapper around :func:`asyncssh.connect`.
+
+    Kept as a module-level seam (tests monkeypatch it) while deferring the heavy
+    ``asyncssh`` import to connect-time — see
+    ``tests/unit/host/test_lazy_network_imports.py``.
+    """
+    from asyncssh import connect
+    return await connect(*args, **kwargs)
 
 
 class ConnectionManager:
@@ -303,6 +346,8 @@ class ConnectionManager:
 
     async def ftp(self) -> aioftp.Client:
         """Return the live FTP client, opening it if needed."""
+        import aioftp
+
         if self._ftp_conn is not None:
             return self._ftp_conn
         async with self._ftp_lock:
@@ -313,7 +358,7 @@ class ConnectionManager:
             client_kwargs = self._ftp_options._client_kwargs()
             if self._hop is not None:
                 local_port = await self._forward_port(ftp_port)
-                client: aioftp.Client = TunneledFtpClient(
+                client: aioftp.Client = _build_tunneled_ftp_client_cls()(
                     hop=self._hop, dest_host=self._ip,
                     **client_kwargs,
                 )

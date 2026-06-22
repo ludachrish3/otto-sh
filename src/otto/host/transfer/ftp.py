@@ -3,15 +3,17 @@
 Registers ``ftp`` into the shared transfer registry on import.
 """
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ..connections import ConnectionManager
+    import aioftp
 
-import aioftp
+    from ..connections import ConnectionManager
 
 from ...logger import get_otto_logger
 from ...utils import CommandStatus, Status
@@ -137,6 +139,8 @@ class FtpFileTransfer(UnixFileTransfer):
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
     ) -> tuple[Status, str]:
+        import aioftp
+
         # Sequential for the same reason as _get_files_ftp (single data channel).
         async with self._ftp_lock:
             ftp_conn = await self._connections.ftp()
