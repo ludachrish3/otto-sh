@@ -112,6 +112,12 @@ otto host --list-hosts
 | `get` | Download files from the host |
 | `login` | Open an interactive shell session on the host |
 
+In addition to these four built-in subcommands, `otto host` exposes **capability
+verbs** — host methods marked `@cli_exposed` — that vary by host class (for
+example `power`, `reboot`, `stage`, `install`, `ls`, `read-file`). Run
+`otto host <HOST_ID> --help` to see the verbs available for a specific host.
+See {doc}`host/capabilities` for the full inventory and class-scoping rules.
+
 ### Host-level options
 
 | Option | Description |

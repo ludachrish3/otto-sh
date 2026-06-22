@@ -10,12 +10,7 @@ These guides cover otto's CLI commands and project configuration in detail.
    run
    test
    monitor
-   host
-   host-dynamic-cli
-   host-privilege
-   host-products
-   host-power
-   host-file-ops
+   host/index
    embedded
    os-profiles
    extending-embedded

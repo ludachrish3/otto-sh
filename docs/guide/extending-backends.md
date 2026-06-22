@@ -117,9 +117,14 @@ A custom `term` backend follows the same shape against
 {class}`~otto.host.connections.TermContext`, registered via
 {func}`~otto.host.connections.register_term_backend` and selected with
 `"term": "..."`. Because ssh/telnet share one `ConnectionManager` class, a
-term's `host_families` is passed as a keyword to `register_term_backend(name,
-cls, host_families=frozenset({"unix"}))` rather than declared as a class
-attribute the way a transfer backend does.
+term's applicable families are passed as a **required** keyword argument to
+`register_term_backend` rather than declared as a class attribute the way a
+transfer backend does:
+
+```python
+register_term_backend("my_term", MyTerm, host_families=frozenset({"unix"}))
+# host_families is required (no default) — omitting it raises TypeError
+```
 
 ## See also
 

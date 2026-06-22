@@ -58,8 +58,11 @@ becomes `carrot_seed_2`.
 | `board` | string | Board type, included in the host id when set. |
 | `element_id` | integer | Disambiguates multiple instances of the same NE; appended to the host id. |
 | `user` | string | Pin a specific user from `creds`.  Defaults to the first entry. |
-| `term` | string | Terminal protocol — `"ssh"` (default) or `"telnet"`. |
-| `transfer` | string | File-transfer protocol — `"scp"` (default), `"sftp"`, `"ftp"`, or `"nc"` for Unix hosts; `"console"` (default) or `"tftp"` for embedded hosts. |
+| `term` | string | Terminal protocol lab pin — must be in the host's `valid_terms` menu.  Product `[host_preferences]` and CLI `--term` can override; see the precedence chain below. |
+| `transfer` | string | File-transfer protocol lab pin — must be in the host's `valid_transfers` menu.  Product `[host_preferences]` and CLI `--transfer` can override; see the precedence chain below. |
+| `valid_terms` | array of strings | Ordered list of term backends that may be selected for this host (gates `--term` and `[host_preferences]`).  Defaults to `["ssh", "telnet"]` for Unix hosts and `["telnet"]` for embedded hosts.  Custom backends registered via `register_term_backend` also appear. |
+| `valid_transfers` | array of strings | Ordered list of transfer backends that may be selected for this host (gates `--transfer` and `[host_preferences]`).  Defaults to `["scp", "sftp", "ftp", "nc"]` for Unix hosts and `["console"]` for embedded hosts.  Custom backends registered via `register_transfer_backend` also appear. |
+| `slot` | integer | Physical slot number of the board to which this host belongs.  Free-form metadata; not part of the host id. |
 | `hop` | string | Host id of an intermediate SSH jump host.  Otto opens an SSH tunnel through it and routes all subsequent connections automatically.  Hops can chain. |
 | `resources` | array of strings | Free-form resource tags used by the reservation backend. |
 | `is_virtual` | boolean | `true` when the host is a VM or emulator. |
@@ -90,6 +93,39 @@ details.
 File transfer for embedded hosts uses `"console"` or `"tftp"` — see
 {doc}`embedded`.
 
+### Power control
+
+The optional `power_control` block configures a pluggable power controller for
+the host.  The built-in `"command"` controller runs configured shell commands on
+a *controller* host in the lab:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `power_control` | object or string | Power controller spec.  A string selects a registered controller by type name; an object takes the fields below.  Omit to leave the host without power control. |
+| `power_control.type` | string | Controller type name (e.g. `"command"`).  Selects the registered `PowerController` implementation. |
+| `power_control.controller` | string | Host id of the lab host that runs the on/off/status commands.  `null` or absent runs commands on the local otto machine. |
+| `power_control.on_cmd` | string | Shell command to power the host on.  Templated with `{name}`, `{ip}`, `{id}`. |
+| `power_control.off_cmd` | string | Shell command to power the host off.  Same template variables. |
+| `power_control.status_cmd` | string | Shell command to query power state (optional). |
+| `power_control.status_on` | string | Substring of `status_cmd` output that means *on* (default `""`). |
+
+```json
+{
+    "power_control": {
+        "type": "command",
+        "controller": "hypervisor1",
+        "on_cmd": "virsh start {name}",
+        "off_cmd": "virsh destroy {name}",
+        "status_cmd": "virsh domstate {name}",
+        "status_on": "running"
+    }
+}
+```
+
+See {doc}`host/capabilities` for the Power Control section, runtime API
+(`host.power()`, `host.reboot(hard=True)`), and how to register a custom
+controller (`register_power_controller`).
+
 ### SNMP monitoring
 
 The optional `snmp` block configures SNMP polling for a host's metrics.  See
@@ -107,7 +143,7 @@ the SNMP section of {doc}`monitor`.
 Each of the following keys accepts an object that overrides individual
 protocol fields.  They merge per-key with hardcoded dataclass defaults;
 product `[host_preferences]` values are then applied on top (product wins
-over the host's own values).  See {doc}`host` for the full
+over the host's own values).  See {doc}`host/configuration` for the full
 connection-options reference.
 
 | Key | Protocol |
@@ -206,7 +242,7 @@ matched (`re.fullmatch`) against each host's **id** (e.g. `carrot_seed`,
 
 - **Selection lists** (`term`, `transfer`) — an ordered list of preferred
   backends.  Otto picks the first entry that is in the host's lab-defined
-  `valid_term` / `valid_transfer` menu; out-of-menu entries are skipped.
+  `valid_terms` / `valid_transfers` menu; out-of-menu entries are skipped.
 - **Option tables** (`ssh_options`, `telnet_options`, `sftp_options`,
   `scp_options`, `ftp_options`, `nc_options`) — per-key value overrides.
 
@@ -250,6 +286,9 @@ product preference, and so on down to the dataclass default.
 The merge is performed at host construction time, so the resulting host
 carries the fully-resolved `*_options` instances — nothing has to be
 re-resolved at use time.
+
+For the full `*_options` field reference and per-field semantics, see
+{doc}`host/configuration`.
 
 ## Merging labs
 
