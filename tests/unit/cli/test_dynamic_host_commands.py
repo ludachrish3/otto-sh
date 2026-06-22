@@ -606,3 +606,31 @@ def test_ls_path_stays_positional_and_power_state_positional(monkeypatch):
     res_power = CliRunner().invoke(app, ["h1", "power", "on"])
     assert res_power.exit_code == 0, res_power.output
     assert captured["power"] == "on"
+
+
+def test_class_for_skips_host_build_during_completion(monkeypatch):
+    """During shell completion (``ctx.resilient_parsing``), verb scoping must NOT
+    build the host: ``_class_for`` returns ``None`` (→ the full unscoped menu) so
+    completion never pays the ``get_host`` lab-load/host-construction cost.
+    """
+    from otto.cli import expose as expose_mod
+
+    calls: list[str | None] = []
+    monkeypatch.setattr(
+        expose_mod, "host_class_for_id", lambda hid: calls.append(hid) or None
+    )
+    grp = HostGroup(name="host")
+
+    class _CompletionCtx:
+        resilient_parsing = True
+        params = {"host_id": "u1"}
+
+    assert grp._class_for(_CompletionCtx()) is None
+    assert calls == []  # host not resolved/built while completing
+
+    class _DispatchCtx:
+        resilient_parsing = False
+        params = {"host_id": "u1"}
+
+    grp._class_for(_DispatchCtx())
+    assert calls == ["u1"]  # real dispatch still resolves the class for scoping

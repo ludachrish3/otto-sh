@@ -208,6 +208,14 @@ def _make_host_group() -> type[TyperGroup]:
                 self._dynamic_names.add(cli_name)
 
         def _class_for(self, ctx: Any) -> type | None:
+            # During shell completion (``resilient_parsing``) skip resolving the
+            # host's class: ``host_class_for_id`` calls ``get_host``, which loads the
+            # lab and constructs the host just to scope the menu. Returning ``None``
+            # offers the full unscoped verb list — correct for completion — without
+            # paying that cost. Verbs are synthesized live either way, so nothing
+            # goes stale.
+            if getattr(ctx, "resilient_parsing", False):
+                return None
             return host_class_for_id((ctx.params or {}).get("host_id"))
 
         def list_commands(self, ctx: Any) -> list[str]:
