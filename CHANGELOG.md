@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-22
+
+### Added
+
+- auto-expose host methods as class-scoped `otto host` subcommands
+- converge product defaulting into one [host_preferences] block
+- switch term/transfer via the override seam; drop in-place setters
+- term families + product host_preferences capability resolution
+- lab-declared term/transfer menus with resolved active selection
+- register products via code providers at host ingest
+- add posix remote file operations (PosixFileOps mixin) + embedded subset
+- add power control, reboot/shutdown & reachability waits to hosts
+- add privilege elevation (sudo, su, as_user) to hosts
+- add dependency-injected product lifecycle to hosts
+
+
+### Changed
+
+- defer asyncssh/aioftp/telnetlib3 to point-of-use
+- drop products from HostSpec — it's repo-logic, not lab data
+
+
+### Dependencies
+
+- declare starlette as an explicit dependency
+- bump uvicorn from 0.48.0 to 0.49.0
+
+
+### Documentation
+
+- restructure otto host guide into a nested Hosts group; refresh currency
+- list starlette in the dependency table
+- added minor cleanup tasks
+- capability-resolution spec + host-preferences end-state backlog
+- add product-providers design spec
+
+
+### Fixed
+
+- render element_id as its number in host id/name
+
+
 ## [0.4.5] - 2026-06-19
 
 ### Added
@@ -358,7 +400,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/ludachrish3/otto-sh/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/ludachrish3/otto-sh/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/ludachrish3/otto-sh/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/ludachrish3/otto-sh/compare/v0.4.2...v0.4.3
