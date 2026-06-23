@@ -11,7 +11,7 @@ import asyncio
 
 import pytest
 
-from tests._loop_reaper import (
+from tests._fixtures._loop_reaper import (
     LeakedProductLoopError,
     classify_loop_origin,
     reap_or_raise,

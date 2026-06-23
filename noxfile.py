@@ -41,8 +41,9 @@ nox.options.sessions = ["tests_unit", "typecheck", "docs"]
 
 UNIT_TEST_ARGS = (
     "tests/unit",
+    "tests/e2e",
     "-m",
-    "not integration",
+    "not integration and not embedded",
     "--cov-fail-under=80",
 )
 

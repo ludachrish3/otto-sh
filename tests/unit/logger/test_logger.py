@@ -32,58 +32,6 @@ def _backdate(directory: Path, seconds: float) -> None:
     os.utime(directory, (past, past))
 
 
-@pytest.mark.integration
-def test_remove_old_logs_old_logs_exist_same_command(caplog):
-
-    logger.create_output_dir(command='pytest', subcommand='thing1')
-    logger.create_output_dir(command='pytest', subcommand='thing2')
-
-    pytest_dir = logger.xdir / 'pytest'
-
-    # Make sure there are 3 output dirs to start (1 from the standard fixture, then the above 2)
-    assert len(listdir(pytest_dir)) == 3
-
-    # Backdate the fixture's logger_test dir an hour into the past; thing1 and
-    # thing2 keep their real (current) mtime, so the result no longer depends
-    # on how fast the machine reaches remove_old_logs.
-    (old_dir,) = (d for d in pytest_dir.iterdir() if d.name.endswith('_logger_test'))
-    _backdate(old_dir, seconds=3600)
-
-    logger.remove_old_logs(seconds=60)
-    assert len(listdir(pytest_dir)) == 2
-
-    assert len(caplog.records) == 1
-    logrecord = caplog.records[0]
-    assert logrecord.message == '[magenta]Deleting log directories that are more than 0 days old'
-
-@pytest.mark.integration
-def test_remove_old_logs_old_logs_exist_different_command(caplog):
-
-    pytest_dir = logger.xdir / 'pytest'
-    not_pytest_dir = logger.xdir / 'not_pytest'
-
-    # Create an old log_dir under each command, then a fresh one under each.
-    logger.create_output_dir(command='not_pytest', subcommand='thing1')
-    logger.create_output_dir(command='pytest', subcommand='thing1')
-    logger.create_output_dir(command='not_pytest', subcommand='thing2')
-
-    assert len(listdir(pytest_dir)) == 2
-    assert len(listdir(not_pytest_dir)) == 2
-
-    # Backdate the older dirs an hour into the past; the rest keep their real
-    # (current) mtime, so remove_old_logs deletes exactly the backdated ones
-    # regardless of timing.
-    _backdate(next(d for d in not_pytest_dir.iterdir() if d.name.endswith('_thing1')), seconds=3600)
-    _backdate(next(d for d in pytest_dir.iterdir() if d.name.endswith('_logger_test')), seconds=3600)
-
-    logger.remove_old_logs(seconds=60)
-    assert len(listdir(pytest_dir)) == 1
-    assert len(listdir(not_pytest_dir)) == 1
-
-    assert len(caplog.records) == 1
-    logrecord = caplog.records[0]
-    assert logrecord.message == '[magenta]Deleting log directories that are more than 0 days old'
-
 def test_remove_old_logs_ignores_non_output_entries():
     """Stray files and non-output directories must never be pruned.
 

@@ -12,12 +12,9 @@ for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
     os.environ.pop(_var, None)
 
 import asyncio  # noqa: E402
-import json  # noqa: E402
 import sys  # noqa: E402
 import weakref  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
-from pathlib import Path  # noqa: E402
-from typing import Any  # noqa: E402
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
@@ -28,7 +25,7 @@ from otto.host.local_host import LocalHost  # noqa: E402
 from otto.host.unix_host import UnixHost  # noqa: E402
 from otto.logger import get_otto_logger  # noqa: E402
 from otto.storage.factory import create_host_from_dict  # noqa: E402
-from tests._loop_reaper import classify_loop_origin, reap_or_raise  # noqa: E402
+from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise  # noqa: E402
 
 _logger = get_otto_logger()
 
@@ -384,29 +381,7 @@ def _reset_otto_logger_retention():
 # Lab-data helpers
 # ---------------------------------------------------------------------------
 
-_LAB_DATA = Path(__file__).parent / "lab_data" / "tech1" / "hosts.json"
-
-
-def host_data(ne: str) -> dict[str, Any]:
-    """Return the raw host dict for a given NE name from the lab JSON."""
-    hosts = json.loads(_LAB_DATA.read_text())
-    for host in hosts:
-        if host["element"] == ne:
-            return host
-    raise KeyError(f"NE {ne!r} not found in {_LAB_DATA}")
-
-
-def make_host(ne: str, **kwargs: Any) -> UnixHost:
-    """Build a UnixHost from lab data with optional field overrides."""
-    data = host_data(ne)
-    return UnixHost(
-        ip=data["ip"],
-        element=data["element"],
-        creds=data["creds"],
-        board=data.get("board"),
-        is_virtual=data.get("is_virtual", False),
-        **kwargs,
-    )
+from tests._fixtures.labdata import host_data, make_host, lab_data_path  # noqa: F401
 
 
 # ---------------------------------------------------------------------------

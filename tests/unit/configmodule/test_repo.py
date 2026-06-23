@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from otto.configmodule.repo import Repo
-from tests.mockrepo import MockRepo
+from tests._fixtures.mockrepo import MockRepo
 
 mock_repo: MockRepo = None
 tests_root = Path(__file__).parent.parent.parent

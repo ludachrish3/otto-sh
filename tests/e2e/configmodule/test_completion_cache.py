@@ -29,6 +29,8 @@ COVERAGE_BOOTSTRAP = PROJECT_ROOT / 'tests' / '_coverage_bootstrap'
 # the program name `__main__`, which it won't match against our env var.
 OTTO_BIN = Path(sys.executable).parent / 'otto'
 
+pytestmark = pytest.mark.xdist_group("completion_cache")
+
 
 def _run_otto(
     argv: list[str],

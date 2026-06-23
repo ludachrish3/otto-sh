@@ -1,45 +1,11 @@
 """Fixtures for coverage unit tests.
 
 These tests require:
-- Vagrant test VMs (test1/test2) to be running
 - ``gcc`` and ``lcov`` installed on the dev VM
 """
 
-import os
-from pathlib import Path
+from tests._fixtures.paths import ensure_sut_dirs
 
 # Must be set before any otto imports -- configmodule reads OTTO_SUT_DIRS at
 # import time to compute the module-level _repos singleton.
-os.environ.setdefault("OTTO_SUT_DIRS", str(Path(__file__).resolve().parents[2] / "repo1"))
-
-import pytest_asyncio
-
-from otto.configmodule.lab import Lab
-from tests.conftest import active_context, make_host
-
-
-def configured_hosts(*hosts):
-    """Temporarily install an OttoContext exposing the given hosts via all_hosts().
-
-    Used by integration tests that construct UnixHost instances directly
-    (bypassing the lab loader) but need the new GcdaFetcher to see them.
-    """
-    lab = Lab(name="pipeline_test")
-    lab.hosts = {h.id: h for h in hosts}
-    return active_context(lab=lab)
-
-
-@pytest_asyncio.fixture
-async def carrot():
-    """UnixHost for test1 (carrot) via SSH."""
-    h = make_host("carrot", term="ssh", transfer="scp")
-    yield h
-    await h.close()
-
-
-@pytest_asyncio.fixture
-async def tomato():
-    """UnixHost for test2 (tomato) via SSH."""
-    h = make_host("tomato", term="ssh", transfer="scp")
-    yield h
-    await h.close()
+ensure_sut_dirs()

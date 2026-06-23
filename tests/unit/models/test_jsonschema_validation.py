@@ -2,14 +2,14 @@
 
 import copy
 import json
-from pathlib import Path
 
 import pytest
 from jsonschema import Draft202012Validator
 
 from otto.models.jsonschema import build_schemas
+from tests._fixtures.labdata import lab_data_dir
 
-_LAB_DATA = Path(__file__).resolve().parents[3] / 'tests' / 'lab_data'
+_LAB_DATA = lab_data_dir()
 _HOST_FILES = sorted(_LAB_DATA.glob('*/hosts.json'))
 
 

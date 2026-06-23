@@ -59,7 +59,7 @@ def _backend_param(backend_id: str) -> pytest.param:
     ``hosts.json`` so a new RTOS / version / filesystem in lab data
     surfaces descriptively in test output without test-code edits.
     """
-    marks = [pytest.mark.integration]
+    marks = []
     if backend_id in _EMBEDDED_BACKENDS:
         marks.append(pytest.mark.embedded)
     return pytest.param(

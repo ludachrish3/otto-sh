@@ -55,7 +55,6 @@ def repo1():
     return Repo(sut_dir=REPO1_DIR)
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_build_succeeds(parent, repo1):
     results = await build_images(repo1, parent, rebuild=True)
@@ -64,7 +63,6 @@ async def test_build_succeeds(parent, repo1):
     assert status is Status.Success, f"build failed: {msg}"
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_build_skips_when_image_exists(parent, repo1):
     # First build (force) → fresh build.
@@ -76,7 +74,6 @@ async def test_build_skips_when_image_exists(parent, repo1):
     assert second["api"][0] is Status.Skipped
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_build_tags_locally(parent, repo1):
     await build_images(repo1, parent, rebuild=False)

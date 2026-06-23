@@ -2,7 +2,7 @@ name = "repo2"
 version = "1.0.4"
 lab_data_type = "json"
 labs = [
-    "${sut_dir}/../lab_data/tech2",
+    "${sut_dir}/../_fixtures/lab_data/tech2",
 ]
 libs = [
     "${sut_dir}/pylib",

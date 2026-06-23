@@ -27,7 +27,7 @@ from tests.conftest import (
     embedded_param_id,
     host_data,
 )
-from tests.integration.host._console_lock import console_access
+from tests._fixtures._console_lock import console_access
 
 # Make repo1's custom Zephyr 2.7 dialect resolvable by the storage factory.
 #
@@ -38,9 +38,9 @@ from tests.integration.host._console_lock import console_access
 # importing the shared ``custom_hosts`` module (the third-party-style package
 # SUT repos depend on for this frame), adding its dir to the path the way
 # ``Repo.add_libs_to_pythonpath`` does at config-load time.
-_CUSTOM_HOSTS = Path(__file__).resolve().parents[2] / "custom_hosts"
-if str(_CUSTOM_HOSTS) not in sys.path:
-    sys.path.insert(0, str(_CUSTOM_HOSTS))
+from tests._fixtures.paths import ensure_custom_hosts_on_path
+
+ensure_custom_hosts_on_path()
 from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame  # noqa: E402
 
 register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)

@@ -9,27 +9,19 @@ extra shell dialects, pulled in via each repo's ``settings.toml`` ``libs`` +
 embedded-lab fold surfaced for repo3.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 
 from otto.host.command_frame import build_command_frame
+from tests._fixtures.paths import ensure_custom_hosts_on_path
 
-_CUSTOM_HOSTS = Path(__file__).resolve().parents[2] / "custom_hosts"
+ensure_custom_hosts_on_path()
 
 
 @pytest.fixture
 def custom_hosts_on_path():
     """Put the third-party module dir on the path and import it (registers)."""
-    added = str(_CUSTOM_HOSTS) not in sys.path
-    if added:
-        sys.path.insert(0, str(_CUSTOM_HOSTS))
     import custom_hosts  # noqa: F401  (import side effect: registers frames)
     yield
-    if added:
-        while str(_CUSTOM_HOSTS) in sys.path:
-            sys.path.remove(str(_CUSTOM_HOSTS))
 
 
 def test_custom_hosts_registers_zephyr_inline(custom_hosts_on_path):

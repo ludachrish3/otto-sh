@@ -43,7 +43,7 @@
 - `tests/_fixtures/paths.py` — centralized `custom_hosts` `sys.path` insert + `OTTO_SUT_DIRS` setup helpers.
 - `tests/integration/conftest.py` — gains the `integration` auto-stamp hook (file already exists; hook is added).
 - `tests/unit/test_tier_marker_invariants.py` — drift guards (G1 hook fires; G2 no VM marker under `unit/`).
-- New tier dirs/files created by the moves in Phase 2 (e.g. `tests/e2e/...`, `tests/integration/host/test_unix_host_integration.py`).
+- New tier dirs/files created by the moves in Phase 2 (e.g. `tests/e2e/...`). NB: `tests/integration/host/test_unix_host_integration.py` already exists (prior partial migration) — Task 7 appends to it, see its correction note.
 
 **Relocated (via `git mv`):**
 - `tests/lab_data/` → `tests/_fixtures/lab_data/`
@@ -601,58 +601,91 @@ Expected: `NO-VM UNCHANGED` (empty diff); all-paths count equals the Task-0 base
 
 - [ ] **Step 5: Stage** (`git add -A tests`; no commit).
 
-### Task 7: Split `test_unix_host.py` (82 unit / 20 integration)
+### Task 7: Reconcile `test_unix_host.py` integration tests against the existing integration file
+
+> **CORRECTION (discovered at execution):** `tests/integration/host/test_unix_host_integration.py`
+> ALREADY EXISTS — a prior, incomplete migration ("formerly test_host_integration.py").
+> `tests/unit/host/test_unix_host.py` has 102 test functions, **21** still carrying
+> `@pytest.mark.integration` (so 81 unit). ~10 of those 21 are **name-identical
+> duplicates** of tests already in the integration file, whose versions are
+> parametrized over `host1=[ssh,telnet,local]` and thus cover ≥ the unit copies;
+> ~11 are **unique** (`test_both_hosts_reachable`, `test_second_credential_works`,
+> `test_telnet_bad_credentials_fails_fast`, `test_get_file`/`test_put_file`, the
+> extra `TestNamedSessionIntegration` cases, etc.). Per user decision: **move the
+> unique tests into the existing file; remove the proven duplicates** (combined
+> move + Tier-3 dedup for this one file). Verify in-loop against the live bed.
 
 **Files:**
-- Modify: `tests/unit/host/test_unix_host.py` (remove the 20 `@integration` methods)
-- Create: `tests/integration/host/test_unix_host_integration.py` (the 20 moved methods)
+- Modify: `tests/unit/host/test_unix_host.py` (remove all 21 `@integration` methods → 81 unit remain)
+- Modify (NOT create): `tests/integration/host/test_unix_host_integration.py` (append the unique moved tests)
 
 **Interfaces:** none new.
 
-- [ ] **Step 1: Identify the integration methods**
-
-Run: `grep -nB1 "@pytest.mark.integration" tests/unit/host/test_unix_host.py`
-Expected: exactly 20 decorated test functions. Record their names — these move; the other 82 stay.
-
-- [ ] **Step 2: Create the integration file with the moved methods**
-
-Create `tests/integration/host/test_unix_host_integration.py`: a module that imports the same fixtures/helpers the moved methods used (check the original's imports — `host_data`/`make_host` from `tests.conftest`, any module-level constants the moved methods reference) and contains the 20 functions verbatim, with the explicit `@pytest.mark.integration` decorator **removed** (auto-stamped by the integration/ dir). Keep any `@pytest.mark.hops`/`timeout` on individual methods.
-
-- [ ] **Step 3: Remove the 20 methods from the unit file**
-
-Delete those 20 functions (and any now-unused imports) from `tests/unit/host/test_unix_host.py`, leaving the 82 unit tests.
-
-- [ ] **Step 4: Verify the split conserves every test**
+- [ ] **Step 1: Classify the 21 integration tests as duplicate-vs-unique**
 
 Run:
 ```bash
-uv run pytest tests/unit/host/test_unix_host.py tests/integration/host/test_unix_host_integration.py \
-  --collect-only -q -p no:cacheprovider | grep -c '::'
+grep -nB1 "@pytest.mark.integration" tests/unit/host/test_unix_host.py     # the 21 in unit
+grep -nE "^class |def test_" tests/integration/host/test_unix_host_integration.py  # what already exists
 ```
-Expected: **102** (82 + 20) — no test lost or duplicated.
+For each of the 21, decide **duplicate** (a test of the same name AND same
+asserted behavior already lives in the integration file, whose parametrized
+`host1=[ssh,telnet,local]` version covers the same or more) or **unique** (no
+equivalent in the integration file). Record the classification — it drives Steps
+2–3. When in doubt, treat as unique (move, don't remove).
 
-- [ ] **Step 5: Verify marker routing**
+- [ ] **Step 2: Move the UNIQUE integration tests into the existing file**
+
+Append the unique tests to `tests/integration/host/test_unix_host_integration.py`,
+into the matching existing class where one fits (e.g. extra named-session cases →
+`TestNamedSessionIntegration`) or a new class (e.g. a `TestFileTransfer` for
+`test_get_file`/`test_put_file`, a `TestCredentials` for `test_second_credential_works`/
+`test_telnet_bad_credentials_fails_fast`). Drop the explicit `@pytest.mark.integration`
+(auto-stamped by the integration/ dir); keep `@pytest.mark.asyncio` and any
+`timeout`. Bring across any module-level constants/imports those tests need
+(`host1`, `transfer_host`, `host_data`/`make_host` from `tests.conftest`). Match
+the existing file's fixture/parametrize idiom (`_ALL_HOSTS`/`_REMOTE_ONLY`) where
+the unit test used a fixed term.
+
+- [ ] **Step 3: Remove ALL 21 integration tests from the unit file**
+
+Delete every `@pytest.mark.integration` test (the unique ones now relocated, the
+duplicates dropped as redundant) plus any now-unused imports/fixtures, leaving the
+**81 unit tests**. The duplicates' redundancy is proven in Step 6.
+
+- [ ] **Step 4: Verify the unit file is now pure no-VM**
 
 Run:
 ```bash
-uv run pytest tests/unit/host/test_unix_host.py -m "not integration and not embedded" --collect-only -q -p no:cacheprovider | grep -c '::'   # expect 82
-uv run pytest tests/integration/host/test_unix_host_integration.py -m integration --collect-only -q -p no:cacheprovider | grep -c '::'        # expect 20
+uv run pytest tests/unit/host/test_unix_host.py --collect-only -q -p no:cacheprovider | grep -c '::'   # expect 81
+grep -c "pytest.mark.integration" tests/unit/host/test_unix_host.py                                     # expect 0
+uv run pytest tests/unit/host/test_unix_host.py -p no:cacheprovider -q                                  # 81 PASS, no VM
 ```
-Expected: 82 and 20 respectively.
+Expected: 81 collected, 0 integration markers, 81 PASS without the bed.
 
-- [ ] **Step 6: Run BOTH halves (no-VM + integration against the bed)**
+- [ ] **Step 5: Verify the integration file collects (originals + moved unique)**
 
-Run:
+Run: `uv run pytest tests/integration/host/test_unix_host_integration.py -m integration --collect-only -q -p no:cacheprovider | grep -c '::'`
+Expected: the original count **plus** the number of unique tests moved in Step 2.
+List the node IDs and confirm each moved test is present once (no accidental dup).
+
+- [ ] **Step 6: PROVE the removals lost no coverage (live bed)**
+
+Confirm the bed is up (`make vm-health`), then run the integration tier:
 ```bash
-uv run pytest tests/unit/host/test_unix_host.py -p no:cacheprovider -q                         # 82 no-VM
-uv run pytest tests/integration/host/test_unix_host_integration.py -p no:cacheprovider -q       # 20 live bed
+make coverage-unix
 ```
-Expected: 82 PASS and 20 PASS. The integration run uses the live Vagrant bed —
-confirm it's up (`make vm-health`) first; on a bed failure, report the host by
-name, don't skip. Together they prove the split preserved both halves' behavior,
-not just collection.
+Assert `coverage-unix`'s `src/otto/host/unix_host.py` (and related host modules)
+covered-line set equals the Phase-0 baseline — i.e. removing the ~10 duplicate
+unit tests changed **no** covered line (their coverage was fully subsumed by the
+integration file's parametrized versions). If any line drops, a "duplicate" was
+not redundant: restore it as a MOVE instead of a removal, and re-verify. Do not
+kill the live-bed run on a slow console.
 
-- [ ] **Step 7: Stage** (`git add -A tests`; no commit).
+- [ ] **Step 7: Record the dedup evidence + stage**
+
+Note in the eventual commit message which tests were moved vs removed and the
+coverage-unix parity proof (the Tier-3 evidence for this file). Then `git add -A tests`; no commit.
 
 ### Task 8: Split `test_import_and_register.py` and `test_logger.py`
 
@@ -839,7 +872,9 @@ refactor(tests): split tests into unit/integration/e2e tiers (fable #5)
 
 Directories now carry the tier (level); markers carry resource-need. Auto-stamp
 `integration` from tests/integration/; drop redundant explicit decorators; keep
-embedded/hops/stability/concurrency. Split mixed files (test_unix_host 82u/20i,
+embedded/hops/stability/concurrency. Split mixed files (test_unix_host 81u/21i —
+reconciled against the pre-existing test_unix_host_integration.py: unique moved,
+duplicates removed with coverage proof),
 import_and_register, logger); move CLI e2e suites to tests/e2e/. Flip the four
 path-based gates (coverage-unit, nox-unit, repeat, testpaths) to marker-based.
 Add tier<->marker drift guards. Full live-bed coverage proven equal to baseline.

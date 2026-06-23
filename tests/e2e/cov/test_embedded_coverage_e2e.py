@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 import tomli
 
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO3 = PROJECT_ROOT / "tests" / "repo3"
 OTTO_BIN = Path(sys.executable).parent / "otto"
 COVERAGERC = PROJECT_ROOT / ".coveragerc"

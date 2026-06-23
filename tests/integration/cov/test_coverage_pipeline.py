@@ -22,13 +22,26 @@ from pathlib import Path
 
 import pytest
 
+from otto.configmodule.lab import Lab
 from otto.coverage.fetcher.remote import GcdaFetcher
 from otto.coverage.reporter import CoverageReporter, discover_gcda_dirs
 from otto.host.local_host import LocalHost
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
 
-from tests.unit.cov.conftest import configured_hosts
+from tests.conftest import active_context
+
+
+def configured_hosts(*hosts):
+    """Temporarily install an OttoContext exposing the given hosts via all_hosts().
+
+    Used by integration tests that construct UnixHost instances directly
+    (bypassing the lab loader) but need the new GcdaFetcher to see them.
+    """
+    lab = Lab(name="pipeline_test")
+    lab.hosts = {h.id: h for h in hosts}
+    return active_context(lab=lab)
+
 
 PRODUCT_DIR = Path(__file__).resolve().parents[2] / "repo1" / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
@@ -83,7 +96,6 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     return result.output.strip()
 
 
-@pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
 class TestCoverageFetch:
     """Test that .gcda files are correctly fetched from remote hosts."""
@@ -128,7 +140,6 @@ class TestCoverageFetch:
                 await _uninstall_from_host(host)
 
 
-@pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
 class TestCoverageReport:
     """Test that coverage reports are correctly generated from merged data."""

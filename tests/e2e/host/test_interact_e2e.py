@@ -15,7 +15,7 @@ Prerequisites:
 
 Running::
 
-    uv run pytest tests/unit/host/test_interact_e2e.py \\
+    uv run pytest tests/e2e/host/test_interact_e2e.py \\
         -m integration -v --override-ini 'addopts='
 
 All tests carry ``@pytest.mark.xdist_group("interact_e2e")`` so pytest-xdist
@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from _pty_driver import InteractiveOttoSession
+from tests.e2e.host._pty_driver import InteractiveOttoSession
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"

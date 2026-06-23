@@ -6,9 +6,9 @@ the FakeSession path can't: asyncssh connection-pool dynamics, real
 cancellation paths, FD/process leaks, transfer-protocol stability under
 fan-out.
 
-All tests are gated by ``@pytest.mark.integration`` so the existing
-``-m "not integration"`` filter excludes them from
-``make ci``. Run via ``make stability-unix`` (requires ``vagrant up``).
+All tests are under ``tests/integration/`` (auto-stamped ``integration``)
+and additionally gated by ``stability`` so the ``-m "not stability"``
+filter excludes them from ``make ci``. Run via ``make stability-unix`` (requires ``vagrant up``).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import pytest
 from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
 
-from tests.unit.host._transfer_retry import transfer_with_retry
+from tests.integration.host._transfer_retry import transfer_with_retry
 
 
 # Real I/O is meaningfully slower than mocked; bump the per-test ceiling.
@@ -76,7 +76,6 @@ _NC_TELNET = pytest.mark.parametrize(
 
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_real_oneshot_pool_high_fanout(host1: UnixHost) -> None:
     """8 concurrent oneshots over real transport must complete with intact output.
 
@@ -112,7 +111,6 @@ async def test_real_oneshot_pool_high_fanout(host1: UnixHost) -> None:
 
 @_SSH_ONLY
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_real_named_session_resurrect(host1: UnixHost) -> None:
     """``open_session(name)`` must return a fresh live session after transport death."""
     s1 = await host1.open_session('resurrect_test')
@@ -140,7 +138,6 @@ async def test_real_named_session_resurrect(host1: UnixHost) -> None:
 
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None:
     """Default-session recreation under concurrent ``_ensure_session`` is robust.
 
@@ -188,7 +185,6 @@ async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None
 
 @_TELNET_ONLY
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_real_long_telnet_oneshot_vs_concurrent(host1: UnixHost) -> None:
     """Real-transport version of the test_oneshot_telnet_concurrent regression.
 
@@ -224,7 +220,6 @@ async def test_real_long_telnet_oneshot_vs_concurrent(host1: UnixHost) -> None:
 
 @_TRANSFERS
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_real_concurrent_transfers(
     transfer_host: UnixHost, tmp_path: Path,
 ) -> None:
@@ -281,7 +276,6 @@ async def test_real_concurrent_transfers(
 
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_real_cancel_mid_run_recovers(host1: UnixHost) -> None:
     """Session must recover from external ``wait_for`` cancellation.
 
@@ -312,7 +306,6 @@ async def test_real_cancel_mid_run_recovers(host1: UnixHost) -> None:
 
 @_NC_TELNET
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_real_nc_concurrent_gets(
     transfer_host: UnixHost, tmp_path: Path,
 ) -> None:
@@ -374,7 +367,6 @@ async def test_real_nc_concurrent_gets(
 
 @_NC_TELNET
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_real_nc_high_fanout_put(
     transfer_host: UnixHost, tmp_path: Path,
 ) -> None:
@@ -429,7 +421,6 @@ async def test_real_nc_high_fanout_put(
 
 @_NC_TELNET
 @pytest.mark.asyncio
-@pytest.mark.integration
 async def test_real_nc_cancel_cleans_up_listener(
     transfer_host: UnixHost, tmp_path: Path,
 ) -> None:

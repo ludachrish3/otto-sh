@@ -47,7 +47,7 @@ _ALL_ZEPHYR = pytest.mark.parametrize(
     [
         pytest.param(
             backend,
-            marks=[pytest.mark.integration, pytest.mark.embedded],
+            marks=[pytest.mark.embedded],
             id=embedded_param_id(backend),
         )
         for backend in EMBEDDED_BACKENDS
@@ -227,7 +227,6 @@ class TestSingleConsole:
         )
 
 
-@pytest.mark.integration
 @pytest.mark.embedded
 @pytest.mark.asyncio
 @pytest.mark.xdist_group("zephyr_fat")
@@ -331,7 +330,6 @@ def _zephyr_dest_map() -> dict[str, str | None]:
 _ZEPHYR_DEST: dict[str, str | None] = _zephyr_dest_map()
 
 
-@pytest.mark.integration
 @pytest.mark.embedded
 @pytest.mark.xdist_group("zephyr_fanout")
 class TestConcurrentEmbeddedTransfer:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Probe every lab VM + Zephyr QEMU instance and report health + timestamps.
 
-Reads the lab data (``tests/lab_data/tech1/hosts.json`` by default) and, for
+Reads the lab data (``tests/_fixtures/lab_data/tech1/hosts.json`` by default) and, for
 each defined host, reports reachability and a timestamp:
 
 * **Unix VMs** (``os_type == "unix"``) are reached over SSH; the script reads
@@ -24,7 +24,7 @@ Exit status is non-zero if any host is unreachable/unresponsive.
 Usage::
 
     scripts/lab_health.py
-    scripts/lab_health.py --hosts tests/lab_data/tech1/hosts.json
+    scripts/lab_health.py --hosts tests/_fixtures/lab_data/tech1/hosts.json
     scripts/lab_health.py --restart-qemu
 """
 
@@ -40,7 +40,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-DEFAULT_HOSTS = Path("tests/lab_data/tech1/hosts.json")
+DEFAULT_HOSTS = Path("tests/_fixtures/lab_data/tech1/hosts.json")
 
 # Non-interactive SSH: no host-key prompts, no known_hosts churn (the lab VMs
 # get rebuilt often), quiet, and a bounded connect so a dead VM fails fast.

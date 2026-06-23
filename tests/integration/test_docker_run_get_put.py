@@ -61,7 +61,6 @@ async def stack():
         await parent.close()
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_oneshot_returns_output_from_container(stack):
     result = await stack.oneshot("echo hello-from-container")
@@ -69,7 +68,6 @@ async def test_oneshot_returns_output_from_container(stack):
     assert "hello-from-container" in result.output
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_oneshot_failing_command_reports_nonzero(stack):
     result = await stack.oneshot("false")
@@ -77,7 +75,6 @@ async def test_oneshot_failing_command_reports_nonzero(stack):
     assert result.retcode != 0
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_marker_file_present(stack):
     """The Dockerfile bakes in /etc/repo1-marker.txt — it should be readable."""
@@ -86,7 +83,6 @@ async def test_marker_file_present(stack):
     assert "repo1-fixture" in result.output
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_put_then_get_roundtrip(stack, tmp_path):
     src = tmp_path / "payload.bin"
@@ -107,7 +103,6 @@ async def test_put_then_get_roundtrip(stack, tmp_path):
     assert (out_dir / "payload.bin").read_bytes() == src.read_bytes()
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_run_chained_commands_in_one_string(stack):
     """Multiple commands in a single string share state via shell `&&`."""
@@ -116,7 +111,6 @@ async def test_run_chained_commands_in_one_string(stack):
     assert "/tmp" in result.output
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_run_preserves_cwd_across_calls(stack):
     """run() uses a persistent shell session — `cd` in one call must persist
@@ -126,7 +120,6 @@ async def test_run_preserves_cwd_across_calls(stack):
     assert result.statuses[-1].output.strip() == "/tmp"
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_run_preserves_env_across_calls(stack):
     """Env vars exported in one run() call must persist into the next."""
@@ -135,7 +128,6 @@ async def test_run_preserves_env_across_calls(stack):
     assert "docker_persist_ok" in result.statuses[-1].output
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_run_state_persists_across_separate_run_invocations(stack):
     """Two separate run() invocations on the same host share shell state."""
@@ -146,7 +138,6 @@ async def test_run_state_persists_across_separate_run_invocations(stack):
     assert r2.only.output.strip() == "/var"
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_run_timeout_recovers_session(stack):
     """A timed-out run() must mark the session for recovery without killing
@@ -160,7 +151,6 @@ async def test_run_timeout_recovers_session(stack):
     assert "recovered" in recovered.only.output
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio(loop_scope="module")
 async def test_oneshot_remains_concurrent_safe(stack):
     """oneshot() must stay stateless and concurrent — two parallel sleeps

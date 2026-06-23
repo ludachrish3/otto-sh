@@ -9,8 +9,6 @@ rebuilt with ``tests/firmware/zephyr/patches/v2_7-shell-retcode.patch``.
 """
 
 import re
-import sys
-from pathlib import Path
 
 import pytest
 
@@ -18,9 +16,9 @@ from otto.host.command_frame import SessionMarkers
 
 # The shared custom_hosts module carries the frame (a third-party-style package,
 # not otto core; see tests/custom_hosts/README.md).
-_CUSTOM_HOSTS = Path(__file__).resolve().parents[2] / "custom_hosts"
-if str(_CUSTOM_HOSTS) not in sys.path:
-    sys.path.insert(0, str(_CUSTOM_HOSTS))
+from tests._fixtures.paths import ensure_custom_hosts_on_path
+
+ensure_custom_hosts_on_path()
 from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame  # noqa: E402
 
 M = SessionMarkers.for_session("2700beef")

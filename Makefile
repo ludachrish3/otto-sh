@@ -48,7 +48,7 @@ STABILITY_UNIX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),10)
 #   unit     — no VM (mocked transports)
 #   unix     — real telnet/SSH against the Linux Vagrant VMs (incl. multi-hop)
 #   embedded — Zephyr/QEMU under the zephyr VM
-M_UNIT := not integration
+M_UNIT := not integration and not embedded
 M_UNIX := integration and not embedded
 M_EMBEDDED := embedded
 
@@ -149,7 +149,7 @@ coverage: ## Run the pinned-Python suite and enforce the coverage gate (excludes
 	$(TIMEOUT_CMD) uv run pytest -m "not stability" --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
 
 coverage-unit: ## Run the pinned-Python unit suite (no Vagrant VMs) and enforce the CI coverage gate. JUnit XML lands in reports/junit/coverage-unit/.
-	$(TIMEOUT_CMD) uv run pytest tests/unit -m "$(M_UNIT)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-unit)
+	$(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_UNIT)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-unit)
 
 coverage-unix: ## Run the pinned-Python Unix-VM integration suite (incl. multi-hop) with a coverage report (no gate — one env can't meet the whole-repo threshold). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
 	$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX)" $(call junitxml,coverage-unix)
@@ -193,7 +193,7 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 	@echo "── Tier 2 (real telnet/SSH) ──"
 	@if command -v jq >/dev/null 2>&1; then \
 	    reachable=0; total=0; \
-	    for ip in $$(jq -r '.[].ip' tests/lab_data/tech1/hosts.json); do \
+	    for ip in $$(jq -r '.[].ip' tests/_fixtures/lab_data/tech1/hosts.json); do \
 	        total=$$((total+1)); \
 	        if ping -c 1 -W 1 $$ip >/dev/null 2>&1; then \
 	            reachable=$$((reachable+1)); \
@@ -212,8 +212,8 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 	@echo "── Tier 3 (cross-OS stability contract — includes embedded) ──"
 	@$(MAKE) stability-embedded COUNT=$(COUNT)
 
-repeat: ## Run the full unit suite (including integration) under pytest-repeat. Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
-	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest tests/unit \
+repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat. Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
+	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \

@@ -43,7 +43,7 @@ _SNMP_PARAMS = pytest.mark.parametrize(
     [
         pytest.param(
             b,
-            marks=[pytest.mark.integration, pytest.mark.embedded],
+            marks=[pytest.mark.embedded],
             id=embedded_param_id(b),
         )
         for b in SNMP_BACKENDS

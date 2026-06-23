@@ -5,7 +5,7 @@ import multiprocessing as mp
 import time
 from pathlib import Path
 
-from tests.integration.host._console_lock import console_access
+from tests._fixtures._console_lock import console_access
 
 
 def _reader_hold_then_barrier(lock_dir: str, barrier) -> None:

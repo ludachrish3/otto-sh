@@ -44,7 +44,6 @@ async def parent_lab():
     await parent.close()
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_instruction_uses_composed_context_manager(parent_lab):
     """Simulate an instruction using composed() as its lifecycle scope."""
@@ -70,7 +69,6 @@ async def test_instruction_uses_composed_context_manager(parent_lab):
     assert container_id not in lab.hosts
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_session_fixture_holds_stack_for_inner_users(parent_lab):
     """A suite-level fixture using own=True should not be torn down by an inner own=False call."""

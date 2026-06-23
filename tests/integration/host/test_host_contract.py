@@ -56,7 +56,7 @@ def _backend_param(backend_id: str) -> pytest.param:
 
     Zephyr backends additionally carry ``embedded``.
     """
-    marks = [pytest.mark.integration]
+    marks = []
     if backend_id in _EMBEDDED_BACKENDS:
         marks.append(pytest.mark.embedded)
     return pytest.param(backend_id, backend_id, marks=marks)

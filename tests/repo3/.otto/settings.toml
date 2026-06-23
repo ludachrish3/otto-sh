@@ -11,7 +11,7 @@ lab_data_type = "json"
 # reached over a QEMU `-serial telnet:` bridge. The instrumented product
 # (product/) is loaded at runtime; the base carries no coverage code.
 labs = [
-    "${sut_dir}/../lab_data/tech1",
+    "${sut_dir}/../_fixtures/lab_data/tech1",
 ]
 
 # Labs this repo supports. The repo3 coverage product is a Zephyr LLEXT and only

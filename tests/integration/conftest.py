@@ -5,12 +5,30 @@ These tests require:
 - gcc and lcov installed on the dev VM
 """
 
-import os
 from pathlib import Path
+
+from tests._fixtures.paths import ensure_sut_dirs
+
+_INTEGRATION_ROOT = Path(__file__).parent
+
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-apply the ``integration`` marker to every test under this tree.
+
+    The ``tests/integration/`` directory is the single source of truth for the
+    integration tier (Spec §5.1): tests here drive the real Vagrant/QEMU bed via
+    otto's Python API. Stamping the marker from the path lets the marker-based
+    gates (``coverage-unix`` = ``-m "integration and not embedded"``, etc.)
+    select this tree without each test repeating ``@pytest.mark.integration``.
+    Idempotent and additive — explicit ``embedded``/``hops``/``stability`` stay.
+    """
+    for item in items:
+        if _INTEGRATION_ROOT in item.path.parents:
+            item.add_marker("integration")
 
 # Must be set before any otto imports -- configmodule reads OTTO_SUT_DIRS at
 # import time to compute the module-level _repos singleton.
-os.environ.setdefault('OTTO_SUT_DIRS', str(Path(__file__).parent.parent / 'repo1'))
+ensure_sut_dirs()
 
 import asyncio
 import json
@@ -20,8 +38,9 @@ import pytest
 import pytest_asyncio
 
 from otto.host.unix_host import UnixHost
+from tests._fixtures.labdata import lab_data_path
 
-_LAB_DATA = Path(__file__).parent.parent / "lab_data" / "tech1" / "hosts.json"
+_LAB_DATA = lab_data_path()
 
 # Docker host the e2e/compose tests target (test VM "pepper" / test3).
 _DOCKER_HOST_IP = "10.10.200.13"

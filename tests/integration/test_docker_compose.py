@@ -67,7 +67,6 @@ async def built_image(parent, repo1):
     return results
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_compose_up_registers_container_host(parent, lab_with_parent, repo1, built_image):
     hosts = await compose_up(repo1, lab_with_parent, on=parent.id)
@@ -82,7 +81,6 @@ async def test_compose_up_registers_container_host(parent, lab_with_parent, repo
         await compose_down(repo1, lab_with_parent, on=parent.id)
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_compose_down_unregisters(parent, lab_with_parent, repo1, built_image):
     hosts = await compose_up(repo1, lab_with_parent, on=parent.id)
@@ -91,7 +89,6 @@ async def test_compose_down_unregisters(parent, lab_with_parent, repo1, built_im
     assert api_id not in lab_with_parent.hosts
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_composed_context_manager_owns_lifecycle(parent, lab_with_parent, repo1, built_image):
     seen_id = None
@@ -102,7 +99,6 @@ async def test_composed_context_manager_owns_lifecycle(parent, lab_with_parent, 
     assert seen_id not in lab_with_parent.hosts
 
 
-@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_compose_up_idempotent(parent, lab_with_parent, repo1, built_image):
     """Running compose_up twice in a row reuses the same stack."""
