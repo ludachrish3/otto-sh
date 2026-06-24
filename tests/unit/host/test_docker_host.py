@@ -228,6 +228,11 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     compose_up.assert_awaited_once()
     assert compose_up.call_args.kwargs["build"] is False
     assert compose_up.call_args.kwargs["project_name"] == "otto-repo1-vagrant"
+    # Auto-up composes on the container's OWN parent host, not a global
+    # default_host: a `carrot_seed.repo1.api` container must auto-start on
+    # carrot, not on whatever host happens to be the compose default. (Latent
+    # bug surfaced by the multi-host docker pool — see docker_host.py::_auto_up.)
+    assert compose_up.call_args.kwargs["on"] == parent.id
     assert h.container_id == "freshcid"
     assert result.status == Status.Success
 

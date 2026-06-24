@@ -1,5 +1,59 @@
 """Root test conftest — shared fixtures across unit and integration tests."""
 
+# ---------------------------------------------------------------------------
+# xdist dispatch front-loading (Phase-3 spike: KEEP decision)
+#
+# ``LoadGroupScheduling`` builds its workqueue by iterating the canonical
+# collected list in order (``OrderedDict`` insertion order = dispatch order).
+# Sorting heavy serial groups to the front guarantees those groups are
+# dispatched to workers *before* the unit-test bulk begins, so slow tests
+# (docker-up/down/build, zephyr fanout) run in parallel with unit tests
+# rather than after them.
+#
+# Spike findings: docs/superpowers/specs/2026-06-23-frontload-spike-findings.md
+# Median wall improvement: ~79.67s → 73.53s (6.14s, 0% overlap across 6 runs).
+#
+# Hook execution ordering: pytest fires ``pytest_collection_modifyitems`` LIFO
+# (deeper conftest files registered first → run first). The embedded-grouping
+# hook in ``tests/integration/host/conftest.py:150`` runs *before* this root
+# hook, stamping xdist_group markers onto embedded test items first. This root
+# hook then sees all markers fully applied — the ordering is correct by
+# construction.
+# ---------------------------------------------------------------------------
+
+_FRONTLOAD_GROUPS: frozenset[str] = frozenset(
+    {"sprout_cov", "docker_e2e", "coverage_e2e", "zephyr_fanout"}
+)
+
+
+def _frontload_key(group: "str | None") -> int:
+    """Return 0 for heavy xdist groups (dispatch first) and 1 for all others.
+
+    Pure helper — no pytest dependency — so it can be imported and tested
+    directly in ``tests/unit/test_frontload_ordering.py`` without spinning up
+    a VM.
+    """
+    return 0 if group in _FRONTLOAD_GROUPS else 1
+
+
+def pytest_collection_modifyitems(config, items) -> None:  # type: ignore[no-untyped-def]
+    """Sort heavy xdist_group items to the front of the collected list.
+
+    Uses ``list.sort`` (stable) so relative order within each tier (heavy vs
+    light) is preserved — non-heavy items stay in their original collection
+    order relative to each other.
+
+    Runs *after* the deeper ``tests/integration/host/conftest.py`` hook that
+    stamps embedded xdist_group markers, so all markers are applied before the
+    reorder (LIFO conftest registration guarantees this).
+    """
+    def _group_of(item):
+        m = item.get_closest_marker("xdist_group")
+        return m.args[0] if (m and m.args) else None
+
+    items.sort(key=lambda it: _frontload_key(_group_of(it)))
+
+
 import os
 
 # Disable colored CLI output before typer/click/rich are imported anywhere.
@@ -382,6 +436,7 @@ def _reset_otto_logger_retention():
 # ---------------------------------------------------------------------------
 
 from tests._fixtures.labdata import host_data, make_host, lab_data_path  # noqa: F401
+from tests._fixtures._host_pool import lease_unix_host  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -564,20 +619,26 @@ async def hop_host(request):
 
 
 @pytest_asyncio.fixture
-async def transfer_host(request):
-    """Integration host, parameterized by transfer type ('scp', 'sftp', 'ftp', 'nc').
+async def transfer_host(request, tmp_path_factory):
+    """Integration host leased from the Unix pool, parameterized by transfer
+    type ('scp', 'sftp', 'ftp', 'nc') or a ``(transfer, term)`` tuple.
 
-    Accepts either a plain transfer string (uses default ssh term) or a
-    ``(transfer, term)`` tuple for explicit term control — e.g. ``('nc', 'telnet')``.
+    Leases a free host from ``UNIX_POOL`` instead of always using carrot, so
+    the transfer tests spread across the veggies-lab peers (carrot/tomato/pepper)
+    rather than serializing on one VM.
     """
     param = request.param
-    if isinstance(param, tuple):
-        transfer, term = param
-        h = make_host("carrot", transfer=transfer, term=term)
-    else:
-        h = make_host("carrot", transfer=param)
-    yield h
-    await h.close()
+    lock_dir = tmp_path_factory.getbasetemp().parent
+    with lease_unix_host(lock_dir) as element:
+        if isinstance(param, tuple):
+            transfer, term = param
+            h = make_host(element, transfer=transfer, term=term)
+        else:
+            h = make_host(element, transfer=param)
+        try:
+            yield h
+        finally:
+            await h.close()
 
 
 # ---------------------------------------------------------------------------

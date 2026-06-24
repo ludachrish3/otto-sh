@@ -8,10 +8,12 @@ tests miss (e.g. a missing build step before compose, or a missing lab
 filter when multiple repos are loaded).
 
 Requirements:
-    vagrant up test1 test3       (test3 is the docker host; test1 is its hop)
+    vagrant up test1 test2 test3   (carrot=test1, tomato=test2, pepper=test3)
+    All three VMs must have docker installed and running.
 
-The whole file is pinned to one xdist group so the tests serialize on
-the shared docker host rather than racing on `/tmp/otto-docker/...`.
+Each test leases one docker-capable host from the pool {carrot, tomato,
+pepper} via the same fd-flock mechanism as the transfer-host pool, so
+tests distribute across all three daemons and never race on the same one.
 """
 
 from __future__ import annotations
@@ -24,6 +26,14 @@ import uuid
 from pathlib import Path
 
 import pytest
+
+from tests._fixtures._host_pool import lease_unix_host
+
+# Docker container hosts require an SSH-based UnixHost parent (see
+# DockerContainerHost._make_session: term must be 'ssh').  tomato_seed defaults
+# to telnet (it's first in its valid_terms list), so it cannot host containers.
+# Restrict the docker lease pool to the SSH-first unix peers only.
+_DOCKER_POOL = ("carrot", "pepper")
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -38,15 +48,12 @@ COVERAGERC = PROJECT_ROOT / ".coveragerc"
 # is merged into the parent test run's coverage data.
 COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
-# Serialize every test in this file on a single xdist worker. Each test
-# DOES use a unique ``OTTO_COMPOSE_SUFFIX`` (via ``fresh_suffix``) and
-# staging is now keyed on the compose-project name, so the staging-dir
-# race that originally motivated this group is gone — but parallelizing
-# 4 ``docker compose up`` operations against the same daemon ends up
-# *slower* due to docker-daemon-level serialization on image/network
-# state, which makes each test slower without reducing wall time. Single
-# worker keeps each test fast and the total deterministic.
-pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
+# Each test leases one docker-capable host from UNIX_POOL via the
+# ``docker_host`` fixture below.  The per-host fd-flock ensures no two
+# tests run against the same daemon concurrently; xdist distributes tests
+# freely across workers so all three daemons are used in parallel,
+# cutting the docker-e2e wall time by ~3×.
+pytestmark = [pytest.mark.integration]
 
 
 # ---------------------------------------------------------------------------
@@ -96,13 +103,32 @@ def _run_otto(
 
 
 @pytest.fixture
+def docker_host(tmp_path_factory) -> str:  # type: ignore[type-arg]
+    """Lease one docker-capable, SSH-based host from the pool for this test's duration.
+
+    Yields the host's seed id, e.g. ``"carrot_seed"``.  The fd-flock on
+    the pool lock file (``unix_pool.<element>``) ensures at most one test
+    runs against each docker daemon at a time, while xdist can distribute
+    different tests to different workers/daemons concurrently.
+
+    The pool is restricted to ``_DOCKER_POOL`` (carrot + pepper) because
+    ``DockerContainerHost`` requires its parent to have ``term='ssh'``.
+    tomato_seed defaults to telnet (telnet is first in its valid_terms),
+    so it cannot serve as a docker container parent.
+    """
+    lock_dir = tmp_path_factory.getbasetemp().parent
+    with lease_unix_host(lock_dir, _DOCKER_POOL) as element:
+        yield f"{element}_seed"
+
+
+@pytest.fixture
 def fresh_suffix() -> str:
     """A short unique compose-project suffix so each test has its own stack."""
     return "e2e-" + uuid.uuid4().hex[:8]
 
 
 @pytest.fixture
-def teardown_after(fresh_suffix, tmp_path):
+def teardown_after(fresh_suffix, docker_host, tmp_path):
     """Yield the suffix; on test exit, ensure the stack is torn down even if
     the test failed mid-flight. Idempotent — `down` is harmless when the
     stack isn't up. Tears down both repo1 and repo2 because the multi-repo
@@ -113,8 +139,9 @@ def teardown_after(fresh_suffix, tmp_path):
     yield fresh_suffix
     # Run a single ``otto docker down`` against both repos so any partially-
     # created repo2 stack from a multi-repo test is cleaned up too.
+    # Pass --on <docker_host> so down targets the same daemon the test used.
     _run_otto(
-        "docker", "down",
+        "docker", "down", "--on", docker_host,
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
         compose_suffix=fresh_suffix,
@@ -126,35 +153,35 @@ def teardown_after(fresh_suffix, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_up_then_down(teardown_after, tmp_path):
+def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
     """The bug that started this whole thread: `otto docker up` must build
     images first when the compose file references locally-built ones."""
     suffix = teardown_after
-    up = _run_otto("docker", "up", "--on", "pepper_seed",
+    up = _run_otto("docker", "up", "--on", docker_host,
                    xdir=tmp_path, compose_suffix=suffix)
     assert up.returncode == 0, (
         f"`docker up` should succeed end-to-end\n"
         f"stdout:\n{up.stdout}\nstderr:\n{up.stderr}"
     )
     assert "container(s) registered" in up.stdout
-    assert "pepper_seed.repo1.api" in up.stdout
+    assert f"{docker_host}.repo1.api" in up.stdout
     assert "pull access denied" not in (up.stdout + up.stderr), \
         "we must build before composing — pull errors mean we didn't"
 
-    down = _run_otto("docker", "down", "--on", "pepper_seed",
+    down = _run_otto("docker", "down", "--on", docker_host,
                      xdir=tmp_path, compose_suffix=suffix)
     assert down.returncode == 0, down.stderr
     assert "stack down" in down.stdout
 
 
-def test_e2e_host_run_against_running_container(teardown_after, tmp_path):
+def test_e2e_host_run_against_running_container(teardown_after, docker_host, tmp_path):
     """Once a stack is up, `otto host <id> run` must execute inside the container."""
     suffix = teardown_after
-    up = _run_otto("docker", "up", "--on", "pepper_seed",
+    up = _run_otto("docker", "up", "--on", docker_host,
                    xdir=tmp_path, compose_suffix=suffix)
     assert up.returncode == 0, up.stderr
 
-    run = _run_otto("host", "pepper_seed.repo1.api", "run", "cat /etc/repo1-marker.txt",
+    run = _run_otto("host", f"{docker_host}.repo1.api", "run", "cat /etc/repo1-marker.txt",
                     xdir=tmp_path, compose_suffix=suffix)
     assert run.returncode == 0, (
         f"`otto host <container> run` should reach the running container\n"
@@ -163,24 +190,24 @@ def test_e2e_host_run_against_running_container(teardown_after, tmp_path):
     assert "repo1-fixture" in run.stdout, run.stdout
 
 
-def test_e2e_host_put_get_roundtrip(teardown_after, tmp_path):
+def test_e2e_host_put_get_roundtrip(teardown_after, docker_host, tmp_path):
     """Two-step put / get through `docker cp` and the parent's SSH."""
     suffix = teardown_after
-    up = _run_otto("docker", "up", "--on", "pepper_seed",
+    up = _run_otto("docker", "up", "--on", docker_host,
                    xdir=tmp_path, compose_suffix=suffix)
     assert up.returncode == 0, up.stderr
 
     payload = tmp_path / "payload.bin"
     payload.write_bytes(b"e2e-payload-" + b"\xab" * 256)
 
-    put = _run_otto("host", "pepper_seed.repo1.api", "put", str(payload), "/tmp",
+    put = _run_otto("host", f"{docker_host}.repo1.api", "put", str(payload), "/tmp",
                     xdir=tmp_path, compose_suffix=suffix)
     assert put.returncode == 0, f"put failed:\n{put.stderr}"
     assert "Transfer complete" in put.stdout
 
     out_dir = tmp_path / "back"
     out_dir.mkdir()
-    get = _run_otto("host", "pepper_seed.repo1.api", "get", "/tmp/payload.bin", str(out_dir),
+    get = _run_otto("host", f"{docker_host}.repo1.api", "get", "/tmp/payload.bin", str(out_dir),
                     xdir=tmp_path, compose_suffix=suffix)
     assert get.returncode == 0, f"get failed:\n{get.stderr}"
     assert (out_dir / "payload.bin").read_bytes() == payload.read_bytes()
@@ -191,15 +218,15 @@ def test_e2e_host_put_get_roundtrip(teardown_after, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_up_is_idempotent(teardown_after, tmp_path):
+def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
     """A second `otto docker up` against a running stack must not fail or
     re-create containers."""
     suffix = teardown_after
-    first = _run_otto("docker", "up", "--on", "pepper_seed",
+    first = _run_otto("docker", "up", "--on", docker_host,
                       xdir=tmp_path, compose_suffix=suffix)
     assert first.returncode == 0, first.stderr
 
-    second = _run_otto("docker", "up", "--on", "pepper_seed",
+    second = _run_otto("docker", "up", "--on", docker_host,
                        xdir=tmp_path, compose_suffix=suffix)
     assert second.returncode == 0, (
         f"second `up` against a running stack must succeed\n"
@@ -208,14 +235,14 @@ def test_e2e_up_is_idempotent(teardown_after, tmp_path):
     assert "container(s) registered" in second.stdout
 
 
-def test_e2e_build_then_build_again_is_skipped(tmp_path):
+def test_e2e_build_then_build_again_is_skipped(docker_host, tmp_path):
     """`otto docker build` followed by `otto docker build` must short-circuit
     on `docker image inspect`."""
-    first = _run_otto("docker", "build", "--on", "pepper_seed",
+    first = _run_otto("docker", "build", "--on", docker_host,
                       xdir=tmp_path)
     assert first.returncode == 0, first.stderr
 
-    second = _run_otto("docker", "build", "--on", "pepper_seed",
+    second = _run_otto("docker", "build", "--on", docker_host,
                        xdir=tmp_path)
     assert second.returncode == 0, second.stderr
     assert "cached" in second.stdout, (
@@ -223,11 +250,11 @@ def test_e2e_build_then_build_again_is_skipped(tmp_path):
     )
 
 
-def test_e2e_build_rebuild_forces(tmp_path):
+def test_e2e_build_rebuild_forces(docker_host, tmp_path):
     """`--rebuild` must run the build even when the hash tag exists."""
-    _run_otto("docker", "build", "--on", "pepper_seed", xdir=tmp_path)
+    _run_otto("docker", "build", "--on", docker_host, xdir=tmp_path)
 
-    forced = _run_otto("docker", "build", "--rebuild", "--on", "pepper_seed",
+    forced = _run_otto("docker", "build", "--rebuild", "--on", docker_host,
                        xdir=tmp_path)
     assert forced.returncode == 0, forced.stderr
     assert "built" in forced.stdout, forced.stdout
@@ -239,14 +266,14 @@ def test_e2e_build_rebuild_forces(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_e2e_multi_repo_only_active_lab_runs(teardown_after, tmp_path):
+def test_e2e_multi_repo_only_active_lab_runs(teardown_after, docker_host, tmp_path):
     """With both repo1 (veggies) and repo2 (fruits) loaded but only the
     veggies lab active, `otto docker up` must only operate on repo1.
     Repo2's grape_seed isn't in the active lab, so it must be skipped
     cleanly — never raise a `host not in lab` error."""
     suffix = teardown_after
     up = _run_otto(
-        "docker", "up", "--on", "pepper_seed",
+        "docker", "up", "--on", docker_host,
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
         compose_suffix=suffix,
@@ -257,14 +284,14 @@ def test_e2e_multi_repo_only_active_lab_runs(teardown_after, tmp_path):
     )
     assert "not in lab" not in (up.stdout + up.stderr), \
         "repo2 (fruits-lab host) must be filtered, not raise"
-    # repo1's stack came up.
-    assert "pepper_seed.repo1.api" in up.stdout
+    # repo1's stack came up on the leased host.
+    assert f"{docker_host}.repo1.api" in up.stdout
     # repo2 must be skipped *entirely* — not just deployed to a different
     # host. `_up` prints "<repo> (<project>): N container(s) registered"
     # for every composed repo, so any mention of "repo2" means it was
     # composed. Asserting against the `grape_seed.…` host id alone would
-    # miss a regression where `--on pepper_seed` wrongly overrode repo2's
-    # lab filter and composed it on pepper as `pepper_seed.repo2.worker`
+    # miss a regression where `--on <host>` wrongly overrode repo2's
+    # lab filter and composed it on that host as `<host>.repo2.worker`
     # — the pre-b466020 bug that leaked an otto-repo2 network every run
     # until docker's address pool was exhausted.
     assert "repo2" not in up.stdout, (
@@ -273,16 +300,24 @@ def test_e2e_multi_repo_only_active_lab_runs(teardown_after, tmp_path):
     )
 
 
-def test_e2e_multi_repo_down_no_traceback(tmp_path):
-    """The exact command the user hit: `otto docker down` with both repos in
-    SUT_DIRS must not raise a Python traceback for the unrelated lab."""
+def test_e2e_multi_repo_down_no_traceback(docker_host, tmp_path):
+    """With both repos in SUT_DIRS, `otto docker down` must not raise a
+    Python traceback for the unrelated lab.
+
+    Repo2 targets the fruits lab (grape_seed) which is not in the active
+    veggies lab. The bug (pre-b466020) raised
+    ``ValueError("Docker host 'grape_seed' is not in lab 'veggies'")``.
+    The fix filters repo2 out before calling compose_down so only repo1
+    is processed. ``--on`` is required because repo1's compose spec has
+    no ``default_host``; the host must be in the active lab to pass
+    the _select_repos guard.
+    """
     result = _run_otto(
-        "docker", "down",
+        "docker", "down", "--on", docker_host,
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
     )
-    # Even if nothing is up, the command must exit cleanly without a
-    # ValueError("Docker host 'grape_seed' is not in lab 'veggies'") traceback.
+    # Even if nothing is up, the command must exit cleanly without a traceback.
     assert "Traceback" not in (result.stdout + result.stderr), \
         f"unexpected traceback:\n{result.stderr}"
     assert "not in lab" not in (result.stdout + result.stderr)
@@ -295,15 +330,23 @@ def test_e2e_multi_repo_down_no_traceback(tmp_path):
 
 def test_e2e_list_hosts_includes_declared_container(tmp_path):
     """Containers must appear in `--list-hosts` *before* any `up` so the user
-    can tab-complete and prepare commands."""
+    can tab-complete and prepare commands.
+
+    With no ``default_host`` in repo1's compose spec, all three docker-capable
+    hosts are pre-registered, so the output must contain at least one
+    ``<element>_seed.repo1.api`` id.
+    """
     result = _run_otto("--list-hosts", "host", xdir=tmp_path)
     # The flag prints the host list and exits non-zero in some paths;
-    # accept either rc as long as the id is mentioned.
+    # accept either rc as long as at least one declared container id appears.
     output = result.stdout + result.stderr
-    assert "pepper_seed.repo1.api" in output, output
+    declared = [f"{el}_seed.repo1.api" for el in ("carrot", "tomato", "pepper")]
+    assert any(h in output for h in declared), (
+        f"expected at least one of {declared} in output:\n{output}"
+    )
 
 
-def test_e2e_run_against_unstarted_container_auto_starts(teardown_after, tmp_path):
+def test_e2e_run_against_unstarted_container_auto_starts(teardown_after, docker_host, tmp_path):
     """Accessing a declared container whose stack isn't running must
     auto-start the stack (feature de361cc) rather than erroring.
 
@@ -313,7 +356,7 @@ def test_e2e_run_against_unstarted_container_auto_starts(teardown_after, tmp_pat
     """
     suffix = teardown_after
     result = _run_otto(
-        "host", "pepper_seed.repo1.api", "run", "true",
+        "host", f"{docker_host}.repo1.api", "run", "true",
         xdir=tmp_path, compose_suffix=suffix,
     )
     output = result.stdout + result.stderr
@@ -338,12 +381,12 @@ def test_e2e_up_unknown_host_clear_error(tmp_path):
     assert "Traceback" not in output, f"unexpected traceback:\n{output}"
 
 
-def test_e2e_ps_lists_running_containers(teardown_after, tmp_path):
+def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
     """After `up`, `otto docker ps` must show the running container."""
     suffix = teardown_after
-    _run_otto("docker", "up", "--on", "pepper_seed",
+    _run_otto("docker", "up", "--on", docker_host,
               xdir=tmp_path, compose_suffix=suffix)
-    ps = _run_otto("docker", "ps", "--on", "pepper_seed",
+    ps = _run_otto("docker", "ps", "--on", docker_host,
                    xdir=tmp_path, compose_suffix=suffix)
     assert ps.returncode == 0, ps.stderr
     # Expect the project name (or the container name embedding it) somewhere.

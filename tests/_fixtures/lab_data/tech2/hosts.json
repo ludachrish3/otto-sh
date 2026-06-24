@@ -25,7 +25,6 @@
         "resources": [
             "apple"
         ],
-        "hop": "orange_seed",
         "labs": [
             "fruits"
         ]
@@ -42,7 +41,6 @@
         "resources": [
             "grape"
         ],
-        "hop": "apple_seed",
         "labs": [
             "fruits"
         ]

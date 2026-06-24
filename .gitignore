@@ -40,5 +40,8 @@ docs/_build
 # Claude files
 .claude
 
+# Superpowers SDD scratch (task briefs, reports, diffs, progress ledger)
+.superpowers/
+
 # Generated JSON Schema (otto schema export default output)
 /schemas/

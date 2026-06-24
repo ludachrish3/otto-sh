@@ -61,5 +61,4 @@ context = "${sut_dir}/docker"
 
 [[docker.composes]]
 path = "${sut_dir}/docker/compose.yml"
-default_host = "pepper_seed"
 services = ["api"]

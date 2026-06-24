@@ -7,6 +7,7 @@
         "valid_terms": ["ssh", "telnet"],
         "valid_transfers": ["scp", "sftp", "ftp", "nc"],
         "is_virtual": true,
+        "docker_capable": true,
         "creds": {
             "vagrant": "vagrant",
             "test": "Password1"
@@ -26,6 +27,7 @@
         "valid_terms": ["telnet", "ssh"],
         "valid_transfers": ["nc", "scp", "sftp", "ftp"],
         "is_virtual": true,
+        "docker_capable": true,
         "creds": {
             "vagrant": "vagrant",
             "test": "Password1"
@@ -46,7 +48,6 @@
         "valid_transfers": ["scp", "sftp", "ftp", "nc"],
         "is_virtual": true,
         "docker_capable": true,
-        "hop": "carrot_seed",
         "creds": {
             "vagrant": "vagrant",
             "test": "Password1"

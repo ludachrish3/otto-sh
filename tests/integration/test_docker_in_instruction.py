@@ -17,6 +17,7 @@ from otto.configmodule.repo import Repo
 from otto.docker import build_images, composed
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
+from tests._fixtures._host_pool import lease_unix_host
 
 REPO1_DIR = Path(__file__).parent.parent / "repo1"
 
@@ -26,8 +27,17 @@ REPO1_DIR = Path(__file__).parent.parent / "repo1"
 pytestmark = pytest.mark.xdist_group("docker_e2e")
 
 
+@pytest.fixture(scope="module")
+def pepper_lease(tmp_path_factory):
+    """Hold the pepper fd-flock for the entire module so no e2e docker test
+    can race against the integration docker tests on the same daemon."""
+    lock_dir = tmp_path_factory.getbasetemp().parent
+    with lease_unix_host(lock_dir, ["pepper"]) as _element:
+        yield _element
+
+
 @pytest_asyncio.fixture
-async def parent_lab():
+async def parent_lab(pepper_lease):
     parent = UnixHost(
         ip="10.10.200.13",
         element="pepper",

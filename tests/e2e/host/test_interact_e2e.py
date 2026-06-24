@@ -18,9 +18,10 @@ Running::
     uv run pytest tests/e2e/host/test_interact_e2e.py \\
         -m integration -v --override-ini 'addopts='
 
-All tests carry ``@pytest.mark.xdist_group("interact_e2e")`` so pytest-xdist
-pins them to a single worker and concurrent runs don't race on the shared
-Vagrant VMs.
+Tests are split into two xdist groups — ``interact_e2e_ssh`` and
+``interact_e2e_telnet`` — so pytest-xdist can run the ssh and telnet
+parametrizations concurrently on separate workers without racing on the
+shared Vagrant VMs.
 """
 
 from __future__ import annotations
@@ -131,8 +132,14 @@ def login_session(request, tmp_path_factory):
 
 
 @pytest.mark.integration
-@pytest.mark.xdist_group("interact_e2e")
-@pytest.mark.parametrize("login_session", ["ssh", "telnet"], indirect=True)
+@pytest.mark.parametrize(
+    "login_session",
+    [
+        pytest.param("ssh", marks=pytest.mark.xdist_group("interact_e2e_ssh")),
+        pytest.param("telnet", marks=pytest.mark.xdist_group("interact_e2e_telnet")),
+    ],
+    indirect=True,
+)
 class TestHostLoginSession:
     """Drive ``otto host carrot_seed --term {term} login`` end-to-end.
 
@@ -185,8 +192,13 @@ class TestHostLoginSession:
 
 
 @pytest.mark.integration
-@pytest.mark.xdist_group("interact_e2e")
-@pytest.mark.parametrize("term", ["ssh", "telnet"])
+@pytest.mark.parametrize(
+    "term",
+    [
+        pytest.param("ssh", marks=pytest.mark.xdist_group("interact_e2e_ssh")),
+        pytest.param("telnet", marks=pytest.mark.xdist_group("interact_e2e_telnet")),
+    ],
+)
 class TestHostLoginSigwinch:
     """Exercise the SIGWINCH-forwarding branches of run_ssh_login / run_telnet_login.
 

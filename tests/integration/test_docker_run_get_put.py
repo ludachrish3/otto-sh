@@ -16,6 +16,7 @@ from otto.configmodule.repo import Repo
 from otto.docker import build_images, compose_down, compose_up
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
+from tests._fixtures._host_pool import lease_unix_host
 
 REPO1_DIR = Path(__file__).parent.parent / "repo1"
 
@@ -25,8 +26,17 @@ REPO1_DIR = Path(__file__).parent.parent / "repo1"
 pytestmark = pytest.mark.xdist_group("docker_e2e")
 
 
+@pytest.fixture(scope="module")
+def pepper_lease(tmp_path_factory):
+    """Hold the pepper fd-flock for the entire module so no e2e docker test
+    can race against the integration docker tests on the same daemon."""
+    lock_dir = tmp_path_factory.getbasetemp().parent
+    with lease_unix_host(lock_dir, ["pepper"]) as _element:
+        yield _element
+
+
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def stack():
+async def stack(pepper_lease):
     """Bring up repo1's compose stack on pepper once per module, yield the api
     container host to all tests, then tear down. Module scope avoids paying
     ~10s of compose_up overhead for each of the 10+ tests in this file —
@@ -53,11 +63,11 @@ async def stack():
 
     build_results = await build_images(repo, parent, rebuild=False)
     assert build_results["api"][0] in (Status.Success, Status.Skipped)
-    hosts = await compose_up(repo, lab)
+    hosts = await compose_up(repo, lab, on=parent.id)
     try:
         yield hosts["api"]
     finally:
-        await compose_down(repo, lab)
+        await compose_down(repo, lab, on=parent.id)
         await parent.close()
 
 

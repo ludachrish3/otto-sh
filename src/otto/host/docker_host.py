@@ -233,7 +233,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
         try:
             hosts = await compose_up(
-                repo, lab, project_name=self.compose_project, build=False
+                repo, lab,
+                on=self.parent.id,
+                project_name=self.compose_project,
+                build=False,
             )
         except Exception as e:
             raise RuntimeError(

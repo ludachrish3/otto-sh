@@ -96,12 +96,13 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     suite_names = {s['name'] for s in entry['suites']}
     assert 'test-instruction' in instruction_names
     assert {'TestDevice', 'TestCoverageProduct'} <= suite_names
-    # Host IDs from tests/lab_data/tech1/hosts.json — co-cached alongside
-    # instructions/suites so `otto host <TAB>` hits the fast path.
+    # Host IDs from tests/_fixtures/lab_data/tech1/hosts.json — co-cached
+    # alongside instructions/suites so `otto host <TAB>` hits the fast path.
     assert {'carrot_seed', 'tomato_seed', 'pepper_seed'} <= set(entry['hosts'])
     # docker-capable parents are cached separately so `otto docker --on <TAB>`
-    # only suggests hosts that can actually run containers.
-    assert entry['docker_hosts'] == ['pepper_seed']
+    # only suggests hosts that can actually run containers. All three veggies
+    # VMs are docker-capable (carrot/tomato gained docker for the e2e pool).
+    assert entry['docker_hosts'] == ['carrot_seed', 'pepper_seed', 'tomato_seed']
 
 
 def test_slow_path_seeds_cache_with_option_schemas(tmp_path: Path) -> None:
