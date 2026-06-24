@@ -49,11 +49,16 @@ COVERAGERC = PROJECT_ROOT / ".coveragerc"
 COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
 # Each test leases one docker-capable host from UNIX_POOL via the
-# ``docker_host`` fixture below.  The per-host fd-flock ensures no two
-# tests run against the same daemon concurrently; xdist distributes tests
-# freely across workers so all three daemons are used in parallel,
-# cutting the docker-e2e wall time by ~3×.
-pytestmark = [pytest.mark.integration]
+# ``docker_host`` fixture below, and runs ``otto`` as subprocesses under
+# subprocess coverage (COVERAGE_PROCESS_START).  These tests are pinned to a
+# single xdist worker via ``xdist_group("docker_e2e")``: spreading
+# subprocess-coverage docker tests across workers makes several workers
+# finalize coverage concurrently, which trips a coverage.py SQLite
+# schema-init race ("no such table: context") during ``cov.save()``.  The
+# per-host fd-flock still guards against same-daemon contention.
+# (Un-grouping these for daemon-pool parallelism in 248d15b reintroduced the
+# race; see tests/integration/test_docker_*.py, which kept the group.)
+pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("docker_e2e")]
 
 
 # ---------------------------------------------------------------------------
