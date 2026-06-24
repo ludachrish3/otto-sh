@@ -123,3 +123,32 @@ Reservation checks are a CLI concern — `open_context` does not gate on them.
 If your script needs to verify reservations before running, call
 `otto.reservations.check_reservations(...)` explicitly before entering the
 block.
+
+## In-memory labs (no lab file)
+
+You do not need a `hosts.json` on disk. Build a `Lab` from host dicts, install
+it as the active context, and the zero-argument selectors (`all_hosts`,
+`get_host`) operate on it directly — useful for tests and ad-hoc scripts.
+Selection touches no network, so this runs as-is:
+
+```{doctest}
+>>> import re
+>>> from otto.storage.factory import create_host_from_dict
+>>> from otto.configmodule.lab import Lab
+>>> from otto.context import OttoContext, set_context, reset_context
+>>> from otto.configmodule import all_hosts, get_host
+>>> hosts = [create_host_from_dict(spec) for spec in [
+...     {"ip": "10.0.0.11", "element": "carrot", "creds": {"admin": "x"}, "labs": ["veg"]},
+...     {"ip": "10.0.0.12", "element": "tomato", "creds": {"admin": "x"}, "labs": ["veg"]},
+... ]]
+>>> lab = Lab(name="veg", hosts={h.id: h for h in hosts})
+>>> token = set_context(OttoContext(lab=lab))
+>>> [h.element for h in all_hosts(re.compile("tomato"))]
+['tomato']
+>>> get_host("carrot").element
+'carrot'
+>>> reset_context(token)
+```
+
+The trailing `reset_context` restores the prior active context — always pair it
+with `set_context` (or use `otto.open_context`, which does both for you).

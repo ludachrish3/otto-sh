@@ -92,16 +92,17 @@ repo a "base" for shared conventions and others its overlays.
 
 ## Non-standard SSH port
 
-```python
-from otto.host import UnixHost
-from otto.host.options import SshOptions
-
-host = UnixHost(
-    ip='10.10.200.12',
-    creds={'admin': 'secret'},
-    element='lab',
-    ssh_options=SshOptions(port=2222),
-)
+```{doctest}
+>>> from otto.host import UnixHost
+>>> from otto.host.options import SshOptions
+>>> host = UnixHost(
+...     ip='10.10.200.12',
+...     creds={'admin': 'secret'},
+...     element='lab',
+...     ssh_options=SshOptions(port=2222),
+... )
+>>> host.ssh_options.port
+2222
 ```
 
 Equivalent `hosts.json` entry:
@@ -140,17 +141,18 @@ surfaced in config (for readers of the JSON file):
 Open a tunnel to an internal web service every time the SSH
 connection is created:
 
-```python
-from otto.host.options import LocalPortForward, SshOptions
-
-ssh_options = SshOptions(
-    local_forwards=[
-        LocalPortForward(
-            listen_host='localhost', listen_port=8080,
-            dest_host='web.internal', dest_port=80,
-        ),
-    ],
-)
+```{doctest}
+>>> from otto.host.options import LocalPortForward, SshOptions
+>>> ssh_options = SshOptions(
+...     local_forwards=[
+...         LocalPortForward(
+...             listen_host='localhost', listen_port=8080,
+...             dest_host='web.internal', dest_port=80,
+...         ),
+...     ],
+... )
+>>> ssh_options.local_forwards[0].dest_port
+80
 ```
 
 After any session on this host opens, `curl localhost:8080` on the
@@ -192,12 +194,13 @@ closes.
 
 ## FTPS instead of plain FTP
 
-```python
-import ssl
-from otto.host.options import FtpOptions
-
-ctx = ssl.create_default_context()
-ftp_options = FtpOptions(ssl=ctx, port=990)
+```{doctest}
+>>> import ssl
+>>> from otto.host.options import FtpOptions
+>>> ctx = ssl.create_default_context()
+>>> ftp_options = FtpOptions(ssl=ctx, port=990)
+>>> ftp_options.port
+990
 ```
 
 Or, for a lab-grade "just accept whatever" context:
@@ -211,10 +214,10 @@ ftp_options = FtpOptions(ssl=True)
 The default 16 KiB block size is fine for most links.  On high-latency
 or very high-bandwidth links, a larger block size is a measurable win:
 
-```python
-from otto.host.options import ScpOptions
-
-scp_options = ScpOptions(block_size=262144)  # 256 KiB
+```{doctest}
+>>> from otto.host.options import ScpOptions
+>>> ScpOptions(block_size=262144).block_size  # 256 KiB
+262144
 ```
 
 ## Telnet with live terminal resize
@@ -224,10 +227,10 @@ propagation.  When `auto_window_resize=True` and stdin is a TTY, otto
 installs a SIGWINCH handler that sends a NAWS update to the remote
 side on every local resize, so remote TUIs reflow:
 
-```python
-from otto.host.options import TelnetOptions
-
-telnet_options = TelnetOptions(auto_window_resize=True)
+```{doctest}
+>>> from otto.host.options import TelnetOptions
+>>> TelnetOptions(auto_window_resize=True).auto_window_resize
+True
 ```
 
 Leave it off (the default) for automated runs so captured output stays

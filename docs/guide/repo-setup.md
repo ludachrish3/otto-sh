@@ -102,8 +102,10 @@ occurs:
    and loads the lab(s) specified by `--lab` or `OTTO_LAB`.  Multiple labs
    are merged, combining their hosts.
 
-5. **Config module creation** -- The global `ConfigModule` is created with
-   the loaded repos and lab, making hosts available to all commands.
+5. **Context creation** -- The global `OttoContext` is created with the
+   loaded repos and lab and installed via `set_context()`, making hosts
+   available to the zero-argument accessors (`get_host`, `all_hosts`) in
+   all commands.
 
 ## Multiple repos
 

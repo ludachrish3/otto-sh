@@ -351,6 +351,7 @@ pull documentation from docstrings.
 
 In Python source files (collected by pytest):
 
+<!-- doctest-lint: ignore -->
 ```python
 def add(a: int, b: int) -> int:
     """Add two numbers.

@@ -222,20 +222,20 @@ class OttoSuite(Generic[TOptions]):
 
             The failure report always includes the source location and
             caller locals.  When *msg* is provided it appears *in addition
-            to* the auto-captured source context, never replacing it::
+            to* the auto-captured source context, never replacing it:
 
-                >>> from unittest.mock import MagicMock
-                >>> from otto.suite.suite import OttoSuite
-                >>> suite = OttoSuite()
-                >>> suite._expect_failures = []
-                >>> suite.logger = MagicMock()
-                >>> x = 42
-                >>> suite.expect(x == 99, "math is broken")
-                >>> report = suite._expect_failures[0]
-                >>> "Message: math is broken" in report
-                True
-                >>> "x = 42" in report
-                True
+            >>> from unittest.mock import MagicMock
+            >>> from otto.suite.suite import OttoSuite
+            >>> suite = OttoSuite()
+            >>> suite._expect_failures = []
+            >>> suite.logger = MagicMock()
+            >>> x = 42
+            >>> suite.expect(x == 99, "math is broken")
+            >>> report = suite._expect_failures[0]
+            >>> "Message: math is broken" in report
+            True
+            >>> "x = 42" in report
+            True
 
         .. note::
             The auto-captured source line and locals are best-effort.

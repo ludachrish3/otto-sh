@@ -139,13 +139,13 @@ Start the performance monitor around a workload to capture metrics:
 ```python
 async def test_performance_under_load(self, suite_options) -> None:
     hosts = [get_host("server1"), get_host("server2")]
-    await self.startMonitor(hosts=hosts)
+    await self.start_monitor(hosts=hosts)
 
-    await self.addMonitorEvent("load started", color="green")
+    await self.add_monitor_event("load started", color="green")
     # ... run workload ...
-    await self.addMonitorEvent("load complete", color="red")
+    await self.add_monitor_event("load complete", color="red")
 
-    await self.stopMonitor()
+    await self.stop_monitor()
 ```
 
 Events appear as vertical markers on the dashboard timeline, making it

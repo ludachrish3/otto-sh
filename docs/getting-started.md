@@ -293,27 +293,43 @@ Other useful environment variables:
 
 ## Lab files
 
-A lab is a JSON file that describes the hosts otto can connect to.  Place lab
-files in one of the directories listed in your `labs` setting:
+A lab file is a JSON array of host definitions.  Place lab files in one of the
+directories listed in your `labs` setting; each host joins one or more labs
+through its `labs` field, and `--lab <name>` selects the matching hosts:
 
 ```json
-{
-    "name": "my_lab",
-    "hosts": {
-        "router1": {
-            "ip": "192.168.1.1",
-            "user": "admin",
-            "password": "secret",
-            "term": "ssh"
-        },
-        "switch1": {
-            "ip": "192.168.1.2",
-            "user": "admin",
-            "password": "secret",
-            "term": "telnet"
-        }
+[
+    {
+        "ip": "192.168.1.1",
+        "element": "router1",
+        "os_type": "unix",
+        "valid_terms": ["ssh"],
+        "creds": { "admin": "secret" },
+        "labs": ["my_lab"]
+    },
+    {
+        "ip": "192.168.1.2",
+        "element": "switch1",
+        "os_type": "unix",
+        "valid_terms": ["telnet"],
+        "creds": { "admin": "secret" },
+        "labs": ["my_lab"]
     }
-}
+]
+```
+
+otto loads each entry into a host object — the same dicts build the
+`router1` and `switch1` hosts:
+
+```{doctest}
+>>> from otto.storage.factory import create_host_from_dict
+>>> hosts = [create_host_from_dict(h) for h in [
+...     {"ip": "192.168.1.1", "element": "router1", "os_type": "unix",
+...      "valid_terms": ["ssh"], "creds": {"admin": "secret"}, "labs": ["my_lab"]},
+...     {"ip": "192.168.1.2", "element": "switch1", "os_type": "unix",
+...      "valid_terms": ["telnet"], "creds": {"admin": "secret"}, "labs": ["my_lab"]}]]
+>>> [h.element for h in hosts]
+['router1', 'switch1']
 ```
 
 Verify otto can see your hosts:
@@ -404,6 +420,24 @@ fields. `otto test TestExample --retries -1` fails with a clean CLI error instea
 of being silently accepted. A plain `@dataclass` still works — validation is
 opt-in per Options class. The same `@options` classes work with
 `@instruction(options=...)` for `otto run` subcommands.
+
+The validation runs at construction time, so an out-of-range value is rejected
+before the suite ever runs:
+
+```{doctest}
+>>> from typing import Annotated
+>>> import typer
+>>> from pydantic import Field, ValidationError
+>>> from otto import options
+>>> @options
+... class _Options:
+...     retries: Annotated[int, typer.Option()] = Field(default=3, ge=0)
+>>> _Options().retries
+3
+>>> try: _Options(retries=-1)
+... except ValidationError: print("rejected")
+rejected
+```
 
 ## Monitoring hosts
 

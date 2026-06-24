@@ -85,13 +85,13 @@ You can also start the monitor programmatically from within a single test:
 class TestPerformance(OttoSuite[_Options]):
 
     async def test_load(self, suite_options: _Options) -> None:
-        await self.startMonitor(hosts=[host1, host2])
-        await self.addMonitorEvent("Load started", color="green")
+        await self.start_monitor(hosts=[host1, host2])
+        await self.add_monitor_event("Load started", color="green")
 
         # ... run workload ...
 
-        await self.addMonitorEvent("Load complete", color="red")
-        await self.stopMonitor()
+        await self.add_monitor_event("Load complete", color="red")
+        await self.stop_monitor()
 ```
 
 When both per-suite and `--monitor`-driven session collectors are active,
@@ -222,7 +222,16 @@ register_snmp_metric(
 ```
 
 This follows the same extension pattern as `register_host_parsers` and
-`register_command_frame`.  The `SnmpMetric` dataclass fields are: `oid`,
-`label`, `chart`, `y_title` (default `''`), `unit` (default `''`),
-`tab` (default `'metrics'`), `tab_label` (default `'Metrics'`), and
-`scale` (default `1.0`).
+`register_command_frame`.  The `SnmpMetric` fields are `oid`, `label`,
+`chart`, `y_title`, `unit`, `tab`, `tab_label`, and `scale`; everything
+after `chart` has a default, so a private OID only needs the first three:
+
+```{doctest}
+>>> from otto.monitor.snmp import SnmpMetric
+>>> m = SnmpMetric(oid='1.3.6.1.4.1.99999.1.5.0', label='Fan Speed', chart='Fan',
+...                y_title='RPM', unit='rpm', tab='fans', tab_label='Fans')
+>>> m.tab, m.tab_label, m.scale
+('fans', 'Fans', 1.0)
+>>> SnmpMetric(oid='1.2.3', label='X', chart='C').tab
+'metrics'
+```

@@ -155,9 +155,11 @@ def all_hosts(
         :class:`EmbeddedHost` from the lab configuration.
 
     Examples:
-        >>> import re
-        >>> # assuming hosts: carrot_seed, tomato_seed, pepper_seed
-        >>> seeds = list(all_hosts(re.compile(r"tomato")))  # doctest: +SKIP
+        Filter the active lab's hosts by id pattern (see
+        :doc:`/guide/library-usage` for a runnable, in-memory example)::
+
+            import re
+            seeds = list(all_hosts(re.compile(r"tomato")))
     """
     from ..context import get_context
     yield from get_context().all_hosts(
@@ -212,12 +214,14 @@ async def do_for_all_hosts(
         or a :class:`BaseException` if that host's call failed.
 
     Examples:
-        >>> import re
-        >>> from otto.host import UnixHost
-        >>> results = await do_for_all_hosts(  # doctest: +SKIP
-        ...     UnixHost.oneshot, "uname -a",
-        ...     pattern=re.compile(r"router"),
-        ... )
+        Call an unbound async method on every matching host::
+
+            import re
+            from otto.host import UnixHost
+            results = await do_for_all_hosts(
+                UnixHost.oneshot, "uname -a",
+                pattern=re.compile(r"router"),
+            )
     """
     from ..context import get_context
     return await get_context().do_for_all_hosts(
@@ -277,7 +281,9 @@ async def run_on_all_hosts(
         or a :class:`BaseException` if that host's call failed.
 
     Examples:
-        >>> results = await run_on_all_hosts("uname -a")  # doctest: +SKIP
+        Run a command on every matching host::
+
+            results = await run_on_all_hosts("uname -a")
     """
     from ..context import get_context
     return await get_context().run_on_all_hosts(

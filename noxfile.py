@@ -117,6 +117,8 @@ def docs(session: nox.Session) -> None:
     """Build HTML docs (warnings as errors) and run Sphinx doctests."""
     # Fast RST structural pre-check (title/underline, etc.) before the slow build.
     session.run("doc8", "docs/")
+    session.run("python", "scripts/lint_markdown_doctests.py", "docs/")
     # -E (fresh env) + -a (write all) so the build matches a clean checkout.
     session.run("sphinx-build", "-E", "-a", "-W", "-b", "html", "docs/", "docs/_build/html")
     session.run("sphinx-build", "-E", "-b", "doctest", "docs/", "docs/_build/doctest")
+    session.run("pytest", "-p", "no:cacheprovider", "-o", "addopts=--doctest-modules", "src/otto")

@@ -164,8 +164,8 @@ otto monitor --file metrics.db             # replay saved data
 ```
 
 Monitoring can also be started from within a test suite using
-`await self.startMonitor(hosts=...)` and
-`await self.stopMonitor()`.
+`await self.start_monitor(hosts=...)` and
+`await self.stop_monitor()`.
 
 ## Quick-start example
 

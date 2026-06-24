@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build test coverage coverage-unit coverage-unix coverage-embedded docs docs-html doctest typecheck clean changelog release publish-test publish stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
+.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build test coverage coverage-unit coverage-unix coverage-embedded docs docs-html doctest doctest-src typecheck clean changelog release publish-test publish stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -236,10 +236,11 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.md')    \
                 $(shell find src/otto -name '*.py') \
 
-docs: docs-lint docs-html doctest ## Build HTML docs and run doctests
+docs: docs-lint docs-html doctest doctest-src ## Build HTML docs and run Sphinx + src doctests
 
-docs-lint: ## Fast RST structural lint (doc8) — catches title/underline desync without a full sphinx build
+docs-lint: ## Fast doc lints — doc8 (RST structure) + markdown doctest-fence guard
 	uv run doc8 docs/
+	uv run python scripts/lint_markdown_doctests.py docs/
 
 docs-html: docs/_build/html/index.html ## Build HTML docs only (warnings are errors)
 
@@ -250,6 +251,9 @@ docs/_build/html/index.html: $(SPHINX_SRCS)
 
 doctest: ## Run Sphinx doctests
 	uv run sphinx-build -E -b doctest docs/ docs/_build/doctest
+
+doctest-src: ## Run docstring doctests in src/ (catches private + ::-literal examples Sphinx skips)
+	uv run pytest -p no:cacheprovider -o addopts="--doctest-modules" src/otto
 
 clean: ## Remove all generated artifacts
 	@rm -rf dist
