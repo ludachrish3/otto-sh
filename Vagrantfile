@@ -277,45 +277,20 @@ VERS
         SHELL
     end
 
-    config.vm.define "test1", autostart: false do |test1|
-        test1.vm.network "private_network", ip: "10.10.200.11"
-
-        # Apply test provisioning
-        provision_test_vm(test1, "test1")
-    end
-
-    config.vm.define "test2", autostart: false do |test2|
-        test2.vm.network "private_network", ip: "10.10.200.12"
-
-        # Apply test provisioning
-        provision_test_vm(test2, "test2")
-    end
-
-    config.vm.define "test3", autostart: false do |test3|
-        test3.vm.network "private_network", ip: "10.10.200.13"
-
-        # Apply test provisioning (shared with test1, test2)
-        provision_test_vm(test3, "test3")
-
-        # Install Docker so otto's docker container hosts can use test3 as
-        # their parent. test3 is the only docker-capable VM in the lab data
-        # (`docker_capable: true` on `pepper` in tests/lab_data/tech1/hosts.json).
-        test3.vm.provision "shell", name: "test3 docker", keep_color: true, inline: <<-SHELL
-
-            # Install docker engine + compose v2 plugin from Ubuntu's repos.
-            # `docker-compose-v2` provides `docker compose` (v2 plugin) which
-            # is the spelling otto uses; the legacy `docker-compose` binary
-            # is intentionally not installed.
-            apt -y install  docker.io                \
-                            docker-compose-v2
-
-            # Let the `vagrant` user (the credential otto authenticates as)
-            # talk to the docker socket without sudo. Otto authenticates as
-            # `vagrant` per tests/lab_data/tech1/hosts.json.
-            usermod -aG docker vagrant
-
-            systemctl enable --now docker
-        SHELL
+    # Three interchangeable Unix test VMs — carrot / tomato / pepper. Identical
+    # provisioning (SSH + telnet + FTP via provision_test_vm, plus docker via
+    # provision_docker), so the test suite can lease whichever is free; only the
+    # name and private-network IP differ. Add a peer = one row here.
+    {
+        "test1" => "10.10.200.11",  # carrot
+        "test2" => "10.10.200.12",  # tomato
+        "test3" => "10.10.200.13",  # pepper
+    }.each do |name, ip|
+        config.vm.define name, autostart: false do |node|
+            node.vm.network "private_network", ip: ip
+            provision_test_vm(node, name)
+            provision_docker(node, name)
+        end
     end
 
     # Ubuntu VM that hosts a Zephyr instance under QEMU. otto reaches the
@@ -1173,6 +1148,32 @@ EOF
             # Create an additional user 'test' for SSH and telnet access.
             useradd -m -s /bin/bash test
             echo 'test:Password1' | chpasswd
+        SHELL
+    end
+
+    # Install Docker engine + compose v2 so otto's docker container hosts can
+    # use this VM as their parent. All three Unix test VMs (carrot/tomato/pepper)
+    # get docker, so the docker e2e suite can lease whichever is free and run
+    # against its own daemon — spreading the docker chain off a single host.
+    # A host advertises itself as a docker parent via `docker_capable: true` in
+    # tests/_fixtures/lab_data/tech1/hosts.json (flipped on for carrot+tomato
+    # alongside the docker-e2e pooling test work).
+    def provision_docker(vm, name)
+        vm.vm.provision "shell", name: "#{name} docker", keep_color: true, inline: <<-SHELL
+
+            # Install docker engine + compose v2 plugin from Ubuntu's repos.
+            # `docker-compose-v2` provides `docker compose` (v2 plugin) which
+            # is the spelling otto uses; the legacy `docker-compose` binary
+            # is intentionally not installed.
+            apt -y install  docker.io                \
+                            docker-compose-v2
+
+            # Let the `vagrant` user (the credential otto authenticates as)
+            # talk to the docker socket without sudo. Otto authenticates as
+            # `vagrant` per tests/_fixtures/lab_data/tech1/hosts.json.
+            usermod -aG docker vagrant
+
+            systemctl enable --now docker
         SHELL
     end
 
