@@ -5,6 +5,38 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-06-25
+
+### Added
+
+- converge run/put/get/login onto @cli_exposed
+
+
+### Changed
+
+- speed up the suite — host-pool lease, front-load, docker pooling
+- restructure into unit/integration/e2e tiers + dedup (fable #5)
+- skip host build during otto-host verb completion
+
+
+### Documentation
+
+- harden doctest coverage — execute examples, add gates, drop the +SKIP charade
+- test-suite speedup design + plan + baseline (fable follow-up)
+- spec + plan for test-suite restructure & dedup (fable #5)
+
+
+### Fixed
+
+- put venv on PATH for release-flow tools in Makefile
+- re-group docker-e2e CLI tests to avoid coverage schema-init race
+
+
+### Maintenance
+
+- docker on all three Unix test VMs + DRY their definitions
+
+
 ## [0.5.0] - 2026-06-22
 
 ### Added
@@ -400,7 +432,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/ludachrish3/otto-sh/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ludachrish3/otto-sh/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/ludachrish3/otto-sh/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/ludachrish3/otto-sh/compare/v0.4.3...v0.4.4
