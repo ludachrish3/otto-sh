@@ -2,10 +2,10 @@
 otto host — run commands, transfer files, and log in to lab hosts.
 
 Commands are synthesised dynamically from ``@cli_exposed`` methods on the
-resolved host's class — see :mod:`otto.cli.expose`.
+resolved host's class — see ``otto.cli.expose``.
 """
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich import print as rprint
@@ -107,12 +107,12 @@ def main(
         autocompletion=_host_id_completer,
     )] = "",
     hop: Annotated[str, typer.Option('--hop', help="Host ID to use as an SSH hop to reach the target.")] = "",
-    term: Annotated[Optional[str], typer.Option(
+    term: Annotated[str | None, typer.Option(
         '--term',
         autocompletion=_term_completer,
         help="Override the terminal protocol for this session.",
     )] = None,
-    transfer: Annotated[Optional[str], typer.Option(
+    transfer: Annotated[str | None, typer.Option(
         '--transfer',
         autocompletion=_transfer_completer,
         help="Override the file transfer protocol for this session.",

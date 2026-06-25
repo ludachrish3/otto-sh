@@ -102,7 +102,6 @@ dev = [
     "jsonschema>=4.0",
     "ruff>=0.14.7",
     "sphinx>=8.0",
-    "sphinx-autodoc-typehints>=2.0",
     "doc8>=1.1",
     "ty==0.0.49",
 ]

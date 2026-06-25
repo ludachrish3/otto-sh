@@ -9,6 +9,8 @@ API Reference
    cli/index
    coverage/index
    docker/index
+   models/index
+   context
    logger
    configmodule
    reservations

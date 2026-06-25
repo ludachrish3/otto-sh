@@ -13,7 +13,7 @@ which is also what instructions and suites import directly.
 
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich import print as rprint
@@ -76,7 +76,7 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(h for h in ids if h.startswith(incomplete))
 
 
-def _select_repos(repo_name: Optional[str], on: Optional[str] = None):
+def _select_repos(repo_name: str | None, on: str | None = None):
     """Filter loaded repos by name AND by lab applicability.
 
     A repo is "applicable" if either:
@@ -132,17 +132,17 @@ def _select_repos(repo_name: Optional[str], on: Optional[str] = None):
     return applicable
 
 
-def _resolve_parent_for_repo(repo, lab, on: Optional[str]) -> UnixHost:
+def _resolve_parent_for_repo(repo, lab, on: str | None) -> UnixHost:
     """Reuse compose._resolve_parent — public via private import to avoid duplicate logic."""
     from ..docker.compose import _resolve_parent
     return _resolve_parent(repo, lab, on, list(repo.docker_settings.composes))
 
 
 async def _build(
-    repo: Annotated[Optional[str], typer.Option('--repo', help='Restrict to a single repo by name.')] = None,
-    on: Annotated[Optional[str], typer.Option('--on', help='Lab host id to build on.', autocompletion=_docker_host_completer)] = None,
+    repo: Annotated[str | None, typer.Option('--repo', help='Restrict to a single repo by name.')] = None,
+    on: Annotated[str | None, typer.Option('--on', help='Lab host id to build on.', autocompletion=_docker_host_completer)] = None,
     rebuild: Annotated[bool, typer.Option('--rebuild', help='Force rebuild even if context-hash tag exists.')] = False,
-    image: Annotated[Optional[list[str]], typer.Argument(help='Image names to build (default: all).')] = None,
+    image: Annotated[list[str] | None, typer.Argument(help='Image names to build (default: all).')] = None,
 ) -> None:
     """Build docker images declared in selected repos."""
     lab = get_lab()
@@ -166,8 +166,8 @@ async def _build(
 
 
 async def _up(
-    repo: Annotated[Optional[str], typer.Option('--repo', help='Restrict to a single repo by name.')] = None,
-    on: Annotated[Optional[str], typer.Option('--on', help='Lab host id to compose on.', autocompletion=_docker_host_completer)] = None,
+    repo: Annotated[str | None, typer.Option('--repo', help='Restrict to a single repo by name.')] = None,
+    on: Annotated[str | None, typer.Option('--on', help='Lab host id to compose on.', autocompletion=_docker_host_completer)] = None,
     no_build: Annotated[bool, typer.Option('--no-build', help='Skip the implicit build step before compose up.')] = False,
 ) -> None:
     """Bring up compose stacks for selected repos and register their containers.
@@ -189,8 +189,8 @@ async def _up(
 
 
 async def _down(
-    repo: Annotated[Optional[str], typer.Option('--repo', help='Restrict to a single repo by name.')] = None,
-    on: Annotated[Optional[str], typer.Option('--on', help='Lab host id to compose on.', autocompletion=_docker_host_completer)] = None,
+    repo: Annotated[str | None, typer.Option('--repo', help='Restrict to a single repo by name.')] = None,
+    on: Annotated[str | None, typer.Option('--on', help='Lab host id to compose on.', autocompletion=_docker_host_completer)] = None,
 ) -> None:
     """Tear down compose stacks for selected repos."""
     lab = get_lab()
@@ -212,7 +212,7 @@ async def _down(
 
 
 async def _ps(
-    on: Annotated[Optional[str], typer.Option('--on', help='Specific docker-capable host to query (default: all).', autocompletion=_docker_host_completer)] = None,
+    on: Annotated[str | None, typer.Option('--on', help='Specific docker-capable host to query (default: all).', autocompletion=_docker_host_completer)] = None,
 ) -> None:
     """List running containers on docker-capable lab hosts."""
     lab = get_lab()

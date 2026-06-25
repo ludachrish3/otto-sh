@@ -1,7 +1,7 @@
 """
 Embedded (bare-metal / RTOS) host class.
 
-An :class:`EmbeddedHost` is a network-reached target whose "OS" is a real-time
+An :class:`~otto.host.embedded_host.EmbeddedHost` is a network-reached target whose "OS" is a real-time
 kernel or bare-metal firmware rather than a POSIX system — Zephyr is the first
 concrete example. It is exposed through the *same* :class:`~otto.host.host.Host`
 API as :class:`~otto.host.unix_host.UnixHost` (``run``/``oneshot``/``send``/
@@ -13,13 +13,13 @@ What makes an embedded target different from a Unix host:
 - **One console.** A Zephyr device exposes a *single* shell over telnet. There
   is no second channel and no stateless exec primitive, so ``oneshot`` shares
   the one persistent session with ``run`` and is therefore **not**
-  concurrency-safe (it is on :class:`UnixHost`).
+  concurrency-safe (it is on :class:`~otto.host.unix_host.UnixHost`).
 - **No bash.** No ``$?``, no command substitution, no ``scp``/``ftp``/``nc``.
   Command framing and file transfer cannot reuse the Unix machinery.
 - **Telnet only.** The shell is reached over telnet (optionally through an SSH
   hop), never SSH directly.
 
-Command execution requires a *command frame*: a :class:`CommandFrame` instance
+Command execution requires a *command frame*: a :class:`~otto.host.command_frame.CommandFrame` instance
 that frames each command for the target's RTOS shell over the plain telnet
 transport and parses the output/return-code back. There is **no default frame**
 — a bare :class:`EmbeddedHost` raises ``ValueError`` at construction if none
@@ -48,7 +48,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, NoReturn, Optional, cast
+from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
@@ -111,11 +111,11 @@ class EmbeddedHost(RemoteHost):
     """Default profile selector for a bare :class:`EmbeddedHost`. Subclasses
     (e.g. :class:`ZephyrHost`) override this to their registered name."""
 
-    os_name: Optional[str] = None
+    os_name: str | None = None
     """Kernel/OS name, or None. A bare ``embedded`` host carries no OS name;
     a concrete subclass (e.g. :class:`ZephyrHost`) sets it."""
 
-    os_version: Optional[str] = None
+    os_version: str | None = None
     """OS/kernel version string, or None if unspecified."""
 
     name: str = None  # type: ignore
@@ -125,16 +125,16 @@ class EmbeddedHost(RemoteHost):
     """Users and their respective passwords. Optional — the Zephyr telnet shell
     backend has no login step, so this is empty for a stock Zephyr target."""
 
-    user: Optional[str] = None
+    user: str | None = None
     """User with which to log in, if the shell requires one. Usually unset."""
 
-    element_id: Optional[int] = field(default=None, repr=False)
+    element_id: int | None = field(default=None, repr=False)
     """Network element identifier to which this host belongs."""
 
-    board: Optional[str] = field(default=None, repr=False)
+    board: str | None = field(default=None, repr=False)
     """Name of the board type to which this host belongs."""
 
-    slot: Optional[int] = field(default=None, repr=False)
+    slot: int | None = field(default=None, repr=False)
     """Physical slot number of the board to which this host belongs."""
 
     is_virtual: bool = False
@@ -155,8 +155,8 @@ class EmbeddedHost(RemoteHost):
     """Closed menu of transfer backends this host supports (active is ``transfer``)."""
 
     filesystem: EmbeddedFileSystem = field(default_factory=NoFileSystem)
-    """On-device filesystem variant — e.g. :class:`FatRamFileSystem`,
-    :class:`LittleFsFileSystem`, or :class:`NoFileSystem` (the default).
+    """On-device filesystem variant — e.g. :class:`~otto.host.embedded_filesystem.FatRamFileSystem`,
+    :class:`~otto.host.embedded_filesystem.LittleFsFileSystem`, or :class:`~otto.host.embedded_filesystem.NoFileSystem` (the default).
     Carries the mount path, the optional ``fs mount`` command, and the
     command-formation hooks the transfer code and the embedded monitor's
     disk parser drive. See :mod:`otto.host.embedded_filesystem`.
@@ -166,7 +166,7 @@ class EmbeddedHost(RemoteHost):
     register custom variants via
     :func:`otto.host.embedded_filesystem.register_filesystem`."""
 
-    command_frame: Optional[CommandFrame] = None
+    command_frame: CommandFrame | None = None
     """Shell-framing *dialect* for this target's console — how a command is
     wrapped in sentinels and how output/retcode are parsed back. There is NO
     default: a bare ``embedded`` host carries no dialect, so a frame is
@@ -182,7 +182,7 @@ class EmbeddedHost(RemoteHost):
     independent of the transport, so it is handed straight to the
     :class:`~otto.host.session.SessionManager`."""
 
-    loader: Optional[BinaryLoader] = None
+    loader: BinaryLoader | None = None
     """Binary-load strategy for this target's runtime (e.g. Zephyr LLEXT).
     Unlike ``command_frame`` it is *optional* — many embedded hosts never load
     binaries. Lab data declares it by string in the ``loader`` field (e.g.
@@ -196,9 +196,9 @@ class EmbeddedHost(RemoteHost):
     supplies an empty or relative ``dest_dir``. When left at the default
     (an empty ``Path()``), ``__post_init__`` resolves it to
     ``filesystem.mount`` so generic fan-out callers like
-    :func:`do_for_all_hosts` don't have to branch on host type. Override
+    ``do_for_all_hosts`` don't have to branch on host type. Override
     in lab data to land transfers somewhere other than the FS root. See
-    :attr:`RemoteHost.default_dest_dir`."""
+    :attr:`~otto.host.remote_host.RemoteHost.default_dest_dir`."""
 
     max_filename_len: int = 255
     """Upper bound on the basename length (including extension) accepted by
@@ -207,12 +207,12 @@ class EmbeddedHost(RemoteHost):
     enforces a tighter limit (e.g. ``32`` for a Zephyr build that sets
     ``CONFIG_FS_FATFS_MAX_LFN=32`` / ``CONFIG_FS_LITTLEFS_NAME_MAX=32``,
     or ``12`` for a stock FAT 8.3 build without LFN support). See
-    :attr:`RemoteHost.max_filename_len`."""
+    :attr:`~otto.host.remote_host.RemoteHost.max_filename_len`."""
 
     telnet_options: TelnetOptions = field(default_factory=TelnetOptions, repr=False)
     """Connection options for the telnet shell (port, cols/rows, etc.)."""
 
-    snmp: Optional[SnmpOptions] = field(default=None, repr=False)
+    snmp: SnmpOptions | None = field(default=None, repr=False)
     """Optional SNMP polling config (lab ``snmp`` block). When set, otto's
     monitor collects this host's metrics over SNMP — a separate channel from
     the single telnet console — instead of running shell commands. See
@@ -224,15 +224,15 @@ class EmbeddedHost(RemoteHost):
     owns the toolchain matching its target ABI — a Zephyr 3.7 bed and a 4.4 bed
     declare different SDKs.  Defaults to system-installed tools."""
 
-    hop: Optional[str] = None
+    hop: str | None = None
     """Host ID of the intermediate SSH hop used to reach this host, or None."""
 
     resources: set[str] = field(default_factory=set[str])
     """Names of resources required to use this host."""
 
     interfaces: dict[str, str] = field(default_factory=dict, repr=False)
-    """Named secondary interface addresses (see :attr:`RemoteHost.interfaces`).
-    Resolve with :meth:`address_for`."""
+    """Named secondary interface addresses (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
+    Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 
     products: list['Product'] = field(default_factory=list)
     """Software-under-test deployed to this host. Default empty. See
@@ -397,7 +397,7 @@ class EmbeddedHost(RemoteHost):
     ) -> CommandStatus:
         """Execute a single command on the embedded host via the persistent shell session.
 
-        Like :meth:`UnixHost._run_one`, the session is stateful and **sequential
+        Like ``UnixHost._run_one``, the session is stateful and **sequential
         only** — the embedded target has a single console, so concurrent
         ``run()`` calls would corrupt the session.
         """
@@ -413,10 +413,10 @@ class EmbeddedHost(RemoteHost):
     ) -> CommandStatus:
         """Run a single command on the embedded host.
 
-        Unlike :meth:`UnixHost.oneshot`, this is **not** concurrency-safe: an
+        Unlike :meth:`~otto.host.unix_host.UnixHost.oneshot`, this is **not** concurrency-safe: an
         embedded target exposes a single console with no stateless exec
         primitive, so ``oneshot`` runs on the same persistent session as
-        :meth:`run`. It exists for API parity; use :meth:`run` for stateful
+        ``run``. It exists for API parity; use ``run`` for stateful
         workflows.
         """
         if is_dry_run():
@@ -429,7 +429,7 @@ class EmbeddedHost(RemoteHost):
         Note: an embedded target has a single console. Opening a second named
         session opens a second telnet connection to the device, which most
         RTOS shell backends do not accept concurrently. Prefer the default
-        session via :meth:`run`.
+        session via ``run``.
         """
         if is_dry_run():
             self._log_command(f"[DRY RUN] open_session({name!r})")
@@ -661,7 +661,7 @@ class ZephyrHost(EmbeddedHost):
     os_type: OsType = 'zephyr'
     """Profile selector recorded on the host. ``zephyr`` for this class."""
 
-    os_name: Optional[str] = 'Zephyr'
+    os_name: str | None = 'Zephyr'
     """Kernel/OS name — ``Zephyr`` for this class."""
 
     command_frame: CommandFrame = field(default_factory=ZephyrFrame)

@@ -28,7 +28,7 @@ class RepeatRunner:
     ----------
     run_cmds:
         Async callable that accepts a ``list[str] | str`` and returns a
-        :class:`RunResult`.  Typically bound to ``Host.run``.
+        :class:`~otto.host.host.RunResult`.  Typically bound to ``Host.run``.
     """
 
     def __init__(

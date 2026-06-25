@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build test coverage coverage-unit coverage-unix coverage-embedded docs docs-html doctest doctest-src typecheck clean changelog release publish-test publish stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
+.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build test coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck clean changelog release publish-test publish stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -255,6 +255,16 @@ docs-lint: ## Fast doc lints — doc8 (RST structure) + markdown doctest-fence g
 	uv run python scripts/lint_markdown_doctests.py docs/
 
 docs-html: docs/_build/html/index.html ## Build HTML docs only (warnings are errors)
+
+docs-inventories: ## Refresh vendored intersphinx inventories in docs/_inventories/
+	mkdir -p docs/_inventories
+	curl -sSL --retry 3 -o docs/_inventories/python.inv     https://docs.python.org/3/objects.inv
+	curl -sSL --retry 3 -o docs/_inventories/typer.inv      https://typer.tiangolo.com/objects.inv
+	curl -sSL --retry 3 -o docs/_inventories/rich.inv       https://rich.readthedocs.io/en/stable/objects.inv
+	curl -sSL --retry 3 -o docs/_inventories/pydantic.inv   https://docs.pydantic.dev/latest/objects.inv
+	curl -sSL --retry 3 -o docs/_inventories/asyncssh.inv   https://asyncssh.readthedocs.io/en/stable/objects.inv
+	curl -sSL --retry 3 -o docs/_inventories/pytest.inv     https://docs.pytest.org/en/stable/objects.inv
+	curl -sSL --retry 3 -o docs/_inventories/telnetlib3.inv https://telnetlib3.readthedocs.io/en/latest/objects.inv
 
 # -E (fresh env, no stale doctrees) + -a (write all) make a local build match
 # CI's clean build, so incremental state can't mask or invent a warning.

@@ -213,4 +213,7 @@ OPTION_SPEC_RUNTIME_PAIRS: list[tuple[type[OttoModel], type]] = [
     (TftpOptionsSpec, rt.TftpOptions),
 ]
 """Each boundary option spec paired with the runtime dataclass it builds.
-Drives the drift guard so the duplicated field lists cannot silently diverge."""
+Drives the drift guard so the duplicated field lists cannot silently diverge.
+
+:meta hide-value:
+"""

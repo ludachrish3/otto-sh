@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from otto.models import EventRecord, MetricPoint, MetricRecord
-from otto.models.monitor import _RowModel
+from otto.models.monitor import RowModel
 
 
 class TestMetricPoint:
@@ -99,4 +99,4 @@ class TestEventRecord:
 
 
 def test_rowmodel_base_is_lenient():
-    assert _RowModel.model_config['extra'] == 'ignore'
+    assert RowModel.model_config['extra'] == 'ignore'

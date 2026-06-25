@@ -879,10 +879,10 @@ class HostSession:
     ) -> RunResult:
         """Execute one or more commands on this named session.
 
-        Mirrors :meth:`Host.run`: accepts a ``str``, a :class:`ShellCommand`, or a
-        sequence mixing the two, and always returns a :class:`RunResult`. Per-command
-        ``expects`` / ``timeout`` on a :class:`ShellCommand` override the run-level
-        defaults; a scalar :data:`Expect` tuple at the run level is normalized to a
+        Mirrors :meth:`~otto.host.host.Host.run`: accepts a ``str``, a :class:`~otto.host.host.ShellCommand`, or a
+        sequence mixing the two, and always returns a :class:`~otto.host.host.RunResult`. Per-command
+        ``expects`` / ``timeout`` on a :class:`~otto.host.host.ShellCommand` override the run-level
+        defaults; a scalar ``Expect`` tuple at the run level is normalized to a
         one-element list.
         """
         from .host import _normalize_expects, _resolve_command, _run_cmds_with_budget
@@ -909,7 +909,7 @@ class HostSession:
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
     async def send(self, text: str, log: bool = True) -> None:
-        """Send raw text to this session's stdin. See :meth:`UnixHost.send`."""
+        """Send raw text to this session's stdin. See :meth:`~otto.host.unix_host.UnixHost.send`."""
         if log:
             self._log_command(text.rstrip())
         await self._session.send(text)
@@ -919,7 +919,7 @@ class HostSession:
         pattern: str | re.Pattern[str],
         timeout: float = 10.0,
     ) -> str:
-        """Wait for a pattern in this session's output. See :meth:`UnixHost.expect`."""
+        """Wait for a pattern in this session's output. See :meth:`~otto.host.unix_host.UnixHost.expect`."""
         result = await self._session.expect(pattern, timeout)
         self._log_output(result)
         return result

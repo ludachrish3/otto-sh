@@ -8,7 +8,7 @@ silencing, same target construction.
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Optional, cast
+from typing import cast
 
 from ..host.remote_host import RemoteHost
 from .collector import MetricCollector, MonitorTarget
@@ -18,9 +18,9 @@ from .snmp import SnmpClient, SnmpSource, SnmpVersion
 
 def build_monitor_collector(
     hosts: Sequence[RemoteHost],
-    db_path: Optional[Path] = None,
+    db_path: Path | None = None,
 ) -> MetricCollector:
-    """Build a :class:`MetricCollector` over *hosts*, one :class:`MonitorTarget` each.
+    """Build a :class:`~otto.monitor.collector.MetricCollector` over *hosts*, one :class:`~otto.monitor.collector.MonitorTarget` each.
 
     Silences host logging (collection is chatty) and chooses each host's
     collection mode:
@@ -30,7 +30,7 @@ def build_monitor_collector(
       :class:`~otto.monitor.snmp.SnmpClient` (address defaulting to the host's
       own ``ip``) plus the OID list to GET;
     - otherwise it is polled by running shell commands, with its parser set
-      resolved via :func:`get_host_parsers` so per-host customisations
+      resolved via :func:`~otto.monitor.parsers.get_host_parsers` so per-host customisations
       registered by init modules are honoured.
 
     Args:

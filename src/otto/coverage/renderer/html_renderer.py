@@ -1,4 +1,4 @@
-"""Render a :class:`CoverageStore` to an HTML report directory.
+"""Render a :class:`~otto.coverage.store.model.CoverageStore` to an HTML report directory.
 
 The report layout follows the familiar gcovr information architecture:
 
@@ -49,7 +49,7 @@ def _label_for(tier: str) -> str:
 
 
 class HtmlRenderer:
-    """Render a :class:`CoverageStore` to an HTML report directory.
+    """Render a :class:`~otto.coverage.store.model.CoverageStore` to an HTML report directory.
 
     Args:
         output_dir: Directory to write the report into (created if needed).

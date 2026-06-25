@@ -31,7 +31,7 @@ import re
 import time
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, AsyncGenerator, Generator, Optional, cast
+from typing import Any, AsyncGenerator, Generator, cast
 
 import pytest
 import pytest_asyncio
@@ -86,8 +86,8 @@ class OttoPlugin:
         duration: int = 0,
         monitor: bool = False,
         monitor_interval: float = 5.0,
-        monitor_output: Optional[Path] = None,
-        monitor_hosts: Optional[str] = None,
+        monitor_output: Path | None = None,
+        monitor_hosts: str | None = None,
     ) -> None:
         self._sut_test_dirs = sut_test_dirs or []
         self._stability_collector = stability_collector

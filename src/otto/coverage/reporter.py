@@ -4,7 +4,7 @@ This module replaces the old ``Pipeline`` class.  It does **not** fetch
 ``.gcda`` files (that is handled by ``otto test --cov`` via
 :class:`~otto.coverage.fetcher.remote.GcdaFetcher`).  Instead it takes
 directories of already-collected ``.gcda`` files, merges them with
-``lcov``, loads the results into a :class:`CoverageStore`, and renders
+``lcov``, loads the results into a :class:`~otto.coverage.store.model.CoverageStore`, and renders
 an HTML report.
 
 Coverage tiers are user-defined.  The reporter accepts an ordered list
@@ -49,10 +49,12 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# An ordered tier specification: ``(tier_name, info_path_or_None)``.
-# A ``None`` path is only valid for the implicit ``system`` tier, which
-# is produced by merging the supplied ``.gcda`` directories with lcov.
 TierSpec = tuple[str, Path | None]
+"""An ordered coverage tier specification: ``(tier_name, info_path_or_None)``.
+
+A ``None`` path is only valid for the implicit ``system`` tier, which is
+produced by merging the supplied ``.gcda`` directories with lcov.
+"""
 
 
 def _read_cov_meta(cov_dirs: list[Path]) -> dict[str, Any]:
@@ -113,7 +115,7 @@ def read_cov_source_roots(cov_dirs: list[Path]) -> dict[str, Path]:
 def read_cov_toolchains(cov_dirs: list[Path]) -> dict[str, Toolchain]:
     """Read per-host toolchain info from coverage metadata.
 
-    Returns a mapping of host directory name → :class:`Toolchain`.
+    Returns a mapping of host directory name → :class:`~otto.host.toolchain.Toolchain`.
     If no toolchain info is present in the metadata, returns an empty dict.
     """
     from ..host.toolchain import Toolchain
@@ -269,7 +271,7 @@ class CoverageReporter:
         """Execute the coverage merge, load, and render pipeline.
 
         Returns:
-            A populated :class:`CoverageStore` with all coverage data.
+            A populated :class:`~otto.coverage.store.model.CoverageStore` with all coverage data.
         """
         from ..host.local_host import LocalHost
 
@@ -380,7 +382,7 @@ async def run_coverage_report(
     subdirs, and runs :class:`CoverageReporter`.
 
     Returns:
-        The populated :class:`CoverageStore`, or ``None`` if no coverage
+        The populated :class:`~otto.coverage.store.model.CoverageStore`, or ``None`` if no coverage
         data is available (no metadata file or no gcda subdirs found).
     """
     try:

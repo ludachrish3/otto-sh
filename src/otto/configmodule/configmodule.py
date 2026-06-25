@@ -119,9 +119,10 @@ def all_hosts(
     """Yield the active lab's real remote hosts, optionally filtered by regex.
 
     This is the *fleet* generator: it yields every network-reached
-    :class:`RemoteHost` in the active lab — both :class:`UnixHost`
-    (SSH/telnet to a shell) and :class:`EmbeddedHost` (telnet to an RTOS
-    console). :class:`DockerContainerHost` entries are skipped by default
+    :class:`~otto.host.remote_host.RemoteHost` in the active lab — both
+    :class:`~otto.host.unix_host.UnixHost`
+    (SSH/telnet to a shell) and :class:`~otto.host.embedded_host.EmbeddedHost` (telnet to an RTOS
+    console). :class:`~otto.host.docker_host.DockerContainerHost` entries are skipped by default
     because containers aren't operated on as part of the host fleet
     (e.g. ``otto monitor``, coverage collection); containers remain
     reachable for targeted use via tab completion and ``get_host``.
@@ -132,27 +133,28 @@ def all_hosts(
             ``pattern.search()``.  When *None* (the default), all hosts
             are yielded.
         include_containers: When ``True``, also yield
-            :class:`DockerContainerHost` entries. Defaults to ``False``.
-        term, transfer: optional active-protocol override; see :func:`_apply_option_overrides`.
+            :class:`~otto.host.docker_host.DockerContainerHost` entries. Defaults to ``False``.
+        term, transfer: optional active-protocol override; see
+            ``_apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides. When
             supplied, each yielded host is a fresh
             :func:`dataclasses.replace`-style copy whose corresponding
             ``*_options`` field is replaced by the caller's instance
             (wholesale replacement, not per-key merge). The new host has
-            a fresh :class:`ConnectionManager` constructed with the
+            a fresh :class:`~otto.host.connections.ConnectionManager` constructed with the
             override options, so the override values shape whichever
             connection opens first. Stored hosts in ``lab.hosts`` are
             untouched. Override keys that don't correspond to a field on
             a given host are silently dropped — e.g. ``ssh_options`` is
-            ignored for an :class:`EmbeddedHost`, which only carries
+            ignored for an :class:`~otto.host.embedded_host.EmbeddedHost`, which only carries
             ``telnet_options``. When no applicable overrides remain, the
             stored instance is yielded as-is so identity is preserved.
             Hop resolution is internal and is *not* affected by overrides.
 
     Yields:
-        RemoteHost: Each matching :class:`UnixHost` or
-        :class:`EmbeddedHost` from the lab configuration.
+        RemoteHost: Each matching :class:`~otto.host.unix_host.UnixHost` or
+        :class:`~otto.host.embedded_host.EmbeddedHost` from the lab configuration.
 
     Examples:
         Filter the active lab's hosts by id pattern (see
@@ -202,7 +204,8 @@ async def do_for_all_hosts(
             When ``False``, execute serially.
         include_containers: Forwarded to :func:`all_hosts`. When
             ``False`` (default), container hosts are excluded.
-        term, transfer: optional active-protocol override; see :func:`_apply_option_overrides`.
+        term, transfer: optional active-protocol override; see
+            ``_apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides
             forwarded to :func:`all_hosts`. See its docstring for
@@ -258,7 +261,7 @@ async def run_on_all_hosts(
     ftp_options: 'FtpOptions | None' = None,
     nc_options: 'NcOptions | None' = None,
 ) -> 'dict[str, RunResult | BaseException]':
-    """Run commands on every matching host via :meth:`UnixHost.run`.
+    """Run commands on every matching host via :meth:`~otto.host.host.BaseHost.run`.
 
     Convenience wrapper around :func:`do_for_all_hosts` for the most
     common use case.
@@ -271,13 +274,14 @@ async def run_on_all_hosts(
         timeout: Per-host timeout forwarded to ``run``.
         include_containers: Forwarded to :func:`do_for_all_hosts`. When
             ``False`` (default), container hosts are excluded.
-        term, transfer: optional active-protocol override; see :func:`_apply_option_overrides`.
+        term, transfer: optional active-protocol override; see
+            ``_apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides
             forwarded to :func:`do_for_all_hosts`.
 
     Returns:
-        A dict keyed by host ID.  Values are :class:`RunResult` instances,
+        A dict keyed by host ID.  Values are :class:`~otto.host.host.RunResult` instances,
         or a :class:`BaseException` if that host's call failed.
 
     Examples:
@@ -319,13 +323,14 @@ def get_host(
 
     Args:
         host_id: Unique host id (as produced by ``UnixHost.id``).
-        term, transfer: optional active-protocol override; see :func:`_apply_option_overrides`.
+        term, transfer: optional active-protocol override; see
+            ``_apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
         ftp_options, nc_options: Optional per-call option overrides.
             Each non-``None`` argument **replaces** the corresponding
             ``*_options`` field on a returned copy wholesale; the copy is
             built via :func:`dataclasses.replace` so the new host's
-            :class:`ConnectionManager` is constructed with the override
+            :class:`~otto.host.connections.ConnectionManager` is constructed with the override
             options from the start. The stored host (and any connection
             it owns) is untouched. With no overrides, the stored
             instance is returned unchanged so

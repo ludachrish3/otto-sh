@@ -57,7 +57,7 @@ class PosixFileOps:
     async def rm(
         self, path: "str | Path", recursive: bool = False, force: bool = False
     ) -> tuple[Status, str]:
-        """Remove *path* (``rm``; *recursive*→``-r``, *force*→``-f``)."""
+        """Remove *path* (``rm``; *recursive* → ``-r``, *force* → ``-f``)."""
         flags = "".join(f for f, on in (("r", recursive), ("f", force)) if on)
         opt = f"-{flags} " if flags else ""
         result = await self.oneshot(f"rm {opt}{self._q(path)}")  # ty: ignore[unresolved-attribute]
@@ -67,7 +67,7 @@ class PosixFileOps:
     async def cp(
         self, src: "str | Path", dst: "str | Path", recursive: bool = False
     ) -> tuple[Status, str]:
-        """Copy *src* to *dst* on the host (``cp``; *recursive*→``-r``)."""
+        """Copy *src* to *dst* on the host (``cp``; *recursive* → ``-r``)."""
         opt = "-r " if recursive else ""
         result = await self.oneshot(  # ty: ignore[unresolved-attribute]
             f"cp {opt}{self._q(src)} {self._q(dst)}"

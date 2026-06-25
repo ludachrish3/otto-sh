@@ -46,12 +46,12 @@ async def discover_toolchain_from_gcno(
 
     Args:
         gcno_dir: Directory containing ``.gcno`` files from the build.
-        localhost: :class:`LocalHost` for running shell commands.
+        localhost: :class:`~otto.host.local_host.LocalHost` for running shell commands.
         work_dir: Directory for writing wrapper scripts (Clang only).
             If ``None``, defaults to ``gcno_dir / '_toolchain_work'``.
 
     Returns:
-        A :class:`Toolchain` if discovery succeeds, ``None`` otherwise.
+        A :class:`~otto.host.toolchain.Toolchain` if discovery succeeds, ``None`` otherwise.
     """
     result = await localhost.oneshot(
         f"find {gcno_dir} -name '*.gcno' -type f | head -5",
@@ -87,7 +87,7 @@ async def discover_toolchain_from_gcno(
 
 
 def toolchain_from_gcov(gcov: Path) -> Toolchain:
-    """Build a :class:`Toolchain` from an explicitly-configured gcov binary.
+    """Build a :class:`~otto.host.toolchain.Toolchain` from an explicitly-configured gcov binary.
 
     A ``.gcno`` embeds no compiler path, and not every build system is CMake,
     so a cross-toolchain is named directly in the repo config

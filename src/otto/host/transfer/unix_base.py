@@ -25,7 +25,7 @@ class UnixFileTransfer(BaseFileTransfer):
     """Common unix scaffolding shared by all SSH/Telnet transfer backends.
 
     Stores the two mandatory unix fields (``_connections``, ``_exec_cmd``),
-    provides :meth:`_warmup_for_transfer` (concurrent strategy-probe + pool
+    provides ``_warmup_for_transfer`` (concurrent strategy-probe + pool
     warming), and supplies a no-op :meth:`prepare` that subclasses override
     when they need a real probe.
     """

@@ -41,7 +41,7 @@ import threading
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..logger import get_otto_logger
 
@@ -136,7 +136,7 @@ class _SessionLogFile:
     """
 
     def __init__(self, log_path: Path, host_name: str) -> None:
-        self._file: Optional[Any] = None
+        self._file: Any | None = None
         self._host_name = host_name
         try:
             self._file = log_path.open('a', encoding='utf-8')
@@ -175,7 +175,7 @@ class _SessionLogFile:
             self._file = None
 
 
-def _session_log_path() -> Optional[Path]:
+def _session_log_path() -> Path | None:
     """Return the path to the current invocation's ``otto.log``, if any."""
     try:
         output_dir = logger.output_dir
@@ -187,7 +187,7 @@ def _session_log_path() -> Optional[Path]:
 
 
 async def _pump_stdin_to_remote(
-    stdin_queue: 'asyncio.Queue[Optional[bytes]]',
+    stdin_queue: 'asyncio.Queue[bytes | None]',
     write_remote: Callable[[bytes], Awaitable[None]],
 ) -> None:
     """Forward stdin chunks to the remote side until EOF or ``Ctrl+]``.
@@ -231,7 +231,7 @@ async def _pump_remote_to_stdout(
 
 def _spawn_stdin_reader(
     loop: asyncio.AbstractEventLoop,
-    stdin_queue: 'asyncio.Queue[Optional[bytes]]',
+    stdin_queue: 'asyncio.Queue[bytes | None]',
     shutdown: threading.Event,
 ) -> 'asyncio.Future[None]':
     """Spawn a worker thread that feeds stdin chunks into ``stdin_queue``.
@@ -323,7 +323,7 @@ async def _run_bridge(
     read_remote: Callable[[], Awaitable[bytes]],
     install_sigwinch: Callable[[], Callable[[], None]],
     on_output_line: Callable[[str], None],
-    banner: Optional[str] = None,
+    banner: str | None = None,
 ) -> None:
     """Shared interactive bridge loop used by SSH and telnet login paths.
 
@@ -356,7 +356,7 @@ async def _run_bridge(
         except (NotImplementedError, RuntimeError) as exc:
             logger.debug(f"SIGWINCH forwarding unavailable: {exc}")
 
-    stdin_queue: 'asyncio.Queue[Optional[bytes]]' = asyncio.Queue()
+    stdin_queue: 'asyncio.Queue[bytes | None]' = asyncio.Queue()
     shutdown = threading.Event()
     reader_future = _spawn_stdin_reader(loop, stdin_queue, shutdown)
 

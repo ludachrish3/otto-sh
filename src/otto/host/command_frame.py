@@ -90,7 +90,7 @@ class CommandFrame(ABC):
 
     type_name: ClassVar[str]
     """Lab-data string for this dialect (e.g. ``'bash'``). Looked up against
-    :data:`_FRAME_CLASSES` by the storage factory; unique across frames."""
+    ``_FRAME_CLASSES`` by the storage factory; unique across frames."""
 
     streams_output_live: ClassVar[bool] = False
     """Whether this dialect's raw inter-marker byte stream is already clean
@@ -334,7 +334,7 @@ class ZephyrSerialFrame(ZephyrFrame):
     once, up front — ``shell echo off`` is a stock builtin. The readiness marker
     (rejected as an unknown command) still comes back via the shell's error
     handler, which is shell *output*, not input echo, so the probe is
-    unaffected. Mirrors :class:`repo1's ZephyrInlineRetcodeFrame` for 2.7.
+    unaffected. Mirrors ``repo1's ZephyrInlineRetcodeFrame`` for 2.7.
     """
 
     type_name = "zephyr-serial"

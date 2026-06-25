@@ -114,7 +114,7 @@ import re
 import shutil
 from dataclasses import dataclass as _dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Optional
+from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
     from ..suite.plugin import StabilityCollector
@@ -148,16 +148,16 @@ class TestRunOptions:
     threshold: float = 100.0
     results: str = ""
     cov: bool = False
-    cov_dir: Optional[Path] = None
+    cov_dir: Path | None = None
     cov_clean: bool = True  # matches the --cov-clean CLI default
     cov_report: bool = False
-    cov_report_dir: Optional[Path] = None
+    cov_report_dir: Path | None = None
     overwrite_cov_report_dir: bool = False
     project_name: str = "Coverage Report"
     monitor: bool = False
     monitor_interval: float = 5.0
-    monitor_output: Optional[Path] = None
-    monitor_hosts: Optional[str] = None
+    monitor_output: Path | None = None
+    monitor_hosts: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ def run_suite(
     )
     options_plugin = OttoOptionsPlugin(opts_instance)
 
-    collector: Optional['StabilityCollector'] = None
+    collector: 'StabilityCollector | None' = None
     if is_stability:
         from ..suite.plugin import StabilityCollector as _StabilityCollector
         collector = _StabilityCollector()
@@ -414,7 +414,7 @@ def main(
         '--cov',
         help='Collect gcov coverage from remote hosts after the suite finishes.',
     )] = False,
-    cov_dir: Annotated[Optional[Path], typer.Option(
+    cov_dir: Annotated[Path | None, typer.Option(
         '--cov-dir',
         help=(
             'Directory to write coverage data to. Implies --cov. '
@@ -441,7 +441,7 @@ def main(
             'Implies --cov. Default location: <output_dir>/cov_report.'
         ),
     )] = False,
-    cov_report_dir: Annotated[Optional[Path], typer.Option(
+    cov_report_dir: Annotated[Path | None, typer.Option(
         '--cov-report-dir',
         help=(
             'Directory to write the HTML coverage report to. '
@@ -471,14 +471,14 @@ def main(
         help='Sampling interval for --monitor.',
         min=1.0,
     )] = 5.0,
-    monitor_output: Annotated[Optional[Path], typer.Option(
+    monitor_output: Annotated[Path | None, typer.Option(
         '--monitor-output', metavar='PATH',
         help=(
             'Override the destination for monitor data. Format inferred from '
             'suffix (.json or .db). Default: <output_dir>/monitor.json.'
         ),
     )] = None,
-    monitor_hosts: Annotated[Optional[str], typer.Option(
+    monitor_hosts: Annotated[str | None, typer.Option(
         '--monitor-hosts', metavar='REGEX',
         help='Regex matched against host IDs to restrict --monitor (re.search).',
     )] = None,
@@ -585,7 +585,7 @@ async def _cov_clean_remotes(repos: list['Repo']) -> None:
 async def _run_coverage(
     repos: list['Repo'],
     log_dir: Path,
-    cov_dir_override: Optional[Path] = None,
+    cov_dir_override: Path | None = None,
 ) -> None:
     """Collect ``.gcda`` coverage from Unix and/or embedded hosts into the cov dir.
 

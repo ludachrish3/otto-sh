@@ -2,13 +2,13 @@
 Abstract base for network-reached hosts.
 
 ``RemoteHost`` is the common ancestor of every host class that talks to a
-target across a network — :class:`UnixHost` (SSH/Telnet to a bash shell),
-:class:`EmbeddedHost` (telnet to an RTOS shell), and any future siblings such
-as a Windows-host class. It is deliberately distinct from :class:`LocalHost`,
+target across a network — :class:`~otto.host.unix_host.UnixHost` (SSH/Telnet to a bash shell),
+:class:`~otto.host.embedded_host.EmbeddedHost` (telnet to an RTOS shell), and any future siblings such
+as a Windows-host class. It is deliberately distinct from :class:`~otto.host.local_host.LocalHost`,
 which runs commands on the local machine and shares no network plumbing.
 
 History: this name used to belong to the *concrete* SSH/Telnet bash host.
-That class is now :class:`UnixHost`; ``RemoteHost`` is the abstract parent.
+That class is now :class:`~otto.host.unix_host.UnixHost`; ``RemoteHost`` is the abstract parent.
 The split makes the OS family of a host explicit (lab data carries an
 ``os_type`` field) and gives embedded targets a place to live alongside Unix
 ones without lying about their shape.
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, cast
+from typing import TYPE_CHECKING, cast
 
 from ..logger import get_otto_logger
 from .host import BaseHost
@@ -68,8 +68,8 @@ def make_host_id(
 OsType = str
 """Profile selector recorded on a host (the ``os_type`` field).
 
-Built-ins: ``unix`` (:class:`UnixHost`), ``embedded`` (generic
-:class:`EmbeddedHost`), ``zephyr`` (:class:`ZephyrHost`). Custom profiles add
+Built-ins: ``unix`` (:class:`~otto.host.unix_host.UnixHost`), ``embedded`` (generic
+:class:`~otto.host.embedded_host.EmbeddedHost`), ``zephyr`` (:class:`~otto.host.embedded_host.ZephyrHost`). Custom profiles add
 more names. The base *family* (unix vs embedded) is derived from the host
 class, not from this string.
 """
@@ -78,7 +78,7 @@ class, not from this string.
 class RemoteHost(BaseHost):
     """Abstract base class for any host reached over a network.
 
-    Concrete subclasses (:class:`UnixHost`, :class:`EmbeddedHost`) supply the
+    Concrete subclasses (:class:`~otto.host.unix_host.UnixHost`, :class:`~otto.host.embedded_host.EmbeddedHost`) supply the
     transport-specific session/transfer machinery as ``@dataclass`` fields.
     Do not instantiate this class directly.
 
@@ -116,41 +116,41 @@ class RemoteHost(BaseHost):
     log: bool
     """Whether this host logs its output to stdout and log files."""
 
-    user: Optional[str]
+    user: str | None
     """User with which to log in, or None to use the first entry in ``creds``."""
 
-    element_id: Optional[int]
+    element_id: int | None
     """Network element identifier, or None when no disambiguation is needed."""
 
-    board: Optional[str]
+    board: str | None
     """Board type name, or None."""
 
-    slot: Optional[int]
+    slot: int | None
     """Physical slot number of the board, or None."""
 
-    hop: Optional[str]
+    hop: str | None
     """Host ID of the intermediate hop used to reach this host, or None."""
 
     os_type: OsType
     """Profile selector recorded on this host (see :data:`OsType`). The base
     *family* (unix vs embedded) is derived from the host class, not this string."""
 
-    os_name: Optional[str]
+    os_name: str | None
     """Kernel/OS name (e.g. ``Linux``, ``Zephyr``)."""
 
-    os_version: Optional[str]
+    os_version: str | None
     """OS/kernel version string, or None if unspecified."""
 
     default_dest_dir: Path
-    """Per-host default directory that :meth:`put` / :meth:`get` resolve a
+    """Per-host default directory that ``put`` / ``get`` resolve a
     relative or empty ``dest_dir`` against. Lets a fan-out helper like
-    :func:`do_for_all_hosts` pass one generic destination (``Path()``) and
+    ``do_for_all_hosts`` pass one generic destination (``Path()``) and
     have each host land the files where its filesystem actually lives —
     e.g. ``/RAM:`` on a Zephyr FAT target, ``/lfs`` on a Zephyr LittleFS
     target. Defaults to ``Path()`` on Unix, which preserves the existing
     "relative path lands in the SSH user's home" behavior."""
 
-    snmp: Optional[SnmpOptions]
+    snmp: "SnmpOptions | None"
     """Optional per-host SNMP polling config (lab ``snmp`` block), or None. When
     set, otto's monitor collects this host over SNMP instead of by running shell
     commands. Declared on both concrete subclasses; see

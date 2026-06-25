@@ -104,10 +104,12 @@ class BaseFileTransfer(ABC):
     """
 
     host_families: frozenset[str] = frozenset()
-    """Host families this backend serves: a subset of ``{'unix', 'embedded'}``.
+    """
+    Host-family selectors this backend serves — a subset of ``{'unix', 'embedded'}``.
     Subclasses declare it; the spec field_validator rejects a backend on a host
     of the wrong family. A backend with an empty set can never validate and is
-    rejected at registration."""
+    rejected at registration.
+    """
 
     @classmethod
     def create(cls, ctx: "TransferContext") -> "BaseFileTransfer":

@@ -4,7 +4,7 @@ reservations
 The reservations package gates every live-lab subcommand on whether the
 effective user actually holds the resources the selected lab needs.
 It is pluggable: the check itself is fixed, but the "who has what
-reserved?" query is answered by a :class:`ReservationBackend`
+reserved?" query is answered by a :class:`~otto.reservations.protocol.ReservationBackend`
 implementation — shipped ones, or your own class selected by dotted
 path in ``.otto/settings.toml``.
 
@@ -20,7 +20,7 @@ Package summary
 The backend contract
 --------------------
 
-Third-party backends implement the :class:`ReservationBackend`
+Third-party backends implement the :class:`~otto.reservations.protocol.ReservationBackend`
 Protocol.  The contract is deliberately small — three read-only
 methods, no write methods of any kind.  Otto never mutates scheduler
 state.
@@ -96,7 +96,7 @@ Extension points for implementers
 
 A custom backend needs three pieces:
 
-1. **A class** that satisfies :class:`ReservationBackend`.  The
+1. **A class** that satisfies :class:`~otto.reservations.protocol.ReservationBackend`.  The
    Protocol is ``@runtime_checkable``, so stock ``isinstance`` checks
    work, but Protocol satisfaction is structural — no explicit
    inheritance is required (and none is recommended).

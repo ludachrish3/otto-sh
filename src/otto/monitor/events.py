@@ -34,19 +34,19 @@ class MonitorEvent:
     """Human-readable description shown on hover in the dashboard."""
 
     source: str = 'manual'
-    """Origin of the event: 'manual' (dashboard UI), 'user_code' (test code), or 'auto' (lifecycle)."""
+    """Who created this event — ``'manual'`` (dashboard UI), ``'user_code'`` (test code), or ``'auto'`` (lifecycle)."""
 
     color: str = '#888888'
     """CSS color for the vertical marker line (hex, named color, or rgb())."""
 
     dash: str = 'dash'
-    """Plotly line dash style. One of: solid, dot, dash, longdash, dashdot, longdashdot."""
+    """Plotly line dash style — one of ``solid``, ``dot``, ``dash``, ``longdash``, ``dashdot``, ``longdashdot``."""
 
     id: int = 0
     """Unique integer id assigned by MetricCollector on creation (or loaded from SQLite)."""
 
     end_timestamp: datetime | None = None
-    """For span events: when the span ended. None for instantaneous events."""
+    """End timestamp for span events; ``None`` for instantaneous events."""
 
     def to_dict(self) -> dict[str, object]:
         """Serialize to a JSON-safe dict for the dashboard API."""

@@ -1,4 +1,4 @@
-"""Parse lcov ``.info`` files and load them into a :class:`CoverageStore`.
+"""Parse lcov ``.info`` files and load them into a :class:`~otto.coverage.store.model.CoverageStore`.
 
 The lcov ``.info`` format is stable and well-documented:
 https://manpages.ubuntu.com/manpages/focal/man1/geninfo.1.html
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class LCOVLoader:
-    """Parse ``.info`` files and load them into a :class:`CoverageStore`
+    """Parse ``.info`` files and load them into a :class:`~otto.coverage.store.model.CoverageStore`
     under a named tier.
 
     Tier names are free-form strings.  The loader registers each tier

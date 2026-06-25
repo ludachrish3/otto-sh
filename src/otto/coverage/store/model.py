@@ -19,10 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
-# Conventional tier name used by the merged .gcda pipeline.  Any string
-# is a valid tier name — this constant just spares callers a string
-# literal when they mean the canonical system-coverage tier.
 TIER_SYSTEM = "system"
+"""Conventional tier name used by the merged .gcda pipeline.
+
+Any string is a valid tier name; this constant spares callers a string
+literal when they mean the canonical system-coverage tier.
+"""
 
 
 @dataclass

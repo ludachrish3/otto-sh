@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def make_rich_progress_handler(progress: Progress, host_name: str) -> "TransferProgressHandler":
-    """Return a TransferProgressHandler that drives the given Rich Progress bar.
+    """Return a ``TransferProgressHandler`` that drives the given Rich Progress bar.
 
     One task is created per source file, detected by a change in *src_path*.
     The caller is responsible for the Progress context (entering and exiting it).
@@ -47,7 +47,7 @@ def make_rich_progress_handler(progress: Progress, host_name: str) -> "TransferP
 
 
 def make_rich_progress_factory(progress: Progress, host_name: str) -> "TransferProgressFactory":
-    """Return a factory that creates a fresh TransferProgressHandler per file.
+    """Return a factory that creates a fresh ``TransferProgressHandler`` per file.
 
     Each call to the returned factory produces an independent handler with its
     own closure state, so concurrent transfers don't share progress tracking.

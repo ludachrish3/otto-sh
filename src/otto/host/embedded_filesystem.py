@@ -60,7 +60,7 @@ class EmbeddedFileSystem(ABC):
     type_name: ClassVar[str]
     """Lab-data string for this variant (e.g. ``'fat-ram'``).
 
-    Looked up against :data:`_FILESYSTEM_CLASSES` by the storage factory.
+    Looked up against ``_FILESYSTEM_CLASSES`` by the storage factory.
     Must be unique across all registered subclasses.
     """
 

@@ -16,7 +16,7 @@ import asyncio
 import re
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 
@@ -39,7 +39,7 @@ def monitor(
     ctx: typer.Context,
 
     # ── Live mode ─────────────────────────────────────────────────────────
-    hosts: Annotated[Optional[str], typer.Option(
+    hosts: Annotated[str | None, typer.Option(
         '--hosts', metavar='REGEX',
         help='Regex matched against host IDs (via re.search). Default: all hosts.',
     )] = None,
@@ -51,13 +51,13 @@ def monitor(
     )] = 5.0,
 
     # ── Historical mode ───────────────────────────────────────────────────
-    file: Annotated[Optional[Path], typer.Option(
+    file: Annotated[Path | None, typer.Option(
         '--file', '-f', metavar='PATH',
         help='Load historical data from a .db or .json file.',
         exists=True,
     )] = None,
 
-    db: Annotated[Optional[Path], typer.Option(
+    db: Annotated[Path | None, typer.Option(
         help='SQLite file to persist live metric data for later historical viewing.',
     )] = None,
 ):
@@ -129,7 +129,7 @@ async def _run_monitor(
     collector: MetricCollector,
     server: MonitorServer,
     interval: timedelta,
-    duration: Optional[timedelta] = None,
+    duration: timedelta | None = None,
 ) -> None:
     """Run collection and the web server concurrently until Ctrl+C."""
     collection_task = asyncio.create_task(collector.run(interval=interval, duration=duration))

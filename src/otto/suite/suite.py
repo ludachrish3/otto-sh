@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 logger: OttoLogger = getLogger('otto') # type: ignore
 
 TOptions = TypeVar('TOptions')
+"""Type variable for the options dataclass of an :class:`OttoSuite` subclass."""
 
 
 def _sanitize_node_name(name: str) -> str:

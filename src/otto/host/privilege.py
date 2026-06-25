@@ -7,7 +7,7 @@ Shared by the posix-shell hosts (:class:`~otto.host.unix_host.UnixHost`,
 ``_elevate`` hook (``run(sudo=True)``) plus ``switch_user`` / ``as_user``.
 
 **sudo** auto-answers the password prompt through the
-:data:`~otto.host.session.Expect` channel (``run(expects=[...])``) — the
+``Expect`` channel (``run(expects=[...])``) — the
 response is written directly by the session machinery and is never logged.
 
 **su** sends the password via ``send(..., log=False)`` so it is delivered to
@@ -16,7 +16,7 @@ stdin without being emitted to the console or log file.
 The mixin carries no fields and declares ``__slots__ = ()`` so it composes with
 the ``@dataclass(slots=True)`` hosts. Password sourcing is host-specific:
 ``_sudo_password`` / ``_user_password`` default to ``None`` (passwordless) and
-:class:`UnixHost` overrides them from ``creds``.
+:class:`~otto.host.unix_host.UnixHost` overrides them from ``creds``.
 """
 from __future__ import annotations
 
@@ -54,8 +54,8 @@ class PosixPrivilege:
         """``su`` the persistent session to *user* (default root).
 
         Sends ``su [user]`` and auto-answers the password prompt (from
-        *password*, else :meth:`_user_password`). Mutates session state — affects
-        subsequent :meth:`run` calls until the user exits back.
+        *password*, else ``_user_password``). Mutates session state — affects
+        subsequent ``run`` calls until the user exits back.
         """
         target = user or "root"
         cmd = "su" if not user else f"su {shlex.quote(user)}"

@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import (
     Annotated,
     Any,
-    Optional,
     # override,     only available in Python >= 3.12
 )
 
@@ -192,7 +191,7 @@ def main(
         )
     ] = False,
 
-    version: Annotated[ Optional[bool],
+    version: Annotated[ bool | None,
         typer.Option("--version",
                     callback=version_callback,
                     is_eager=True,
@@ -208,7 +207,7 @@ def main(
         ),
     ] = False,
 
-    as_user: Annotated[Optional[str],
+    as_user: Annotated[str | None,
         typer.Option('--as-user',
             metavar='USERNAME',
             help=(

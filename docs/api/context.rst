@@ -1,0 +1,4 @@
+context
+=======
+
+.. automodule:: otto.context

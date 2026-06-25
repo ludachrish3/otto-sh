@@ -1,7 +1,7 @@
 """
 Docker container host.
 
-A :class:`DockerContainerHost` satisfies the otto :class:`Host` protocol by
+A :class:`~otto.host.docker_host.DockerContainerHost` satisfies the otto :class:`~otto.host.host.Host` protocol by
 delegating most operations through a *parent* host that runs the docker
 daemon. ``oneshot`` becomes ``parent.oneshot("docker exec ...")``;
 ``get`` / ``put`` are two-step ``docker cp`` via the parent's filesystem;
@@ -11,10 +11,10 @@ existing SSH connection.
 ``run`` (and ``open_session`` / ``send`` / ``expect``) use a persistent
 ``docker exec -it <ctr> sh`` session multiplexed on the parent's SSH
 connection — shell state (``cd``, env vars, shell vars) persists across
-calls, matching :class:`LocalHost` and :class:`UnixHost`. ``oneshot``
+calls, matching :class:`~otto.host.local_host.LocalHost` and :class:`~otto.host.unix_host.UnixHost`. ``oneshot``
 stays stateless and concurrent-safe.
 
-Persistent-shell support requires an SSH-based :class:`UnixHost` parent.
+Persistent-shell support requires an SSH-based :class:`~otto.host.unix_host.UnixHost` parent.
 Local-host parents and telnet parents are rejected at session-open time —
 the per-call ``oneshot`` path still works against any parent.
 """
@@ -59,9 +59,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     parent: 'Host'
     """The lab host running the docker daemon. Owns auth, hop chain, and
     the SSH connection used to reach the daemon. Typed as
-    :class:`Host` (the protocol) so the type-system surface stays narrow,
+    :class:`~otto.host.host.Host` (the protocol) so the type-system surface stays narrow,
     but ``run`` / ``open_session`` / ``send`` / ``expect`` / ``interact``
-    additionally require an SSH-based :class:`UnixHost` at runtime —
+    additionally require an SSH-based :class:`~otto.host.unix_host.UnixHost` at runtime —
     they open a persistent ``docker exec`` channel on the parent's
     asyncssh connection. ``oneshot`` and file transfer work against any
     parent."""
@@ -83,7 +83,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     so other commands (``logs``, ``ps``, ``down``) can scope correctly."""
 
     name: str = field(default='', init=False)
-    """Human-readable host name. Filled in :meth:`__post_init__`."""
+    """Human-readable host name. Filled in ``__post_init__``."""
 
     id: str = field(default='', init=False)
     """Unique host id used as the key in ``Lab.hosts`` and on the CLI.
@@ -305,8 +305,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Execute one command on the persistent in-container shell.
 
         Shell state (``cd``, env vars, shell vars) persists across calls,
-        matching :class:`LocalHost` and :class:`UnixHost`. Requires an
-        SSH-based :class:`UnixHost` parent.
+        matching :class:`~otto.host.local_host.LocalHost` and :class:`~otto.host.unix_host.UnixHost`. Requires an
+        SSH-based :class:`~otto.host.unix_host.UnixHost` parent.
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
@@ -459,7 +459,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     def rebuild_connections(self) -> None:
         """Drop any persistent session so the next call reopens it.
 
-        Mirrors :meth:`UnixHost.rebuild_connections` for the
+        Mirrors :meth:`~otto.host.unix_host.UnixHost.rebuild_connections` for the
         ``all_hosts() → host.rebuild_connections()`` pattern that ``otto
         test --cov`` uses to refresh hosts after pytest installs a new
         event loop. The container host doesn't own any raw transport

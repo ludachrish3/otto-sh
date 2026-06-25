@@ -69,7 +69,7 @@ class SshHopTransport:
         """Return the hop SSH connection, creating it via the factory if needed.
 
         ``_visited`` threads the cycle-detection set used by
-        :meth:`RemoteHost._build_hop_transport`'s factory through the
+        ``RemoteHost._build_hop_transport``'s factory through the
         parent chain.  External callers don't need to pass it.
         """
         if self._conn is not None:

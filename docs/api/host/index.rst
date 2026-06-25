@@ -13,6 +13,7 @@ local and remote machines.
    localhost
    dockerhost
    transfer
+   transfer_base
    embedded_filesystem
    session
    connections
@@ -24,3 +25,8 @@ local and remote machines.
    toolchain
    options
    interact
+   product
+   power
+   privilege
+   file_ops
+   binary_loader

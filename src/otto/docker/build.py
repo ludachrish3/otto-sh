@@ -9,7 +9,7 @@ share the exact same code path so semantics never diverge.
 from __future__ import annotations
 
 import shlex
-from typing import Iterable, Optional
+from typing import Iterable
 
 from ..configmodule.repo import DockerImage, DockerSettings, Repo
 from ..host.host import Host
@@ -105,13 +105,13 @@ async def build_images(
     repo: Repo,
     parent: Host,
     *,
-    image_names: Optional[Iterable[str]] = None,
+    image_names: Iterable[str] | None = None,
     rebuild: bool = False,
 ) -> dict[str, tuple[Status, str]]:
     """Build all (or selected) images for *repo* on *parent*.
 
     Args:
-        repo: The :class:`Repo` whose ``[docker]`` settings declare the images.
+        repo: The :class:`~otto.configmodule.repo.Repo` whose ``[docker]`` settings declare the images.
         parent: A docker-capable lab host. Builds happen here.
         image_names: Optional filter — only build images whose ``name`` is
             in this iterable. ``None`` builds everything declared.
@@ -120,8 +120,8 @@ async def build_images(
 
     Returns:
         Mapping of image name to ``(Status, message_or_tag)``. Status is
-        :attr:`Status.Skipped` for images that already existed,
-        :attr:`Status.Success` for fresh builds, and a failure status
+        :attr:`~otto.utils.Status.Skipped` for images that already existed,
+        :attr:`~otto.utils.Status.Success` for fresh builds, and a failure status
         otherwise. The message is the full tag on success/skip, or the
         captured stderr on failure.
     """

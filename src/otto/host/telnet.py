@@ -19,7 +19,6 @@ from dataclasses import (
 )
 from typing import (
     Any,
-    Optional,
 )
 from weakref import WeakSet
 
@@ -128,11 +127,11 @@ class TelnetClient():
     options: TelnetOptions = field(default_factory=TelnetOptions)
     """Connection options. Default reproduces otto's historical behavior."""
 
-    prompt: Optional[str] = None
+    prompt: str | None = None
     """Shell prompt string the device displays after each command (e.g. '$ ' or '# ').
     Used during login to confirm authentication succeeded."""
 
-    connect_port: Optional[int] = None
+    connect_port: int | None = None
     """Override port for ConnectionManager's tunneled case. When None,
     ``options.port`` is used. Keeps tunnel port-forwarding transparent
     to the TelnetOptions carried through the rest of the stack."""
@@ -232,7 +231,7 @@ class TelnetClient():
         Readiness after the password is *not* confirmed here. When no
         ``prompt`` is configured, ``login()`` returns as soon as the password
         is written and the session's marker handshake
-        (:meth:`otto.host.session.ShellSession._ensure_initialized`, which
+        (``ShellSession._ensure_initialized``, which
         runs immediately after) is the deterministic readiness check — it
         reads through any banner/MOTD to a unique sentinel and is bounded by
         a timeout that surfaces a bad-credential login as a clear error.

@@ -16,7 +16,7 @@ from os import listdir
 from pathlib import Path
 from queue import Queue
 from shutil import rmtree
-from typing import Optional, cast
+from typing import cast
 
 from rich.highlighter import NullHighlighter
 from rich.logging import RichHandler
@@ -58,8 +58,8 @@ class OttoLogger(Logger):
         self._xdir: Path
         self._output_dir: Path
         self._rich_logging: bool = False
-        self._listener: Optional[QueueListener] = None
-        self._keep_seconds: Optional[float] = None
+        self._listener: QueueListener | None = None
+        self._keep_seconds: float | None = None
         self._output_dir_atexit_registered: bool = False
 
     @property
@@ -78,7 +78,7 @@ class OttoLogger(Logger):
         return self._output_dir
 
     @property
-    def keep_seconds(self) -> Optional[float]:
+    def keep_seconds(self) -> float | None:
         """Log retention period in seconds, set from --log-days during initialization."""
         return self._keep_seconds
 
@@ -94,7 +94,7 @@ class OttoLogger(Logger):
 
     def create_output_dir(self,
         command: str,
-        subcommand: Optional[str] = None,
+        subcommand: str | None = None,
     ):
         """Set base directory in which logs are written for an invocation.
 
@@ -264,7 +264,7 @@ def init_otto_logger(
 
 
 def get_otto_logger(
-    name: Optional[str] = None,
+    name: str | None = None,
 ) -> OttoLogger:
     """
     Return the OttoLogger hierarchy logger with the specified name.

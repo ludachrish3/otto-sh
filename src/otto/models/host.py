@@ -330,4 +330,7 @@ HOST_SPEC_RUNTIME_PAIRS: list[tuple[type[HostSpec], type]] = [
     (EmbeddedHostSpec, EmbeddedHost),
 ]
 """Each host spec paired with the runtime class it builds. Drives the drift
-guard so a spec field that has no constructor counterpart is caught."""
+guard so a spec field that has no constructor counterpart is caught.
+
+:meta hide-value:
+"""

@@ -20,7 +20,7 @@ from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import aiosqlite
 from pydantic import ValidationError
@@ -324,7 +324,7 @@ class MetricCollector:
 
     async def run(self,
         interval: timedelta = timedelta(seconds=5),
-        duration: Optional[timedelta] = None,
+        duration: timedelta | None = None,
     ) -> None:
         """
         Collect metrics from all hosts on each tick.

@@ -62,7 +62,7 @@ def create_host_from_dict(
     host_data: dict[str, Any],
     preferences: dict[str, dict[str, Any]] | None = None,
 ) -> RemoteHost:
-    """Create the appropriate :class:`RemoteHost` subclass from a host dict.
+    """Create the appropriate :class:`~otto.host.remote_host.RemoteHost` subclass from a host dict.
 
     ``os_type`` selects the profile / class / spec. ``preferences`` is the unified
     ``{selector: {capability_list | option_table}}`` table; for each host the

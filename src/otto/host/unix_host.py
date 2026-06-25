@@ -28,7 +28,7 @@ The `.put()` and `.get()` methods both take a single file or a list of files. De
 value the correct connection type (scp, sftp, ftp, or netcat) is used without being specified as an argument.
 
 History: this class was originally named ``RemoteHost``. With the introduction
-of :class:`EmbeddedHost` for bare-metal/RTOS targets, ``RemoteHost`` is now an
+of :class:`~otto.host.embedded_host.EmbeddedHost` for bare-metal/RTOS targets, ``RemoteHost`` is now an
 abstract base for any network-reached host and the bash-on-SSH/Telnet concrete
 class lives here as ``UnixHost``.
 """
@@ -49,7 +49,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Annotated,
-    Optional,
     cast,
 )
 
@@ -124,32 +123,32 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Default profile selector for a bare :class:`UnixHost`. A custom
     unix-based profile (e.g. ``ubuntu-22.04``) records its own name here."""
 
-    os_name: Optional[str] = 'Linux'
+    os_name: str | None = 'Linux'
     """Kernel/OS name. Defaults to ``Linux`` (the concrete Unix kernel today)."""
 
-    os_version: Optional[str] = None
+    os_version: str | None = None
     """OS/kernel version string, or None if unspecified."""
 
     name: str = None # type: ignore
     """Human readable name to represent the host. Automatically generated if not provided."""
 
-    user: Optional[str] = None
+    user: str | None = None
     """User with which to log in. If not provided, the first user in the `creds` dict will be used."""
 
-    element_id: Optional[int] = field(default=None, repr=False)
+    element_id: int | None = field(default=None, repr=False)
     """Network element identifier to which this host belongs.
     None indicates there are no other NEs of this type and a number is not needed."""
 
-    board: Optional[str] = field(default=None, repr=False)
+    board: str | None = field(default=None, repr=False)
     """Name of the board type to which this host belongs."""
 
-    slot: Optional[int] = field(default=None, repr=False)
+    slot: int | None = field(default=None, repr=False)
     """Phyiscal slot number of the board to which this host belongs."""
 
-    hw_version: Optional[str] = None
+    hw_version: str | None = None
     """Hardware version description."""
 
-    sw_version: Optional[str] = None
+    sw_version: str | None = None
     """Software version description."""
 
     term: str = 'ssh'
@@ -178,13 +177,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     which preserves the existing behavior — SCP/SFTP resolve a relative
     destination against the SSH user's home directory. Override per-host
     to land transfers in a fixed location regardless of the caller's
-    argument. See :attr:`RemoteHost.default_dest_dir`."""
+    argument. See :attr:`~otto.host.remote_host.RemoteHost.default_dest_dir`."""
 
     max_filename_len: int = 255
     """Upper bound on the basename length (including extension) accepted by
     the target's filesystem. Defaults to ``255`` — the Linux ``NAME_MAX``,
     also the cap for ext4 / XFS / Btrfs / NTFS. Lower it for hosts on a
-    tighter filesystem; see :attr:`RemoteHost.max_filename_len` for details.
+    tighter filesystem; see :attr:`~otto.host.remote_host.RemoteHost.max_filename_len` for details.
     Over-limit names are rejected by :meth:`put` / :meth:`get` with a
     self-explaining error instead of an opaque ``File name too long``
     midway through the transfer."""
@@ -209,30 +208,30 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Connection options for netcat file transfers (nc executable, port
     strategy, listener check, etc.)."""
 
-    command_frame: Optional[CommandFrame] = None
+    command_frame: CommandFrame | None = None
     """Shell-framing dialect for this host's bash console. ``None`` (the
     default) lets the :class:`~otto.host.session.SessionManager` use its
     built-in :class:`~otto.host.command_frame.BashFrame`, preserving the
     historical behavior exactly. Lab data may name a registered frame by string
     (resolved in ``__post_init__``); a profile or subclass may supply an
     instance. Promoted to a common field in Phase A so any host can declare its
-    dialect — see :attr:`EmbeddedHost.command_frame`."""
+    dialect — see :attr:`~otto.host.embedded_host.EmbeddedHost.command_frame`."""
 
-    snmp: Optional[SnmpOptions] = field(default=None, repr=False)
+    snmp: SnmpOptions | None = field(default=None, repr=False)
     """Optional SNMP polling config (lab ``snmp`` block). When set, otto's
     monitor collects this host's metrics over SNMP instead of running shell
     commands. SNMP monitoring is not embedded-only — a Unix host may use it to
     poll a real SNMP agent. See :class:`~otto.host.options.SnmpOptions`."""
 
-    hop: Optional[str] = None
+    hop: str | None = None
     """Host ID of the intermediate hop used to reach this host, or None for direct connection."""
 
     resources: set[str] = field(default_factory=set[str])
     """Names of resources required to use this host."""
 
     interfaces: dict[str, str] = field(default_factory=dict, repr=False)
-    """Named secondary interface addresses (see :attr:`RemoteHost.interfaces`).
-    Resolve with :meth:`address_for`."""
+    """Named secondary interface addresses (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
+    Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 
     products: list['Product'] = field(default_factory=list)
     """Software-under-test deployed to this host. Default empty. See
@@ -464,7 +463,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         if self._connections.has_tunnel:
             local_port = await self._connections._forward_port(remote_port)
             connect_host = 'localhost'
-            connect_port: Optional[int] = local_port
+            connect_port: int | None = local_port
         else:
             connect_host = self._connections.ip
             connect_port = None  # TelnetClient will use options.port
@@ -530,7 +529,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ) -> CommandStatus:
         """Run a single command concurrent-safely, independent of the persistent shell.
 
-        Unlike :meth:`run`, this method is **concurrent-safe**: multiple
+        Unlike :meth:`~otto.host.host.BaseHost.run`, this method is **concurrent-safe**: multiple
         ``oneshot()`` calls can run simultaneously via ``asyncio.gather()`` or
         ``asyncio.create_task()`` without corrupting each other or the
         persistent shell session.
@@ -573,7 +572,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             exit code.
 
         See Also:
-            :meth:`run`: stateful, sequential alternative with expect support.
+            :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative with expect support.
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
@@ -582,12 +581,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     async def open_session(self, name: str) -> HostSession:
         """Open a named persistent shell session.
 
-        Unlike :meth:`run`, which uses a single default session, this method
+        Unlike :meth:`~otto.host.host.BaseHost.run`, which uses a single default session, this method
         creates an additional named session that can run commands concurrently
         with the default session (or other named sessions).
 
         The session is established eagerly — any connection errors surface here.
-        Call :meth:`HostSession.close` when done, or use the async context
+        Call :meth:`~otto.host.session.HostSession.close` when done, or use the async context
         manager protocol::
 
             async with (await host.open_session("monitor")) as mon:
@@ -598,12 +597,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 the existing session if it is still alive, or replaces it if dead.
 
         Returns:
-            A :class:`HostSession` proxy exposing ``run``, ``send``,
+            A :class:`~otto.host.session.HostSession` proxy exposing ``run``, ``send``,
             ``expect``, and ``close``.
 
         See Also:
-            :meth:`oneshot`: stateless one-shot alternative.
-            :meth:`run`: default persistent session.
+            :meth:`~otto.host.unix_host.UnixHost.oneshot`: stateless one-shot alternative.
+            :meth:`~otto.host.host.BaseHost.run`: default persistent session.
         """
         if is_dry_run():
             self._log_command(f"[DRY RUN] open_session({name!r})")

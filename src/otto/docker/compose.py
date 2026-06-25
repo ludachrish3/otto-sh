@@ -20,7 +20,7 @@ import contextlib
 import getpass
 import json
 import shlex
-from typing import Any, AsyncIterator, Optional
+from typing import Any, AsyncIterator
 
 from ..configmodule.lab import Lab
 from ..configmodule.repo import DockerCompose, Repo
@@ -62,7 +62,7 @@ def _is_transient_network_race(output: str) -> bool:
     return "failed to set up container networking" in low and "not found" in low
 
 
-def get_user_compose_project(repo_name: str, suffix: Optional[str] = None) -> str:
+def get_user_compose_project(repo_name: str, suffix: str | None = None) -> str:
     """Return a compose project name unique enough to coexist with other runs.
 
     Format: ``otto-<repo>-<suffix>``. *suffix* defaults to the OS username,
@@ -82,7 +82,7 @@ def _safe_username() -> str:
         return "anon"
 
 
-def _resolve_parent(repo: Repo, lab: Lab, on: Optional[str], composes: list[DockerCompose]) -> UnixHost:
+def _resolve_parent(repo: Repo, lab: Lab, on: str | None, composes: list[DockerCompose]) -> UnixHost:
     """Pick a parent host for *repo*'s compose stack.
 
     Order: explicit *on* > the first compose entry's ``default_host`` > error.
@@ -140,7 +140,7 @@ async def _resolve_container_id(
     parent: Host,
     project_name: str,
     service: str,
-) -> Optional[str]:
+) -> str | None:
     """Look up the running container id for ``project_name/service`` on *parent*.
 
     Called right after a successful ``up -d``, where compose has already
@@ -171,8 +171,8 @@ async def compose_up(
     repo: Repo,
     lab: Lab,
     *,
-    on: Optional[str] = None,
-    project_name: Optional[str] = None,
+    on: str | None = None,
+    project_name: str | None = None,
     build: bool = True,
 ) -> dict[str, DockerContainerHost]:
     """Bring up *repo*'s compose stack on a parent host.
@@ -180,13 +180,13 @@ async def compose_up(
     Idempotent at the project-name level: if a stack with the same
     *project_name* is already running on *parent*, this becomes a lookup
     instead of a fresh ``up``. Either way, returns a dict mapping each
-    declared service to its :class:`DockerContainerHost`, with the hosts
+    declared service to its :class:`~otto.host.docker_host.DockerContainerHost`, with the hosts
     also registered in ``lab.hosts`` so ``--list-hosts`` and
     ``otto host <id>`` see them.
 
     Args:
         build: When True (the default) and the repo declares
-            ``[[docker.images]]``, run :func:`build_images` first so locally-
+            ``[[docker.images]]``, run :func:`~otto.docker.build.build_images` first so locally-
             built images exist on the parent before compose tries to pull
             them. The build is idempotent via the context-hash skip, so this
             is cheap when nothing changed. Pass ``build=False`` if the
@@ -298,8 +298,8 @@ async def compose_down(
     repo: Repo,
     lab: Lab,
     *,
-    on: Optional[str] = None,
-    project_name: Optional[str] = None,
+    on: str | None = None,
+    project_name: str | None = None,
     stop_timeout: int = 1,
 ) -> Status:
     """Tear down *repo*'s compose stack and unregister its container hosts.
@@ -352,8 +352,8 @@ async def composed(
     repo: Repo,
     lab: Lab,
     *,
-    on: Optional[str] = None,
-    project_name: Optional[str] = None,
+    on: str | None = None,
+    project_name: str | None = None,
     own: bool = False,
     build: bool = True,
 ) -> AsyncIterator[dict[str, DockerContainerHost]]:

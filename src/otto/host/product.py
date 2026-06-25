@@ -9,7 +9,7 @@ product knows how to stage/install/uninstall/check itself.
 
 It is intentionally **not** a pydantic model — that would force every project
 product into pydantic and diverge from the sibling host strategies
-(:class:`CommandFrame`, :class:`BinaryLoader`, :class:`EmbeddedFileSystem`).
+(:class:`~otto.host.command_frame.CommandFrame`, :class:`~otto.host.binary_loader.BinaryLoader`, :class:`~otto.host.embedded_filesystem.EmbeddedFileSystem`).
 Concrete subclasses pick their own data representation (``@dataclass`` or an
 ``OttoModel``).
 
@@ -69,7 +69,7 @@ class Product(ABC):
 class FileProduct(Product):
     """Convenience base for a product that *is* a single artifact file.
 
-    ``stage()`` transfers the artifact via :meth:`Host.put`. ``name`` defaults to
+    ``stage()`` transfers the artifact via :meth:`~otto.host.host.Host.put`. ``name`` defaults to
     the artifact's basename. ``install``/``uninstall``/``is_installed`` remain
     abstract — they are inherently project-specific. Once the remote file-ops
     phase lands, the natural ``is_installed`` is
@@ -84,7 +84,7 @@ class FileProduct(Product):
 
     dest_dir: Path = field(default_factory=Path)
     """Destination directory on the host; resolved against the host's
-    ``default_dest_dir`` by :meth:`Host.put`."""
+    ``default_dest_dir`` by :meth:`~otto.host.host.Host.put`."""
 
     def __post_init__(self) -> None:
         if not self.name:

@@ -19,7 +19,6 @@ from typing import (
     TYPE_CHECKING,
     Annotated,
     Awaitable,
-    Optional,
     Protocol,
     cast,
 )
@@ -64,7 +63,7 @@ class ShellCommand:
     """A command plus the per-command options that should be used to run it.
 
     Fields left as ``None`` inherit from the run-level kwargs on :meth:`Host.run`.
-    A scalar :data:`~otto.host.session.Expect` value is accepted for ``expects``
+    A scalar ``Expect`` value is accepted for ``expects``
     for ergonomics; it is normalized to a one-element list before execution.
     """
 
@@ -105,7 +104,7 @@ class RunResult:
 
     @property
     def only(self) -> CommandStatus:
-        """Return the sole :class:`CommandStatus` when exactly one command ran.
+        """Return the sole :class:`~otto.utils.CommandStatus` when exactly one command ran.
 
         Raises ``ValueError`` otherwise — useful for single-command call sites
         that want to read fields directly without unpacking.
@@ -379,7 +378,7 @@ class BaseHost(ABC):
     async def interact(self) -> None:
         """Open an interactive shell bridged to the local terminal.
 
-        Subclasses implement :meth:`_interact` to do the actual protocol
+        Subclasses implement ``_interact`` to do the actual protocol
         work. This wrapper exists so CLI and SDK callers have a single
         public entry point.
 
@@ -418,13 +417,13 @@ class BaseHost(ABC):
                 the remaining budget; when exhausted, remaining commands are skipped
                 with ``Status.Error``. :attr:`ShellCommand.timeout` caps the per-command
                 value but is still bounded by the remaining budget.
-            sudo: If ``True``, each command is rewritten through :meth:`_elevate` before
+            sudo: If ``True``, each command is rewritten through ``_elevate`` before
                 execution. Hosts that do not support elevation (e.g. embedded/RTOS) raise
-                :exc:`NotImplementedError` — see :meth:`_elevate`.
+                :exc:`NotImplementedError` — see ``_elevate``.
 
         Returns:
-            :class:`RunResult` with the aggregate :class:`Status` and a list of
-            per-command :class:`CommandStatus` entries.
+            :class:`~otto.host.host.RunResult` with the aggregate :class:`~otto.utils.Status` and a list of
+            per-command :class:`~otto.utils.CommandStatus` entries.
 
         See Also:
             :meth:`oneshot`: stateless, concurrent-safe alternative for one-off commands.
@@ -634,7 +633,7 @@ class BaseHost(ABC):
         """Reboot this host.
 
         ``hard=False`` (default) issues the in-shell reboot command
-        (:meth:`_soft_reboot`); ``hard=True`` power-cycles via the
+        (``_soft_reboot``); ``hard=True`` power-cycles via the
         :class:`~otto.host.power.PowerController`. When *wait*, block on
         :meth:`wait_until_up` (up to *timeout*, default 10 minutes); if the
         host is still unreachable when *timeout* expires, the result is
@@ -773,7 +772,7 @@ class SuppressCommandOutput():
     per-host form when suppressing work that runs concurrently.
     """
 
-    host: Optional[Host] = None
+    host: "Host | None" = None
     """Host object to suppress. If not provided, all host output is affected."""
 
     def __enter__(self):

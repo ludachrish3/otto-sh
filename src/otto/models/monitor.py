@@ -11,7 +11,7 @@ Two seams:
 * :class:`MetricRecord` / :class:`EventRecord` — flat records at the JSON
   ``--file`` and SQLite import/export boundary. These read *historical,
   external* data, so they are deliberately **lenient** (``extra='ignore'``,
-  via :class:`_RowModel`): an unknown column from a newer schema is dropped, not
+  via :class:`RowModel`): an unknown column from a newer schema is dropped, not
   rejected, exactly as the old ``.get()``/``[]`` parsing did. Field names follow
   the JSON spelling; a ``validation_alias`` also accepts the SQLite column
   spelling (``ts``/``end_ts``) so one model validates both seams.
@@ -43,7 +43,7 @@ class MetricPoint(OttoModel):
     meta:  dict[str, Any] | None = None
 
 
-class _RowModel(BaseModel):
+class RowModel(BaseModel):
     """Lenient base for historical-data import/export rows.
 
     Unlike :class:`~otto.models.base.OttoModel` (``extra='forbid'``, which exists
@@ -56,7 +56,7 @@ class _RowModel(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
 
-class MetricRecord(_RowModel):
+class MetricRecord(RowModel):
     """One ``metrics`` row at the JSON / SQLite import-export boundary.
 
     The JSON ``--file`` format spells the time key ``timestamp``; the SQLite
@@ -75,7 +75,7 @@ class MetricRecord(_RowModel):
     meta:      dict[str, Any] | None = None
 
 
-class EventRecord(_RowModel):
+class EventRecord(RowModel):
     """One ``events`` row at the JSON / SQLite **import** boundary.
 
     Mirrors the ``MonitorEvent`` fields. Used to validate external event data

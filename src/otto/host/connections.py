@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from ..logger import get_otto_logger
 from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
@@ -181,7 +181,7 @@ class ConnectionManager:
         self,
         ip: str,
         creds: dict[str, str],
-        user: Optional[str],
+        user: str | None,
         term: str,
         name: str,
         hop: HopTransport | None = None,
