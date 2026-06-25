@@ -6,6 +6,16 @@
 #   make release BUMP=minor
 BUMP ?= patch
 
+# Release-flow tools (git-cliff, bump-my-version) live in the project venv and
+# are invoked DIRECTLY, never via `uv run` — `uv run` would sync and dirty
+# uv.lock, which blocks the bump. The catch: when the venv isn't activated,
+# .venv/bin isn't on PATH, so git-cliff fails with "git-cliff: not found"
+# (bump-my-version happens to survive because `uv tool` also drops it in
+# ~/.local/bin, but git-cliff has no such fallback). Prepend the venv's bin dir
+# for the `changelog`/`release` recipes so the tools resolve either way. Honor
+# an already-active venv ($VIRTUAL_ENV); otherwise fall back to ./.venv.
+VENV_BIN := $(if $(VIRTUAL_ENV),$(VIRTUAL_ENV)/bin,$(CURDIR)/.venv/bin)
+
 # Coverage target invoked by `validate`. `ci` overrides this to
 # `coverage-unit` because GitHub Actions doesn't have the Vagrant VMs
 # that integration/hops tests require.
@@ -82,9 +92,11 @@ ci: ## Run pipeline without VM-dependent tests (used by GitHub Actions)
 	@$(MAKE) validate COVERAGE_TARGET=coverage-unit \
 		&& $(MAKE) build
 
+changelog: export PATH := $(VENV_BIN):$(PATH)
 changelog: ## Regenerate CHANGELOG.md from conventional commit history (Unreleased only — does not touch released sections)
 	git-cliff -o CHANGELOG.md
 
+release: export PATH := $(VENV_BIN):$(PATH)
 release: ## Validate (typecheck + docs + FULL nox matrix across all Pythons, requires dev VM), regenerate changelog at the new version, bump version, then build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) typecheck \
