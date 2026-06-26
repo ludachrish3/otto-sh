@@ -15,4 +15,6 @@ API Reference
    configmodule
    reservations
    storage
+   testing
+   examples
    utils

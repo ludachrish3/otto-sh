@@ -24,6 +24,8 @@ Protocol.  The contract is deliberately small — three read-only
 methods, no write methods of any kind.  Otto never mutates scheduler
 state.
 
+.. autoclass:: otto.reservations.SupportsUsernameCompletion
+
 .. automodule:: otto.reservations.protocol
 
 Exceptions

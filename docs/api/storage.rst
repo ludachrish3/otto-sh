@@ -11,6 +11,10 @@ register a name via :func:`otto.storage.register_lab_repository` from an
 
 .. autofunction:: otto.storage.register_lab_repository
 
+.. autofunction:: otto.storage.create_host_from_dict
+
+.. autoexception:: otto.storage.LabNotFoundError
+
 .. automodule:: otto.storage.protocol
 
 .. automodule:: otto.storage.json_repository
