@@ -74,6 +74,27 @@ class TestRunTestProtocol:
         phases = [c.args[1] for c in mock_car.call_args_list]
         assert phases == ['setup', 'call', 'call', 'call', 'teardown']
 
+    def test_setupshow_invokes_show_test_item(self):
+        """--setup-show routes through pytest's private ``show_test_item``.
+
+        Since pytest 9.1 that helper requires the keyword-only ``add_space``
+        argument. ``wraps`` calls the *real* helper, so this guards against
+        both otto dropping the kwarg and a future pytest signature change
+        (the path is otherwise never exercised by the suite).
+        """
+        from _pytest.runner import show_test_item as real_show_test_item
+
+        plugin = OttoPlugin(iterations=1)
+        item = _make_item()
+        item.config.getoption.return_value = True  # setupshow=True
+
+        with patch('otto.suite.plugin.call_and_report', side_effect=_call_and_report_side_effect), \
+             patch('otto.suite.plugin.show_test_item', wraps=real_show_test_item) as mock_show:
+            result = plugin.pytest_runtest_protocol(item, nextitem=None)
+
+        assert result is True
+        mock_show.assert_called_once_with(item, add_space=False)
+
     def test_setup_failure_skips_call_phase(self):
         """If setup fails, skip call iterations and go straight to teardown."""
         plugin = OttoPlugin(iterations=10)

@@ -215,7 +215,7 @@ class OttoPlugin:
             return True
 
         if item.config.getoption('setupshow', False):
-            show_test_item(item)
+            show_test_item(item, add_space=False)
 
         # ── Call (repeated) ───────────────────────────────────────────
         iteration = 0

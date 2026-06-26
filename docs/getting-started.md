@@ -180,7 +180,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `pydantic` | 2.6 | Boundary validation models for lab JSON, host records, and settings |
 | `pydantic-settings` | 2.2 | Environment-variable settings (`OTTO_*`) |
 | `pysnmp` | 7.1.0 | Async SNMP manager for separate-channel host monitoring |
-| `pytest` | 9.0.1 | Test runner; otto imports user test files at runtime |
+| `pytest` | 9.1.1 | Test runner; otto imports user test files at runtime |
 | `pytest-asyncio` | 1.4.0 | Async test support for pytest |
 | `pytest-timeout` | 2.3.1 | Per-test timeouts for `otto test` (`@pytest.mark.timeout`) |
 | `rich` | 15.0.0 | Terminal formatting, panels, and tables |
