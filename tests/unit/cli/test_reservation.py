@@ -38,8 +38,8 @@ class _FakeBackend:
     def get_reserved_resources(self, username: str) -> set[str]:
         return {"r1"}
 
-    def who_reserved(self, resource: str) -> str | None:
-        return "alice"
+    def who_reserved(self, resource: str) -> list[str]:
+        return ["alice"]
 
 
 # ── whoami ─────────────────────────────────────────────────────────────────────
@@ -116,8 +116,8 @@ def test_check_exits_1_on_missing_reservation(capsys):
         def get_reserved_resources(self, username: str) -> set[str]:
             return set()
 
-        def who_reserved(self, resource: str) -> str | None:
-            return None
+        def who_reserved(self, resource: str) -> list[str]:
+            return []
 
     identity = ResolvedIdentity(username="alice", source="$USER")
     res = ReservationState(backend=_EmptyBackend(), identity=identity, skip_check=False)
@@ -130,3 +130,47 @@ def test_check_exits_1_on_missing_reservation(capsys):
     ):
         check(ctx)
     assert exc.value.exit_code == 1
+
+
+def test_whoami_builds_backend_on_demand(capsys):
+    from unittest.mock import patch
+
+    from otto.configmodule.lab import Lab
+
+    identity = ResolvedIdentity(username="alice", source="--as-user")
+    # -R shape: backend not built, but a factory is available.
+    res = ReservationState(
+        backend=None,
+        identity=identity,
+        skip_check=True,
+        backend_factory=lambda: _FakeBackend(),
+    )
+    ctx = _make_ctx({"otto_reservation": res})
+
+    with patch("otto.configmodule.get_lab", return_value=Lab(name="test_lab")):
+        whoami(ctx)
+
+    out = capsys.readouterr().out
+    assert "alice" in out
+    assert "fake" in out  # backend_name() from the factory-built backend
+
+
+def test_check_builds_backend_on_demand(capsys):
+    from unittest.mock import patch
+
+    from otto.configmodule.lab import Lab
+
+    identity = ResolvedIdentity(username="alice", source="--as-user")
+    res = ReservationState(
+        backend=None,
+        identity=identity,
+        skip_check=True,
+        backend_factory=lambda: _FakeBackend(),
+    )
+    ctx = _make_ctx({"otto_reservation": res})
+
+    lab = Lab(name="test_lab", resources={"r1"})
+    with patch("otto.configmodule.get_lab", return_value=lab):
+        check(ctx)  # _FakeBackend reserves {"r1"} for everyone → passes
+
+    assert "OK" in capsys.readouterr().out

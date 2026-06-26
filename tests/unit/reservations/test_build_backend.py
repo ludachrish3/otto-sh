@@ -1,8 +1,6 @@
 """Unit tests for the reservation backend factory."""
 
 import json
-import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -77,11 +75,11 @@ class TestJsonBackend:
         assert isinstance(backend, JsonReservationBackend)
 
 
-class TestDottedPath:
+class TestRegisteredBackend:
 
-    def test_dotted_path_resolved(self, tmp_path, monkeypatch):
-        # Install a fake module on sys.modules that build_backend can import.
-        fake = types.ModuleType("otto_fake_backend_mod")
+    def test_registered_name_resolved_with_url_and_kwargs(self, tmp_path):
+        from otto.reservations import register_reservation_backend
+        from otto.reservations.registry import _RESERVATION_BACKENDS
 
         class FakeBackend:
             def __init__(self, *, api_key: str = "", url=None):
@@ -92,28 +90,30 @@ class TestDottedPath:
                 return set()
 
             def who_reserved(self, resource):
-                return None
+                return []
 
             def backend_name(self):
                 return "fake"
 
-        fake.FakeBackend = FakeBackend  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "otto_fake_backend_mod", fake)
+        register_reservation_backend("fake-test", FakeBackend)
+        try:
+            backend = build_backend(
+                {
+                    "backend": "fake-test",
+                    "url": "https://api.example",
+                    "fake-test": {"api_key": "secret"},
+                },
+                repo_dir=tmp_path,
+            )
+            assert isinstance(backend, FakeBackend)
+            assert backend.api_key == "secret"
+            assert backend.url == "https://api.example"
+        finally:
+            _RESERVATION_BACKENDS.pop("fake-test", None)
 
-        backend = build_backend(
-            {
-                "backend": "otto_fake_backend_mod:FakeBackend",
-                "url": "https://api.example",
-                "otto_fake_backend_mod:FakeBackend": {"api_key": "secret"},
-            },
-            repo_dir=tmp_path,
-        )
-        assert isinstance(backend, FakeBackend)
-        assert backend.api_key == "secret"
-        assert backend.url == "https://api.example"
-
-    def test_dotted_path_without_url(self, tmp_path, monkeypatch):
-        fake = types.ModuleType("otto_fake_backend_mod2")
+    def test_registered_name_without_url(self, tmp_path):
+        from otto.reservations import register_reservation_backend
+        from otto.reservations.registry import _RESERVATION_BACKENDS
 
         class FakeBackend:
             def __init__(self, *, api_key: str = ""):
@@ -123,34 +123,22 @@ class TestDottedPath:
                 return set()
 
             def who_reserved(self, resource):
-                return None
+                return []
 
             def backend_name(self):
                 return "fake"
 
-        fake.FakeBackend = FakeBackend  # type: ignore[attr-defined]
-        monkeypatch.setitem(sys.modules, "otto_fake_backend_mod2", fake)
+        register_reservation_backend("fake-test-2", FakeBackend)
+        try:
+            backend = build_backend(
+                {"backend": "fake-test-2", "fake-test-2": {"api_key": "secret"}},
+                repo_dir=tmp_path,
+            )
+            assert isinstance(backend, FakeBackend)
+            assert backend.api_key == "secret"
+        finally:
+            _RESERVATION_BACKENDS.pop("fake-test-2", None)
 
-        backend = build_backend(
-            {
-                "backend": "otto_fake_backend_mod2:FakeBackend",
-                "FakeBackend": {"api_key": "secret"},
-            },
-            repo_dir=tmp_path,
-        )
-        assert isinstance(backend, FakeBackend)
-        assert backend.api_key == "secret"
-
-    def test_invalid_backend_name_raises(self, tmp_path):
+    def test_unknown_backend_name_raises(self, tmp_path):
         with pytest.raises(ValueError, match="Unknown reservation backend"):
             build_backend({"backend": "mystery"}, tmp_path)
-
-    def test_missing_module_raises(self, tmp_path):
-        with pytest.raises(ValueError, match="Could not import"):
-            build_backend({"backend": "nonexistent.module:Cls"}, tmp_path)
-
-    def test_missing_class_raises(self, tmp_path, monkeypatch):
-        fake = types.ModuleType("otto_fake_empty_mod")
-        monkeypatch.setitem(sys.modules, "otto_fake_empty_mod", fake)
-        with pytest.raises(ValueError, match="no attribute"):
-            build_backend({"backend": "otto_fake_empty_mod:Missing"}, tmp_path)

@@ -6,7 +6,6 @@ See :mod:`otto.reservations.protocol` for the backend contract and
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +42,12 @@ from .null_backend import (
 from .protocol import (
     ReservationBackend as ReservationBackend,
 )
+from .protocol import (
+    SupportsUsernameCompletion as SupportsUsernameCompletion,
+)
+from .registry import (
+    register_reservation_backend as register_reservation_backend,
+)
 
 
 def build_backend(
@@ -57,9 +62,9 @@ def build_backend(
         The ``[reservations]`` sub-dict parsed from ``.otto/settings.toml``.
         Expected keys:
 
-        * ``backend`` — ``"json"``, ``"none"``, or a dotted path
-          ``"pkg.module:ClassName"`` for third-party implementations.
-          Defaults to ``"none"`` when absent.
+        * ``backend`` — ``"json"``, ``"none"``, or a name registered via
+          :func:`register_reservation_backend` from an init module. Defaults to
+          ``"none"`` when absent.
         * ``url`` — optional string, forwarded as ``url=...`` to the
           backend constructor when present.
         * ``<backend-name>`` — optional nested table with backend-specific
@@ -77,7 +82,7 @@ def build_backend(
     Raises
     ------
     ValueError
-        If ``backend`` names an unknown backend or a malformed dotted path.
+        If ``backend`` names an unknown backend.
     ReservationBackendError
         If a third-party backend's construction fails for backend reasons
         (network, bad credentials, etc.).
@@ -112,36 +117,56 @@ def build_backend(
             path = repo_dir / path
         return JsonReservationBackend(url=url, path=path)
 
-    # Dotted path: "pkg.module:ClassName"
-    if ":" not in backend_name:
-        raise ValueError(
-            f"Unknown reservation backend {backend_name!r}. Expected "
-            f"'json', 'none', or a dotted path like 'pkg.module:ClassName'."
-        )
+    # Custom backend: resolved by registered name (register_reservation_backend
+    # from an init module). No dotted-path / importlib resolution.
+    from .registry import get_reservation_backend_class
 
-    module_name, _, class_name = backend_name.partition(":")
-    try:
-        module = importlib.import_module(module_name)
-    except ImportError as e:
-        raise ValueError(
-            f"Could not import reservation backend module {module_name!r}: {e}"
-        ) from e
-
-    try:
-        cls = getattr(module, class_name)
-    except AttributeError as e:
-        raise ValueError(
-            f"Module {module_name!r} has no attribute {class_name!r}"
-        ) from e
-
-    # Nested backend-specific kwargs, if any.  Accept either the full dotted
-    # name or just the class name as the sub-table key.
-    extra_kwargs: dict[str, Any] = (
-        settings.get(backend_name)
-        or settings.get(class_name)
-        or {}
-    )
-
+    cls = get_reservation_backend_class(backend_name)
+    extra_kwargs: dict[str, Any] = settings.get(backend_name) or {}
     if url is not None:
         return cls(url=url, **extra_kwargs)  # type: ignore[no-any-return]
     return cls(**extra_kwargs)  # type: ignore[no-any-return]
+
+
+def build_reservation_state(
+    repos: list[Any],
+    *,
+    as_user: str | None,
+    skip_reservation_check: bool,
+    cwd_fallback: Path,
+) -> ReservationState:
+    """Resolve the per-invocation reservation state from the active repos.
+
+    The first repo with a ``[reservations]`` section wins. With
+    ``skip_reservation_check`` (the ``-R`` break-glass flag) the backend is
+    **not** constructed at all — a scheduler that fails or hangs in its
+    constructor can never block lab access. A ``backend_factory`` thunk is
+    always attached so ``otto reservation`` subcommands can build it on demand.
+
+    Raises
+    ------
+    ReservationBackendError
+        If construction fails and ``skip_reservation_check`` is False.
+    """
+    reservation_settings: dict[str, Any] = {}
+    reservation_repo_dir: Path = repos[0].sut_dir if repos else cwd_fallback
+    for repo in repos:
+        if repo.reservation_settings:
+            reservation_settings = repo.reservation_settings
+            reservation_repo_dir = repo.sut_dir
+            break
+
+    def _factory() -> ReservationBackend:
+        return build_backend(reservation_settings, reservation_repo_dir)
+
+    backend: ReservationBackend | None = None
+    if not skip_reservation_check:
+        backend = _factory()  # may raise ReservationBackendError
+
+    identity = resolve_username(as_user)
+    return ReservationState(
+        backend=backend,
+        identity=identity,
+        skip_check=skip_reservation_check,
+        backend_factory=_factory,
+    )

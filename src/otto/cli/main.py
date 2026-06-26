@@ -97,6 +97,23 @@ def list_labs_callback(value: bool):
 def log_level_callback(value: str):
     return value.upper()
 
+def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:
+    """Completion source for ``--as-user``: usernames the reservation backend knows.
+
+    Prefers the completion-cache snapshot (slow-path populated, so no backend is
+    built in the completion fast path); falls back to a live best-effort
+    collection on a cache miss. Empty when the backend can't enumerate users.
+    """
+    from ..configmodule import get_completion_names, get_repos
+    from ..configmodule.completion_cache import collect_reservation_usernames
+
+    cached = get_completion_names()
+    if cached is not None and isinstance(cached.get('usernames'), list):
+        names = cached['usernames']
+    else:
+        names = collect_reservation_usernames(get_repos())
+    return sorted(n for n in names if n.startswith(incomplete))
+
 app = typer.Typer(
     no_args_is_help=True,
     help=DESCRIPTION,
@@ -210,6 +227,7 @@ def main(
     as_user: Annotated[str | None,
         typer.Option('--as-user',
             metavar='USERNAME',
+            autocompletion=_username_completer,
             help=(
                 "Check reservations as USERNAME instead of the current user. "
                 "Use when a teammate has the shared lab booked under their name."
@@ -298,24 +316,21 @@ def main(
     from ..docker.compose import register_declared_container_hosts
     register_declared_container_hosts(lab, repos)
 
-    # Build the reservation backend (first repo with a [reservations] section wins;
-    # empty settings across all repos yields a null backend — effectively disabled).
+    # Resolve reservation identity + backend (first repo with a [reservations]
+    # section wins). With -R the backend is NOT constructed at all, so a broken
+    # or hanging scheduler can never block lab access (break-glass).
     from ..reservations import (
         ReservationBackendError,
-        build_backend,
-        resolve_username,
+        build_reservation_state,
     )
 
-    reservation_settings: dict[str, Any] = {}
-    reservation_repo_dir: Path = repos[0].sut_dir if repos else Path.cwd()
-    for repo in repos:
-        if repo.reservation_settings:
-            reservation_settings = repo.reservation_settings
-            reservation_repo_dir = repo.sut_dir
-            break
-
     try:
-        reservation_backend = build_backend(reservation_settings, reservation_repo_dir)
+        reservation_state = build_reservation_state(
+            repos,
+            as_user=as_user,
+            skip_reservation_check=skip_reservation_check,
+            cwd_fallback=Path.cwd(),
+        )
     except ReservationBackendError as e:
         rprint(
             f"[bold red]Reservation backend unavailable:[/bold red] {e}\n"
@@ -323,20 +338,14 @@ def main(
         )
         raise typer.Exit(1) from e
 
-    identity = resolve_username(as_user)
-
-    if identity.source == "--as-user":
+    identity = reservation_state.identity
+    if identity is not None and identity.source == "--as-user":
         rprint(
             f"[bold magenta][reservations] acting as {identity.username!r} "
             f"(--as-user)[/bold magenta]"
         )
 
-    from ..reservations import ReservationState
-    ctx.meta["otto_reservation"] = ReservationState(
-        backend=reservation_backend,
-        identity=identity,
-        skip_check=skip_reservation_check,
-    )
+    ctx.meta["otto_reservation"] = reservation_state
 
     # Install the runtime context: lab + dry_run flag.
     from ..context import OttoContext, set_context

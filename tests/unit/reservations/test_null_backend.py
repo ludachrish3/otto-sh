@@ -16,7 +16,7 @@ def test_empty_resources():
 
 def test_no_holder():
     backend = NullReservationBackend()
-    assert backend.who_reserved("any-resource") is None
+    assert backend.who_reserved("any-resource") == []
 
 
 def test_backend_name():

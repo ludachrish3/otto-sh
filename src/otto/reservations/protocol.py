@@ -11,19 +11,20 @@ anything) remains authoritative.
 
 Implementers
 ------------
-Third-party backends implement the :class:`ReservationBackend` protocol and
-are selected in the repo's ``.otto/settings.toml``:
+Third-party backends implement the :class:`ReservationBackend` protocol, register under
+a bare name via ``register_reservation_backend("my-team-jira", MyBackend)`` from an
+``init`` module, and are selected in the repo's ``.otto/settings.toml``:
 
 .. code-block:: toml
 
     [reservations]
-    backend = "mypkg.mybackend:MyBackend"
+    backend = "my-team-jira"
     url = "https://scheduler.example.com"
 
-    [reservations.mypkg-mybackend]
+    [reservations.my-team-jira]
     api_key_env = "SCHEDULER_API_KEY"
 
-The ``url`` key and any ``[reservations.<backend>]`` sub-table are passed to
+The ``url`` key and any ``[reservations.<name>]`` sub-table are passed to
 the backend's ``__init__`` as keyword arguments.  ``url`` is optional on both
 sides: implementers may accept and use it, or hardcode their own endpoint —
 whichever fits the deployment.
@@ -76,12 +77,12 @@ class ReservationBackend(Protocol):
 
     def who_reserved(self,
         resource: str,
-    ) -> str | None:
-        """Return the username currently holding ``resource``.
+    ) -> list[str]:
+        """Return the usernames currently holding ``resource``.
 
         Used for error messages when a reservation check fails
-        (e.g. ``"rack3-psu is held by alice"``) so the caller knows who to
-        talk to.
+        (e.g. ``"shared-lab is held by alice, bob"``) so the caller knows who
+        to talk to.
 
         Parameters
         ----------
@@ -90,9 +91,11 @@ class ReservationBackend(Protocol):
 
         Returns
         -------
-        str | None
-            The holder's username, or ``None`` if no one currently holds the
-            resource.
+        list[str]
+            The usernames holding the resource, in a deterministic order with
+            duplicates removed.  An **empty list** means no one currently holds
+            it (there is no ``None`` sentinel — a resource can have any number
+            of concurrent holders).
 
         Raises
         ------
@@ -107,4 +110,20 @@ class ReservationBackend(Protocol):
         Used in diagnostic output and error messages (e.g. ``"json"``,
         ``"my-team-jira"``).  Should be stable across runs.
         """
+        ...
+
+
+@runtime_checkable
+class SupportsUsernameCompletion(Protocol):
+    """Optional capability: enumerate usernames for ``--as-user`` completion.
+
+    A backend that can list its users implements ``list_usernames``; otto
+    detects it structurally (``isinstance(backend, SupportsUsernameCompletion)``)
+    and feeds the values into ``--as-user`` tab-completion (cached, see
+    ``otto.configmodule.completion_cache.collect_reservation_usernames``).
+    Backends that cannot enumerate users simply omit it.
+    """
+
+    def list_usernames(self) -> list[str]:
+        """Return all usernames the backend knows about, for completion."""
         ...

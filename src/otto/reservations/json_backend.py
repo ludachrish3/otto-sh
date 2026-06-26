@@ -69,12 +69,12 @@ class JsonReservationBackend:
 
     def who_reserved(self,
         resource: str,
-    ) -> str | None:
+    ) -> list[str]:
+        holders: list[str] = []
         for entry in self._active_entries():
-            if resource in entry.resources:
-                # First writer wins — the file is a list, order is authoritative.
-                return str(entry.user)
-        return None
+            if resource in entry.resources and entry.user not in holders:
+                holders.append(str(entry.user))
+        return holders
 
     # ------------------------------------------------------------------
     # Internal

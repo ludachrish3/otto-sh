@@ -20,7 +20,7 @@ Cache location
 ``$OTTO_XDIR/.otto/completion_cache.json``. If ``OTTO_XDIR`` is not set,
 caching is disabled and completion always falls through to the slow path.
 
-Cache schema (version 5)
+Cache schema (version 6)
 ------------------------
 
 Single flat map, keyed by fingerprint hex digest. Each entry records both the
@@ -29,7 +29,7 @@ stale entries without trusting the mtimes on-disk::
 
     {
         "<fingerprint>": {
-            "schema_version": 5,
+            "schema_version": 6,
             "generated_at": 1745000000,
             "instructions": [
                 {"name": "install",
@@ -85,7 +85,7 @@ COMPLETION_ENV_VAR = '_OTTO_COMPLETE'
 CACHE_FILENAME = 'completion_cache.json'
 
 # Bump when the on-disk schema changes in a way older readers can't parse.
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 HOSTS_FILENAME = 'hosts.json'
 
@@ -378,12 +378,14 @@ def read_cache(repos: list['Repo']) -> dict[str, Any] | None:
     docker_hosts = entry.get('docker_hosts', [])
     term_backends = entry.get('term_backends', [])
     transfer_backends = entry.get('transfer_backends', [])
+    usernames = entry.get('usernames', [])
     if (not isinstance(instructions, list)
             or not isinstance(suites, list)
             or not isinstance(hosts, list)
             or not isinstance(docker_hosts, list)
             or not isinstance(term_backends, list)
-            or not isinstance(transfer_backends, list)):
+            or not isinstance(transfer_backends, list)
+            or not isinstance(usernames, list)):
         return None
     return {
         'instructions': instructions,
@@ -392,6 +394,7 @@ def read_cache(repos: list['Repo']) -> dict[str, Any] | None:
         'docker_hosts': docker_hosts,
         'term_backends': term_backends,
         'transfer_backends': transfer_backends,
+        'usernames': usernames,
     }
 
 
@@ -403,6 +406,7 @@ def write_cache(
     docker_hosts: list[str] | None = None,
     term_backends: list[str] | None = None,
     transfer_backends: list[dict[str, Any]] | None = None,
+    usernames: list[str] | None = None,
 ) -> None:
     """Write (or update) the entry for the current fingerprint.
 
@@ -442,6 +446,7 @@ def write_cache(
         'docker_hosts': docker_hosts or [],
         'term_backends': term_backends or [],
         'transfer_backends': transfer_backends or [],
+        'usernames': usernames or [],
     }
 
     tmp = tempfile.NamedTemporaryFile(
@@ -537,6 +542,33 @@ def collect_backend_names() -> dict[str, Any]:
             for name, cls in sorted(_TRANSFER_BACKENDS.items())
         ],
     }
+
+
+def collect_reservation_usernames(repos: list['Repo']) -> list[str]:
+    """Best-effort usernames for ``--as-user`` completion (cached).
+
+    Builds the selected reservation backend (first repo with a
+    ``[reservations]`` section) and, when it implements
+    :class:`~otto.reservations.protocol.SupportsUsernameCompletion`, returns
+    ``list_usernames()`` sorted. Runs on the slow path; any failure (no backend
+    configured, build error, enumeration error, missing capability) yields
+    ``[]`` so completion degrades gracefully and never blocks real work.
+    """
+    from ..reservations import build_backend
+    from ..reservations.protocol import SupportsUsernameCompletion
+
+    for repo in repos:
+        settings = getattr(repo, 'reservation_settings', None)
+        if not settings:
+            continue
+        try:
+            backend = build_backend(settings, repo.sut_dir)
+            if isinstance(backend, SupportsUsernameCompletion):
+                return sorted(backend.list_usernames())
+        except Exception:
+            return []
+        return []
+    return []
 
 
 def collect_docker_capable_host_ids(repos: list['Repo']) -> list[str]:

@@ -2,7 +2,6 @@
 
 import types
 from dataclasses import dataclass
-from typing import Optional
 from unittest.mock import patch
 
 import pytest
@@ -33,8 +32,9 @@ class _FakeBackend:
     def get_reserved_resources(self, username: str) -> set[str]:
         return {r for r, u in self.owners.items() if u == username}
 
-    def who_reserved(self, resource: str) -> Optional[str]:
-        return self.owners.get(resource)
+    def who_reserved(self, resource: str) -> list[str]:
+        u = self.owners.get(resource)
+        return [u] if u is not None else []
 
     def backend_name(self) -> str:
         return "fake"
@@ -110,6 +110,23 @@ class TestCheckReservations:
         backend = _FakeBackend(owners={})
         check_reservations(lab, "alice", backend)
 
+    def test_lists_multiple_holders_in_message(self):
+        class _MultiHolderBackend:
+            def __init__(self, holders):
+                self._h = holders
+            def get_reserved_resources(self, username):
+                return {r for r, us in self._h.items() if username in us}
+            def who_reserved(self, resource):
+                return list(self._h.get(resource, []))
+            def backend_name(self):
+                return "multi"
+
+        lab = Lab(name="shared_lab", resources={"rack1"})
+        backend = _MultiHolderBackend(holders={"rack1": ["alice", "bob"]})
+        with pytest.raises(MissingReservationError) as exc_info:
+            check_reservations(lab, "carol", backend)
+        assert "held by alice, bob" in str(exc_info.value)
+
 
 class TestGate:
 
@@ -160,3 +177,21 @@ class TestGate:
             pytest.raises(MissingReservationError),
         ):
             gate(ctx)
+
+    def test_skip_flag_warns_even_when_backend_none(self, caplog):
+        import logging
+
+        lab = _lab_with_resources()
+        identity = ResolvedIdentity(username="alice", source="$USER")
+        # backend=None models the -R break-glass path (Task 5): construction skipped.
+        res = ReservationState(backend=None, identity=identity, skip_check=True)
+        ctx = _fake_ctx({"otto_reservation": res})
+
+        with (
+            caplog.at_level(logging.WARNING, logger="otto"),
+            patch("otto.configmodule.get_lab", return_value=lab),
+        ):
+            gate(ctx)  # must not raise
+
+        assert any("skipped" in rec.message.lower() for rec in caplog.records)
+        assert any("alice" in rec.message for rec in caplog.records)

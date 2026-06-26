@@ -24,6 +24,8 @@ import typer
 from ..logger import get_otto_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from ..configmodule.lab import Lab
     from .identity import ResolvedIdentity
     from .protocol import ReservationBackend
@@ -36,6 +38,9 @@ class ReservationState:
     backend: "ReservationBackend | None" = None
     identity: "ResolvedIdentity | None" = None
     skip_check: bool = False
+    # Builds the backend on demand. Set even under -R (where ``backend`` is
+    # None) so reservation subcommands can construct it only when needed.
+    backend_factory: "Callable[[], ReservationBackend] | None" = None
 
 
 class ReservationBackendError(Exception):
@@ -110,33 +115,38 @@ def check_reservations(
     if not missing:
         return
 
-    holders: dict[str, str | None] = {r: backend.who_reserved(r) for r in sorted(missing)}
+    holders: dict[str, list[str]] = {r: backend.who_reserved(r) for r in sorted(missing)}
     lines = [
         f"User {username!r} does not hold all resources required by lab "
         f"{lab.name!r}. Missing:"
     ]
-    for resource, holder in holders.items():
-        if holder is None:
+    for resource, who in holders.items():
+        if not who:
             lines.append(f"  - {resource} (unreserved)")
         else:
-            lines.append(f"  - {resource} (held by {holder})")
+            lines.append(f"  - {resource} (held by {', '.join(who)})")
     raise MissingReservationError("\n".join(lines))
 
 
 def gate(ctx: typer.Context) -> None:
     """Run the reservation check for this invocation, reading state from ctx.meta.
 
-    No-ops when no reservation state is present (e.g. unit tests invoking a
-    subcommand app directly) or no backend is configured. The active lab is
-    fetched lazily so the no-op paths never require an OttoContext.
+    When ``-R`` (skip_check) is set, a loud warning is emitted regardless of
+    whether a backend was configured. No-ops when no reservation state is
+    present (e.g. unit tests invoking a subcommand app directly) or, after the
+    skip-warning path, when no backend is configured. The active lab is fetched
+    lazily so the no-op paths never require an OttoContext.
     """
     res = ctx.meta.get("otto_reservation")
-    if res is None or res.backend is None:
+    if res is None:
         return
 
     from ..configmodule import get_lab
-    lab = get_lab()
+
+    # A skipped check (-R) must be loud and is independent of whether a backend
+    # was constructed — under -R no backend is built (backend is None).
     if res.skip_check:
+        lab = get_lab()
         username = res.identity.username if res.identity is not None else "<unknown>"
         needed = required_resources(lab)
         from rich import print as rprint
@@ -150,5 +160,9 @@ def gate(ctx: typer.Context) -> None:
         )
         return
 
+    if res.backend is None:
+        return
+
+    lab = get_lab()
     assert res.identity is not None, "identity must be resolved before gate() runs"
     check_reservations(lab, res.identity.username, res.backend)

@@ -90,7 +90,7 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     cache = _read_cache(tmp_path)
     assert len(cache) == 1
     entry = next(iter(cache.values()))
-    assert entry['schema_version'] == 5
+    assert entry['schema_version'] == 6
     assert isinstance(entry['generated_at'], int)
     instruction_names = {i['name'] for i in entry['instructions']}
     suite_names = {s['name'] for s in entry['suites']}

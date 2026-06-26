@@ -17,8 +17,8 @@ class NullReservationBackend:
 
     def who_reserved(self,
         resource: str,  # noqa: ARG002 — protocol compliance
-    ) -> str | None:
-        return None
+    ) -> list[str]:
+        return []
 
     def backend_name(self) -> str:
         return "none"

@@ -73,7 +73,7 @@ class TestGetReservedResources:
 
 class TestWhoReserved:
 
-    def test_resource_held_returns_username(self, tmp_path):
+    def test_resource_held_returns_single_holder_list(self, tmp_path):
         backend = _make_backend(tmp_path, {
             "version": 1,
             "reservations": [
@@ -81,15 +81,35 @@ class TestWhoReserved:
                 {"user": "bob",   "resources": ["rack4-psu"]},
             ],
         })
-        assert backend.who_reserved("rack3-psu") == "alice"
-        assert backend.who_reserved("rack4-psu") == "bob"
+        assert backend.who_reserved("rack3-psu") == ["alice"]
+        assert backend.who_reserved("rack4-psu") == ["bob"]
 
-    def test_unreserved_returns_none(self, tmp_path):
+    def test_unreserved_returns_empty_list(self, tmp_path):
         backend = _make_backend(tmp_path, {
             "version": 1,
             "reservations": [],
         })
-        assert backend.who_reserved("rack3-psu") is None
+        assert backend.who_reserved("rack3-psu") == []
+
+    def test_multiple_holders_aggregated_in_file_order(self, tmp_path):
+        backend = _make_backend(tmp_path, {
+            "version": 1,
+            "reservations": [
+                {"user": "alice", "resources": ["shared-lab"]},
+                {"user": "bob",   "resources": ["shared-lab"]},
+            ],
+        })
+        assert backend.who_reserved("shared-lab") == ["alice", "bob"]
+
+    def test_duplicate_holder_deduped(self, tmp_path):
+        backend = _make_backend(tmp_path, {
+            "version": 1,
+            "reservations": [
+                {"user": "alice", "resources": ["shared-lab"]},
+                {"user": "alice", "resources": ["shared-lab", "other"]},
+            ],
+        })
+        assert backend.who_reserved("shared-lab") == ["alice"]
 
 
 class TestBackendName:

@@ -68,6 +68,7 @@ from .completion_cache import (
     collect_current_commands,
     collect_docker_capable_host_ids,
     collect_host_ids,
+    collect_reservation_usernames,
     is_completion_mode,
     read_cache,
     write_cache,
@@ -103,11 +104,13 @@ if _completion_names is None:
     _host_ids = collect_host_ids(_repos)
     _docker_host_ids = collect_docker_capable_host_ids(_repos)
     _backends = collect_backend_names()
+    _usernames = collect_reservation_usernames(_repos)
     try:
         write_cache(
             _repos, _instructions, _suites, _host_ids, _docker_host_ids,
             term_backends=_backends['term_backends'],
             transfer_backends=_backends['transfer_backends'],
+            usernames=_usernames,
         )
     except OSError:
         # Cache writes are best-effort — never block real work on them.

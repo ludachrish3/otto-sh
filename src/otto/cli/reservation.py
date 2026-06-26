@@ -48,7 +48,12 @@ def whoami(ctx: typer.Context) -> None:
     """Show the resolved reservation identity and backend."""
     from ..configmodule import get_lab
     res = ctx.meta.get("otto_reservation")
-    backend_name = res.backend.backend_name() if (res and res.backend) else "<none>"
+    backend = None
+    if res is not None:
+        backend = res.backend or (
+            res.backend_factory() if res.backend_factory else None
+        )
+    backend_name = backend.backend_name() if backend else "<none>"
     identity = res.identity if res else None
     if identity is None:
         rprint("[yellow]No identity resolved (did the top-level callback run?)[/yellow]")
@@ -68,7 +73,12 @@ def check(ctx: typer.Context) -> None:
     from ..configmodule import get_lab
     res = ctx.meta.get("otto_reservation")
 
-    if res is None or res.backend is None or res.identity is None:
+    backend = None
+    if res is not None:
+        backend = res.backend or (
+            res.backend_factory() if res.backend_factory else None
+        )
+    if res is None or backend is None or res.identity is None:
         rprint("[red]Reservation backend or identity not configured.[/red]")
         raise typer.Exit(1)
 
@@ -83,7 +93,7 @@ def check(ctx: typer.Context) -> None:
     rprint(f"Required resources: {sorted(needed)}")
 
     try:
-        check_reservations(lab, username, res.backend)
+        check_reservations(lab, username, backend)
     except MissingReservationError as e:
         rprint(f"[red]{e}[/red]")
         raise typer.Exit(1) from e
