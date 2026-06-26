@@ -287,7 +287,8 @@ def main(
     # Set up config module
     repos = get_repos()
 
-    # Extract lab search paths from all repos
+    # Extract + aggregate lab search paths across all repos (for the default
+    # json backend).
     lab_search_paths: list[Path] = []
     for repo in repos:
         lab_search_paths.extend(repo.labs)
@@ -305,8 +306,29 @@ def main(
                 else:
                     dest.setdefault(key, {}).update(val)
 
-    lab = load_lab(labs, search_paths=lab_search_paths,
-                   preferences=merged_host_preferences)
+    # Select the host-source backend: the first repo that declares a [lab] block
+    # wins (mirrors reservations' "first repo declares" rule). With no [lab]
+    # block anywhere, lab_settings stays {} and the factory falls back to the
+    # built-in json backend over the aggregated search paths.
+    lab_settings: dict[str, Any] = {}
+    lab_repo_dir: Path = repos[0].sut_dir if repos else Path.cwd()
+    for repo in repos:
+        if repo.lab_settings:
+            lab_settings = repo.lab_settings
+            lab_repo_dir = repo.sut_dir
+            break
+
+    from ..storage import LabRepositoryError, build_lab_repository
+
+    try:
+        lab_repository = build_lab_repository(
+            lab_settings, lab_repo_dir, search_paths=lab_search_paths
+        )
+    except (ValueError, LabRepositoryError) as e:
+        rprint(f"[bold red]Host source unavailable:[/bold red] {e}")
+        raise typer.Exit(1) from e
+
+    lab = load_lab(labs, preferences=merged_host_preferences, repository=lab_repository)
 
     # Synthesize placeholder Docker container hosts from each repo's
     # `[docker]` settings. They appear in `--list-hosts` and tab-completion

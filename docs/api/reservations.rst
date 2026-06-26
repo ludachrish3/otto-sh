@@ -94,6 +94,8 @@ Backend factory
 
 .. autofunction:: otto.reservations.build_reservation_state
 
+.. automodule:: otto.reservations.registry
+
 Extension points for implementers
 ---------------------------------
 

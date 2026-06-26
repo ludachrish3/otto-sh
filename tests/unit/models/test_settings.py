@@ -9,6 +9,7 @@ from otto.models.settings import (
     DockerComposeSpec,
     DockerImageSpec,
     DockerSettingsSpec,
+    LabConfigSpec,
     OsProfileSpec,
     OttoEnvSettings,
     ReservationConfigSpec,
@@ -458,3 +459,34 @@ def test_otto_env_settings_xdir_dot_is_preserved(clean_otto_env):
     # a real value (even ".") is kept — only the empty string means "unset".
     clean_otto_env.setenv("OTTO_XDIR", ".")
     assert OttoEnvSettings().xdir == Path(".")
+
+
+# ---------------------------------------------------------------------------
+# Task 4 (Plan A): LabConfigSpec + SettingsModel.lab wiring
+# ---------------------------------------------------------------------------
+
+
+def test_lab_config_spec_defaults_to_json():
+    cfg = LabConfigSpec.model_validate({})
+    assert cfg.backend == "json"
+    assert cfg.model_extra == {}
+
+
+def test_lab_config_spec_keeps_backend_subtable_open():
+    cfg = LabConfigSpec.model_validate(
+        {"backend": "myteam", "myteam": {"url": "https://cmdb"}}
+    )
+    assert cfg.backend == "myteam"
+    assert cfg.model_extra == {"myteam": {"url": "https://cmdb"}}
+
+
+def test_settings_model_accepts_lab_block():
+    m = SettingsModel.model_validate(
+        {"name": "demo", "version": "1.0.0", "lab": {"backend": "json"}}
+    )
+    assert m.lab.backend == "json"
+
+
+def test_settings_model_lab_defaults_when_absent():
+    m = SettingsModel.model_validate({"name": "demo", "version": "1.0.0"})
+    assert m.lab.backend == "json"

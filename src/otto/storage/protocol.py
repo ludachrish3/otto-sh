@@ -1,4 +1,3 @@
-from pathlib import Path
 from typing import (
     Any,
     Protocol,
@@ -10,71 +9,51 @@ from ..configmodule.lab import Lab
 
 @runtime_checkable
 class LabRepository(Protocol):
-    """Protocol defining DB-agnostic interface for loading labs."""
+    """DB-agnostic interface for loading labs.
 
-    def load_lab(self,
+    A backend is configured at construction time (the built-in JSON backend
+    takes its ``search_paths`` in ``__init__``), then queried through the two
+    methods below. Selection and construction happen in
+    :func:`otto.storage.build_lab_repository`.
+    """
+
+    def load_lab(
+        self,
         name: str,
-        search_paths: list[Path],
         preferences: dict[str, dict[str, Any]] | None = None,
     ) -> Lab:
-        """
-        Load a lab by name from the repository.
+        """Load a lab by name.
 
         Parameters
         ----------
         name : str
-            Name of the lab to load
-        search_paths : list[Path]
-            Directories to search for the lab data
+            Name of the lab to load.
         preferences : dict[str, dict[str, Any]] | None
             The unified ``{selector: {capability: [...] | option_table: {key: val}}}``
             product-preference table forwarded to the factory, which matches each
-            host's ``id`` and applies the result. ``None`` reproduces today's behavior.
+            host's ``id`` and applies the result. ``None`` reproduces today's
+            behavior.
 
         Returns
         -------
         Lab
-            Fully constructed Lab object with all hosts
+            Fully constructed lab.
 
         Raises
         ------
-        FileNotFoundError
-            If lab cannot be found in any search path
-        ValueError
-            If lab data is malformed
-        ImportError
-            If module loading fails (Python repository only)
+        LabNotFoundError
+            If no lab named ``name`` exists.
+        LabRepositoryError
+            If the backend fails to satisfy the query (I/O, parse, network).
         """
         ...
 
-    def supports_location(self, path: Path) -> bool:
-        """
-        Check if this repository can handle data at the given location.
-
-        Parameters
-        ----------
-        path : Path
-            Location to check
-
-        Returns
-        -------
-        bool
-            True if this repository can load from this location
-        """
-        ...
-
-    def list_labs(self, search_paths: list[Path]) -> list[str]:
-        """
-        List all valid lab names available in the search paths.
-
-        Parameters
-        ----------
-        search_paths : list[Path]
-            Directories to search for labs
+    def list_labs(self) -> list[str]:
+        """List all lab names this backend can provide.
 
         Returns
         -------
         list[str]
-            List of lab names found in the search paths
+            Lab names (every element a ``str``).
         """
         ...

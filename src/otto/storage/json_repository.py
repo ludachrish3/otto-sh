@@ -4,6 +4,10 @@ from typing import Any
 
 from ..configmodule.lab import Lab
 from ..logger import get_otto_logger
+from .errors import (
+    LabNotFoundError,
+    LabRepositoryError,
+)
 from .factory import (
     create_host_from_dict,
     validate_host_dict,
@@ -15,59 +19,37 @@ HOSTS_FILENAME = "hosts.json"
 
 
 class JsonFileLabRepository:
-    """Repository implementation for loading labs from a hosts.json file.
+    """Load labs from ``hosts.json`` files under a fixed set of search paths.
 
-    Each search-path directory may contain a hosts.json file holding all
-    known hosts. Each host carries a 'labs' field listing the lab names it
-    belongs to, mirroring a database row-with-membership design.
+    The search paths are supplied once at construction — this is the built-in
+    ``"json"`` backend, and :func:`otto.storage.build_lab_repository` feeds it
+    the aggregated ``labs`` directories. Each ``hosts.json`` holds all known
+    hosts; a host's ``labs`` field lists the labs it belongs to, mirroring a
+    row-with-membership database design.
     """
 
-    def supports_location(self,
-        path: Path,
-    ) -> bool:
-        """Check if path is a directory that could contain a hosts.json file."""
-        return path.is_dir()
+    def __init__(self, search_paths: list[Path] | None = None) -> None:
+        self.search_paths: list[Path] = list(search_paths or [])
 
-    def load_lab(self,
+    def load_lab(
+        self,
         name: str,
-        search_paths: list[Path],
         preferences: dict[str, dict[str, Any]] | None = None,
     ) -> Lab:
-        """
-        Load a lab by filtering hosts from hosts.json files.
-
-        Searches all search paths for hosts.json files, merges all hosts,
-        then returns only those whose 'labs' field contains the requested name.
-
-        Parameters
-        ----------
-        name : str
-            Name of the lab to load
-        search_paths : list[Path]
-            Directories to search for hosts.json files
-        preferences : dict[str, dict[str, Any]] | None
-            The unified ``{selector: {capability: [...] | option_table: {key: val}}}``
-            product-preference table forwarded to the factory, which matches each
-            host's ``id`` and applies the result. ``None`` reproduces today's behavior.
-
-        Returns
-        -------
-        Lab
-            Constructed Lab object with all matching hosts added
+        """Load a lab by filtering hosts from the configured hosts.json files.
 
         Raises
         ------
-        FileNotFoundError
-            If no hosts.json found in any search path, or no hosts belong
-            to the requested lab
-        ValueError
-            If a hosts.json file doesn't contain a JSON array or host data
-            is invalid
-        json.JSONDecodeError
-            If a hosts.json file contains malformed JSON
+        LabNotFoundError
+            If no hosts.json exists in any search path, or no host belongs to
+            the requested lab.
+        LabRepositoryError
+            If a hosts.json is malformed or a host's data is invalid.
         """
-
-        hosts_files = self._find_hosts_files(search_paths)
+        try:
+            hosts_files = self._find_hosts_files()
+        except FileNotFoundError as e:
+            raise LabNotFoundError(str(e)) from None
 
         all_hosts_data: list[dict[str, Any]] = []
         for hosts_file in hosts_files:
@@ -76,8 +58,8 @@ class JsonFileLabRepository:
         matching = [h for h in all_hosts_data if name in h.get("labs", [])]
 
         if not matching:
-            searched = '\n  '.join(str(p) for p in search_paths)
-            raise FileNotFoundError(
+            searched = '\n  '.join(str(p) for p in self.search_paths)
+            raise LabNotFoundError(
                 f"Lab '{name}' not found in any search path:\n  {searched}"
             ) from None
 
@@ -85,7 +67,7 @@ class JsonFileLabRepository:
             try:
                 validate_host_dict(host_data)
             except ValueError as e:
-                raise ValueError(
+                raise LabRepositoryError(
                     f"Invalid host data at index {idx} in lab '{name}': {e}"
                 ) from e
 
@@ -100,38 +82,30 @@ class JsonFileLabRepository:
                 logger.error(
                     f"Failed to create host at index {idx} in lab '{name}': {e}"
                 )
-                raise ValueError(
+                raise LabRepositoryError(
                     f"Failed to create host at index {idx} in lab '{name}': {e}"
                 ) from e
 
         logger.debug(f"Loaded lab '{name}' with {len(lab.hosts)} hosts")
         return lab
 
-    def list_labs(self, search_paths: list[Path]) -> list[str]:
-        """
-        List all lab names referenced by hosts across all hosts.json files.
+    def list_labs(self) -> list[str]:
+        """List all lab names referenced by hosts across the configured paths.
 
-        Parameters
-        ----------
-        search_paths : list[Path]
-            Directories to search for hosts.json files
-
-        Returns
-        -------
-        list[str]
-            Sorted list of unique lab names found
+        Returns an empty list when no hosts.json exists. A malformed hosts.json
+        is skipped rather than raised, so listing stays best-effort.
         """
         lab_names: set[str] = set()
 
         try:
-            hosts_files = self._find_hosts_files(search_paths)
+            hosts_files = self._find_hosts_files()
         except FileNotFoundError:
             return []
 
         for hosts_file in hosts_files:
             try:
                 hosts_data = self._load_json_hosts(hosts_file)
-            except (ValueError, json.JSONDecodeError):
+            except LabRepositoryError:
                 continue
             for host in hosts_data:
                 for lab in host.get("labs", []):
@@ -139,33 +113,23 @@ class JsonFileLabRepository:
 
         return sorted(lab_names)
 
-    def _find_hosts_files(self, search_paths: list[Path]) -> list[Path]:
-        """
-        Find all hosts.json files across the search paths.
-
-        Parameters
-        ----------
-        search_paths : list[Path]
-            Directories to search
-
-        Returns
-        -------
-        list[Path]
-            All found hosts.json paths (one per search path at most)
+    def _find_hosts_files(self) -> list[Path]:
+        """Find all hosts.json files across the configured search paths.
 
         Raises
         ------
         FileNotFoundError
-            If no hosts.json found in any search path
+            Internal signal (translated to LabNotFoundError by ``load_lab`` and
+            swallowed by ``list_labs``) when no hosts.json is found.
         """
         found: list[Path] = []
-        for search_path in search_paths:
+        for search_path in self.search_paths:
             candidate = search_path / HOSTS_FILENAME
             if candidate.exists() and candidate.is_file():
                 found.append(candidate)
 
         if not found:
-            searched = '\n  '.join(str(p) for p in search_paths)
+            searched = '\n  '.join(str(p) for p in self.search_paths)
             raise FileNotFoundError(
                 f"No {HOSTS_FILENAME} found in any search path:\n  {searched}"
             ) from None
@@ -173,32 +137,24 @@ class JsonFileLabRepository:
         return found
 
     def _load_json_hosts(self, hosts_file: Path) -> list[dict[str, Any]]:
-        """
-        Load and parse a hosts.json file, returning the list of host dicts.
-
-        Parameters
-        ----------
-        hosts_file : Path
-            Path to the hosts.json file
-
-        Returns
-        -------
-        list[dict]
-            List of host dictionaries from the JSON file
+        """Load and parse a hosts.json file, returning the list of host dicts.
 
         Raises
         ------
-        json.JSONDecodeError
-            If the file contains malformed JSON
-        ValueError
-            If the top-level JSON value is not an array
+        LabRepositoryError
+            If the file contains malformed JSON or its top-level value is not a
+            JSON array.
         """
-
-        with hosts_file.open() as f:
-            data = json.load(f)
+        try:
+            with hosts_file.open() as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise LabRepositoryError(
+                f"Hosts file '{hosts_file}' contains malformed JSON: {e}"
+            ) from e
 
         if not isinstance(data, list):
-            raise ValueError(
+            raise LabRepositoryError(
                 f"Hosts file '{hosts_file}' must contain a JSON array, "
                 f"got {type(data).__name__}"
             )

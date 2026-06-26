@@ -21,7 +21,10 @@ def test_load_lab_forwards_preferences(monkeypatch):
     captured: dict[str, object] = {}
 
     class FakeRepo:
-        def load_lab(self, name, search_paths, defaults=None, preferences=None):
+        def __init__(self, search_paths=None):
+            pass
+
+        def load_lab(self, name, preferences=None):
             captured["preferences"] = preferences
             return Lab(name=name)
 

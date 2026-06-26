@@ -205,15 +205,19 @@ class Repo():
         from rich.panel import Panel
         from rich.text import Text
 
-        from ..storage import JsonFileLabRepository
+        from ..storage import LabRepositoryError, build_lab_repository
 
-        lab_search_paths: list[Path] = []
-        lab_search_paths.extend(self.labs)
-
-        lab_names = JsonFileLabRepository().list_labs(search_paths=lab_search_paths)
-
-        lab_names = [ f"• {lab_name}" for lab_name in lab_names ]
-        lab_name_text = Text('\n'.join(lab_names))
+        try:
+            repository = build_lab_repository(
+                self.lab_settings, self.sut_dir, search_paths=self.labs
+            )
+            lab_names = repository.list_labs()
+        except (ValueError, LabRepositoryError) as e:
+            # Panel rendering must never crash on a misconfigured/unreachable
+            # host source; surface the reason in-panel instead of a traceback.
+            lab_name_text = Text(f"⚠ host source unavailable: {e}", style="red")
+        else:
+            lab_name_text = Text('\n'.join(f"• {lab_name}" for lab_name in lab_names))
 
         panel = Panel(
             lab_name_text,
@@ -489,6 +493,17 @@ class Repo():
         the other repo settings.
         """
         raw = self.settings.get('reservations', {}) or {}
+        return self._expand_recursive(raw)
+
+    @property
+    def lab_settings(self) -> dict[str, Any]:
+        """Return the ``[lab]`` settings sub-dict with ``${sut_dir}`` expanded.
+
+        Returns an empty dict when the section is absent, so the host-source
+        factory falls back to the built-in ``json`` backend over this repo's
+        ``labs`` search paths.
+        """
+        raw = self.settings.get('lab', {}) or {}
         return self._expand_recursive(raw)
 
     def _expand_recursive(self,

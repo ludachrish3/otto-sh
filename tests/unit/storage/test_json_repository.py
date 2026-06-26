@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from otto.configmodule.lab import Lab
+from otto.storage import LabNotFoundError, LabRepositoryError
 from otto.storage.json_repository import JsonFileLabRepository
 
 
@@ -15,22 +16,9 @@ def _hosts_file(path: Path, hosts: list[dict]) -> Path:
 
 
 class TestJsonFileLabRepository:
-    """Tests for JsonFileLabRepository class."""
-
-    def test_supports_location_directory(self, tmp_path):
-        """Test that supports_location returns True for directories."""
-        repo = JsonFileLabRepository()
-        assert repo.supports_location(tmp_path) is True
-
-    def test_supports_location_file(self, tmp_path):
-        """Test that supports_location returns False for files."""
-        repo = JsonFileLabRepository()
-        test_file = tmp_path / "test.txt"
-        test_file.write_text("test")
-        assert repo.supports_location(test_file) is False
+    """Tests for JsonFileLabRepository (construct-time search paths)."""
 
     def test_load_lab_simple(self, tmp_path):
-        """Test loading a simple lab with one host."""
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
@@ -42,8 +30,8 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
-        lab = repo.load_lab("testlab", [tmp_path])
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("testlab")
 
         assert isinstance(lab, Lab)
         assert lab.name == "testlab"
@@ -51,7 +39,6 @@ class TestJsonFileLabRepository:
         assert "orange" in lab.resources
 
     def test_load_lab_multiple_hosts(self, tmp_path):
-        """Test loading a lab with multiple hosts."""
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
@@ -71,8 +58,8 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
-        lab = repo.load_lab("multilab", [tmp_path])
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("multilab")
 
         assert isinstance(lab, Lab)
         assert lab.name == "multilab"
@@ -81,16 +68,16 @@ class TestJsonFileLabRepository:
         assert "tomato" in lab.resources
 
     def test_load_lab_not_found_no_hosts_file(self, tmp_path):
-        """Test that FileNotFoundError is raised when no hosts.json exists."""
-        repo = JsonFileLabRepository()
+        """A missing hosts.json raises LabNotFoundError, not FileNotFoundError."""
+        repo = JsonFileLabRepository([tmp_path])
 
-        with pytest.raises(FileNotFoundError) as exc_info:
-            repo.load_lab("nonexistent", [tmp_path])
+        with pytest.raises(LabNotFoundError) as exc_info:
+            repo.load_lab("nonexistent")
 
         assert str(tmp_path) in str(exc_info.value)
 
     def test_load_lab_not_found_lab_absent(self, tmp_path):
-        """Test that FileNotFoundError is raised when hosts.json exists but lab name is not present."""
+        """hosts.json exists but the lab name is not present -> LabNotFoundError."""
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
@@ -101,15 +88,14 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
+        repo = JsonFileLabRepository([tmp_path])
 
-        with pytest.raises(FileNotFoundError) as exc_info:
-            repo.load_lab("nonexistent", [tmp_path])
+        with pytest.raises(LabNotFoundError) as exc_info:
+            repo.load_lab("nonexistent")
 
         assert "nonexistent" in str(exc_info.value)
 
     def test_load_lab_only_returns_matching_hosts(self, tmp_path):
-        """Test that only hosts belonging to the requested lab are returned."""
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
@@ -127,14 +113,13 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
-        lab = repo.load_lab("lab_a", [tmp_path])
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("lab_a")
 
         assert len(lab.hosts) == 1
         assert "orange" in lab.hosts
 
     def test_load_lab_multiple_search_paths(self, tmp_path):
-        """Test loading lab from multiple search paths."""
         path1 = tmp_path / "path1"
         path2 = tmp_path / "path2"
         path1.mkdir()
@@ -150,34 +135,34 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
-        lab = repo.load_lab("testlab", [path1, path2])
+        repo = JsonFileLabRepository([path1, path2])
+        lab = repo.load_lab("testlab")
 
         assert isinstance(lab, Lab)
         assert lab.name == "testlab"
 
     def test_load_lab_not_a_list(self, tmp_path):
-        """Test that ValueError is raised when JSON root is not an array."""
+        """A non-array JSON root raises LabRepositoryError."""
         (tmp_path / "hosts.json").write_text(json.dumps({"hosts": []}))
 
-        repo = JsonFileLabRepository()
+        repo = JsonFileLabRepository([tmp_path])
 
-        with pytest.raises(ValueError) as exc_info:
-            repo.load_lab("badlab", [tmp_path])
+        with pytest.raises(LabRepositoryError) as exc_info:
+            repo.load_lab("badlab")
 
         assert "array" in str(exc_info.value)
 
     def test_load_lab_invalid_json(self, tmp_path):
-        """Test that json.JSONDecodeError is raised for malformed JSON."""
+        """Malformed JSON raises LabRepositoryError."""
         (tmp_path / "hosts.json").write_text("[{invalid json")
 
-        repo = JsonFileLabRepository()
+        repo = JsonFileLabRepository([tmp_path])
 
-        with pytest.raises(Exception):  # json.JSONDecodeError
-            repo.load_lab("badlab", [tmp_path])
+        with pytest.raises(LabRepositoryError):
+            repo.load_lab("badlab")
 
     def test_load_lab_invalid_host_data(self, tmp_path):
-        """Test that ValueError is raised for invalid host data."""
+        """Invalid host data raises LabRepositoryError with index context."""
         _hosts_file(tmp_path, [
             {
                 "element": "orange",
@@ -186,16 +171,15 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
+        repo = JsonFileLabRepository([tmp_path])
 
-        with pytest.raises(ValueError) as exc_info:
-            repo.load_lab("badlab", [tmp_path])
+        with pytest.raises(LabRepositoryError) as exc_info:
+            repo.load_lab("badlab")
 
         assert "index 0" in str(exc_info.value)
         assert "ip" in str(exc_info.value)
 
     def test_load_lab_resource_aggregation(self, tmp_path):
-        """Test that resources from hosts are aggregated to lab level."""
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
@@ -213,8 +197,8 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
-        lab = repo.load_lab("resourcelab", [tmp_path])
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("resourcelab")
 
         assert "orange" in lab.resources
         assert "citrus" in lab.resources
@@ -222,7 +206,6 @@ class TestJsonFileLabRepository:
         assert "vegetable" in lab.resources
 
     def test_load_lab_host_ids_generated(self, tmp_path):
-        """Test that host IDs are properly generated."""
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
@@ -235,13 +218,12 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
-        lab = repo.load_lab("idlab", [tmp_path])
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("idlab")
 
         assert "orange_seed0" in lab.hosts
 
     def test_list_labs(self, tmp_path):
-        """Test that list_labs returns all unique lab names from hosts.json."""
         _hosts_file(tmp_path, [
             {
                 "ip": "10.10.200.11",
@@ -259,13 +241,10 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
-        labs = repo.list_labs([tmp_path])
-
-        assert labs == ["alpha", "beta"]
+        repo = JsonFileLabRepository([tmp_path])
+        assert repo.list_labs() == ["alpha", "beta"]
 
     def test_list_labs_multiple_search_paths(self, tmp_path):
-        """Test list_labs aggregates across multiple search paths."""
         path1 = tmp_path / "p1"
         path2 = tmp_path / "p2"
         path1.mkdir()
@@ -290,23 +269,27 @@ class TestJsonFileLabRepository:
             },
         ])
 
-        repo = JsonFileLabRepository()
-        labs = repo.list_labs([path1, path2])
-
-        assert labs == ["alpha", "beta"]
+        repo = JsonFileLabRepository([path1, path2])
+        assert repo.list_labs() == ["alpha", "beta"]
 
     def test_list_labs_no_hosts_file(self, tmp_path):
-        """Test that list_labs returns empty list when no hosts.json exists."""
+        repo = JsonFileLabRepository([tmp_path])
+        assert repo.list_labs() == []
+
+    def test_list_labs_skips_malformed_file(self, tmp_path):
+        """A malformed hosts.json is skipped by list_labs, not fatal."""
+        (tmp_path / "hosts.json").write_text("[{invalid json")
+        repo = JsonFileLabRepository([tmp_path])
+        assert repo.list_labs() == []
+
+    def test_default_search_paths_empty(self):
+        """Constructed with no search paths -> no labs, no hosts file found."""
         repo = JsonFileLabRepository()
-        labs = repo.list_labs([tmp_path])
-        assert labs == []
+        assert repo.list_labs() == []
 
 
 class TestLoadLabWithPreferences:
-    """End-to-end tests for the unified ``preferences=`` parameter on ``load_lab``.
-    (Formerly tested the removed ``defaults=`` parameter; updated to the unified
-    [host_preferences] path in Task 2.)
-    """
+    """End-to-end tests for the unified ``preferences=`` parameter on ``load_lab``."""
 
     def _hosts(self, tmp_path):
         _hosts_file(tmp_path, [
@@ -321,28 +304,25 @@ class TestLoadLabWithPreferences:
         ])
 
     def test_defaults_apply_during_load(self, tmp_path):
-        """Product preferences (option tables) are merged into hosts during ``load_lab``.
-        With the Task-2 product-wins flip, the preference connect_timeout wins
-        over the host value, but port is host-only so it is preserved.
+        """Product preferences (option tables) merge into hosts during load_lab.
+        The preference connect_timeout wins; the host-only port is preserved.
         """
         self._hosts(tmp_path)
-        repo = JsonFileLabRepository()
+        repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab(
             "testlab",
-            [tmp_path],
             preferences={".*": {"ssh_options": {"connect_timeout": 99.0}}},
         )
         host = next(iter(lab.hosts.values()))
-        assert host.ssh_options.port == 9000        # host-only key preserved
+        assert host.ssh_options.port == 9000          # host-only key preserved
         assert host.ssh_options.connect_timeout == 99.0  # preferences wins
 
     def test_defaults_none_unchanged_behavior(self, tmp_path):
         """``preferences=None`` matches today's behavior."""
         self._hosts(tmp_path)
-        repo = JsonFileLabRepository()
-        lab = repo.load_lab("testlab", [tmp_path])
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("testlab")
         host = next(iter(lab.hosts.values()))
         assert host.ssh_options.port == 9000
-        # connect_timeout falls through to the dataclass default.
         from otto.host.options import SshOptions
         assert host.ssh_options.connect_timeout == SshOptions().connect_timeout

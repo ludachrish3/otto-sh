@@ -114,6 +114,35 @@ class TestGetTestSuitesPanel:
 
 
 # ---------------------------------------------------------------------------
+# get_lab_panel — host-source-backed lab listing + graceful failure
+# ---------------------------------------------------------------------------
+
+class TestGetLabPanel:
+
+    def test_lists_lab_names_from_host_source(self, tmp_path):
+        """The default json backend's lab names render as bulleted entries."""
+        sut_dir = _make_sut(tmp_path, extra_toml='labs = ["${sut_dir}/labdata"]\n')
+        labdata = sut_dir / 'labdata'
+        labdata.mkdir()
+        (labdata / 'hosts.json').write_text('[{"labs": ["alpha", "beta"]}]')
+        repo = Repo(sut_dir=sut_dir)
+        text = _render(repo.get_lab_panel())
+        assert 'alpha' in text
+        assert 'beta' in text
+
+    def test_unknown_backend_renders_error_not_traceback(self, tmp_path):
+        """A misconfigured [lab] backend surfaces in-panel instead of crashing."""
+        sut_dir = _make_sut(
+            tmp_path, extra_toml='[lab]\nbackend = "does-not-exist"\n'
+        )
+        repo = Repo(sut_dir=sut_dir)
+        # Must not raise — get_lab_panel catches the build failure.
+        text = _render(repo.get_lab_panel())
+        assert 'host source unavailable' in text
+        assert 'does-not-exist' in text
+
+
+# ---------------------------------------------------------------------------
 # resolve_suite
 # ---------------------------------------------------------------------------
 

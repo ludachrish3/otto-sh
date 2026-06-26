@@ -121,6 +121,20 @@ class ReservationConfigSpec(OttoModel):
     url: str | None = None
 
 
+class LabConfigSpec(OttoModel):
+    """The otto-owned ``[lab]`` envelope: which host-source ``backend`` to use.
+
+    ``extra='allow'`` keeps the backend-specific ``[lab.<backend>]`` sub-table
+    open — otto-core cannot type a third-party backend's kwargs. Defaults to the
+    built-in ``"json"`` backend so repos with no ``[lab]`` block behave exactly
+    as before.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    backend: str = "json"
+
+
 def _iso8601_utc(value: object) -> object:
     """Normalize an ISO-8601 ``expires`` string: trailing ``Z`` → ``+00:00`` and
     a naive timestamp is treated as UTC. Non-strings pass through unchanged so
@@ -206,6 +220,7 @@ class SettingsModel(OttoModel):
     host_preferences: dict[str, dict[str, Any]] = {}
     os_profiles: dict[str, OsProfileSpec] = {}
     docker: DockerSettingsSpec = DockerSettingsSpec()
+    lab: LabConfigSpec = LabConfigSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()
 
     @model_validator(mode="before")

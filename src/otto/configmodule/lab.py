@@ -12,6 +12,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from ..host.host import Host
+    from ..storage.protocol import LabRepository
 
 
 @dataclass
@@ -66,56 +67,31 @@ class Lab():
 # from this module, so this import must wait until Lab is defined.
 from ..storage.json_repository import JsonFileLabRepository  # noqa: E402, I001
 
-def _get_individual_lab(
-    labname: str,
-    search_paths: list[Path] | None = None,
-    preferences: dict[str, dict[str, Any]] | None = None,
-) -> Lab:
-    """
-    Load an individual lab by name.
-
-    Parameters
-    ----------
-    labname : str
-        Name of the lab to load
-    search_paths : list[Path] | None
-        Directories to search for lab data. If None, uses empty list.
-    preferences : dict[str, dict[str, Any]] | None
-        The unified ``{selector: {capability: [...] | option_table: {key: val}}}``
-        product-preference table forwarded to the repository and factory.
-        ``None`` reproduces today's behavior.
-
-    Returns
-    -------
-    Lab
-        Loaded lab object
-    """
-
-    if search_paths is None:
-        search_paths = []
-
-    repo = JsonFileLabRepository()
-    return repo.load_lab(labname, search_paths, preferences=preferences)
-
 def load_lab(
     labnames: str | list[str],
     search_paths: list[Path] | None = None,
     preferences: dict[str, dict[str, Any]] | None = None,
+    repository: "LabRepository | None" = None,
 ) -> Lab:
     """
-    Perform all actions necessary to build a Lab object based on a list of lab names.
+    Build a Lab object from one or more lab names.
 
     Parameters
     ----------
     labnames : str | list[str]
-        Name(s) of lab data to retrieve.
+        Name(s) of lab data to retrieve (a comma-separated string is split).
     search_paths : list[Path] | None
-        Directories to search for lab data.
+        Directories searched by the default json backend. Ignored when
+        ``repository`` is supplied.
     preferences : dict[str, dict[str, Any]] | None
         The unified ``{selector: {capability: [...] | option_table: {key: val}}}``
         product-preference table applied to every host in the resulting lab.
-        Forwarded to the factory, which matches each host's ``id`` and applies
-        the result. ``None`` reproduces today's behavior.
+        ``None`` reproduces today's behavior.
+    repository : LabRepository | None
+        A pre-built host-source backend (e.g. from
+        :func:`otto.storage.build_lab_repository`). When ``None``, a built-in
+        json backend over ``search_paths`` is used — preserving library/script
+        behavior.
 
     Returns
     -------
@@ -125,14 +101,16 @@ def load_lab(
 
     match labnames:
         case str():
-            labnameList = labnames.split(",")
+            lab_names = labnames.split(",")
         case _:
-            labnameList = labnames
+            lab_names = labnames
 
-    labs = [_get_individual_lab(name, search_paths,
-                                preferences=preferences) for name in labnameList]
+    if repository is None:
+        repository = JsonFileLabRepository(search_paths=search_paths or [])
+
+    labs = [repository.load_lab(name, preferences=preferences) for name in lab_names]
     lab = labs[0]
-    for additionalLab in labs[1:]:
-        lab += additionalLab
+    for additional_lab in labs[1:]:
+        lab += additional_lab
 
     return lab
