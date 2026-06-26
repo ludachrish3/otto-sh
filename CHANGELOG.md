@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-06-26
+
+### Added
+
+- backend conformance suite + sample reference backends
+- make the host source a registered, pluggable backend
+- modernize interface — multi-holder who_reserved, named-registry backends, -R break-glass, cached --as-user completion
+
+
+### Dependencies
+
+- bump pytest to 9.1.1 and fix show_test_item() call
+- bump ruff from 0.15.17 to 0.15.20
+- bump ty from 0.0.49 to 0.0.54
+
+
+### Documentation
+
+- host-database guide, reservations upgrade, team-setup onboarding
+- enable Sphinx nitpicky with zero ignores
+
+
 ## [0.5.1] - 2026-06-25
 
 ### Added
@@ -432,7 +454,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/ludachrish3/otto-sh/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ludachrish3/otto-sh/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ludachrish3/otto-sh/compare/v0.4.5...v0.5.0
 [0.4.5]: https://github.com/ludachrish3/otto-sh/compare/v0.4.4...v0.4.5
