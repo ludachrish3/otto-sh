@@ -45,6 +45,13 @@ labs
   `--lab my_lab`, otto looks in these directories for a file matching that
   name.  Defaults to `[]`.
 
+\[lab\]
+: Optional table selecting the **host-source backend** — where otto's hosts come
+  from. `backend` names a registered source (defaults to `"json"`, which reads
+  `hosts.json` from the `labs` directories); a `[lab.<name>]` sub-table holds
+  that backend's keyword arguments. See {doc}`host-database` for the full
+  treatment.
+
 libs
 : List of Python package directories to add to `sys.path` at startup.
   This is where you put your instruction modules, shared options, and helper
@@ -81,6 +88,13 @@ init
   entries can select them by `os_type` name.  See {doc}`os-profiles` for
   the full treatment.
 
+\[reservations\]
+: Optional table enabling the **reservation gate** — otto refuses to start
+  live-lab commands against resources the current user doesn't hold. `backend`
+  names a registered scheduler source (`"none"` — the default — disables the
+  gate; `"json"` reads a reservation file). See {doc}`reservations` for backends,
+  the file format, and the `--as-user` / `-R` break-glass overrides.
+
 ## What happens at startup
 
 When you run any `otto` command, the following initialization sequence
@@ -98,9 +112,11 @@ occurs:
    - Auto-imports all `test_*.py` files from `tests` directories (this
      registers suites)
 
-4. **Lab loading** -- Otto collects all `labs` search paths from every repo
-   and loads the lab(s) specified by `--lab` or `OTTO_LAB`.  Multiple labs
-   are merged, combining their hosts.
+4. **Lab loading** -- Otto builds the host source via `build_lab_repository`
+   (selected by `[lab] backend`, defaulting to the built-in `json` source over
+   the merged `labs` search paths) and loads the lab(s) named by `--lab` or
+   `OTTO_LAB`. Multiple labs are merged, combining their hosts. The host source
+   is pluggable — see {doc}`host-database`.
 
 5. **Context creation** -- The global `OttoContext` is created with the
    loaded repos and lab and installed via `set_context()`, making hosts
@@ -126,3 +142,32 @@ Each directory listed under `labs` holds a `hosts.json` file describing the
 hosts at that location.  The full per-host schema — every field, the
 connection-option tables, repo-level host defaults, and how labs merge — lives
 in {doc}`lab-config`.
+
+(team-setup-checklist)=
+## Team setup checklist
+
+Most of otto's configuration is a **one-time, team-level** decision. New
+contributors then just clone and run. Work through this map once when adopting
+otto for a team:
+
+1. **Create `.otto/settings.toml`** — `name`, `version`, and the `labs` / `libs`
+   / `tests` / `init` paths (this page, above).
+2. **Choose a host source** — the built-in `json` source (commit `hosts.json`
+   under a `labs` directory) is the default; point `[lab] backend` at a CMDB or
+   inventory API if you have one. See {doc}`host-database`.
+3. **Decide on reservation gating** — leave it off (`backend = "none"`, the
+   default) for sandbox labs, or wire `[reservations]` to your scheduler so otto
+   refuses to clobber a held rack. Tell the team about the `--as-user` and
+   `-R` / `--skip-reservation-check` break-glass overrides *before* they need
+   them. See {doc}`reservations`.
+4. **Register shared code** — put instruction/option modules under `libs` and
+   list them in `init`; auto-import test suites from `tests`. See {doc}`run` and
+   {doc}`test`.
+5. **Set per-product preferences** — optional `[host_preferences]` /
+   `[os_profiles]` (this page, above, and {doc}`lab-config` / {doc}`os-profiles`).
+6. **Enable tab completion** — see {doc}`../getting-started`.
+
+Each backend choice is verifiable: otto ships conformance helpers
+(`otto.testing.assert_lab_repository_conforms` /
+`assert_reservation_backend_conforms`) so a custom host source or reservation
+backend can be checked against otto's contract in your own test suite.

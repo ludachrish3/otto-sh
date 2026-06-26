@@ -273,6 +273,12 @@ load time.
 | `tests` | Directories scanned for `test_*.py` files (triggers suite registration) |
 | `init` | Python modules imported at startup (registers instructions and shared options) |
 
+```{tip}
+Setting otto up for a *team* is a one-time exercise — host source, reservation
+gating, shared libs, tab completion. The {ref}`team-setup-checklist` in
+{doc}`guide/repo-setup` walks through it.
+```
+
 ### Environment variables
 
 Set `OTTO_SUT_DIRS` to point otto at your project:
@@ -452,6 +458,7 @@ This opens a web dashboard showing CPU, memory, disk, and network metrics.
 
 ## Where to go next
 
+- {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team
 - {doc}`guide/index` -- Detailed guides for each CLI command and project configuration
 - {doc}`cookbook/index` -- Recipes for common asyncio patterns
 - {doc}`api/index` -- Full API reference

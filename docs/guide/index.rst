@@ -7,6 +7,7 @@ These guides cover otto's CLI commands and project configuration in detail.
 
    repo-setup
    lab-config
+   host-database
    run
    test
    monitor

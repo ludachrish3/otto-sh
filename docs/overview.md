@@ -197,6 +197,7 @@ Monitoring can also be started from within a test suite using
 ## Where to go next
 
 - {doc}`getting-started` — Installation and first steps
+- {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`guide/index` — Detailed guides for each CLI command
 - {doc}`cookbook/index` — Recipes for common asyncio patterns
 - {doc}`api/index` — Full API reference for all otto packages

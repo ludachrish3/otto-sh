@@ -11,6 +11,11 @@ Otto is strictly a consumer of reservation data.  It never creates,
 edits, or releases a reservation — the external scheduler remains
 authoritative.
 
+```{note}
+Wiring up reservations is a one-time, team-level decision. See the
+{ref}`team-setup-checklist` in {doc}`repo-setup` for the full onboarding map.
+```
+
 ## What gets checked, and where
 
 The gate runs at the top of every live-lab subcommand:
@@ -121,6 +126,21 @@ banner before the command runs:
 The banner fires only in that one case.  On a normal run (no
 `--as-user`) there is no banner — you already know who you are.
 
+### Username tab-completion
+
+If your backend can enumerate its users, otto offers them as `--as-user`
+tab-completion values. A backend opts in by implementing the optional
+[`SupportsUsernameCompletion`](../api/reservations.rst) capability — a single
+`list_usernames() -> list[str]` method. Otto detects it structurally; backends
+that can't list users simply omit it and `--as-user` still accepts free-form
+input.
+
+The values are cached with the same policy as host ids (otto's completion cache,
+invalidated by the settings fingerprint and `--clear-autocomplete-cache`), because
+enumerating users can be slow and the list changes rarely. A cold cache yields
+no suggestions and refreshes on the next normal run — completion never blocks on
+the backend.
+
 Real situations where `--as-user` is the right tool:
 
 - A teammate has a shared rack booked under their name; you need to run
@@ -212,135 +232,135 @@ lives on the roadmap.
 
 ## Writing a custom backend
 
-When your team already has a scheduler (Jira, a web API, a database),
-write a backend that talks to it instead of using the JSON file.
+When your team already has a scheduler (Jira, a web API, a database), write a
+backend that talks to it instead of using the JSON file. A backend implements
+the [`ReservationBackend`](../api/reservations.rst) Protocol — three read-only
+methods (`get_reserved_resources`, `who_reserved`, `backend_name`). Otto never
+calls a write method; the scheduler stays authoritative.
 
-Implementers implement the [`ReservationBackend`](../api/reservations.rst)
-Protocol — three read-only methods.  Otto never calls a write method;
-the scheduler remains authoritative.
+Otto ships a small, dependency-free reference implementation —
+[`otto.examples.reservations.ExampleReservationBackend`](../api/examples.rst) —
+that you can copy from `src/otto/examples/reservations.py` as a starting point.
+It demonstrates a multi-holder `who_reserved`, a stable `backend_name`, and the
+optional `list_usernames` completion capability:
 
-### Minimal skeleton
-
-```python
-# my_team_backend.py
-from typing import Optional
-
-from otto.reservations import ReservationBackendError
-
-
-class MyTeamBackend:
-    """Reservation backend backed by the team's internal Jira project."""
-
-    def __init__(self, *, url: str, api_key_env: str = "JIRA_API_KEY") -> None:
-        import os
-        self._url = url
-        self._api_key = os.environ.get(api_key_env)
-        if not self._api_key:
-            raise ReservationBackendError(
-                f"Environment variable {api_key_env} is not set"
-            )
-
-    def get_reserved_resources(self, username: str) -> set[str]:
-        try:
-            records = self._fetch(f"/reservations?user={username}&active=true")
-        except OSError as e:
-            raise ReservationBackendError(f"Scheduler unreachable: {e}") from e
-        return {r["resource_id"] for r in records}
-
-    def who_reserved(self, resource: str) -> Optional[str]:
-        try:
-            records = self._fetch(f"/reservations?resource={resource}&active=true")
-        except OSError as e:
-            raise ReservationBackendError(f"Scheduler unreachable: {e}") from e
-        return records[0]["user"] if records else None
-
-    def backend_name(self) -> str:
-        return "my-team-jira"
-
-    def _fetch(self, suffix: str) -> list[dict]:
-        ...
+```{doctest}
+>>> from otto.examples.reservations import ExampleReservationBackend
+>>> backend = ExampleReservationBackend()
+>>> backend.backend_name()
+'example'
+>>> sorted(backend.get_reserved_resources("alice"))
+['lab-a', 'shared']
+>>> backend.who_reserved("shared")
+['alice', 'bob']
+>>> backend.list_usernames()
+['alice', 'bob']
 ```
 
 ### Selecting it in settings
 
+Register the backend under a bare name from an `init` module (one of the modules
+in `init = [...]`), then select it by that name:
+
+```python
+# my_team_backend.py  (listed in init = [...])
+from otto.reservations import register_reservation_backend
+from my_company.jira_backend import MyTeamBackend
+
+register_reservation_backend("my-team-jira", MyTeamBackend)
+```
+
 ```toml
 [reservations]
-backend = "my_team_backend:MyTeamBackend"
+backend = "my-team-jira"
 url = "https://jira.example.com"
 
-[reservations.MyTeamBackend]
+[reservations.my-team-jira]
 api_key_env = "JIRA_API_KEY"
 ```
 
-The factory resolves `"pkg.module:ClassName"` via `importlib`, then
-instantiates the class as `Class(url=url, **kwargs_from_settings)` —
-where `kwargs_from_settings` is the nested
-`[reservations.<ClassName>]` sub-table.  The full dotted name (via
-quoted keys, e.g. `["reservations"."pkg.mod:Class"]`) also works, but
-the unquoted class-name form is easier to read.
+Otto constructs the backend as
+`MyTeamBackend(url="https://jira.example.com", api_key_env="JIRA_API_KEY")` —
+the `[reservations.<name>]` sub-table becomes keyword arguments, and `url` is
+passed when present. Selecting an unregistered name raises an error listing the
+registered backends. This is the same named-registry mechanism otto uses for
+host sources, term/transfer backends, and host classes; an `init` module always
+imports before the reservation check runs, so the name is registered in time.
 
-The module must be importable from otto's process — add the directory
-to `[libs]` in `.otto/settings.toml`, install the module as a package,
-or use any other `sys.path` mechanism.
+### Verify your backend
+
+Otto ships a conformance helper that checks a backend against the full contract
+and reports every violation at once (a single `AssertionError` listing each
+failed rule). The shipped sample conforms:
+
+```{doctest}
+>>> from otto.testing import assert_reservation_backend_conforms
+>>> from otto.examples.reservations import ExampleReservationBackend
+>>> assert_reservation_backend_conforms(
+...     ExampleReservationBackend(),
+...     known_user="alice",
+...     known_resources=["lab-a", "shared"],
+... )
+```
+
+Call it from your own suite. Passing `known_user` / `known_resources` (resources
+that user is known to hold) enables the round-trip consistency rules against your
+own fixtures:
+
+```python
+from otto.testing import assert_reservation_backend_conforms
+from my_team_backend import MyTeamBackend
+
+def test_my_backend_conforms():
+    assert_reservation_backend_conforms(
+        MyTeamBackend(url="https://jira.example.com"),
+        known_user="alice",
+        known_resources=["rack3-psu"],
+    )
+```
 
 ### Contract rules for implementers
 
-- **Never mutate.**  Otto only reads from the scheduler.  Writes,
-  releases, extensions — all stay in the scheduler's own UI/API.
-- **Return the user's full reserved set** from `get_reserved_resources`.
-  Don't pre-filter against what otto "might need" — otto does that
-  filtering itself, and doing it twice loses information for the error
-  message.
-- **Raise [`ReservationBackendError`](../api/reservations.rst)** for
-  *every* failure mode that prevents a definitive answer: network
-  errors, timeouts, credential failures, malformed responses, missing
-  data files.  Do not swallow, do not return empty.  The CLI surfaces
-  this specific exception as a fail-closed startup error with an `-R`
-  hint — swallowing it means otto proceeds as if the user has nothing
-  reserved, which is the opposite of fail-closed.
-- **String-match byte-for-byte.**  The strings you return from
-  `get_reserved_resources` must match `UnixHost.resources` and
-  `Lab.resources` exactly.  If the upstream scheduler uses different
-  identifiers, normalize inside your backend — not in otto.
-- **`backend_name()` should be stable.**  The name shows up in
-  diagnostic output and skip warnings; changing it between versions
-  breaks search queries over log history.
-- **`url` is optional on both sides.**  You can either accept `url: str
-  | None = None` and consume it, or hardcode your scheduler's endpoint
-  and omit the parameter.  The factory only passes `url=` when the
+- **Never mutate.** Otto only reads from the scheduler. Writes, releases,
+  extensions — all stay in the scheduler's own UI/API.
+- **Return the user's full reserved set** from `get_reserved_resources`. Don't
+  pre-filter against what otto "might need" — otto does that filtering itself,
+  and doing it twice loses information for the error message.
+- **`who_reserved` returns a `list[str]`.** Return every username currently
+  holding the resource, in a deterministic order with duplicates removed. An
+  **empty list** means no one holds it — there is no `None` sentinel, and a
+  resource can have any number of concurrent holders.
+- **Raise [`ReservationBackendError`](../api/reservations.rst)** for *every*
+  failure mode that prevents a definitive answer: network errors, timeouts,
+  credential failures, malformed responses, missing data files. Do not swallow,
+  do not return empty. The CLI surfaces this specific exception as a fail-closed
+  startup error with an `-R` hint — swallowing it means otto proceeds as if the
+  user holds nothing, the opposite of fail-closed.
+- **String-match byte-for-byte.** The strings you return must match
+  `UnixHost.resources` and `Lab.resources` exactly. Normalize inside your
+  backend, not in otto.
+- **`backend_name()` should be stable.** It shows up in diagnostics and skip
+  warnings; changing it between versions breaks log-history searches.
+- **`url` is optional on both sides.** Accept `url: str | None = None` and use
+  it, or hardcode your endpoint and omit it — otto passes `url=` only when the
   setting is present.
-
-### Third-party package layout
-
-If you distribute the backend as a Python package:
-
-```text
-my_team_backend/
-├── pyproject.toml
-└── src/
-    └── my_team_backend/
-        ├── __init__.py         # exports MyTeamBackend
-        └── backend.py
-```
-
-```toml
-[reservations]
-backend = "my_team_backend:MyTeamBackend"
-```
-
-Users `pip install my_team_backend` into the same environment as otto,
-and the factory picks it up by dotted path.  No otto-side code changes
-are needed to add a new backend.
+- **Optionally implement `list_usernames()`** to power cached `--as-user`
+  completion (see [Username tab-completion](#username-tab-completion)).
 
 ## Fail-closed behavior
 
-If backend construction raises, or an early health check fails, otto
-exits before running the requested command.  The error message does
-mention `-R` in this case — the user otherwise has no way to proceed
-if their scheduler is down.
+If backend construction raises (scheduler unreachable, bad credentials), otto
+exits before running the requested command — and the error message *does* mention
+`-R`, because the user otherwise has no way to proceed.
 
-All other failures (user genuinely doesn't hold the resource) exit via
-the normal `MissingReservationError` path, which does not mention `-R`.
+Passing `-R` / `--skip-reservation-check` goes further: otto does **not construct
+the backend at all**. A scheduler that fails or even hangs in its constructor can
+never block lab access — that is the strongest form of break-glass. (The
+introspection subcommands `otto reservation whoami` / `check` still build the
+backend on demand when you ask them to.)
+
+All other failures (the user genuinely doesn't hold the resource) exit via the
+normal `MissingReservationError` path, which does not mention `-R`.
 
 ## Troubleshooting
 
@@ -350,11 +370,10 @@ the normal `MissingReservationError` path, which does not mention `-R`.
   is in someone else's name, or (if you're certain the data is wrong)
   use `-R` for one command.
 
-`"Could not import reservation backend module ..."`
-: The dotted path in `[reservations] backend = "pkg.mod:Cls"` pointed
-  at a module otto can't find.  Either add the containing directory to
-  `libs = [...]` in `.otto/settings.toml`, or install the backend as a
-  package in the same environment.
+`"Unknown reservation backend '...'"`
+: `[reservations] backend` names a backend that was never registered. Check the
+  name, and confirm the `init` module that calls
+  `register_reservation_backend(...)` is listed in `init = [...]`.
 
 `"Failed to read reservation file ..."`
 : The JSON backend can't open the file.  Check `path` in
