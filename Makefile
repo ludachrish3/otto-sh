@@ -21,7 +21,7 @@ VENV_BIN := $(if $(VIRTUAL_ENV),$(VIRTUAL_ENV)/bin,$(CURDIR)/.venv/bin)
 # that integration/hops tests require.
 COVERAGE_TARGET ?= coverage
 
-COVERAGE_THRESHOLD := 90
+COVERAGE_THRESHOLD := 92
 # CI runs unit tests only (integration/hops markers need Vagrant VMs that
 # don't exist in GitHub Actions), so the achievable threshold is lower.
 CI_COVERAGE_THRESHOLD := 85
