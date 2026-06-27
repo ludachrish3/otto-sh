@@ -43,6 +43,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from ..context import try_get_context
 from ..logger import get_otto_logger
 
 logger = get_otto_logger()
@@ -177,10 +178,8 @@ class _SessionLogFile:
 
 def _session_log_path() -> Path | None:
     """Return the path to the current invocation's ``otto.log``, if any."""
-    try:
-        output_dir = logger.output_dir
-    except AttributeError:
-        return None
+    ctx = try_get_context()
+    output_dir = ctx.output_dir if ctx is not None else None
     if output_dir is None:
         return None
     return Path(output_dir) / 'otto.log'

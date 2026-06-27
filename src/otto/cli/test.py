@@ -126,7 +126,8 @@ from rich.table import Table
 
 from ..configmodule import get_repos
 from ..configmodule.repo import Repo
-from ..logger import get_otto_logger
+from ..context import get_context
+from ..logger import get_otto_logger, management
 from ..suite.plugin import OttoPlugin
 from ..suite.register import _SUITE_REGISTRY, OttoOptionsPlugin
 
@@ -216,7 +217,10 @@ def run_suite(
 
     repos = get_repos()
     sut_test_dirs = [path for repo in repos for path in repo.tests]
-    log_dir = logger.output_dir
+    _log_dir = get_context().output_dir
+    if _log_dir is None:
+        raise RuntimeError("output_dir is not set; create_output_dir must run before run_suite")
+    log_dir: Path = _log_dir
     results_path = results or str(log_dir / 'junit.xml')
 
     # Pre-run cleanup of .gcda files on remotes
@@ -245,6 +249,11 @@ def run_suite(
         '--no-header',
         '--override-ini', 'log_cli=false',
         '--override-ini', 'addopts=',
+        # Restrict conftest loading to the suite file's directory tree so that
+        # otto's own tests/conftest.py (which resets logging management state)
+        # is not picked up by the inner session when the suite lives inside the
+        # otto project tree.
+        f'--confcutdir={Path(suite_file).resolve().parent}',
         # pytest-asyncio registers anyio for assertion rewriting, but anyio is
         # already imported by the time pytest.main() is called from within otto.
         # The warning is harmless (anyio's internals don't affect test results)
@@ -516,7 +525,7 @@ def main(
         monitor_hosts=monitor_hosts,
     )
     if ctx.invoked_subcommand is not None:
-        logger.create_output_dir('test', ctx.invoked_subcommand)
+        get_context().output_dir = management.create_output_dir('test', ctx.invoked_subcommand)
         from ..reservations import gate
         gate(ctx)
 

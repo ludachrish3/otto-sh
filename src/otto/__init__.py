@@ -1,7 +1,4 @@
-# Ensure that the OttoLogger is initialized correctly before anything else happens
 from otto.logger import get_otto_logger as get_otto_logger
-
-get_otto_logger()
 
 # Blessed, concise form for declaring suite/instruction Options with validation:
 # ``from otto import options`` then ``@options`` on the Options class. A re-export

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Generic, TypeVar, cast
 import pytest
 import pytest_asyncio
 
-from otto.logger.logger import OttoLogger
+from otto.context import get_context
 
 if TYPE_CHECKING:
     from otto.host.unix_host import UnixHost
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from otto.monitor.parsers import MetricParser
     from otto.monitor.server import MonitorServer
 
-logger: OttoLogger = getLogger('otto') # type: ignore
+logger = getLogger('otto')
 
 TOptions = TypeVar('TOptions')
 """Type variable for the options dataclass of an :class:`OttoSuite` subclass."""
@@ -160,7 +160,10 @@ class OttoSuite(Generic[TOptions]):
     _session_monitor_collector: 'MetricCollector | None' = None
 
     def setup_method(self, method: object = None) -> None:
-        self.suiteDir = logger.output_dir
+        output_dir = get_context().output_dir
+        if output_dir is None:
+            raise RuntimeError("output_dir is not set; create_output_dir must run before suite")
+        self.suiteDir = output_dir
         """Base directory where all artifacts go for the suite"""
 
         self.logger = logger
@@ -185,12 +188,18 @@ class OttoSuite(Generic[TOptions]):
     @classmethod
     def setup_class(cls):
         logger.debug('Welcome to the base setup_class() method')
-        cls.testDir = logger.output_dir / 'setupClass'
+        output_dir = get_context().output_dir
+        if output_dir is None:
+            raise RuntimeError("output_dir is not set; create_output_dir must run before suite")
+        cls.testDir = output_dir / 'setupClass'
 
     @classmethod
     def teardown_class(cls):
         logger.debug('Welcome to the base teardown_class() method')
-        cls.testDir = logger.output_dir / 'teardownClass'
+        output_dir = get_context().output_dir
+        if output_dir is None:
+            raise RuntimeError("output_dir is not set; create_output_dir must run before suite")
+        cls.testDir = output_dir / 'teardownClass'
 
     # ── Expect (non-fatal assertions) ────────────────────────────────────
 

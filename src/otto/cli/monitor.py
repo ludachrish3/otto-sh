@@ -22,7 +22,8 @@ import typer
 
 # TODO: Create a SqlPath class that automatically adds the correct slashes and stuff in the front (something like sqlite:////path/to/file)
 from ..configmodule import all_hosts
-from ..logger import get_otto_logger
+from ..context import get_context
+from ..logger import get_otto_logger, management
 from ..monitor.collector import MetricCollector
 from ..monitor.factory import build_monitor_collector
 from ..monitor.server import MonitorServer
@@ -66,7 +67,7 @@ def monitor(
     if ctx.resilient_parsing:
         return
 
-    logger.create_output_dir("monitor")
+    get_context().output_dir = management.create_output_dir("monitor")
 
     # ── Build collector ────────────────────────────────────────────────────
     if file is not None:

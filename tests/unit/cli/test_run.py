@@ -4,7 +4,7 @@ Unit tests for the ``otto run`` subcommand.
 The run subcommand is a dynamic registry: instructions register themselves via
 the ``@instruction()`` decorator exported from ``otto.cli.run``.  Tests verify:
   - The subcommand shows help when invoked with no arguments
-  - Its callback sets the logger's log directory based on the invoked subcommand
+  - Its callback calls management.create_output_dir based on the invoked subcommand
   - The ``@instruction()`` decorator registers a callable on ``run_app``
   - Decorated instruction bodies actually execute and can interact with hosts
   - The ``options=`` parameter enables dataclass-based option inheritance
@@ -12,7 +12,7 @@ the ``@instruction()`` decorator exported from ``otto.cli.run``.  Tests verify:
 
 from dataclasses import dataclass
 from typing import Annotated
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import typer
@@ -47,26 +47,25 @@ class TestRunHelp:
 # ── Callback behaviour ────────────────────────────────────────────────────────
 
 class TestRunCallback:
-    """The run_app callback sets the log directory when a subcommand is invoked."""
+    """The run_app callback calls management.create_output_dir when a subcommand runs."""
 
     def test_log_dir_set_for_subcommand(self):
-        """
-        When a subcommand named 'install' is invoked, the callback should
-        call logger.setLogDir('run_install').
-        """
-        from otto.cli import run as run_module
+        """When a subcommand named '_test_cmd' is invoked, the callback should
+        call management.create_output_dir('run', '_test_cmd').
 
-        mock_logger = MagicMock()
+        The no_logger_output_dir autouse fixture patches create_output_dir globally;
+        we access that mock via the patch target directly.
+        """
+        from unittest.mock import patch
 
-        # Register a minimal no-op subcommand so we have something to invoke
-        @run_app.command('_test_cmd')
-        def _test_cmd():
+        @run_app.command('_test_cmd_cb')
+        def _test_cmd_cb():
             pass
 
-        with patch.object(run_module, 'logger', mock_logger):
-            runner.invoke(run_app, ['_test_cmd'])
+        with patch('otto.logger.management.create_output_dir') as p_create:
+            runner.invoke(run_app, ['_test_cmd_cb'])
 
-        mock_logger.create_output_dir.assert_called_once_with('run', '_test_cmd')
+        p_create.assert_called_once_with('run', '_test_cmd_cb')
 
 
 # ── @instruction() decorator ──────────────────────────────────────────────────
@@ -94,7 +93,6 @@ class TestInstructionDecorator:
 
     def test_decorated_instruction_is_invocable(self):
         """A decorated async instruction can be invoked synchronously via CliRunner."""
-        from otto.cli import run as run_module
         from otto.utils import CommandStatus, Status
 
         @instruction('_unit_test_noop')
@@ -106,9 +104,7 @@ class TestInstructionDecorator:
                 retcode=0,
             )
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(run_app, ['_unit_test_noop'])
+        result = runner.invoke(run_app, ['_unit_test_noop'])
         assert result.exit_code == 0
 
 
@@ -117,15 +113,14 @@ class TestInstructionDecorator:
 class TestInstructionExecution:
     """Verify that instruction bodies run end-to-end, not just register.
 
-    Mock boundary: logger.create_output_dir (filesystem I/O) and
-    UnixHost methods (network I/O).  The @instruction decorator,
-    async_typer_command wrapper, and Typer argument parsing all run for real.
+    Mock boundary: management.create_output_dir (filesystem I/O, patched by
+    no_logger_output_dir autouse fixture) and UnixHost methods (network I/O).
+    The @instruction decorator, async_typer_command wrapper, and Typer argument
+    parsing all run for real.
     """
 
     def test_instruction_body_executes(self):
         """The async function body must actually run, not just be registered."""
-        from otto.cli import run as run_module
-
         execution_log: list[str] = []
 
         @instruction('_unit_test_exec')
@@ -138,17 +133,13 @@ class TestInstructionExecution:
                 retcode=0,
             )
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(run_app, ['_unit_test_exec'])
+        result = runner.invoke(run_app, ['_unit_test_exec'])
 
         assert result.exit_code == 0
         assert execution_log == ['ran']
 
     def test_instruction_receives_typer_arguments(self):
         """Typer argument parsing must work through the @instruction decorator."""
-        from otto.cli import run as run_module
-
         captured: dict[str, str] = {}
 
         @instruction('_unit_test_args')
@@ -163,9 +154,7 @@ class TestInstructionExecution:
                 retcode=0,
             )
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(run_app, ['_unit_test_args', 'my-device'])
+        result = runner.invoke(run_app, ['_unit_test_args', 'my-device'])
 
         assert result.exit_code == 0
         assert captured['target'] == 'my-device'
@@ -176,8 +165,6 @@ class TestInstructionExecution:
         Mock boundary is at the host method level — acceptable for
         instructions which are thin wrappers around host calls.
         """
-        from otto.cli import run as run_module
-
         mock_host = AsyncMock(spec=UnixHost)
         mock_host.run.return_value = CommandStatus(
             command='echo hello',
@@ -190,9 +177,7 @@ class TestInstructionExecution:
         async def _host_test() -> CommandStatus:
             return await mock_host.run('echo hello')
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(run_app, ['_unit_test_host'])
+        result = runner.invoke(run_app, ['_unit_test_host'])
 
         assert result.exit_code == 0
         mock_host.run.assert_awaited_once_with('echo hello')
@@ -207,8 +192,6 @@ class TestInstructionOptions:
 
     def test_instruction_with_options_dataclass(self):
         """Dataclass fields become CLI options on the instruction."""
-        from otto.cli import run as run_module
-
         @dataclass
         class _Opts:
             name: Annotated[str, typer.Option(help='A name.')] = 'default'
@@ -220,9 +203,7 @@ class TestInstructionOptions:
             captured['opts'] = opts
             return CommandStatus('test', '', Status.Success, 0)
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(run_app, ['_unit_test_opts_dc', '--name', 'hello'])
+        result = runner.invoke(run_app, ['_unit_test_opts_dc', '--name', 'hello'])
 
         assert result.exit_code == 0
         assert isinstance(captured['opts'], _Opts)
@@ -236,7 +217,6 @@ class TestInstructionOptions:
         import pydantic
 
         from otto import options
-        from otto.cli import run as run_module
 
         @options
         class _ValOpts:
@@ -247,19 +227,15 @@ class TestInstructionOptions:
         async def _opts_validate(opts: _ValOpts) -> CommandStatus:
             return CommandStatus('test', '', Status.Success, 0)
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(
-                run_app, ['_unit_test_opts_validate', '--count', '-5'],
-            )
+        result = runner.invoke(
+            run_app, ['_unit_test_opts_validate', '--count', '-5'],
+        )
 
         assert result.exit_code == 2, result.output
         assert 'count' in result.stderr
 
     def test_instruction_with_inherited_options(self):
         """Parent + child dataclass fields both appear as CLI options."""
-        from otto.cli import run as run_module
-
         @dataclass
         class _Parent:
             device: Annotated[str, typer.Option(help='Device.')] = 'router'
@@ -275,13 +251,11 @@ class TestInstructionOptions:
             captured['opts'] = opts
             return CommandStatus('test', '', Status.Success, 0)
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(run_app, [
-                '_unit_test_opts_inherit',
-                '--device', 'switch',
-                '--firmware', 'v2.0',
-            ])
+        result = runner.invoke(run_app, [
+            '_unit_test_opts_inherit',
+            '--device', 'switch',
+            '--firmware', 'v2.0',
+        ])
 
         assert result.exit_code == 0
         opts = captured['opts']
@@ -291,8 +265,6 @@ class TestInstructionOptions:
 
     def test_instruction_options_defaults(self):
         """When no CLI flags are passed, dataclass defaults are used."""
-        from otto.cli import run as run_module
-
         @dataclass
         class _Defaults:
             color: Annotated[str, typer.Option(help='Color.')] = 'blue'
@@ -304,17 +276,13 @@ class TestInstructionOptions:
             captured['opts'] = opts
             return CommandStatus('test', '', Status.Success, 0)
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(run_app, ['_unit_test_opts_defaults'])
+        result = runner.invoke(run_app, ['_unit_test_opts_defaults'])
 
         assert result.exit_code == 0
         assert captured['opts'].color == 'blue'
 
     def test_instruction_options_mixed_with_inline_params(self):
         """An instruction can combine an options dataclass with inline params."""
-        from otto.cli import run as run_module
-
         @dataclass
         class _MixOpts:
             level: Annotated[int, typer.Option(help='Level.')] = 1
@@ -330,13 +298,11 @@ class TestInstructionOptions:
             captured['verbose'] = verbose
             return CommandStatus('test', '', Status.Success, 0)
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(run_app, [
-                '_unit_test_opts_mixed',
-                '--level', '5',
-                '--verbose',
-            ])
+        result = runner.invoke(run_app, [
+            '_unit_test_opts_mixed',
+            '--level', '5',
+            '--verbose',
+        ])
 
         assert result.exit_code == 0
         assert captured['opts'].level == 5
@@ -363,8 +329,6 @@ class TestInstructionOptions:
 
     def test_instruction_without_options_still_works(self):
         """Existing instructions without options= are unaffected."""
-        from otto.cli import run as run_module
-
         captured: list[str] = []
 
         @instruction('_unit_test_no_opts')
@@ -374,9 +338,7 @@ class TestInstructionOptions:
             captured.append(msg)
             return CommandStatus('test', '', Status.Success, 0)
 
-        mock_logger = MagicMock()
-        with patch.object(run_module, 'logger', mock_logger):
-            result = runner.invoke(run_app, ['_unit_test_no_opts', '--msg', 'bye'])
+        result = runner.invoke(run_app, ['_unit_test_no_opts', '--msg', 'bye'])
 
         assert result.exit_code == 0
         assert captured == ['bye']

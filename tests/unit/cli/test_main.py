@@ -3,7 +3,7 @@ Unit tests for the main CLI entry-point argument parsing.
 
 Tests cover:
   - Eager options that exit before the main callback (--version, --list-labs)
-  - Global options forwarded to init_otto_logger (--verbose, --log-level, --log-days, --xdir)
+  - Global options forwarded to init_cli_logging (--verbose, --log-level, --log-days, --xdir)
   - Lab-loading arguments (--lab, --show-lab, --list-hosts)
   - Validation of numeric constraints (--log-days min=0)
   - --field / --debug toggle
@@ -18,7 +18,7 @@ import pytest
 from typer.testing import CliRunner
 
 from otto.cli.main import app
-from otto.logger import get_otto_logger
+from otto.logger import get_otto_logger, management
 
 runner = CliRunner()
 
@@ -47,12 +47,12 @@ def main_mocks(tmp_path):
 
     with (
         patch.dict(os.environ, clean_env, clear=True),
-        patch('otto.cli.main.init_otto_logger') as p_logger,
+        patch('otto.logger.management.init_cli_logging') as p_logger,
         patch('otto.cli.main.get_repos', return_value=[]),
         patch('otto.cli.main.load_lab', return_value=mock_lab) as p_getlab,
     ):
         yield {
-            'init_otto_logger': p_logger,
+            'init_cli_logging': p_logger,
             'load_lab': p_getlab,
             'lab': mock_lab,
             'config': mock_config,
@@ -149,9 +149,9 @@ class TestLabFreeSubcommands:
 # ── Logger arguments ──────────────────────────────────────────────────────────
 
 class TestLoggerArguments:
-    """Verify that parsed CLI values flow through init_otto_logger to real logger state.
+    """Verify that parsed CLI values flow through init_cli_logging to real logger state.
 
-    init_otto_logger runs for real here.  Assertions check observable logger
+    init_cli_logging runs for real here.  Assertions check observable logger
     state (level, xdir, rich_logging) and the I/O-boundary mocks
     (RichHandler constructor args, remove_old_logs call args).
     """
@@ -188,15 +188,15 @@ class TestLoggerArguments:
 
     def test_rich_log_file_default_is_false(self, real_main_mocks):
         _invoke([])
-        assert get_otto_logger().rich_logging is False
+        assert management._state.rich_log_file is False
 
     def test_rich_log_file_true(self, real_main_mocks):
         _invoke(['--rich-log-file'])
-        assert get_otto_logger().rich_logging is True
+        assert management._state.rich_log_file is True
 
     def test_rich_log_file_explicit_false(self, real_main_mocks):
         _invoke(['--no-rich-log-file'])
-        assert get_otto_logger().rich_logging is False
+        assert management._state.rich_log_file is False
 
     def test_log_level_default_is_info(self, real_main_mocks):
         _invoke([])
@@ -212,35 +212,35 @@ class TestLoggerArguments:
 
     def test_log_days_default(self, real_main_mocks):
         _invoke([])
-        assert get_otto_logger().keep_seconds == 30 * 24 * 60 * 60
+        assert management._state.keep_seconds == 30 * 24 * 60 * 60
 
     def test_log_days_custom(self, real_main_mocks):
         _invoke(['--log-days', '14'])
-        assert get_otto_logger().keep_seconds == 14 * 24 * 60 * 60
+        assert management._state.keep_seconds == 14 * 24 * 60 * 60
 
     def test_xdir_from_env(self, real_main_mocks):
         # real_main_mocks pre-sets OTTO_XDIR to tmp_path; the callback should
         # pick that up without an explicit --xdir on the command line.
         _invoke([])
-        assert get_otto_logger().xdir == real_main_mocks['tmp_path']
+        assert management._state.xdir == real_main_mocks['tmp_path']
 
     def test_xdir_custom_path(self, real_main_mocks, tmp_path):
         custom_xdir = tmp_path / 'custom_xdir'
         custom_xdir.mkdir()
         _invoke(['--xdir', str(custom_xdir)])
-        assert get_otto_logger().xdir == custom_xdir
+        assert management._state.xdir == custom_xdir
 
     def test_xdir_default_when_neither_flag_nor_env(self, real_main_mocks, monkeypatch):
         """--xdir is optional: with neither flag nor OTTO_XDIR it defaults to CWD.
 
         The CWD default is safe because ``remove_old_logs`` only rmtree's entries
-        matching otto's timestamped log-dir name pattern (see logger.py), so a
+        matching otto's timestamped log-dir name pattern (see management.py), so a
         CWD-pointed xdir can no longer walk foreign trees at startup.
         """
         monkeypatch.delenv('OTTO_XDIR', raising=False)
         result = _invoke([])
         assert result.exit_code == 0
-        assert get_otto_logger().xdir == Path()
+        assert management._state.xdir == Path()
 
 
 # ── Lab loading ───────────────────────────────────────────────────────────────

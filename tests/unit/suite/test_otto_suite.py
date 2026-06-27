@@ -20,6 +20,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import otto.suite.suite as suite_module
+from otto.configmodule.lab import Lab
+from otto.context import OttoContext, reset_context, set_context
 from otto.suite.plugin import OttoPlugin
 from otto.suite.register import OttoOptionsPlugin
 from otto.suite.suite import _sanitize_node_name
@@ -73,19 +75,18 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path,
     ``tests/_loop_reaper.py``) closes any orphaned harness loop at the outer
     test's teardown boundary.
     """
-    mock_logger = MagicMock()
-    mock_logger.output_dir = tmp_path
-
-    with patch.object(suite_module, "logger", mock_logger):
-        try:
-            exit_code = pytest.main(
-                [str(test_file), "-o", "asyncio_mode=auto",
-                 "-o", "asyncio_default_fixture_loop_scope=function",
-                 "--no-cov", "--override-ini", "addopts=", "-x"],
-                plugins=[OttoPlugin(), OttoOptionsPlugin(options)],
-            )
-        finally:
-            sys.modules.pop(test_file.stem, None)
+    ctx = OttoContext(lab=Lab(name='_test_stub'), output_dir=tmp_path)
+    token = set_context(ctx)
+    try:
+        exit_code = pytest.main(
+            [str(test_file), "-o", "asyncio_mode=auto",
+             "-o", "asyncio_default_fixture_loop_scope=function",
+             "--no-cov", "--override-ini", "addopts=", "-x"],
+            plugins=[OttoPlugin(), OttoOptionsPlugin(options)],
+        )
+    finally:
+        sys.modules.pop(test_file.stem, None)
+        reset_context(token)
     return exit_code
 
 
@@ -440,11 +441,13 @@ class TestActiveMonitorCollector:
         class _Suite(OttoSuite):
             pass
 
-        mock_logger = MagicMock()
-        mock_logger.output_dir = tmp_path
-        with patch.object(suite_module, 'logger', mock_logger):
+        ctx = OttoContext(lab=Lab(name='_test_stub'), output_dir=tmp_path)
+        token = set_context(ctx)
+        try:
             s = _Suite()
             s.setup_method()
+        finally:
+            reset_context(token)
         return s
 
     def test_returns_none_when_no_monitor_active(self, tmp_path: Path):

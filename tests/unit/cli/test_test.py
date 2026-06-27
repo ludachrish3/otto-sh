@@ -21,6 +21,7 @@ import typer
 from typer.testing import CliRunner
 
 from otto.cli.test import run_suite, suite_app
+from otto.context import get_context
 from otto.suite.register import _SUITE_REGISTRY, register_suite
 
 runner = CliRunner()
@@ -88,9 +89,7 @@ class TestTestHelp:
 
 class TestTestCallback:
     def test_logger_output_dir_called_for_suite(self):
-        """The suite_app callback must call create_output_dir('test', suite_name)."""
-        import otto.cli.test as test_module
-
+        """The suite_app callback must call management.create_output_dir('test', suite_name)."""
         @register_suite()
         class _CallbackSuite:
             pass
@@ -101,12 +100,11 @@ class TestTestCallback:
                 suite_app.add_typer(sub_app)
                 break
 
-        mock_logger = MagicMock()
-        with patch.object(test_module, 'logger', mock_logger), \
+        with patch('otto.logger.management.create_output_dir') as p_create, \
              patch('otto.cli.test.run_suite'):
             runner.invoke(suite_app, ['_CallbackSuite'])
 
-        mock_logger.create_output_dir.assert_called_once_with('test', '_CallbackSuite')
+        p_create.assert_called_once_with('test', '_CallbackSuite')
 
 
 # ── run_suite internals ───────────────────────────────────────────────────────
@@ -131,17 +129,13 @@ class TestRunSuiteInternals:
         return fake_ctx
 
     def test_pytest_main_called_with_suite_file(self, tmp_path):
-        import otto.cli.test as test_module
-
         fake_file = str(tmp_path / 'test_fake.py')
-        mock_logger = MagicMock()
-        mock_logger.output_dir = tmp_path
 
         class _FakeSuite:
             __name__ = '_FakeSuite'
 
+        get_context().output_dir = tmp_path
         with patch('otto.cli.test.get_repos', return_value=[]), \
-             patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest') as mock_pytest:
             run_suite(_FakeSuite, fake_file, None, self._fake_parent_ctx({}))
 
@@ -152,16 +146,11 @@ class TestRunSuiteInternals:
         assert '_FakeSuite' in args_list
 
     def test_results_auto_path_used_when_empty(self, tmp_path):
-        import otto.cli.test as test_module
-
-        mock_logger = MagicMock()
-        mock_logger.output_dir = tmp_path
-
         class _FakeSuite3:
             __name__ = '_FakeSuite3'
 
+        get_context().output_dir = tmp_path
         with patch('otto.cli.test.get_repos', return_value=[]), \
-             patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest') as mock_pytest:
             run_suite(_FakeSuite3, 'fake.py', None, self._fake_parent_ctx({}))
 
@@ -171,16 +160,11 @@ class TestRunSuiteInternals:
         assert str(tmp_path) in junit_arg
 
     def test_markers_arg_passed(self, tmp_path):
-        import otto.cli.test as test_module
-
-        mock_logger = MagicMock()
-        mock_logger.output_dir = tmp_path
-
         class _FakeSuite4:
             __name__ = '_FakeSuite4'
 
+        get_context().output_dir = tmp_path
         with patch('otto.cli.test.get_repos', return_value=[]), \
-             patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest') as mock_pytest:
             run_suite(_FakeSuite4, 'fake.py', None,
                       self._fake_parent_ctx({'markers': 'not integration'}))
@@ -195,11 +179,6 @@ class TestRunSuiteInternals:
         output path to ``<output_dir>/monitor.json`` when the user didn't
         supply ``--monitor-output``.
         """
-        import otto.cli.test as test_module
-
-        mock_logger = MagicMock()
-        mock_logger.output_dir = tmp_path
-
         captured: dict = {}
 
         class _CapturingPlugin:
@@ -209,8 +188,8 @@ class TestRunSuiteInternals:
         class _FakeMonSuite:
             __name__ = '_FakeMonSuite'
 
+        get_context().output_dir = tmp_path
         with patch('otto.cli.test.get_repos', return_value=[]), \
-             patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest'), \
              patch('otto.cli.test.OttoPlugin', _CapturingPlugin):
             run_suite(_FakeMonSuite, 'fake.py', None, self._fake_parent_ctx({
@@ -226,11 +205,6 @@ class TestRunSuiteInternals:
         assert captured.get('monitor_output') == tmp_path / 'monitor.json'
 
     def test_monitor_output_override_passes_through(self, tmp_path):
-        import otto.cli.test as test_module
-
-        mock_logger = MagicMock()
-        mock_logger.output_dir = tmp_path
-
         captured: dict = {}
 
         class _CapturingPlugin:
@@ -240,9 +214,9 @@ class TestRunSuiteInternals:
         class _FakeMonSuite2:
             __name__ = '_FakeMonSuite2'
 
+        get_context().output_dir = tmp_path
         out = tmp_path / 'somewhere.db'
         with patch('otto.cli.test.get_repos', return_value=[]), \
-             patch.object(test_module, 'logger', mock_logger), \
              patch('otto.cli.test.pytest'), \
              patch('otto.cli.test.OttoPlugin', _CapturingPlugin):
             run_suite(_FakeMonSuite2, 'fake.py', None, self._fake_parent_ctx({
@@ -1089,11 +1063,9 @@ class TestRunSuiteReport:
             def __init__(self):
                 self.meta = {RUN_OPTIONS_KEY: TestRunOptions(**parent_opts)}
 
-        mock_logger = MagicMock()
-        mock_logger.output_dir = log_dir
+        get_context().output_dir = log_dir
 
         with patch('otto.cli.test.get_repos', return_value=[repo]), \
-             patch('otto.cli.test.logger', mock_logger), \
              patch('otto.cli.test.pytest.main'), \
              patch('otto.cli.test._run_coverage', new=AsyncMock()), \
              patch('otto.cli.test._cov_clean_remotes', new=AsyncMock()), \

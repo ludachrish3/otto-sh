@@ -12,14 +12,13 @@ Both reuse the top-level ``--lab`` option — no redundant flags here.
 import typer
 from rich import print as rprint
 
-from ..logger import get_otto_logger
+from ..context import get_context
+from ..logger import management
 from ..reservations import (
     MissingReservationError,
     check_reservations,
     required_resources,
 )
-
-logger = get_otto_logger()
 
 reservation_app = typer.Typer(
     name='reservation',
@@ -40,7 +39,7 @@ def reservation_callback(ctx: typer.Context) -> None:
     # (which also prunes old logs per the retention policy), only for a real
     # subcommand — never on group ``--help``/no-args.
     if ctx.invoked_subcommand is not None:
-        logger.create_output_dir('reservation', ctx.invoked_subcommand)
+        get_context().output_dir = management.create_output_dir('reservation', ctx.invoked_subcommand)
 
 
 @reservation_app.command()

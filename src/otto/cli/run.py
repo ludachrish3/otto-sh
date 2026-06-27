@@ -14,14 +14,13 @@ import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..logger import get_otto_logger
+from ..context import get_context
+from ..logger import management
 from ..params import build_options, options_params
 from ..utils import (
     CommandStatus,
     async_typer_command,
 )
-
-logger = get_otto_logger()
 
 P = ParamSpec("P")
 
@@ -63,7 +62,7 @@ def main(
         return
 
     if ctx.invoked_subcommand is not None:
-        logger.create_output_dir("run", f"{ctx.invoked_subcommand}")
+        get_context().output_dir = management.create_output_dir("run", f"{ctx.invoked_subcommand}")
         from ..reservations import gate
         gate(ctx)
 

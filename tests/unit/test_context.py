@@ -1,4 +1,5 @@
 import re
+from pathlib import Path
 
 import pytest
 
@@ -307,3 +308,11 @@ async def test_run_on_all_hosts_accepts_option_overrides():
 
     results2 = await ctx.do_for_all_hosts(_noop, ssh_options=None, ftp_options=None)
     assert results2["h1"] == "ok"
+
+
+def test_otto_context_output_dir_defaults_none_and_is_settable():
+    # OttoContext requires a lab; use a minimal stand-in via the dataclass.
+    ctx = OttoContext(lab=None)  # type: ignore[arg-type]
+    assert ctx.output_dir is None
+    ctx.output_dir = Path('/tmp/otto-run-xyz')
+    assert ctx.output_dir == Path('/tmp/otto-run-xyz')

@@ -50,9 +50,10 @@ from typing import Annotated
 
 import typer
 
+from ..context import get_context
 from ..coverage.reporter import TierSpec, run_coverage_report
 from ..coverage.store.model import TIER_SYSTEM
-from ..logger import get_otto_logger
+from ..logger import get_otto_logger, management
 
 logger = get_otto_logger()
 
@@ -76,7 +77,7 @@ def cov_callback(ctx: typer.Context) -> None:
     # policy. Gated on a real subcommand so group ``--help``/no-args never
     # touches the filesystem.
     if ctx.invoked_subcommand is not None:
-        logger.create_output_dir('cov', ctx.invoked_subcommand)
+        get_context().output_dir = management.create_output_dir('cov', ctx.invoked_subcommand)
 
 
 def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:

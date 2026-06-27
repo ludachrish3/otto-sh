@@ -27,8 +27,9 @@ from ..docker import (
     compose_up,
     get_user_compose_project,
 )
+from ..context import get_context
 from ..host.unix_host import UnixHost
-from ..logger import get_otto_logger
+from ..logger import get_otto_logger, management
 from ..utils import Status, async_typer_command
 
 logger = get_otto_logger()
@@ -52,7 +53,7 @@ def docker_callback(ctx: typer.Context) -> None:
     # (which also prunes old logs per the retention policy), only for a real
     # subcommand — never on group ``--help``/no-args.
     if ctx.invoked_subcommand is not None:
-        logger.create_output_dir('docker', ctx.invoked_subcommand)
+        get_context().output_dir = management.create_output_dir('docker', ctx.invoked_subcommand)
 
 
 def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:

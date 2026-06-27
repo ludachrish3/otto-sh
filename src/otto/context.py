@@ -89,6 +89,7 @@ class OttoContext:
     lab: "Lab"
     dry_run: bool = False
     log_command_output: bool = True
+    output_dir: "Path | None" = None
     scope: HostScope = field(default_factory=HostScope)
 
     def get_host(self, host_id: str, **overrides: Any) -> "UnixHost":

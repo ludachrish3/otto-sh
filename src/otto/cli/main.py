@@ -1,6 +1,7 @@
 import importlib
 import os
 import sys
+from logging import getLogger
 from pathlib import Path
 from typing import (
     Annotated,
@@ -26,7 +27,8 @@ from ..configmodule.env import (
     SUT_DIRS_ENV_VAR,
     XDIR_ENV_VAR,
 )
-from ..logger import init_otto_logger
+
+from ..logger import management
 from ..utils import (
     split_on_commas,
 )
@@ -275,12 +277,14 @@ def main(
 
     rprint(Align.center(banner))
 
-    logger = init_otto_logger(xdir=xdir,
-                            log_level=log_level,
-                            keep_days=log_days,
-                            verbose=verbose,
-                            rich_log_file=rich_log_file,
-                            )
+    management.init_cli_logging(
+        xdir=xdir,
+        log_level=log_level,
+        keep_days=log_days,
+        verbose=verbose,
+        rich_log_file=rich_log_file,
+    )
+    logger = getLogger('otto')
     for handler in logger.handlers:
         handler.addFilter(HostFilter())
 

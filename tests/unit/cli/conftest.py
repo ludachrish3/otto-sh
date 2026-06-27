@@ -33,15 +33,42 @@ from otto.utils import CommandStatus, Status
 
 @pytest.fixture(autouse=True)
 def no_logger_output_dir():
-    """Prevent OttoLogger.create_output_dir from being called in CLI tests.
+    """Prevent management.create_output_dir from being called in CLI unit tests.
 
-    The CLI commands call logger.create_output_dir() early, which requires
-    logger.xdir to be set (done by init_otto_logger() in the main callback).
-    Unit tests invoke subcommand apps directly, bypassing that callback, so
-    we patch it out globally here rather than repeating the patch per test.
+    The CLI commands call ``get_context().output_dir = management.create_output_dir(...)``
+    early, which requires (a) an active OttoContext and (b) management._state.xdir set
+    by init_cli_logging(). Unit tests invoke subcommand apps directly, bypassing the
+    main callback, so we patch out ``create_output_dir`` AND install a minimal stub
+    context (if none is already active) so that ``get_context()`` doesn't raise.
+
+    Tests that use ``real_main_mocks`` install a real context via ``set_context``
+    beforehand; the stub is skipped for them.
+
+    We also pre-set ``propagate = False`` on the ``'otto'`` logger to match what
+    ``management.init_cli_logging`` would do in a real invocation. Without this,
+    tests that mock ``init_cli_logging`` leave ``propagate = True`` (restored by
+    ``_reset_otto_logger_retention`` / ``management.reset()`` between tests),
+    causing log records to reach pytest's live-log handler, which temporarily
+    suspends stdout capture inside the CliRunner's isolation context.  Suspending
+    capture drops the CliRunner's ``_NamedTextIOWrapper`` reference, whose
+    ``TextIOWrapper.__del__`` closes the underlying ``BytesIOCopy`` — making the
+    subsequent ``outstreams[0].getvalue()`` fail with ``ValueError``.
     """
-    with patch('otto.cli.monitor.logger.create_output_dir'):
+    from logging import getLogger
+
+    from otto.configmodule.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context, try_get_context
+    token = None
+    if try_get_context() is None:
+        token = set_context(OttoContext(lab=Lab(name='_test_stub')))
+    # Mirror the propagate=False that init_cli_logging sets so that mocked-
+    # init_cli_logging tests don't accidentally emit live logs into pytest's
+    # capture machinery while a CliRunner invocation is in progress.
+    getLogger('otto').propagate = False
+    with patch('otto.logger.management.create_output_dir'):
         yield
+    if token is not None:
+        reset_context(token)
 
 
 # ── Helpers for real filesystem fixtures ─────────────────────────────────────
@@ -83,12 +110,12 @@ def real_main_mocks(tmp_path):
     """Fixture that lets business logic run for real, mocking only I/O.
 
     What runs for real:
-      - ``init_otto_logger`` (level, handler setup)
+      - ``management.init_cli_logging`` (level, handler setup)
       - ``load_lab`` (reads hosts.json from tmp_path)
       - OttoContext installation via ``set_context``
 
     What is mocked (I/O boundaries only):
-      - ``OttoLogger.remove_old_logs`` — filesystem listing + deletion
+      - ``management.remove_old_logs`` — filesystem listing + deletion
       - ``RichHandler`` — console I/O
       - ``get_repos`` — module-level singleton; returns a real ``Repo``
       - ``LocalHost.run`` — subprocess for git commands
@@ -97,7 +124,7 @@ def real_main_mocks(tmp_path):
     repo = Repo(sut_dir=sut_dir)
 
     # Strip the user's OTTO_* env so test outcomes don't drift with the shell;
-    # point OTTO_XDIR at tmp_path so init_otto_logger never writes to the project
+    # point OTTO_XDIR at tmp_path so init_cli_logging never writes to the project
     # root (--xdir is optional and defaults to CWD, which we don't want here).
     clean_env = {k: v for k, v in os.environ.items()
                  if not k.startswith('OTTO_')}
@@ -106,17 +133,11 @@ def real_main_mocks(tmp_path):
     logger = get_otto_logger()
     original_level = logger.level
     original_handlers = list(logger.handlers)
-    # Snapshot singleton state that init_otto_logger mutates so a later test on
-    # this xdist worker can't inherit a stale xdir/keep_seconds. (The
-    # test_cov.py flake came from this exact leak: a polluted xdir landed at
-    # the project root and cov_callback's remove_old_logs walked .git/.)
-    original_xdir = getattr(logger, '_xdir', None)
-    original_keep_seconds = logger._keep_seconds
 
     with (
         patch.dict(os.environ, clean_env, clear=True),
-        patch('otto.logger.logger.OttoLogger.remove_old_logs') as p_remove,
-        patch('otto.logger.logger.RichHandler') as p_rich,
+        patch('otto.logger.management.remove_old_logs') as p_remove,
+        patch('otto.logger.management.RichHandler') as p_rich,
         patch('otto.cli.main.get_repos', return_value=[repo]),
         patch(
             'otto.host.local_host.LocalHost.run',
@@ -147,11 +168,3 @@ def real_main_mocks(tmp_path):
     for handler in original_handlers:
         logger.addHandler(handler)
     logger.setLevel(original_level)
-    if original_xdir is None:
-        try:
-            del logger._xdir
-        except AttributeError:
-            pass
-    else:
-        logger._xdir = original_xdir
-    logger._keep_seconds = original_keep_seconds

@@ -12,11 +12,10 @@ from rich import print as rprint
 
 from ..configmodule import all_hosts, get_host
 from ..configmodule.configmodule import _apply_option_overrides
-from ..logger import get_otto_logger
+from ..context import get_context
+from ..logger import management
 from .callbacks import list_hosts_callback
 from .expose import HostGroup
-
-logger = get_otto_logger()
 
 
 def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
@@ -132,7 +131,7 @@ def main(
         rprint(ctx.get_help())
         raise typer.Exit()
 
-    logger.create_output_dir("host", f"{ctx.invoked_subcommand}")
+    get_context().output_dir = management.create_output_dir("host", f"{ctx.invoked_subcommand}")
     from ..reservations import gate
     gate(ctx)
 

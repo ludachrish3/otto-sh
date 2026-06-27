@@ -142,16 +142,15 @@ class TestHostHelp:
 
 class TestHostCallback:
     def test_log_dir_set_for_subcommand(self):
-        mock_logger = MagicMock()
         mock_host = _make_host_with_session([('', 0)])
 
         with (
-            patch.object(host_module, 'logger', mock_logger),
+            patch('otto.logger.management.create_output_dir') as p_create,
             patch.object(host_module, 'get_host', return_value=mock_host),
         ):
             runner.invoke(host_app, ['router1', 'run', 'ls'])
 
-        mock_logger.create_output_dir.assert_called_once_with('host', 'run')
+        p_create.assert_called_once_with('host', 'run')
 
 
 # ── Host resolution ──────────────────────────────────────────────────────────

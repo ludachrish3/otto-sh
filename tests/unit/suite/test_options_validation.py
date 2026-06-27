@@ -76,14 +76,16 @@ def test_build_options_plain_dataclass_unaffected():
 # ── End-to-end through the suite CLI path ─────────────────────────────────────
 
 from typing import Annotated  # noqa: E402
-from unittest.mock import MagicMock  # noqa: E402
 
 import pydantic  # noqa: E402
+import pytest  # noqa: E402
 import typer  # noqa: E402
 from typer.testing import CliRunner  # noqa: E402
 
 from otto import options  # noqa: E402
 from otto.cli.test import suite_app  # noqa: E402
+from otto.configmodule.lab import Lab  # noqa: E402
+from otto.context import OttoContext, reset_context, set_context  # noqa: E402
 from otto.suite.register import _SUITE_REGISTRY, register_suite  # noqa: E402
 
 
@@ -93,6 +95,22 @@ def _attach(suite_cls) -> None:
         if name == suite_cls.__name__:
             suite_app.add_typer(sub_app)
             return
+
+
+@pytest.fixture(autouse=True)
+def _stub_cli_bootstrap(monkeypatch):
+    """Patch management.create_output_dir and install a stub context.
+
+    Tests in this module invoke ``suite_app`` directly (not via the main
+    callback), so ``init_cli_logging``/``create_output_dir`` have never run
+    and there is no active OttoContext. Patch both so the callback doesn't
+    raise.
+    """
+    monkeypatch.setattr("otto.logger.management.create_output_dir", lambda *a, **k: None)
+    ctx = OttoContext(lab=Lab(name='_test_stub'))
+    token = set_context(ctx)
+    yield
+    reset_context(token)
 
 
 def test_suite_pydantic_options_reject_bad_value(monkeypatch):
@@ -106,7 +124,6 @@ def test_suite_pydantic_options_reject_bad_value(monkeypatch):
 
     # run_suite is never reached — validation fails first at construction.
     monkeypatch.setattr("otto.cli.test.run_suite", lambda *a, **k: None)
-    monkeypatch.setattr("otto.cli.test.logger", MagicMock())
     result = CliRunner().invoke(suite_app, ["_ValSuite", "--count", "-5"])
     assert result.exit_code == 2, result.output
     assert "count" in result.stderr
@@ -128,7 +145,6 @@ def test_suite_pydantic_options_accept_good_value(monkeypatch):
         "otto.cli.test.run_suite",
         lambda cls, f, opts, ctx: seen.update(count=opts.count),
     )
-    monkeypatch.setattr("otto.cli.test.logger", MagicMock())
     result = CliRunner().invoke(suite_app, ["_OkSuite", "--count", "5"])
     assert result.exit_code == 0, result.output
     assert seen["count"] == 5
@@ -151,7 +167,6 @@ def test_suite_field_default_used_when_flag_omitted(monkeypatch):
         "otto.cli.test.run_suite",
         lambda cls, f, opts, ctx: seen.update(count=opts.count),
     )
-    monkeypatch.setattr("otto.cli.test.logger", MagicMock())
     result = CliRunner().invoke(suite_app, ["_DefSuite"])  # no --count
     assert result.exit_code == 0, result.output
     assert seen["count"] == 7
@@ -174,7 +189,6 @@ def test_suite_plain_dataclass_options_still_work(monkeypatch):
         "otto.cli.test.run_suite",
         lambda cls, f, opts, ctx: seen.update(label=opts.label),
     )
-    monkeypatch.setattr("otto.cli.test.logger", MagicMock())
     result = CliRunner().invoke(suite_app, ["_PlainSuite", "--label", "y"])
     assert result.exit_code == 0, result.output
     assert seen["label"] == "y"

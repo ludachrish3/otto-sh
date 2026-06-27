@@ -1,7 +1,7 @@
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -16,7 +16,7 @@ class TestSuiteOptionsPassthrough:
         OttoOptionsPlugin, then asserts that the suite_options fixture provides it
         correctly.
         """
-        import otto.suite.suite as suite_module
+        from otto.context import reset_context, set_context
         from otto.suite.plugin import OttoPlugin
         from otto.suite.register import OttoOptionsPlugin
 
@@ -41,24 +41,27 @@ class TestCapture(OttoSuite):
         assert suite_options.device_type == "switch"  # type: ignore
 """)
 
-        mock_logger = MagicMock()
-        mock_logger.output_dir = tmp_path
-
-        with patch.object(suite_module, "logger", mock_logger):
-            try:
-                exit_code = pytest.main(
-                    [str(test_file), "-o", "asyncio_mode=auto",
-                     "-o", "asyncio_default_fixture_loop_scope=function",
-                     "--no-cov", "--override-ini", "addopts="],
-                    plugins=[OttoPlugin(), OttoOptionsPlugin(opts)],
-                )
-            finally:
-                # Evict the generated module (keyed by stem) so a second run
-                # of this test in the same process -- e.g. under
-                # `pytest --count` -- re-imports it instead of hitting
-                # "import file mismatch". clean_registry only sweeps
-                # `_otto_suite_*` keys, not this one.
-                sys.modules.pop(test_file.stem, None)
+        # Inject a minimal OttoContext so OttoSuite.setup_method can call
+        # get_context().output_dir (Task 3 migration: output_dir lives on
+        # OttoContext, not on the logger).
+        mock_ctx = MagicMock()
+        mock_ctx.output_dir = tmp_path
+        token = set_context(mock_ctx)
+        try:
+            exit_code = pytest.main(
+                [str(test_file), "-o", "asyncio_mode=auto",
+                 "-o", "asyncio_default_fixture_loop_scope=function",
+                 "--no-cov", "--override-ini", "addopts="],
+                plugins=[OttoPlugin(), OttoOptionsPlugin(opts)],
+            )
+        finally:
+            reset_context(token)
+            # Evict the generated module (keyed by stem) so a second run
+            # of this test in the same process -- e.g. under
+            # `pytest --count` -- re-imports it instead of hitting
+            # "import file mismatch". clean_registry only sweeps
+            # `_otto_suite_*` keys, not this one.
+            sys.modules.pop(test_file.stem, None)
 
         assert capture_file.exists(), "test_capture_suite_options never ran"
         assert capture_file.read_text() == "switch"
