@@ -33,6 +33,7 @@ from repo1_common.options import RepoOptions
 
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import get_host
+from otto.context import get_context
 from otto.host import LocalHost
 from otto.logger import get_otto_logger
 from otto.utils import CommandStatus, Status
@@ -76,7 +77,7 @@ async def nc_smoke(opts: _Options) -> CommandStatus:
         )
 
     local = LocalHost()
-    work = logger.output_dir / 'nc_smoke'
+    work = get_context().output_dir / 'nc_smoke'
     src_dir = work / 'src'
     roundtrip_dir = work / 'roundtrip'
     src_dir.mkdir(parents=True, exist_ok=True)

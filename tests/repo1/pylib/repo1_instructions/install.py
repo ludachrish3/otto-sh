@@ -7,6 +7,7 @@ from repo1_common.options import RepoOptions
 
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import do_for_all_hosts, run_on_all_hosts
+from otto.context import get_context
 from otto.host import LocalHost
 from otto.host.unix_host import UnixHost
 from otto.logger import get_otto_logger
@@ -27,8 +28,9 @@ class _Options(RepoOptions):
 async def test_instruction(opts: _Options):
 
     local_host = LocalHost()
-    local_file1 = logger.output_dir / "output1.bin"
-    local_file2 = logger.output_dir / "output2.bin"
+    output_dir = get_context().output_dir
+    local_file1 = output_dir / "output1.bin"
+    local_file2 = output_dir / "output2.bin"
     status = await local_host.run(f'dd if=/dev/urandom of={local_file1} bs=1K count=50')
     if not status.status.is_ok:
         return status
