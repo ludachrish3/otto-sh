@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build test coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck clean changelog release publish-test publish stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
+.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -110,23 +110,13 @@ release: ## Validate (typecheck + docs + FULL nox matrix across all Pythons, req
 		&& $(MAKE) build \
 		&& echo \
 		&& echo "Regenerated CHANGELOG.md, bumped version, tagged, and built dist/." \
-		&& echo "Pushing the tag fires .github/workflows/release.yml, which" \
-		&& echo "publishes to PyPI via OIDC (gated by the 'pypi' environment)." \
+		&& echo "Pushing the tag fires .github/workflows/release.yml, which builds," \
+		&& echo "publishes to PyPI via OIDC (gated by the 'pypi' environment), and" \
+		&& echo "creates the GitHub Release." \
 		&& echo "Push with:" \
 		&& echo "    git push --follow-tags" \
 		&& echo \
-		&& echo "Manual fallbacks (require UV_PUBLISH_TOKEN in env):" \
-		&& echo "    make publish-test    # upload dist/ to TestPyPI" \
-		&& echo "    make publish         # upload dist/ to PyPI"
-
-publish-test: ## Manual fallback: upload dist/ to TestPyPI (prefer dispatching release-testpypi.yml; requires UV_PUBLISH_TOKEN)
-	uv publish \
-		--publish-url https://test.pypi.org/legacy/ \
-		--check-url   https://test.pypi.org/simple/
-
-publish: ## Manual fallback: upload dist/ to PyPI — permanent (prefer pushing a v* tag to fire release.yml; requires UV_PUBLISH_TOKEN)
-	uv publish \
-		--check-url https://pypi.org/simple/
+		&& echo "To rehearse first, dispatch release-testpypi.yml from the Actions tab."
 
 nox-unit: ## Run the unit suite across all supported Pythons (no VMs). Fastest safe test. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/nox-unit/.
 	uv run nox -s tests_unit -- --count=$(NOX_COUNT) --repeat-scope=session

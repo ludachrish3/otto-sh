@@ -62,14 +62,13 @@ from the Actions tab (`workflow_dispatch`). It builds and uploads to TestPyPI
 via the `testpypi` environment. Prerelease versions (e.g. `0.4.0rc1`) are the
 natural fit for this path.
 
-## Manual fallbacks
+## Documentation publishing
 
-If the workflow is unavailable, `dist/` can be uploaded by hand with a
-`UV_PUBLISH_TOKEN` in the environment:
-
-```bash
-make publish-test   # upload dist/ to TestPyPI
-make publish        # upload dist/ to PyPI — permanent
-```
-
-Prefer the tag-driven workflow; the manual targets exist only as a fallback.
+The hosted documentation at
+[otto-sh.readthedocs.io](https://otto-sh.readthedocs.io) is **not** built or
+published by GitHub Actions. Read the Docs builds it independently off its own
+webhook, using
+[`.readthedocs.yaml`](https://github.com/ludachrish3/otto-sh/blob/main/.readthedocs.yaml)
+(`sphinx-build -W`, so warnings fail the build). It tracks the configured
+branch/version rather than the `v*` release tag — a documentation change lands
+when it reaches that branch, independent of cutting a PyPI release.

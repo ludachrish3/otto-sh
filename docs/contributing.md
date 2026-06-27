@@ -244,9 +244,8 @@ and update `pyproject.toml` in the same commit.
 ## Running tests
 
 ```bash
-make test                     # run all tests
-make test TESTS=test_host     # filter by keyword
-make coverage                 # run tests and enforce coverage threshold
+make coverage                 # run the full suite and enforce the coverage gate
+uv run pytest -k test_host    # run a subset by keyword
 ```
 
 ### Regression-test categories
@@ -265,7 +264,7 @@ Pick the one that matches what you want to exercise:
 | Everything (the dev-VM contract) | `make all` | lab VMs |
 | Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full) | `nox` needs VMs |
 
-`make test TESTS=<kw>` filters any run by keyword. Recover a wedged embedded bed
+`uv run pytest -k <kw>` filters any run by keyword. Recover a wedged embedded bed
 with `make qemu-restart`; probe the whole lab with `make vm-health`.
 
 ### Embedded coverage bed
