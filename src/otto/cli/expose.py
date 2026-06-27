@@ -228,12 +228,34 @@ def _make_host_group() -> type[TyperGroup]:
                 if n not in self._dynamic_names or n in allowed
             ]
 
+        def _class_command(self, cls: type, cmd_name: str, attr_name: str) -> Any:
+            """Build (and cache) the verb's command from *cls*'s own method, so a
+            verb name shared across classes can carry a different signature per
+            class. Cached per ``(cls, cmd_name)``."""
+            cache = getattr(self, "_class_cmd_cache", None)
+            if cache is None:
+                cache = self._class_cmd_cache = {}
+            key = (cls, cmd_name)
+            if key not in cache:
+                fn = inspect.getattr_static(cls, attr_name, None) or getattr(cls, attr_name)
+                help_text = getattr(fn, "__cli_help__", None) or (
+                    (fn.__doc__ or "").strip().splitlines() or [""]
+                )[0]
+                cache[key] = _synthesize_command(cmd_name, attr_name, help_text, fn)
+            return cache[key]
+
         def get_command(self, ctx: Any, cmd_name: str) -> Any:
             self._ensure_dynamic()
             cls = self._class_for(ctx)
-            if cls is not None and cmd_name in self._dynamic_names and cmd_name not in exposed_cli_names(cls):
-                return None
-            return super().get_command(ctx, cmd_name)
+            if cls is None:
+                # Completion / unresolved host → the unscoped global command.
+                return super().get_command(ctx, cmd_name)
+            verbs = collect_exposed_methods(cls)
+            if cmd_name in self._dynamic_names and cmd_name not in verbs:
+                return None  # dynamic verb not exposed on this host class
+            if cmd_name in verbs:
+                return self._class_command(cls, cmd_name, verbs[cmd_name])
+            return super().get_command(ctx, cmd_name)  # static (non-dynamic) commands
 
     return HostGroup
 

@@ -569,12 +569,13 @@ class EmbeddedHost(RemoteHost):
     #  Binary load
     ####################
 
+    @cli_exposed(success="Binary loaded.")
     async def load(
         self,
-        file: Path,
-        name: str,
-        show_progress: bool = False,
-        timeout: float | None = 120.0,
+        file: Annotated[Path, Arg(help="Binary to load into the device runtime.")],
+        name: Annotated[str, Arg(help="Name to register the loaded binary under.")],
+        show_progress: Annotated[bool, Exclude] = False,
+        timeout: Annotated[float | None, Exclude] = 120.0,
     ) -> tuple[Status, str]:
         """Load a binary into the device runtime via the host's binary loader.
 
@@ -615,10 +616,11 @@ class EmbeddedHost(RemoteHost):
             return Status.Success, ""
         return Status.Error, f"load {name} from {file} failed: {reason}"
 
+    @cli_exposed(success="Binary unloaded.")
     async def unload(
         self,
-        name: str,
-        timeout: float | None = 20.0,
+        name: Annotated[str, Arg(help="Name of the binary to unload.")],
+        timeout: Annotated[float | None, Exclude] = 20.0,
     ) -> tuple[Status, str]:
         """Unload *name* from the device runtime, draining to full eviction.
 

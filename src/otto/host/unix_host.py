@@ -59,6 +59,7 @@ from ..utils import (
     Arg,
     CommandStatus,
     Exclude,
+    Opt,
     Status,
     cli_exposed,
 )
@@ -667,6 +668,74 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return self._dry_run_transfer("PUT", src_files, dest_dir)
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
+
+    ####################
+    #  Kernel modules
+    ####################
+
+    @cli_exposed
+    async def lsmod(self) -> list[str]:
+        """List the kernel modules currently loaded on the host."""
+        return await self._loaded_modules()
+
+    async def _loaded_modules(self) -> list[str]:
+        """Loaded module names, read from ``/proc/modules`` — the source ``lsmod``
+        formats. World-readable (no sudo), no ``lsmod`` binary dependency; column
+        one is the module name, already ``-``→``_`` normalized by the kernel.
+        Returns ``[]`` under dry-run (the live module set is unknowable, and the
+        skipped read would otherwise echo the dry-run banner). ``log=False``
+        keeps the (potentially long) module dump out of the console/log."""
+        if is_dry_run():
+            return []
+        result = await self.oneshot("cat /proc/modules", log=False)
+        if not result.status.is_ok:
+            return []
+        return [line.split()[0] for line in result.output.splitlines() if line.strip()]
+
+    @cli_exposed(success="Module loaded.")
+    async def load(
+        self,
+        file: Annotated[Path, Arg(help="Kernel module .ko to insert.")],
+        name: Annotated[str | None, Opt(help="Module name; defaults to the file stem.")] = None,
+        dest_dir: Annotated[Path, Exclude] = Path("/tmp"),
+        show_progress: Annotated[bool, Exclude] = False,
+    ) -> tuple[Status, str]:
+        """Insert a kernel module: stage the .ko to the host, then ``insmod`` it.
+
+        ``put`` lands the .ko on the target (as the login/transfer user); the
+        ``insmod`` runs in the shell session — under ``sudo`` unless the session
+        is already root (Spec A's ``current_user``). The staged file is removed
+        afterward (the module lives in kernel memory once inserted). ``name``
+        defaults to the file stem (``-``→``_``) and is used in error text.
+        """
+        resolved = (name or file.stem).replace("-", "_")
+        dest = dest_dir / file.name
+        status, put_msg = await self.put(file, dest_dir, show_progress=show_progress)
+        if not status.is_ok:
+            return status, f"staging {file} failed: {put_msg}"
+        need_sudo = self.current_user != "root"
+        result = await self.run(f"insmod {self._q(dest)}", sudo=need_sudo)
+        await self.rm(dest, force=True)  # best-effort cleanup
+        if result.status.is_ok:
+            return Status.Success, ""
+        return Status.Error, f"insmod {resolved} failed: {result.only.output.strip()}"
+
+    @cli_exposed(success="Module unloaded.")
+    async def unload(
+        self,
+        name: Annotated[str, Arg(help="Module name to remove.")],
+    ) -> tuple[Status, str]:
+        """Remove a kernel module (``rmmod``). Idempotent: removing a module that
+        is not resident succeeds without running ``rmmod`` (mirrors
+        :meth:`~otto.host.embedded_host.EmbeddedHost.unload`)."""
+        resolved = name.replace("-", "_")
+        if not is_dry_run() and resolved not in await self._loaded_modules():
+            return Status.Success, ""
+        need_sudo = self.current_user != "root"
+        result = await self.run(f"rmmod {self._q(resolved)}", sudo=need_sudo)
+        if result.status.is_ok:
+            return Status.Success, ""
+        return Status.Error, f"rmmod {resolved} failed: {result.only.output.strip()}"
 
     ####################
     #  Power / reboot

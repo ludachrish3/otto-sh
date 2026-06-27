@@ -634,3 +634,92 @@ def test_class_for_skips_host_build_during_completion(monkeypatch):
 
     grp._class_for(_DispatchCtx())
     assert calls == ["u1"]  # real dispatch still resolves the class for scoping
+
+
+# ---------------------------------------------------------------------------
+# Task 1: Per-class CLI parsers
+# ---------------------------------------------------------------------------
+
+def test_class_command_builds_parser_from_the_given_class():
+    """The same verb name on two classes yields parsers shaped by each class."""
+    from typing import Annotated
+    from otto.cli.expose import HostGroup
+    from otto.utils import cli_exposed, Arg, Opt
+
+    class HostX:
+        @cli_exposed
+        async def frob(self, target: Annotated[str, Arg()]) -> None:
+            ...
+
+    class HostY:
+        @cli_exposed
+        async def frob(self, target: Annotated[str | None, Opt()] = None) -> None:
+            ...
+
+    g = HostGroup(name="host")
+    cmd_x = g._class_command(HostX, "frob", "frob")
+    cmd_y = g._class_command(HostY, "frob", "frob")
+    px = {p.name: p for p in cmd_x.params}
+    py = {p.name: p for p in cmd_y.params}
+    assert px["target"].param_type_name == "argument"   # required positional
+    assert py["target"].param_type_name == "option"      # --target
+
+
+def test_class_command_caches_per_class_and_verb():
+    from typing import Annotated
+    from otto.cli.expose import HostGroup
+    from otto.utils import cli_exposed, Arg
+
+    class HostX:
+        @cli_exposed
+        async def frob(self, target: Annotated[str, Arg()]) -> None:
+            ...
+
+    g = HostGroup(name="host")
+    first = g._class_command(HostX, "frob", "frob")
+    second = g._class_command(HostX, "frob", "frob")
+    assert first is second  # cached, not rebuilt
+
+
+def test_get_command_uses_resolved_class_parser(monkeypatch):
+    from typing import Annotated
+    from unittest.mock import MagicMock
+    from otto.cli.expose import HostGroup
+    from otto.utils import cli_exposed, Opt
+
+    class HostY:
+        @cli_exposed
+        async def frob(self, target: Annotated[str | None, Opt()] = None) -> None:
+            ...
+
+    g = HostGroup(name="host")
+    monkeypatch.setattr(g, "_class_for", lambda ctx: HostY)
+    cmd = g.get_command(MagicMock(), "frob")
+    params = {p.name: p for p in cmd.params}
+    assert params["target"].param_type_name == "option"
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Embedded load/unload CLI retrofit
+# ---------------------------------------------------------------------------
+
+def test_embedded_and_unix_load_have_per_class_signatures():
+    """Same verb name, divergent signatures: embedded `load` requires a
+    positional `name`; unix `load` exposes it as the `--name` option."""
+    from otto.cli.expose import HostGroup
+    from otto.host.embedded_host import ZephyrHost
+    from otto.host.unix_host import UnixHost
+
+    g = HostGroup(name="host")
+    emb = {p.name: p for p in g._class_command(ZephyrHost, "load", "load").params}
+    unix = {p.name: p for p in g._class_command(UnixHost, "load", "load").params}
+    assert emb["name"].param_type_name == "argument"   # embedded: required positional
+    assert emb["name"].required is True
+    assert unix["name"].param_type_name == "option"      # unix: --name
+
+
+def test_embedded_load_unload_are_cli_exposed():
+    from otto.cli.expose import collect_exposed_methods
+    from otto.host.embedded_host import ZephyrHost
+    verbs = collect_exposed_methods(ZephyrHost)
+    assert "load" in verbs and "unload" in verbs

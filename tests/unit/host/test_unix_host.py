@@ -1284,3 +1284,184 @@ async def test_unix_switch_user_updates_host_current_user():
     await host.switch_user("root")
     assert host.current_user == "root"
 
+
+# ---------------------------------------------------------------------------
+# Kernel modules
+# ---------------------------------------------------------------------------
+
+def _unix_host():
+    from otto.host.unix_host import UnixHost
+    return UnixHost(ip="10.0.0.1", element="box", creds={"admin": "secret"},
+                    user="admin", log=False)
+
+
+@pytest.mark.asyncio
+async def test_loaded_modules_parses_proc_modules_column_one():
+    from unittest.mock import AsyncMock
+    from otto.utils import CommandStatus, Status
+    host = _unix_host()
+    proc = "ext4 737280 2 - Live 0x0\nnvme 49152 3 nvme_core, Live 0x0\n"
+    host.oneshot = AsyncMock(return_value=CommandStatus("cat /proc/modules", proc, Status.Success, 0))
+    assert await host._loaded_modules() == ["ext4", "nvme"]
+
+
+@pytest.mark.asyncio
+async def test_loaded_modules_empty_when_read_fails():
+    from unittest.mock import AsyncMock
+    from otto.utils import CommandStatus, Status
+    host = _unix_host()
+    host.oneshot = AsyncMock(return_value=CommandStatus("cat /proc/modules", "", Status.Error, 1))
+    assert await host._loaded_modules() == []
+
+
+@pytest.mark.asyncio
+async def test_lsmod_returns_loaded_module_names():
+    from unittest.mock import AsyncMock
+    host = _unix_host()
+    host._loaded_modules = AsyncMock(return_value=["ext4", "nvme"])
+    assert await host.lsmod() == ["ext4", "nvme"]
+
+
+def _run_result(cmd, output, status, retcode):
+    from otto.host.host import RunResult
+    from otto.utils import CommandStatus
+    return RunResult(status=status, statuses=[CommandStatus(cmd, output, status, retcode)])
+
+
+@pytest.mark.asyncio
+async def test_load_stages_then_insmod_sudo_for_nonroot(tmp_path):
+    from unittest.mock import AsyncMock, MagicMock
+    from otto.utils import Status
+    host = _unix_host()
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"          # non-root
+    ko = tmp_path / "my-mod.ko"
+    ko.write_bytes(b"\x00")
+    host.put = AsyncMock(return_value=(Status.Success, ""))
+    host.run = AsyncMock(return_value=_run_result("insmod /tmp/my-mod.ko", "", Status.Success, 0))
+    host.rm = AsyncMock(return_value=(Status.Success, ""))
+    status, msg = await host.load(ko)
+    assert status is Status.Success and msg == ""
+    host.put.assert_awaited_once()
+    assert host.run.await_args.args[0] == "insmod /tmp/my-mod.ko"
+    assert host.run.await_args.kwargs["sudo"] is True
+    host.rm.assert_awaited_once()                      # staged file cleaned up
+
+
+@pytest.mark.asyncio
+async def test_load_no_sudo_when_current_user_root(tmp_path):
+    from unittest.mock import AsyncMock, MagicMock
+    from otto.utils import Status
+    host = _unix_host()
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "root"
+    ko = tmp_path / "m.ko"
+    ko.write_bytes(b"\x00")
+    host.put = AsyncMock(return_value=(Status.Success, ""))
+    host.run = AsyncMock(return_value=_run_result("insmod /tmp/m.ko", "", Status.Success, 0))
+    host.rm = AsyncMock(return_value=(Status.Success, ""))
+    await host.load(ko)
+    assert host.run.await_args.kwargs["sudo"] is False
+
+
+@pytest.mark.asyncio
+async def test_load_put_failure_short_circuits(tmp_path):
+    from unittest.mock import AsyncMock, MagicMock
+    from otto.utils import Status
+    host = _unix_host()
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"
+    ko = tmp_path / "m.ko"
+    ko.write_bytes(b"\x00")
+    host.put = AsyncMock(return_value=(Status.Error, "scp failed"))
+    host.run = AsyncMock()
+    status, msg = await host.load(ko)
+    assert status is Status.Error and "staging" in msg
+    host.run.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_load_error_message_uses_normalized_name(tmp_path):
+    from unittest.mock import AsyncMock, MagicMock
+    from otto.utils import Status
+    host = _unix_host()
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"
+    ko = tmp_path / "foo-bar.ko"
+    ko.write_bytes(b"\x00")
+    host.put = AsyncMock(return_value=(Status.Success, ""))
+    host.run = AsyncMock(return_value=_run_result("insmod ...", "Invalid module format", Status.Error, 1))
+    host.rm = AsyncMock(return_value=(Status.Success, ""))
+    status, msg = await host.load(ko)
+    assert status is Status.Error
+    assert "foo_bar" in msg and "Invalid module format" in msg
+
+
+@pytest.mark.asyncio
+async def test_unload_idempotent_when_not_resident():
+    from unittest.mock import AsyncMock
+    from otto.utils import Status
+    host = _unix_host()
+    host._loaded_modules = AsyncMock(return_value=["ext4"])
+    host.run = AsyncMock()
+    status, msg = await host.unload("my_mod")
+    assert status is Status.Success and msg == ""
+    host.run.assert_not_awaited()           # not resident → no rmmod
+
+
+@pytest.mark.asyncio
+async def test_unload_rmmod_with_sudo_when_resident():
+    from unittest.mock import AsyncMock, MagicMock
+    from otto.utils import Status
+    host = _unix_host()
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"
+    host._loaded_modules = AsyncMock(return_value=["my_mod"])
+    host.run = AsyncMock(return_value=_run_result("rmmod my_mod", "", Status.Success, 0))
+    status, msg = await host.unload("my-mod")        # dash normalized to my_mod
+    assert status is Status.Success
+    assert host.run.await_args.args[0] == "rmmod my_mod"
+    assert host.run.await_args.kwargs["sudo"] is True
+
+
+@pytest.mark.asyncio
+async def test_unload_error_maps_rmmod_failure():
+    from unittest.mock import AsyncMock, MagicMock
+    from otto.utils import Status
+    host = _unix_host()
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"
+    host._loaded_modules = AsyncMock(return_value=["my_mod"])
+    host.run = AsyncMock(return_value=_run_result("rmmod my_mod", "Module my_mod is in use", Status.Error, 1))
+    status, msg = await host.unload("my_mod")
+    assert status is Status.Error and "in use" in msg
+
+
+@pytest.mark.asyncio
+async def test_lsmod_dry_run_returns_empty():
+    """Dry-run yields no module list (not the dry-run banner parsed as a name)."""
+    from tests.conftest import active_context
+    host = _unix_host()
+    with active_context(dry_run=True):
+        assert await host.lsmod() == []
+
+
+@pytest.mark.asyncio
+async def test_unload_dry_run_issues_rmmod_without_idempotency_check():
+    """Under dry-run the idempotency check is skipped, so the would-be ``rmmod``
+    is still issued (symmetric with load's dry-run insmod)."""
+    from unittest.mock import AsyncMock, MagicMock
+    from tests.conftest import active_context
+    from otto.utils import Status
+    host = _unix_host()
+    host._session_mgr = MagicMock()
+    host._session_mgr.current_user = "admin"
+    host._loaded_modules = AsyncMock(return_value=[])          # would short-circuit if consulted
+    host.run = AsyncMock(return_value=_run_result("rmmod foo", "[DRY RUN]", Status.Skipped, 0))
+    with active_context(dry_run=True):
+        status, _ = await host.unload("foo")
+    host.run.assert_awaited_once()
+    assert host.run.await_args.args[0] == "rmmod foo"
+    host._loaded_modules.assert_not_awaited()                 # idempotency check skipped in dry-run
+    assert status is Status.Success
+
