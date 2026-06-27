@@ -8,6 +8,12 @@ project = "otto"
 author = "otto contributors"
 release = importlib.metadata.version("otto-sh")
 version = release
+# Sphinx's default html_title is "{project} {release} documentation", which bakes
+# the build-time package version into the page/tab title. Between tagged releases
+# that resolves to a dev string (e.g. "otto 0.5.1.dev3+g1234567"), which is stale
+# and noisy. The Read the Docs version selector already reports exactly which
+# version (latest/stable/tag) the reader is on, so keep the title version-free.
+html_title = f"{project} documentation"
 # Treat all unresolved cross-references as errors.
 nitpicky = True
 
