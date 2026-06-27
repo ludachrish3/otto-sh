@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest as pytest
 
+import otto.logger.logger as logger_mod
 from otto.logger.logger import (
     get_otto_logger,
     init_otto_logger,
@@ -77,3 +78,44 @@ def test_remove_old_logs_xdir_does_not_exist(tmpdir, caplog):
 def test_log_formatting(tmpdir, caplog):
     logger.info("[magenta]This is important")
     assert len(caplog.records) == 1
+
+
+def test_remove_old_logs_respects_time_budget(monkeypatch, caplog):
+    """The scan stops once the time budget is exceeded and resumes next run."""
+    cmd_dir = logger.xdir / 'pytest'
+    olds = []
+    for i in range(6):
+        d = cmd_dir / f'20200101_0000{i:02d}_000'
+        d.mkdir()
+        _backdate(d, seconds=3600)
+        olds.append(d)
+
+    # Fake monotonic clock advancing 1.0s per call: start=0.0, then the inner
+    # checks see 1.0, 2.0, 3.0, ... so a 2.5s budget trips on the 3rd check.
+    ticks = iter([float(n) for n in range(0, 1000)])
+    monkeypatch.setattr(logger_mod.time, 'monotonic', lambda: next(ticks))
+
+    with caplog.at_level('DEBUG', logger='otto'):
+        logger.remove_old_logs(seconds=60, time_budget=2.5)
+
+    assert [d for d in olds if d.exists()], 'budget should stop before removing all dirs'
+    assert any('time budget' in r.message for r in caplog.records)
+
+    # A second pass with a non-advancing clock (elapsed always 0) drains the rest.
+    monkeypatch.setattr(logger_mod.time, 'monotonic', lambda: 0.0)
+    logger.remove_old_logs(seconds=60, time_budget=2.5)
+    assert not [d for d in olds if d.exists()], 'remaining old dirs should drain on the next run'
+
+
+def test_remove_old_logs_no_budget_message_on_normal_run(caplog):
+    """A small tree finishes well under budget — no truncation message."""
+    cmd_dir = logger.xdir / 'pytest'
+    d = cmd_dir / '20200101_000000_000'
+    d.mkdir()
+    _backdate(d, seconds=3600)
+
+    with caplog.at_level('DEBUG', logger='otto'):
+        logger.remove_old_logs(seconds=60)  # default 5.0s budget, real clock
+
+    assert not d.exists()
+    assert not any('time budget' in r.message for r in caplog.records)

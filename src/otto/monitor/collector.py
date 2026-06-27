@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import aiosqlite
 from pydantic import ValidationError
 
+from ..filesystem import network_fs_type
 from ..host.host import RunResult
 from ..models import EventRecord, MetricPoint, MetricRecord
 from .events import MonitorEvent
@@ -215,8 +216,24 @@ class MetricCollector:
                 "Use a different --db path, or stop the other instance."
             )
 
+        net_fstype = network_fs_type(self._db_path)
+        journal_mode = 'DELETE' if net_fstype else 'WAL'
+        if net_fstype:
+            logger.debug(
+                "Monitor DB '%s' is on a network filesystem (%s); using "
+                "journal_mode=DELETE instead of WAL (WAL is unsupported over "
+                "network filesystems).",
+                self._db_path, net_fstype,
+            )
+            logger.debug(
+                "Monitor DB lock guard on '%s' is same-host only on network "
+                "filesystems; for multi-machine setups sharing one DB, place it "
+                "on local disk.",
+                self._db_path,
+            )
+
         conn = await aiosqlite.connect(self._db_path)
-        await conn.execute('PRAGMA journal_mode=WAL')
+        await conn.execute(f'PRAGMA journal_mode={journal_mode}')
         await conn.execute('PRAGMA busy_timeout=5000')
         await conn.executescript(_SCHEMA)
         # Migrate: add end_ts column if the events table predates span support

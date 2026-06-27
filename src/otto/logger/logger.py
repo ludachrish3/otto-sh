@@ -2,6 +2,7 @@
 
 import atexit
 import re
+import time
 from datetime import datetime, timedelta
 from logging import (
     FileHandler,
@@ -34,6 +35,11 @@ from .formatters import (
 # accidentally pointing at a project root) can't lead to rmtree'ing
 # unrelated subdirectories — only otto-created log dirs are candidates.
 _LOG_DIR_NAME_RE = re.compile(r'^\d{8}_\d{6}_\d{3}(_.+)?$')
+
+# Maximum wall-clock seconds ``remove_old_logs`` may spend scanning per call.
+# A safety valve against unbounded stat storms on large/slow (e.g. NFS) log
+# trees; a backlog drains across subsequent runs. Far above any normal tree.
+LOG_ROTATE_BUDGET_SECONDS = 5.0
 
 
 class OttoLogger(Logger):
@@ -157,6 +163,8 @@ class OttoLogger(Logger):
 
     def remove_old_logs(self,
         seconds: float,
+        *,
+        time_budget: float = LOG_ROTATE_BUDGET_SECONDS,
     ):
         """
         Remove all logs older than `seconds` seconds old.
@@ -165,6 +173,9 @@ class OttoLogger(Logger):
 
         Args:
             seconds: Number of seconds to retain old logs.
+            time_budget: Maximum wall-clock seconds to spend scanning per call.
+                When exceeded the scan stops early and resumes on the next call,
+                bounding the per-run cost on large/slow (e.g. NFS) trees.
         """
 
         xdir = self.xdir
@@ -175,14 +186,21 @@ class OttoLogger(Logger):
         oldest = datetime.now() - timedelta(seconds=seconds)
         oldest = oldest.timestamp()
         loggedDeletion = False
+        start = time.monotonic()
+        budget_hit = False
 
         for cmd_dir_name in listdir(xdir):
+            if budget_hit:
+                break
             cmd_dir = xdir / cmd_dir_name
             # Skip stray files that callers (e.g. tests) may have written
             # alongside the expected ``<cmd>/<log_dir>/`` tree.
             if not cmd_dir.is_dir():
                 continue
             for log_dir_name in listdir(cmd_dir):
+                if time.monotonic() - start > time_budget:
+                    budget_hit = True
+                    break
                 output_dir = cmd_dir / log_dir_name
 
                 # Fail-safe: only rmtree entries that match the timestamped
@@ -205,6 +223,13 @@ class OttoLogger(Logger):
                         loggedDeletion = True
                     rmtree(output_dir)
                     self.debug(f"Removed {output_dir}")
+
+        if budget_hit:
+            self.debug(
+                "Log rotation hit its %gs time budget; remaining old "
+                "directories will be removed on the next run.",
+                time_budget,
+            )
 
     @property
     def rich_logging(self):

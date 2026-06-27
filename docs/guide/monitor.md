@@ -43,6 +43,29 @@ Use `--db` to write collected metrics to a SQLite file for later viewing:
 otto --lab my_lab monitor --db metrics.db
 ```
 
+### Running otto on shared/NFS storage
+
+otto is safe to run with its log/artifact root (`OTTO_XDIR`) on a shared mount
+(NFS, CIFS/SMB, sshfs, …):
+
+- **Monitor database.** SQLite's WAL journaling is not supported over a network
+  filesystem, so when the `--db` path is on one otto automatically uses the
+  `DELETE` journal mode instead (logged at debug level). This is transparent and
+  lossless for monitoring's write pattern.
+- **Multi-machine, one shared database.** The "another instance is already
+  writing" guard relies on `flock`, whose semantics on network filesystems are
+  same-host only. If several machines may write to the *same* database file,
+  put that database on **local disk** (or give each machine its own `--db`
+  path).
+- **Logs and artifacts.** Per-run log directories are fine on shared storage.
+  Old-log rotation is wall-clock budgeted, so even a very large log tree cannot
+  stall a run — any backlog is pruned across subsequent runs.
+- **Lab data and settings** (`hosts.json`, `.otto/settings.toml`) are read once
+  per run and are unaffected.
+
+If otto cannot determine the filesystem type, it assumes local disk and keeps
+its default behaviour.
+
 ## Historical mode
 
 View previously collected data by passing `--file`:
