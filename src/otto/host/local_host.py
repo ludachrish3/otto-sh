@@ -108,6 +108,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             log_output=self._log_output,
             session_factory=LocalSession,
             oneshot_factory=self._exec_subprocess,
+            user_password=self._user_password,
         )
         self._repeater = RepeatRunner(run_cmds=self.run)
         self._file_transfer = LocalFileTransfer(name=self.name)

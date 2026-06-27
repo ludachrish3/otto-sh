@@ -1254,3 +1254,33 @@ class TestOpenSessionCleanup:
         self._add_mock_session(host, 'live', alive=True)
         assert host._connected is True
 
+
+@pytest.mark.asyncio
+async def test_host_current_user_reads_default_session():
+    from unittest.mock import MagicMock
+    from otto.host.session import ShellSession
+    from otto.host.unix_host import UnixHost
+    host = UnixHost(ip="10.0.0.1", element="box", creds={"admin": "secret"},
+                    user="admin", log=False)
+    transport = MagicMock(spec=ShellSession)
+    transport.current_user = "admin"
+    host._session_mgr._session = transport
+    assert host.current_user == "admin"
+
+
+@pytest.mark.asyncio
+async def test_unix_switch_user_updates_host_current_user():
+    from unittest.mock import AsyncMock, MagicMock
+    from otto.host.session import ShellSession
+    from otto.host.unix_host import UnixHost
+    host = UnixHost(ip="10.0.0.1", element="box",
+                    creds={"admin": "secret", "root": "rootpw"}, user="admin", log=False)
+    transport = MagicMock(spec=ShellSession)
+    transport.alive = True
+    transport.send = AsyncMock()
+    transport.expect = AsyncMock(return_value="Password:")
+    transport.current_user = "admin"
+    host._session_mgr._session = transport
+    await host.switch_user("root")
+    assert host.current_user == "root"
+

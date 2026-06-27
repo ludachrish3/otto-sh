@@ -358,6 +358,15 @@ class BaseHost(ABC):
             f"as_user is not supported on '{self.__class__.__name__}'"
         ) from None
 
+    @property
+    def current_user(self) -> str:
+        """User this host's default shell session is currently running as.
+
+        Seeded from the login user; changes only through :meth:`switch_user` /
+        :meth:`as_user`. See :attr:`~otto.host.session.HostSession.current_user`
+        for named sessions."""
+        return self._session_mgr.current_user  # ty: ignore[unresolved-attribute]
+
     def _apply_sudo(self, sc: 'ShellCommand') -> 'ShellCommand':
         """Rewrite a ``ShellCommand`` to run under sudo, merging in the
         password ``Expect`` ahead of any caller-supplied expects."""

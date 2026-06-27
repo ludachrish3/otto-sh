@@ -157,6 +157,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             log_output=self._log_output,
             session_factory=_make_session,
             oneshot_factory=self._oneshot_via_parent,
+            user_password=self._user_password,
         )
 
     ####################

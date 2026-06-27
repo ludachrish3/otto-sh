@@ -321,6 +321,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             log_command=self._log_command,
             log_output=self._log_output,
             command_frame=self.command_frame,
+            user_password=self._user_password,
         )
         self._file_transfer = self._build_file_transfer()
 
@@ -347,6 +348,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             log_command=self._log_command,
             log_output=self._log_output,
             command_frame=self.command_frame,
+            user_password=self._user_password,
         )
         self._file_transfer = self._build_file_transfer()
 

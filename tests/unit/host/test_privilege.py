@@ -6,6 +6,72 @@ import pytest
 from otto.utils import CommandStatus, Status
 
 
+def _mock_session_mgr():
+    """AsyncMock session-mgr whose send/expect are awaitable but whose
+    current_user bookkeeping is synchronous (no un-awaited coroutines)."""
+    mgr = AsyncMock()
+    mgr._set_current_user = MagicMock()
+    mgr.current_user = ""
+    return mgr
+
+
+@pytest.mark.asyncio
+async def test_perform_su_builds_command_and_returns_target():
+    from otto.host.privilege import _perform_su
+    sent = []
+
+    async def send(text, log=True):
+        sent.append((text, log))
+
+    async def expect(pat, timeout=10.0):
+        return "Password:"
+
+    target = await _perform_su(send, expect, "root", None, lambda u: "rootpw")
+    assert target == "root"
+    assert ("su root\n", True) in sent
+    assert ("rootpw\n", False) in sent
+
+
+@pytest.mark.asyncio
+async def test_perform_su_no_user_means_root_no_quote():
+    from otto.host.privilege import _perform_su
+    sent = []
+
+    async def send(text, log=True):
+        sent.append(text)
+
+    async def expect(pat, timeout=10.0):
+        return "Password:"
+
+    target = await _perform_su(send, expect, "", None, lambda u: None)
+    assert target == "root"
+    assert "su\n" in sent  # bare `su`, no username, no password sent
+
+
+@pytest.mark.asyncio
+async def test_switch_user_records_current_user():
+    from otto.host.unix_host import UnixHost
+    host = UnixHost(ip="10.0.0.1", element="box",
+                    creds={"admin": "secret", "root": "rootpw"}, user="admin", log=False)
+    host._session_mgr = _mock_session_mgr()
+    await host.switch_user("root")
+    host._session_mgr._set_current_user.assert_called_once_with("root")
+
+
+@pytest.mark.asyncio
+async def test_as_user_restores_previous_user():
+    from otto.host.unix_host import UnixHost
+    host = UnixHost(ip="10.0.0.1", element="box",
+                    creds={"admin": "secret", "root": "rootpw"}, user="admin", log=False)
+    mgr = _mock_session_mgr()
+    mgr.current_user = "admin"
+    host._session_mgr = mgr
+    async with host.as_user("root"):
+        pass
+    calls = [c.args[0] for c in mgr._set_current_user.call_args_list]
+    assert calls == ["root", "admin"]  # entered as root, restored to admin
+
+
 @pytest.mark.asyncio
 async def test_embedded_run_sudo_raises():
     from otto.host.embedded_host import ZephyrHost
@@ -78,11 +144,10 @@ async def test_sudo_preserves_caller_expects():
 
 @pytest.mark.asyncio
 async def test_switch_user_sends_su_and_password():
-    from unittest.mock import AsyncMock
     from otto.host.unix_host import UnixHost
     host = UnixHost(ip="10.0.0.1", element="box",
                     creds={"admin": "secret", "root": "rootpw"}, user="admin", log=False)
-    host._session_mgr = AsyncMock()
+    host._session_mgr = _mock_session_mgr()
     await host.switch_user("root")
     host._session_mgr.send.assert_any_await("su root\n", log=True)
     host._session_mgr.send.assert_any_await("rootpw\n", log=False)
@@ -90,11 +155,10 @@ async def test_switch_user_sends_su_and_password():
 
 @pytest.mark.asyncio
 async def test_switch_user_default_is_root_no_user_arg():
-    from unittest.mock import AsyncMock
     from otto.host.unix_host import UnixHost
     host = UnixHost(ip="10.0.0.1", element="box", creds={"admin": "secret"},
                     user="admin", log=False)
-    host._session_mgr = AsyncMock()
+    host._session_mgr = _mock_session_mgr()
     host._session_mgr.expect.return_value = "Password:"
     await host.switch_user()  # default root, no creds entry for root → no password sent
     host._session_mgr.send.assert_any_await("su\n", log=True)
@@ -110,11 +174,10 @@ async def test_embedded_switch_user_raises():
 
 @pytest.mark.asyncio
 async def test_as_user_switches_then_exits():
-    from unittest.mock import AsyncMock
     from otto.host.unix_host import UnixHost
     host = UnixHost(ip="10.0.0.1", element="box",
                     creds={"admin": "secret", "root": "rootpw"}, user="admin", log=False)
-    host._session_mgr = AsyncMock()
+    host._session_mgr = _mock_session_mgr()
     async with host.as_user("root"):
         pass
     sent = [c.args[0] for c in host._session_mgr.send.await_args_list]
@@ -182,11 +245,18 @@ async def test_switch_user_quotes_special_char_username():
         user="admin",
         log=False,
     )
-    # Replace the session manager with an AsyncMock to capture what was sent.
-    host._session_mgr = AsyncMock()
+    # Replace the session manager with a mock to capture what was sent.
+    host._session_mgr = _mock_session_mgr()
 
     await host.switch_user("od d")  # space in username — must be shell-quoted
 
     # The first send must be the shlex-quoted su command.
     first_call = host._session_mgr.send.await_args_list[0]
     assert first_call.args[0] == "su 'od d'\n"
+
+
+@pytest.mark.asyncio
+async def test_embedded_current_user_is_empty_loginless():
+    from otto.host.embedded_host import ZephyrHost
+    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    assert host.current_user == ""  # loginless embedded shell

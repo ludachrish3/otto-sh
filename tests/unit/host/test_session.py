@@ -11,7 +11,7 @@ import os
 import re
 import signal
 import subprocess
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -406,6 +406,12 @@ class TestSendExpect:
 # Session initialization
 # ---------------------------------------------------------------------------
 
+def test_shell_session_current_user_defaults_empty():
+    """A freshly constructed shell session has no tracked user yet."""
+    s = MockSession()
+    assert s.current_user == ''
+
+
 class MockSessionInit:
 
     @pytest.mark.asyncio
@@ -795,3 +801,181 @@ class TestEnsureInitializedTimeout:
             await s._ensure_initialized()
 
         assert s.alive is False
+
+
+def test_session_manager_current_user_falls_back_to_login():
+    from otto.host.session import SessionManager
+    conn = MagicMock()
+    conn.credentials = ("alice", "pw")
+    mgr = SessionManager(connections=conn, name="h")
+    assert mgr.current_user == "alice"  # no default session built yet
+
+
+def test_session_manager_current_user_empty_without_connections():
+    from otto.host.session import SessionManager
+    mgr = SessionManager(name="local")  # connections=None (e.g. LocalHost)
+    assert mgr.current_user == ""
+
+
+def test_session_manager_current_user_tolerates_connections_without_credentials():
+    """Seeding runs _login_user on every session build, so a connection
+    manager that exposes no ``credentials`` (minimal test fakes, loginless
+    transports) must fall back to '' rather than raise."""
+    import types
+    from otto.host.session import SessionManager
+    mgr = SessionManager(connections=types.SimpleNamespace(), name="h")
+    assert mgr._login_user() == ""
+    assert mgr.current_user == ""
+    s = MockSession()
+    mgr._seed_user(s)  # must not raise
+    assert s.current_user == ""
+
+
+def test_session_manager_seed_user_stamps_login_user():
+    from otto.host.session import SessionManager
+    conn = MagicMock()
+    conn.credentials = ("alice", "pw")
+    mgr = SessionManager(connections=conn, name="h")
+    s = MockSession()
+    mgr._seed_user(s)
+    assert s.current_user == "alice"
+
+
+def test_session_manager_set_current_user_updates_default_session():
+    from otto.host.session import SessionManager
+    conn = MagicMock()
+    conn.credentials = ("alice", "pw")
+    mgr = SessionManager(connections=conn, name="h")
+    s = MockSession()
+    mgr._session = s
+    mgr._set_current_user("root")
+    assert s.current_user == "root"
+    assert mgr.current_user == "root"
+
+
+def test_session_manager_accepts_user_password_arg():
+    from otto.host.session import SessionManager
+    mgr = SessionManager(name="h", user_password=lambda u: "pw")
+    assert mgr._user_password("anyone") == "pw"
+
+
+@pytest.mark.asyncio
+async def test_host_session_current_user_delegates_to_shell():
+    from otto.host.session import HostSession
+    shell = MockSession()
+    shell.current_user = "alice"
+    hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None)
+    assert hs.current_user == "alice"
+
+
+@pytest.mark.asyncio
+async def test_host_session_switch_user_without_resolver_raises():
+    from otto.host.session import HostSession
+    shell = MockSession()
+    hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None)
+    with pytest.raises(NotImplementedError):
+        await hs.switch_user("root")
+
+
+@pytest.mark.asyncio
+async def test_host_session_switch_user_elevates_and_stamps():
+    from otto.host.session import HostSession
+    shell = AsyncMock(spec=ShellSession)
+    shell.current_user = "alice"
+    shell.expect.return_value = "Password:"
+    hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None,
+                     user_password=lambda u: "rootpw")
+    await hs.switch_user("root")
+    assert shell.current_user == "root"
+    sent = [c.args[0] for c in shell.send.await_args_list]
+    assert "su root\n" in sent and "rootpw\n" in sent
+
+
+@pytest.mark.asyncio
+async def test_host_session_as_user_restores_previous():
+    from otto.host.session import HostSession
+    shell = AsyncMock(spec=ShellSession)
+    shell.current_user = "alice"
+    shell.expect.return_value = "Password:"
+    hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None,
+                     user_password=lambda u: "rootpw")
+    async with hs.as_user("root"):
+        assert shell.current_user == "root"
+    assert shell.current_user == "alice"
+
+
+@pytest.mark.asyncio
+async def test_default_session_seeds_current_user_from_login():
+    """The default session is stamped with the login user at build time."""
+    import types
+    from otto.host.session import SessionManager
+    conn = types.SimpleNamespace(credentials=("alice", "pw"))
+    built: list[MockSession] = []
+
+    def factory() -> MockSession:
+        s = MockSession()
+        built.append(s)
+        return s
+
+    mgr = SessionManager(connections=conn, name="h", session_factory=factory)
+    task = asyncio.create_task(mgr.send("hello\n"))  # triggers default-session build
+    await asyncio.sleep(0.01)
+    built[0].feed(built[0]._ready_marker + "\n")
+    await task
+    assert mgr._session is built[0]
+    assert mgr._session.current_user == "alice"
+    assert mgr.current_user == "alice"
+
+
+@pytest.mark.asyncio
+async def test_open_session_seeds_named_session_current_user_from_login():
+    """A freshly opened named session is stamped with the login user."""
+    import types
+    from otto.host.session import SessionManager
+    conn = types.SimpleNamespace(credentials=("alice", "pw"))
+    built: list[MockSession] = []
+
+    def factory() -> MockSession:
+        s = MockSession()
+        built.append(s)
+        return s
+
+    mgr = SessionManager(connections=conn, name="h", session_factory=factory)
+    task = asyncio.create_task(mgr.open_session("mon"))
+    await asyncio.sleep(0.01)
+    built[0].feed(built[0]._ready_marker + "\n")
+    hs = await task
+    assert hs.current_user == "alice"
+
+
+@pytest.mark.asyncio
+async def test_named_session_elevation_does_not_touch_default():
+    """Elevating a named session leaves another (default) session untouched."""
+    from otto.host.session import HostSession
+    default_shell = MockSession()
+    default_shell.current_user = "alice"
+    named_shell = AsyncMock(spec=ShellSession)
+    named_shell.current_user = "alice"
+    named_shell.expect.return_value = "Password:"
+    hs = HostSession("mon", named_shell, lambda _: None, lambda _: None, lambda _: None,
+                     user_password=lambda u: "rootpw")
+    await hs.switch_user("root")
+    assert named_shell.current_user == "root"      # named session elevated
+    assert default_shell.current_user == "alice"   # the other session untouched
+
+
+@pytest.mark.asyncio
+async def test_host_session_as_user_nested_restores_each_level():
+    """Nested as_user blocks restore the prior user at each level."""
+    from otto.host.session import HostSession
+    shell = AsyncMock(spec=ShellSession)
+    shell.current_user = "alice"
+    shell.expect.return_value = "Password:"
+    hs = HostSession("mon", shell, lambda _: None, lambda _: None, lambda _: None,
+                     user_password=lambda u: "pw")
+    async with hs.as_user("bob"):
+        assert shell.current_user == "bob"
+        async with hs.as_user("root"):
+            assert shell.current_user == "root"
+        assert shell.current_user == "bob"   # inner block restored to bob
+    assert shell.current_user == "alice"     # outer block restored to alice

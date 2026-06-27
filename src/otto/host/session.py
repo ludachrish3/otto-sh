@@ -18,7 +18,8 @@ import asyncio
 import re
 import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from .command_frame import BashFrame, CommandFrame, SessionMarkers
@@ -127,6 +128,10 @@ class ShellSession(ABC):
         # honored by transports that pace their writes (TelnetSession). Used to
         # drive a transfer-style bar for bulk console pushes (EmbeddedHost.load).
         self._write_progress: Callable[[int, int], None] | None = None
+        # The OS user this shell is currently running as. Seeded by
+        # SessionManager from the host's login user; mutated only by the
+        # elevation flow (switch_user/as_user). '' on loginless shells.
+        self.current_user: str = ''
 
     @property
     def alive(self) -> bool:
@@ -858,17 +863,57 @@ class HostSession:
         log_command: Callable[[str], None],
         log_output: Callable[[str], None],
         deregister: Callable[[str], None],
+        user_password: 'Callable[[str], str | None] | None' = None,
     ) -> None:
         self._name = name
         self._session = session
         self._log_command = log_command
         self._log_output = log_output
         self._deregister = deregister
+        # Resolver for su-target passwords (creds-based). None on non-posix
+        # hosts → this session cannot elevate. Set by SessionManager.
+        self._user_password = user_password
 
     @property
     def alive(self) -> bool:
         """Whether the underlying shell session is still active."""
         return self._session.alive
+
+    @property
+    def current_user(self) -> str:
+        """User this named session is currently running as.
+
+        Seeded from the host's login user; changed only via
+        :meth:`switch_user` / :meth:`as_user`."""
+        return self._session.current_user
+
+    async def switch_user(self, user: str = "", password: str | None = None) -> None:
+        """``su`` *this* session to *user* (default root), tracking
+        :attr:`current_user`. Posix-only — raises ``NotImplementedError`` on
+        hosts whose sessions do not support elevation (no password resolver)."""
+        if self._user_password is None:
+            raise NotImplementedError(
+                "switch_user is not supported on this host's sessions"
+            )
+        from .privilege import _perform_su
+        target = await _perform_su(
+            self.send, self.expect, user, password, self._user_password
+        )
+        self._session.current_user = target
+
+    @asynccontextmanager
+    async def as_user(
+        self, user: str = "root", password: str | None = None
+    ) -> 'AsyncIterator[HostSession]':
+        """Run a block as *user* on this session, restoring the prior user on
+        exit."""
+        prev = self.current_user
+        await self.switch_user(user, password)
+        try:
+            yield self
+        finally:
+            await self.send("exit\n")
+            self._session.current_user = prev
 
     async def run(
         self,
@@ -963,6 +1008,7 @@ class SessionManager:
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         retry_backoff: float | None = None,
+        user_password: 'Callable[[str], str | None] | None' = None,
     ) -> None:
         self._connections = connections
         self._name = name
@@ -970,6 +1016,10 @@ class SessionManager:
         self._log_output = log_output
         self._session_factory = session_factory
         self._oneshot_factory = oneshot_factory
+        # Resolver for su-target passwords, forwarded to HostSessions so named
+        # sessions can elevate. None on non-posix hosts → named-session
+        # elevation is unsupported there.
+        self._user_password = user_password
         # Shell dialect handed to every session built on the ConnectionManager
         # dispatch path (SSH or telnet alike). ``None`` resolves to bash inside
         # ``ShellSession``; an embedded host passes a ZephyrFrame so its
@@ -1014,6 +1064,40 @@ class SessionManager:
         if self._session and self._session.alive:
             return True
         return any(s.alive for s in self._named_sessions.values())
+
+    def _login_user(self) -> str:
+        """The host's login username, or '' when loginless / no creds.
+
+        Best-effort: session seeding runs this on every build, so it tolerates
+        a connection manager that exposes no ``credentials`` (e.g. minimal test
+        fakes or a loginless transport) by falling back to ''."""
+        creds = getattr(self._connections, 'credentials', None)
+        if not creds:
+            return ''
+        return creds[0]
+
+    def _seed_user(self, session: 'ShellSession') -> None:
+        """Stamp a freshly built session with the login user."""
+        session.current_user = self._login_user()
+
+    @property
+    def current_user(self) -> str:
+        """User the default session is currently running as.
+
+        Seeded from the login user; changed only via switch_user/as_user.
+        Falls back to the login user before the default session is built.
+        """
+        if self._session is not None:
+            return self._session.current_user
+        return self._login_user()
+
+    def _set_current_user(self, user: str) -> None:
+        """Private bookkeeping for the default session. Called only by the
+        elevation flow (PosixPrivilege.switch_user/as_user) after a real
+        ``su`` has run — never a public API (that would let callers desync
+        the tracked user from the shell's actual user)."""
+        if self._session is not None:
+            self._session.current_user = user
 
     async def _ensure_session(self) -> None:
         """Create a ShellSession if one doesn't exist or if the current one is dead.
@@ -1064,6 +1148,7 @@ class SessionManager:
             for attempt in range(2):
                 new_session = await self._build_session()
                 new_session._on_output = self._log_output
+                self._seed_user(new_session)
                 # The marker handshake can take ~1 s on a cold telnet open. A
                 # caller-side ``wait_for`` cancellation (or a failed login)
                 # landing here would otherwise drop the just-built session — and
@@ -1310,6 +1395,7 @@ class SessionManager:
                         raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
 
             shell_session._on_output = self._log_output
+            self._seed_user(shell_session)
             # The marker handshake can take ~1 s on a cold telnet open (the
             # slow window that used to live inside ``connect()``'s login
             # drain). A cancellation or failed login landing here must not
@@ -1330,6 +1416,7 @@ class SessionManager:
                 log_command=self._log_command,
                 log_output=self._log_output,
                 deregister=lambda n: (self._named_sessions.pop(n, None), None)[1],
+                user_password=self._user_password,
             )
             self._named_sessions[name] = host_session
             return host_session

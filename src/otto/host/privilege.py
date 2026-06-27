@@ -21,6 +21,7 @@ the ``@dataclass(slots=True)`` hosts. Password sourcing is host-specific:
 from __future__ import annotations
 
 import shlex
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator
 
@@ -29,6 +30,28 @@ if TYPE_CHECKING:
 
 # Recognizable, locale-independent sudo prompt we match on.
 _SUDO_PROMPT = "otto-sudo:"
+
+
+async def _perform_su(
+    send: 'Callable[..., Awaitable[None]]',
+    expect: 'Callable[..., Awaitable[str]]',
+    user: str,
+    password: str | None,
+    user_password: 'Callable[[str], str | None]',
+) -> str:
+    """Run the ``su`` exchange against a session's ``send``/``expect`` and
+    return the resolved target user. Does **no** ``current_user`` bookkeeping —
+    the caller stamps the session it elevated. Shared by
+    :meth:`PosixPrivilege.switch_user` (default session) and
+    :meth:`~otto.host.session.HostSession.switch_user` (named session)."""
+    target = user or "root"
+    cmd = "su" if not user else f"su {shlex.quote(user)}"
+    pw = password if password is not None else user_password(target)
+    await send(cmd + "\n")
+    if pw is not None:
+        await expect(r"[Pp]assword:")
+        await send(pw + "\n", log=False)
+    return target
 
 
 class PosixPrivilege:
@@ -51,19 +74,16 @@ class PosixPrivilege:
         return wrapped, expects
 
     async def switch_user(self, user: str = "", password: str | None = None) -> None:
-        """``su`` the persistent session to *user* (default root).
+        """``su`` the persistent (default) session to *user* (default root).
 
-        Sends ``su [user]`` and auto-answers the password prompt (from
-        *password*, else ``_user_password``). Mutates session state — affects
+        Performs the real ``su`` and then records the new user so
+        ``current_user`` reflects it. Mutates session state — affects
         subsequent ``run`` calls until the user exits back.
         """
-        target = user or "root"
-        cmd = "su" if not user else f"su {shlex.quote(user)}"
-        pw = password if password is not None else self._user_password(target)
-        await self.send(cmd + "\n")  # ty: ignore[unresolved-attribute]
-        if pw is not None:
-            await self.expect(r"[Pp]assword:")  # ty: ignore[unresolved-attribute]
-            await self.send(pw + "\n", log=False)  # ty: ignore[unresolved-attribute]
+        target = await _perform_su(
+            self.send, self.expect, user, password, self._user_password  # ty: ignore[unresolved-attribute]
+        )
+        self._session_mgr._set_current_user(target)  # ty: ignore[unresolved-attribute]
 
     @asynccontextmanager
     async def as_user(
@@ -73,9 +93,14 @@ class PosixPrivilege:
 
             async with host.as_user("root"):
                 await host.run("systemctl restart foo")
+
+        Tracks ``current_user`` across the switch and restores the prior
+        user when the block exits.
         """
+        prev = self._session_mgr.current_user  # ty: ignore[unresolved-attribute]
         await self.switch_user(user, password)
         try:
             yield self
         finally:
             await self.send("exit\n")  # ty: ignore[unresolved-attribute]
+            self._session_mgr._set_current_user(prev)  # ty: ignore[unresolved-attribute]
