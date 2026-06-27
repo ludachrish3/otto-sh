@@ -7,8 +7,11 @@ to in-memory asyncio streams, avoiding any real SSH or telnet connections.
 """
 
 import asyncio
+import os
 import re
-from unittest.mock import AsyncMock
+import signal
+import subprocess
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -544,6 +547,28 @@ class TestLocalSession:
         result = await local_session.run_cmd("echo line1; echo line2; echo line3")
         assert result.status == Status.Success
         assert logged == ["line1", "line2", "line3"]
+
+    def test_signal_children_tolerates_child_exiting_mid_scan(self):
+        """A child that exits between the /proc scan and os.kill must not crash recovery.
+
+        Reproduces the TOCTOU race behind the flaky
+        ``test_slow_command_times_out_and_session_recovers``: _signal_children reads
+        ``/proc/<pid>/stat`` to find children, then signals each with os.kill. If a
+        child exits in that window, os.kill raises ProcessLookupError (ESRCH, errno 3).
+        That is a sibling of FileNotFoundError (ENOENT, errno 2), not a subclass, so the
+        existing handler did not catch it and recovery blew up. A vanishing child is
+        exactly what we are trying to signal, so it must be swallowed silently.
+        """
+        # Guarantee at least one matching child so the scan reaches the os.kill call;
+        # without it the loop would no-op and the test would pass vacuously.
+        child = subprocess.Popen(["sleep", "30"])
+        try:
+            with patch("os.kill", side_effect=ProcessLookupError(3, "No such process")):
+                # Must not raise — the race is benign and gets swallowed.
+                LocalSession._signal_children(os.getpid(), signal.SIGINT)
+        finally:
+            child.terminate()
+            child.wait()
 
 
 # ---------------------------------------------------------------------------

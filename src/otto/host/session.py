@@ -756,7 +756,7 @@ class LocalSession(ShellSession):
                     # Field 4 (0-indexed: 3) is PPID
                     if int(ppid_line[3]) == parent_pid:
                         os.kill(int(entry.name), sig)
-                except (IndexError, ValueError, FileNotFoundError, PermissionError):
+                except (IndexError, ValueError, FileNotFoundError, ProcessLookupError, PermissionError):
                     continue
         except (FileNotFoundError, PermissionError):
             pass
