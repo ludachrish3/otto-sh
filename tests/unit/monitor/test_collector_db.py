@@ -22,7 +22,7 @@ Covers:
 import json
 import sqlite3
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -58,7 +58,7 @@ async def _inject_point(
     ts: datetime | None = None,
 ) -> None:
     """Manually inject a data point as if _process_host_results had stored it."""
-    ts = ts or datetime.now()
+    ts = ts or datetime.now(tz=timezone.utc)
     key = f"{host}/{label}"
     from collections import deque
 
@@ -177,7 +177,7 @@ class TestMetricPersistence:
     async def test_metric_written_to_db(self, tmp_path):
         db_path = str(tmp_path / "test.db")
         collector = await _empty_collector_with_db(db_path)
-        ts = datetime(2024, 6, 1, 12, 0, 0)
+        ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         await _inject_point(collector, "router1", "CPU %", 42.5, ts)
         await collector.close_db()
         with closing(sqlite3.connect(db_path)) as conn, conn:
@@ -215,7 +215,7 @@ class TestEventPersistence:
     async def test_event_written_to_db(self, tmp_path):
         db_path = str(tmp_path / "test.db")
         collector = await _empty_collector_with_db(db_path)
-        ts = datetime(2024, 6, 1, 13, 0, 0)
+        ts = datetime(2024, 6, 1, 13, 0, 0, tzinfo=timezone.utc)
         await collector.add_event(label="test start", timestamp=ts, color="#888888", source="auto")
         await collector.close_db()
         with closing(sqlite3.connect(db_path)) as conn, conn:
@@ -228,8 +228,8 @@ class TestEventPersistence:
     async def test_span_event_written_with_end_ts(self, tmp_path):
         db_path = str(tmp_path / "test.db")
         collector = await _empty_collector_with_db(db_path)
-        start = datetime(2024, 6, 1, 13, 0, 0)
-        end = datetime(2024, 6, 1, 13, 5, 0)
+        start = datetime(2024, 6, 1, 13, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2024, 6, 1, 13, 5, 0, tzinfo=timezone.utc)
         await collector.add_event(label="my span", timestamp=start, end_timestamp=end)
         await collector.close_db()
         with closing(sqlite3.connect(db_path)) as conn, conn:
@@ -340,7 +340,7 @@ class TestFromSqlite:
 
     @pytest.mark.asyncio
     async def test_loads_metric_rows(self, tmp_path):
-        ts = datetime(2024, 3, 1, 10, 0, 0).isoformat()
+        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
         db_path = self._make_db(
             tmp_path,
             rows=[(ts, "router1", "CPU %", 33.3), (ts, "router1", "Memory %", 55.0)],
@@ -354,7 +354,7 @@ class TestFromSqlite:
 
     @pytest.mark.asyncio
     async def test_loads_multiple_hosts(self, tmp_path):
-        ts = datetime(2024, 3, 1, 10, 0, 0).isoformat()
+        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
         db_path = self._make_db(
             tmp_path,
             rows=[
@@ -369,7 +369,7 @@ class TestFromSqlite:
 
     @pytest.mark.asyncio
     async def test_loads_events(self, tmp_path):
-        ts = datetime(2024, 3, 1, 10, 0, 0).isoformat()
+        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
         db_path = self._make_db(
             tmp_path,
             events=[(ts, None, "test start", "auto", "#888888", "dash")],
@@ -382,8 +382,8 @@ class TestFromSqlite:
 
     @pytest.mark.asyncio
     async def test_loads_span_events(self, tmp_path):
-        ts = datetime(2024, 3, 1, 10, 0, 0).isoformat()
-        end_ts = datetime(2024, 3, 1, 10, 5, 0).isoformat()
+        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
+        end_ts = datetime(2024, 3, 1, 10, 5, 0, tzinfo=timezone.utc).isoformat()
         db_path = self._make_db(
             tmp_path,
             events=[(ts, end_ts, "test span", "auto", "#2ca02c", "solid")],
@@ -391,7 +391,7 @@ class TestFromSqlite:
         collector = await MetricCollector.from_sqlite(db_path)
         events = collector.get_events()
         assert events[0].end_timestamp is not None
-        assert events[0].end_timestamp == datetime(2024, 3, 1, 10, 5, 0)
+        assert events[0].end_timestamp == datetime(2024, 3, 1, 10, 5, 0, tzinfo=timezone.utc)
 
     @pytest.mark.asyncio
     async def test_get_meta_reports_live_false(self, tmp_path):
@@ -404,7 +404,7 @@ class TestFromSqlite:
     async def test_old_schema_without_host_column(self, tmp_path):
         """from_sqlite() should handle old DBs that lack the host column."""
         db_path = str(tmp_path / "old.db")
-        ts = datetime(2024, 3, 1, 10, 0, 0).isoformat()
+        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
         with closing(sqlite3.connect(db_path)) as conn, conn:
             conn.executescript("""
                 CREATE TABLE metrics (
@@ -443,7 +443,7 @@ class TestJsonRoundTrip:
     @pytest.mark.asyncio
     async def test_metrics_preserved(self, tmp_path):
         collector = _empty_collector()
-        ts = datetime(2024, 6, 1, 12, 0, 0)
+        ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         await _inject_point(collector, "host1", "CPU %", 77.7, ts)
         path = str(tmp_path / "out.json")
         collector.export_json(path)
@@ -456,7 +456,7 @@ class TestJsonRoundTrip:
     @pytest.mark.asyncio
     async def test_events_preserved(self, tmp_path):
         collector = _empty_collector()
-        ts = datetime(2024, 6, 1, 12, 0, 0)
+        ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         await collector.add_event(
             label="my event", timestamp=ts, color="#ff0000", source="user_code"
         )
@@ -472,8 +472,8 @@ class TestJsonRoundTrip:
     @pytest.mark.asyncio
     async def test_span_events_preserved(self, tmp_path):
         collector = _empty_collector()
-        start = datetime(2024, 6, 1, 12, 0, 0)
-        end = datetime(2024, 6, 1, 12, 10, 0)
+        start = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        end = datetime(2024, 6, 1, 12, 10, 0, tzinfo=timezone.utc)
         await collector.add_event(label="span", timestamp=start, end_timestamp=end)
         path = str(tmp_path / "out.json")
         collector.export_json(path)
@@ -484,7 +484,7 @@ class TestJsonRoundTrip:
     @pytest.mark.asyncio
     async def test_multiple_hosts_preserved(self, tmp_path):
         collector = _empty_collector()
-        ts = datetime(2024, 6, 1, 12, 0, 0)
+        ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         await _inject_point(collector, "host1", "CPU %", 10.0, ts)
         await _inject_point(collector, "host2", "CPU %", 20.0, ts)
         path = str(tmp_path / "out.json")
@@ -543,8 +543,8 @@ class TestLiveToHistoricalPipeline:
 
         # Simulate a live run writing data
         live = await _empty_collector_with_db(db_path)
-        ts1 = datetime(2024, 6, 1, 12, 0, 0)
-        ts2 = datetime(2024, 6, 1, 12, 0, 5)
+        ts1 = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        ts2 = datetime(2024, 6, 1, 12, 0, 5, tzinfo=timezone.utc)
         await _inject_point(live, "dut", "CPU %", 30.0, ts1)
         await _inject_point(live, "dut", "CPU %", 35.0, ts2)
         await live.add_event(label="test start", timestamp=ts1, source="auto", color="#888888")
@@ -565,7 +565,7 @@ class TestLiveToHistoricalPipeline:
         json_path = str(tmp_path / "session.json")
 
         live = _empty_collector()
-        ts = datetime(2024, 6, 1, 12, 0, 0)
+        ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         await _inject_point(live, "dut", "Memory %", 60.0, ts)
         await live.add_event(label="test pass", timestamp=ts, source="auto", color="#2ca02c")
         live.export_json(json_path)

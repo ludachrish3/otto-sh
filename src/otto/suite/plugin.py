@@ -204,8 +204,8 @@ class OttoPlugin:
         # all access through an Any-cast alias so ty stays out of the way.
         item_any = cast("Any", item)
         hasrequest = hasattr(item, "_request")
-        if hasrequest and not item_any._request:
-            item_any._initrequest()
+        if hasrequest and not item_any._request:  # noqa: SLF001 — deliberate access to pytest.Function._request (private pytest API, cast to Any)
+            item_any._initrequest()  # noqa: SLF001 — deliberate access to pytest.Function._initrequest (private pytest API, cast to Any)
 
         # ── Setup (once) ──────────────────────────────────────────────
         setup_report = call_and_report(item, "setup", log=True)
@@ -213,7 +213,7 @@ class OttoPlugin:
             # Teardown even on setup failure, then exit
             call_and_report(item, "teardown", log=True, nextitem=nextitem)
             if hasrequest:
-                item_any._request = False
+                item_any._request = False  # noqa: SLF001 — deliberate access to pytest.Function._request (private pytest API, cast to Any)
                 item_any.funcargs = None
             return True
 
@@ -232,7 +232,7 @@ class OttoPlugin:
         # ── Teardown (once) ───────────────────────────────────────────
         call_and_report(item, "teardown", log=True, nextitem=nextitem)
         if hasrequest:
-            item_any._request = False
+            item_any._request = False  # noqa: SLF001 — deliberate access to pytest.Function._request (private pytest API, cast to Any)
             item_any.funcargs = None
 
         return True
@@ -253,7 +253,7 @@ class OttoPlugin:
             try:
                 item.runtest()
                 return  # success — stop retrying
-            except Exception as exc:  # noqa: PERF203 — per-item resilience
+            except Exception as exc:  # noqa: PERF203,BLE001 — per-item resilience, retry must catch test exceptions
                 last_exc = exc
                 logger.warning(f"retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}")
         if last_exc is not None:
@@ -344,7 +344,7 @@ class OttoPlugin:
         db_path = output if output is not None and output.suffix.lower() == ".db" else None
         collector = build_monitor_collector(hosts=hosts, db_path=db_path)
 
-        OttoSuite._session_monitor_collector = collector
+        OttoSuite._session_monitor_collector = collector  # noqa: SLF001 — intra-package write to OttoSuite class-level monitor collector slot
         try:
             yield
         finally:
@@ -355,7 +355,7 @@ class OttoPlugin:
             elif db_path is not None:
                 logger.info(f"Monitor data written to {db_path}")
             await collector.close()
-            OttoSuite._session_monitor_collector = None
+            OttoSuite._session_monitor_collector = None  # noqa: SLF001 — intra-package clear of OttoSuite class-level monitor collector slot
 
     @pytest_asyncio.fixture(
         scope="class",

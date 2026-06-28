@@ -19,7 +19,7 @@ import os
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
 import aiosqlite
@@ -291,7 +291,7 @@ class MetricCollector:
             ),
         )
         await self._db_conn.commit()
-        assert cursor.lastrowid is not None
+        assert cursor.lastrowid is not None  # noqa: S101 — internal invariant: SQLite always sets lastrowid after a successful INSERT
         return cursor.lastrowid
 
     async def _db_delete_event(self, event_id: int) -> None:
@@ -395,14 +395,14 @@ class MetricCollector:
                 parser.core_count = target.core_count
 
         secs = interval.total_seconds()
-        start = datetime.now()
+        start = datetime.now(tz=timezone.utc)
 
         # Initial collection: no sleep, publishes first data as soon as commands return
         initial_results = await asyncio.gather(
             *[self._collect_one(target, secs) for target in self._targets],
             return_exceptions=True,
         )
-        ts = datetime.now()
+        ts = datetime.now(tz=timezone.utc)
         for target, result in zip(self._targets, initial_results, strict=True):
             match result:
                 case RunResult(statuses=cmd_statuses):
@@ -419,13 +419,13 @@ class MetricCollector:
                     continue
 
         # Sleep is first so results[0] is the sleep and results[1:] are host results
-        while duration is None or datetime.now() - start < duration:
+        while duration is None or datetime.now(tz=timezone.utc) - start < duration:
             results = await asyncio.gather(
                 asyncio.sleep(secs),
                 *[self._collect_one(target, secs) for target in self._targets],
                 return_exceptions=True,
             )
-            ts = datetime.now()
+            ts = datetime.now(tz=timezone.utc)
 
             for target, result in zip(self._targets, results[1:], strict=True):
                 match result:
@@ -521,7 +521,7 @@ class MetricCollector:
     ) -> MonitorEvent:
         """Record a labeled event and push it to all dashboard subscribers."""
         event = MonitorEvent(
-            timestamp=timestamp or datetime.now(),
+            timestamp=timestamp or datetime.now(tz=timezone.utc),
             label=label,
             source=source,
             color=color,

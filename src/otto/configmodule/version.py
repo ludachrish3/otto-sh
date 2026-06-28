@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 from re import (
-    compile,
+    compile as compile_re,
 )
 
 from typing_extensions import override
 
-version_re = compile(
+version_re = compile_re(
     r"(?P<major>\d+)\."
     r"(?P<minor>\d+)\."
     r"(?P<patch>\d+)"

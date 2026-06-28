@@ -13,7 +13,7 @@ POST /api/event     Record a manual event from the dashboard UI
 
 import asyncio
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
 from typing import Any
@@ -130,7 +130,7 @@ def _build_app(collector: MetricCollector) -> FastAPI:
             label=existing.label,
             color=existing.color,
             dash=existing.dash,
-            end_timestamp=datetime.now(),
+            end_timestamp=datetime.now(tz=timezone.utc),
         )
         if updated is None:
             return JSONResponse({"error": "Event not found"}, status_code=404)
@@ -186,7 +186,7 @@ def _get_all_ips() -> list[str]:
 
     try:
         out = subprocess.check_output(
-            ["ip", "-4", "-o", "addr", "show"],
+            ["ip", "-4", "-o", "addr", "show"],  # noqa: S607 — resolved via PATH by design
             text=True,
             timeout=5,
         )
@@ -215,7 +215,7 @@ class MonitorServer:
     def __init__(
         self,
         collector: MetricCollector,
-        host: str = "0.0.0.0",
+        host: str = "0.0.0.0",  # noqa: S104 — intentional all-interface bind
         port: int = 0,
     ) -> None:
         self._collector = collector
@@ -228,7 +228,7 @@ class MonitorServer:
     def url(self) -> str:
         """Primary URL using the first detected non-loopback IP (or the bind address)."""
         host = self._bind_host
-        if host in ("0.0.0.0", "::"):
+        if host in ("0.0.0.0", "::"):  # noqa: S104 — intentional all-interface bind
             ips = _get_all_ips()
             host = ips[0] if ips else self._bind_host
         return f"http://{host}:{self._port}"
@@ -236,7 +236,7 @@ class MonitorServer:
     @property
     def urls(self) -> list[str]:
         """All URLs the server is reachable on (one per non-loopback interface)."""
-        if self._bind_host in ("0.0.0.0", "::"):
+        if self._bind_host in ("0.0.0.0", "::"):  # noqa: S104 — intentional all-interface bind
             ips = _get_all_ips()
             if ips:
                 return [f"http://{ip}:{self._port}" for ip in ips]
@@ -262,7 +262,7 @@ class MonitorServer:
         task = asyncio.create_task(server.serve())
 
         # wait until uvicorn signals it's started
-        while not server.started:
+        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
             await asyncio.sleep(0.05)
 
         # extract the port from the socket

@@ -28,7 +28,7 @@ from ..configmodule.repo import DockerCompose, DockerImage
 from ..host.host import Host
 from ..utils import Status
 
-PARENT_ROOT = Path("/tmp/otto-docker")
+PARENT_ROOT = Path("/tmp/otto-docker")  # noqa: S108 — deliberate staging path
 
 
 def project_root(project: str) -> Path:

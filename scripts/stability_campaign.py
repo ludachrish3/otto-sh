@@ -183,7 +183,7 @@ def _run_tier(tier: Tier) -> None:
         Path(j).parent.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, **tier.env}
     # Never hard-kill: a SIGKILL'd embedded run wedges single-client consoles.
-    subprocess.run(tier.argv, env=env, check=False)
+    subprocess.run(tier.argv, env=env, check=False)  # noqa: S603 — trusted args
 
 
 def run_stage(count: int, *, breadth: bool, dry_run: bool) -> StageReport:

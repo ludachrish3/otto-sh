@@ -22,7 +22,7 @@ from pathlib import Path
 
 def iter_problems(xml_path: Path):
     """Yield ``(kind, classname::name, message, text)`` for each failure/error."""
-    tree = ET.parse(xml_path)
+    tree = ET.parse(xml_path)  # noqa: S314 — parses our own trusted JUnit output, not untrusted input
     for tc in tree.iter("testcase"):
         for kind in ("failure", "error"):
             el = tc.find(kind)

@@ -38,7 +38,7 @@ async def _ftp_size(ftp_conn: aioftp.Client, path: str) -> int:
     try:
         _code, info = await ftp_conn.command(f"SIZE {path}", "213")
         return int(info[0].strip()) if info else 0
-    except Exception:
+    except Exception:  # noqa: BLE001 — FTP SIZE command may fail for various protocol reasons; 0 is safe fallback
         return 0
 
 
@@ -76,7 +76,12 @@ class FtpFileTransfer(UnixFileTransfer):
     @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "FtpFileTransfer":
-        assert ctx.connections is not None and ctx.exec_cmd is not None
+        if ctx.connections is None:
+            raise ValueError(
+                "FtpFileTransfer requires a connections manager on the transfer context"
+            )
+        if ctx.exec_cmd is None:
+            raise ValueError("FtpFileTransfer requires exec_cmd on the transfer context")
         return cls(
             connections=ctx.connections,
             name=ctx.host_name,
@@ -139,7 +144,7 @@ class FtpFileTransfer(UnixFileTransfer):
                                     bytes_done += len(block)
                                     handler(str(src), str(dst), bytes_done, total)
                 return Status.Success, ""
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — FTP get can fail via network/protocol/IO; all map to Error
                 return Status.Error, str(e)
 
     async def _put_files_ftp(
@@ -173,7 +178,7 @@ class FtpFileTransfer(UnixFileTransfer):
                                     bytes_done += len(block)
                                     handler(str(src), str(dst), bytes_done, total)
                 return Status.Success, ""
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — FTP put can fail via network/protocol/IO; all map to Error
                 return Status.Error, str(e)
 
 

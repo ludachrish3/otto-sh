@@ -11,7 +11,7 @@ so it can be tested with an AsyncMock without any real connection.
 import asyncio
 from collections import deque
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..utils import CommandStatus
@@ -19,6 +19,10 @@ from .host import RunResult
 
 # deque of (timestamp, results) pairs for one named repeat task
 MetricResult = deque[tuple[datetime, list[CommandStatus]]]
+
+# Sentinel used as the default "no deadline" for the `until` parameter.
+# Must be aware so it can be compared against datetime.now(tz=timezone.utc).
+_DATETIME_MAX_UTC: datetime = datetime.max.replace(tzinfo=timezone.utc)
 
 
 class RepeatRunner:
@@ -57,14 +61,14 @@ class RepeatRunner:
             raise ValueError("Command interval must be a positive time interval")
 
         try:
-            duration_end_time = datetime.now() + duration
+            duration_end_time = datetime.now(tz=timezone.utc) + duration
         except OverflowError:
-            duration_end_time = datetime.max
+            duration_end_time = datetime.max.replace(tzinfo=timezone.utc)
 
         end_time = min(duration_end_time, until)
         times_remaining = times
 
-        while datetime.now() < end_time and times_remaining != 0:
+        while datetime.now(tz=timezone.utc) < end_time and times_remaining != 0:
             try:
                 # Run command and interval sleep concurrently.  If the command
                 # finishes before the interval we still wait; if it takes longer
@@ -77,7 +81,7 @@ class RepeatRunner:
                 )
                 cmd_result = results[0]
                 if not isinstance(cmd_result, BaseException):
-                    ts = datetime.now()
+                    ts = datetime.now(tz=timezone.utc)
                     cmd_statuses = cmd_result.statuses
                     if name in self._repeat_results:
                         self._repeat_results[name].append((ts, cmd_statuses))
@@ -105,7 +109,7 @@ class RepeatRunner:
         if task.cancelled() or task.exception() is not None:
             return
         results = task.result().statuses
-        ts = datetime.now()
+        ts = datetime.now(tz=timezone.utc)
         if name in self._repeat_results:
             self._repeat_results[name].append((ts, results))
         if on_result is not None:
@@ -122,7 +126,7 @@ class RepeatRunner:
         interval: timedelta,
         times: int = -1,
         duration: timedelta = timedelta.max,
-        until: datetime = datetime.max,
+        until: datetime = _DATETIME_MAX_UTC,
         on_result: Callable[[str, datetime, list[CommandStatus]], None] | None = None,
         max_history: int = 1000,
     ) -> None:

@@ -89,7 +89,7 @@ class PosixPrivilege:
             password,
             self._user_password,
         )
-        self._session_mgr._set_current_user(target)  # ty: ignore[unresolved-attribute]
+        self._session_mgr._set_current_user(target)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
 
     @asynccontextmanager
     async def as_user(
@@ -109,4 +109,4 @@ class PosixPrivilege:
             yield self
         finally:
             await self.send("exit\n")  # ty: ignore[unresolved-attribute]
-            self._session_mgr._set_current_user(prev)  # ty: ignore[unresolved-attribute]
+            self._session_mgr._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[unresolved-attribute]

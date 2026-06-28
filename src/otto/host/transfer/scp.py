@@ -58,9 +58,14 @@ class ScpFileTransfer(UnixFileTransfer):
     @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "ScpFileTransfer":
-        assert (
-            ctx.connections is not None and ctx.exec_cmd is not None and ctx.scp_options is not None
-        )
+        if ctx.connections is None:
+            raise ValueError(
+                "ScpFileTransfer requires a connections manager on the transfer context"
+            )
+        if ctx.exec_cmd is None:
+            raise ValueError("ScpFileTransfer requires exec_cmd on the transfer context")
+        if ctx.scp_options is None:
+            raise ValueError("ScpFileTransfer requires scp_options on the transfer context")
         return cls(
             connections=ctx.connections,
             name=ctx.host_name,
@@ -106,7 +111,7 @@ class ScpFileTransfer(UnixFileTransfer):
                 (ssh_conn, str(src)),
                 dest_dir,
                 progress_handler=_progress,
-                **self._scp_options._kwargs(),
+                **self._scp_options._kwargs(),  # noqa: SLF001 — intra-package access to ScpOptions._kwargs
             )
             return Status.Success, ""
 
@@ -134,7 +139,7 @@ class ScpFileTransfer(UnixFileTransfer):
                 str(src),
                 (ssh_conn, str(dest_dir)),
                 progress_handler=_progress,
-                **self._scp_options._kwargs(),
+                **self._scp_options._kwargs(),  # noqa: SLF001 — intra-package access to ScpOptions._kwargs
             )
             return Status.Success, ""
 

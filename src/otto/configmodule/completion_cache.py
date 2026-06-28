@@ -519,7 +519,7 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
     try:
         from ..suite.register import _SUITE_REGISTRY
     except ImportError:
-        _SUITE_REGISTRY = []  # type: ignore[assignment]
+        _SUITE_REGISTRY = []  # type: ignore[assignment]  # noqa: N806 — matching the imported constant name
     for name, sub_app in _SUITE_REGISTRY:
         callback = None
         if sub_app.registered_commands:
@@ -576,7 +576,7 @@ def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
             backend = build_backend(settings, repo.sut_dir)
             if isinstance(backend, SupportsUsernameCompletion):
                 return sorted(backend.list_usernames())
-        except Exception:
+        except Exception:  # noqa: BLE001 — completion fallback, best-effort username list; return empty on any error
             return []
         return []
     return []

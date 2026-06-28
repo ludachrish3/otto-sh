@@ -65,7 +65,8 @@ class EmbeddedFileTransfer(BaseFileTransfer):
 
         Subclasses override this to read selector-specific ctx fields.
         """
-        assert ctx.exec_cmd is not None
+        if ctx.exec_cmd is None:
+            raise ValueError("EmbeddedFileTransfer requires exec_cmd on the transfer context")
         return cls(
             name=ctx.host_name,
             exec_cmd=ctx.exec_cmd,

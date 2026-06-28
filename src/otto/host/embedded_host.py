@@ -375,7 +375,7 @@ class EmbeddedHost(RemoteHost):
             return CommandStatus(
                 command="connect", output="Connection successful", status=Status.Success, retcode=0
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — verify_connection probes all failure modes
             self._log_command(f"[DRY RUN] Connection FAILED: {e}")
             return CommandStatus(command="connect", output=str(e), status=Status.Error, retcode=1)
 
@@ -553,7 +553,7 @@ class EmbeddedHost(RemoteHost):
         return result.status.is_ok
 
     @cli_exposed
-    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:
+    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002 — CLI-exposed param name, maps to --all flag
         """List entry names in *path* via the device ``fs ls`` former."""
         result = await self._run_one(self.filesystem.ls_command(str(path)))
         if not result.status.is_ok:

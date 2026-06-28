@@ -6,13 +6,13 @@ from otto.configmodule.version import Version
 def test_version_no_arguments():
 
     with pytest.raises(TypeError):
-        version = Version()
+        Version()
 
 
 def test_version_null_string():
 
     with pytest.raises(ValueError):
-        version = Version("")
+        Version("")
 
 
 def test_version_valid_string():

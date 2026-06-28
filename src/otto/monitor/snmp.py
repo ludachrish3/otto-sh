@@ -268,7 +268,7 @@ class SnmpClient:
                 transport,
                 *(ObjectType(ObjectIdentity(oid)) for oid in oids),
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — SNMP client raises heterogeneous errors; all map to warning + empty result
             logger.warning("SNMP GET to %s:%d failed: %s", self.address, self.port, exc)
             return result
         finally:

@@ -230,7 +230,7 @@ class TestTransferContract:
                 [local_src],
                 Path("/nonexistent_otto_contract"),
             )
-        except Exception:
+        except Exception:  # noqa: BLE001 — contract test: exception is one acceptable failure mode for no-FS backend
             return  # exception is one acceptable failure mode
         assert status != Status.Success, (
             f"no-FS backend reported Success for put — expected an error (err={err!r})"

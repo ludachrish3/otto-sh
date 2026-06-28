@@ -59,7 +59,7 @@ class LocalFileTransfer(BaseFileTransfer):
                     size = dest.stat().st_size
                     progress_factory()(str(src), str(dest), size, size)
             return Status.Success, ""
-        except Exception as e:
+        except OSError as e:
             return Status.Error, str(e)
 
     @override

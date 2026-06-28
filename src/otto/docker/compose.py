@@ -79,7 +79,7 @@ def get_user_compose_project(repo_name: str, suffix: str | None = None) -> str:
 def _safe_username() -> str:
     try:
         return getpass.getuser()
-    except Exception:
+    except KeyError:
         return "anon"
 
 
@@ -346,7 +346,7 @@ async def compose_down(
         if host is not None:
             try:
                 await host.close()
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — best-effort teardown, logs warning
                 logger.warning(f"[docker] error closing container host {hid}: {e}")
 
     return status

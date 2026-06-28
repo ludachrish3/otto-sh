@@ -463,7 +463,6 @@ async def test_composed_does_not_teardown_when_already_running(tmp_path):
         return _ok()
 
     parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
-    seen_down = []
     parent.oneshot_orig = parent.oneshot
 
     async with composed(repo, lab):

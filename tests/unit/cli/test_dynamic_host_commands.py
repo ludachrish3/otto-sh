@@ -30,7 +30,7 @@ def test_cli_exposed_sets_markers_with_dashed_default_name():
 
 
 def test_cli_exposed_accepts_explicit_name_and_help():
-    @cli_exposed(name="pwr", help="power it")
+    @cli_exposed(name="pwr", help_="power it")
     async def power(self, state=None): ...
 
     assert power.__cli_name__ == "pwr"
@@ -138,7 +138,7 @@ async def test_make_method_command_unsupported_method_errors():
 
 def test_render_runresult_failure_exits_nonzero():
     class _RR:
-        class status:
+        class status:  # noqa: N801 — lowercase mimics result.status attribute shape
             is_ok = False
 
     with pytest.raises(typer.Exit):
@@ -147,7 +147,7 @@ def test_render_runresult_failure_exits_nonzero():
 
 def test_render_runresult_ok_returns_silently():
     class _RR:
-        class status:
+        class status:  # noqa: N801 — lowercase mimics result.status attribute shape
             is_ok = True
 
     # no exception, no output
@@ -596,7 +596,7 @@ def test_ls_path_stays_positional_and_power_state_positional(monkeypatch):
         id = "h1"
 
         @cli_exposed
-        async def ls(self, path: "Annotated[str, Arg()]" = ".", all: bool = False):
+        async def ls(self, path: "Annotated[str, Arg()]" = ".", all: bool = False):  # noqa: A002 — CLI-exposed param name, maps to --all flag
             captured["ls"] = (path, all)
             return ["x"]
 

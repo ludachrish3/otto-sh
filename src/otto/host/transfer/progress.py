@@ -40,7 +40,7 @@ def make_rich_progress_handler(progress: Progress, host_name: str) -> "TransferP
             current_src = src
             description = f"[green]{host_name}[/] {Path(src).name}"
             task_id = progress.add_task(description, total=bytes_total)
-        assert task_id is not None
+        assert task_id is not None  # noqa: S101 — internal invariant: task_id set above when src changes; always set on second+ call
         progress.update(task_id, completed=bytes_done)
 
     return handler

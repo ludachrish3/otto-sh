@@ -87,7 +87,7 @@ def assert_lab_repository_conforms(
                 continue
             try:
                 lab = repo.load_lab(n)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
                 c.expect(False, f"LabRepository: load_lab({n!r}) raised {type(e).__name__}: {e}")
                 continue
             is_lab = isinstance(lab, Lab)
@@ -109,7 +109,7 @@ def assert_lab_repository_conforms(
                     )
                 try:
                     lab2 = repo.load_lab(n)
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
                     c.expect(
                         False,
                         f"LabRepository: load_lab({n!r}) idempotency re-call raised "
@@ -132,7 +132,7 @@ def assert_lab_repository_conforms(
         )
     except LabNotFoundError:
         pass
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — conformance check, distinguishes unexpected exception from LabNotFoundError
         c.expect(
             False,
             f"LabRepository: an unknown lab must raise LabNotFoundError, got "
@@ -145,7 +145,7 @@ def assert_lab_repository_conforms(
             c.expect(n in listed, f"LabRepository: expected lab {n!r} to appear in list_labs()")
             try:
                 repo.load_lab(n)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — conformance check, must catch any impl exception to report violation
                 c.expect(
                     False, f"LabRepository: expected lab {n!r} to load, got {type(e).__name__}: {e}"
                 )

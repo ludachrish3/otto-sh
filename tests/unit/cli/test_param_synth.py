@@ -119,7 +119,7 @@ def test_list_option_uses_str_with_converter():
         ...
 
     b = build_cli_binding(f)
-    p = _by_name(b, "tags")
+    _by_name(b, "tags")
     assert "tags" in b.converters
     assert b.converters["tags"]("a,b") == ["a", "b"]
 

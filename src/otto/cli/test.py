@@ -292,7 +292,7 @@ def run_suite(
         from ..suite.plugin import StabilityCollector as _StabilityCollector
 
         collector = _StabilityCollector()
-        otto_plugin._stability_collector = collector
+        otto_plugin._stability_collector = collector  # noqa: SLF001 — intra-package write to stability plugin's collector slot
 
     pytest.main(
         [*base_args, f"--junitxml={results_path}"],
@@ -670,7 +670,7 @@ async def _cov_clean_remotes(repos: list["Repo"]) -> None:
     if not any(all_hosts()):
         return
 
-    fetcher = GcdaFetcher(Path("/tmp"))
+    fetcher = GcdaFetcher(Path("/tmp"))  # noqa: S108 — deliberate staging path
     await fetcher.clean_remote(gcda_remote_dir)
 
 

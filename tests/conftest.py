@@ -110,7 +110,7 @@ def pytest_runtest_call(item: pytest.Item):
     for attempt in range(1, n):
         try:
             item.runtest()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — retry hook must catch any test exception to report and retry
             _logger.warning(f"retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}")
             outcome.force_exception(exc)
             continue

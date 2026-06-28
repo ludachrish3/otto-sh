@@ -94,7 +94,7 @@ def _is_optional(base: Any) -> tuple[bool, Any]:
     is_union = origin is Union or (_native_union is not None and isinstance(base, _native_union))
     if is_union:
         args = [a for a in get_args(base) if a is not type(None)]
-        if len(args) == 1 and len(get_args(base)) == 2:
+        if len(args) == 1 and len(get_args(base)) == 2:  # noqa: PLR2004 — Optional[X] has exactly 2 type args (X and NoneType), clearer inline
             return True, args[0]
     return False, base
 

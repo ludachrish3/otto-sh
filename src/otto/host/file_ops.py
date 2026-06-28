@@ -39,7 +39,7 @@ class PosixFileOps:
         return result.status.is_ok
 
     @cli_exposed
-    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:
+    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002 — CLI-exposed param name, maps to --all flag
         """List entry names in *path* (``ls -1``; *all* adds ``-A`` for dotfiles)."""
         flags = "-1A" if all else "-1"
         result = await self.oneshot(f"ls {flags} {self._q(path)}")  # ty: ignore[unresolved-attribute]

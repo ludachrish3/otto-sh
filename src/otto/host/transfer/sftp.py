@@ -55,7 +55,12 @@ class SftpFileTransfer(UnixFileTransfer):
     @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "SftpFileTransfer":
-        assert ctx.connections is not None and ctx.exec_cmd is not None
+        if ctx.connections is None:
+            raise ValueError(
+                "SftpFileTransfer requires a connections manager on the transfer context"
+            )
+        if ctx.exec_cmd is None:
+            raise ValueError("SftpFileTransfer requires exec_cmd on the transfer context")
         return cls(
             connections=ctx.connections,
             name=ctx.host_name,

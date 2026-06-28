@@ -429,7 +429,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return CommandStatus(
                 command="connect", output="Connection successful", status=Status.Success, retcode=0
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — verify_connection probes all failure modes
             self._log_command(f"[DRY RUN] Connection FAILED: {e}")
             return CommandStatus(command="connect", output=str(e), status=Status.Error, retcode=1)
 
@@ -476,7 +476,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         interactive_options = replace(self.telnet_options, auto_window_resize=True)
         remote_port = interactive_options.port
         if self._connections.has_tunnel:
-            local_port = await self._connections._forward_port(remote_port)
+            local_port = await self._connections._forward_port(remote_port)  # noqa: SLF001 — intra-package access to HostConnections._forward_port for tunnel setup
             connect_host = "localhost"
             connect_port: int | None = local_port
         else:
@@ -724,7 +724,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self,
         file: Annotated[Path, Arg(help="Kernel module .ko to insert.")],
         name: Annotated[str | None, Opt(help="Module name; defaults to the file stem.")] = None,
-        dest_dir: Annotated[Path, Exclude] = Path("/tmp"),
+        dest_dir: Annotated[Path, Exclude] = Path("/tmp"),  # noqa: S108 — deliberate staging path
         show_progress: Annotated[bool, Exclude] = False,
     ) -> tuple[Status, str]:
         """Insert a kernel module: stage the .ko to the host, then ``insmod`` it.

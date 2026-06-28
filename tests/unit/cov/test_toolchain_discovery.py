@@ -49,7 +49,7 @@ class TestGccToolchain:
 
 class TestClangToolchain:
     def test_creates_wrapper(self, tmp_path):
-        tc = _clang_toolchain(
+        _clang_toolchain(
             Path("/opt/llvm/bin"),
             Path("/opt/llvm"),
             tmp_path,

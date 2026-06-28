@@ -48,8 +48,8 @@ def default_mock_repo():
 
 def test_repo_config_location(default_mock_repo):
 
-    repoSettingsFile = mock_repo.sut_dir / ".otto" / "settings.toml"
-    assert repoSettingsFile.exists()
+    repo_settings_file = mock_repo.sut_dir / ".otto" / "settings.toml"
+    assert repo_settings_file.exists()
 
 
 def test_repo_commit_name(default_mock_repo):

@@ -208,7 +208,7 @@ class RemoteHost(BaseHost):
         """Probe by attempting a connection (no command), bounded by *timeout*."""
         try:
             result = await asyncio.wait_for(self.verify_connection(), timeout)
-        except Exception:
+        except Exception:  # noqa: BLE001 — reachability probe, any failure means unreachable
             return False
         return result.status.is_ok
 
@@ -370,9 +370,9 @@ class RemoteHost(BaseHost):
                 # ``_conn_lock``, which is what prevents concurrent callers
                 # of the outer factory from each opening their own parent
                 # connection and leaking the race losers.
-                if outer._parent is None:
-                    outer._parent = hop_host._build_hop_transport()
-                parent_tunnel = await outer._parent.get_tunnel(_visited=visited)
+                if outer._parent is None:  # noqa: SLF001 — intra-package access to SshHopTransport._parent cache
+                    outer._parent = hop_host._build_hop_transport()  # noqa: SLF001 — intra-package access to RemoteHost._build_hop_transport
+                parent_tunnel = await outer._parent.get_tunnel(_visited=visited)  # noqa: SLF001 — intra-package access to SshHopTransport._parent
 
             user, password = (
                 next(iter(hop_host.creds.items()))
@@ -389,5 +389,5 @@ class RemoteHost(BaseHost):
             )
             return conn
 
-        outer._factory = _create_tunnel
+        outer._factory = _create_tunnel  # noqa: SLF001 — intra-package assignment to SshHopTransport._factory closure
         return outer

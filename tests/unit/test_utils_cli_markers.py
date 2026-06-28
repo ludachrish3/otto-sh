@@ -9,9 +9,9 @@ def test_markers_are_plain_data():
     o = Opt(help="timeout")
     assert o.elem_type is None and o.help == "timeout"
     # Exclude is a reusable singleton — re-import proves identity, not just self-equality
-    from otto.utils import Exclude as _E2
+    from otto.utils import Exclude as _Excl
 
-    assert Exclude is _E2
+    assert Exclude is _Excl
     assert type(Exclude).__name__ == "_Exclude"
 
 

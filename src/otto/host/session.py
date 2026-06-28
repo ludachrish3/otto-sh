@@ -44,6 +44,11 @@ Expect = tuple[str | re.Pattern[str], str]
 # Max length hint for asyncssh regex readuntil (performance optimization)
 _MAX_SEPARATOR_LEN = 256
 
+# Log-preview truncation limits to keep debug output readable.
+_LOG_PREVIEW_FRAMED = 256  # max chars of a framed command payload in the log
+_LOG_PREVIEW_HANDSHAKE = 512  # max chars of handshake data shown in the log
+_LOG_PREVIEW_BUFFER = 1024  # buffer length above which run_cmd shows head+tail excerpt
+
 # Timeout for session recovery after Ctrl+C
 _RECOVERY_TIMEOUT = 5.0
 
@@ -249,7 +254,11 @@ class ShellSession(ABC):
                 # Truncate the matched data so a noisy banner doesn't flood
                 # the log; the tail (where the marker landed) is the part
                 # that matters for diagnosing a future bring-up.
-                shown = data if len(data) <= 512 else f"...{data[-512:]}"
+                shown = (
+                    data
+                    if len(data) <= _LOG_PREVIEW_HANDSHAKE
+                    else f"...{data[-_LOG_PREVIEW_HANDSHAKE:]}"
+                )
                 logger.debug(
                     f"{self._log_tag}: handshake matched in {elapsed:.2f}s "
                     f"(attempts={attempt}, {len(data)} bytes): {shown!r}"
@@ -417,7 +426,11 @@ class ShellSession(ABC):
         # Truncate for the log so a multi-line script doesn't dominate the
         # output. The frame seam is the natural call site to instrument once —
         # every dialect then gets the visibility for free.
-        shown = framed if len(framed) <= 256 else f"{framed[:256]}...({len(framed)} bytes total)"
+        shown = (
+            framed
+            if len(framed) <= _LOG_PREVIEW_FRAMED
+            else f"{framed[:_LOG_PREVIEW_FRAMED]}...({len(framed)} bytes total)"
+        )
         logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
         self._write_progress = write_progress
         try:
@@ -490,8 +503,8 @@ class ShellSession(ABC):
         # extract_retcode / parse_output had to work with.
         buffer_preview = (
             buffer
-            if len(buffer) <= 1024
-            else f"{buffer[:512]}...({len(buffer)}b)...{buffer[-512:]}"
+            if len(buffer) <= _LOG_PREVIEW_BUFFER
+            else f"{buffer[:_LOG_PREVIEW_HANDSHAKE]}...({len(buffer)}b)...{buffer[-_LOG_PREVIEW_HANDSHAKE:]}"
         )
         logger.debug(
             f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
@@ -575,7 +588,7 @@ class SshSession(ShellSession):
     async def _open(self) -> None:
         import asyncssh
 
-        assert self._conn is not None, "SshSession._conn must be set before _open()"
+        assert self._conn is not None, "SshSession._conn must be set before _open()"  # noqa: S101 — internal invariant: _conn set by subclass before _open()
         if self._open_cmd is not None:
             self._process = await self._conn.create_process(
                 self._open_cmd,
@@ -590,12 +603,12 @@ class SshSession(ShellSession):
 
     @override
     async def _write(self, data: str) -> None:
-        assert self._process is not None
+        assert self._process is not None  # noqa: S101 — internal invariant: _open() must run before _write()
         self._process.stdin.write(data)
 
     @override
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
-        assert self._process is not None
+        assert self._process is not None  # noqa: S101 — internal invariant: _open() must run before _read_until_pattern()
         return await self._process.stdout.readuntil(pattern, _MAX_SEPARATOR_LEN)
 
     @override
@@ -721,13 +734,13 @@ class LocalSession(ShellSession):
 
     @override
     async def _write(self, data: str) -> None:
-        assert self._process is not None and self._process.stdin is not None
+        assert self._process is not None and self._process.stdin is not None  # noqa: S101 — internal invariant: process created in _open() before _write()
         self._process.stdin.write(data.encode())
         await self._process.stdin.drain()
 
     @override
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
-        assert self._process is not None and self._process.stdout is not None
+        assert self._process is not None and self._process.stdout is not None  # noqa: S101 — internal invariant: process created in _open() before _read_until_pattern()
         buf = ""
         while True:
             chunk = await self._process.stdout.read(1)
@@ -1166,7 +1179,7 @@ class SessionManager:
             last_exc: ConnectionError | None = None
             for attempt in range(2):
                 new_session = await self._build_session()
-                new_session._on_output = self._log_output
+                new_session._on_output = self._log_output  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
                 self._seed_user(new_session)
                 # The marker handshake can take ~1 s on a cold telnet open. A
                 # caller-side ``wait_for`` cancellation (or a failed login)
@@ -1174,7 +1187,7 @@ class SessionManager:
                 # its open transport FD — on the floor. Close it before the
                 # exception propagates.
                 try:
-                    await new_session._ensure_initialized()
+                    await new_session._ensure_initialized()  # noqa: SLF001 — intra-package access to ShellSession._ensure_initialized for handshake
                 except ConnectionError as exc:
                     with suppress(Exception):  # pragma: no cover - best-effort cleanup
                         await new_session.close()
@@ -1203,7 +1216,7 @@ class SessionManager:
                 self._session = new_session
                 break
             else:  # pragma: no cover - the loop always breaks or raises
-                assert last_exc is not None
+                assert last_exc is not None  # noqa: S101 — internal invariant: for-else only reached when loop ran at least once
                 raise last_exc
 
     async def _build_session(self) -> "ShellSession":
@@ -1213,7 +1226,7 @@ class SessionManager:
         """
         if self._session_factory is not None:
             return self._session_factory()
-        assert self._connections is not None
+        assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no session_factory
         match self._connections.term:
             case "ssh":
                 ssh_conn = await self._connections.ssh()
@@ -1252,7 +1265,7 @@ class SessionManager:
         await self._ensure_session()
         if log:
             self._log_command(cmd)
-        assert self._session is not None
+        assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         result = await self._session.run_cmd(
             cmd,
             expects=expects,
@@ -1271,7 +1284,7 @@ class SessionManager:
         if self._oneshot_factory is not None:
             return await self._oneshot_factory(cmd, timeout)
 
-        assert self._connections is not None
+        assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no oneshot_factory
         if log:
             self._log_command(cmd)
         match self._connections.term:
@@ -1366,12 +1379,12 @@ class SessionManager:
             # and remove the slot, opening a tiny window where _named_sessions
             # has no entry for this name.
             if existing is not None:
-                await existing._session.close()
+                await existing._session.close()  # noqa: SLF001 — intra-package access to HostSession._session to close dead transport
 
             if self._session_factory is not None:
                 shell_session: ShellSession = self._session_factory()
             else:
-                assert self._connections is not None
+                assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no session_factory
                 match self._connections.term:
                     case "ssh":
                         ssh_conn = await self._connections.ssh()
@@ -1415,7 +1428,7 @@ class SessionManager:
                             f'{self._name}: unsupported terminal type "{self._connections.term}"'
                         )
 
-            shell_session._on_output = self._log_output
+            shell_session._on_output = self._log_output  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
             self._seed_user(shell_session)
             # The marker handshake can take ~1 s on a cold telnet open (the
             # slow window that used to live inside ``connect()``'s login
@@ -1423,7 +1436,7 @@ class SessionManager:
             # orphan the just-built session — for telnet that would leak the
             # owned client's socket and skip the session's cleanup duties.
             try:
-                await shell_session._ensure_initialized()
+                await shell_session._ensure_initialized()  # noqa: SLF001 — intra-package access to ShellSession._ensure_initialized for handshake
             except BaseException:
                 with suppress(Exception):  # pragma: no cover - best-effort cleanup
                     await shell_session.close()
@@ -1444,7 +1457,7 @@ class SessionManager:
         await self._ensure_session()
         if log:
             self._log_command(text.rstrip())
-        assert self._session is not None
+        assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         await self._session.send(text)
 
     async def expect(
@@ -1453,7 +1466,7 @@ class SessionManager:
         timeout: float = 10.0,
     ) -> str:
         await self._ensure_session()
-        assert self._session is not None
+        assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         result = await self._session.expect(pattern, timeout)
         self._log_output(result)
         return result

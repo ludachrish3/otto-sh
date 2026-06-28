@@ -47,24 +47,24 @@ class MultilineFormatter(Formatter):
     def format(self, record: LogRecord) -> str:
 
         # Store the original full message to restore later
-        originalMsg = record.msg
-        formattedLines: list[str] = []
+        original_msg = record.msg
+        formatted_lines: list[str] = []
 
         # Create smaller log records, each with just a single line
         # Format each one on its own so that they have the proper formatting,
         # then join them together with newlines. Splitting on the newline
         # character is needed instead of calling splitlines() because
         # splitlines() ignores the first trailing newline character.
-        for line in originalMsg.splitlines():
+        for line in original_msg.splitlines():
             record.msg = line
-            formattedLine = super().format(record)
+            formatted_line = super().format(record)
 
-            formattedLines.append(formattedLine)
+            formatted_lines.append(formatted_line)
 
-        output = "\n".join(formattedLines)
+        output = "\n".join(formatted_lines)
 
         # Restore the original message, including all newlines
-        record.msg = originalMsg
+        record.msg = original_msg
 
         return output
 

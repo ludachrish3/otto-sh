@@ -91,7 +91,7 @@ async def test_real_oneshot_pool_high_fanout(host1: UnixHost) -> None:
     on the daemon's connection-limit backpressure (a different, infrastructure-
     level concern that surfaces at N>=10 on a default sshd).
     """
-    N = 8
+    N = 8  # noqa: N806 — single-letter math dimension
     results = await asyncio.gather(
         *(host1.oneshot(f"echo concurrent_{i}") for i in range(N)),
         return_exceptions=True,
@@ -159,7 +159,7 @@ async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None
     initial_id = id(sess)
     await sess.close()
 
-    M = 20
+    M = 20  # noqa: N806 — single-letter math dimension
     results = await asyncio.gather(
         *(mgr._ensure_session() for _ in range(M)),
         return_exceptions=True,
@@ -294,7 +294,7 @@ async def test_real_cancel_mid_run_recovers(host1: UnixHost) -> None:
         await asyncio.wait_for(host1.run("sleep 30"), timeout=0.5)
     except asyncio.TimeoutError:
         pass  # expected
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001 — test: any non-timeout exception is unexpected and should fail
         pytest.fail(f"unexpected exception during wait_for: {e!r}")
 
     # 5 successive commands must all succeed — proves the prompt-reading
@@ -358,7 +358,7 @@ async def test_real_nc_concurrent_gets(
         # wasn't reaped.
         import subprocess
 
-        local_listeners = subprocess.run(
+        local_listeners = subprocess.run(  # noqa: ASYNC221 — test harness, blocking subprocess acceptable
             ["pgrep", "-af", "nc -l"],
             capture_output=True,
             text=True,
@@ -389,7 +389,7 @@ async def test_real_nc_high_fanout_put(
     contention and per-transfer listener spin-up/teardown harder than the
     N=5 baseline.
     """
-    N = 20
+    N = 20  # noqa: N806 — single-letter math dimension
     files = []
     for i in range(N):
         src = tmp_path / f"fanout_{i}_{transfer_host.term}.txt"

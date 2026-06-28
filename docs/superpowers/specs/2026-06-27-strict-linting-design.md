@@ -42,6 +42,7 @@ Rationale: the **formatter** enforces indentation, quotes, and trailing commas. 
 | `PLC0415` | lazy/local imports (startup speed) | `from .context import try_get_context` inside a fn |
 | `G004` | f-string logging | `_logger.debug(f"{self._name}: FTP get {src} -> {dst}")` |
 | `TRY003`, `EM101`, `EM102`, `EM103` | terse inline exception messages | `raise ValueError(f"{type} is {origin}, not a Literal...")` |
+| `ASYNC230`, `ASYNC240` | blocking file I/O in async functions | FS ops at otto's flagged sites are brief / off the hot path; rule premises trio/anyio, not asyncio |
 
 ### Group 3 — Annotation-safety cluster (protects Sphinx-nitpicky + 3.10)
 `FA100, FA102, TC001, TC002, TC003, UP037`
@@ -61,7 +62,7 @@ Rationale: otto's working model is **real runtime annotations + module-top impor
 
 ## Per-file ignores
 
-- `tests/**`: `S101` (assert), `D` (docstrings), `PLR2004` (magic values), `SLF001` (private access), `ANN` (annotations), `ARG` (unused fixture/args). Rationale: standard test idioms; keep the strict bar where it matters (`src`).
+- `tests/**`: `S101` (assert), `D` (docstrings), `PLR2004` (magic values), `SLF001` (private access), `ANN` (annotations), `ARG` (unused fixture/args), plus the S-family `S104/S105/S106/S108/S110/S310/S603/S607` (tests use fake creds / subprocess harnesses / remote-host paths — not a security surface). Rationale: standard test idioms; keep the strict bar where it matters (`src`).
 - `**/__init__.py`: `F401` (re-export without `__all__` churn).
 
 ## Delivery strategy — ratchet by shrinking the ignore-list

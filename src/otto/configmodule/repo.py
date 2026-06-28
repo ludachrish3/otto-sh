@@ -427,24 +427,24 @@ class Repo:
         FileNotFoundError
             If the TOML file is not found.
         """
-        ottoSettingsPath = self.sut_dir / TOML_SETTINGS_PATH
-        if not ottoSettingsPath.exists():
+        otto_settings_path = self.sut_dir / TOML_SETTINGS_PATH
+        if not otto_settings_path.exists():
             raise FileNotFoundError(
                 f"The SUT repo {self.sut_dir} does not have the required TOML file, {TOML_SETTINGS_PATH}"
             ) from None
 
-        return ottoSettingsPath
+        return otto_settings_path
 
     def read_settings(
         self,
     ) -> str:
 
-        ottoSettingsPath = self.get_otto_settings_path()
+        otto_settings_path = self.get_otto_settings_path()
 
-        with open(ottoSettingsPath) as ottoSettingsFile:
-            settingsText = ottoSettingsFile.read()
+        with open(otto_settings_path) as otto_settings_file:
+            settings_text = otto_settings_file.read()
 
-        return settingsText
+        return settings_text
 
     def parse_settings(self) -> None:
         """Parse + validate the repo's ``.otto/settings.toml`` via SettingsModel."""
@@ -453,8 +453,8 @@ class Repo:
         # note in src/otto/models/__init__.py. So this import is safe here.
         from ..models.settings import SettingsModel
 
-        settingsText = self.read_settings()
-        self.settings = tomli.loads(settingsText)  # raw — coverage/reservation read it
+        settings_text = self.read_settings()
+        self.settings = tomli.loads(settings_text)  # raw — coverage/reservation read it
 
         expanded = self._expand_recursive(self.settings)
         model = SettingsModel.model_validate(expanded)
@@ -595,9 +595,9 @@ class Repo:
 
     async def set_git_description(self):
 
-        commandStatus = await self.run_git_command("describe")
-        if commandStatus.status == Status.Success:
-            self._git_description = f"({commandStatus.output.strip()})"
+        command_status = await self.run_git_command("describe")
+        if command_status.status == Status.Success:
+            self._git_description = f"({command_status.output.strip()})"
 
         # `git describe` can fail if no names or tags exist for the repo.
         # In this case, which is expected and can happen, set the description
@@ -607,8 +607,8 @@ class Repo:
 
     async def set_commit_hash(self):
 
-        commandStatus = await self.run_git_command("log -1 --format=%H")
-        self._git_hash = commandStatus.output
+        command_status = await self.run_git_command("log -1 --format=%H")
+        self._git_hash = command_status.output
 
     @property
     def commit(self):

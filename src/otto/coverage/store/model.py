@@ -118,7 +118,7 @@ class BranchHits:
         return self.hits.for_tier(tier) > 0
 
     def merge(self, other: BranchHits) -> None:
-        assert self.block == other.block and self.branch == other.branch
+        assert self.block == other.block and self.branch == other.branch  # noqa: S101 — internal invariant: callers must only merge matching branch keys
         self.hits.merge(other.hits)
         for tier, reachable in other.reachable.items():
             self.set_reachable(tier, reachable)
@@ -146,7 +146,7 @@ class LineRecord:
     commit_summary: str | None = None
 
     def merge(self, other: LineRecord) -> None:
-        assert self.line_number == other.line_number
+        assert self.line_number == other.line_number  # noqa: S101 — internal invariant: callers must only merge matching line numbers
         self.hits.merge(other.hits)
 
         existing = {(b.block, b.branch): b for b in self.branches}
@@ -177,7 +177,7 @@ class FileRecord:
         return self.lines[line_number]
 
     def merge(self, other: FileRecord) -> None:
-        assert self.path == other.path
+        assert self.path == other.path  # noqa: S101 — internal invariant: callers must only merge records for the same file path
         for lineno, other_line in other.lines.items():
             if lineno in self.lines:
                 self.lines[lineno].merge(other_line)

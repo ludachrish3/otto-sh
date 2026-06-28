@@ -6,7 +6,7 @@ and the on_result callback in start().
 """
 
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -126,5 +126,5 @@ class TestGetRepeatResults:
         snapshot = host.repeat_results("myjob")
 
         # Mutating the deque after getting snapshot should not affect snapshot
-        host._repeater._repeat_results["myjob"].append((datetime.now(), single))
+        host._repeater._repeat_results["myjob"].append((datetime.now(tz=timezone.utc), single))
         assert len(snapshot) == 1

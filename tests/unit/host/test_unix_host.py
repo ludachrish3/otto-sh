@@ -987,7 +987,7 @@ class TestOpenSession:
         mock_conn.wait_closed = AsyncMock()
         host._connections._ssh_conn = mock_conn
         mock_shell = self._mock_shell_session()
-        with patch("otto.host.session.SshSession", return_value=mock_shell) as MockSshSession:
+        with patch("otto.host.session.SshSession", return_value=mock_shell) as MockSshSession:  # noqa: N806 — CapWords for a class mock
             await host.open_session("monitor")
         MockSshSession.assert_called_once_with(
             mock_conn,
@@ -1030,7 +1030,7 @@ class TestOpenSession:
             patch("otto.host.session.TelnetClient", return_value=mock_client),
             patch(
                 "otto.host.session.TelnetSession", return_value=self._mock_shell_session()
-            ) as MockTelnetSession,
+            ) as MockTelnetSession,  # noqa: N806 — CapWords for a class mock
         ):
             await h.open_session("monitor")
         MockTelnetSession.assert_called_once_with(
@@ -1109,7 +1109,7 @@ class TestOpenSession:
                     self._mock_shell_session(),
                     self._mock_shell_session(),
                 ],
-            ) as MockTelnetSession,
+            ) as MockTelnetSession,  # noqa: N806 — CapWords for a class mock
         ):
             await h.open_session("alpha")
             await h.open_session("beta")

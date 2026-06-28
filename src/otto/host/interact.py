@@ -40,7 +40,7 @@ import signal
 import sys
 import threading
 from collections.abc import Awaitable, Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -149,8 +149,8 @@ class _SessionLogFile:
         if self._file is None:
             return
         timestamp = (
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S.")
-            + f"{datetime.now().microsecond // 1000:03d}"
+            datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S.")
+            + f"{datetime.now(tz=timezone.utc).microsecond // 1000:03d}"
         )
         record = f"{timestamp} [ INFO  ] @{self._host_name} > | {line}\n"
         try:
@@ -164,8 +164,8 @@ class _SessionLogFile:
         if self._file is None:
             return
         timestamp = (
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S.")
-            + f"{datetime.now().microsecond // 1000:03d}"
+            datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S.")
+            + f"{datetime.now(tz=timezone.utc).microsecond // 1000:03d}"
         )
         record = f"{timestamp} [ INFO  ] @{self._host_name}   | {text}\n"
         try:
@@ -446,7 +446,7 @@ async def run_ssh_login(
             try:
                 c, r = _initial_term_size()
                 process.change_terminal_size(c, r)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 — SIGWINCH handler, best-effort resize
                 logger.debug(f"SSH window-change forward failed: {exc}")
 
         loop.add_signal_handler(signal.SIGWINCH, handler)
@@ -502,7 +502,7 @@ async def run_telnet_login(
     async def read_remote() -> bytes:
         try:
             return await reader.read(4096)
-        except Exception:
+        except Exception:  # noqa: BLE001 — I/O bridge reader, return empty on any stream error
             return b""
 
     def install_sigwinch() -> Callable[[], None]:
@@ -511,16 +511,16 @@ async def run_telnet_login(
         def handler() -> None:
             try:
                 c, r = _initial_term_size()
-                client._send_naws(c, r)
-            except Exception as exc:
+                client._send_naws(c, r)  # noqa: SLF001 — intra-package access to TelnetClient._send_naws for SIGWINCH handler
+            except Exception as exc:  # noqa: BLE001 — SIGWINCH handler, best-effort NAWS push
                 logger.debug(f"NAWS push failed: {exc}")
 
         loop.add_signal_handler(signal.SIGWINCH, handler)
         try:
             c, r = _initial_term_size()
-            client._send_naws(c, r)
-        except Exception:
-            pass
+            client._send_naws(c, r)  # noqa: SLF001 — intra-package access to TelnetClient._send_naws for initial window size
+        except Exception as exc:  # noqa: BLE001 — best-effort initial NAWS, signal handler will retry
+            logger.debug(f"Initial NAWS push failed (non-fatal, signal handler will retry): {exc}")
 
         def remove() -> None:
             with contextlib.suppress(NotImplementedError, RuntimeError):

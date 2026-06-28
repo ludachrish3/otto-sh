@@ -398,11 +398,11 @@ def main(
     if show_lab:
         from rich.pretty import pprint
 
-        pprintDepth = None
+        pprint_depth = None
         if not verbose:
-            pprintDepth = 3
+            pprint_depth = 3
 
-        pprint(lab, max_depth=pprintDepth, expand_all=True)
+        pprint(lab, max_depth=pprint_depth, expand_all=True)
         raise typer.Exit
 
     # Listing hosts can't be done as a callback because context creation must be done first.

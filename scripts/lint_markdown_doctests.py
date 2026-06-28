@@ -28,6 +28,7 @@ PROMPT = re.compile(r"^\s*>>>(\s|$)")
 FENCE = re.compile(r"^\s*(?P<ticks>`{3,})(?P<info>.*)$")
 IGNORE = "<!-- doctest-lint: ignore -->"
 SKIP_PARTS = ("_build", "superpowers")
+_STANDARD_FENCE_TICKS = 3  # CommonMark: a standard fenced code block uses exactly 3 backticks
 
 
 def lint_file(path: Path) -> list[tuple[int, str]]:
@@ -54,7 +55,12 @@ def lint_file(path: Path) -> list[tuple[int, str]]:
                 info = ""
                 ignored = False
                 continue
-            if open_ticks == 3 and info != "{doctest}" and not ignored and PROMPT.match(line):
+            if (
+                open_ticks == _STANDARD_FENCE_TICKS
+                and info != "{doctest}"
+                and not ignored
+                and PROMPT.match(line)
+            ):
                 offenses.append(
                     (n, f"doctest prompt in ```{info or '(plain)'} fence (not {{doctest}})")
                 )

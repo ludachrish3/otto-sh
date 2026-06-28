@@ -26,7 +26,7 @@ async def _start_and_stop(server: MonitorServer) -> int:
     """Start the server, capture the bound port, then stop immediately."""
     task = asyncio.create_task(server.serve())
 
-    while not server.started:
+    while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
         await asyncio.sleep(0.05)
 
     port = server._port
@@ -54,11 +54,11 @@ class TestPortBinding:
         server_b = MonitorServer(_empty_collector(), host="127.0.0.1", port=0)
 
         task_a = asyncio.create_task(server_a.serve())
-        while not server_a.started:
+        while not server_a.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
             await asyncio.sleep(0.05)
 
         task_b = asyncio.create_task(server_b.serve())
-        while not server_b.started:
+        while not server_b.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
             await asyncio.sleep(0.05)
 
         port_a = server_a._port
@@ -145,7 +145,7 @@ class TestDeleteEndpoint:
         collector = _empty_collector()
         server = MonitorServer(collector, host="127.0.0.1", port=0)
         task = asyncio.create_task(server.serve())
-        while not server.started:
+        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
             await asyncio.sleep(0.05)
 
         try:

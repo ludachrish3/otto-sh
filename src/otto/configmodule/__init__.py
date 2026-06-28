@@ -41,14 +41,14 @@ from .repo import (
     apply_repo_settings as apply_repo_settings,
 )
 from .repo import (
-    get_repos as _getRepos,
+    get_repos as _get_repos,
 )
 from .version import (
     Version as Version,
 )
 
 _env = load_otto_env()
-_repos = _getRepos(_env.sut_dirs)
+_repos = _get_repos(_env.sut_dirs)
 
 # ---------------------------------------------------------------------------
 # Completion fast path (Phase B of the tab-completion speedup).

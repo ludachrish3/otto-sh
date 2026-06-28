@@ -141,7 +141,7 @@ class TestConnectionManagerTunnel:
         with patch("otto.host.connections.ssh_connect", new_callable=AsyncMock) as mock_connect:
             mock_ssh = MagicMock(spec=SSHClientConnection)
             mock_connect.return_value = mock_ssh
-            result = await cm.ssh()
+            await cm.ssh()
             mock_connect.assert_awaited_once_with(
                 "10.0.0.1",
                 username="user",
@@ -167,11 +167,11 @@ class TestConnectionManagerTunnel:
             name="test",
             hop=SshHopTransport(factory),
         )
-        with patch("otto.host.connections.TelnetClient") as MockTelnet:
+        with patch("otto.host.connections.TelnetClient") as MockTelnet:  # noqa: N806 — CapWords for a class mock
             mock_tc = MagicMock()
             mock_tc.connect = AsyncMock()
             MockTelnet.return_value = mock_tc
-            result = await cm.telnet()
+            await cm.telnet()
             MockTelnet.assert_called_once()
             call_args = MockTelnet.call_args
             assert call_args.args == ("localhost",)
@@ -201,7 +201,7 @@ class TestConnectionManagerTunnel:
         )
         with (
             patch.object(TunneledFtpClient, "connect", new_callable=AsyncMock) as mock_connect,
-            patch.object(TunneledFtpClient, "login", new_callable=AsyncMock) as mock_login,
+            patch.object(TunneledFtpClient, "login", new_callable=AsyncMock),
         ):
             result = await cm.ftp()
             assert isinstance(result, TunneledFtpClient)
@@ -436,7 +436,7 @@ class TestNetcatGetThroughHop:
         )
 
         with (
-            patch.object(ft, "_wait_for_remote_listener", new_callable=AsyncMock) as mock_wait,
+            patch.object(ft, "_wait_for_remote_listener", new_callable=AsyncMock),
             patch(
                 "otto.host.transfer.nc._connect_with_retry", new_callable=AsyncMock
             ) as mock_connect,

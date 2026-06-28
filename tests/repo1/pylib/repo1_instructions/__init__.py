@@ -1,5 +1,5 @@
-from .install import *
-from .nc_smoke import *
+from .install import test_instruction
+from .nc_smoke import nc_smoke
 
 # The Zephyr 2.7 ``zephyr-inline`` command frame moved to the shared
 # ``custom_hosts`` module — a third-party-style package this repo now depends on

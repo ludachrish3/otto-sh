@@ -14,7 +14,7 @@ callback (which requires a real lab) is not involved.
 import json
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -263,7 +263,7 @@ class TestLoadHistorical:
     @pytest.mark.asyncio
     async def test_sqlite_with_data_loads_metrics(self, tmp_path):
         db_file = tmp_path / "data.db"
-        ts = datetime(2024, 1, 1, 12, 0, 0).isoformat()
+        ts = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc).isoformat()
         with closing(sqlite3.connect(str(db_file))) as conn, conn:
             conn.executescript("""
                 CREATE TABLE metrics (

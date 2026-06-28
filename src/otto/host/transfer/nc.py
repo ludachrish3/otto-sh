@@ -28,6 +28,9 @@ from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
 
 _NC_BLOCK_SIZE = 8192
+_NC_LISTENER_FAST_POLL_ITERS = (
+    5  # number of fast-interval poll iterations before switching to slow interval
+)
 
 # Drain the nc writer every N blocks so `bytes_done` reported to the progress
 # handler tracks bytes that have actually left the process, not bytes buffered
@@ -199,10 +202,16 @@ class NcFileTransfer(UnixFileTransfer):
     @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "NcFileTransfer":
-        assert ctx.connections is not None
-        assert ctx.exec_cmd is not None
-        assert ctx.get_local_ip is not None
-        assert ctx.nc_options is not None
+        if ctx.connections is None:
+            raise ValueError(
+                "NcFileTransfer requires a connections manager on the transfer context"
+            )
+        if ctx.exec_cmd is None:
+            raise ValueError("NcFileTransfer requires exec_cmd on the transfer context")
+        if ctx.get_local_ip is None:
+            raise ValueError("NcFileTransfer requires get_local_ip on the transfer context")
+        if ctx.nc_options is None:
+            raise ValueError("NcFileTransfer requires nc_options on the transfer context")
         return cls(
             connections=ctx.connections,
             name=ctx.host_name,
@@ -305,7 +314,7 @@ class NcFileTransfer(UnixFileTransfer):
                 )
                 return
             parts = result.output.strip().split()
-            if len(parts) != 2:
+            if len(parts) != 2:  # noqa: PLR2004 — strategy probe output is exactly "port_choice listener_choice" (2 words)
                 _logger.debug(
                     f"{self._name}: strategy probe returned malformed output "
                     f"{result.output!r}; lazy cascades will resolve"
@@ -493,7 +502,9 @@ class NcFileTransfer(UnixFileTransfer):
             result = await self._control_run(check)
             if result.retcode == 0:
                 return
-            await asyncio.sleep(fast_interval if iterations < 5 else interval)
+            await asyncio.sleep(
+                fast_interval if iterations < _NC_LISTENER_FAST_POLL_ITERS else interval
+            )
             iterations += 1
         raise ConnectionError(f"Remote nc listener on port {port} not ready within {timeout}s")
 
@@ -615,13 +626,13 @@ class NcFileTransfer(UnixFileTransfer):
                                 handler(str(src), str(dst), bytes_done, total)
                     writer.close()
                     done.set_result((Status.Success, ""))
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001 — nc server callback; any transfer failure maps to Error result
                     done.set_result((Status.Error, str(e)))
 
             # Port 0 lets the OS assign a free port — no collisions when
             # multiple hosts transfer concurrently.  asyncio.start_server
             # returns once the socket is bound, so no sleep is needed.
-            server = await asyncio.start_server(_on_connect, "0.0.0.0", 0)
+            server = await asyncio.start_server(_on_connect, "0.0.0.0", 0)  # noqa: S104 — intentional all-interface bind
             port = server.sockets[0].getsockname()[1]
             try:
                 send_task = asyncio.create_task(
@@ -770,7 +781,7 @@ class NcFileTransfer(UnixFileTransfer):
             try:
                 host = "localhost"
                 target_port = await self._connections.forward_port(port)
-            except Exception:
+            except Exception:  # noqa: BLE001 — port-forward setup failed; nothing to reap, silently return
                 return
         else:
             host = self._connections.ip

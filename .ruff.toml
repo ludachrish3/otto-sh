@@ -24,6 +24,7 @@ ignore = [
     "PLC0415",  # lazy/local imports (deliberate, startup speed)
     "G004",     # f-string in logging calls
     "TRY003", "EM101", "EM102", "EM103",  # terse inline exception messages
+    "ASYNC230", "ASYNC240",  # blocking file I/O in async: rule premises trio/anyio; otto is asyncio, flagged sites are brief/off-hot-path FS ops
     # --- Group 3: annotation-safety (protect Sphinx-nitpicky + py3.10) ---
     "FA100", "FA102",          # would force `from __future__ import annotations`
     "TC001", "TC002", "TC003", # would hide annotation imports under TYPE_CHECKING
@@ -36,8 +37,6 @@ ignore = [
 
     # ===== TEMP (ratchet) — NOT permanent. Generated in Step 3; removed =====
     # ===== batch-by-batch in Phases 2..A. Do NOT hand-edit individual codes. =====
-    "A002",
-    "A004",
     "ANN001",
     "ANN002",
     "ANN003",
@@ -47,11 +46,6 @@ ignore = [
     "ANN206",
     "ARG001",
     "ARG002",
-    "ASYNC110",
-    "ASYNC221",
-    "ASYNC230",
-    "ASYNC240",
-    "BLE001",
     "C901",
     "D100",
     "D101",
@@ -65,28 +59,17 @@ ignore = [
     "D301",
     "D400",
     "D401",
-    "DTZ001",
-    "DTZ005",
-    "DTZ901",
     "E402",
     "E501",
     "E731",
     "E741",
     "ERA001",
     "EXE001",
-    "F403",
-    "F821",
-    "F841",
     "INP001",
-    "N801",
-    "N806",
-    "N812",
-    "N814",
     "PGH003",
     "PLC0414",
     "PLR0133",
     "PLR0913",
-    "PLR2004",
     "PLW0108",
     "PLW0603",
     "PLW1510",
@@ -106,17 +89,6 @@ ignore = [
     "PYI034",
     "RET504",
     "RSE102",
-    "S101",
-    "S104",
-    "S105",
-    "S106",
-    "S108",
-    "S110",
-    "S310",
-    "S314",
-    "S603",
-    "S607",
-    "SLF001",
     "T201",
     "TD004",
     "TRY004",
@@ -126,7 +98,7 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"tests/**" = ["S101", "D", "PLR2004", "SLF001", "ANN", "ARG"]
+"tests/**" = ["S101", "D", "PLR2004", "SLF001", "ANN", "ARG", "S104", "S105", "S106", "S108", "S110", "S310", "S603", "S607"]  # S*: tests use fake creds / subprocess harnesses / remote-host paths — not a security surface
 "**/__init__.py" = ["F401"]
 
 [lint.pylint]

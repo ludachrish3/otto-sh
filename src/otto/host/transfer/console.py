@@ -102,7 +102,8 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
     @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "ConsoleFileTransfer":
-        assert ctx.exec_cmd is not None
+        if ctx.exec_cmd is None:
+            raise ValueError("ConsoleFileTransfer requires exec_cmd on the transfer context")
         return cls(
             name=ctx.host_name,
             exec_cmd=ctx.exec_cmd,
@@ -276,7 +277,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         """
         try:
             await self._exec_cmd(self._filesystem.rm_command(dest_path), timeout=_RM_TIMEOUT)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 — best-effort cleanup of partial transfer, non-fatal
             logger.debug(
                 f"{self._name}: cleanup `fs rm {dest_path}` failed after a transfer error: {exc!r}"
             )

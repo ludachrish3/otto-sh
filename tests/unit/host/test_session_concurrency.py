@@ -144,7 +144,7 @@ async def test_oneshot_pool_connects_concurrently() -> None:
     factory = _SlowConnectFactory()
     mgr = _make_mgr(factory)
 
-    N = 10
+    N = 10  # noqa: N806 — single-letter math dimension
     delay = _SlowConnectFakeSession.connect_delay
 
     loop = asyncio.get_running_loop()
@@ -175,7 +175,7 @@ async def test_oneshot_pool_high_fanout() -> None:
     factory = _Factory()
     mgr = _make_mgr(factory)
 
-    N = 200
+    N = 200  # noqa: N806 — single-letter math dimension
     results = await asyncio.gather(
         *(mgr.oneshot(f"echo {i}") for i in range(N)),
         return_exceptions=True,
@@ -264,7 +264,7 @@ async def test_ensure_default_session_recreation_race() -> None:
     assert initial is not None and initial.alive
     initial._alive = False
 
-    M = 50
+    M = 50  # noqa: N806 — single-letter math dimension
     results = await asyncio.gather(
         *(mgr.run_cmd(f"echo {i}", timeout=5.0) for i in range(M)),
         return_exceptions=True,

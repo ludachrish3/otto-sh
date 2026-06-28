@@ -79,8 +79,8 @@ def abort_console_transports() -> int:
         try:
             transport.abort()
             count += 1
-        except Exception:  # noqa: PERF203 — per-item resilience
-            pass
+        except Exception as exc:  # noqa: PERF203,BLE001 — per-item resilience, best-effort transport abort
+            logger.debug(f"Failed to abort console transport (non-fatal): {exc}")
     _live_console_transports.clear()
     return count
 
@@ -90,8 +90,8 @@ def _sigwinch_fanout() -> None:
     cols, rows = shutil.get_terminal_size((80, 24))
     for client in list(_naws_subscribers):
         try:
-            client._send_naws(cols, rows)
-        except Exception as exc:  # noqa: PERF203 — per-item resilience  # pragma: no cover - best-effort cleanup
+            client._send_naws(cols, rows)  # noqa: SLF001 — intra-package access to TelnetClient._send_naws for SIGWINCH fanout
+        except Exception as exc:  # noqa: PERF203,BLE001 — per-item resilience, best-effort NAWS cleanup  # pragma: no cover
             logger.debug(f"NAWS push failed for {client.host}: {exc}")
 
 
@@ -164,7 +164,7 @@ class TelnetClient:
 
         start = asyncio.get_event_loop().time()
 
-        open_kwargs = self.options._open_kwargs()
+        open_kwargs = self.options._open_kwargs()  # noqa: SLF001 — intra-package access to TelnetOptions._open_kwargs
         open_kwargs["port"] = port  # override for tunneled case
         self.reader, self.writer = await open_telnet_connection(
             self.host,
@@ -223,7 +223,7 @@ class TelnetClient:
         frame = IAC + SB + NAWS + payload + IAC + SE
         try:
             self.writer.send_iac(frame)  # type: ignore[union-attr]
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:  # noqa: BLE001 — best-effort NAWS write, any failure is non-fatal  # pragma: no cover
             logger.debug(f"NAWS write failed for {self.host}: {exc}")
 
     async def login(self) -> None:

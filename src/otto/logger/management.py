@@ -18,7 +18,7 @@ import atexit
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from logging import FileHandler, LogRecord, NullHandler, getLogger
 from logging.handlers import QueueHandler, QueueListener
 from os import listdir
@@ -149,7 +149,7 @@ def create_output_dir(command: str, subcommand: str | None = None) -> Path:
         raise RuntimeError("init_cli_logging() must run before create_output_dir() (xdir unset)")
 
     # Name the dir down to the millisecond (%f is microseconds; drop last 3).
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+    timestamp = datetime.now(tz=timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:-3]
     command = _command_to_dir_name(command)
     sub = f"_{_command_to_dir_name(subcommand)}" if subcommand is not None else ""
     output_dir = _state.xdir / command / f"{timestamp}{sub}"
@@ -218,7 +218,7 @@ def remove_old_logs(
     if xdir is None or not xdir.is_dir():
         return
 
-    oldest = (datetime.now() - timedelta(seconds=seconds)).timestamp()
+    oldest = (datetime.now(tz=timezone.utc) - timedelta(seconds=seconds)).timestamp()
     logged_deletion = False
     start = time.monotonic()
     budget_hit = False

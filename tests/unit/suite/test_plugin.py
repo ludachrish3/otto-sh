@@ -1,5 +1,6 @@
 import contextlib
 import sys
+from datetime import timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -399,7 +400,7 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
             while True:
                 await asyncio.sleep(0.01)
                 real_collector._series.setdefault("host1/cpu", deque()).append(
-                    MetricPoint(ts=datetime.now(), value=42.0, meta=None)
+                    MetricPoint(ts=datetime.now(tz=timezone.utc), value=42.0, meta=None)
                 )
         except asyncio.CancelledError:
             raise

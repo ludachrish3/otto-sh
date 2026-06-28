@@ -8,7 +8,7 @@ from dataclasses import (
     dataclass,
     replace,
 )
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from logging import (
     Filter,
     LogRecord,
@@ -44,6 +44,10 @@ if TYPE_CHECKING:
 Expect = tuple[str | re.Pattern[str], str]
 
 logger = getLogger("otto")
+
+# Sentinel used as the default "no deadline" for the `until` parameter.
+# Must be aware so it can be compared against datetime.now(tz=timezone.utc).
+_DATETIME_MAX_UTC: datetime = datetime.max.replace(tzinfo=timezone.utc)
 
 
 def get_logging_command_output_enabled() -> bool:
@@ -731,7 +735,7 @@ class BaseHost(ABC):
         interval: timedelta,
         times: int = -1,
         duration: timedelta = timedelta.max,
-        until: datetime = datetime.max,
+        until: datetime = _DATETIME_MAX_UTC,
         on_result: Callable[[str, datetime, list[CommandStatus]], None] | None = None,
         max_history: int = 1000,
     ) -> None:

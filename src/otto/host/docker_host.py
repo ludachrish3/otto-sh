@@ -151,7 +151,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     "configure an SSH-based parent."
                 )
             return _DockerSshSession(
-                conn_provider=self.parent._connections.ssh,
+                conn_provider=self.parent._connections.ssh,  # noqa: SLF001 — intra-package access to parent host's _connections
                 container_id_getter=lambda: self.container_id,
             )
 
@@ -219,14 +219,14 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         image rebuild — a missing image fails fast with an actionable error.
         """
         from ..configmodule import get_lab as _get_lab
-        from ..configmodule import get_repos as _getRepos
+        from ..configmodule import get_repos as _get_repos
         from ..docker.compose import compose_up
 
         logger.info(
             f"[docker] container {self.id!r} not running; "
             f"auto-starting stack {self.compose_project!r}"
         )
-        repos = _getRepos()
+        repos = _get_repos()
         lab = _get_lab()
         repo = next((r for r in repos if r.name == self.project), None)
         if repo is None:
@@ -378,7 +378,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             )
         await self._ensure_running()
 
-        conn = await self.parent._connections.ssh()
+        conn = await self.parent._connections.ssh()  # noqa: SLF001 — intra-package access to parent host's _connections
         # Pick a sensible default shell. /bin/sh is universal in Linux
         # containers; users can override by running `docker exec` directly
         # if they want bash.
@@ -392,7 +392,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     @staticmethod
     def _stage_dir(container_id: str) -> Path:
         """Per-container staging directory on the parent filesystem."""
-        return Path(f"/tmp/otto-docker-stage/{container_id}")
+        return Path(f"/tmp/otto-docker-stage/{container_id}")  # noqa: S108 — deliberate staging path
 
     @override
     @cli_exposed(success="Transfer complete.")

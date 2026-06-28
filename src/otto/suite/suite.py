@@ -192,7 +192,7 @@ class OttoSuite(Generic[TOptions]):
         """Return the per-suite collector if active, else the session-wide one."""
         if self._monitor_collector is not None:
             return self._monitor_collector
-        return type(self)._session_monitor_collector
+        return type(self)._session_monitor_collector  # noqa: SLF001 — intra-package read of OttoSuite class-level monitor collector via runtime type
 
     def teardown_method(self, method: object = None) -> None:
         logger.debug("Welcome to the base teardown_method() method")
@@ -376,7 +376,7 @@ class OttoSuite(Generic[TOptions]):
         for host in all_hosts():
             try:
                 await host.close()
-            except Exception as exc:  # noqa: PERF203 — per-item resilience  # best-effort teardown — never fail a class on it
+            except Exception as exc:  # noqa: PERF203,BLE001 — per-item teardown resilience, best-effort host close
                 logger.debug(
                     "OttoSuite: error closing %s at class teardown: %s",
                     getattr(host, "id", host),
@@ -458,7 +458,7 @@ class OttoSuite(Generic[TOptions]):
         self._monitor_task = asyncio.create_task(_run())
 
         # Wait until the server is ready to accept connections
-        while not self._monitor_server.started:
+        while not self._monitor_server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
             await asyncio.sleep(0.05)
 
         url = self._monitor_server.url

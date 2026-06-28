@@ -55,7 +55,7 @@ def _render_result(result: Any, success: str | None = None) -> None:
             raise typer.Exit(1)
         return
 
-    if isinstance(result, tuple) and len(result) == 2 and hasattr(result[0], "is_ok"):
+    if isinstance(result, tuple) and len(result) == 2 and hasattr(result[0], "is_ok"):  # noqa: PLR2004 — 2-element (Status, msg) tuple protocol check, clearer inline
         status, msg = result
         if msg:
             rprint(msg)
@@ -147,7 +147,7 @@ def host_class_for_id(host_id: str | None) -> type | None:
         from ..configmodule import get_host
 
         return type(get_host(host_id))
-    except Exception:
+    except Exception:  # noqa: BLE001 — completion fallback: no lab loaded / unknown id → return None for full menu
         return None
 
 

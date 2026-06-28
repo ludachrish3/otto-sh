@@ -166,5 +166,6 @@ def gate(ctx: typer.Context) -> None:
         return
 
     lab = get_lab()
-    assert res.identity is not None, "identity must be resolved before gate() runs"
+    if res.identity is None:
+        raise RuntimeError("identity must be resolved before gate() runs")
     check_reservations(lab, res.identity.username, res.backend)

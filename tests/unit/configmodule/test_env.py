@@ -59,13 +59,13 @@ def test_env_sutdirs_set_to_one_path_that_does_not_exist(monkeypatch, tmpdir) ->
 
 def test_env_sutdirs_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factory) -> None:
 
-    sutDir1 = tmpdir_factory.mktemp("dir1")
-    sutDir2 = tmpdir_factory.mktemp("dir2")
+    sut_dir1 = tmpdir_factory.mktemp("dir1")
+    sut_dir2 = tmpdir_factory.mktemp("dir2")
 
-    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{sutDir1},{sutDir2}")
+    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{sut_dir1},{sut_dir2}")
     env = load_otto_env()
 
-    assert env.sut_dirs == [sutDir1, sutDir2]
+    assert env.sut_dirs == [sut_dir1, sut_dir2]
 
 
 def test_env_sutdirs_set_to_multiple_paths_one_does_not_exist(monkeypatch, tmpdir) -> None:

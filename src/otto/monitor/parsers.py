@@ -56,6 +56,9 @@ class MetricDataPoint(NamedTuple):
     (e.g. ``{'used': '4.2 GB', 'total': '16 GB'}`` for memory)."""
 
 
+_BYTES_PER_UNIT = 1024.0  # binary prefix divisor used by human_readable
+
+
 def human_readable(value: float, precision: int = 1) -> str:
     """Format a byte count as a human-readable string using binary prefixes (df -h style).
 
@@ -74,9 +77,9 @@ def human_readable(value: float, precision: int = 1) -> str:
     """
     suffix = "P"
     for suffix in ("B", "K", "M", "G", "T", "P"):
-        if value < 1024.0 or suffix == "P":
+        if value < _BYTES_PER_UNIT or suffix == "P":
             break
-        value /= 1024.0
+        value /= _BYTES_PER_UNIT
     formatted = f"{value:.{precision}f}".rstrip("0").rstrip(".")
     return (formatted or "0") + f" {suffix}"
 
@@ -183,7 +186,7 @@ class TopCpuParser(MetricParser):
                 continue
 
             # Aggregate CPU line (no -1): "%Cpu(s):  2.5 us, ..., 95.8 id, ..."
-            if line.startswith("%Cpu(s)") and block == 2:
+            if line.startswith("%Cpu(s)") and block == 2:  # noqa: PLR2004 — top CPU aggregate appears in block 2 of top -b output
                 m = re.search(r"(\d+\.?\d*)\s*id", line)
                 if m:
                     result["Overall CPU"] = MetricDataPoint(
@@ -198,9 +201,9 @@ class TopCpuParser(MetricParser):
 
             # Parse process rows from the second block only
             # Columns: PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND
-            if in_table and block == 2 and proc_count < self.top_n:
+            if in_table and block == 2 and proc_count < self.top_n:  # noqa: PLR2004 — top process rows appear in block 2 of top -b output
                 parts = line.split(None, 11)
-                if len(parts) < 12:
+                if len(parts) < 12:  # noqa: PLR2004 — top process row has 12 columns: PID USER PR NI VIRT RES SHR S %CPU %MEM TIME+ COMMAND
                     continue
                 try:
                     result[f"proc/{parts[0]}"] = MetricDataPoint(
@@ -241,7 +244,7 @@ class MemParser(MetricParser):
             if line.lower().startswith("mem:"):
                 parts = line.split()
                 # free -b: Mem: total used free shared buff/cache available
-                if len(parts) >= 3:
+                if len(parts) >= 3:  # noqa: PLR2004 — free -b Mem: line has at least 3 fields (label, total, used)
                     try:
                         total = float(parts[1])
                         used = float(parts[2])

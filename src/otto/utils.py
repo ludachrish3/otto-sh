@@ -34,7 +34,7 @@ def split_on_commas(values: list[str] | str) -> list[str]:
     >>> split_on_commas("single")
     ['single']
     """
-    allValues: list[str] = []
+    all_values: list[str] = []
 
     match values:
         case str():
@@ -42,25 +42,25 @@ def split_on_commas(values: list[str] | str) -> list[str]:
 
         case list():
             for value in values:
-                newValues = split_on_commas(value)
-                allValues += newValues
+                new_values = split_on_commas(value)
+                all_values += new_values
 
-            return allValues
+            return all_values
 
 
 def _get_literal_values(
-    type: Any,
+    type_: Any,
 ) -> list[TypeVar]:
 
-    origin = get_origin(type)
+    origin = get_origin(type_)
     if origin is Literal:
-        return list(get_args(type))
+        return list(get_args(type_))
     if origin is Union:
         values: list[TypeVar] = []
-        for arg in get_args(type):
+        for arg in get_args(type_):
             values += _get_literal_values(arg)
         return values
-    raise ValueError(f"{type} is {origin}, not a Literal or Union of Literals")
+    raise ValueError(f"{type_} is {origin}, not a Literal or Union of Literals")
 
 
 P = ParamSpec("P")
@@ -118,7 +118,7 @@ Exclude = _Exclude()
 
 
 def cli_exposed(
-    fn=None, *, name: str | None = None, help: str | None = None, success: str | None = None
+    fn=None, *, name: str | None = None, help_: str | None = None, success: str | None = None
 ):
     """Mark a host coroutine method for auto-exposure as an ``otto host``
     subcommand. ``name`` defaults to the method name with underscores dashed.
@@ -131,7 +131,7 @@ def cli_exposed(
     def deco(f):
         f.__cli_exposed__ = True
         f.__cli_name__ = name or f.__name__.replace("_", "-")
-        f.__cli_help__ = help
+        f.__cli_help__ = help_
         f.__cli_success__ = success
         return f
 

@@ -73,11 +73,11 @@ def _parse_mountinfo(text: str) -> list[tuple[str, str]]:
         if not line.strip():
             continue
         parts = line.split(" - ", 1)
-        if len(parts) != 2:
+        if len(parts) != 2:  # noqa: PLR2004 — mountinfo " - " separator always produces exactly 2 parts
             continue
         left_fields = parts[0].split()
         right_fields = parts[1].split()
-        if len(left_fields) < 5 or not right_fields:
+        if len(left_fields) < 5 or not right_fields:  # noqa: PLR2004 — mountinfo has 5 required fields before the " - " separator (ID PARENT MAJ:MIN ROOT MOUNTPOINT)
             continue
         pairs.append((_unescape_mountinfo(left_fields[4]), right_fields[0]))
     return pairs

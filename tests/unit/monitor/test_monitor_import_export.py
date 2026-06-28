@@ -14,7 +14,7 @@ exercised directly.
 
 import json
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -28,13 +28,15 @@ pytestmark = pytest.mark.asyncio
 
 # ── Shared timestamps ─────────────────────────────────────────────────────────
 
-T0 = datetime(2024, 6, 1, 12, 0, 0)
-T1 = datetime(2024, 6, 1, 12, 0, 5)
-T2 = datetime(2024, 6, 1, 12, 0, 10)
+_UTC = timezone.utc
 
-EV_TS = datetime(2024, 6, 1, 12, 0, 2)
-SPAN_START = datetime(2024, 6, 1, 12, 0, 3)
-SPAN_END = datetime(2024, 6, 1, 12, 0, 8)
+T0 = datetime(2024, 6, 1, 12, 0, 0, tzinfo=_UTC)
+T1 = datetime(2024, 6, 1, 12, 0, 5, tzinfo=_UTC)
+T2 = datetime(2024, 6, 1, 12, 0, 10, tzinfo=_UTC)
+
+EV_TS = datetime(2024, 6, 1, 12, 0, 2, tzinfo=_UTC)
+SPAN_START = datetime(2024, 6, 1, 12, 0, 3, tzinfo=_UTC)
+SPAN_END = datetime(2024, 6, 1, 12, 0, 8, tzinfo=_UTC)
 
 HOST = "host1"
 

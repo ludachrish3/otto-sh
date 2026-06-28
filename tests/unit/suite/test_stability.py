@@ -221,7 +221,7 @@ class TestStabilityReport:
         collector.record("test_a", passed=False)  # 90% pass rate
 
         # threshold=90 → exactly meets threshold → STABLE
-        with patch("otto.cli.test.logger") as mock_logger:
+        with patch("otto.cli.test.logger"):
             _print_stability_report("MySuite", collector, 10, 0, 90.0, tmp_path)
 
         report_text = (tmp_path / "stability_report.txt").read_text()

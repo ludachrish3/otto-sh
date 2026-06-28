@@ -311,7 +311,7 @@ class ZephyrFrame(CommandFrame):
 
         # [prompt, <command output...>, prompt] — drop the bracketing prompts.
         block = lines[begin_line + 1 : retcode_line]
-        output = block[1:-1] if len(block) >= 2 else []
+        output = block[1:-1] if len(block) >= 2 else []  # noqa: PLR2004 — block needs ≥2 lines for [1:-1] slice to yield non-empty output
         return "\n".join(output).strip()
 
     def _region_before_end(self, buffer: str, m: SessionMarkers) -> list[str]:

@@ -244,7 +244,7 @@ from otto.utils import cli_exposed
 from otto.host import UnixHost
 
 class MyHost(UnixHost):
-    @cli_exposed(help="Flash firmware to the board")
+    @cli_exposed(help_="Flash firmware to the board")
     async def flash_firmware(self, image: Path) -> tuple[Status, str]:
         ...
 ```

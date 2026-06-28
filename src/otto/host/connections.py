@@ -292,7 +292,7 @@ class ConnectionManager:
 
     async def _ensure_tunnel(self) -> SSHClientConnection:
         """Return the tunnel SSH connection, creating it via the hop transport if needed."""
-        assert self._hop is not None
+        assert self._hop is not None  # noqa: S101 — internal invariant: callers must check has_tunnel before calling _ensure_tunnel()
         logger.debug(f"Establishing SSH tunnel for {self._name}")
         tunnel = await self._hop.get_tunnel()
         logger.debug(f"SSH tunnel established for {self._name}")
@@ -303,7 +303,7 @@ class ConnectionManager:
 
         Returns the local port number to connect to.
         """
-        assert self._hop is not None
+        assert self._hop is not None  # noqa: S101 — internal invariant: callers must check has_tunnel before calling _forward_port()
         local_port = await self._hop.forward_port(self._ip, dest_port)
         logger.debug(
             f"Forwarding localhost:{local_port} -> {self._ip}:{dest_port} for {self._name}"
@@ -327,9 +327,9 @@ class ConnectionManager:
                 username=user,
                 password=password,
                 tunnel=tunnel,
-                **self._ssh_options._kwargs(),
+                **self._ssh_options._kwargs(),  # noqa: SLF001 — intra-package access to SshOptions._kwargs
             )
-            await self._ssh_options._apply_post_connect(conn)
+            await self._ssh_options._apply_post_connect(conn)  # noqa: SLF001 — intra-package access to SshOptions._apply_post_connect
             self._ssh_conn = conn
             logger.debug(f"Connected to {self._name} via SSH")
             return conn
@@ -343,7 +343,7 @@ class ConnectionManager:
                 return self._sftp_conn
             conn = await self.ssh()
             logger.debug(f"Starting SFTP client for {self._name}")
-            sftp = await conn.start_sftp_client(**self._sftp_options._kwargs())
+            sftp = await conn.start_sftp_client(**self._sftp_options._kwargs())  # noqa: SLF001 — intra-package access to SftpOptions._kwargs
             self._sftp_conn = sftp
             logger.debug(f"SFTP client connected for {self._name}")
             return sftp
@@ -359,7 +359,7 @@ class ConnectionManager:
                 return self._ftp_conn
             user, password = self.credentials
             ftp_port = self._ftp_options.port
-            client_kwargs = self._ftp_options._client_kwargs()
+            client_kwargs = self._ftp_options._client_kwargs()  # noqa: SLF001 — intra-package access to FtpOptions._client_kwargs
             if self._hop is not None:
                 local_port = await self._forward_port(ftp_port)
                 client: aioftp.Client = _build_tunneled_ftp_client_cls()(

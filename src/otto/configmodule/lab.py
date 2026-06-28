@@ -45,7 +45,7 @@ class Lab:
         from ..host.remote_host import RemoteHost  # lazy import avoids a module-load cycle
 
         if isinstance(host, RemoteHost):
-            host._lab = self
+            host._lab = self  # noqa: SLF001 — intra-package back-link set by Lab at host registration
 
         self.hosts[host.id] = host
 

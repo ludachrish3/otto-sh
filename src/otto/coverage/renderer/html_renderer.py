@@ -35,6 +35,10 @@ logger = logging.getLogger(__name__)
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
+# Coverage percentage thresholds for CSS class assignment (pct-high / pct-mid / pct-low).
+_PCT_HIGH_THRESHOLD = 75.0
+_PCT_MID_THRESHOLD = 50.0
+
 # Pretty labels for the conventional tier names.  Tiers without an entry
 # here render with their raw name title-cased — no code change needed to
 # add a new tier, just an optional label tweak.
@@ -332,9 +336,9 @@ class HtmlRenderer:
     @staticmethod
     def _pct_class(pct: float) -> str:
         """Return a CSS class name based on a coverage percentage."""
-        if pct >= 75.0:
+        if pct >= _PCT_HIGH_THRESHOLD:
             return "pct-high"
-        if pct >= 50.0:
+        if pct >= _PCT_MID_THRESHOLD:
             return "pct-mid"
         return "pct-low"
 
