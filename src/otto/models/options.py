@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 
 from ..host import options as rt
 from ..host.transfer import NcListenerCheck, NcPortStrategy
@@ -31,10 +31,10 @@ class SshOptionsSpec(OttoModel):
     encryption_algs: list[str] | None = None
     server_host_key_algs: list[str] | None = None
     compression_algs: list[str] | None = None
-    local_forwards: list[rt.LocalPortForward] = []
-    remote_forwards: list[rt.RemotePortForward] = []
-    socks_forwards: list[rt.SocksForward] = []
-    extra: dict[str, Any] = {}
+    local_forwards: list[rt.LocalPortForward] = Field(default_factory=list)
+    remote_forwards: list[rt.RemotePortForward] = Field(default_factory=list)
+    socks_forwards: list[rt.SocksForward] = Field(default_factory=list)
+    extra: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> rt.SshOptions:
         return rt.SshOptions(
@@ -67,7 +67,7 @@ class FtpOptionsSpec(OttoModel):
     write_speed_limit: int | None = None
     ssl: Any = None
     passive_commands: tuple[str, ...] = ("epsv", "pasv")
-    extra: dict[str, Any] = {}
+    extra: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> rt.FtpOptions:
         return rt.FtpOptions(
@@ -87,7 +87,7 @@ class FtpOptionsSpec(OttoModel):
 class SftpOptionsSpec(OttoModel):
     env: dict[str, str] | None = None
     send_env: list[str] | None = None
-    extra: dict[str, Any] = {}
+    extra: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> rt.SftpOptions:
         return rt.SftpOptions(env=self.env, send_env=self.send_env, extra=dict(self.extra))
@@ -97,7 +97,7 @@ class ScpOptionsSpec(OttoModel):
     preserve: bool = False
     recurse: bool = True
     block_size: int = 16384
-    extra: dict[str, Any] = {}
+    extra: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> rt.ScpOptions:
         return rt.ScpOptions(
@@ -121,7 +121,7 @@ class TelnetOptionsSpec(OttoModel):
     login: bool = True
     single_client_console: bool = False
     auto_window_resize: bool = False
-    extra: dict[str, Any] = {}
+    extra: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("login_prompt", mode="before")
     @classmethod

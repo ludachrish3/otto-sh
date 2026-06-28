@@ -66,7 +66,7 @@ class JsonFileLabRepository:
         for idx, host_data in enumerate(matching):
             try:
                 validate_host_dict(host_data)
-            except ValueError as e:
+            except ValueError as e:  # noqa: PERF203 — per-item resilience
                 raise LabRepositoryError(
                     f"Invalid host data at index {idx} in lab '{name}': {e}"
                 ) from e
@@ -78,7 +78,7 @@ class JsonFileLabRepository:
                 host = create_host_from_dict(host_data, preferences=preferences)
                 lab.add_host(host)
                 lab.resources.update(host.resources)
-            except Exception as e:
+            except Exception as e:  # noqa: PERF203 — per-item resilience
                 logger.error(f"Failed to create host at index {idx} in lab '{name}': {e}")
                 raise LabRepositoryError(
                     f"Failed to create host at index {idx} in lab '{name}': {e}"

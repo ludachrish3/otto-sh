@@ -14,7 +14,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from typing_extensions import override
 
 from ..host.binary_loader import build_binary_loader
@@ -117,7 +117,7 @@ class HostSpec(OttoModel):
     element: str
 
     # --- common optional fields ---
-    creds: dict[str, str] = {}
+    creds: dict[str, str] = Field(default_factory=dict)
     name: str | None = None
     os_type: str = "unix"
     os_name: str | None = None
@@ -130,8 +130,8 @@ class HostSpec(OttoModel):
     is_virtual: bool = False
     default_dest_dir: Path = Path()
     max_filename_len: int = 255
-    resources: set[str] = set()
-    interfaces: dict[str, str] = {}
+    resources: set[str] = Field(default_factory=set)
+    interfaces: dict[str, str] = Field(default_factory=dict)
     log: bool = True
     log_stdout: bool = True  # common: both UnixHost and EmbeddedHost declare it
     telnet_options: TelnetOptionsSpec = TelnetOptionsSpec()
@@ -151,7 +151,7 @@ class HostSpec(OttoModel):
 
     # Lab membership — validated (so a `lab`/`labs` typo errors) but NOT a host
     # constructor argument; the repository uses it to filter hosts into a Lab.
-    labs: list[str] = []
+    labs: list[str] = Field(default_factory=list)
 
     @field_validator("interfaces")
     @classmethod
@@ -161,7 +161,7 @@ class HostSpec(OttoModel):
         for name, addr in v.items():
             try:
                 ip_address(addr)
-            except ValueError:
+            except ValueError:  # noqa: PERF203 — per-item resilience
                 raise ValueError(f"interface {name!r} address {addr!r} is not a valid IP") from None
         return v
 
@@ -220,8 +220,8 @@ class UnixHostSpec(HostSpec):
     creds: dict[str, str]  # override: required for a Unix host (SSH/telnet login)
     hw_version: str | None = None
     sw_version: str | None = None
-    valid_terms: list[str] = ["ssh", "telnet"]
-    valid_transfers: list[str] = ["scp", "sftp", "ftp", "nc"]
+    valid_terms: list[str] = Field(default_factory=lambda: ["ssh", "telnet"])
+    valid_transfers: list[str] = Field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
     term: str | None = None  # optional active pin; resolved at to_host
     transfer: str | None = None  # optional active pin; resolved at to_host
     docker_capable: bool = False
@@ -278,8 +278,8 @@ class UnixHostSpec(HostSpec):
 
 class EmbeddedHostSpec(HostSpec):
     os_type: str = "embedded"
-    valid_terms: list[str] = ["telnet"]
-    valid_transfers: list[str] = ["console"]
+    valid_terms: list[str] = Field(default_factory=lambda: ["telnet"])
+    valid_transfers: list[str] = Field(default_factory=lambda: ["console"])
     term: str | None = None
     transfer: str | None = None
     filesystem: str | None = None

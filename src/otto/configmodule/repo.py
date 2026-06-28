@@ -297,8 +297,8 @@ class Repo:
                     contextlib.redirect_stderr(io.StringIO()),
                 ):
                     pytest.main(
-                        paths
-                        + [
+                        [
+                            *paths,
                             "--collect-only",
                             "-p",
                             "no:terminal",

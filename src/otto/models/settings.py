@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from pydantic import ConfigDict, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .base import OttoModel
@@ -44,7 +44,7 @@ class DockerImageSpec(OttoModel):
     # dict[str, Any] (not dict[str, str]) for parity with the old TOML parser:
     # a build arg written as a bare scalar (``PORT = 8080``) stays accepted and
     # is stringified below, rather than rejected at validation.
-    build_args: dict[str, Any] = {}
+    build_args: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> DockerImage:
         from ..configmodule.repo import DockerImage
@@ -78,8 +78,8 @@ class DockerComposeSpec(OttoModel):
 
 class DockerSettingsSpec(OttoModel):
     registry_url: str = "docker.io"
-    images: list[DockerImageSpec] = []
-    composes: list[DockerComposeSpec] = []
+    images: list[DockerImageSpec] = Field(default_factory=list)
+    composes: list[DockerComposeSpec] = Field(default_factory=list)
 
     def to_runtime(self) -> DockerSettings:
         from ..configmodule.repo import DockerSettings
@@ -166,7 +166,7 @@ class ReservationFile(OttoModel):
     """The ``version: 1`` JSON reservation file the built-in JSON backend reads."""
 
     version: Literal[1]
-    reservations: list[ReservationEntry] = []
+    reservations: list[ReservationEntry] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -208,18 +208,18 @@ class SettingsModel(OttoModel):
     # legacy / passthrough — present in every fixture, consumed by nobody in
     # parse_settings, but must be tolerated under extra='forbid'.
     lab_data_type: str = "json"
-    coverage: dict[str, Any] = {}
+    coverage: dict[str, Any] = Field(default_factory=dict)
 
     # paths + module/name lists
-    labs: list[Path] = []
-    valid_labs: list[str] = []
-    libs: list[Path] = []
-    tests: list[Path] = []
-    init: list[str] = []
+    labs: list[Path] = Field(default_factory=list)
+    valid_labs: list[str] = Field(default_factory=list)
+    libs: list[Path] = Field(default_factory=list)
+    tests: list[Path] = Field(default_factory=list)
+    init: list[str] = Field(default_factory=list)
 
     # structured sub-tables
-    host_preferences: dict[str, dict[str, Any]] = {}
-    os_profiles: dict[str, OsProfileSpec] = {}
+    host_preferences: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    os_profiles: dict[str, OsProfileSpec] = Field(default_factory=dict)
     docker: DockerSettingsSpec = DockerSettingsSpec()
     lab: LabConfigSpec = LabConfigSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()

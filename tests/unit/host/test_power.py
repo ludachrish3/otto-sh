@@ -1,5 +1,6 @@
 """Unit tests for the PowerController strategy, registry, and host power verbs."""
 
+from typing import ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,7 +22,7 @@ def _target_with_controller(runner):
     target = UnixHost(ip="10.0.0.9", element="vm", creds={"u": "p"}, name="vm1", log=False)
 
     class _FakeLab:
-        hosts = {"hyp": runner}
+        hosts: ClassVar = {"hyp": runner}
 
     target._lab = _FakeLab()  # type: ignore[assignment]
     return target

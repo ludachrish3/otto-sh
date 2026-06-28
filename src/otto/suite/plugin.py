@@ -253,7 +253,7 @@ class OttoPlugin:
             try:
                 item.runtest()
                 return  # success — stop retrying
-            except Exception as exc:
+            except Exception as exc:  # noqa: PERF203 — per-item resilience
                 last_exc = exc
                 logger.warning(f"retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}")
         if last_exc is not None:

@@ -258,7 +258,7 @@ def _spy_factory(calls):
     fresh handler with its own (src, dst, done, total) appended events."""
 
     def factory():
-        h, _ = _spy_handler()
+        _, _ = _spy_handler()
 
         # rewrap so all handlers feed the same `calls` list — sufficient for
         # these tests since they only assert on per-file completion events.
@@ -526,7 +526,7 @@ class TestCleanupOnFailure:
         src = tmp_path / "f.bin"
         src.write_bytes(b"x" * 128)
 
-        status, err = await xfer.put_files([src], RAM)
+        status, _err = await xfer.put_files([src], RAM)
         assert status == Status.Error
         # The PRE-write rm at the top of _console_put_one is the first
         # rm; the cleanup rm after the failure is the second. Two `fs rm`

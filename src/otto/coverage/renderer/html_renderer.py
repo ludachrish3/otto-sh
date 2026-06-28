@@ -224,10 +224,10 @@ class HtmlRenderer:
             pill_class = "branch-unreachable"
 
         tip_parts = [f"block={branch.block} branch={branch.branch}"]
-        for tier in tier_order:
-            tip_parts.append(
-                f"{tier}: hits={branch.hits.for_tier(tier)} reach={branch.is_reachable(tier)}"
-            )
+        tip_parts.extend(
+            f"{tier}: hits={branch.hits.for_tier(tier)} reach={branch.is_reachable(tier)}"
+            for tier in tier_order
+        )
         return {
             "block": branch.block,
             "branch": branch.branch,

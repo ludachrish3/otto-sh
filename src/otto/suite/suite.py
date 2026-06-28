@@ -376,7 +376,7 @@ class OttoSuite(Generic[TOptions]):
         for host in all_hosts():
             try:
                 await host.close()
-            except Exception as exc:  # best-effort teardown — never fail a class on it
+            except Exception as exc:  # noqa: PERF203 — per-item resilience  # best-effort teardown — never fail a class on it
                 logger.debug(
                     "OttoSuite: error closing %s at class teardown: %s",
                     getattr(host, "id", host),

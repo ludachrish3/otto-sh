@@ -303,7 +303,7 @@ def test_host_preferences_accepts_selections_and_option_tables():
 
 
 def test_host_preferences_unknown_inner_key_raises():
-    with pytest.raises(ValueError, match="unknown .host_preferences. key 'bogus'"):
+    with pytest.raises(ValueError, match=r"unknown \[host_preferences\] key 'bogus'"):
         SettingsModel.model_validate(
             {
                 "name": "p",

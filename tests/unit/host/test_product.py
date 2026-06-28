@@ -43,7 +43,7 @@ async def test_fileproduct_stage_delegates_to_host_put():
     p = _DummyFileProduct(artifact=Path("/builds/app.bin"), dest_dir=Path("/opt"))
     host = AsyncMock()
     host.put.return_value = (Status.Success, "")
-    status, msg = await p.stage(host)
+    status, _msg = await p.stage(host)
     assert status is Status.Success
     host.put.assert_awaited_once_with(Path("/builds/app.bin"), Path("/opt"))
 

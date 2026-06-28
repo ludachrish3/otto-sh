@@ -678,7 +678,7 @@ class TestSshFileTransfer:
         src.write_text("hello")
         host._connections._ssh_conn = self._mock_ssh_conn()
         with patch("asyncssh.scp", new_callable=AsyncMock) as mock_scp:
-            status, msg = await host.put([src], Path("/tmp"), show_progress=False)
+            status, _msg = await host.put([src], Path("/tmp"), show_progress=False)
         assert status == Status.Success
         mock_scp.assert_called_once()
 
@@ -689,7 +689,7 @@ class TestSshFileTransfer:
         mock_sftp.get = AsyncMock()
         h._connections._sftp_conn = mock_sftp
 
-        status, msg = await h.get([Path("/etc/hostname")], Path("/tmp"), show_progress=False)
+        status, _msg = await h.get([Path("/etc/hostname")], Path("/tmp"), show_progress=False)
         assert status == Status.Success
         mock_sftp.get.assert_called_once()
         await h.close()
@@ -703,7 +703,7 @@ class TestSshFileTransfer:
         mock_sftp.put = AsyncMock()
         h._connections._sftp_conn = mock_sftp
 
-        status, msg = await h.put([src], Path("/tmp"), show_progress=False)
+        status, _msg = await h.put([src], Path("/tmp"), show_progress=False)
         assert status == Status.Success
         mock_sftp.put.assert_called_once()
         await h.close()
@@ -716,7 +716,7 @@ class TestSshFileTransfer:
         mock_ftp.quit = AsyncMock()  # called by close()
         h._connections._ftp_conn = mock_ftp
 
-        status, msg = await h.get(
+        status, _msg = await h.get(
             [Path("/home/vagrant/test.txt")], Path("/tmp"), show_progress=False
         )
         assert status == Status.Success
@@ -733,7 +733,7 @@ class TestSshFileTransfer:
         mock_ftp.quit = AsyncMock()  # called by close()
         h._connections._ftp_conn = mock_ftp
 
-        status, msg = await h.put([src], Path("/tmp"), show_progress=False)
+        status, _msg = await h.put([src], Path("/tmp"), show_progress=False)
         assert status == Status.Success
         mock_ftp.upload.assert_called_once()
         await h.close()
@@ -1557,7 +1557,7 @@ async def test_unload_rmmod_with_sudo_when_resident():
     host._session_mgr.current_user = "admin"
     host._loaded_modules = AsyncMock(return_value=["my_mod"])
     host.run = AsyncMock(return_value=_run_result("rmmod my_mod", "", Status.Success, 0))
-    status, msg = await host.unload("my-mod")  # dash normalized to my_mod
+    status, _msg = await host.unload("my-mod")  # dash normalized to my_mod
     assert status is Status.Success
     assert host.run.await_args.args[0] == "rmmod my_mod"
     assert host.run.await_args.kwargs["sudo"] is True

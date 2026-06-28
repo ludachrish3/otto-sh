@@ -309,7 +309,7 @@ async def compose_down(
     seconds passed to ``docker compose down --timeout``. Defaults to 1s
     rather than docker's default of 10s — otto's typical workload is
     integration tests with disposable stacks where waiting 10s on every
-    teardown adds up fast (4 tests × 10s = 40s of wall time on the
+    teardown adds up fast (4 tests x 10s = 40s of wall time on the
     serialized ``docker_e2e`` group). Pass a larger value for stacks where
     graceful shutdown matters.
     """

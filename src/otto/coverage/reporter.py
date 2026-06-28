@@ -154,9 +154,7 @@ def discover_gcda_dirs(cov_dirs: list[Path]) -> list[Path]:
         if not cov_dir.is_dir():
             logger.warning("Coverage directory does not exist: %s", cov_dir)
             continue
-        for host_dir in sorted(cov_dir.iterdir()):
-            if host_dir.is_dir():
-                gcda_dirs.append(host_dir)
+        gcda_dirs.extend(host_dir for host_dir in sorted(cov_dir.iterdir()) if host_dir.is_dir())
     return gcda_dirs
 
 

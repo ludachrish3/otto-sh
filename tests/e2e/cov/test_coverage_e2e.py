@@ -36,6 +36,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -275,10 +276,10 @@ class TestLineHitCounts:
     # All hosts run: add, sub, mul, div (1 call each)
     # First host (carrot): extra div 1 0 (divide-by-zero)
     # Last host (pepper): 3 clamp calls (below, above, in-range)
-    MATH_OPS_EXPECTED = {
-        4: 3,  # return a + b (3 hosts × 1 add)
-        8: 3,  # return a - b (3 hosts × 1 sub)
-        12: 3,  # return a * b (3 hosts × 1 mul)
+    MATH_OPS_EXPECTED: ClassVar = {
+        4: 3,  # return a + b (3 hosts x 1 add)
+        8: 3,  # return a - b (3 hosts x 1 sub)
+        12: 3,  # return a * b (3 hosts x 1 mul)
         16: 4,  # if (b == 0): 3 normal div + 1 div-by-zero
         17: 1,  # return -1: only the div-by-zero on first host
         19: 3,  # *result = a / b: 3 normal divides
@@ -419,7 +420,7 @@ class TestBranchCoverage:
     def test_branch_reachability_system_only(self, coverage_run):
         store, *_ = coverage_run
         for fr in store.files():
-            for _lineno, lr in fr.lines.items():
+            for lr in fr.lines.values():
                 for b in lr.branches:
                     # System tier saw the branch (recorded reachability).
                     assert b.is_reachable("system") is not None

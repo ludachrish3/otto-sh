@@ -115,7 +115,7 @@ def _load_lab():
 # console fails normally (paying the one real 15s timeout) and is recognised by
 # its "shell never became ready" signature; that marks the backend, and every
 # *subsequent* test targeting it fails fast instead of repeating the timeout.
-# The cascade collapses from N×15s to one real failure plus instant fast-fails.
+# The cascade collapses from N x 15s to one real failure plus instant fast-fails.
 #
 # A speculative pre-probe was tried and rejected: any probe ceiling short
 # enough to save time is shorter than the 15s the real connection allows, so a

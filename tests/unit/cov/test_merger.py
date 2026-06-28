@@ -75,7 +75,7 @@ class TestLcovMerger:
     async def test_merge_empty_raises(self, tmp_path):
         localhost = LocalHost()
         merger = LcovMerger(localhost)
-        with pytest.raises(ValueError, match="No .info files"):
+        with pytest.raises(ValueError, match=r"No \.info files"):
             await merger.merge_info_files([], tmp_path / "out.info")
         await localhost.close()
 

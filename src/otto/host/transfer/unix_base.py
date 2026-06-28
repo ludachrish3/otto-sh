@@ -66,6 +66,5 @@ class UnixFileTransfer(BaseFileTransfer):
         """
         tasks: list[Coroutine[Any, Any, Any]] = [self.prepare()]
         if self._connections.term == "telnet":
-            for _ in range(max(file_count, 1)):
-                tasks.append(self._exec_cmd("true"))
+            tasks.extend(self._exec_cmd("true") for _ in range(max(file_count, 1)))
         await asyncio.gather(*tasks, return_exceptions=True)

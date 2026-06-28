@@ -510,7 +510,7 @@ class TestUnload:
             _ok("No such extension cov_ext"),
         ]
 
-        status, err = await host.unload("cov_ext")
+        status, _err = await host.unload("cov_ext")
 
         assert status == Status.Success
         assert host._session_mgr.run_cmd.await_count == 2

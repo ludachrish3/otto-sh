@@ -2,7 +2,7 @@
 
 import inspect
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
@@ -643,14 +643,14 @@ def test_class_for_skips_host_build_during_completion(monkeypatch):
 
     class _CompletionCtx:
         resilient_parsing = True
-        params = {"host_id": "u1"}
+        params: ClassVar = {"host_id": "u1"}
 
     assert grp._class_for(_CompletionCtx()) is None
     assert calls == []  # host not resolved/built while completing
 
     class _DispatchCtx:
         resilient_parsing = False
-        params = {"host_id": "u1"}
+        params: ClassVar = {"host_id": "u1"}
 
     grp._class_for(_DispatchCtx())
     assert calls == ["u1"]  # real dispatch still resolves the class for scoping

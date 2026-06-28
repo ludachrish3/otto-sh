@@ -67,7 +67,7 @@ def _invoke(extra_args: list[str]):
     The required ``--lab`` option pre-filled so tests don't have to repeat it
     everywhere.
     """
-    return runner.invoke(app, ["--lab", "test_lab"] + extra_args)
+    return runner.invoke(app, ["--lab", "test_lab", *extra_args])
 
 
 # ── Eager / early-exit options ────────────────────────────────────────────────

@@ -228,7 +228,7 @@ async def test_embedded_as_user_raises():
     from otto.host.embedded_host import ZephyrHost
 
     host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
-    with pytest.raises(NotImplementedError, match="as_user|su"):
+    with pytest.raises(NotImplementedError, match=r"as_user|su"):
         async with host.as_user("root"):
             pass
 

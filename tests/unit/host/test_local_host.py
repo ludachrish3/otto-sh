@@ -208,7 +208,7 @@ async def test_get_files(tmp_path: Path):
     (src_dir / "b.txt").write_text("bbb")
 
     dest_dir = tmp_path / "dest"
-    status, msg = await host.get(
+    status, _msg = await host.get(
         [src_dir / "a.txt", src_dir / "b.txt"],
         dest_dir,
     )
@@ -224,7 +224,7 @@ async def test_put_files(tmp_path: Path):
     src.write_text("data")
 
     dest_dir = tmp_path / "remote"
-    status, msg = await host.put(src, dest_dir)
+    status, _msg = await host.put(src, dest_dir)
     assert status == Status.Success
     assert (dest_dir / "file.txt").read_text() == "data"
 

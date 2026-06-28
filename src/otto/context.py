@@ -167,7 +167,7 @@ class OttoContext:
         for h in hosts:
             try:
                 out[h.id] = await method(h, *args, **kwargs)
-            except BaseException as exc:
+            except BaseException as exc:  # noqa: PERF203 — per-item resilience
                 out[h.id] = exc
         return out
 

@@ -79,8 +79,9 @@ async def test_bash_streams_each_line_live(bash_session: FrameMockSession):
         await asyncio.sleep(0.01)
         s.feed(f"{s._begin_marker}\nline1\nline2\n{s._end_marker_prefix}0__\n")
 
-    asyncio.create_task(simulate())
+    feed_task = asyncio.create_task(simulate())
     result = await s.run_cmd("seq 1 2")
+    await feed_task
 
     assert result.output == "line1\nline2"
     assert s.emitted == ["line1", "line2"]  # live frames emit each line as it arrives
@@ -101,8 +102,9 @@ async def test_zephyr_buffers_and_emits_parsed_output_once(zephyr_session: Frame
             f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
         )
 
-    asyncio.create_task(simulate())
+    feed_task = asyncio.create_task(simulate())
     result = await s.run_cmd("llext unload cov_ext")
+    await feed_task
 
     assert result.output == "Unloaded extension cov_ext"
     # Exactly one emit, equal to parsed output — no prompts, no `0`, no blanks.
@@ -121,8 +123,9 @@ async def test_zephyr_no_output_emits_nothing(zephyr_session: FrameMockSession):
             f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
         )
 
-    asyncio.create_task(simulate())
+    feed_task = asyncio.create_task(simulate())
     result = await s.run_cmd("fs mount fat /RAM:")
+    await feed_task
 
     assert result.output == ""
     assert s.emitted == []
@@ -137,8 +140,9 @@ async def test_on_output_argument_overrides_default_sink(bash_session: FrameMock
         await asyncio.sleep(0.01)
         s.feed(f"{s._begin_marker}\nhi\n{s._end_marker_prefix}0__\n")
 
-    asyncio.create_task(simulate())
+    feed_task = asyncio.create_task(simulate())
     await s.run_cmd("echo hi", on_output=sink.append)
+    await feed_task
 
     assert sink == ["hi"]
     assert s.emitted == []  # the per-command sink replaced the default
@@ -197,8 +201,9 @@ class TestWriteProgress:
                 f"\r\n{s._end_marker_prefix}: command not found\r\n~$ "
             )
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         await s.run_cmd("noop", write_progress=cb)
+        await feed_task
 
         assert seen == [cb]  # set during the framed write
         assert s._write_progress is None  # cleared afterward

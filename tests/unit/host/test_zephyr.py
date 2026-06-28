@@ -155,8 +155,9 @@ class TestFraming:
             await asyncio.sleep(0.01)
             session.feed(session.shell_response("3.7.2", 0))
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         await session.run_cmd("kernel version")
+        await feed_task
         assert session.written[0] == ZephyrFrame().frame("kernel version", session._markers)
 
 
@@ -172,8 +173,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(session.shell_response("Zephyr version 3.7.2", 0))
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("kernel version")
+        await feed_task
 
         assert result.output == "Zephyr version 3.7.2"
         assert result.retcode == 0
@@ -187,8 +189,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(session.shell_response("usage: ...", -22))
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("device off bad")
+        await feed_task
 
         assert result.retcode == -22
         assert result.status == Status.Failed
@@ -201,8 +204,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(session.shell_response("bogus: command not found", -8))
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("bogus")
+        await feed_task
 
         assert result.retcode == -8
         assert result.status == Status.Failed
@@ -214,8 +218,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(session.shell_response("", 0))
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("kernel reboot cold")
+        await feed_task
 
         assert result.output == ""
         assert result.retcode == 0
@@ -226,8 +231,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(session.shell_response("devices:\n- uart@3f8 (READY)\n- eth0 (READY)", 0))
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("device list")
+        await feed_task
 
         assert result.output == "devices:\n- uart@3f8 (READY)\n- eth0 (READY)"
         assert result.retcode == 0
@@ -243,8 +249,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(session.shell_response("123456", 0))
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("kernel uptime")
+        await feed_task
 
         assert result.output == "123456"
         assert result.retcode == 0
@@ -261,8 +268,9 @@ class TestRunCmd:
                 session.shell_response("Zephyr version 3.7.2", 0, prompt="zephyr-board:/$ ")
             )
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("kernel version")
+        await feed_task
 
         assert result.output == "Zephyr version 3.7.2"
         assert result.retcode == 0
@@ -279,8 +287,9 @@ class TestRunCmd:
                 session.shell_response("Zephyr version 3.7.2", 0, prompt="\x1b[1;32m~$ \x1b[m")
             )
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("kernel version")
+        await feed_task
 
         assert result.output == "Zephyr version 3.7.2"
         assert result.retcode == 0
@@ -305,8 +314,9 @@ class TestExpect:
                 f"\r\n{session._end_marker_prefix}: command not found\r\n~$ "
             )
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("risky", expects=[("confirm", "y\r")])
+        await feed_task
 
         assert "y\r" in session.written
         assert result.retcode == 0

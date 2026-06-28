@@ -332,7 +332,7 @@ class TestCredentials:
     async def test_second_credential_works(self):
         """Verify the non-default (test) user can log in and run commands."""
         data = host_data("tomato")
-        second_user, second_password = list(data["creds"].items())[1]
+        second_user, _second_password = list(data["creds"].items())[1]
         host = UnixHost(
             ip=data["ip"],
             user=second_user,
@@ -360,7 +360,7 @@ class TestCredentials:
         monkeypatch.setattr(ShellSession, "_init_timeout", 3.0)
 
         data = host_data("carrot")
-        user = list(data["creds"].keys())[0]
+        user = next(iter(data["creds"].keys()))
         host = UnixHost(
             ip=data["ip"],
             user=user,

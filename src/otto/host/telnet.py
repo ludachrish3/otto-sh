@@ -79,7 +79,7 @@ def abort_console_transports() -> int:
         try:
             transport.abort()
             count += 1
-        except Exception:
+        except Exception:  # noqa: PERF203 — per-item resilience
             pass
     _live_console_transports.clear()
     return count
@@ -91,7 +91,7 @@ def _sigwinch_fanout() -> None:
     for client in list(_naws_subscribers):
         try:
             client._send_naws(cols, rows)
-        except Exception as exc:  # pragma: no cover - best-effort cleanup
+        except Exception as exc:  # noqa: PERF203 — per-item resilience  # pragma: no cover - best-effort cleanup
             logger.debug(f"NAWS push failed for {client.host}: {exc}")
 
 

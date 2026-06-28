@@ -50,8 +50,9 @@ def _module_and_decorator_markers(path: Path) -> set[str]:
 
 def test_unit_tier_has_no_vm_markers():
     """G2: no test file under tests/unit/ references a VM-only marker."""
-    offenders: list[str] = []
-    for path in _UNIT.rglob("test_*.py"):
-        if _VM_MARKERS & _module_and_decorator_markers(path):
-            offenders.append(str(path.relative_to(_TESTS)))
+    offenders: list[str] = [
+        str(path.relative_to(_TESTS))
+        for path in _UNIT.rglob("test_*.py")
+        if _VM_MARKERS & _module_and_decorator_markers(path)
+    ]
     assert not offenders, f"VM markers found under tests/unit/: {offenders}"

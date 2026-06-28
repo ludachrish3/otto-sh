@@ -211,6 +211,6 @@ class TestCoverageStore:
         store.merge_file(fr2)
 
         assert store.file_count() == 1
-        merged = list(store.files())[0]
+        merged = next(iter(store.files()))
         assert merged.lines[1].hits.for_tier("system") == 3
         assert merged.lines[1].hits.for_tier("unit") == 2

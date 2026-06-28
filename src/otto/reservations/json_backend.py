@@ -87,10 +87,9 @@ class JsonReservationBackend:
         """Load the file and return entries that are not past their expiry."""
         data = self._load()
         now = datetime.now(tz=timezone.utc)
-        active: list[ReservationEntry] = []
-        for entry in data.reservations:
-            if entry.expires is None or entry.expires > now:
-                active.append(entry)
+        active: list[ReservationEntry] = [
+            entry for entry in data.reservations if entry.expires is None or entry.expires > now
+        ]
         return active
 
     def _load(self) -> ReservationFile:

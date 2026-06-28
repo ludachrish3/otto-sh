@@ -185,7 +185,7 @@ class TestBaseFileTransferProgressWiring:
         executes — the spy never gets called."""
         spy, captured = self._spy_subclass()
         spy._max_filename_len = 5
-        status, err = await spy.put_files(
+        status, _err = await spy.put_files(
             [Path("/a/long_filename.bin")],
             Path("/dest"),
         )

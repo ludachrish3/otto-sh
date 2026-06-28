@@ -157,8 +157,9 @@ class TestRunCmdLogging:
             await asyncio.sleep(0.01)
             s.feed(f"{s._begin_marker}\nhello\n{s._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await s.run_cmd("echo hello")
+        await feed_task
 
         assert result.retcode == 0
         log = _messages(caplog)
@@ -194,8 +195,9 @@ class TestRecoverSessionLogging:
             await asyncio.sleep(0.01)
             s.feed(f"interrupted stuff\n{s._recover_marker}\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         partial = await s._recover_session()
+        await feed_task
 
         assert partial.endswith("interrupted stuff")
         log = _messages(caplog)

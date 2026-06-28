@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Graduated × tiered stability campaign runner for feature/embedded-host.
+"""Graduated x tiered stability campaign runner for feature/embedded-host.
 
 Drives every kind of test suite under pytest-repeat --count, classifies the
 JUnit output, and gates escalation (COUNT 1 -> 3 -> 10) on a clean stage.

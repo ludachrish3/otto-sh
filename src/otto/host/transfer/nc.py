@@ -44,7 +44,7 @@ _logger = get_otto_logger()
 
 # Port scripts run inside `( ... )` so their `exit 0` / `exit 1` only
 # terminates the subshell. Without the subshell wrap, a failure-path `exit`
-# kills the whole telnet control session, forcing a 1–2 s reopen on every
+# kills the whole telnet control session, forcing a 1-2 s reopen on every
 # subsequent call.
 _SS_PORT_SCRIPT = (
     '( used=$(ss -tln | grep -oE ":[0-9]+ " | tr -d ": " | sort -un); '
@@ -138,7 +138,7 @@ async def _connect_with_retry(
                 asyncio.open_connection(host, port),
                 timeout=min(1.0, max(0.1, deadline - asyncio.get_running_loop().time())),
             )
-        except (ConnectionRefusedError, asyncio.TimeoutError, OSError) as err:
+        except (ConnectionRefusedError, asyncio.TimeoutError, OSError) as err:  # noqa: PERF203 — per-item resilience
             if asyncio.get_running_loop().time() >= deadline:
                 raise ConnectionError(
                     f"Remote nc listener on {host}:{port} not ready within {timeout}s"
@@ -392,7 +392,7 @@ class NcFileTransfer(UnixFileTransfer):
                 self._resolved_port_strategy = strategy
                 _logger.debug(f"{self._name}: cached port strategy '{strategy}'")
                 return port
-            except (RuntimeError, ValueError) as e:
+            except (RuntimeError, ValueError) as e:  # noqa: PERF203 — per-item resilience
                 errors.append(f"{strategy}: {e}")
         raise RuntimeError(
             f"All port-finding strategies failed on {self._name}: " + "; ".join(errors)

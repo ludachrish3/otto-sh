@@ -86,9 +86,7 @@ def list_labs_callback(value: bool):
         from rich.table import Table
 
         # Extract lab search paths from all repos
-        panels: list[Panel] = []
-        for repo in get_repos():
-            panels.append(repo.get_lab_panel())
+        panels: list[Panel] = [repo.get_lab_panel() for repo in get_repos()]
 
         table = Table(
             show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1)

@@ -573,7 +573,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
           callers reuse one session (one TCP+auth handshake amortized over
           all calls); concurrent callers each pull their own session off
           the free-list, opening a new one if none are free.  This preserves
-          the independence guarantee while avoiding the 1–2 s handshake on
+          the independence guarantee while avoiding the 1-2 s handshake on
           every call.
 
         Args:

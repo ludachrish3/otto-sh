@@ -135,7 +135,7 @@ async def test_oneshot_pool_connects_concurrently() -> None:
     via ``open_session()``.  When ``open_session()`` guarded the whole
     get-or-create body (including the slow connect) with a single shared
     lock, those N connects ran one after another — N short oneshots took
-    ``N × connect_delay`` instead of ~one ``connect_delay``.  On real telnet
+    ``N x connect_delay`` instead of ~one ``connect_delay``.  On real telnet
     hosts that turned 10 parallel oneshots into a ~16 s serial chain and
     blew the 15 s budget in ``test_real_long_telnet_oneshot_vs_concurrent``.
 

@@ -85,7 +85,7 @@ class RepeatRunner:
                         on_result(name, ts, cmd_statuses)
                 times_remaining -= 1
 
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # noqa: PERF203 — per-item resilience
                 break
 
         # pop() with default avoids race conditions with stop()

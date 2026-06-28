@@ -295,7 +295,7 @@ def run_suite(
         otto_plugin._stability_collector = collector
 
     pytest.main(
-        base_args + [f"--junitxml={results_path}"],
+        [*base_args, f"--junitxml={results_path}"],
         plugins=[otto_plugin, options_plugin],
     )
 

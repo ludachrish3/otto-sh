@@ -104,7 +104,7 @@ async def test_build_one_runs_when_image_missing(tmp_path):
     parent.oneshot.side_effect = oneshot
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
-    status, msg = await _build_one(parent, "repo1", settings, img, rebuild=False)
+    status, _msg = await _build_one(parent, "repo1", settings, img, rebuild=False)
     assert status is Status.Success
     cmds = [c.args[0] for c in parent.oneshot.call_args_list]
     assert any(c.startswith("docker build ") for c in cmds), cmds

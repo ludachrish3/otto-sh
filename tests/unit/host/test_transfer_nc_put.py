@@ -100,7 +100,7 @@ class TestNcPutDrain:
 
     @pytest.mark.asyncio
     async def test_drains_periodically(self, tmp_path: Path):
-        # 8 KB blocks × 256 = 2 MB. At drain_every=64, that's 4 drain calls
+        # 8 KB blocks x 256 = 2 MB. At drain_every=64, that's 4 drain calls
         # during the loop (one per 64 blocks) plus the final drain.
         src = tmp_path / "payload.bin"
         src.write_bytes(b"x" * (8192 * 256))

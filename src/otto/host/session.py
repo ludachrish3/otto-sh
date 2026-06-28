@@ -1305,7 +1305,7 @@ class SessionManager:
                 # Telnet has no stateless exec primitive (unlike SSH which
                 # multiplexes channels over one connection).  Rather than open
                 # a fresh TCP+auth for every oneshot call — which in practice cost
-                # 1–2 s each on real hardware — we keep a free-list of idle
+                # 1-2 s each on real hardware — we keep a free-list of idle
                 # persistent sessions and reuse them.  Serial callers churn
                 # one session; concurrent callers (e.g. `_put_files_nc`
                 # launching multiple `nc -l` listeners in parallel) each get

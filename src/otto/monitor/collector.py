@@ -778,12 +778,12 @@ class MetricCollector:
         for key, pts in self._series.items():
             host = key.split("/")[0] if "/" in key else ""
             label = key.split("/", 1)[1] if "/" in key else key
-            for pt in pts:
-                metrics.append(
-                    MetricRecord(
-                        timestamp=pt.ts, host=host, label=label, value=pt.value, meta=pt.meta
-                    ).model_dump(mode="json", exclude_none=True)
-                )
+            metrics.extend(
+                MetricRecord(
+                    timestamp=pt.ts, host=host, label=label, value=pt.value, meta=pt.meta
+                ).model_dump(mode="json", exclude_none=True)
+                for pt in pts
+            )
         return json.dumps(
             {
                 "metrics": metrics,

@@ -601,7 +601,7 @@ class TestNetcatPutThroughHop:
                 mock_writer.wait_closed = AsyncMock()
                 mock_connect.return_value = (MagicMock(), mock_writer)
 
-                status, err = await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
+                _, _ = await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
 
                 # Verify port forwarding was used
                 mock_connections.forward_port.assert_awaited_once_with(55555)
@@ -669,7 +669,7 @@ class TestNetcatPutThroughHop:
                 mock_writer.wait_closed = AsyncMock()
                 mock_connect.return_value = (MagicMock(), mock_writer)
 
-                status, err = await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
+                _, _ = await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
 
                 # Verify direct connection (no forward_port called)
                 mock_connections.forward_port.assert_not_awaited()

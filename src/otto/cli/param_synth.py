@@ -83,7 +83,7 @@ def _split_annotation(hint: Any) -> tuple[Any, tuple[Any, ...]]:
             inner_annotated = none_stripped[0]
             inner_base, *meta = get_args(inner_annotated)
             # Reconstruct Optional[inner_base] as the base type
-            return typing.Optional[inner_base], tuple(meta)
+            return typing.Optional[inner_base], tuple(meta)  # noqa: UP045 — runtime Optional[] construction (not an annotation); X | None raises TypeError on special forms
     return hint, ()
 
 
@@ -106,7 +106,7 @@ def _normalize_scalar(base: Any, marker_type: type | None) -> Any:
     is_opt, inner = _is_optional(base)
     if is_opt:
         norm = _normalize_scalar(inner, None)
-        return typing.Optional[norm]
+        return typing.Optional[norm]  # noqa: UP045 — runtime Optional[] construction (not an annotation); X | None raises TypeError on special forms
     _native_union = getattr(types, "UnionType", None)
     origin = get_origin(base)
     is_union = origin is Union or (_native_union is not None and isinstance(base, _native_union))

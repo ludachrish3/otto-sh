@@ -98,8 +98,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(f"{session._begin_marker}\nhello world\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("echo hello world")
+        await feed_task
 
         assert result.command == "echo hello world"
         assert result.output == "hello world"
@@ -114,8 +115,9 @@ class TestRunCmd:
                 f"{session._begin_marker}\ncommand not found\n{session._end_marker_prefix}127__\n"
             )
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("badcmd")
+        await feed_task
 
         assert result.status == Status.Failed
         assert result.retcode == 127
@@ -127,8 +129,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("cd /tmp")
+        await feed_task
 
         assert result.output == ""
         assert result.retcode == 0
@@ -141,8 +144,9 @@ class TestRunCmd:
                 f"{session._begin_marker}\nline1\nline2\nline3\n{session._end_marker_prefix}0__\n"
             )
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("seq 1 3")
+        await feed_task
 
         assert result.output == "line1\nline2\nline3"
         assert result.retcode == 0
@@ -153,8 +157,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(f"$ {session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("echo hello")
+        await feed_task
 
         assert result.output == "hello"
 
@@ -164,8 +169,9 @@ class TestRunCmd:
             await asyncio.sleep(0.01)
             session.feed(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         await session.run_cmd("ls")
+        await feed_task
 
         # Verify the command was sentinel-wrapped
         cmd_write = session.written[0]
@@ -190,11 +196,12 @@ class TestExpects:
             await asyncio.sleep(0.02)
             session.feed(f"\ninstalled ok\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd(
             "sudo apt install nginx",
             expects=[(r"Password:", "secret\n")],
         )
+        await feed_task
 
         assert result.status == Status.Success
         assert "secret\n" in session.written  # response was sent
@@ -209,7 +216,7 @@ class TestExpects:
             await asyncio.sleep(0.02)
             session.feed(f"\ndone\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd(
             "sudo apt install nginx",
             expects=[
@@ -217,6 +224,7 @@ class TestExpects:
                 (r"\[Y/n\]", "Y\n"),
             ],
         )
+        await feed_task
 
         assert result.status == Status.Success
         assert "secret\n" in session.written
@@ -230,11 +238,12 @@ class TestExpects:
             await asyncio.sleep(0.01)
             session.feed(f"{session._begin_marker}\nok\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd(
             "echo ok",
             expects=[(r"Password:", "secret\n")],
         )
+        await feed_task
 
         assert result.status == Status.Success
         assert result.output == "ok"
@@ -249,11 +258,12 @@ class TestExpects:
             await asyncio.sleep(0.02)
             session.feed(f"\nok\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd(
             "sudo ls",
             expects=[(re.compile(r"password for \w+:"), "pw\n")],
         )
+        await feed_task
 
         assert result.status == Status.Success
         assert "pw\n" in session.written
@@ -273,7 +283,7 @@ class TestTimeout:
             session.feed(f"{session._begin_marker}\n")
             # Never feed the END marker — simulates a hung command
 
-        asyncio.create_task(simulate())
+        simulate_task = asyncio.create_task(simulate())
 
         # After timeout, recovery sends Ctrl+C + recovery sentinel
         # We need to feed the recovery marker
@@ -281,9 +291,11 @@ class TestTimeout:
             await asyncio.sleep(0.15)
             session.feed(f"{session._recover_marker}\n")
 
-        asyncio.create_task(feed_recovery())
+        recovery_task = asyncio.create_task(feed_recovery())
 
         result = await session.run_cmd("sleep 999", timeout=0.1)
+        await simulate_task
+        await recovery_task
 
         assert result.status == Status.Error
         assert result.retcode == -1
@@ -297,15 +309,17 @@ class TestTimeout:
             session.feed(f"{session._begin_marker}\n")
             # Hang...
 
-        asyncio.create_task(simulate())
+        simulate_task = asyncio.create_task(simulate())
 
         async def feed_recovery():
             await asyncio.sleep(0.15)
             session.feed(f"{session._recover_marker}\n")
 
-        asyncio.create_task(feed_recovery())
+        recovery_task = asyncio.create_task(feed_recovery())
 
         await session.run_cmd("sleep 999", timeout=0.1)
+        await simulate_task
+        await recovery_task
 
         # Session should still be alive
         assert session.alive
@@ -317,7 +331,7 @@ class TestTimeout:
             session.feed(f"{session._begin_marker}\n")
             # Never feed anything — recovery will also time out
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
 
         # Patch _RECOVERY_TIMEOUT to something very short for the test
         import otto.host.session as session_mod
@@ -328,6 +342,7 @@ class TestTimeout:
             result = await session.run_cmd("sleep 999", timeout=0.1)
         finally:
             session_mod._RECOVERY_TIMEOUT = original
+        await feed_task
 
         assert result.status == Status.Error
         assert not session.alive
@@ -350,8 +365,9 @@ class TestSendExpect:
             await asyncio.sleep(0.01)
             session.feed("Welcome to Python 3.10\n>>> ")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         data = await session.expect(r">>> ")
+        await feed_task
         assert ">>> " in data
         assert "Welcome to Python" in data
 
@@ -367,9 +383,10 @@ class TestSendExpect:
             await asyncio.sleep(0.01)
             session.feed_eof()
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         with pytest.raises(asyncio.IncompleteReadError):
             await session.expect(r">>> ", timeout=1.0)
+        await feed_task
 
         assert not session.alive
 
@@ -429,8 +446,9 @@ class MockSessionDeath:
             await asyncio.sleep(0.01)
             session.feed_eof()
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("echo hello")
+        await feed_task
 
         assert result.status == Status.Error
         assert not session.alive
@@ -567,8 +585,9 @@ class TestCommandLogging:
                 f"{session._begin_marker}\nalpha\nbravo\ncharlie\n{session._end_marker_prefix}0__\n"
             )
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("seq 3")
+        await feed_task
 
         assert result.status == Status.Success
         assert logged == ["alpha", "bravo", "charlie"]
@@ -583,8 +602,9 @@ class TestCommandLogging:
             await asyncio.sleep(0.01)
             session.feed(f"{session._begin_marker}\ncontent\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         await session.run_cmd("echo content")
+        await feed_task
 
         assert logged == ["content"]
         for line in logged:
@@ -600,8 +620,9 @@ class TestCommandLogging:
             await asyncio.sleep(0.01)
             session.feed(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("cd /tmp")
+        await feed_task
 
         assert result.status == Status.Success
         assert logged == []
@@ -618,11 +639,12 @@ class TestCommandLogging:
             await asyncio.sleep(0.02)
             session.feed(f"\ninstalled ok\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd(
             "sudo apt install nginx",
             expects=[(r"Password:", "secret\n")],
         )
+        await feed_task
 
         assert result.status == Status.Success
         assert "installed ok" in logged
@@ -641,7 +663,7 @@ class TestCommandLogging:
             session.feed(f"{session._begin_marker}\nearly line\n")
             # Never send end sentinel — command will time out
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         # Patch the recovery timeout to a small value so the post-timeout
         # ``_recover_session`` call doesn't block this test for the full
         # 5-second recovery window (no recovery sentinel ever arrives).
@@ -653,6 +675,7 @@ class TestCommandLogging:
             result = await session.run_cmd("long_running_cmd", timeout=0.1)
         finally:
             session_mod._RECOVERY_TIMEOUT = original
+        await feed_task
 
         assert result.status == Status.Error
         assert "early line" in logged
@@ -667,8 +690,9 @@ class TestCommandLogging:
             await asyncio.sleep(0.01)
             session.feed(f"{session._begin_marker}\none\ntwo\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("test")
+        await feed_task
 
         assert result.output == "one\ntwo"
         assert logged == ["one", "two"]
@@ -681,8 +705,9 @@ class TestCommandLogging:
             await asyncio.sleep(0.01)
             session.feed(f"{session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n")
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("echo hello")
+        await feed_task
 
         assert result.status == Status.Success
         assert result.output == "hello"
@@ -703,8 +728,9 @@ class TestCommandLogging:
                 f"{session._end_marker_prefix}0__\n"
             )
 
-        asyncio.create_task(simulate())
+        feed_task = asyncio.create_task(simulate())
         result = await session.run_cmd("ls")
+        await feed_task
 
         assert result.output == "file.txt"
         assert logged == ["file.txt"]
@@ -748,9 +774,10 @@ class TestEnsureInitializedTimeout:
             await asyncio.sleep(0.01)
             s.feed_eof()
 
-        asyncio.create_task(drop())
+        drop_task = asyncio.create_task(drop())
         with pytest.raises(ConnectionError, match="never became ready"):
             await s._ensure_initialized()
+        await drop_task
 
         assert s.alive is False
 
