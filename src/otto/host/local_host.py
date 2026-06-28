@@ -206,10 +206,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                 status=status,
             )
 
-        if proc.returncode == 0:
-            status = Status.Success
-        else:
-            status = Status.Failed
+        status = Status.Success if proc.returncode == 0 else Status.Failed
 
         return CommandStatus(
             command=cmd, output="\n".join(lines), retcode=proc.returncode, status=status

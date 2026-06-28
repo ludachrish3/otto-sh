@@ -372,7 +372,7 @@ class TestCredentials:
         )
         try:
             start = time.monotonic()
-            with pytest.raises(Exception):
+            with pytest.raises(ConnectionError):
                 await host.run("echo hello")
             elapsed = time.monotonic() - start
             # Bounded by the shrunk handshake timeout — proves it did not hang.

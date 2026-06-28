@@ -115,7 +115,8 @@ def test_opt_marker_forces_option():
 
 
 def test_list_option_uses_str_with_converter():
-    async def f(self, tags: list[str] = []): ...
+    async def f(self, tags: list[str] = []):  # noqa: B006 — function never called; type must stay list[str] for synthesizer
+        ...
 
     b = build_cli_binding(f)
     p = _by_name(b, "tags")

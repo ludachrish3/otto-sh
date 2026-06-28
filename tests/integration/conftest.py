@@ -32,6 +32,7 @@ def pytest_collection_modifyitems(config, items):
 ensure_sut_dirs()
 
 import asyncio
+import contextlib
 import json
 from typing import Any
 
@@ -94,10 +95,8 @@ def reap_orphan_docker_stacks() -> None:
     runs out of network subnets. Best-effort — if the host is unreachable we
     let the individual tests report that themselves.
     """
-    try:
+    with contextlib.suppress(Exception):
         asyncio.run(_reap_orphan_docker_stacks())
-    except Exception:
-        pass
 
 
 def _host_data(ne: str) -> dict[str, Any]:

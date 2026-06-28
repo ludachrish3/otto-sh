@@ -12,6 +12,7 @@ loop that created them, but only under ``--cov`` (ordinary runs keep their
 persistent sessions and pay no reconnect cost).
 """
 
+import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -31,10 +32,8 @@ async def _drive(request: MagicMock) -> None:
     suite = OttoSuite.__new__(OttoSuite)  # bare instance; the fixture only needs request
     gen = OttoSuite._otto_release_connections.__wrapped__(suite, request)
     await gen.__anext__()  # setup → suspend at yield
-    try:
+    with contextlib.suppress(StopAsyncIteration):
         await gen.__anext__()  # resume → run teardown
-    except StopAsyncIteration:
-        pass
 
 
 @pytest.mark.asyncio

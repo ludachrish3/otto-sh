@@ -19,7 +19,7 @@ import re
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
@@ -281,10 +281,8 @@ class ShellSession(ABC):
             f"marking session dead and closing"
         )
         self._alive = False
-        try:
+        with suppress(Exception):  # pragma: no cover - best-effort cleanup
             await self.close()
-        except Exception:  # pragma: no cover - best-effort cleanup
-            pass
         raise ConnectionError(
             "shell never became ready after open — the device is "
             "unresponsive or login failed (e.g. bad credentials)"
@@ -798,10 +796,8 @@ class LocalSession(ShellSession):
                         await self._process.stdin.drain()
                     except (BrokenPipeError, ConnectionResetError):
                         pass
-                try:
+                with suppress(ProcessLookupError):
                     self._process.terminate()
-                except ProcessLookupError:
-                    pass
                 try:
                     await asyncio.wait_for(self._process.wait(), timeout=5.0)
                 except asyncio.TimeoutError:
@@ -1180,10 +1176,8 @@ class SessionManager:
                 try:
                     await new_session._ensure_initialized()
                 except ConnectionError as exc:
-                    try:
+                    with suppress(Exception):  # pragma: no cover - best-effort cleanup
                         await new_session.close()
-                    except Exception:  # pragma: no cover - best-effort cleanup
-                        pass
                     last_exc = exc
                     if attempt == 0:
                         logger.debug(
@@ -1203,10 +1197,8 @@ class SessionManager:
                         continue
                     raise
                 except BaseException:
-                    try:
+                    with suppress(Exception):  # pragma: no cover - best-effort cleanup
                         await new_session.close()
-                    except Exception:  # pragma: no cover - best-effort cleanup
-                        pass
                     raise
                 self._session = new_session
                 break
@@ -1406,10 +1398,8 @@ class SessionManager:
                         try:
                             await client.connect()
                         except BaseException:
-                            try:
+                            with suppress(Exception):
                                 await client.close()
-                            except Exception:
-                                pass
                             raise
                         shell_session = TelnetSession(
                             client.reader,
@@ -1435,10 +1425,8 @@ class SessionManager:
             try:
                 await shell_session._ensure_initialized()
             except BaseException:
-                try:
+                with suppress(Exception):  # pragma: no cover - best-effort cleanup
                     await shell_session.close()
-                except Exception:  # pragma: no cover - best-effort cleanup
-                    pass
                 raise
 
             host_session = HostSession(

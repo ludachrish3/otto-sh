@@ -71,6 +71,7 @@ runs as normal and rewrites the cache afterward.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import inspect
 import json
@@ -460,22 +461,20 @@ def write_cache(
         "usernames": usernames or [],
     }
 
-    tmp = tempfile.NamedTemporaryFile(
+    with tempfile.NamedTemporaryFile(
         mode="w",
         dir=cache_path.parent,
         delete=False,
         prefix=".completion_cache_",
         suffix=".tmp",
-    )
-    try:
+    ) as tmp:
+        tmp_name = tmp.name
         json.dump(existing, tmp)
-        tmp.close()
-        os.replace(tmp.name, cache_path)
+    try:
+        os.replace(tmp_name, cache_path)
     except Exception:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
+        with contextlib.suppress(OSError):
+            os.unlink(tmp_name)
         raise
 
 
@@ -673,10 +672,7 @@ def collect_host_ids(repos: list["Repo"]) -> list[str]:
             # default_host; otherwise enumerate every docker-capable host
             # in this repo's labs (pessimistic but stable; the actual
             # bring-up picks one).
-            if compose.default_host:
-                parents = [compose.default_host]
-            else:
-                parents = list(docker_capable_ids)
+            parents = [compose.default_host] if compose.default_host else list(docker_capable_ids)
             for parent in parents:
                 for service in compose.services:
                     ids.add(f"{parent}.{repo.name}.{service}".lower())

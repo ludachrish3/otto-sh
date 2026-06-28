@@ -39,9 +39,12 @@ def _module_and_decorator_markers(path: Path) -> set[str]:
     found: set[str] = set()
     for node in ast.walk(tree):
         # @pytest.mark.<name>
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute):
-            if getattr(node.value, "attr", None) == "mark":
-                found.add(node.attr)
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Attribute)
+            and getattr(node.value, "attr", None) == "mark"
+        ):
+            found.add(node.attr)
     return found
 
 

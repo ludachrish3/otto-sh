@@ -8,6 +8,7 @@ These test the frames *standalone* (no session), with a fixed
 and test_zephyr.py (Zephyr).
 """
 
+import dataclasses
 import re
 
 import pytest
@@ -34,7 +35,7 @@ class TestSessionMarkers:
         assert m.recover == "__OTTO_abc123_RECOVER__"
 
     def test_is_frozen(self):
-        with pytest.raises(Exception):
+        with pytest.raises(dataclasses.FrozenInstanceError):
             M.begin = "nope"  # type: ignore[misc]
 
 

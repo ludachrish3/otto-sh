@@ -141,7 +141,7 @@ def report(
         ),
     ] = "Coverage Report",
     tier: Annotated[
-        list[str],
+        list[str] | None,
         typer.Option(
             "--tier",
             help=(
@@ -151,7 +151,7 @@ def report(
                 'lcov-merged system tier. Defaults to "--tier system".'
             ),
         ),
-    ] = [],
+    ] = None,
 ) -> None:
     """Generate a coverage report from otto test --cov output directories."""
     # Validate output directories

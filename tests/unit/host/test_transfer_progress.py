@@ -79,10 +79,12 @@ class TestSharedProgress:
     async def test_exception_still_decrements_ref(self):
         """An exception inside the context still releases the ref count cleanly."""
         fake_progress = MagicMock()
-        with patch.object(transfer_mod, "make_transfer_progress", return_value=fake_progress):
-            with pytest.raises(RuntimeError):
-                async with _acquire_shared_progress():
-                    raise RuntimeError("boom")
+        with (
+            patch.object(transfer_mod, "make_transfer_progress", return_value=fake_progress),
+            pytest.raises(RuntimeError),
+        ):
+            async with _acquire_shared_progress():
+                raise RuntimeError("boom")
         assert transfer_mod._shared_progress_refs == 0
         assert transfer_mod._shared_progress is None
         fake_progress.stop.assert_called_once()

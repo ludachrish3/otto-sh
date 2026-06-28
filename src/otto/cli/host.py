@@ -99,7 +99,7 @@ def _resolve_host(host_id: str):
         rprint("Available hosts:")
         for h in all_hosts(include_containers=True):
             rprint(f"  - {h.id}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from None
 
 
 @host_app.callback(invoke_without_command=True)

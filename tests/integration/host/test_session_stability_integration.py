@@ -14,6 +14,7 @@ filter excludes them from ``make ci``. Run via ``make stability-unix`` (requires
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from pathlib import Path
 from typing import cast
@@ -452,13 +453,13 @@ async def test_real_nc_cancel_cleans_up_listener(
         .splitlines()
     )
 
-    try:
+    with contextlib.suppress(
+        asyncio.TimeoutError, asyncio.CancelledError
+    ):  # expected — we cancelled mid-transfer
         await asyncio.wait_for(
             transfer_host.put([src], Path("/tmp")),
             timeout=0.2,
         )
-    except (asyncio.TimeoutError, asyncio.CancelledError):
-        pass  # expected — we cancelled mid-transfer
 
     # Allow a brief grace period for cleanup to settle before checking.
     await asyncio.sleep(2.0)

@@ -33,6 +33,7 @@ message because the remote kernel has no link to the local terminal.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import re
 import signal
@@ -175,10 +176,8 @@ class _SessionLogFile:
 
     def close(self) -> None:
         if self._file is not None:
-            try:
+            with contextlib.suppress(OSError):
                 self._file.close()
-            except OSError:
-                pass
             self._file = None
 
 
@@ -309,10 +308,8 @@ def _restore_terminal(fd: int, saved: Any) -> None:
         import termios
     except ImportError:
         return
-    try:
+    with contextlib.suppress(termios.error):
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
-    except termios.error:
-        pass
 
 
 def _print_stderr(msg: str) -> None:
@@ -387,20 +384,14 @@ async def _run_bridge(
             if task.done():
                 continue
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
-            except (asyncio.CancelledError, Exception):
-                pass
     finally:
         shutdown.set()
-        try:
+        with contextlib.suppress(asyncio.TimeoutError, Exception):
             await asyncio.wait_for(asyncio.shield(reader_future), timeout=0.5)
-        except (asyncio.TimeoutError, Exception):
-            pass
-        try:
+        with contextlib.suppress(Exception):
             uninstall_sigwinch()
-        except Exception:
-            pass
         _restore_terminal(stdin_fd, saved_attrs)
 
 
@@ -428,13 +419,13 @@ async def run_ssh_login(
     term_type = os.environ.get("TERM") or "xterm"
     cols, rows = _initial_term_size()
 
-    process_kwargs: dict[str, Any] = dict(
-        request_pty="force",
-        term_type=term_type,
-        term_size=(cols, rows),
-        stderr=asyncssh.STDOUT,
-        encoding=None,
-    )
+    process_kwargs: dict[str, Any] = {
+        "request_pty": "force",
+        "term_type": term_type,
+        "term_size": (cols, rows),
+        "stderr": asyncssh.STDOUT,
+        "encoding": None,
+    }
     if command is not None:
         process_kwargs["command"] = command
     process = await conn.create_process(**process_kwargs)
@@ -461,10 +452,8 @@ async def run_ssh_login(
         loop.add_signal_handler(signal.SIGWINCH, handler)
 
         def remove() -> None:
-            try:
+            with contextlib.suppress(NotImplementedError, RuntimeError):
                 loop.remove_signal_handler(signal.SIGWINCH)
-            except (NotImplementedError, RuntimeError):
-                pass
 
         return remove
 
@@ -484,10 +473,8 @@ async def run_ssh_login(
             banner=f"[otto] interactive session with {host_name} (ssh). Press Ctrl+] to disconnect.",
         )
     finally:
-        try:
+        with contextlib.suppress(Exception):
             process.close()
-        except Exception:
-            pass
         log_file_effective.write_marker("Interactive session ended")
         log_file_effective.close()
         _print_stderr(f"[otto] disconnected from {host_name}.")
@@ -536,10 +523,8 @@ async def run_telnet_login(
             pass
 
         def remove() -> None:
-            try:
+            with contextlib.suppress(NotImplementedError, RuntimeError):
                 loop.remove_signal_handler(signal.SIGWINCH)
-            except (NotImplementedError, RuntimeError):
-                pass
 
         return remove
 

@@ -26,6 +26,7 @@ shared Vagrant VMs.
 
 from __future__ import annotations
 
+import contextlib
 import re
 import time
 from pathlib import Path
@@ -229,14 +230,12 @@ class TestHostLoginSigwinch:
             time.sleep(0.3)
 
             sess.sendline("stty size")
-            try:
+            # Remote reflection isn't the primary assertion — if the
+            # shell response merges with the echo due to cursor repaint,
+            # that's fine. The key is the otto-side handler ran without
+            # raising (otherwise the session would have crashed below).
+            with contextlib.suppress(TimeoutError):
                 sess.expect(b"50 132", timeout=5)
-            except TimeoutError:
-                # Remote reflection isn't the primary assertion — if the
-                # shell response merges with the echo due to cursor repaint,
-                # that's fine. The key is the otto-side handler ran without
-                # raising (otherwise the session would have crashed below).
-                pass
 
             sess.disconnect()
             sess.expect(b"disconnected from", timeout=10)

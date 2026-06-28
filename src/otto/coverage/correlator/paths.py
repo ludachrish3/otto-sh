@@ -110,10 +110,7 @@ async def discover_path_mappings(
     # commonpath returns the longest common path component boundary.
     # If the result looks like a file (has an extension), walk up to its parent.
     common_p = Path(common)
-    if common_p.suffix:
-        common_dir = str(common_p.parent)
-    else:
-        common_dir = common
+    common_dir = str(common_p.parent) if common_p.suffix else common
 
     source_str = str(source_root.resolve())
     if common_dir == source_str:

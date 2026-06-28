@@ -339,10 +339,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             rest = m.group(2)
             # The shell separates the hex column from the ASCII gutter with a
             # tab; fall back to the fixed hex-field width if a tab is absent.
-            if "\t" in rest:
-                hex_field = rest.split("\t", 1)[0]
-            else:
-                hex_field = rest[: _HEXDUMP_COLS * 3]
+            hex_field = rest.split("\t", 1)[0] if "\t" in rest else rest[: _HEXDUMP_COLS * 3]
             tokens = hex_field.split()
             try:
                 chunks[offset] = bytes(int(t, 16) for t in tokens)

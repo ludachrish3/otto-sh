@@ -92,7 +92,7 @@ def test_serialize_options_handles_supported_kinds() -> None:
         f: Annotated[float, typer.Option("--f")] = 0.0,
         b: Annotated[bool, typer.Option("--b/--no-b")] = False,
         p: Annotated[Path, typer.Option("--p")] = Path(),
-        l: Annotated[list[str], typer.Option("--l")] = [],
+        l: Annotated[list[str] | None, typer.Option("--l")] = None,
     ) -> None: ...
 
     schema = cc._serialize_options(source, command_name="source")

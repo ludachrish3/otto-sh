@@ -160,7 +160,7 @@ def test_resolve_parent_rejects_non_capable(tmp_path):
 
 
 def test_resolve_parent_errors_when_no_host(tmp_path):
-    repo = _make_repo(tmp_path, default_host=None or "pepper_seed")
+    repo = _make_repo(tmp_path, default_host="pepper_seed")
     lab = _make_lab()
     # Use a wholly unknown host.
     with pytest.raises(ValueError, match="not in lab"):

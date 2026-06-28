@@ -1,3 +1,4 @@
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -105,7 +106,8 @@ if _completion_names is None:
     _docker_host_ids = collect_docker_capable_host_ids(_repos)
     _backends = collect_backend_names()
     _usernames = collect_reservation_usernames(_repos)
-    try:
+    # Cache writes are best-effort — never block real work on them.
+    with contextlib.suppress(OSError):
         write_cache(
             _repos,
             _instructions,
@@ -116,9 +118,6 @@ if _completion_names is None:
             transfer_backends=_backends["transfer_backends"],
             usernames=_usernames,
         )
-    except OSError:
-        # Cache writes are best-effort — never block real work on them.
-        pass
 
 
 def get_completion_names() -> dict[str, Any] | None:

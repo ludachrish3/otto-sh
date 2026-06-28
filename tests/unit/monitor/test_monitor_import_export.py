@@ -130,7 +130,7 @@ def _assert_collectors_equal(original: MetricCollector, loaded: MetricCollector)
         assert len(loaded_pts) == len(orig_pts), (
             f"Point count mismatch for series {key!r}: {len(orig_pts)} → {len(loaded_pts)}"
         )
-        for op, lp in zip(orig_pts, loaded_pts):
+        for op, lp in zip(orig_pts, loaded_pts, strict=True):
             assert lp.ts == op.ts, f"Timestamp mismatch in {key!r}"
             assert lp.value == pytest.approx(op.value), f"Value mismatch in {key!r}"
             assert lp.meta == op.meta, f"Meta mismatch in {key!r}"
@@ -142,7 +142,7 @@ def _assert_collectors_equal(original: MetricCollector, loaded: MetricCollector)
     assert len(loaded_events) == len(orig_events), (
         f"Event count mismatch: {len(orig_events)} → {len(loaded_events)}"
     )
-    for oe, le in zip(orig_events, loaded_events):
+    for oe, le in zip(orig_events, loaded_events, strict=True):
         assert le.label == oe.label
         assert le.color == oe.color
         assert le.dash == oe.dash

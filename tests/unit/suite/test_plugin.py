@@ -1,3 +1,4 @@
+import contextlib
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -78,10 +79,8 @@ class _FixtureRunner:
 
     @staticmethod
     async def teardown(gen):
-        try:
+        with contextlib.suppress(StopAsyncIteration):
             await gen.__anext__()
-        except StopAsyncIteration:
-            pass
 
 
 @pytest.mark.asyncio
@@ -232,10 +231,8 @@ class _ClassFixtureRunner:
 
     @staticmethod
     async def teardown(gen):
-        try:
+        with contextlib.suppress(StopAsyncIteration):
             await gen.__anext__()
-        except StopAsyncIteration:
-            pass
 
 
 @pytest.mark.asyncio

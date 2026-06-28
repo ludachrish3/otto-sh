@@ -208,7 +208,7 @@ async def _up(
         hosts = await compose_up(r, lab, on=on, build=not no_build)
         proj = get_user_compose_project(r.name)
         rprint(f"[green]{r.name} ({proj}): {len(hosts)} container(s) registered:")
-        for service, host in hosts.items():
+        for _service, host in hosts.items():
             rprint(f"  - {host.id}  →  {host.container_id[:12]}")
 
 

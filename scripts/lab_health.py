@@ -228,10 +228,7 @@ def _print_report(hosts: list[dict], hops: dict[str, dict]) -> bool:
     drifts: list[tuple[str, float]] = []
     for host in hosts:
         ostype = host.get("os_type", "?")
-        if _is_ssh_host(host):
-            res = _check_unix(host)
-        else:
-            res = _check_embedded(host, hops)
+        res = _check_unix(host) if _is_ssh_host(host) else _check_embedded(host, hops)
         all_ok = all_ok and res["ok"]
 
         drift_col = "—"

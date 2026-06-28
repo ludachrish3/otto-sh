@@ -10,6 +10,7 @@ Supports three data sources:
 """
 
 import asyncio
+import contextlib
 import copy
 import fcntl
 import json
@@ -208,11 +209,11 @@ class MetricCollector:
             fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
             self._lock_fd = fd
-        except OSError:
+        except OSError as err:
             raise RuntimeError(
                 f"Another otto monitor instance is already writing to '{self._db_path}'. "
                 "Use a different --db path, or stop the other instance."
-            )
+            ) from err
 
         net_fstype = network_fs_type(self._db_path)
         journal_mode = "DELETE" if net_fstype else "WAL"
@@ -379,13 +380,11 @@ class MetricCollector:
             *[target.host.run(["grep -c ^processor /proc/cpuinfo"]) for target in shell_targets],
             return_exceptions=True,
         )
-        for target, result in zip(shell_targets, setup_results):
+        for target, result in zip(shell_targets, setup_results, strict=True):
             match result:
                 case RunResult(statuses=[cmd_status]):
-                    try:
+                    with contextlib.suppress(ValueError):  # keep default of 1
                         target.core_count = int(cmd_status.output.strip())
-                    except ValueError:
-                        pass  # keep default of 1
                 case BaseException():
                     logger.warning(
                         "Monitor: could not determine core count for %s, defaulting to 1",
@@ -404,7 +403,7 @@ class MetricCollector:
             return_exceptions=True,
         )
         ts = datetime.now()
-        for target, result in zip(self._targets, initial_results):
+        for target, result in zip(self._targets, initial_results, strict=True):
             match result:
                 case RunResult(statuses=cmd_statuses):
                     await self._process_host_results(
@@ -428,7 +427,7 @@ class MetricCollector:
             )
             ts = datetime.now()
 
-            for target, result in zip(self._targets, results[1:]):
+            for target, result in zip(self._targets, results[1:], strict=True):
                 match result:
                     case RunResult(statuses=cmd_statuses):
                         await self._process_host_results(

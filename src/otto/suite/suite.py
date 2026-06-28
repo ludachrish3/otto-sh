@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import inspect
 import os
 import re
@@ -474,10 +475,8 @@ class OttoSuite(Generic[TOptions]):
         if self._monitor_server is not None:
             self._monitor_server.stop()
         if self._monitor_task is not None:
-            try:
+            with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._monitor_task, timeout=10)
-            except asyncio.TimeoutError:
-                pass
             self._monitor_task = None
         if self._monitor_collector is not None:
             await self._monitor_collector.close_db()

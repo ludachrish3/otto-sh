@@ -216,7 +216,7 @@ class TestSingleConsole:
         # Best-effort second open — we expect failure (see above test for
         # the exhaustive list of acceptable failure modes); the assertion
         # is on what comes after, not on the exception type.
-        with pytest.raises(BaseException):
+        with pytest.raises(BaseException):  # noqa: B017 — any failure mode is acceptable (see comment above)
             await asyncio.wait_for(host1.open_session("aux"), timeout=5.0)
 
         # Default session must still work.
@@ -409,7 +409,7 @@ class TestConcurrentEmbeddedTransfer:
                 *(h.put([src], Path(_ZEPHYR_DEST[h.element] or "/")) for h in hosts),
                 return_exceptions=True,
             )
-            for h, result in zip(hosts, results):
+            for h, result in zip(hosts, results, strict=True):
                 self._check_put_result(h.element, result)
         finally:
             await asyncio.gather(
@@ -448,7 +448,7 @@ class TestConcurrentEmbeddedTransfer:
             basil_status, basil_err = basil_result
             assert basil_status == Status.Success, f"basil: SCP put failed: {basil_err!r}"
 
-            for h, result in zip(zephyrs, zephyr_results):
+            for h, result in zip(zephyrs, zephyr_results, strict=True):
                 self._check_put_result(h.element, result)
         finally:
             await asyncio.gather(
@@ -497,7 +497,7 @@ class TestConcurrentEmbeddedTransfer:
                 return_exceptions=True,
             )
 
-            for h, result in zip(fs_hosts, results):
+            for h, result in zip(fs_hosts, results, strict=True):
                 landing = tmp_path / f"got_{h.element}"
                 assert not isinstance(result, BaseException), f"{h.element}: get raised: {result!r}"
                 status, err = result

@@ -138,11 +138,11 @@ async def _connect_with_retry(
                 asyncio.open_connection(host, port),
                 timeout=min(1.0, max(0.1, deadline - asyncio.get_running_loop().time())),
             )
-        except (ConnectionRefusedError, asyncio.TimeoutError, OSError):
+        except (ConnectionRefusedError, asyncio.TimeoutError, OSError) as err:
             if asyncio.get_running_loop().time() >= deadline:
                 raise ConnectionError(
                     f"Remote nc listener on {host}:{port} not ready within {timeout}s"
-                )
+                ) from err
             await asyncio.sleep(retry_interval)
 
 

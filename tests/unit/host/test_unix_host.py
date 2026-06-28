@@ -9,6 +9,7 @@ ssh / telnet / local).
 """
 
 import asyncio
+import contextlib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -338,7 +339,7 @@ class TestOneshot:
                 try:
                     return next(self._data)
                 except StopIteration:
-                    raise StopAsyncIteration
+                    raise StopAsyncIteration from None
 
         process.stdout = AsyncLineIter(lines)
         mock_wait_result = MagicMock()
@@ -386,9 +387,11 @@ class TestOneshot:
         mock_session.close = AsyncMock()
         mock_session._ensure_initialized = AsyncMock()
 
-        with patch("otto.host.session.TelnetClient", return_value=mock_client):
-            with patch("otto.host.session.TelnetSession", return_value=mock_session):
-                result = await h.oneshot("echo hello")
+        with (
+            patch("otto.host.session.TelnetClient", return_value=mock_client),
+            patch("otto.host.session.TelnetSession", return_value=mock_session),
+        ):
+            result = await h.oneshot("echo hello")
 
         assert result.status == Status.Success
         assert result.output == "hello"
@@ -447,33 +450,33 @@ class TestOneshot:
             s._on_output = None
             return s
 
-        with patch("otto.host.session.TelnetClient", side_effect=_new_client):
-            with patch("otto.host.session.TelnetSession", side_effect=_new_session):
-                listener_task = asyncio.create_task(
-                    h.oneshot("nc -l 45681 < /dev/null > /tmp/x 2>/dev/null", timeout=None),
-                )
-                # Wait until the listener is actually running inside its
-                # session, so we know it's holding whatever resource the
-                # cache uses.
-                await asyncio.wait_for(listener_running.wait(), timeout=1.0)
+        with (
+            patch("otto.host.session.TelnetClient", side_effect=_new_client),
+            patch("otto.host.session.TelnetSession", side_effect=_new_session),
+        ):
+            listener_task = asyncio.create_task(
+                h.oneshot("nc -l 45681 < /dev/null > /tmp/x 2>/dev/null", timeout=None),
+            )
+            # Wait until the listener is actually running inside its
+            # session, so we know it's holding whatever resource the
+            # cache uses.
+            await asyncio.wait_for(listener_running.wait(), timeout=1.0)
 
-                # A concurrent oneshot() call must NOT block on the listener.
-                # Under the bug this deadlocks and wait_for raises TimeoutError.
-                try:
-                    await asyncio.wait_for(h.oneshot("echo concurrent"), timeout=1.0)
-                except asyncio.TimeoutError:
-                    pytest.fail(
-                        "h.oneshot() deadlocked waiting for a concurrent long-"
-                        "running telnet oneshot — reproduces the "
-                        "'Remote nc listener on <ip>:<port> not ready' "
-                        "failure in _put_files_nc on telnet hosts",
-                    )
-                finally:
-                    release_listener.set()
-                    try:
-                        await asyncio.wait_for(listener_task, timeout=1.0)
-                    except Exception:
-                        pass
+            # A concurrent oneshot() call must NOT block on the listener.
+            # Under the bug this deadlocks and wait_for raises TimeoutError.
+            try:
+                await asyncio.wait_for(h.oneshot("echo concurrent"), timeout=1.0)
+            except asyncio.TimeoutError:
+                pytest.fail(
+                    "h.oneshot() deadlocked waiting for a concurrent long-"
+                    "running telnet oneshot — reproduces the "
+                    "'Remote nc listener on <ip>:<port> not ready' "
+                    "failure in _put_files_nc on telnet hosts",
+                )
+            finally:
+                release_listener.set()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(listener_task, timeout=1.0)
 
         await h.close()
 
@@ -621,12 +624,12 @@ class TestNotConnectedFileTransfer:
             mock_server.sockets[0].getsockname.return_value = ("0.0.0.0", 9999)
             return mock_server
 
-        with patch.object(h, "_get_local_ip", return_value="127.0.0.1"):
-            with patch.object(h, "oneshot", new_callable=AsyncMock, side_effect=mock_oneshot):
-                with patch(
-                    "otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server
-                ):
-                    status, _ = await h.get([Path("/remote/file.txt")], Path("/tmp"))
+        with (
+            patch.object(h, "_get_local_ip", return_value="127.0.0.1"),
+            patch.object(h, "oneshot", new_callable=AsyncMock, side_effect=mock_oneshot),
+            patch("otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server),
+        ):
+            status, _ = await h.get([Path("/remote/file.txt")], Path("/tmp"))
         assert status == Status.Error
         await h.close()
 
@@ -775,12 +778,12 @@ class TestNcFileTransfer:
             asyncio.get_running_loop().call_soon(lambda: asyncio.ensure_future(cb(reader, writer)))
             return mock_server
 
-        with patch.object(h, "oneshot", AsyncMock(side_effect=mock_oneshot)) as mock_os:
-            with patch.object(h, "_get_local_ip", return_value="127.0.0.1"):
-                with patch(
-                    "otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server
-                ):
-                    status, msg = await h.get([Path("/remote/file.txt")], dest, show_progress=False)
+        with (
+            patch.object(h, "oneshot", AsyncMock(side_effect=mock_oneshot)) as mock_os,
+            patch.object(h, "_get_local_ip", return_value="127.0.0.1"),
+            patch("otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server),
+        ):
+            status, msg = await h.get([Path("/remote/file.txt")], dest, show_progress=False)
 
         assert status == Status.Success
         assert msg == ""
@@ -873,12 +876,14 @@ class TestNcFileTransfer:
         mock_reader = AsyncMock(spec=asyncio.StreamReader)
 
         assert h.log is True
-        with patch.object(h, "oneshot", AsyncMock(side_effect=oneshot_capturing_log)):
-            with patch(
+        with (
+            patch.object(h, "oneshot", AsyncMock(side_effect=oneshot_capturing_log)),
+            patch(
                 "otto.host.transfer.nc._connect_with_retry",
                 AsyncMock(return_value=(mock_reader, mock_writer)),
-            ):
-                status, _ = await h.put([src], Path("/tmp"), show_progress=False)
+            ),
+        ):
+            status, _ = await h.put([src], Path("/tmp"), show_progress=False)
 
         assert status == Status.Success
         assert log_states and all(state is False for state in log_states)
@@ -918,12 +923,12 @@ class TestNcFileTransfer:
             return send_cs
 
         assert h.log is True
-        with patch.object(h, "oneshot", AsyncMock(side_effect=oneshot_capturing_log)):
-            with patch.object(h, "_get_local_ip", return_value="127.0.0.1"):
-                with patch(
-                    "otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server
-                ):
-                    status, _ = await h.get([Path("/remote/file.txt")], dest, show_progress=False)
+        with (
+            patch.object(h, "oneshot", AsyncMock(side_effect=oneshot_capturing_log)),
+            patch.object(h, "_get_local_ip", return_value="127.0.0.1"),
+            patch("otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server),
+        ):
+            status, _ = await h.get([Path("/remote/file.txt")], dest, show_progress=False)
 
         assert status == Status.Success
         assert log_states and all(state is False for state in log_states)
@@ -996,9 +1001,11 @@ class TestOpenSession:
     async def test_telnet_returns_remote_session(self):
         h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
         mock_shell = self._mock_shell_session()
-        with patch("otto.host.session.TelnetClient", return_value=self._mock_telnet_client()):
-            with patch("otto.host.session.TelnetSession", return_value=mock_shell):
-                result = await h.open_session("monitor")
+        with (
+            patch("otto.host.session.TelnetClient", return_value=self._mock_telnet_client()),
+            patch("otto.host.session.TelnetSession", return_value=mock_shell),
+        ):
+            result = await h.open_session("monitor")
         assert isinstance(result, HostSession)
         assert result.alive is True
         await h.close()
@@ -1007,9 +1014,11 @@ class TestOpenSession:
     async def test_telnet_connects_new_client(self):
         h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
         mock_client = self._mock_telnet_client()
-        with patch("otto.host.session.TelnetClient", return_value=mock_client):
-            with patch("otto.host.session.TelnetSession", return_value=self._mock_shell_session()):
-                await h.open_session("monitor")
+        with (
+            patch("otto.host.session.TelnetClient", return_value=mock_client),
+            patch("otto.host.session.TelnetSession", return_value=self._mock_shell_session()),
+        ):
+            await h.open_session("monitor")
         mock_client.connect.assert_called_once()
         await h.close()
 
@@ -1071,16 +1080,18 @@ class TestOpenSession:
         h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
         client_a = self._mock_telnet_client()
         client_b = self._mock_telnet_client()
-        with patch("otto.host.session.TelnetClient", side_effect=[client_a, client_b]):
-            with patch(
+        with (
+            patch("otto.host.session.TelnetClient", side_effect=[client_a, client_b]),
+            patch(
                 "otto.host.session.TelnetSession",
                 side_effect=[
                     self._mock_shell_session(),
                     self._mock_shell_session(),
                 ],
-            ):
-                await h.open_session("alpha")
-                await h.open_session("beta")
+            ),
+        ):
+            await h.open_session("alpha")
+            await h.open_session("beta")
         client_a.connect.assert_called_once()
         client_b.connect.assert_called_once()
         await h.close()
@@ -1090,16 +1101,18 @@ class TestOpenSession:
         h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
         client_a = self._mock_telnet_client()
         client_b = self._mock_telnet_client()
-        with patch("otto.host.session.TelnetClient", side_effect=[client_a, client_b]):
-            with patch(
+        with (
+            patch("otto.host.session.TelnetClient", side_effect=[client_a, client_b]),
+            patch(
                 "otto.host.session.TelnetSession",
                 side_effect=[
                     self._mock_shell_session(),
                     self._mock_shell_session(),
                 ],
-            ) as MockTelnetSession:
-                await h.open_session("alpha")
-                await h.open_session("beta")
+            ) as MockTelnetSession,
+        ):
+            await h.open_session("alpha")
+            await h.open_session("beta")
         calls = MockTelnetSession.call_args_list
         assert calls[0].kwargs["_owned_client"] is client_a
         assert calls[1].kwargs["_owned_client"] is client_b
@@ -1125,9 +1138,11 @@ class TestOpenSession:
         with patch("otto.host.session.SshSession", return_value=ssh_shell):
             ssh_session = await ssh_host.open_session("monitor")
 
-        with patch("otto.host.session.TelnetClient", return_value=mock_client):
-            with patch("otto.host.session.TelnetSession", return_value=telnet_shell):
-                telnet_session = await telnet_host.open_session("monitor")
+        with (
+            patch("otto.host.session.TelnetClient", return_value=mock_client),
+            patch("otto.host.session.TelnetSession", return_value=telnet_shell),
+        ):
+            telnet_session = await telnet_host.open_session("monitor")
 
         assert isinstance(ssh_session, HostSession)
         assert isinstance(telnet_session, HostSession)

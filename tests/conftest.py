@@ -67,6 +67,7 @@ for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
     os.environ.pop(_var, None)
 
 import asyncio
+import contextlib
 import sys
 import weakref
 from dataclasses import dataclass
@@ -227,10 +228,10 @@ def _install_loop_origin_tracker() -> None:
     def _tracking_init(self, *args, **kwargs):
         orig_init(self, *args, **kwargs)
         origin = classify_loop_origin(_frame_filenames(sys._getframe(1)))
-        try:
+        with contextlib.suppress(
+            TypeError
+        ):  # not weak-referenceable (shouldn't happen for real loops)
             _LOOP_INFO[self] = (origin, _current_test)
-        except TypeError:
-            pass  # not weak-referenceable (shouldn't happen for real loops)
 
     base_events.BaseEventLoop.__init__ = _tracking_init
     _tracker_installed = True
@@ -272,10 +273,8 @@ def _live_scoped_runner_loops(item) -> set:
             cached = getattr(fixturedef, "cached_result", None)
             if not cached:  # never set up, or already finalized -> scope ended
                 continue
-            try:
+            with contextlib.suppress(Exception):
                 owned.add(cached[0].get_loop())
-            except Exception:
-                pass
     return owned
 
 
@@ -305,9 +304,7 @@ def pytest_runtest_teardown(item):
     # exclusion swallow one. ``owned`` only ever holds harness runner loops, so
     # this guard is belt-and-suspenders, but it keeps the "product leaks are
     # never masked" invariant local and self-evident.
-    reapable = [
-        loop for loop in _LOOP_INFO.keys() if loop not in owned or origin_of(loop) == "product"
-    ]
+    reapable = [loop for loop in _LOOP_INFO if loop not in owned or origin_of(loop) == "product"]
     _loops_reaped += reap_or_raise(reapable, origin_of, describe=describe)
     return result
 
@@ -384,8 +381,6 @@ def _detect_asyncio_leaks(request):
 # ---------------------------------------------------------------------------
 # active_context: test helper for installing an OttoContext in a block.
 # ---------------------------------------------------------------------------
-
-import contextlib
 
 
 @contextlib.contextmanager

@@ -1,5 +1,6 @@
 """Shared Rich Console instance for the Otto application."""
 
+import contextlib
 import os
 
 from rich.console import Console
@@ -11,7 +12,5 @@ CONSOLE = Console()
 # non-tty state, so the probe fails and the console silently collapses to
 # 80 columns mid-command. Pin the size now, while stdout is still the real
 # terminal; if stdout isn't a tty (piped/redirected) leave Rich to auto-detect.
-try:
+with contextlib.suppress(OSError):
     CONSOLE.size = os.get_terminal_size()
-except OSError:
-    pass

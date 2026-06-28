@@ -14,6 +14,7 @@ including the planned ``--no-log`` toggle for ``host login`` — can reuse it.
 
 from __future__ import annotations
 
+import contextlib
 import fcntl
 import os
 import pty
@@ -116,19 +117,13 @@ class InteractiveOttoSession:
     def __exit__(self, exc_type, exc, tb) -> None:
         proc = self._proc
         if proc is not None and proc.poll() is None:
-            try:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
                 os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-            try:
+            with contextlib.suppress(subprocess.TimeoutExpired):
                 proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                pass
         if self._master_fd is not None:
-            try:
+            with contextlib.suppress(OSError):
                 os.close(self._master_fd)
-            except OSError:
-                pass
             self._master_fd = None
 
     # ------------------------------------------------------------------
@@ -189,7 +184,9 @@ class InteractiveOttoSession:
             try:
                 readable, _, _ = select.select([self._master_fd], [], [], remaining)
             except (OSError, ValueError) as exc:
-                raise TimeoutError(f"select() failed while waiting for {compiled.pattern!r}: {exc}")
+                raise TimeoutError(
+                    f"select() failed while waiting for {compiled.pattern!r}: {exc}"
+                ) from exc
             if not readable:
                 continue
             try:

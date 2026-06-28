@@ -162,7 +162,7 @@ class OttoContext:
                 *(method(h, *args, **kwargs) for h in hosts),
                 return_exceptions=True,
             )
-            return dict(zip([h.id for h in hosts], results))
+            return dict(zip([h.id for h in hosts], results, strict=True))
         out: dict[str, T | BaseException] = {}
         for h in hosts:
             try:

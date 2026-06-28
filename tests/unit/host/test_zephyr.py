@@ -83,10 +83,7 @@ class MockZephyrSession(TelnetSession):
         ``\\r\\n<result>\\r\\n<prompt>`` for each of the four framed lines (the
         two rejected markers, the command, and ``retval``).
         """
-        if output:
-            body = "".join(f"{ln}\r\n" for ln in output.split("\n"))
-        else:
-            body = ""
+        body = "".join(f"{ln}\r\n" for ln in output.split("\n")) if output else ""
         return (
             f"\r\n{self._begin_marker}: command not found\r\n{prompt}"
             f"\r\n{body}{prompt}"

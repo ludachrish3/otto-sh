@@ -67,15 +67,7 @@ def test_socks_forward_from_dict_and_positional():
 
 def test_forward_rejects_unknown_key():
     with pytest.raises(ValidationError):
-        LocalPortForward(
-            **{  # type: ignore[call-arg]
-                "listen_host": "x",
-                "listen_port": 1,
-                "dest_host": "y",
-                "dest_port": 2,
-                "bogus": 3,
-            }
-        )
+        LocalPortForward(listen_host="x", listen_port=1, dest_host="y", dest_port=2, bogus=3)
 
 
 def test_ssh_spec_defaults_match_runtime_defaults():

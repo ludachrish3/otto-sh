@@ -24,6 +24,7 @@ transport with a test double — no monkeypatching of library functions needed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -392,10 +393,8 @@ class ConnectionManager:
             if self._telnet_conn is not None and not self._telnet_conn.alive:
                 # Best-effort cleanup of the stale client; close() is idempotent
                 # and clears the writer/reader so a partial-close doesn't linger.
-                try:
+                with contextlib.suppress(Exception):
                     await self._telnet_conn.close()
-                except Exception:
-                    pass
                 self._telnet_conn = None
 
             if self._telnet_conn is not None:
@@ -429,10 +428,8 @@ class ConnectionManager:
             try:
                 await client.connect()
             except BaseException:
-                try:
+                with contextlib.suppress(Exception):
                     await client.close()
-                except Exception:
-                    pass
                 raise
             self._telnet_conn = client
             logger.debug(f"Connected to {self._name} via telnet")

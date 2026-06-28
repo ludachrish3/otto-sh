@@ -7,7 +7,7 @@ def test_lab_default() -> None:
 
     assert lab.name == "lab1"
     assert lab.resources == set()
-    assert lab.hosts == dict()
+    assert lab.hosts == {}
 
 
 def test_load_lab_forwards_preferences(monkeypatch):

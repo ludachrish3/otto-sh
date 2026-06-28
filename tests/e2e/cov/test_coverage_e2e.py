@@ -419,7 +419,7 @@ class TestBranchCoverage:
     def test_branch_reachability_system_only(self, coverage_run):
         store, *_ = coverage_run
         for fr in store.files():
-            for lineno, lr in fr.lines.items():
+            for _lineno, lr in fr.lines.items():
                 for b in lr.branches:
                     # System tier saw the branch (recorded reachability).
                     assert b.is_reachable("system") is not None

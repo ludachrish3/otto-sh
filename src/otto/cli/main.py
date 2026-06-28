@@ -141,7 +141,7 @@ app = typer.Typer(
 def main(
     ctx: typer.Context,
     labs: Annotated[
-        list[str],
+        list[str] | None,
         typer.Option(
             "--lab",
             "-l",
@@ -150,7 +150,7 @@ def main(
             metavar="COMMA SEPARATED LIST",
             help="Name of lab(s) to reserve and use.",
         ),
-    ] = [],
+    ] = None,
     xdir: Annotated[
         Path,
         typer.Option(

@@ -70,7 +70,7 @@ def test_roundtrip_str_list() -> None:
     """``list[str]`` round-trips via the ``str_list`` kind."""
 
     def source(
-        tags: Annotated[list[str], typer.Option("--tag", help="repeat me")] = [],
+        tags: Annotated[list[str] | None, typer.Option("--tag", help="repeat me")] = None,
     ) -> None: ...
 
     schema = _serialize_options(source, command_name="source")
