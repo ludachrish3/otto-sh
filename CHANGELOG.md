@@ -5,6 +5,50 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-06-28
+
+### Added
+
+- kernel-module load/unload/lsmod + per-class CLI parsers
+- per-session current_user tracking & elevation (Spec A)
+- NFS-readiness — monitor DB journal adapt + time-boxed log rotation
+
+
+### Changed
+
+- make 'otto' a plain logging.Logger
+
+
+### Dependencies
+
+- bump telnetlib3 from 4.0.4 to 4.0.5
+- bump bump-my-version from 1.3.0 to 1.4.1
+- bump actions/checkout from 6.0.3 to 7.0.0
+- bump pydantic-settings from 2.14.0 to 2.14.2
+- bump pydantic from 2.12.5 to 2.13.4
+- bump ty from 0.0.54 to 0.0.55
+- bump starlette from 0.52.1 to 1.3.1
+- bump typer from 0.26.7 to 0.26.8
+- bump hypothesis from 6.155.2 to 6.155.7
+- bump sse-starlette from 3.4.4 to 3.4.5
+- bump fastapi from 0.136.3 to 0.138.1
+
+
+### Documentation
+
+- save forgotten plans and todo files
+- drop manual-publish make targets; scrub publishing docs
+- drop stale version string from docs title
+- implementation plan for standard-logging refactor
+- spec for standard-logging refactor (subclass removal + output_dir→OttoContext); split out import-light __init__
+
+
+### Fixed
+
+- migrate repo1 sample instructions off logger.output_dir
+- tolerate child exiting mid-scan in LocalSession recovery
+
+
 ## [0.5.2] - 2026-06-26
 
 ### Added
@@ -454,7 +498,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/ludachrish3/otto-sh/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ludachrish3/otto-sh/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ludachrish3/otto-sh/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/ludachrish3/otto-sh/compare/v0.4.5...v0.5.0
