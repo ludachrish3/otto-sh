@@ -83,6 +83,7 @@ Each phase is one plan/PR, lands green, and is added to (or already in) the defa
 | **2 — Bug/simplify** | un-ignore `B, C4, SIM, PIE, FLY` | un-ignore → autofix → manual → green | batch clean; gate green |
 | **3 — Modernize** | un-ignore `UP` (minus `UP037`), `RUF`, `PERF`; evaluate `RUF012` vs pydantic | same | batch clean; gate green |
 | **4 — Naming/bug-class** | un-ignore `N` (incl `N806`), `DTZ`, `BLE`, `SLF001`/`PLR2004` (src), `S` (src; tests exempt) | same | batch clean; gate green |
+| **S — Suppression audit** | adopt `PGH003`/`PGH004` (force `# type: ignore[code]`); audit the ~30 pyright-era `# type: ignore` (NOT honored by ty) — delete dead ones, migrate genuinely-needed ones to `# ty: ignore[code]`; decide whether to drop the dormant `[tool.pyright]` config; re-apply `BLE001`/`ARG002` *intent* (as real handling or plain comments) at the sites whose `# noqa` were stripped in Phase 1a when those rules ratchet in | un-ignore → audit → green | gate green; no unused/dead suppressions; `ty`'s `unused-ignore-comment` clean |
 | **D — Documentation** (tail) | un-ignore `D100–D104` (and decide `D105`/`D107`); document modules/classes/methods | large standalone | gate green; docs build green |
 | **A — Annotations** (tail) | un-ignore `ANN` (minus `ANN401`); add real 3.10 annotations + module-top imports (never `__future__`/`TC`/`UP037`) | large standalone | gate green; **re-verify `make docs` green** |
 | **ty — tests** (optional) | drop `tests` from `[tool.ty.src] exclude`; resolve resulting errors | separate lever | `make typecheck` green incl. tests |
@@ -100,6 +101,8 @@ ty is already maximal (`all = "error"`) and in the gate. No config change is nee
 - **`S101` assert (src):** kept enabled for `src`; the ~29 existing asserts must be judged in phase 4 — converted to real errors where they are production invariants (asserts compile out under `-O`), or `# noqa: S101` where they are genuine internal checks.
 - **Pre-existing `from __future__ import annotations`:** a few files (e.g. `transfer/ftp.py`) already carry it. The `FA` deny means we never *force* it; whether to strip the existing ones is a separate, out-of-scope cleanup.
 - **Format churn at line-length 100:** larger than at 120 (more wraps). Phase 0 absorbs it in one isolated, mechanical commit so later phases review cleanly.
+- **`ruff format`/autofix vs the type checker (learned in Phase 0/1a):** reformatting splits one-line statements, which **orphans line-specific `# ty: ignore` directives** from the lines ty attributes errors to; and the `B010` autofix rewrites deliberate `setattr(x, "__signature__", v)` → `x.__signature__ = v`, **re-exposing** ty errors that `setattr` hid. Both broke `ty check` while `make docs`/unit stayed green. **Every phase's verification (and the final review) MUST run `make typecheck`** — formatting/lint changes are not type-checker-neutral. ty's `unused-ignore-comment` rule (at `all = "error"`) is the backstop that catches orphaned directives.
+- **Stripped `# noqa` intent (Phase 1a):** `RUF100` removed `# noqa: BLE001`/`ARG002` comments that became "unused" once those rules were TEMP-ignored, losing inline rationale for deliberate broad-excepts / unused-args. Recoverable from git; **re-applied in Phase S / when each rule ratchets in** (Phases 2/4).
 
 ## Out of scope / non-goals
 
