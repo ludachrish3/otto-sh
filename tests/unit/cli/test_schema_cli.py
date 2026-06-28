@@ -10,24 +10,27 @@ runner = CliRunner()
 
 
 def test_export_writes_all_documents(tmp_path):
-    out = tmp_path / 'schemas'
-    result = runner.invoke(schema_app, ['export', '--out', str(out)])
+    out = tmp_path / "schemas"
+    result = runner.invoke(schema_app, ["export", "--out", str(out)])
     assert result.exit_code == 0, result.output
 
-    written = {p.name for p in out.glob('*.schema.json')}
+    written = {p.name for p in out.glob("*.schema.json")}
     assert {
-        'unix-host.schema.json', 'embedded-host.schema.json',
-        'hosts.schema.json', 'settings.schema.json', 'reservations.schema.json',
+        "unix-host.schema.json",
+        "embedded-host.schema.json",
+        "hosts.schema.json",
+        "settings.schema.json",
+        "reservations.schema.json",
     } <= written
 
     # Every emitted file is valid JSON carrying the schema dialect.
-    for path in out.glob('*.schema.json'):
+    for path in out.glob("*.schema.json"):
         doc = json.loads(path.read_text())
-        assert doc['$schema'] == 'https://json-schema.org/draft/2020-12/schema'
+        assert doc["$schema"] == "https://json-schema.org/draft/2020-12/schema"
 
 
 def test_export_reports_what_it_wrote(tmp_path):
-    out = tmp_path / 'schemas'
-    result = runner.invoke(schema_app, ['export', '--out', str(out), '--builtins-only'])
+    out = tmp_path / "schemas"
+    result = runner.invoke(schema_app, ["export", "--out", str(out), "--builtins-only"])
     assert result.exit_code == 0
-    assert 'hosts.schema.json' in result.output
+    assert "hosts.schema.json" in result.output

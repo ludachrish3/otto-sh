@@ -16,11 +16,10 @@ import pytest_asyncio
 
 from otto.configmodule.repo import Repo
 from otto.docker import build_images
-from otto.docker.build import image_full_tag, image_latest_tag
+from otto.docker.build import image_latest_tag
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
-
 
 REPO1_DIR = Path(__file__).parent.parent / "repo1"
 

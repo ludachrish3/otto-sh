@@ -15,14 +15,16 @@ from ..models.host import HostSpec
 # Names of the per-protocol option tables accepted on host dicts and in
 # ``[host_preferences."<selector>"]`` blocks. Kept here (and imported by
 # ``configmodule.repo``) as the canonical option-key set.
-OPTIONS_KEYS: frozenset[str] = frozenset({
-    'ssh_options',
-    'telnet_options',
-    'sftp_options',
-    'scp_options',
-    'ftp_options',
-    'nc_options',
-})
+OPTIONS_KEYS: frozenset[str] = frozenset(
+    {
+        "ssh_options",
+        "telnet_options",
+        "sftp_options",
+        "scp_options",
+        "ftp_options",
+        "nc_options",
+    }
+)
 
 
 def _merge_host_dict(
@@ -70,7 +72,7 @@ def create_host_from_dict(
     ``to_host``) and option-value defaults (merged per-key, product-wins). With
     ``preferences=None`` the result is identical to a bare host dict.
     """
-    selector = host_data.get('os_type', 'unix')
+    selector = host_data.get("os_type", "unix")
     profile = build_os_profile(selector)
     cls = build_host_class(profile.base)
     spec_cls = build_host_spec(profile.base)
@@ -79,14 +81,16 @@ def create_host_from_dict(
     option_defaults: dict[str, dict[str, Any]] | None = None
     if preferences:
         host_id = make_host_id(
-            host_data['element'], host_data.get('element_id'),
-            host_data.get('board'), host_data.get('slot'),
+            host_data["element"],
+            host_data.get("element_id"),
+            host_data.get("board"),
+            host_data.get("slot"),
         )
         flat_prefs = select_preferences(preferences, host_id)
         option_defaults = select_option_defaults(preferences, host_id)
 
     merged = _merge_host_dict(host_data, option_defaults, profile, spec_cls)
-    merged['os_type'] = selector
+    merged["os_type"] = selector
     spec = spec_cls.model_validate(merged)
     host = spec.to_host(cls, preferences=flat_prefs)
     apply_product_providers(host)
@@ -108,15 +112,15 @@ def validate_host_dict(host_data: dict[str, Any]) -> None:
     pydantic.ValidationError
         On any structural problem (subclass of ``ValueError``).
     """
-    selector = host_data.get('os_type', 'unix')
+    selector = host_data.get("os_type", "unix")
     profile = get_os_profile(selector)
     if profile is None:
-        known = ', '.join(registered_profile_names())
+        known = ", ".join(registered_profile_names())
         raise ValueError(
             f"Field 'os_type' {selector!r} is not a registered profile. "
             f"Registered profiles: {known}"
         )
     spec_cls = build_host_spec(profile.base)
     merged = _merge_host_dict(host_data, None, profile, spec_cls)
-    merged['os_type'] = selector
+    merged["os_type"] = selector
     spec_cls.model_validate(merged)

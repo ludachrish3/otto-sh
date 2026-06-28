@@ -28,20 +28,21 @@ wrapping the log file narrower than the terminal. CONSOLE is already pinned
 to the launch-time terminal width in otto.console."""
 
 _ANSI = re.compile(
-    r'\x1b'                 # ESC
-    r'(?:'
-    r'\[[0-9;]*[a-zA-Z]'    # CSI sequences (covers SGR and cursor/erase codes)
-    r'|\][^\x07\x1b]*'      # OSC sequences
-    r'(?:\x07|\x1b\\)'      # OSC terminator (BEL or ST)
-    r'|[@-_][^@-_]*'        # other two-character escape sequences
-    r')'
+    r"\x1b"  # ESC
+    r"(?:"
+    r"\[[0-9;]*[a-zA-Z]"  # CSI sequences (covers SGR and cursor/erase codes)
+    r"|\][^\x07\x1b]*"  # OSC sequences
+    r"(?:\x07|\x1b\\)"  # OSC terminator (BEL or ST)
+    r"|[@-_][^@-_]*"  # other two-character escape sequences
+    r")"
 )
 
+
 def format_log_time(dt: datetime) -> Text:
-    return Text( f'[ {dt.strftime("%Y-%m-%d %H:%M:%S")}.{dt.microsecond // 1000:03d} ]')
+    return Text(f"[ {dt.strftime('%Y-%m-%d %H:%M:%S')}.{dt.microsecond // 1000:03d} ]")
+
 
 class MultilineFormatter(Formatter):
-
     @override
     def format(self, record: LogRecord) -> str:
 
@@ -55,26 +56,28 @@ class MultilineFormatter(Formatter):
         # character is needed instead of calling splitlines() because
         # splitlines() ignores the first trailing newline character.
         for line in originalMsg.splitlines():
-
             record.msg = line
             formattedLine = super().format(record)
 
             formattedLines.append(formattedLine)
 
-        output = '\n'.join(formattedLines)
+        output = "\n".join(formattedLines)
 
         # Restore the original message, including all newlines
         record.msg = originalMsg
 
         return output
 
-_default_log_format = '{asctime} [{levelname:^7}] {message}'
-_default_log_style  = '{'
 
-FormatType = Literal['%'] | Literal['{']
+_default_log_format = "{asctime} [{levelname:^7}] {message}"
+_default_log_style = "{"
+
+FormatType = Literal["%", "{"]
+
+
 class RichFormatter(MultilineFormatter):
-
-    def __init__(self,
+    def __init__(
+        self,
         fmt: str = _default_log_format,
         style: FormatType = _default_log_style,
         **kwargs: Any,
@@ -87,17 +90,18 @@ class RichFormatter(MultilineFormatter):
 
         # Remove all ANSI characters if rich logging is disabled
         if not self.rich:
-            msg =_ANSI.sub('', msg)
+            msg = _ANSI.sub("", msg)
 
         return msg
 
-    def _stylize(self,
+    def _stylize(
+        self,
         record: LogRecord,
     ) -> LogRecord:
 
         with _console.capture() as capture:
-
-            _console.print(record.msg,
+            _console.print(
+                record.msg,
                 markup=True,
             )
 

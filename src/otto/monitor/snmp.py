@@ -36,7 +36,7 @@ from pydantic import ConfigDict
 from ..models.base import OttoModel
 from .parsers import MetricDataPoint
 
-logger = logging.getLogger('otto')
+logger = logging.getLogger("otto")
 
 
 # ---------------------------------------------------------------------------
@@ -50,18 +50,19 @@ logger = logging.getLogger('otto')
 # TODO: 63245 is a placeholder Private Enterprise Number. Apply for a real PEN
 # with IANA before shipping the agent outside the test bed.
 OTTO_PEN = 63245
-_OTTO_BASE = f'1.3.6.1.4.1.{OTTO_PEN}'
+_OTTO_BASE = f"1.3.6.1.4.1.{OTTO_PEN}"
 
 # Standard scalar OIDs (work against any standards-compliant agent).
-OID_SYS_UPTIME = '1.3.6.1.2.1.1.3.0'  # sysUpTime, TimeTicks (1/100 s)
+OID_SYS_UPTIME = "1.3.6.1.2.1.1.3.0"  # sysUpTime, TimeTicks (1/100 s)
 
 
-SnmpVersion = Literal['1', '2c']
+SnmpVersion = Literal["1", "2c"]
 
 
 # ---------------------------------------------------------------------------
 # Presentation layer — SnmpMetric descriptor (the SNMP analog of MetricParser)
 # ---------------------------------------------------------------------------
+
 
 class SnmpMetric(OttoModel):
     """How a single OID's value is interpreted and charted.
@@ -81,14 +82,14 @@ class SnmpMetric(OttoModel):
 
     model_config = ConfigDict(frozen=True)
 
-    oid:       str
-    label:     str
-    chart:     str
-    y_title:   str = ''
-    unit:      str = ''
-    tab:       str = 'metrics'
-    tab_label: str = 'Metrics'
-    scale:     float = 1.0
+    oid: str
+    label: str
+    chart: str
+    y_title: str = ""
+    unit: str = ""
+    tab: str = "metrics"
+    tab_label: str = "Metrics"
+    scale: float = 1.0
 
     def to_point(self, raw: float) -> MetricDataPoint:
         """Apply ``scale`` to a raw numeric varbind, returning a chartable point."""
@@ -124,16 +125,45 @@ def _register_builtin_metrics() -> None:
     …); the enterprise OIDs are scalars served by otto's Zephyr agent.
     """
     for metric in (
-        SnmpMetric(oid=OID_SYS_UPTIME, label='Uptime', chart='Uptime',
-                   y_title='Uptime', unit='s', scale=0.01),
-        SnmpMetric(oid=f'{_OTTO_BASE}.1.1.0', label='Overall CPU', chart='CPU',
-                   y_title='Usage %', unit='%', tab='cpu', tab_label='CPU', scale=0.01),
-        SnmpMetric(oid=f'{_OTTO_BASE}.1.2.0', label='Heap Used', chart='Memory Usage',
-                   y_title='Memory', unit='B', tab='memory', tab_label='Memory'),
-        SnmpMetric(oid=f'{_OTTO_BASE}.1.3.0', label='Heap Free', chart='Memory Usage',
-                   y_title='Memory', unit='B', tab='memory', tab_label='Memory'),
-        SnmpMetric(oid=f'{_OTTO_BASE}.1.4.0', label='Threads', chart='Threads',
-                   y_title='Count', unit=''),
+        SnmpMetric(
+            oid=OID_SYS_UPTIME,
+            label="Uptime",
+            chart="Uptime",
+            y_title="Uptime",
+            unit="s",
+            scale=0.01,
+        ),
+        SnmpMetric(
+            oid=f"{_OTTO_BASE}.1.1.0",
+            label="Overall CPU",
+            chart="CPU",
+            y_title="Usage %",
+            unit="%",
+            tab="cpu",
+            tab_label="CPU",
+            scale=0.01,
+        ),
+        SnmpMetric(
+            oid=f"{_OTTO_BASE}.1.2.0",
+            label="Heap Used",
+            chart="Memory Usage",
+            y_title="Memory",
+            unit="B",
+            tab="memory",
+            tab_label="Memory",
+        ),
+        SnmpMetric(
+            oid=f"{_OTTO_BASE}.1.3.0",
+            label="Heap Free",
+            chart="Memory Usage",
+            y_title="Memory",
+            unit="B",
+            tab="memory",
+            tab_label="Memory",
+        ),
+        SnmpMetric(
+            oid=f"{_OTTO_BASE}.1.4.0", label="Threads", chart="Threads", y_title="Count", unit=""
+        ),
     ):
         register_snmp_metric(metric)
 
@@ -180,6 +210,7 @@ def points_from_values(
 # Acquisition layer — thin async pysnmp v2c GET wrapper
 # ---------------------------------------------------------------------------
 
+
 @dataclass(slots=True)
 class SnmpClient:
     """Async SNMP v1/v2c GET client for a single endpoint.
@@ -190,12 +221,12 @@ class SnmpClient:
     this client knows nothing about hop topology.
     """
 
-    address:   str
-    port:      int = 161
-    community: str = 'public'
-    version:   SnmpVersion = '2c'
-    timeout:   float = 2.0
-    retries:   int = 1
+    address: str
+    port: int = 161
+    community: str = "public"
+    version: SnmpVersion = "2c"
+    timeout: float = 2.0
+    retries: int = 1
 
     async def get(self, oids: list[str]) -> dict[str, float | None]:
         """GET ``oids`` in one PDU; return ``{oid: numeric_value_or_None}``.
@@ -219,15 +250,17 @@ class SnmpClient:
             get_cmd,
         )
 
-        mp_model = 1 if self.version == '2c' else 0
-        result: dict[str, float | None] = {oid: None for oid in oids}
+        mp_model = 1 if self.version == "2c" else 0
+        result: dict[str, float | None] = dict.fromkeys(oids)
 
         # One dispatcher per GET; close it in finally so the UDP socket isn't
         # leaked (otherwise it lingers until GC and trips ResourceWarning).
         dispatcher = SnmpDispatcher()
         try:
             transport = await UdpTransportTarget.create(
-                (self.address, self.port), timeout=self.timeout, retries=self.retries,
+                (self.address, self.port),
+                timeout=self.timeout,
+                retries=self.retries,
             )
             error_indication, error_status, _error_index, var_binds = await get_cmd(
                 dispatcher,
@@ -235,17 +268,22 @@ class SnmpClient:
                 transport,
                 *(ObjectType(ObjectIdentity(oid)) for oid in oids),
             )
-        except Exception as exc:  # noqa: BLE001 — a poll failure must not kill collection
-            logger.warning('SNMP GET to %s:%d failed: %s', self.address, self.port, exc)
+        except Exception as exc:
+            logger.warning("SNMP GET to %s:%d failed: %s", self.address, self.port, exc)
             return result
         finally:
             dispatcher.close()
 
         if error_indication:
-            logger.warning('SNMP error from %s:%d: %s', self.address, self.port, error_indication)
+            logger.warning("SNMP error from %s:%d: %s", self.address, self.port, error_indication)
             return result
         if error_status:
-            logger.warning('SNMP error-status from %s:%d: %s', self.address, self.port, error_status.prettyPrint())
+            logger.warning(
+                "SNMP error-status from %s:%d: %s",
+                self.address,
+                self.port,
+                error_status.prettyPrint(),
+            )
             return result
 
         for var_bind in var_binds:
@@ -270,7 +308,7 @@ class SnmpSource:
     """
 
     client: SnmpClient
-    oids:   list[str]
+    oids: list[str]
 
 
 def _coerce_numeric(value: object) -> float | None:
@@ -290,6 +328,6 @@ def _coerce_numeric(value: object) -> float | None:
 def _match_requested(oid_str: str, requested: dict[str, float | None]) -> str | None:
     """Map a returned OID back to a requested key, tolerating a trailing ``.0``."""
     for key in requested:
-        if key == oid_str or key.rstrip('.0') == oid_str.rstrip('.0'):
+        if key == oid_str or key.rstrip(".0") == oid_str.rstrip(".0"):
             return key
     return None

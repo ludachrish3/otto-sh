@@ -12,4 +12,4 @@ same directory at collection time.
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / 'pylib'))
+sys.path.insert(0, str(Path(__file__).parent / "pylib"))

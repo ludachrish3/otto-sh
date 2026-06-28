@@ -14,15 +14,15 @@ from otto.host.local_host import LocalHost
 from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
 
-
 # ---------------------------------------------------------------------------
 # Unit tests (mocked — fast, deterministic)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def host() -> UnixHost:
     """Bare UnixHost, no connections established."""
-    return UnixHost(ip='10.0.0.1', element='box', creds={'user': 'pass'}, log=False)
+    return UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=False)
 
 
 class TestRunTimeout:
@@ -31,43 +31,44 @@ class TestRunTimeout:
     @pytest.mark.asyncio
     async def test_no_timeout_passes_none_to_run_one(self, host: UnixHost):
         """Without timeout, _run_one receives no explicit timeout."""
-        ok = CommandStatus('echo hi', 'hi', Status.Success, 0)
-        with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
-            await host.run(['echo hi'])
-        mock.assert_called_once_with('echo hi', expects=None, timeout=None, log=True)
+        ok = CommandStatus("echo hi", "hi", Status.Success, 0)
+        with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
+            await host.run(["echo hi"])
+        mock.assert_called_once_with("echo hi", expects=None, timeout=None, log=True)
 
     @pytest.mark.asyncio
     async def test_timeout_passes_remaining_to_run_one(self, host: UnixHost):
         """With a timeout, each _run_one receives the remaining budget."""
-        ok = CommandStatus('cmd', 'ok', Status.Success, 0)
-        with patch.object(host, '_run_one', new_callable=AsyncMock, return_value=ok) as mock:
-            await host.run(['cmd1', 'cmd2'], timeout=10.0)
+        ok = CommandStatus("cmd", "ok", Status.Success, 0)
+        with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
+            await host.run(["cmd1", "cmd2"], timeout=10.0)
 
         assert mock.call_count == 2
         # First call should get ~10s, second should get slightly less
-        first_timeout = mock.call_args_list[0].kwargs['timeout']
-        second_timeout = mock.call_args_list[1].kwargs['timeout']
+        first_timeout = mock.call_args_list[0].kwargs["timeout"]
+        second_timeout = mock.call_args_list[1].kwargs["timeout"]
         assert first_timeout > 9.0  # nearly full budget
-        assert second_timeout > 0   # still has remaining time
+        assert second_timeout > 0  # still has remaining time
         assert first_timeout > second_timeout  # budget decreases
 
     @pytest.mark.asyncio
     async def test_budget_exhausted_skips_remaining_commands(self, host: UnixHost):
         """When the budget runs out, remaining commands are skipped."""
+
         async def slow_cmd(cmd, **kwargs):
             # Simulate a command that takes nearly all the budget
             await asyncio.sleep(0.08)
-            return CommandStatus(cmd, 'ok', Status.Success, 0)
+            return CommandStatus(cmd, "ok", Status.Success, 0)
 
-        with patch.object(host, '_run_one', new_callable=AsyncMock, side_effect=slow_cmd):
+        with patch.object(host, "_run_one", new_callable=AsyncMock, side_effect=slow_cmd):
             result = await host.run(
-                ['slow1', 'slow2', 'skipped'],
+                ["slow1", "slow2", "skipped"],
                 timeout=0.1,
             )
 
         # First two might run; third should be skipped with Status.Error
         assert result.status == Status.Error
-        skipped = [r for r in result.statuses if 'budget exhausted' in r.output]
+        skipped = [r for r in result.statuses if "budget exhausted" in r.output]
         assert len(skipped) >= 1
 
     @pytest.mark.asyncio
@@ -76,21 +77,22 @@ class TestRunTimeout:
         call_timeouts: list[float] = []
 
         async def track_timeout(cmd, **kwargs):
-            call_timeouts.append(kwargs.get('timeout'))
-            return CommandStatus(cmd, 'ok', Status.Success, 0)
+            call_timeouts.append(kwargs.get("timeout"))
+            return CommandStatus(cmd, "ok", Status.Success, 0)
 
-        with patch.object(host, '_run_one', new_callable=AsyncMock, side_effect=track_timeout):
-            await host.run(['fast1', 'fast2', 'fast3'], timeout=5.0)
+        with patch.object(host, "_run_one", new_callable=AsyncMock, side_effect=track_timeout):
+            await host.run(["fast1", "fast2", "fast3"], timeout=5.0)
 
         # All three should get nearly the full budget since each is instant
         assert len(call_timeouts) == 3
         for t in call_timeouts:
-            assert t > 4.5, f'Expected > 4.5s remaining, got {t}'
+            assert t > 4.5, f"Expected > 4.5s remaining, got {t}"
 
 
 # ---------------------------------------------------------------------------
 # Integration tests (LocalHost — real session, real shell)
 # ---------------------------------------------------------------------------
+
 
 class TestRunTimeoutIntegration:
     """Integration tests using real LocalHost shell sessions."""
@@ -101,15 +103,15 @@ class TestRunTimeoutIntegration:
         host = LocalHost()
         try:
             result = await host.run(
-                ['echo one', 'echo two', 'echo three'],
+                ["echo one", "echo two", "echo three"],
                 timeout=10.0,
             )
             assert result.status == Status.Success
             assert len(result.statuses) == 3
             assert all(r.status == Status.Success for r in result.statuses)
-            assert 'one' in result.statuses[0].output
-            assert 'two' in result.statuses[1].output
-            assert 'three' in result.statuses[2].output
+            assert "one" in result.statuses[0].output
+            assert "two" in result.statuses[1].output
+            assert "three" in result.statuses[2].output
         finally:
             await host.close()
 
@@ -121,20 +123,20 @@ class TestRunTimeoutIntegration:
             # sleep 10 will exceed the 0.1s budget — _run_one's wait_for fires,
             # triggers Ctrl+C recovery, returns Status.Error
             result = await host.run(
-                ['sleep 10', 'echo after'],
+                ["sleep 10", "echo after"],
                 timeout=0.1,
             )
             assert result.statuses[0].status == Status.Error
-            assert 'timed out' in result.statuses[0].output.lower()
+            assert "timed out" in result.statuses[0].output.lower()
 
             # 'echo after' should be skipped (budget exhausted) or timed out
             if len(result.statuses) > 1:
                 assert result.statuses[1].status == Status.Error
 
             # Session should still be healthy — verify by running another command
-            result2 = (await host.run('echo recovered')).only
+            result2 = (await host.run("echo recovered")).only
             assert result2.status == Status.Success
-            assert 'recovered' in result2.output
+            assert "recovered" in result2.output
         finally:
             await host.close()
 
@@ -143,7 +145,7 @@ class TestRunTimeoutIntegration:
         """Without timeout, run behaves exactly as before."""
         host = LocalHost()
         try:
-            result = await host.run(['echo hello', 'echo world'])
+            result = await host.run(["echo hello", "echo world"])
             assert result.status == Status.Success
             assert len(result.statuses) == 2
         finally:
@@ -158,12 +160,12 @@ class TestRunTimeoutIntegration:
             # The point is that the later command gets nearly the full 0.5s
             # budget (donation), not just an even-split 0.17s slice.
             result = await host.run(
-                ['echo fast1', 'echo fast2', 'sleep 0.1 && echo done'],
+                ["echo fast1", "echo fast2", "sleep 0.1 && echo done"],
                 timeout=0.5,
             )
             assert result.status == Status.Success
             assert len(result.statuses) == 3
             assert all(r.status == Status.Success for r in result.statuses)
-            assert 'done' in result.statuses[2].output
+            assert "done" in result.statuses[2].output
         finally:
             await host.close()

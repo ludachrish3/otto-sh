@@ -14,10 +14,16 @@ import typer
 
 @dataclass
 class RepoOptions:
-    device_type: Annotated[str, typer.Option(
-        help="Type of device under test (e.g. 'router', 'switch').",
-    )] = "router"
+    device_type: Annotated[
+        str,
+        typer.Option(
+            help="Type of device under test (e.g. 'router', 'switch').",
+        ),
+    ] = "router"
 
-    lab_env: Annotated[str, typer.Option(
-        help="Lab environment to target (e.g. 'staging', 'production').",
-    )] = "staging"
+    lab_env: Annotated[
+        str,
+        typer.Option(
+            help="Lab environment to target (e.g. 'staging', 'production').",
+        ),
+    ] = "staging"

@@ -29,6 +29,7 @@ runner = CliRunner()
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _render(renderable) -> str:
     """Render a Rich renderable to a plain string for assertion."""
     buf = io.StringIO()
@@ -38,27 +39,29 @@ def _render(renderable) -> str:
 
 def _make_sut(
     base: Path,
-    name: str = 'myrepo',
-    version: str = '1.0.0',
-    extra_toml: str = '',
+    name: str = "myrepo",
+    version: str = "1.0.0",
+    extra_toml: str = "",
 ) -> Path:
     """Create a minimal SUT directory with .otto/settings.toml."""
     sut_dir = base / name
     sut_dir.mkdir(parents=True, exist_ok=True)
-    otto_dir = sut_dir / '.otto'
+    otto_dir = sut_dir / ".otto"
     otto_dir.mkdir()
-    (otto_dir / 'settings.toml').write_text(
+    (otto_dir / "settings.toml").write_text(
         f'name = "{name}"\nversion = "{version}"\ntests = ["${{sut_dir}}/tests"]\n{extra_toml}'
     )
     return sut_dir
 
 
-def _add_test_file(sut_dir: Path, filename: str = 'test_example.py', content: str | None = None) -> Path:
+def _add_test_file(
+    sut_dir: Path, filename: str = "test_example.py", content: str | None = None
+) -> Path:
     """Write a test file into the SUT's tests/ directory."""
-    tests_dir = sut_dir / 'tests'
+    tests_dir = sut_dir / "tests"
     tests_dir.mkdir(exist_ok=True)
     if content is None:
-        content = 'def test_pass():\n    assert True\n\ndef test_another():\n    assert True\n'
+        content = "def test_pass():\n    assert True\n\ndef test_another():\n    assert True\n"
     p = tests_dir / filename
     p.write_text(content)
     return p
@@ -67,7 +70,7 @@ def _add_test_file(sut_dir: Path, filename: str = 'test_example.py', content: st
 def _item(sut_dir: Path, rel: str, name: str, cls_name: str | None = None) -> CollectedTest:
     """Build a CollectedTest with an absolute path inside sut_dir."""
     return CollectedTest(
-        nodeid=f'pytest/root/{rel}::{name}',
+        nodeid=f"pytest/root/{rel}::{name}",
         name=name,
         path=(sut_dir / rel).resolve(),
         cls_name=cls_name,
@@ -78,96 +81,94 @@ def _item(sut_dir: Path, rel: str, name: str, cls_name: str | None = None) -> Co
 # get_test_suites_panel — unique suites / files
 # ---------------------------------------------------------------------------
 
-class TestGetTestSuitesPanel:
 
+class TestGetTestSuitesPanel:
     def test_class_based_shows_class_name_only(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
         repo = Repo(sut_dir=sut_dir)
-        items = [_item(sut_dir, 'tests/test_foo.py', 'test_bar', cls_name='TestSuite')]
+        items = [_item(sut_dir, "tests/test_foo.py", "test_bar", cls_name="TestSuite")]
         text = _render(repo.get_test_suites_panel(items))
-        assert 'TestSuite' in text
-        assert 'tests/test_foo.py' not in text
+        assert "TestSuite" in text
+        assert "tests/test_foo.py" not in text
 
     def test_bare_function_excluded(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
         repo = Repo(sut_dir=sut_dir)
-        items = [_item(sut_dir, 'tests/test_foo.py', 'test_bar')]
+        items = [_item(sut_dir, "tests/test_foo.py", "test_bar")]
         text = _render(repo.get_test_suites_panel(items))
         # Bare functions are not registered suites — they must not appear
-        assert 'test_foo' not in text
-        assert 'no tests found' in text
+        assert "test_foo" not in text
+        assert "no tests found" in text
 
     def test_deduplicates_same_suite(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
         repo = Repo(sut_dir=sut_dir)
         items = [
-            _item(sut_dir, 'tests/test_foo.py', 'test_one', cls_name='TestSuite'),
-            _item(sut_dir, 'tests/test_foo.py', 'test_two', cls_name='TestSuite'),
+            _item(sut_dir, "tests/test_foo.py", "test_one", cls_name="TestSuite"),
+            _item(sut_dir, "tests/test_foo.py", "test_two", cls_name="TestSuite"),
         ]
         text = _render(repo.get_test_suites_panel(items))
-        assert text.count('TestSuite') == 1
+        assert text.count("TestSuite") == 1
 
     def test_empty_shows_placeholder(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
         repo = Repo(sut_dir=sut_dir)
-        assert 'no tests found' in _render(repo.get_test_suites_panel([]))
+        assert "no tests found" in _render(repo.get_test_suites_panel([]))
 
 
 # ---------------------------------------------------------------------------
 # get_lab_panel — host-source-backed lab listing + graceful failure
 # ---------------------------------------------------------------------------
 
-class TestGetLabPanel:
 
+class TestGetLabPanel:
     def test_lists_lab_names_from_host_source(self, tmp_path):
         """The default json backend's lab names render as bulleted entries."""
         sut_dir = _make_sut(tmp_path, extra_toml='labs = ["${sut_dir}/labdata"]\n')
-        labdata = sut_dir / 'labdata'
+        labdata = sut_dir / "labdata"
         labdata.mkdir()
-        (labdata / 'hosts.json').write_text('[{"labs": ["alpha", "beta"]}]')
+        (labdata / "hosts.json").write_text('[{"labs": ["alpha", "beta"]}]')
         repo = Repo(sut_dir=sut_dir)
         text = _render(repo.get_lab_panel())
-        assert 'alpha' in text
-        assert 'beta' in text
+        assert "alpha" in text
+        assert "beta" in text
 
     def test_unknown_backend_renders_error_not_traceback(self, tmp_path):
         """A misconfigured [lab] backend surfaces in-panel instead of crashing."""
-        sut_dir = _make_sut(
-            tmp_path, extra_toml='[lab]\nbackend = "does-not-exist"\n'
-        )
+        sut_dir = _make_sut(tmp_path, extra_toml='[lab]\nbackend = "does-not-exist"\n')
         repo = Repo(sut_dir=sut_dir)
         # Must not raise — get_lab_panel catches the build failure.
         text = _render(repo.get_lab_panel())
-        assert 'host source unavailable' in text
-        assert 'does-not-exist' in text
+        assert "host source unavailable" in text
+        assert "does-not-exist" in text
 
 
 # ---------------------------------------------------------------------------
 # resolve_suite
 # ---------------------------------------------------------------------------
 
-class TestResolveSuite:
 
+class TestResolveSuite:
     def test_sut_relative_file_resolves_to_absolute(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
         test_file = _add_test_file(sut_dir)
         repo = Repo(sut_dir=sut_dir)
-        result = resolve_suite('tests/test_example.py', [repo])
+        result = resolve_suite("tests/test_example.py", [repo])
         assert result == str(test_file.resolve())
 
     def test_sut_relative_nodeid_resolves_to_absolute(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
         test_file = _add_test_file(sut_dir)
         repo = Repo(sut_dir=sut_dir)
-        result = resolve_suite('tests/test_example.py::test_pass', [repo])
-        assert result == f'{test_file.resolve()}::test_pass'
+        result = resolve_suite("tests/test_example.py::test_pass", [repo])
+        assert result == f"{test_file.resolve()}::test_pass"
 
     def test_class_nodeid_resolves_correctly(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
         test_file = _add_test_file(sut_dir)
         repo = Repo(sut_dir=sut_dir)
-        result = resolve_suite('tests/test_example.py::TestSuite::test_method', [repo])
-        assert result == f'{test_file.resolve()}::TestSuite::test_method'
+        result = resolve_suite("tests/test_example.py::TestSuite::test_method", [repo])
+        assert result == f"{test_file.resolve()}::TestSuite::test_method"
 
     def test_absolute_path_returned_unchanged(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
@@ -180,36 +181,37 @@ class TestResolveSuite:
         sut_dir = _make_sut(tmp_path)
         repo = Repo(sut_dir=sut_dir)
         # pyproject.toml exists relative to the otto project CWD
-        assert resolve_suite('pyproject.toml', [repo]) == 'pyproject.toml'
+        assert resolve_suite("pyproject.toml", [repo]) == "pyproject.toml"
 
     def test_unresolvable_path_returned_unchanged(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
         repo = Repo(sut_dir=sut_dir)
-        assert resolve_suite('nonexistent/test_file.py', [repo]) == 'nonexistent/test_file.py'
+        assert resolve_suite("nonexistent/test_file.py", [repo]) == "nonexistent/test_file.py"
 
     def test_first_matching_repo_wins(self, tmp_path):
-        sut_a = _make_sut(tmp_path / 'a', name='repo_a')
-        sut_b = _make_sut(tmp_path / 'b', name='repo_b')
-        file_a = _add_test_file(sut_a, 'test_shared.py')
-        _add_test_file(sut_b, 'test_shared.py')
+        sut_a = _make_sut(tmp_path / "a", name="repo_a")
+        sut_b = _make_sut(tmp_path / "b", name="repo_b")
+        file_a = _add_test_file(sut_a, "test_shared.py")
+        _add_test_file(sut_b, "test_shared.py")
         repo_a = Repo(sut_dir=sut_a)
         repo_b = Repo(sut_dir=sut_b)
-        result = resolve_suite('tests/test_shared.py::test_pass', [repo_a, repo_b])
-        assert result == f'{file_a.resolve()}::test_pass'
+        result = resolve_suite("tests/test_shared.py::test_pass", [repo_a, repo_b])
+        assert result == f"{file_a.resolve()}::test_pass"
 
     def test_falls_through_to_second_repo_if_first_has_no_match(self, tmp_path):
-        sut_a = _make_sut(tmp_path / 'a', name='repo_a')  # no test file
-        sut_b = _make_sut(tmp_path / 'b', name='repo_b')
-        file_b = _add_test_file(sut_b, 'test_only_in_b.py')
+        sut_a = _make_sut(tmp_path / "a", name="repo_a")  # no test file
+        sut_b = _make_sut(tmp_path / "b", name="repo_b")
+        file_b = _add_test_file(sut_b, "test_only_in_b.py")
         repo_a = Repo(sut_dir=sut_a)
         repo_b = Repo(sut_dir=sut_b)
-        result = resolve_suite('tests/test_only_in_b.py', [repo_a, repo_b])
+        result = resolve_suite("tests/test_only_in_b.py", [repo_a, repo_b])
         assert result == str(file_b.resolve())
 
 
 # ---------------------------------------------------------------------------
 # --list-* CLI callbacks
 # ---------------------------------------------------------------------------
+
 
 class TestListCallbacks:
     """Verify callbacks invoke the correct panel method and exit cleanly."""
@@ -221,9 +223,9 @@ class TestListCallbacks:
         return repo
 
     def test_list_suites_calls_correct_panel(self):
-        repo = self._mock_repo('get_test_suites_panel')
-        with patch('otto.cli.test.get_repos', return_value=[repo]):
-            result = runner.invoke(suite_app, ['--list-suites'])
+        repo = self._mock_repo("get_test_suites_panel")
+        with patch("otto.cli.test.get_repos", return_value=[repo]):
+            result = runner.invoke(suite_app, ["--list-suites"])
         assert result.exit_code == 0
         repo.collect_tests.assert_called_once()
         repo.get_test_suites_panel.assert_called_once()
@@ -233,8 +235,8 @@ class TestListCallbacks:
 # get_instructions_panel
 # ---------------------------------------------------------------------------
 
-class TestGetInstructionsPanel:
 
+class TestGetInstructionsPanel:
     def _fake_group(self, module: str, func_name: str, cmd_name: str | None = None) -> MagicMock:
         cb = MagicMock()
         cb.__module__ = module
@@ -251,54 +253,55 @@ class TestGetInstructionsPanel:
     def test_shows_command_from_matching_module(self, tmp_path):
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        group = self._fake_group('my_instructions.cmd', 'do_something')
-        with patch('otto.cli.run.run_app') as mock_app:
+        group = self._fake_group("my_instructions.cmd", "do_something")
+        with patch("otto.cli.run.run_app") as mock_app:
             mock_app.registered_groups = [group]
             text = _render(repo.get_instructions_panel())
-        assert 'do-something' in text
+        assert "do-something" in text
 
     def test_excludes_command_from_other_module(self, tmp_path):
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        group = self._fake_group('other_repo.cmd', 'foreign_command')
-        with patch('otto.cli.run.run_app') as mock_app:
+        group = self._fake_group("other_repo.cmd", "foreign_command")
+        with patch("otto.cli.run.run_app") as mock_app:
             mock_app.registered_groups = [group]
             text = _render(repo.get_instructions_panel())
-        assert 'foreign-command' not in text
-        assert 'no instructions found' in text
+        assert "foreign-command" not in text
+        assert "no instructions found" in text
 
     def test_explicit_cmd_name_takes_priority_over_func_name(self, tmp_path):
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        group = self._fake_group('my_instructions.cmd', 'func_name', cmd_name='explicit-name')
-        with patch('otto.cli.run.run_app') as mock_app:
+        group = self._fake_group("my_instructions.cmd", "func_name", cmd_name="explicit-name")
+        with patch("otto.cli.run.run_app") as mock_app:
             mock_app.registered_groups = [group]
             text = _render(repo.get_instructions_panel())
-        assert 'explicit-name' in text
-        assert 'func-name' not in text
+        assert "explicit-name" in text
+        assert "func-name" not in text
 
     def test_matches_top_level_init_module(self, tmp_path):
         """Module name exactly equal to an init entry (not just a prefix) should match."""
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        group = self._fake_group('my_instructions', 'top_level_cmd')
-        with patch('otto.cli.run.run_app') as mock_app:
+        group = self._fake_group("my_instructions", "top_level_cmd")
+        with patch("otto.cli.run.run_app") as mock_app:
             mock_app.registered_groups = [group]
             text = _render(repo.get_instructions_panel())
-        assert 'top-level-cmd' in text
+        assert "top-level-cmd" in text
 
     def test_empty_when_no_groups(self, tmp_path):
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        with patch('otto.cli.run.run_app') as mock_app:
+        with patch("otto.cli.run.run_app") as mock_app:
             mock_app.registered_groups = []
             text = _render(repo.get_instructions_panel())
-        assert 'no instructions found' in text
+        assert "no instructions found" in text
 
 
 # ---------------------------------------------------------------------------
 # Integration tests — external SUT repo in tmp_path
 # ---------------------------------------------------------------------------
+
 
 class TestExternalRepoIntegration:
     """
@@ -314,16 +317,16 @@ class TestExternalRepoIntegration:
 
     @pytest.fixture
     def sut(self, tmp_path) -> tuple[Path, Repo]:
-        sut_dir = tmp_path / 'external_sut'
+        sut_dir = tmp_path / "external_sut"
         sut_dir.mkdir()
-        (sut_dir / '.otto').mkdir()
-        (sut_dir / '.otto' / 'settings.toml').write_text(
+        (sut_dir / ".otto").mkdir()
+        (sut_dir / ".otto" / "settings.toml").write_text(
             'name = "external"\nversion = "0.1.0"\ntests = ["${sut_dir}/tests"]\n'
         )
-        tests_dir = sut_dir / 'tests'
+        tests_dir = sut_dir / "tests"
         tests_dir.mkdir()
-        (tests_dir / 'test_suite.py').write_text(
-            'def test_alpha():\n    assert True\n\ndef test_beta():\n    assert True\n'
+        (tests_dir / "test_suite.py").write_text(
+            "def test_alpha():\n    assert True\n\ndef test_beta():\n    assert True\n"
         )
         return sut_dir, Repo(sut_dir=sut_dir)
 
@@ -351,31 +354,34 @@ class TestExternalRepoIntegration:
         _, repo = sut
         items = repo.collect_tests()
         text = _render(repo.get_test_suites_panel(items))
-        assert 'test_suite' not in text
-        assert 'no tests found' in text
+        assert "test_suite" not in text
+        assert "no tests found" in text
 
     def test_class_based_suites_panel_shows_class_name(self, tmp_path):
         """Class-based suites show just ClassName — the 'otto test ClassName' subcommand."""
         sut_dir = _make_sut(tmp_path)
-        _add_test_file(sut_dir, 'test_class.py',
-                       'class TestMyDevice:\n    def test_ping(self):\n        assert True\n')
+        _add_test_file(
+            sut_dir,
+            "test_class.py",
+            "class TestMyDevice:\n    def test_ping(self):\n        assert True\n",
+        )
         repo = Repo(sut_dir=sut_dir)
         items = repo.collect_tests()
         text = _render(repo.get_test_suites_panel(items))
-        assert 'TestMyDevice' in text
-        assert 'test_class.py' not in text
+        assert "TestMyDevice" in text
+        assert "test_class.py" not in text
         assert str(sut_dir) not in text
 
     def test_resolve_suite_maps_display_path_to_absolute(self, sut: tuple[Path, Repo]):
         sut_dir, repo = sut
-        resolved = resolve_suite('tests/test_suite.py::test_alpha', [repo])
-        expected = str((sut_dir / 'tests' / 'test_suite.py').resolve()) + '::test_alpha'
+        resolved = resolve_suite("tests/test_suite.py::test_alpha", [repo])
+        expected = str((sut_dir / "tests" / "test_suite.py").resolve()) + "::test_alpha"
         assert resolved == expected
 
     def test_resolve_suite_directory_resolves_to_absolute(self, sut: tuple[Path, Repo]):
         sut_dir, repo = sut
-        resolved = resolve_suite('tests', [repo])
-        assert resolved == str((sut_dir / 'tests').resolve())
+        resolved = resolve_suite("tests", [repo])
+        assert resolved == str((sut_dir / "tests").resolve())
 
     def test_round_trip_display_to_resolve(self, sut: tuple[Path, Repo]):
         """
@@ -387,7 +393,7 @@ class TestExternalRepoIntegration:
         for item in items:
             display_path = _test_run_syntax(item, sut_dir)
             resolved = resolve_suite(display_path, [repo])
-            file_part, _, _ = resolved.partition('::')
+            file_part, _, _ = resolved.partition("::")
             resolved_path = Path(file_part)
-            assert resolved_path.is_absolute(), f'{file_part!r} is not absolute'
-            assert resolved_path.exists(), f'{file_part!r} does not exist'
+            assert resolved_path.is_absolute(), f"{file_part!r} is not absolute"
+            assert resolved_path.exists(), f"{file_part!r} does not exist"

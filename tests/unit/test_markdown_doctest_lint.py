@@ -11,7 +11,7 @@ def _load_linter():
     return module
 
 
-FIXTURE = '''\
+FIXTURE = """\
 # Title
 
 A clean executed example:
@@ -54,7 +54,7 @@ Intentional non-runnable pedagogy, exempted:
 A bare prompt loose in prose is also flagged:
 
 >>> stray()
-'''
+"""
 
 
 def test_flags_only_unexecuted_prompts(tmp_path):

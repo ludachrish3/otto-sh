@@ -1,7 +1,3 @@
-from pathlib import Path
-
-import pytest
-
 from otto.configmodule.lab import Lab
 
 

@@ -7,19 +7,16 @@ Events appear as vertical lines on all metric charts. They can be created by:
   - Automatically by OttoSuite.setUp() / tearDown() when monitoring is active
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
-
-VALID_DASH_STYLES = frozenset({
-    'solid', 'dot', 'dash', 'longdash', 'dashdot', 'longdashdot'
-})
+VALID_DASH_STYLES = frozenset({"solid", "dot", "dash", "longdash", "dashdot", "longdashdot"})
 
 # Default colors for automatic test lifecycle events
 AUTO_EVENT_COLORS = {
-    'start': '#888888',
-    'pass':  '#2ca02c',
-    'fail':  '#d62728',
+    "start": "#888888",
+    "pass": "#2ca02c",
+    "fail": "#d62728",
 }
 
 
@@ -33,13 +30,13 @@ class MonitorEvent:
     label: str
     """Human-readable description shown on hover in the dashboard."""
 
-    source: str = 'manual'
+    source: str = "manual"
     """Who created this event — ``'manual'`` (dashboard UI), ``'user_code'`` (test code), or ``'auto'`` (lifecycle)."""
 
-    color: str = '#888888'
+    color: str = "#888888"
     """CSS color for the vertical marker line (hex, named color, or rgb())."""
 
-    dash: str = 'dash'
+    dash: str = "dash"
     """Plotly line dash style — one of ``solid``, ``dot``, ``dash``, ``longdash``, ``dashdot``, ``longdashdot``."""
 
     id: int = 0
@@ -51,11 +48,11 @@ class MonitorEvent:
     def to_dict(self) -> dict[str, object]:
         """Serialize to a JSON-safe dict for the dashboard API."""
         return {
-            'id':            self.id,
-            'timestamp':     self.timestamp.isoformat(),
-            'label':         self.label,
-            'source':        self.source,
-            'color':         self.color,
-            'dash':          self.dash,
-            'end_timestamp': self.end_timestamp.isoformat() if self.end_timestamp else None,
+            "id": self.id,
+            "timestamp": self.timestamp.isoformat(),
+            "label": self.label,
+            "source": self.source,
+            "color": self.color,
+            "dash": self.dash,
+            "end_timestamp": self.end_timestamp.isoformat() if self.end_timestamp else None,
         }

@@ -26,7 +26,6 @@ import sys
 import termios
 import time
 from pathlib import Path
-from typing import Optional, Union
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
@@ -34,7 +33,7 @@ COVERAGERC = PROJECT_ROOT / ".coveragerc"
 OTTO_BIN = Path(sys.executable).parent / "otto"
 
 
-def otto_subprocess_env(xdir: Path, *, sut_dirs: Optional[Path] = None) -> dict[str, str]:
+def otto_subprocess_env(xdir: Path, *, sut_dirs: Path | None = None) -> dict[str, str]:
     """Build the env dict for an ``otto`` subprocess under test.
 
     Mirrors the pattern used by :mod:`tests.unit.cov.test_coverage_e2e`:
@@ -82,15 +81,15 @@ class InteractiveOttoSession:
         xdir: Path,
         cols: int = 80,
         rows: int = 24,
-        sut_dirs: Optional[Path] = None,
+        sut_dirs: Path | None = None,
     ) -> None:
         self._argv = [str(OTTO_BIN), *argv]
         self._xdir = Path(xdir)
         self._cols = cols
         self._rows = rows
         self._sut_dirs = sut_dirs
-        self._master_fd: Optional[int] = None
-        self._proc: Optional[subprocess.Popen[bytes]] = None
+        self._master_fd: int | None = None
+        self._proc: subprocess.Popen[bytes] | None = None
         self._buf = bytearray()
 
     def __enter__(self) -> "InteractiveOttoSession":
@@ -158,7 +157,7 @@ class InteractiveOttoSession:
 
     def expect(
         self,
-        pattern: Union[bytes, re.Pattern[bytes]],
+        pattern: bytes | re.Pattern[bytes],
         *,
         timeout: float,
     ) -> bytes:

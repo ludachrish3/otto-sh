@@ -7,6 +7,7 @@ instruction can do too::
 
     from otto.docker import build_images, compose_up, compose_down, composed
 
+
     @instruction()
     async def smoke():
         async with composed(repo, lab, own=True) as containers:

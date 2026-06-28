@@ -54,9 +54,7 @@ def _find_login_log_dir(xdir: Path) -> Path:
     """Return the single ``host/<timestamp>_login`` output dir under ``xdir``."""
     host_dir = xdir / "host"
     assert host_dir.is_dir(), f"Expected {host_dir} to exist after host login"
-    candidates = sorted(
-        d for d in host_dir.iterdir() if d.is_dir() and d.name.endswith("_login")
-    )
+    candidates = sorted(d for d in host_dir.iterdir() if d.is_dir() and d.name.endswith("_login"))
     assert len(candidates) == 1, (
         f"Expected exactly one ``_login`` output dir under {host_dir}, found {candidates}"
     )
@@ -113,9 +111,7 @@ def login_session(request, tmp_path_factory):
             # proves the round-trip happened — drain briefly and continue.
             sess.drain(0.2)
         sess.disconnect()
-        disconnect_seen = sess.expect(
-            f"[otto] disconnected from {HOST_NAME}.".encode(), timeout=10
-        )
+        disconnect_seen = sess.expect(f"[otto] disconnected from {HOST_NAME}.".encode(), timeout=10)
         exit_code = sess.wait(timeout=10)
 
     log_path = _find_login_log_dir(xdir) / "otto.log"
@@ -162,9 +158,7 @@ class TestHostLoginSession:
         assert "Entering interactive session" in content, (
             f"otto.log missing entering marker:\n{content}"
         )
-        assert "Interactive session ended" in content, (
-            f"otto.log missing exit marker:\n{content}"
-        )
+        assert "Interactive session ended" in content, f"otto.log missing exit marker:\n{content}"
         assert ROUND_TRIP_TOKEN in content, (
             f"otto.log missing round-trip token {ROUND_TRIP_TOKEN!r}:\n{content}"
         )

@@ -27,7 +27,6 @@ from ..configmodule.env import (
     SUT_DIRS_ENV_VAR,
     XDIR_ENV_VAR,
 )
-
 from ..logger import management
 from ..utils import (
     split_on_commas,
@@ -38,26 +37,29 @@ __version__ = get_version()
 
 # TODO: Should rich help menus be optional?
 # Uncomment the line below to remove rich help menu formatting globally
-#typer.core.HAS_RICH = False
+# typer.core.HAS_RICH = False
 
 _field_default = get_env().field_default is not None
 """Determines the default for debug or field. If OTTO_FIELD_DEFAULT is set to
 anything at all, then field is the default. Read once at import via the startup
 env singleton (get_env())."""
 
-DESCRIPTION = f'''
+DESCRIPTION = f"""
 O.T.T.O. (Our Trusty Testing Orchestrator)
 
 If a development repo is under test, then {SUT_DIRS_ENV_VAR} must be set in your environment.
 It is a list of paths to repo root directories, separated by ``,`` or the OS path separator (``:`` on Linux/macOS, ``;`` on Windows).
 
-'''
+"""
+
 
 def version_callback(version: bool):
     if version:
         from rich import print as rprint
+
         rprint(f"otto version: {__version__}")
         raise typer.Exit
+
 
 def clear_autocomplete_cache_callback(value: bool) -> None:
     if not value:
@@ -69,11 +71,11 @@ def clear_autocomplete_cache_callback(value: bool) -> None:
     cache_path = _cache_path()
     removed = clear_cache()
     if removed:
-        rprint(f'Removed completion cache: {cache_path}')
+        rprint(f"Removed completion cache: {cache_path}")
     elif cache_path is None:
-        rprint('No completion cache to clear (OTTO_XDIR is not set).')
+        rprint("No completion cache to clear (OTTO_XDIR is not set).")
     else:
-        rprint(f'No completion cache found at {cache_path}.')
+        rprint(f"No completion cache found at {cache_path}.")
     raise typer.Exit
 
 
@@ -88,7 +90,9 @@ def list_labs_callback(value: bool):
         for repo in get_repos():
             panels.append(repo.get_lab_panel())
 
-        table = Table(show_header=False, show_footer=False, box=None, expand=True, padding=(0,1,1,1))
+        table = Table(
+            show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1)
+        )
         for _ in panels:
             table.add_column(ratio=1)
         table.add_row(*panels)
@@ -96,8 +100,10 @@ def list_labs_callback(value: bool):
 
         raise typer.Exit
 
+
 def log_level_callback(value: str):
     return value.upper()
+
 
 def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:
     """Completion source for ``--as-user``: usernames the reservation backend knows.
@@ -110,11 +116,12 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:
     from ..configmodule.completion_cache import collect_reservation_usernames
 
     cached = get_completion_names()
-    if cached is not None and isinstance(cached.get('usernames'), list):
-        names = cached['usernames']
+    if cached is not None and isinstance(cached.get("usernames"), list):
+        names = cached["usernames"]
     else:
         names = collect_reservation_usernames(get_repos())
     return sorted(n for n in names if n.startswith(incomplete))
+
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -122,9 +129,10 @@ app = typer.Typer(
     invoke_without_command=True,
     pretty_exceptions_show_locals=True,
     context_settings={
-        'help_option_names': ['-h', '--help'],
+        "help_option_names": ["-h", "--help"],
     },
 )
+
 
 @app.callback(
     no_args_is_help=True,
@@ -132,103 +140,113 @@ app = typer.Typer(
 )
 def main(
     ctx: typer.Context,
-    labs: Annotated[list[str],
-        typer.Option('--lab', '-l',
+    labs: Annotated[
+        list[str],
+        typer.Option(
+            "--lab",
+            "-l",
             envvar=LAB_ENV_VAR,
             callback=split_on_commas,
-            metavar='COMMA SEPARATED LIST',
-            help='Name of lab(s) to reserve and use.'
-        )
+            metavar="COMMA SEPARATED LIST",
+            help="Name of lab(s) to reserve and use.",
+        ),
     ] = [],
-
-    xdir: Annotated[Path,
-        typer.Option('--xdir', '-x',
+    xdir: Annotated[
+        Path,
+        typer.Option(
+            "--xdir",
+            "-x",
             envvar=XDIR_ENV_VAR,
-            help='Directory in which to store logs and artifacts.'
+            help="Directory in which to store logs and artifacts.",
         ),
     ] = Path(),
-
-    debug: Annotated[bool,
-        typer.Option('--field/--debug',
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--field/--debug",
             envvar=FIELD_PRODUCT_ENV_VAR,
-            help='Use field or debug products.',
-        )
+            help="Use field or debug products.",
+        ),
     ] = _field_default,
-
-    log_days: Annotated[int,
+    log_days: Annotated[
+        int,
         typer.Option(
             min=0,
             envvar=LOG_DAYS_ENV_VAR,
-            help='Number of days to retain logs.',
-        )
+            help="Number of days to retain logs.",
+        ),
     ] = DEFAULT_LOG_RETENTION_DAYS,
-
-    log_level: Annotated[str,
+    log_level: Annotated[
+        str,
         typer.Option(
             envvar=LOG_LVL_ENV_VAR,
-            metavar='LOG LEVEL',
+            metavar="LOG LEVEL",
             callback=log_level_callback,
-            help='Level at which to log.',
-        )
-    ] = 'INFO',
-
-    rich_log_file: Annotated[bool,
+            help="Level at which to log.",
+        ),
+    ] = "INFO",
+    rich_log_file: Annotated[
+        bool,
         typer.Option(
             envvar=LOG_RICH_ENV_VAR,
-            help='Determines whether log files have rich formatting.',
-        )
+            help="Determines whether log files have rich formatting.",
+        ),
     ] = False,
-
-    verbose: Annotated[bool,
-        typer.Option('--verbose', '-v',
-                    ),
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+        ),
     ] = False,
-
-    list_labs: Annotated[bool,
-        typer.Option('--list-labs',
+    list_labs: Annotated[
+        bool,
+        typer.Option(
+            "--list-labs",
             callback=list_labs_callback,
             is_eager=True,
-            help='List all available lab names.'
+            help="List all available lab names.",
         ),
     ] = False,
-
-    show_lab: Annotated[bool,
-        typer.Option('--show-lab',
-            help='Show specified lab details.'
+    show_lab: Annotated[
+        bool,
+        typer.Option("--show-lab", help="Show specified lab details."),
+    ] = False,
+    list_hosts: Annotated[
+        bool,
+        typer.Option("--list-hosts", help="Show all valid host IDs."),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            "-n",
+            help="Preview what would be executed without running commands on hosts.",
         ),
     ] = False,
-
-    list_hosts: Annotated[bool,
-        typer.Option('--list-hosts',
-            help='Show all valid host IDs.'
+    version: Annotated[
+        bool | None,
+        typer.Option(
+            "--version",
+            callback=version_callback,
+            is_eager=True,
+            help="Show program version and exit.",
         ),
-    ] = False,
-
-    dry_run: Annotated[bool,
-        typer.Option('--dry-run', '-n',
-            help='Preview what would be executed without running commands on hosts.',
-        )
-    ] = False,
-
-    version: Annotated[ bool | None,
-        typer.Option("--version",
-                    callback=version_callback,
-                    is_eager=True,
-                    help='Show program version and exit.',
-                    ),
     ] = None,
-
-    clear_autocomplete_cache: Annotated[bool,
-        typer.Option('--clear-autocomplete-cache',
+    clear_autocomplete_cache: Annotated[
+        bool,
+        typer.Option(
+            "--clear-autocomplete-cache",
             callback=clear_autocomplete_cache_callback,
             is_eager=True,
-            help='Delete the shell-completion cache file and exit.',
+            help="Delete the shell-completion cache file and exit.",
         ),
     ] = False,
-
-    as_user: Annotated[str | None,
-        typer.Option('--as-user',
-            metavar='USERNAME',
+    as_user: Annotated[
+        str | None,
+        typer.Option(
+            "--as-user",
+            metavar="USERNAME",
             autocompletion=_username_completer,
             help=(
                 "Check reservations as USERNAME instead of the current user. "
@@ -236,9 +254,11 @@ def main(
             ),
         ),
     ] = None,
-
-    skip_reservation_check: Annotated[bool,
-        typer.Option('--skip-reservation-check', '-R',
+    skip_reservation_check: Annotated[
+        bool,
+        typer.Option(
+            "--skip-reservation-check",
+            "-R",
             help=(
                 "Bypass the reservation check entirely. Intended only for "
                 "emergencies when the scheduler is wrong or unreachable."
@@ -263,9 +283,7 @@ def main(
         # Use Typer's own echo/Exit rather than ``click.UsageError``: Typer >= 0.26
         # vendors its own click fork, so a *real* ``click.UsageError`` is not caught
         # by Typer's error handler and would escape uncaught (exit 1, no message).
-        typer.echo(
-            "Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').", err=True
-        )
+        typer.echo("Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').", err=True)
         raise typer.Exit(code=2)
 
     from rich import print as rprint
@@ -284,7 +302,7 @@ def main(
         verbose=verbose,
         rich_log_file=rich_log_file,
     )
-    logger = getLogger('otto')
+    logger = getLogger("otto")
     for handler in logger.handlers:
         handler.addFilter(HostFilter())
 
@@ -340,6 +358,7 @@ def main(
     # up" error until `compose_up` overwrites the placeholder with a real
     # entry.
     from ..docker.compose import register_declared_container_hosts
+
     register_declared_container_hosts(lab, repos)
 
     # Resolve reservation identity + backend (first repo with a [reservations]
@@ -375,6 +394,7 @@ def main(
 
     # Install the runtime context: lab + dry_run flag.
     from ..context import OttoContext, set_context
+
     set_context(OttoContext(lab=lab, dry_run=dry_run))
 
     if show_lab:
@@ -394,8 +414,10 @@ def main(
         raise typer.Exit()
 
     if dry_run:
-        logger.info("[magenta][DRY RUN] Commands and file transfers will be skipped. "
-                    "Connections will still be verified.")
+        logger.info(
+            "[magenta][DRY RUN] Commands and file transfers will be skipped. "
+            "Connections will still be verified."
+        )
 
     for repo in repos:
         logger.debug(f"{repo.sut_dir}: {repo.commit}")
@@ -415,20 +437,20 @@ def main(
 # ---------------------------------------------------------------------------
 
 _SUBCOMMAND_MODULES: dict[str, tuple[str, str]] = {
-    'run':         ('.run',         'run_app'),
-    'test':        ('.test',        'suite_app'),
-    'monitor':     ('.monitor',     'monitor_app'),
-    'cov':         ('.cov',         'cov_app'),
-    'host':        ('.host',        'host_app'),
-    'docker':      ('.docker',      'docker_app'),
-    'reservation': ('.reservation', 'reservation_app'),
-    'schema':      ('.schema',      'schema_app'),
+    "run": (".run", "run_app"),
+    "test": (".test", "suite_app"),
+    "monitor": (".monitor", "monitor_app"),
+    "cov": (".cov", "cov_app"),
+    "host": (".host", "host_app"),
+    "docker": (".docker", "docker_app"),
+    "reservation": (".reservation", "reservation_app"),
+    "schema": (".schema", "schema_app"),
 }
 
 # Subcommands that introspect otto itself rather than operate on a lab. The
 # top-level callback skips its lab / reservation bootstrap (and the `--lab`
 # requirement) for these.
-_LAB_FREE_SUBCOMMANDS: frozenset[str] = frozenset({'schema'})
+_LAB_FREE_SUBCOMMANDS: frozenset[str] = frozenset({"schema"})
 
 
 def _requested_subcommands() -> set[str]:
@@ -437,11 +459,11 @@ def _requested_subcommands() -> set[str]:
     Inspects ``sys.argv`` and (in completion mode) ``COMP_WORDS`` for tokens
     that name a known subcommand.
     """
-    completion_mode = bool(os.environ.get('_OTTO_COMPLETE'))
+    completion_mode = bool(os.environ.get("_OTTO_COMPLETE"))
 
     tokens: set[str] = set(sys.argv[1:])
     if completion_mode:
-        tokens.update(os.environ.get('COMP_WORDS', '').split())
+        tokens.update(os.environ.get("COMP_WORDS", "").split())
 
     matched = set(_SUBCOMMAND_MODULES) & tokens
     if matched:
@@ -463,7 +485,7 @@ def _placeholder_subapp(name: str) -> typer.Typer:
     """
     return typer.Typer(
         name=name,
-        help=f'(run `otto {name} -h` for details)',
+        help=f"(run `otto {name} -h` for details)",
     )
 
 
@@ -479,10 +501,10 @@ def _attach_cached_stubs(
     from ..configmodule.completion_stubs import build_stub_command
 
     for entry in commands:
-        name = entry.get('name')
+        name = entry.get("name")
         if not name:
             continue
-        options = entry.get('options') or []
+        options = entry.get("options") or []
         parent.add_typer(build_stub_command(name, options))
 
 
@@ -508,10 +530,10 @@ def _register_subcommands() -> None:
         if name in wanted:
             mod = importlib.import_module(modpath, package=__package__)
             sub_app = getattr(mod, attr)
-            if cached is not None and name == 'test':
-                _attach_cached_stubs(sub_app, cached.get('suites', []))
-            elif cached is not None and name == 'run':
-                _attach_cached_stubs(sub_app, cached.get('instructions', []))
+            if cached is not None and name == "test":
+                _attach_cached_stubs(sub_app, cached.get("suites", []))
+            elif cached is not None and name == "run":
+                _attach_cached_stubs(sub_app, cached.get("instructions", []))
             app.add_typer(sub_app)
         else:
             app.add_typer(_placeholder_subapp(name))

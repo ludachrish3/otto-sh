@@ -28,10 +28,13 @@ def test_unknown_lab_raises_lab_not_found():
 
 
 def test_custom_dataset_overrides_demo():
-    repo = ExampleLabRepository(labs={
-        "only": [{"ip": "10.9.9.9", "element": "node", "creds": {"u": "p"},
-                  "resources": ["node"]}],
-    })
+    repo = ExampleLabRepository(
+        labs={
+            "only": [
+                {"ip": "10.9.9.9", "element": "node", "creds": {"u": "p"}, "resources": ["node"]}
+            ],
+        }
+    )
     assert repo.list_labs() == ["only"]
     assert "node" in repo.load_lab("only").hosts
 
@@ -43,9 +46,7 @@ def test_accepts_repo_dir_for_registry_compatibility(tmp_path):
 
 
 def test_sample_conforms():
-    assert_lab_repository_conforms(
-        ExampleLabRepository(), expected_labs=["east", "west"]
-    )
+    assert_lab_repository_conforms(ExampleLabRepository(), expected_labs=["east", "west"])
 
 
 def test_registrable_by_name():

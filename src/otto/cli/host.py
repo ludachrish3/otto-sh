@@ -30,8 +30,8 @@ def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     from ..configmodule.completion_cache import collect_host_ids
 
     cached = get_completion_names()
-    if cached is not None and isinstance(cached.get('hosts'), list):
-        ids = cached['hosts']
+    if cached is not None and isinstance(cached.get("hosts"), list):
+        ids = cached["hosts"]
     else:
         ids = collect_host_ids(get_repos())
 
@@ -48,10 +48,11 @@ def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     from ..configmodule import get_completion_names
 
     cached = get_completion_names()
-    if cached is not None and isinstance(cached.get('term_backends'), list):
-        names = cached['term_backends']
+    if cached is not None and isinstance(cached.get("term_backends"), list):
+        names = cached["term_backends"]
     else:
         from ..host.connections import _TERM_BACKENDS
+
         names = list(_TERM_BACKENDS)
     return sorted(n for n in names if n.startswith(incomplete))
 
@@ -67,22 +68,25 @@ def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     from ..configmodule import get_completion_names
 
     cached = get_completion_names()
-    if cached is not None and isinstance(cached.get('transfer_backends'), list):
+    if cached is not None and isinstance(cached.get("transfer_backends"), list):
         names = [
-            e['name'] for e in cached['transfer_backends']
-            if isinstance(e, dict) and 'unix' in e.get('host_families', [])
+            e["name"]
+            for e in cached["transfer_backends"]
+            if isinstance(e, dict) and "unix" in e.get("host_families", [])
         ]
     else:
         from ..host.transfer import _TRANSFER_BACKENDS
-        names = [n for n, c in _TRANSFER_BACKENDS.items() if 'unix' in c.host_families]
+
+        names = [n for n, c in _TRANSFER_BACKENDS.items() if "unix" in c.host_families]
     return sorted(n for n in names if n.startswith(incomplete))
 
+
 host_app = typer.Typer(
-    name='host',
-    help='Run commands and transfer files on lab hosts.',
+    name="host",
+    help="Run commands and transfer files on lab hosts.",
     cls=HostGroup,
     context_settings={
-        'help_option_names': ['-h', '--help'],
+        "help_option_names": ["-h", "--help"],
     },
 )
 
@@ -101,26 +105,39 @@ def _resolve_host(host_id: str):
 @host_app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    host_id: Annotated[str, typer.Argument(
-        help="Host ID to operate on.",
-        autocompletion=_host_id_completer,
-    )] = "",
-    hop: Annotated[str, typer.Option('--hop', help="Host ID to use as an SSH hop to reach the target.")] = "",
-    term: Annotated[str | None, typer.Option(
-        '--term',
-        autocompletion=_term_completer,
-        help="Override the terminal protocol for this session.",
-    )] = None,
-    transfer: Annotated[str | None, typer.Option(
-        '--transfer',
-        autocompletion=_transfer_completer,
-        help="Override the file transfer protocol for this session.",
-    )] = None,
-    list_hosts: Annotated[bool,
-        typer.Option('--list-hosts',
+    host_id: Annotated[
+        str,
+        typer.Argument(
+            help="Host ID to operate on.",
+            autocompletion=_host_id_completer,
+        ),
+    ] = "",
+    hop: Annotated[
+        str, typer.Option("--hop", help="Host ID to use as an SSH hop to reach the target.")
+    ] = "",
+    term: Annotated[
+        str | None,
+        typer.Option(
+            "--term",
+            autocompletion=_term_completer,
+            help="Override the terminal protocol for this session.",
+        ),
+    ] = None,
+    transfer: Annotated[
+        str | None,
+        typer.Option(
+            "--transfer",
+            autocompletion=_transfer_completer,
+            help="Override the file transfer protocol for this session.",
+        ),
+    ] = None,
+    list_hosts: Annotated[
+        bool,
+        typer.Option(
+            "--list-hosts",
             callback=list_hosts_callback,
             is_eager=True,
-            help='Show all valid host IDs.',
+            help="Show all valid host IDs.",
         ),
     ] = False,
 ) -> None:
@@ -133,6 +150,7 @@ def main(
 
     get_context().output_dir = management.create_output_dir("host", f"{ctx.invoked_subcommand}")
     from ..reservations import gate
+
     gate(ctx)
 
     host = _resolve_host(host_id)

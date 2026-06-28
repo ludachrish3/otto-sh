@@ -21,6 +21,7 @@ Requirements (else the test SKIPS, never fails spuriously):
     - the repo3 coverage product built into ``[coverage.embedded].build_dir``
       (see ``tests/repo3/product/README.md``).
 """
+
 from __future__ import annotations
 
 import os
@@ -75,11 +76,18 @@ def clean_sprout_cov():
 
     lab = Lab(name="embedded_cov_e2e")
     basil = host_data("basil")
-    lab.add_host(UnixHost(
-        ip=basil["ip"], element=basil["element"], creds=basil["creds"],
-        board=basil.get("board"), is_virtual=True, term="ssh",
-        transfer="scp", log=False,
-    ))
+    lab.add_host(
+        UnixHost(
+            ip=basil["ip"],
+            element=basil["element"],
+            creds=basil["creds"],
+            board=basil.get("board"),
+            is_virtual=True,
+            term="ssh",
+            transfer="scp",
+            log=False,
+        )
+    )
     set_context(OttoContext(lab=lab))
 
     host = create_host_from_dict(host_data("sprout_cov"))
@@ -101,7 +109,6 @@ def clean_sprout_cov():
             "This is a hard failure by design (not a skip) so a dead bed can't hide "
             "behind a green run."
         )
-    yield
 
 
 def _run_otto(*args: str, xdir: Path, timeout: int = 300) -> subprocess.CompletedProcess[str]:
@@ -120,8 +127,12 @@ def _run_otto(*args: str, xdir: Path, timeout: int = 300) -> subprocess.Complete
     }
     full_argv = [str(OTTO_BIN), "--lab", "embedded", "-R", *args]
     return subprocess.run(
-        full_argv, env=env, capture_output=True, text=True,
-        cwd=str(PROJECT_ROOT), timeout=timeout,
+        full_argv,
+        env=env,
+        capture_output=True,
+        text=True,
+        cwd=str(PROJECT_ROOT),
+        timeout=timeout,
     )
 
 
@@ -152,10 +163,13 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
     cov_dir = tmp_path / "cov"
 
     result = _run_otto(
-        "test", "--cov",
-        "--cov-dir", str(cov_dir),
+        "test",
+        "--cov",
+        "--cov-dir",
+        str(cov_dir),
         "--cov-report",
-        "--cov-report-dir", str(report_dir),
+        "--cov-report-dir",
+        str(report_dir),
         "TestEmbeddedCoverage",
         xdir=tmp_path,
     )

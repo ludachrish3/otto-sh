@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from abc import ABC
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import (
     dataclass,
     replace,
@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Annotated,
-    Awaitable,
     Protocol,
     cast,
 )
@@ -44,11 +43,13 @@ if TYPE_CHECKING:
 # it without a circular import (session.py imports from host.py at module level).
 Expect = tuple[str | re.Pattern[str], str]
 
-logger = getLogger('otto')
+logger = getLogger("otto")
+
 
 def get_logging_command_output_enabled() -> bool:
     """Return True if command-output logging is enabled on the active context."""
     from ..context import try_get_context
+
     ctx = try_get_context()
     return ctx.log_command_output if ctx is not None else True
 
@@ -56,6 +57,7 @@ def get_logging_command_output_enabled() -> bool:
 def is_dry_run() -> bool:
     """Return True if dry-run mode is enabled on the active context."""
     from ..context import try_get_context
+
     ctx = try_get_context()
     return ctx.dry_run if ctx is not None else False
 
@@ -72,7 +74,7 @@ class ShellCommand:
     cmd: str
     """Command string to execute."""
 
-    expects: 'Expect | list[Expect] | None' = None
+    expects: "Expect | list[Expect] | None" = None
     """Per-command expects. ``None`` inherits the run-level ``expects`` value."""
 
     timeout: float | None = None
@@ -119,8 +121,8 @@ class RunResult:
 
 
 def _normalize_expects(
-    expects: 'Expect | list[Expect] | None',
-) -> list['Expect'] | None:
+    expects: "Expect | list[Expect] | None",
+) -> list["Expect"] | None:
     """Wrap a scalar ``Expect`` (a 2-tuple) into a one-element list.
 
     ``None`` and existing lists pass through unchanged. Disambiguation is by
@@ -134,14 +136,16 @@ def _normalize_expects(
 
 
 def _resolve_command(
-    item: 'str | ShellCommand',
-    default_expects: 'Expect | list[Expect] | None',
+    item: "str | ShellCommand",
+    default_expects: "Expect | list[Expect] | None",
     default_timeout: float | None,
     default_log: bool = True,
 ) -> ShellCommand:
     """Coerce ``item`` to a ``ShellCommand`` whose ``None`` fields inherit from defaults."""
     if isinstance(item, str):
-        return ShellCommand(cmd=item, expects=default_expects, timeout=default_timeout, log=default_log)
+        return ShellCommand(
+            cmd=item, expects=default_expects, timeout=default_timeout, log=default_log
+        )
     return ShellCommand(
         cmd=item.cmd,
         expects=item.expects if item.expects is not None else default_expects,
@@ -174,12 +178,14 @@ async def _run_cmds_with_budget(
         if deadline is not None:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                statuses.append(CommandStatus(
-                    command=sc.cmd,
-                    output='Skipped: cumulative timeout budget exhausted',
-                    status=Status.Error,
-                    retcode=-1,
-                ))
+                statuses.append(
+                    CommandStatus(
+                        command=sc.cmd,
+                        output="Skipped: cumulative timeout budget exhausted",
+                        status=Status.Error,
+                        retcode=-1,
+                    )
+                )
                 if overall_status.is_ok:
                     overall_status = Status.Error
                 continue
@@ -200,7 +206,6 @@ async def _run_cmds_with_budget(
 
 
 class Host(Protocol):
-
     log: bool
     """Determines whether this host should log its output to stdout and log files."""
 
@@ -213,70 +218,70 @@ class Host(Protocol):
     resources: set[str]
     """Resources required to reserve this host."""
 
-    products: list['Product']
+    products: list["Product"]
     """Software-under-test deployed to this host (default empty)."""
 
-    power_control: 'PowerController | None'
+    power_control: "PowerController | None"
     """Pluggable power backend, or None when this host can't be power-controlled."""
 
-    async def _interact(self) -> None:
-        ...
+    async def _interact(self) -> None: ...
 
-    async def interact(self) -> None:
-        ...
+    async def interact(self) -> None: ...
 
-    async def run(self,
+    async def run(
+        self,
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = None,
         log: bool = True,
         sudo: bool = False,
-    ) -> RunResult:
-        ...
+    ) -> RunResult: ...
 
-    async def oneshot(self,
+    async def oneshot(
+        self,
         cmd: str,
         timeout: float | None = None,
         log: bool = True,
-    ) -> CommandStatus:
-        ...
+    ) -> CommandStatus: ...
 
-    async def open_session(self,
+    async def open_session(
+        self,
         name: str,
-    ) -> HostSession:
-        ...
+    ) -> HostSession: ...
 
-    async def send(self,
+    async def send(
+        self,
         text: str,
         log: bool = True,
-    ) -> None:
-        ...
+    ) -> None: ...
 
-    async def expect(self,
+    async def expect(
+        self,
         pattern: str | re.Pattern[str],
         timeout: float = 30.0,
-    ) -> str:
-        ...
+    ) -> str: ...
 
     ####################
     #  File transfer
     ####################
 
-    async def get(self,
+    async def get(
+        self,
         src_files: list[Path] | Path,
         dest_dir: Path,
-    ) -> tuple[Status, str]:
-        ...
+    ) -> tuple[Status, str]: ...
 
-    async def put(self,
+    async def put(
+        self,
         src_files: list[Path] | Path,
         dest_dir: Path,
-    ) -> tuple[Status, str]:
-        ...
+    ) -> tuple[Status, str]: ...
 
     async def power(self, state: str | None = None) -> tuple[Status, str]: ...
 
-    async def reboot(self, hard: bool = False, wait: bool = False, timeout: float = 600.0) -> tuple[Status, str]: ...
+    async def reboot(
+        self, hard: bool = False, wait: bool = False, timeout: float = 600.0
+    ) -> tuple[Status, str]: ...
 
     async def shutdown(self) -> tuple[Status, str]: ...
 
@@ -286,8 +291,7 @@ class Host(Protocol):
 
     async def wait_until_down(self, timeout: float, interval: float = 2.0) -> bool: ...
 
-    async def close(self) -> None:
-        ...
+    async def close(self) -> None: ...
 
     async def stage(self) -> tuple[Status, str]: ...
 
@@ -305,14 +309,13 @@ class Host(Protocol):
 
 
 class BaseHost(ABC):
-
     id: str
     name: str
     log: bool
     resources: set[str]
-    products: list['Product']
-    power_control: 'PowerController | None'
-    _repeater: 'RepeatRunner'
+    products: list["Product"]
+    power_control: "PowerController | None"
+    _repeater: "RepeatRunner"
 
     ####################
     #  Dry-run helpers
@@ -321,7 +324,9 @@ class BaseHost(ABC):
     def _dry_run_result(self, cmd: str) -> CommandStatus:
         """Return a synthetic CommandStatus for dry-run mode."""
         self._log_command(f"[DRY RUN] {cmd}")
-        return CommandStatus(command=cmd, output="[DRY RUN] Command not executed", status=Status.Skipped, retcode=0)
+        return CommandStatus(
+            command=cmd, output="[DRY RUN] Command not executed", status=Status.Skipped, retcode=0
+        )
 
     def _dry_run_transfer(self, action: str, files: list[Path], dest: Path) -> tuple[Status, str]:
         """Return a synthetic transfer result for dry-run mode."""
@@ -333,11 +338,12 @@ class BaseHost(ABC):
     #  Privilege
     ####################
 
-    def _elevate(self, cmd: str) -> tuple[str, list['Expect']]:
+    def _elevate(self, cmd: str) -> tuple[str, list["Expect"]]:
         """Return *(wrapped_cmd, extra_expects)* to run *cmd* with elevation.
 
         Default raises — only posix-shell hosts (via the ``PosixPrivilege``
-        mixin) can elevate. Embedded/RTOS hosts have no ``sudo``."""
+        mixin) can elevate. Embedded/RTOS hosts have no ``sudo``.
+        """
         raise NotImplementedError(
             f"sudo/elevation is not supported on '{self.__class__.__name__}'"
         ) from None
@@ -346,7 +352,8 @@ class BaseHost(ABC):
         """Switch the persistent session to another user via ``su``.
 
         Default raises — only posix-shell hosts (via ``PosixPrivilege``) support
-        ``su``."""
+        ``su``.
+        """
         raise NotImplementedError(
             f"su/switch_user is not supported on '{self.__class__.__name__}'"
         ) from None
@@ -355,7 +362,8 @@ class BaseHost(ABC):
         """Async context manager to run a block as *user*.
 
         Default raises — only posix-shell hosts (via ``PosixPrivilege``) support
-        ``su``-based user switching."""
+        ``su``-based user switching.
+        """
         raise NotImplementedError(
             f"as_user is not supported on '{self.__class__.__name__}'"
         ) from None
@@ -366,12 +374,14 @@ class BaseHost(ABC):
 
         Seeded from the login user; changes only through :meth:`switch_user` /
         :meth:`as_user`. See :attr:`~otto.host.session.HostSession.current_user`
-        for named sessions."""
+        for named sessions.
+        """
         return self._session_mgr.current_user  # ty: ignore[unresolved-attribute]
 
-    def _apply_sudo(self, sc: 'ShellCommand') -> 'ShellCommand':
+    def _apply_sudo(self, sc: "ShellCommand") -> "ShellCommand":
         """Rewrite a ``ShellCommand`` to run under sudo, merging in the
-        password ``Expect`` ahead of any caller-supplied expects."""
+        password ``Expect`` ahead of any caller-supplied expects.
+        """
         wrapped, extra = self._elevate(sc.cmd)
         base = _normalize_expects(sc.expects) or []
         return replace(sc, cmd=wrapped, expects=extra + base)
@@ -403,9 +413,14 @@ class BaseHost(ABC):
     @cli_exposed
     async def run(
         self,
-        cmds: Annotated[str | ShellCommand | Sequence[str | ShellCommand], Arg(variadic=True, elem_type=str, help='Command(s) to run.')],
+        cmds: Annotated[
+            str | ShellCommand | Sequence[str | ShellCommand],
+            Arg(variadic=True, elem_type=str, help="Command(s) to run."),
+        ],
         expects: Annotated[Expect | list[Expect] | None, Exclude] = None,
-        timeout: Annotated[float | None, Opt(help='Per-command/cumulative timeout (seconds).')] = None,
+        timeout: Annotated[
+            float | None, Opt(help="Per-command/cumulative timeout (seconds).")
+        ] = None,
         log: Annotated[bool, Exclude] = True,
         sudo: bool = False,
     ) -> RunResult:
@@ -449,7 +464,7 @@ class BaseHost(ABC):
                 single.cmd,
                 expects=_normalize_expects(single.expects),
                 timeout=single.timeout,
-                log=cast(bool, single.log),  # _resolve_command collapsed the None sentinel
+                log=cast("bool", single.log),  # _resolve_command collapsed the None sentinel
             )
             status = result.status if not result.status.is_ok else Status.Success
             return RunResult(status=status, statuses=[result])
@@ -463,12 +478,13 @@ class BaseHost(ABC):
                 sc.cmd,
                 expects=_normalize_expects(sc.expects),
                 timeout=t,
-                log=cast(bool, sc.log),  # _resolve_command collapsed the None sentinel
+                log=cast("bool", sc.log),  # _resolve_command collapsed the None sentinel
             )
 
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
-    async def _run_one(self,
+    async def _run_one(
+        self,
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = None,
@@ -477,25 +493,29 @@ class BaseHost(ABC):
         """Per-command runner for the persistent shell session. Subclasses override."""
         raise NotImplementedError from None
 
-    async def oneshot(self,
+    async def oneshot(
+        self,
         cmd: str,
         timeout: float | None = None,
         log: bool = True,
     ) -> CommandStatus:
         raise NotImplementedError from None
 
-    async def open_session(self,
+    async def open_session(
+        self,
         name: str,
     ) -> HostSession:
         raise NotImplementedError from None
 
-    async def send(self,
+    async def send(
+        self,
         text: str,
         log: bool = True,
     ) -> None:
         raise NotImplementedError from None
 
-    async def expect(self,
+    async def expect(
+        self,
         pattern: str | re.Pattern[str],
         timeout: float = 30.0,
     ) -> str:
@@ -505,13 +525,15 @@ class BaseHost(ABC):
     #  File transfer
     ####################
 
-    async def get(self,
+    async def get(
+        self,
         src_files: list[Path] | Path,
         dest_dir: Path,
     ) -> tuple[Status, str]:
         raise NotImplementedError from None
 
-    async def put(self,
+    async def put(
+        self,
         src_files: list[Path] | Path,
         dest_dir: Path,
     ) -> tuple[Status, str]:
@@ -538,7 +560,7 @@ class BaseHost(ABC):
         non-ok ``(Status, str)``; an empty list is a successful no-op.
         """
         for product in self.products:
-            status, msg = await product.stage(cast('Host', self))
+            status, msg = await product.stage(cast("Host", self))
             if not status.is_ok:
                 return status, msg
         return Status.Success, ""
@@ -556,7 +578,7 @@ class BaseHost(ABC):
         if stage_only or not status.is_ok:
             return status, msg
         for product in self.products:
-            status, msg = await product.install(cast('Host', self))
+            status, msg = await product.install(cast("Host", self))
             if not status.is_ok:
                 return status, msg
         return Status.Success, ""
@@ -570,7 +592,7 @@ class BaseHost(ABC):
         """
         first_error: tuple[Status, str] | None = None
         for product in self.products:
-            status, msg = await product.uninstall(cast('Host', self))
+            status, msg = await product.uninstall(cast("Host", self))
             if not status.is_ok and first_error is None:
                 first_error = (status, msg)
         return first_error if first_error is not None else (Status.Success, "")
@@ -580,11 +602,12 @@ class BaseHost(ABC):
         """True iff there is at least one product and all report installed.
 
         An empty :attr:`products` list is **not installed** (avoids the
-        vacuous-truth surprise of ``all([])``)."""
+        vacuous-truth surprise of ``all([])``).
+        """
         if not self.products:
             return False
         for product in self.products:
-            if not await product.is_installed(cast('Host', self)):
+            if not await product.is_installed(cast("Host", self)):
                 return False
         return True
 
@@ -597,7 +620,7 @@ class BaseHost(ABC):
     #  Power / reboot
     ####################
 
-    def _require_power_control(self) -> 'PowerController':
+    def _require_power_control(self) -> "PowerController":
         if self.power_control is None:
             raise ValueError(
                 f"Host {self.name!r} has no power_control configured. Set a "
@@ -607,28 +630,29 @@ class BaseHost(ABC):
         return self.power_control
 
     @cli_exposed
-    async def power(self, state: 'Annotated[str | None, Arg()]' = None) -> tuple[Status, str]:
+    async def power(self, state: "Annotated[str | None, Arg()]" = None) -> tuple[Status, str]:
         """Power this host ``'on'``/``'off'``, or toggle when *state* is None.
 
         Toggling reads the controller's :meth:`~otto.host.power.PowerController.status`;
         if the controller can't report state, pass an explicit ``state``.
         """
         from .power import PowerState
+
         controller = self._require_power_control()
         if state == "on":
-            return await controller.on(cast('Host', self))
+            return await controller.on(cast("Host", self))
         if state == "off":
-            return await controller.off(cast('Host', self))
+            return await controller.off(cast("Host", self))
         if state is None:
-            current = await controller.status(cast('Host', self))
+            current = await controller.status(cast("Host", self))
             if current is None:
                 raise ValueError(
                     f"power(toggle) on {self.name!r} needs a controller that "
                     f"reports status; pass state='on' or 'off'."
                 )
             if current is PowerState.ON:
-                return await controller.off(cast('Host', self))
-            return await controller.on(cast('Host', self))
+                return await controller.off(cast("Host", self))
+            return await controller.on(cast("Host", self))
         raise ValueError(f"invalid power state {state!r}; expected 'on', 'off', or None")
 
     async def _soft_reboot(self) -> tuple[Status, str]:
@@ -651,7 +675,7 @@ class BaseHost(ABC):
         downgraded to :attr:`~otto.utils.Status.Failed`.
         """
         if hard:
-            status, msg = await self._require_power_control().cycle(cast('Host', self))
+            status, msg = await self._require_power_control().cycle(cast("Host", self))
         else:
             status, msg = await self._soft_reboot()
         if status.is_ok and wait and not await self.wait_until_up(timeout):
@@ -700,7 +724,8 @@ class BaseHost(ABC):
     #  Repeat commands
     ####################
 
-    def start_repeat(self,
+    def start_repeat(
+        self,
         name: str,
         cmds: list[str] | str,
         interval: timedelta,
@@ -714,8 +739,14 @@ class BaseHost(ABC):
             self._log_command(f"[DRY RUN] start_repeat({name!r}, {cmds}, interval={interval})")
             return
         self._repeater.start(
-            name=name, cmds=cmds, interval=interval, times=times,
-            duration=duration, until=until, on_result=on_result, max_history=max_history,
+            name=name,
+            cmds=cmds,
+            interval=interval,
+            times=times,
+            duration=duration,
+            until=until,
+            on_result=on_result,
+            max_history=max_history,
         )
 
     async def stop_repeat(self, name: str) -> None:
@@ -724,9 +755,7 @@ class BaseHost(ABC):
     async def stop_all_repeats(self) -> None:
         await self._repeater.stop_all()
 
-    def repeat_results(
-        self, name: str
-    ) -> list[tuple[datetime, list[CommandStatus]]]:
+    def repeat_results(self, name: str) -> list[tuple[datetime, list[CommandStatus]]]:
         return self._repeater.get_results(name)
 
     ####################
@@ -734,21 +763,23 @@ class BaseHost(ABC):
     ####################
 
     # TODO: Dynamically size the preamble to be max(configModule.lab.hosts.names) + 2 (1 space on each side)
-    def _log_command(self,
+    def _log_command(
+        self,
         command: str,
     ) -> None:
-        logger.info(f"[bold]@{self.name}   | {command}", extra={'host': self})
+        logger.info(f"[bold]@{self.name}   | {command}", extra={"host": self})
 
-    def _log_output(self,
+    def _log_output(
+        self,
         output: str,
     ) -> None:
-        preamble =  f"[yellow]@{self.name} > | "
-        output_lines = [ f'{preamble}{line}' for line in output.splitlines() ]
+        preamble = f"[yellow]@{self.name} > | "
+        output_lines = [f"{preamble}{line}" for line in output.splitlines()]
 
         # A python 3.10 limitation does not allow escape characters within f-string closures.
         # Assign a variable to be a newline so it can be used within an f-string closure.
-        newline = '\n'
-        logger.info(f"{newline.join(output_lines)}",  extra={'host': self})
+        newline = "\n"
+        logger.info(f"{newline.join(output_lines)}", extra={"host": self})
 
 
 class HostFilter(Filter):
@@ -759,7 +790,7 @@ class HostFilter(Filter):
     @override
     def filter(self, record: LogRecord) -> bool:
 
-        host: Host | None = getattr(record, 'host', None)
+        host: Host | None = getattr(record, "host", None)
 
         # From this filter's perspective, all logs not related to logging can log
         if host is None:
@@ -768,9 +799,10 @@ class HostFilter(Filter):
         # Also respect the context and host logging flags
         return get_logging_command_output_enabled() and host.log
 
+
 # TODO: Consider a way to make commands and their output log no matter what if the log level were debug.
 @dataclass
-class SuppressCommandOutput():
+class SuppressCommandOutput:
     """Suppress command/output logging for one host or globally.
 
     On enter, the prior state is snapshotted; on exit it is restored.
@@ -793,6 +825,7 @@ class SuppressCommandOutput():
             self.host.log = False
         else:
             from ..context import try_get_context
+
             self._ctx = try_get_context()
             self._prev_global = self._ctx.log_command_output if self._ctx is not None else True
             if self._ctx is not None:
@@ -801,6 +834,5 @@ class SuppressCommandOutput():
     def __exit__(self, *_):
         if self.host is not None:
             self.host.log = self._prev_host_log
-        else:
-            if self._ctx is not None:
-                self._ctx.log_command_output = self._prev_global
+        elif self._ctx is not None:
+            self._ctx.log_command_output = self._prev_global

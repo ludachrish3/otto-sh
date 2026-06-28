@@ -111,6 +111,7 @@ def test_each_selector_resolves_to_its_own_backend_class():
         TftpFileTransfer,
         build_transfer_backend,
     )
+
     assert build_transfer_backend("scp") is ScpFileTransfer
     assert build_transfer_backend("sftp") is SftpFileTransfer
     assert build_transfer_backend("ftp") is FtpFileTransfer
@@ -137,10 +138,17 @@ def test_public_import_surface_preserved():
         register_transfer_backend,
         validate_filename_lengths,
     )
-    for name in ("register_transfer_backend", "build_transfer_backend",
-                 "make_rich_progress_handler", "make_transfer_progress",
-                 "TransferProgressHandler", "NcListenerCheck", "NcPortStrategy",
-                 "EmbeddedFileTransfer"):
+
+    for name in (
+        "register_transfer_backend",
+        "build_transfer_backend",
+        "make_rich_progress_handler",
+        "make_transfer_progress",
+        "TransferProgressHandler",
+        "NcListenerCheck",
+        "NcPortStrategy",
+        "EmbeddedFileTransfer",
+    ):
         assert hasattr(host_pkg, name), name
 
 

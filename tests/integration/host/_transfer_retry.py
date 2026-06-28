@@ -10,6 +10,7 @@ No retry: the nc silent-empty-file race is handled internally by
 ``TimeoutError`` that reaches this layer is a real hang and should surface
 as a failure, not be retried.
 """
+
 from __future__ import annotations
 
 import asyncio

@@ -19,9 +19,15 @@ from otto.models.settings import (
 )
 
 _OTTO_ENV_VARS = (
-    "OTTO_SUT_DIRS", "OTTO_LAB", "OTTO_XDIR", "OTTO_COMPOSE_SUFFIX",
-    "OTTO_FIELD_DEFAULT", "OTTO_FIELD_PRODUCTS", "OTTO_LOG_DAYS",
-    "OTTO_LOG_LEVEL", "OTTO_LOG_RICH",
+    "OTTO_SUT_DIRS",
+    "OTTO_LAB",
+    "OTTO_XDIR",
+    "OTTO_COMPOSE_SUFFIX",
+    "OTTO_FIELD_DEFAULT",
+    "OTTO_FIELD_PRODUCTS",
+    "OTTO_LOG_DAYS",
+    "OTTO_LOG_LEVEL",
+    "OTTO_LOG_RICH",
 )
 
 
@@ -42,16 +48,20 @@ def test_docker_settings_spec_defaults_to_empty_runtime():
 
 
 def test_docker_image_spec_builds_runtime_with_sorted_tupled_build_args():
-    spec = DockerSettingsSpec.model_validate({
-        "registry_url": "reg.example",
-        "images": [{
-            "name": "api",
-            "dockerfile": "/repo/docker/Dockerfile",
-            "context": "/repo/docker",
-            "target": "prod",
-            "build_args": {"B": "2", "A": "1"},
-        }],
-    })
+    spec = DockerSettingsSpec.model_validate(
+        {
+            "registry_url": "reg.example",
+            "images": [
+                {
+                    "name": "api",
+                    "dockerfile": "/repo/docker/Dockerfile",
+                    "context": "/repo/docker",
+                    "target": "prod",
+                    "build_args": {"B": "2", "A": "1"},
+                }
+            ],
+        }
+    )
     rt = spec.to_runtime()
     assert isinstance(rt.images[0], DockerImage)
     img = rt.images[0]
@@ -63,13 +73,17 @@ def test_docker_image_spec_builds_runtime_with_sorted_tupled_build_args():
 
 
 def test_docker_compose_spec_builds_runtime():
-    spec = DockerSettingsSpec.model_validate({
-        "composes": [{
-            "path": "/repo/compose.yml",
-            "default_host": "pepper_seed",
-            "services": ["api", "worker"],
-        }],
-    })
+    spec = DockerSettingsSpec.model_validate(
+        {
+            "composes": [
+                {
+                    "path": "/repo/compose.yml",
+                    "default_host": "pepper_seed",
+                    "services": ["api", "worker"],
+                }
+            ],
+        }
+    )
     rt = spec.to_runtime()
     assert isinstance(rt.composes[0], DockerCompose)
     assert rt.composes[0].path == Path("/repo/compose.yml")
@@ -80,12 +94,14 @@ def test_docker_compose_spec_builds_runtime():
 def test_docker_image_spec_stringifies_scalar_build_args():
     # parity with the old TOML parser: a bare-scalar build arg (e.g. an int) is
     # accepted and stringified rather than rejected at validation.
-    spec = DockerImageSpec.model_validate({
-        "name": "api",
-        "dockerfile": "/d/Dockerfile",
-        "context": "/d",
-        "build_args": {"PORT": 8080, "DEBUG": True},
-    })
+    spec = DockerImageSpec.model_validate(
+        {
+            "name": "api",
+            "dockerfile": "/d/Dockerfile",
+            "context": "/d",
+            "build_args": {"PORT": 8080, "DEBUG": True},
+        }
+    )
     assert spec.to_runtime().build_args == (("DEBUG", "True"), ("PORT", "8080"))
 
 
@@ -105,13 +121,15 @@ def test_docker_image_spec_requires_name_dockerfile_context():
 
 
 def test_os_profile_spec_requires_base_and_collects_defaults():
-    spec = OsProfileSpec.model_validate({
-        "base": "embedded",
-        "os_name": "Zephyr",
-        "os_version": "3.7",
-        "command_frame": "zephyr",
-        "max_filename_len": 32,
-    })
+    spec = OsProfileSpec.model_validate(
+        {
+            "base": "embedded",
+            "os_name": "Zephyr",
+            "os_version": "3.7",
+            "command_frame": "zephyr",
+            "max_filename_len": 32,
+        }
+    )
     assert spec.base == "embedded"
     assert spec.defaults == {
         "os_name": "Zephyr",
@@ -139,10 +157,12 @@ def test_reservation_config_defaults_to_none_backend():
 
 
 def test_reservation_config_keeps_open_backend_subtable():
-    cfg = ReservationConfigSpec.model_validate({
-        "backend": "json",
-        "json": {"path": "reservations.json"},
-    })
+    cfg = ReservationConfigSpec.model_validate(
+        {
+            "backend": "json",
+            "json": {"path": "reservations.json"},
+        }
+    )
     assert cfg.backend == "json"
     assert cfg.model_extra == {"json": {"path": "reservations.json"}}
 
@@ -153,13 +173,15 @@ def test_reservation_config_rejects_non_string_backend():
 
 
 def test_reservation_file_parses_entries_and_z_suffix():
-    f = ReservationFile.model_validate({
-        "version": 1,
-        "reservations": [
-            {"user": "alice", "resources": ["rack3-psu"], "expires": "2099-01-01T00:00:00Z"},
-            {"user": "bob", "resources": ["rack4-psu"]},
-        ],
-    })
+    f = ReservationFile.model_validate(
+        {
+            "version": 1,
+            "reservations": [
+                {"user": "alice", "resources": ["rack3-psu"], "expires": "2099-01-01T00:00:00Z"},
+                {"user": "bob", "resources": ["rack4-psu"]},
+            ],
+        }
+    )
     assert isinstance(f.reservations[0], ReservationEntry)
     assert f.reservations[0].user == "alice"
     assert f.reservations[0].expires == datetime(2099, 1, 1, tzinfo=timezone.utc)
@@ -167,10 +189,12 @@ def test_reservation_file_parses_entries_and_z_suffix():
 
 
 def test_reservation_file_naive_expires_treated_as_utc():
-    f = ReservationFile.model_validate({
-        "version": 1,
-        "reservations": [{"user": "a", "resources": ["r"], "expires": "2099-01-01T00:00:00"}],
-    })
+    f = ReservationFile.model_validate(
+        {
+            "version": 1,
+            "reservations": [{"user": "a", "resources": ["r"], "expires": "2099-01-01T00:00:00"}],
+        }
+    )
     assert f.reservations[0].expires == datetime(2099, 1, 1, tzinfo=timezone.utc)
 
 
@@ -183,18 +207,22 @@ def test_reservation_file_rejects_malformed_expires():
     # a bad timestamp surfaces as ValidationError (the validator must not swallow
     # the underlying ValueError from datetime.fromisoformat).
     with pytest.raises(ValidationError):
-        ReservationFile.model_validate({
-            "version": 1,
-            "reservations": [{"user": "a", "resources": ["r"], "expires": "not-a-date"}],
-        })
+        ReservationFile.model_validate(
+            {
+                "version": 1,
+                "reservations": [{"user": "a", "resources": ["r"], "expires": "not-a-date"}],
+            }
+        )
 
 
 def test_reservation_file_rejects_non_string_resources():
     with pytest.raises(ValidationError):
-        ReservationFile.model_validate({
-            "version": 1,
-            "reservations": [{"user": "a", "resources": [3]}],
-        })
+        ReservationFile.model_validate(
+            {
+                "version": 1,
+                "reservations": [{"user": "a", "resources": [3]}],
+            }
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -225,11 +253,13 @@ def test_settings_version_allows_semver_suffix():
 
 
 def test_settings_allows_legacy_lab_data_type_and_opaque_coverage():
-    m = SettingsModel.model_validate({
-        **_minimal(),
-        "lab_data_type": "json",
-        "coverage": {"gcda_remote_dir": "/var/cov", "embedded": {"extension": "cov"}},
-    })
+    m = SettingsModel.model_validate(
+        {
+            **_minimal(),
+            "lab_data_type": "json",
+            "coverage": {"gcda_remote_dir": "/var/cov", "embedded": {"extension": "cov"}},
+        }
+    )
     assert m.lab_data_type == "json"
     assert m.coverage == {"gcda_remote_dir": "/var/cov", "embedded": {"extension": "cov"}}
 
@@ -241,24 +271,32 @@ def test_settings_forbids_unknown_top_level_key():
 
 
 def test_settings_paths_coerce_to_path_lists():
-    m = SettingsModel.model_validate({
-        **_minimal(),
-        "labs": ["/a/lab"], "libs": ["/a/lib"], "tests": ["/a/tests"],
-        "init": ["mod_a"], "valid_labs": ["embedded"],
-    })
+    m = SettingsModel.model_validate(
+        {
+            **_minimal(),
+            "labs": ["/a/lab"],
+            "libs": ["/a/lib"],
+            "tests": ["/a/tests"],
+            "init": ["mod_a"],
+            "valid_labs": ["embedded"],
+        }
+    )
     assert m.labs == [Path("/a/lab")]
     assert m.init == ["mod_a"]
     assert m.valid_labs == ["embedded"]
 
 
 def test_host_preferences_accepts_selections_and_option_tables():
-    m = SettingsModel.model_validate({
-        "name": "p", "version": "1.0.0",
-        "host_preferences": {
-            ".*": {"term": ["telnet"], "ssh_options": {"connect_timeout": 5.0}},
-            "router.*": {"telnet_options": {"port": 9023}},
-        },
-    })
+    m = SettingsModel.model_validate(
+        {
+            "name": "p",
+            "version": "1.0.0",
+            "host_preferences": {
+                ".*": {"term": ["telnet"], "ssh_options": {"connect_timeout": 5.0}},
+                "router.*": {"telnet_options": {"port": 9023}},
+            },
+        }
+    )
     assert m.host_preferences[".*"]["term"] == ["telnet"]
     assert m.host_preferences[".*"]["ssh_options"] == {"connect_timeout": 5.0}
     assert m.host_preferences["router.*"]["telnet_options"] == {"port": 9023}
@@ -266,42 +304,57 @@ def test_host_preferences_accepts_selections_and_option_tables():
 
 def test_host_preferences_unknown_inner_key_raises():
     with pytest.raises(ValueError, match="unknown .host_preferences. key 'bogus'"):
-        SettingsModel.model_validate({
-            "name": "p", "version": "1.0.0",
-            "host_preferences": {".*": {"bogus": ["x"]}},
-        })
+        SettingsModel.model_validate(
+            {
+                "name": "p",
+                "version": "1.0.0",
+                "host_preferences": {".*": {"bogus": ["x"]}},
+            }
+        )
 
 
 def test_host_preferences_bad_selector_regex_raises():
     with pytest.raises(ValueError, match="is not a valid regular expression"):
-        SettingsModel.model_validate({
-            "name": "p", "version": "1.0.0",
-            "host_preferences": {"[": {"term": ["ssh"]}},
-        })
+        SettingsModel.model_validate(
+            {
+                "name": "p",
+                "version": "1.0.0",
+                "host_preferences": {"[": {"term": ["ssh"]}},
+            }
+        )
 
 
 def test_host_preferences_option_table_typo_raises():
     with pytest.raises(ValueError):
-        SettingsModel.model_validate({
-            "name": "p", "version": "1.0.0",
-            "host_preferences": {".*": {"ssh_options": {"not_a_real_key": 1}}},
-        })
+        SettingsModel.model_validate(
+            {
+                "name": "p",
+                "version": "1.0.0",
+                "host_preferences": {".*": {"ssh_options": {"not_a_real_key": 1}}},
+            }
+        )
 
 
 def test_host_preferences_capability_must_be_list():
     with pytest.raises(ValueError, match="must be a list"):
-        SettingsModel.model_validate({
-            "name": "p", "version": "1.0.0",
-            "host_preferences": {".*": {"term": "telnet"}},
-        })
+        SettingsModel.model_validate(
+            {
+                "name": "p",
+                "version": "1.0.0",
+                "host_preferences": {".*": {"term": "telnet"}},
+            }
+        )
 
 
 def test_legacy_host_defaults_rejected_with_migration_message():
     with pytest.raises(ValueError, match=r"\[host_defaults\] was removed"):
-        SettingsModel.model_validate({
-            "name": "p", "version": "1.0.0",
-            "host_defaults": {"ssh_options": {"port": 22}},
-        })
+        SettingsModel.model_validate(
+            {
+                "name": "p",
+                "version": "1.0.0",
+                "host_defaults": {"ssh_options": {"port": 22}},
+            }
+        )
 
 
 def test_settings_schema_exposes_host_preferences_not_host_defaults():
@@ -311,11 +364,13 @@ def test_settings_schema_exposes_host_preferences_not_host_defaults():
 
 
 def test_settings_builds_docker_and_os_profiles():
-    m = SettingsModel.model_validate({
-        **_minimal(),
-        "os_profiles": {"zephyr-3.7": {"base": "embedded", "os_version": "3.7"}},
-        "docker": {"registry_url": "reg.x"},
-    })
+    m = SettingsModel.model_validate(
+        {
+            **_minimal(),
+            "os_profiles": {"zephyr-3.7": {"base": "embedded", "os_version": "3.7"}},
+            "docker": {"registry_url": "reg.x"},
+        }
+    )
     assert m.os_profiles["zephyr-3.7"].base == "embedded"
     assert m.os_profiles["zephyr-3.7"].defaults == {"os_version": "3.7"}
     assert m.docker.to_runtime().registry_url == "reg.x"
@@ -336,13 +391,15 @@ def test_settings_validates_every_in_tree_fixture():
 
 
 def test_settings_host_preferences_accepted():
-    m = SettingsModel.model_validate({
-        **_minimal(),
-        "host_preferences": {
-            ".*": {"transfer": ["sftp", "scp"], "term": ["ssh"]},
-            "zephyr.*": {"transfer": ["console"]},
-        },
-    })
+    m = SettingsModel.model_validate(
+        {
+            **_minimal(),
+            "host_preferences": {
+                ".*": {"transfer": ["sftp", "scp"], "term": ["ssh"]},
+                "zephyr.*": {"transfer": ["console"]},
+            },
+        }
+    )
     assert m.host_preferences == {
         ".*": {"transfer": ["sftp", "scp"], "term": ["ssh"]},
         "zephyr.*": {"transfer": ["console"]},
@@ -356,23 +413,28 @@ def test_settings_host_preferences_defaults_empty():
 
 def test_settings_host_preferences_rejects_unknown_capability():
     with pytest.raises(ValueError, match=r"unknown \[host_preferences\] key 'transfre'"):
-        SettingsModel.model_validate({
-            **_minimal(),
-            "host_preferences": {".*": {"transfre": ["scp"]}},
-        })
+        SettingsModel.model_validate(
+            {
+                **_minimal(),
+                "host_preferences": {".*": {"transfre": ["scp"]}},
+            }
+        )
 
 
 def test_settings_host_preferences_rejects_bad_selector_regex():
     with pytest.raises(ValueError, match=r"not a valid regular expression"):
-        SettingsModel.model_validate({
-            **_minimal(),
-            "host_preferences": {"[unclosed": {"transfer": ["scp"]}},
-        })
+        SettingsModel.model_validate(
+            {
+                **_minimal(),
+                "host_preferences": {"[unclosed": {"transfer": ["scp"]}},
+            }
+        )
 
 
 def test_host_default_option_keys_match_factory_options_keys():
     from otto.models.settings import _HOST_DEFAULT_OPTION_SPECS
     from otto.storage.factory import OPTIONS_KEYS
+
     assert set(_HOST_DEFAULT_OPTION_SPECS) == OPTIONS_KEYS
 
 
@@ -385,9 +447,9 @@ def test_docker_spec_fields_match_runtime_dataclass():
 
     from otto.configmodule.repo import DockerCompose, DockerImage, DockerSettings
     from otto.models.settings import (
-        DockerComposeSpec,
         DockerSettingsSpec,
     )
+
     pairs = [
         (DockerImageSpec, DockerImage),
         (DockerComposeSpec, DockerCompose),
@@ -433,6 +495,7 @@ def test_otto_env_settings_reads_prefixed_vars(clean_otto_env, tmp_path):
 
 def test_otto_env_settings_splits_sut_dirs_comma_and_pathsep(clean_otto_env, tmp_path):
     import os
+
     a = tmp_path / "a"
     b = tmp_path / "b"
     a.mkdir()
@@ -458,7 +521,7 @@ def test_otto_env_settings_empty_values_use_defaults(clean_otto_env):
 def test_otto_env_settings_xdir_dot_is_preserved(clean_otto_env):
     # a real value (even ".") is kept — only the empty string means "unset".
     clean_otto_env.setenv("OTTO_XDIR", ".")
-    assert OttoEnvSettings().xdir == Path(".")
+    assert OttoEnvSettings().xdir == Path()
 
 
 # ---------------------------------------------------------------------------
@@ -473,9 +536,7 @@ def test_lab_config_spec_defaults_to_json():
 
 
 def test_lab_config_spec_keeps_backend_subtable_open():
-    cfg = LabConfigSpec.model_validate(
-        {"backend": "myteam", "myteam": {"url": "https://cmdb"}}
-    )
+    cfg = LabConfigSpec.model_validate({"backend": "myteam", "myteam": {"url": "https://cmdb"}})
     assert cfg.backend == "myteam"
     assert cfg.model_extra == {"myteam": {"url": "https://cmdb"}}
 

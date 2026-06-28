@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from otto.configmodule.env import (
@@ -11,7 +9,7 @@ from otto.configmodule.env import (
 )
 
 
-@pytest.fixture(autouse=True, scope='function')
+@pytest.fixture(autouse=True, scope="function")
 def clear_env(monkeypatch):
     """Clear the environment variables Otto cares about before every test"""
 
@@ -28,24 +26,24 @@ def test_env_not_set() -> None:
 def test_env_lab_value() -> None:
     """Notify users if this test fails or if its logic changes because this is an external interface."""
 
-    assert LAB_ENV_VAR == 'OTTO_LAB'
+    assert LAB_ENV_VAR == "OTTO_LAB"
 
 
 def test_env_sutdirs_value() -> None:
     """Notify users if this test fails or if its logic changes because this is an external interface."""
 
-    assert SUT_DIRS_ENV_VAR == 'OTTO_SUT_DIRS'
+    assert SUT_DIRS_ENV_VAR == "OTTO_SUT_DIRS"
 
 
 def test_env_log_days_value() -> None:
     """Notify users if this test fails or if its logic changes because this is an external interface."""
 
-    assert LOG_DAYS_ENV_VAR == 'OTTO_LOG_DAYS'
+    assert LOG_DAYS_ENV_VAR == "OTTO_LOG_DAYS"
 
 
 def test_env_sutdirs_set_to_one_path_that_exists(monkeypatch, tmpdir) -> None:
 
-    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{tmpdir}')
+    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{tmpdir}")
     env = load_otto_env()
 
     assert env.sut_dirs == [tmpdir]
@@ -53,7 +51,7 @@ def test_env_sutdirs_set_to_one_path_that_exists(monkeypatch, tmpdir) -> None:
 
 def test_env_sutdirs_set_to_one_path_that_does_not_exist(monkeypatch, tmpdir) -> None:
 
-    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{tmpdir}_typo')
+    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{tmpdir}_typo")
 
     with pytest.raises(FileNotFoundError):
         load_otto_env()
@@ -61,10 +59,10 @@ def test_env_sutdirs_set_to_one_path_that_does_not_exist(monkeypatch, tmpdir) ->
 
 def test_env_sutdirs_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factory) -> None:
 
-    sutDir1 = tmpdir_factory.mktemp('dir1')
-    sutDir2 = tmpdir_factory.mktemp('dir2')
+    sutDir1 = tmpdir_factory.mktemp("dir1")
+    sutDir2 = tmpdir_factory.mktemp("dir2")
 
-    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{sutDir1},{sutDir2}')
+    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{sutDir1},{sutDir2}")
     env = load_otto_env()
 
     assert env.sut_dirs == [sutDir1, sutDir2]
@@ -72,7 +70,7 @@ def test_env_sutdirs_set_to_multiple_paths_that_exist(monkeypatch, tmpdir_factor
 
 def test_env_sutdirs_set_to_multiple_paths_one_does_not_exist(monkeypatch, tmpdir) -> None:
 
-    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f'{tmpdir},{tmpdir}_typo')
+    monkeypatch.setenv(SUT_DIRS_ENV_VAR, f"{tmpdir},{tmpdir}_typo")
 
     with pytest.raises(FileNotFoundError):
         load_otto_env()
@@ -81,4 +79,4 @@ def test_env_sutdirs_set_to_multiple_paths_one_does_not_exist(monkeypatch, tmpdi
 def test_env_xdir_value() -> None:
     """Notify users if this test fails or if its logic changes because this is an external interface."""
 
-    assert XDIR_ENV_VAR == 'OTTO_XDIR'
+    assert XDIR_ENV_VAR == "OTTO_XDIR"

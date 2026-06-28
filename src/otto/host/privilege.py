@@ -18,12 +18,13 @@ the ``@dataclass(slots=True)`` hosts. Password sourcing is host-specific:
 ``_sudo_password`` / ``_user_password`` default to ``None`` (passwordless) and
 :class:`~otto.host.unix_host.UnixHost` overrides them from ``creds``.
 """
+
 from __future__ import annotations
 
 import shlex
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .session import Expect
@@ -33,17 +34,18 @@ _SUDO_PROMPT = "otto-sudo:"
 
 
 async def _perform_su(
-    send: 'Callable[..., Awaitable[None]]',
-    expect: 'Callable[..., Awaitable[str]]',
+    send: "Callable[..., Awaitable[None]]",
+    expect: "Callable[..., Awaitable[str]]",
     user: str,
     password: str | None,
-    user_password: 'Callable[[str], str | None]',
+    user_password: "Callable[[str], str | None]",
 ) -> str:
     """Run the ``su`` exchange against a session's ``send``/``expect`` and
     return the resolved target user. Does **no** ``current_user`` bookkeeping —
     the caller stamps the session it elevated. Shared by
     :meth:`PosixPrivilege.switch_user` (default session) and
-    :meth:`~otto.host.session.HostSession.switch_user` (named session)."""
+    :meth:`~otto.host.session.HostSession.switch_user` (named session).
+    """
     target = user or "root"
     cmd = "su" if not user else f"su {shlex.quote(user)}"
     pw = password if password is not None else user_password(target)
@@ -81,7 +83,11 @@ class PosixPrivilege:
         subsequent ``run`` calls until the user exits back.
         """
         target = await _perform_su(
-            self.send, self.expect, user, password, self._user_password  # ty: ignore[unresolved-attribute]
+            self.send,  # ty: ignore[unresolved-attribute]
+            self.expect,  # ty: ignore[unresolved-attribute]
+            user,
+            password,
+            self._user_password,
         )
         self._session_mgr._set_current_user(target)  # ty: ignore[unresolved-attribute]
 

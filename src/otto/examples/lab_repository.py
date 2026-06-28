@@ -46,12 +46,20 @@ from ..storage import (
 # host-level "labs" field is unnecessary.
 _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
     "east": [
-        {"ip": "10.0.0.1", "element": "router1", "creds": {"admin": "admin"},
-         "resources": ["router1"]},
+        {
+            "ip": "10.0.0.1",
+            "element": "router1",
+            "creds": {"admin": "admin"},
+            "resources": ["router1"],
+        },
     ],
     "west": [
-        {"ip": "10.0.1.1", "element": "router2", "creds": {"admin": "admin"},
-         "resources": ["router2"]},
+        {
+            "ip": "10.0.1.1",
+            "element": "router2",
+            "creds": {"admin": "admin"},
+            "resources": ["router2"],
+        },
     ],
 }
 
@@ -73,7 +81,7 @@ class ExampleLabRepository:
     def __init__(
         self,
         *,
-        repo_dir: Path | None = None,  # noqa: ARG002 — factory/registry uniformity
+        repo_dir: Path | None = None,
         labs: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self._labs: dict[str, list[dict[str, Any]]] = (
@@ -87,9 +95,7 @@ class ExampleLabRepository:
     ) -> Lab:
         if name not in self._labs:
             known = ", ".join(sorted(self._labs)) or "(none)"
-            raise LabNotFoundError(
-                f"Lab {name!r} not found. Known labs: {known}"
-            )
+            raise LabNotFoundError(f"Lab {name!r} not found. Known labs: {known}")
         lab = Lab(name=name)
         for host_data in self._labs[name]:
             host = create_host_from_dict(host_data, preferences=preferences)

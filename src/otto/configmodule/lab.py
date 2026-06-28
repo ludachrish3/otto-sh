@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class Lab():
+class Lab:
     name: str
     """Name of this lab."""
 
@@ -26,7 +26,8 @@ class Lab():
     hosts: dict[str, Host] = field(default_factory=dict)
     """Host objects, keyed by unique host id."""
 
-    def add_host(self,
+    def add_host(
+        self,
         host: Host,
     ) -> None:
         """Add a Host object to the `Lab`'s dictionary of hosts.
@@ -35,7 +36,6 @@ class Lab():
         ----------
         host : Host to add to the dictionary of hosts
         """
-
         if host.id in self.hosts:
             raise KeyError(
                 f"Attempted to add a host with ID '{host.id}', "
@@ -43,16 +43,19 @@ class Lab():
             ) from None
 
         from ..host.remote_host import RemoteHost  # lazy import avoids a module-load cycle
+
         if isinstance(host, RemoteHost):
             host._lab = self
 
         self.hosts[host.id] = host
 
-    def __add__(self,
-        other: 'Lab',
-    ) -> 'Lab':
+    def __add__(
+        self,
+        other: "Lab",
+    ) -> "Lab":
 
         from ..host.remote_host import RemoteHost
+
         self.name = f"{self.name}_{other.name}"
         self.resources = self.resources.union(other.resources)
         for host in other.hosts.values():
@@ -62,10 +65,12 @@ class Lab():
 
         return self
 
+
 # Imported here (after Lab is fully defined) rather than at the top of the
 # module to avoid a circular-import bootstrap: json_repository imports Lab
 # from this module, so this import must wait until Lab is defined.
-from ..storage.json_repository import JsonFileLabRepository  # noqa: E402, I001
+from ..storage.json_repository import JsonFileLabRepository
+
 
 def load_lab(
     labnames: str | list[str],
@@ -98,7 +103,6 @@ def load_lab(
     Lab
         Fully defined lab instance.
     """
-
     match labnames:
         case str():
             lab_names = labnames.split(",")

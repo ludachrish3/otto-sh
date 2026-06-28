@@ -1,7 +1,8 @@
 """Runtime host menu fields + active resolution via to_host."""
+
 import pytest
 
-from otto.host.embedded_host import EmbeddedHost, ZephyrHost
+from otto.host.embedded_host import ZephyrHost
 from otto.host.unix_host import UnixHost
 from otto.models.host import EmbeddedHostSpec, UnixHostSpec
 
@@ -35,8 +36,14 @@ def test_unix_pin_outside_menu_fails_loud():
 
 def test_directly_built_unix_host_validates_active_against_menu():
     with pytest.raises(ValueError, match="transfer 'sftp' is not in"):
-        UnixHost(ip="1.1.1.1", element="x", creds={"u": "p"},
-                 transfer="sftp", valid_transfers=["scp"], log=False)
+        UnixHost(
+            ip="1.1.1.1",
+            element="x",
+            creds={"u": "p"},
+            transfer="sftp",
+            valid_transfers=["scp"],
+            log=False,
+        )
 
 
 def test_embedded_defaults_active():
@@ -58,10 +65,11 @@ def test_embedded_connection_uses_self_term_not_hardcoded():
 def test_host_id_and_name_render_element_id():
     from otto.host.unix_host import UnixHost
 
-    h = UnixHost(ip="1.1.1.1", creds={"root": "x"}, element="Test",
-                 element_id=5, board="BoardX", slot=2)
-    assert h.id == "test5_boardx2"      # element_id is the NUMBER; id is lower-cased
-    assert h.name == "Test5 BoardX2"    # original case, space-joined name
+    h = UnixHost(
+        ip="1.1.1.1", creds={"root": "x"}, element="Test", element_id=5, board="BoardX", slot=2
+    )
+    assert h.id == "test5_boardx2"  # element_id is the NUMBER; id is lower-cased
+    assert h.name == "Test5 BoardX2"  # original case, space-joined name
 
     h2 = UnixHost(ip="1.1.1.1", creds={"root": "x"}, element="solo")
     assert h2.id == "solo"
@@ -75,6 +83,7 @@ def test_make_host_id_matches_built_host_id():
     assert make_host_id("Test", 5, "BoardX", 2) == "test5_boardx2"
     assert make_host_id("solo", None, None, None) == "solo"
 
-    h = UnixHost(ip="1.1.1.1", creds={"root": "x"}, element="Test",
-                 element_id=5, board="BoardX", slot=2)
+    h = UnixHost(
+        ip="1.1.1.1", creds={"root": "x"}, element="Test", element_id=5, board="BoardX", slot=2
+    )
     assert make_host_id("Test", 5, "BoardX", 2) == h.id

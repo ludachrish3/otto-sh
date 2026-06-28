@@ -42,9 +42,7 @@ from pathlib import Path
 import pytest
 
 from otto.utils import Status
-
 from tests.conftest import EMBEDDED_BACKENDS, embedded_param_id, remote_name
-
 
 # Backend ids that carry the `embedded` marker. Single-sourced from
 # :data:`tests.conftest` so the Zephyr version x filesystem matrix lives in
@@ -63,7 +61,10 @@ def _backend_param(backend_id: str) -> pytest.param:
     if backend_id in _EMBEDDED_BACKENDS:
         marks.append(pytest.mark.embedded)
     return pytest.param(
-        backend_id, backend_id, marks=marks, id=embedded_param_id(backend_id),
+        backend_id,
+        backend_id,
+        marks=marks,
+        id=embedded_param_id(backend_id),
     )
 
 
@@ -84,7 +85,6 @@ pytestmark = [pytest.mark.timeout(600), pytest.mark.stability]
 
 @_ALL_BACKENDS
 class TestRunIterationStability:
-
     @pytest.mark.asyncio
     async def test_sequential_run_iterations_stay_intact(self, host1, host1_kit):
         """N sequential ``run`` calls must each return ``Status.Success``
@@ -93,15 +93,9 @@ class TestRunIterationStability:
         n = host1_kit.stability_iterations
         for i in range(n):
             result = (await host1.run(host1_kit.successful_cmd)).only
-            assert result.status == Status.Success, (
-                f"iteration {i}/{n} failed: {result}"
-            )
-            assert result.retcode == 0, (
-                f"iteration {i}/{n} non-zero retcode: {result.retcode}"
-            )
-            assert result.output, (
-                f"iteration {i}/{n} produced empty output"
-            )
+            assert result.status == Status.Success, f"iteration {i}/{n} failed: {result}"
+            assert result.retcode == 0, f"iteration {i}/{n} non-zero retcode: {result.retcode}"
+            assert result.output, f"iteration {i}/{n} produced empty output"
             assert host1_kit.expect_in_output in result.output, (
                 f"iteration {i}/{n} mangled output: {result.output!r}"
             )
@@ -109,10 +103,13 @@ class TestRunIterationStability:
 
 @_ALL_BACKENDS
 class TestTransferCycleStability:
-
     @pytest.mark.asyncio
     async def test_put_get_delete_cycles_round_trip(
-        self, host1, host1_kit, worker_id, tmp_path: Path,
+        self,
+        host1,
+        host1_kit,
+        worker_id,
+        tmp_path: Path,
     ):
         """N put/get/verify/delete cycles must all succeed without
         partition exhaustion or content corruption. On embedded backends
@@ -134,21 +131,17 @@ class TestTransferCycleStability:
             local_src.write_bytes(payload)
 
             put_status, put_err = await host1.put([local_src], remote_dir)
-            assert put_status == Status.Success, (
-                f"cycle {i}/{n} put failed: {put_err}"
-            )
+            assert put_status == Status.Success, f"cycle {i}/{n} put failed: {put_err}"
 
             get_status, get_err = await host1.get(
-                [remote_dir / name], landing,
+                [remote_dir / name],
+                landing,
             )
-            assert get_status == Status.Success, (
-                f"cycle {i}/{n} get failed: {get_err}"
-            )
+            assert get_status == Status.Success, f"cycle {i}/{n} get failed: {get_err}"
 
             got = (landing / name).read_bytes()
             assert got == payload, (
-                f"cycle {i}/{n} content corrupt: "
-                f"len(got)={len(got)} len(payload)={len(payload)}"
+                f"cycle {i}/{n} content corrupt: len(got)={len(got)} len(payload)={len(payload)}"
             )
 
             # Clean up between iterations so the partition usage stays
@@ -176,10 +169,13 @@ class TestTransferCycleStability:
 
 @_ALL_BACKENDS
 class TestLargeTransferStability:
-
     @pytest.mark.asyncio
     async def test_large_file_round_trips_byte_identical(
-        self, host1, host1_kit, worker_id, tmp_path: Path,
+        self,
+        host1,
+        host1_kit,
+        worker_id,
+        tmp_path: Path,
     ):
         """One transfer at the backend's stability-class size must
         round-trip byte-identically. Embedded sizes are orders of
@@ -196,23 +192,19 @@ class TestLargeTransferStability:
 
         remote_dir = Path(host1_kit.temp_remote_dir)
         put_status, put_err = await host1.put([local_src], remote_dir)
-        assert put_status == Status.Success, (
-            f"large put ({size} bytes) failed: {put_err}"
-        )
+        assert put_status == Status.Success, f"large put ({size} bytes) failed: {put_err}"
 
         landing = tmp_path / "landing"
         landing.mkdir()
         get_status, get_err = await host1.get(
-            [remote_dir / name], landing,
+            [remote_dir / name],
+            landing,
         )
-        assert get_status == Status.Success, (
-            f"large get ({size} bytes) failed: {get_err}"
-        )
+        assert get_status == Status.Success, f"large get ({size} bytes) failed: {get_err}"
 
         got = (landing / name).read_bytes()
         assert got == payload, (
-            f"large file ({size} bytes) corrupt after round-trip: "
-            f"len(got)={len(got)}"
+            f"large file ({size} bytes) corrupt after round-trip: len(got)={len(got)}"
         )
 
         del_status = await _delete_remote(host1, remote_dir / name)
@@ -225,6 +217,7 @@ class TestLargeTransferStability:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 async def _delete_remote(host, path: Path) -> Status:
     """Backend-agnostic remote delete; returns the resulting ``Status``.
 
@@ -236,6 +229,7 @@ async def _delete_remote(host, path: Path) -> Status:
     change on a new RTOS).
     """
     from otto.host.embedded_host import EmbeddedHost
+
     if isinstance(host, EmbeddedHost):
         result = (await host.run(f"fs rm {path}")).only
     else:

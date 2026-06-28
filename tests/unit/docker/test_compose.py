@@ -7,15 +7,12 @@ from __future__ import annotations
 
 import getpass
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from otto.configmodule.lab import Lab
 from otto.configmodule.repo import (
-    DockerCompose,
-    DockerImage,
-    DockerSettings,
     Repo,
 )
 from otto.docker.compose import (
@@ -30,10 +27,10 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _ok(out: str = "") -> CommandStatus:
     return CommandStatus(command="", output=out, status=Status.Success, retcode=0)
@@ -54,7 +51,9 @@ _TRANSIENT_NETWORK_RACE_OUTPUT = (
 )
 
 
-def _make_repo(tmp: Path, *, name: str = "repo1", services: tuple = ("api",), default_host: str = "pepper_seed") -> Repo:
+def _make_repo(
+    tmp: Path, *, name: str = "repo1", services: tuple = ("api",), default_host: str = "pepper_seed"
+) -> Repo:
     sut = tmp / name
     (sut / ".otto").mkdir(parents=True)
     (sut / "docker").mkdir()
@@ -62,19 +61,19 @@ def _make_repo(tmp: Path, *, name: str = "repo1", services: tuple = ("api",), de
     (sut / "docker" / "compose.yml").write_text("services: {}\n")
     services_toml = "[" + ", ".join(f'"{s}"' for s in services) + "]"
     (sut / ".otto" / "settings.toml").write_text(
-        f"name = \"{name}\"\n"
-        f"version = \"1.0.0\"\n"
+        f'name = "{name}"\n'
+        f'version = "1.0.0"\n'
         f"\n"
         f"[docker]\n"
         f"\n"
         f"[[docker.images]]\n"
-        f"name = \"api\"\n"
-        f"dockerfile = \"${{sut_dir}}/docker/Dockerfile\"\n"
-        f"context = \"${{sut_dir}}/docker\"\n"
+        f'name = "api"\n'
+        f'dockerfile = "${{sut_dir}}/docker/Dockerfile"\n'
+        f'context = "${{sut_dir}}/docker"\n'
         f"\n"
         f"[[docker.composes]]\n"
-        f"path = \"${{sut_dir}}/docker/compose.yml\"\n"
-        f"default_host = \"{default_host}\"\n"
+        f'path = "${{sut_dir}}/docker/compose.yml"\n'
+        f'default_host = "{default_host}"\n'
         f"services = {services_toml}\n"
     )
     return Repo(sut_dir=sut)
@@ -109,6 +108,7 @@ def _make_lab() -> Lab:
 # get_user_compose_project
 # ---------------------------------------------------------------------------
 
+
 def test_compose_project_uses_user_when_no_suffix(monkeypatch):
     monkeypatch.delenv("OTTO_COMPOSE_SUFFIX", raising=False)
     name = get_user_compose_project("Repo1")
@@ -124,10 +124,13 @@ def test_compose_project_honors_env_override(monkeypatch):
 # _resolve_parent
 # ---------------------------------------------------------------------------
 
+
 def test_resolve_parent_prefers_explicit_on(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
-    parent = _resolve_parent(repo, lab, on="pepper_seed", composes=list(repo.docker_settings.composes))
+    parent = _resolve_parent(
+        repo, lab, on="pepper_seed", composes=list(repo.docker_settings.composes)
+    )
     assert parent.id == "pepper_seed"
 
 
@@ -142,9 +145,15 @@ def test_resolve_parent_rejects_non_capable(tmp_path):
     repo = _make_repo(tmp_path, default_host="other_seed")
     lab = _make_lab()
     # Add a host that is NOT docker_capable.
-    other = _wire_parent_mock(UnixHost(
-        ip="1.2.3.4", element="other", creds={"u": "p"}, board="seed", docker_capable=False,
-    ))
+    other = _wire_parent_mock(
+        UnixHost(
+            ip="1.2.3.4",
+            element="other",
+            creds={"u": "p"},
+            board="seed",
+            docker_capable=False,
+        )
+    )
     lab.hosts[other.id] = other
     with pytest.raises(ValueError, match="not docker_capable"):
         _resolve_parent(repo, lab, on=None, composes=list(repo.docker_settings.composes))
@@ -161,6 +170,7 @@ def test_resolve_parent_errors_when_no_host(tmp_path):
 # ---------------------------------------------------------------------------
 # compose_up command construction & idempotence
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_compose_up_constructs_expected_command(tmp_path):
@@ -255,8 +265,9 @@ async def test_compose_up_skips_build_when_build_false(tmp_path):
     parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
 
     await compose_up(repo, lab, build=False)
-    assert not any(c.startswith("docker image inspect") for c in call_log), \
+    assert not any(c.startswith("docker image inspect") for c in call_log), (
         "build=False must skip the build path entirely"
+    )
 
 
 @pytest.mark.asyncio
@@ -290,9 +301,7 @@ async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monke
     """A transient libnetwork "network ... not found" on the first `up -d` is
     retried once; the convergent re-run then starts the already-created
     container and succeeds."""
-    monkeypatch.setattr(
-        "otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False
-    )
+    monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False)
     repo = _make_repo(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["pepper_seed"]
@@ -328,9 +337,7 @@ async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypa
     """A genuine compose failure (not the network race) is NOT retried — it
     propagates as RuntimeError after a single attempt, so the retry can't
     mask real errors (bad compose file, pull denied, port clash)."""
-    monkeypatch.setattr(
-        "otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False
-    )
+    monkeypatch.setattr("otto.docker.compose._NETWORK_RACE_RETRY_BACKOFF_S", 0.0, raising=False)
     repo = _make_repo(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["pepper_seed"]
@@ -357,9 +364,7 @@ async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypat
     """A just-Started container can briefly not appear in `docker ps` on a busy
     daemon; the container-id lookup must poll past that empty first result so
     the service is registered instead of silently skipped (0 containers)."""
-    monkeypatch.setattr(
-        "otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False
-    )
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
     repo = _make_repo(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["pepper_seed"]
@@ -392,12 +397,8 @@ async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypat
 async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeypatch):
     """If the container never becomes visible, resolve gives up after a bounded
     number of polls (no infinite wait) and the service is skipped."""
-    monkeypatch.setattr(
-        "otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False
-    )
-    monkeypatch.setattr(
-        "otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 3, raising=False
-    )
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_BACKOFF_S", 0.0, raising=False)
+    monkeypatch.setattr("otto.docker.compose._CONTAINER_ID_RESOLVE_ATTEMPTS", 3, raising=False)
     repo = _make_repo(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["pepper_seed"]
@@ -432,8 +433,11 @@ async def test_compose_down_removes_registered_hosts(tmp_path):
 
     # Pre-populate with a fake registered container host.
     fake = DockerContainerHost(
-        parent=parent, container_id="cid", project="repo1",
-        service="api", compose_project="otto-repo1-x",
+        parent=parent,
+        container_id="cid",
+        project="repo1",
+        service="api",
+        compose_project="otto-repo1-x",
     )
     lab.hosts[fake.id] = fake  # type: ignore[assignment]
     assert fake.id in lab.hosts
@@ -466,8 +470,9 @@ async def test_composed_does_not_teardown_when_already_running(tmp_path):
         pass
 
     cmds = [c.args[0] for c in parent.oneshot.call_args_list]  # type: ignore[union-attr]
-    assert not any(("compose" in c and " down" in c) for c in cmds), \
+    assert not any(("compose" in c and " down" in c) for c in cmds), (
         "composed(own=False) must skip teardown when stack was already running"
+    )
 
 
 @pytest.mark.asyncio
@@ -491,13 +496,15 @@ async def test_composed_tears_down_when_own_true(tmp_path):
         pass
 
     cmds = [c.args[0] for c in parent.oneshot.call_args_list]  # type: ignore[union-attr]
-    assert any(("compose" in c and " down" in c) for c in cmds), \
+    assert any(("compose" in c and " down" in c) for c in cmds), (
         "composed(own=True) must tear down even if stack was already up"
+    )
 
 
 # ---------------------------------------------------------------------------
 # register_declared_container_hosts
 # ---------------------------------------------------------------------------
+
 
 def test_register_declared_creates_placeholders(tmp_path):
     repo = _make_repo(tmp_path)

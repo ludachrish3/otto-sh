@@ -35,7 +35,10 @@ _REMOTE_ONLY = pytest.mark.parametrize("host1", ["ssh", "telnet"], indirect=True
 _ALL_TRANSFERS = pytest.mark.parametrize(
     "transfer_host",
     [
-        "scp", "sftp", "ftp", "nc",
+        "scp",
+        "sftp",
+        "ftp",
+        "nc",
         pytest.param(("nc", "telnet"), id="nc-telnet"),
     ],
     indirect=True,
@@ -46,28 +49,28 @@ _ALL_TRANSFERS = pytest.mark.parametrize(
 # Basic command execution
 # ---------------------------------------------------------------------------
 
+
 @_ALL_HOSTS
 class TestBasicCommands:
-
     @pytest.mark.asyncio
     async def test_echo(self, host1: Host):
-        result = (await host1.run('echo hello')).only
+        result = (await host1.run("echo hello")).only
         assert result.status == Status.Success
-        assert 'hello' in result.output
+        assert "hello" in result.output
 
     @pytest.mark.asyncio
     async def test_multiple_commands_run_in_order(self, host1: Host):
-        result = await host1.run(['echo first', 'echo second'])
+        result = await host1.run(["echo first", "echo second"])
         assert result.status == Status.Success
         assert len(result.statuses) == 2
-        assert 'first' in result.statuses[0].output
-        assert 'second' in result.statuses[1].output
+        assert "first" in result.statuses[0].output
+        assert "second" in result.statuses[1].output
 
     @pytest.mark.asyncio
     async def test_uname_returns_linux(self, host1: Host):
-        result = (await host1.run('uname -s')).only
+        result = (await host1.run("uname -s")).only
         assert result.status == Status.Success
-        assert 'Linux' in result.output
+        assert "Linux" in result.output
 
     @pytest.mark.asyncio
     async def test_multiline_output(self, host1: Host):
@@ -78,20 +81,20 @@ class TestBasicCommands:
 
     @pytest.mark.asyncio
     async def test_failing_command_returns_failed_status(self, host1: Host):
-        result = (await host1.run('ls /nonexistent_dir_otto_test')).only
+        result = (await host1.run("ls /nonexistent_dir_otto_test")).only
         assert result.status == Status.Failed
         # GNU `ls` returns 2 for a missing path on every backend (ssh/telnet/local).
         assert result.retcode == 2
 
     @pytest.mark.asyncio
     async def test_unexpected_eof_returns_error(self, host1: Host):
-        result = (await host1.run('exit 42')).only
+        result = (await host1.run("exit 42")).only
         assert result.status == Status.Error
         assert result.retcode == -1
 
     @pytest.mark.asyncio
     async def test_overall_status_reflects_failure(self, host1: Host):
-        result = await host1.run(['echo ok', 'ls /nonexistent_dir_otto_test'])
+        result = await host1.run(["echo ok", "ls /nonexistent_dir_otto_test"])
         assert result.status == Status.Failed
         assert result.statuses[0].status == Status.Success
         assert result.statuses[1].status == Status.Failed
@@ -101,9 +104,9 @@ class TestBasicCommands:
 # State persistence
 # ---------------------------------------------------------------------------
 
+
 @_ALL_HOSTS
 class TestStatePersistence:
-
     @pytest.mark.asyncio
     async def test_cd_persists_between_commands(self, host1: Host):
         await host1.run("cd /")
@@ -124,9 +127,9 @@ class TestStatePersistence:
 # Timeout and recovery
 # ---------------------------------------------------------------------------
 
+
 @_ALL_HOSTS
 class TestTimeout:
-
     @pytest.mark.asyncio
     async def test_timeout_returns_error(self, host1: Host):
         result = (await host1.run("sleep 999", timeout=0.1)).only
@@ -140,7 +143,7 @@ class TestTimeout:
         )
         # The SSH process is killed on timeout, surfacing the sentinel retcode.
         # ``LocalHost`` carries no ``term``; the assertion is ssh-scoped.
-        if getattr(host1, 'term', None) == 'ssh':
+        if getattr(host1, "term", None) == "ssh":
             assert result.retcode == -1
 
     @pytest.mark.asyncio
@@ -155,9 +158,9 @@ class TestTimeout:
 # Send / Expect
 # ---------------------------------------------------------------------------
 
+
 @_ALL_HOSTS
 class TestSendExpect:
-
     @pytest.mark.asyncio
     async def test_python_repl(self, host1: Host):
         # Use -i to force interactive mode (local sessions use PIPE, not PTY)
@@ -173,45 +176,45 @@ class TestSendExpect:
 # Named sessions
 # ---------------------------------------------------------------------------
 
+
 @_ALL_HOSTS
 class TestNamedSessionIntegration:
-
     @pytest.mark.asyncio
     async def test_named_session_runs_command(self, host1: Host):
-        mon = await host1.open_session('monitor')
-        result = (await mon.run('echo hello')).only
+        mon = await host1.open_session("monitor")
+        result = (await mon.run("echo hello")).only
         assert result.status == Status.Success
-        assert 'hello' in result.output
+        assert "hello" in result.output
         await mon.close()
 
     @pytest.mark.asyncio
     async def test_two_sessions_have_independent_state(self, host1: Host):
-        s1 = await host1.open_session('s1')
-        s2 = await host1.open_session('s2')
-        await s1.run('cd /tmp')
-        await s2.run('cd /home')
-        r1 = (await s1.run('pwd')).only
-        r2 = (await s2.run('pwd')).only
-        assert r1.output.strip() == '/tmp'
-        assert '/home' in r2.output.strip()
+        s1 = await host1.open_session("s1")
+        s2 = await host1.open_session("s2")
+        await s1.run("cd /tmp")
+        await s2.run("cd /home")
+        r1 = (await s1.run("pwd")).only
+        r2 = (await s2.run("pwd")).only
+        assert r1.output.strip() == "/tmp"
+        assert "/home" in r2.output.strip()
         await s1.close()
         await s2.close()
 
     @pytest.mark.asyncio
     async def test_context_manager_removes_session_from_registry(self, host1: Host):
-        async with (await host1.open_session('monitor')) as mon:
-            assert 'monitor' in host1._session_mgr._named_sessions
-            result = (await mon.run('echo hi')).only
+        async with await host1.open_session("monitor") as mon:
+            assert "monitor" in host1._session_mgr._named_sessions
+            result = (await mon.run("echo hi")).only
             assert result.status == Status.Success
-        assert 'monitor' not in host1._session_mgr._named_sessions
+        assert "monitor" not in host1._session_mgr._named_sessions
 
     @pytest.mark.asyncio
     async def test_host_close_closes_all_named_sessions(self, host1: Host):
-        s1 = await host1.open_session('s1')
-        s2 = await host1.open_session('s2')
+        s1 = await host1.open_session("s1")
+        s2 = await host1.open_session("s2")
         # Sessions initialize lazily on first I/O — run a command to make them alive
-        await s1.run('echo init')
-        await s2.run('echo init')
+        await s1.run("echo init")
+        await s2.run("echo init")
         assert s1.alive
         assert s2.alive
         await host1.close()
@@ -224,6 +227,7 @@ class TestNamedSessionIntegration:
 # Incremental output logging
 # ---------------------------------------------------------------------------
 
+
 @_ALL_HOSTS
 class TestIncrementalLogging:
     """Verify that command output is logged line-by-line as it arrives."""
@@ -233,16 +237,17 @@ class TestIncrementalLogging:
         """Each output line appears as a separate log record with distinct timestamps."""
         with caplog.at_level(logging.INFO):
             caplog.clear()
-            result = (await host1.run(
-                "for i in 1 2 3; do echo line_$i; sleep 0.05; done",
-                timeout=10.0,
-            )).only
+            result = (
+                await host1.run(
+                    "for i in 1 2 3; do echo line_$i; sleep 0.05; done",
+                    timeout=10.0,
+                )
+            ).only
 
         assert result.status == Status.Success
         # Each line should have been logged individually
         output_records = [
-            r for r in caplog.records
-            if hasattr(r, 'host') and 'line_' in r.getMessage()
+            r for r in caplog.records if hasattr(r, "host") and "line_" in r.getMessage()
         ]
         assert len(output_records) >= 3
         # Timestamps should be spread out (not all batched at the end)
@@ -256,17 +261,19 @@ class TestIncrementalLogging:
         with caplog.at_level(logging.INFO):
             caplog.clear()
             start = time.time()
-            result = (await host1.run(
-                "echo early_output; sleep 0.1; echo late_output",
-                timeout=10.0,
-            )).only
+            result = (
+                await host1.run(
+                    "echo early_output; sleep 0.1; echo late_output",
+                    timeout=10.0,
+                )
+            ).only
             end = time.time()
 
         assert result.status == Status.Success
         early_records = [
-            r for r in caplog.records
-            if hasattr(r, 'host') and 'early_output' in r.getMessage()
-            and '> |' in r.getMessage()
+            r
+            for r in caplog.records
+            if hasattr(r, "host") and "early_output" in r.getMessage() and "> |" in r.getMessage()
         ]
         assert len(early_records) >= 1, "'early_output' should have been logged"
         # early_output should have been logged well before the command finished
@@ -291,6 +298,7 @@ class TestIncrementalLogging:
 # Multi-host reachability
 # ---------------------------------------------------------------------------
 
+
 @_REMOTE_ONLY
 class TestReachability:
     """A second host on the bed is independently reachable alongside host1.
@@ -307,9 +315,9 @@ class TestReachability:
         host2 = make_host("tomato", **kwargs)
         try:
             for host in (host1, host2):
-                result = (await host.run('echo ping')).only
+                result = (await host.run("echo ping")).only
                 assert result.status == Status.Success
-                assert 'ping' in result.output
+                assert "ping" in result.output
         finally:
             await host2.close()
 
@@ -318,8 +326,8 @@ class TestReachability:
 # Credentials
 # ---------------------------------------------------------------------------
 
-class TestCredentials:
 
+class TestCredentials:
     @pytest.mark.asyncio
     async def test_second_credential_works(self):
         """Verify the non-default (test) user can log in and run commands."""
@@ -333,7 +341,7 @@ class TestCredentials:
             board=data.get("board"),
         )
         try:
-            result = (await host.run('whoami')).only
+            result = (await host.run("whoami")).only
             assert result.status == Status.Success
             assert second_user in result.output
         finally:
@@ -377,41 +385,39 @@ class TestCredentials:
 # File transfer (SCP, SFTP, FTP, nc)
 # ---------------------------------------------------------------------------
 
+
 # NOTE: Transfers go through asyncssh/scp/sftp and have been observed to hang
 # indefinitely when the remote SSH daemon stalls mid-protocol. get/put are
 # wrapped in ``transfer_with_retry`` so an individual transfer is bounded
 # and retried once, preventing the whole suite from blocking on a single flake.
 @_ALL_TRANSFERS
 class TestFileTransfer:
-
     @pytest.mark.asyncio
     async def test_get_file(self, transfer_host: UnixHost, tmp_path: Path):
         """Download /etc/hostname and verify it matches the hostname command."""
-        result = (await transfer_host.run('hostname')).only
+        result = (await transfer_host.run("hostname")).only
         expected_hostname = result.output.strip()
 
         status, msg = await transfer_with_retry(
-            lambda: transfer_host.get([Path('/etc/hostname')], tmp_path)
+            lambda: transfer_host.get([Path("/etc/hostname")], tmp_path)
         )
         assert status == Status.Success, f"get failed: {msg}"
 
-        local_hostname = (tmp_path / 'hostname').read_text().strip()
+        local_hostname = (tmp_path / "hostname").read_text().strip()
         assert local_hostname == expected_hostname
 
     @pytest.mark.asyncio
     async def test_put_file(self, transfer_host: UnixHost, tmp_path: Path):
         """Upload a file, verify it arrived, clean up."""
-        content = 'file transfer test'
-        src = tmp_path / f'otto_{transfer_host.transfer}_{transfer_host.term}_upload.txt'
+        content = "file transfer test"
+        src = tmp_path / f"otto_{transfer_host.transfer}_{transfer_host.term}_upload.txt"
         src.write_text(content)
-        remote_path = f'/tmp/otto_{transfer_host.transfer}_{transfer_host.term}_upload.txt'
+        remote_path = f"/tmp/otto_{transfer_host.transfer}_{transfer_host.term}_upload.txt"
 
-        status, msg = await transfer_with_retry(
-            lambda: transfer_host.put([src], Path('/tmp'))
-        )
+        status, msg = await transfer_with_retry(lambda: transfer_host.put([src], Path("/tmp")))
         assert status == Status.Success, f"put failed: {msg}"
 
-        result = (await transfer_host.run(f'cat {remote_path}')).only
+        result = (await transfer_host.run(f"cat {remote_path}")).only
         assert content in result.output
 
-        await transfer_host.run(f'rm -f {remote_path}')
+        await transfer_host.run(f"rm -f {remote_path}")

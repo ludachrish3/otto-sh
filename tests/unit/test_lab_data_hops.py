@@ -7,6 +7,7 @@ Only embedded (Zephyr) hosts legitimately hop, through basil.
 Note: hosts with no ``os_type`` key default to ``"unix"`` per the HostSpec
 model, so the guard treats missing ``os_type`` as ``"unix"``.
 """
+
 from __future__ import annotations
 
 import json
@@ -21,11 +22,7 @@ _TECHS = ("tech1", "tech2")
 @pytest.mark.parametrize("tech", _TECHS)
 def test_no_unix_host_defines_a_hop(tech: str) -> None:
     hosts = json.loads(lab_data_path(tech).read_text())
-    offenders = [
-        h["element"]
-        for h in hosts
-        if h.get("os_type", "unix") == "unix" and "hop" in h
-    ]
+    offenders = [h["element"] for h in hosts if h.get("os_type", "unix") == "unix" and "hop" in h]
     assert not offenders, (
         f"{tech}: Unix hosts must be directly reachable (no hop) — "
         f"hop functionality is covered by test_hop_integration.py. Offenders: {offenders}"

@@ -1,7 +1,5 @@
 """Unit tests for the host-source backend factory (build_lab_repository)."""
 
-from pathlib import Path
-
 import pytest
 
 from otto.storage import (
@@ -14,7 +12,6 @@ from otto.storage.registry import _LAB_REPOSITORIES
 
 
 class TestJsonDefault:
-
     def test_missing_backend_defaults_to_json(self, tmp_path):
         repo = build_lab_repository({}, tmp_path, search_paths=[tmp_path])
         assert isinstance(repo, JsonFileLabRepository)
@@ -23,9 +20,7 @@ class TestJsonDefault:
     def test_explicit_json_receives_search_paths(self, tmp_path):
         p1 = tmp_path / "a"
         p2 = tmp_path / "b"
-        repo = build_lab_repository(
-            {"backend": "json"}, tmp_path, search_paths=[p1, p2]
-        )
+        repo = build_lab_repository({"backend": "json"}, tmp_path, search_paths=[p1, p2])
         assert isinstance(repo, JsonFileLabRepository)
         assert repo.search_paths == [p1, p2]
 
@@ -36,7 +31,6 @@ class TestJsonDefault:
 
 
 class TestCustomBackend:
-
     def test_registered_backend_receives_repo_dir_and_kwargs(self, tmp_path):
         class FakeRepo:
             def __init__(self, repo_dir, url=None):
@@ -83,7 +77,6 @@ class TestCustomBackend:
 
 
 class TestErrors:
-
     def test_unknown_backend_raises_lab_repository_error(self, tmp_path):
         with pytest.raises(LabRepositoryError, match="Unknown lab repository backend"):
             build_lab_repository({"backend": "does-not-exist"}, tmp_path)

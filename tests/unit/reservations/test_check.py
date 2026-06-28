@@ -53,7 +53,6 @@ def _lab_with_resources() -> Lab:
 
 
 class TestRequiredResources:
-
     def test_union_of_lab_and_hosts(self):
         lab = _lab_with_resources()
         assert required_resources(lab) == {"rack1", "carrot", "tomato"}
@@ -64,21 +63,26 @@ class TestRequiredResources:
 
 
 class TestCheckReservations:
-
     def test_full_coverage_returns_silently(self):
         lab = _lab_with_resources()
-        backend = _FakeBackend(owners={
-            "rack1": "alice", "carrot": "alice", "tomato": "alice",
-        })
+        backend = _FakeBackend(
+            owners={
+                "rack1": "alice",
+                "carrot": "alice",
+                "tomato": "alice",
+            }
+        )
         check_reservations(lab, "alice", backend)  # must not raise
 
     def test_partial_coverage_raises_with_holders(self):
         lab = _lab_with_resources()
-        backend = _FakeBackend(owners={
-            "rack1":  "alice",
-            "carrot": "bob",    # held by someone else
-            "tomato": None,     # unreserved (not in dict, but model None explicitly)
-        })
+        backend = _FakeBackend(
+            owners={
+                "rack1": "alice",
+                "carrot": "bob",  # held by someone else
+                "tomato": None,  # unreserved (not in dict, but model None explicitly)
+            }
+        )
         # Remove tomato so it reads as unreserved
         del backend.owners["tomato"]
         with pytest.raises(MissingReservationError) as exc_info:
@@ -114,10 +118,13 @@ class TestCheckReservations:
         class _MultiHolderBackend:
             def __init__(self, holders):
                 self._h = holders
+
             def get_reserved_resources(self, username):
                 return {r for r, us in self._h.items() if username in us}
+
             def who_reserved(self, resource):
                 return list(self._h.get(resource, []))
+
             def backend_name(self):
                 return "multi"
 
@@ -129,9 +136,10 @@ class TestCheckReservations:
 
 
 class TestGate:
-
     def test_no_backend_is_noop(self):
-        ctx = _fake_ctx({"otto_reservation": ReservationState(backend=None, identity=None, skip_check=False)})
+        ctx = _fake_ctx(
+            {"otto_reservation": ReservationState(backend=None, identity=None, skip_check=False)}
+        )
         gate(ctx)  # must not raise
 
     def test_skip_flag_short_circuits(self, caplog):
@@ -155,9 +163,13 @@ class TestGate:
 
     def test_normal_path_calls_check(self):
         lab = _lab_with_resources()
-        backend = _FakeBackend(owners={
-            "rack1": "alice", "carrot": "alice", "tomato": "alice",
-        })
+        backend = _FakeBackend(
+            owners={
+                "rack1": "alice",
+                "carrot": "alice",
+                "tomato": "alice",
+            }
+        )
         identity = ResolvedIdentity(username="alice", source="$USER")
         res = ReservationState(backend=backend, identity=identity, skip_check=False)
         ctx = _fake_ctx({"otto_reservation": res})

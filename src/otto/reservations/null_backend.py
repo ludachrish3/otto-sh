@@ -10,13 +10,15 @@ aren't blocked.
 class NullReservationBackend:
     """Always returns "no reservations known" — the check is a no-op."""
 
-    def get_reserved_resources(self,
-        username: str,  # noqa: ARG002 — protocol compliance
+    def get_reserved_resources(
+        self,
+        username: str,
     ) -> set[str]:
         return set()
 
-    def who_reserved(self,
-        resource: str,  # noqa: ARG002 — protocol compliance
+    def who_reserved(
+        self,
+        resource: str,
     ) -> list[str]:
         return []
 

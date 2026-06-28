@@ -12,10 +12,10 @@ from asyncssh import SSHClientConnection
 
 from otto.host.transport import SshHopTransport
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_conn() -> MagicMock:
@@ -39,10 +39,12 @@ def transport(factory: AsyncMock) -> SshHopTransport:
 # get_tunnel
 # ---------------------------------------------------------------------------
 
-class TestGetTunnel:
 
+class TestGetTunnel:
     @pytest.mark.asyncio
-    async def test_calls_factory(self, transport: SshHopTransport, factory: AsyncMock, mock_conn: MagicMock):
+    async def test_calls_factory(
+        self, transport: SshHopTransport, factory: AsyncMock, mock_conn: MagicMock
+    ):
         result = await transport.get_tunnel()
         factory.assert_awaited_once()
         assert result is mock_conn
@@ -59,16 +61,16 @@ class TestGetTunnel:
 # forward_port
 # ---------------------------------------------------------------------------
 
-class TestForwardPort:
 
+class TestForwardPort:
     @pytest.mark.asyncio
     async def test_delegates_to_connection(self, transport: SshHopTransport, mock_conn: MagicMock):
         mock_listener = MagicMock()
         mock_listener.get_port.return_value = 44444
         mock_conn.forward_local_port = AsyncMock(return_value=mock_listener)
 
-        port = await transport.forward_port('10.0.0.5', 22)
-        mock_conn.forward_local_port.assert_awaited_once_with('', 0, '10.0.0.5', 22)
+        port = await transport.forward_port("10.0.0.5", 22)
+        mock_conn.forward_local_port.assert_awaited_once_with("", 0, "10.0.0.5", 22)
         assert port == 44444
 
     @pytest.mark.asyncio
@@ -77,7 +79,7 @@ class TestForwardPort:
         mock_listener.get_port.return_value = 55555
         mock_conn.forward_local_port = AsyncMock(return_value=mock_listener)
 
-        assert await transport.forward_port('192.168.1.1', 8080) == 55555
+        assert await transport.forward_port("192.168.1.1", 8080) == 55555
 
     @pytest.mark.asyncio
     async def test_tracks_listeners(self, transport: SshHopTransport, mock_conn: MagicMock):
@@ -86,7 +88,7 @@ class TestForwardPort:
             listener = MagicMock()
             listener.get_port.return_value = expected_port
             mock_conn.forward_local_port = AsyncMock(return_value=listener)
-            await transport.forward_port('10.0.0.1', expected_port)
+            await transport.forward_port("10.0.0.1", expected_port)
 
         assert len(transport._port_forwards) == 2
 
@@ -95,8 +97,8 @@ class TestForwardPort:
 # close
 # ---------------------------------------------------------------------------
 
-class TestClose:
 
+class TestClose:
     @pytest.mark.asyncio
     async def test_closes_connection(self, transport: SshHopTransport, mock_conn: MagicMock):
         await transport.get_tunnel()
@@ -112,7 +114,7 @@ class TestClose:
             listener.get_port.return_value = port
             listener.close = MagicMock()
             mock_conn.forward_local_port = AsyncMock(return_value=listener)
-            await transport.forward_port('10.0.0.1', port)
+            await transport.forward_port("10.0.0.1", port)
             listeners.append(listener)
 
         await transport.close()

@@ -29,7 +29,6 @@ from pathlib import Path
 import pytest
 
 from otto.host.embedded_host import EmbeddedHost
-from otto.host.unix_host import UnixHost
 from otto.storage.factory import create_host_from_dict
 from otto.utils import Status
 from tests.conftest import (
@@ -63,9 +62,9 @@ pytestmark = pytest.mark.timeout(30)
 # Signed errno retcodes (Zephyr-isms)
 # ---------------------------------------------------------------------------
 
+
 @_ALL_ZEPHYR
 class TestSignedRetcode:
-
     @pytest.mark.asyncio
     async def test_unknown_command_returns_negative_enoexec(self, host1):
         """The Zephyr shell sets ``retval`` to ``-8`` (``-ENOEXEC``) after an
@@ -75,8 +74,7 @@ class TestSignedRetcode:
         result = (await host1.run("definitely_not_a_zephyr_command")).only
         assert result.status == Status.Failed
         assert result.retcode == -8, (
-            f"expected -ENOEXEC (-8) for unknown Zephyr command, "
-            f"got {result.retcode}"
+            f"expected -ENOEXEC (-8) for unknown Zephyr command, got {result.retcode}"
         )
 
 
@@ -84,9 +82,9 @@ class TestSignedRetcode:
 # Multi-line output stays clean through the Zephyr frame's positional parser
 # ---------------------------------------------------------------------------
 
+
 @_ALL_ZEPHYR
 class TestMultilineOutputClean:
-
     @pytest.mark.asyncio
     async def test_multiline_output_has_no_marker_or_prompt_noise(self, host1):
         """A command with several lines of output must parse cleanly.
@@ -109,9 +107,7 @@ class TestMultilineOutputClean:
         # `retval` itself as a substring could legitimately appear in other
         # contexts, so we only check for it on a line of its own.
         for line in result.output.splitlines():
-            assert line.strip() != "retval", (
-                f"retval line leaked into output: {result.output!r}"
-            )
+            assert line.strip() != "retval", f"retval line leaked into output: {result.output!r}"
         # No raw ANSI escapes (the shell's colored prompt is stripped before
         # parsing).
         assert "\x1b[" not in result.output
@@ -121,9 +117,9 @@ class TestMultilineOutputClean:
 # Stock Zephyr builtins
 # ---------------------------------------------------------------------------
 
+
 @_ALL_ZEPHYR
 class TestStockBuiltins:
-
     @pytest.mark.asyncio
     async def test_kernel_uptime_yields_integer_microseconds(self, host1):
         """``kernel uptime`` prints a single bare integer (microseconds since
@@ -144,6 +140,7 @@ class TestStockBuiltins:
 # ---------------------------------------------------------------------------
 # Single-console caveat
 # ---------------------------------------------------------------------------
+
 
 @_ALL_ZEPHYR
 class TestSingleConsole:
@@ -195,12 +192,14 @@ class TestSingleConsole:
         # rather than the CI job. 5 s is comfortably longer than a real
         # connection-failure path (~ms) and short enough to keep the
         # suite fast.
-        with pytest.raises((
-            asyncio.TimeoutError,
-            asyncio.CancelledError,
-            OSError,  # parent of ConnectionError; also covers ENETUNREACH/EHOSTUNREACH
-            asyncio.IncompleteReadError,
-        )):
+        with pytest.raises(
+            (
+                asyncio.TimeoutError,
+                asyncio.CancelledError,
+                OSError,  # parent of ConnectionError; also covers ENETUNREACH/EHOSTUNREACH
+                asyncio.IncompleteReadError,
+            )
+        ):
             await asyncio.wait_for(host1.open_session("aux"), timeout=5.0)
 
     @pytest.mark.asyncio
@@ -292,7 +291,7 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
     #     released, not left wedged.
     host_c = create_host_from_dict(data)
     try:
-        recovered = (await host_c.oneshot("kernel uptime"))
+        recovered = await host_c.oneshot("kernel uptime")
     finally:
         await host_c.close()
     assert recovered.status == Status.Success, (
@@ -311,6 +310,7 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
 # `asyncio.gather` — that is what `do_for_all_hosts` does internally —
 # without relying on the lab/configmodule layer.
 # ---------------------------------------------------------------------------
+
 
 # Per-target writable filesystem mount, keyed by lab `ne` name and derived
 # from each host's declared `filesystem` variant (the FS class's mount path,
@@ -363,9 +363,7 @@ class TestConcurrentEmbeddedTransfer:
         production factory does (``create_host_from_dict``). Each test gets
         its own instances so a previous test's session state cannot leak.
         """
-        return [
-            create_host_from_dict(host_data(ne)) for ne in _ZEPHYR_DEST
-        ]
+        return [create_host_from_dict(host_data(ne)) for ne in _ZEPHYR_DEST]
 
     @staticmethod
     def _check_put_result(host_id: str, result) -> None:
@@ -379,8 +377,7 @@ class TestConcurrentEmbeddedTransfer:
         ``sprout_no_fs`` — is checked the same way without hard-coding ne names.
         """
         assert not isinstance(result, BaseException), (
-            f"{host_id}: put raised — concurrent session init regressed. "
-            f"Exception: {result!r}"
+            f"{host_id}: put raised — concurrent session init regressed. Exception: {result!r}"
         )
         status, err = result
         if _ZEPHYR_DEST[host_id] is None:
@@ -389,14 +386,13 @@ class TestConcurrentEmbeddedTransfer:
                 f"graceful error (err={err!r})"
             )
         else:
-            assert status == Status.Success, (
-                f"{host_id}: put failed: {err!r}"
-            )
+            assert status == Status.Success, f"{host_id}: put failed: {err!r}"
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(120)
     async def test_concurrent_puts_across_zephyr_targets(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """Every Zephyr target in the matrix receives a put() concurrently.
         They share ``hop=basil_seed`` — all the telnet-over-SSH legs open into
@@ -410,23 +406,22 @@ class TestConcurrentEmbeddedTransfer:
         hosts = self._build_zephyr_hosts()
         try:
             results = await asyncio.gather(
-                *(
-                    h.put([src], Path(_ZEPHYR_DEST[h.element] or "/"))
-                    for h in hosts
-                ),
+                *(h.put([src], Path(_ZEPHYR_DEST[h.element] or "/")) for h in hosts),
                 return_exceptions=True,
             )
             for h, result in zip(hosts, results):
                 self._check_put_result(h.element, result)
         finally:
             await asyncio.gather(
-                *(h.close() for h in hosts), return_exceptions=True,
+                *(h.close() for h in hosts),
+                return_exceptions=True,
             )
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(180)
     async def test_concurrent_puts_with_unix_scp_on_shared_hop(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """The exact fan-out shape that ``test_instruction`` triggers: a
         Unix host (``basil``) and every Zephyr target receive a put
@@ -442,10 +437,7 @@ class TestConcurrentEmbeddedTransfer:
         try:
             results = await asyncio.gather(
                 basil.put([src], Path("/tmp")),
-                *(
-                    h.put([src], Path(_ZEPHYR_DEST[h.element] or "/"))
-                    for h in zephyrs
-                ),
+                *(h.put([src], Path(_ZEPHYR_DEST[h.element] or "/")) for h in zephyrs),
                 return_exceptions=True,
             )
             basil_result, *zephyr_results = results
@@ -454,9 +446,7 @@ class TestConcurrentEmbeddedTransfer:
                 f"basil: SCP put raised: {basil_result!r}"
             )
             basil_status, basil_err = basil_result
-            assert basil_status == Status.Success, (
-                f"basil: SCP put failed: {basil_err!r}"
-            )
+            assert basil_status == Status.Success, f"basil: SCP put failed: {basil_err!r}"
 
             for h, result in zip(zephyrs, zephyr_results):
                 self._check_put_result(h.element, result)
@@ -470,7 +460,8 @@ class TestConcurrentEmbeddedTransfer:
     @pytest.mark.asyncio
     @pytest.mark.timeout(180)
     async def test_concurrent_gets_across_zephyr_targets(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ):
         """Symmetric fan-out for get(): pre-stage the payload sequentially
         on each fs-capable target, then drive a concurrent get(). The
@@ -488,9 +479,7 @@ class TestConcurrentEmbeddedTransfer:
                 if dest is None:
                     continue
                 status, err = await h.put([src], Path(dest))
-                assert status == Status.Success, (
-                    f"{h.element}: pre-stage put failed: {err!r}"
-                )
+                assert status == Status.Success, f"{h.element}: pre-stage put failed: {err!r}"
 
             # Per-host local landing dir so concurrent gets don't collide
             # on the same destination file.
@@ -510,15 +499,12 @@ class TestConcurrentEmbeddedTransfer:
 
             for h, result in zip(fs_hosts, results):
                 landing = tmp_path / f"got_{h.element}"
-                assert not isinstance(result, BaseException), (
-                    f"{h.element}: get raised: {result!r}"
-                )
+                assert not isinstance(result, BaseException), f"{h.element}: get raised: {result!r}"
                 status, err = result
-                assert status == Status.Success, (
-                    f"{h.element}: get failed: {err!r}"
-                )
+                assert status == Status.Success, f"{h.element}: get failed: {err!r}"
                 assert (landing / "fanout.bin").read_bytes() == self._PAYLOAD
         finally:
             await asyncio.gather(
-                *(h.close() for h in hosts), return_exceptions=True,
+                *(h.close() for h in hosts),
+                return_exceptions=True,
             )

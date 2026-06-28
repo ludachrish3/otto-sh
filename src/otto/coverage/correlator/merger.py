@@ -4,6 +4,7 @@ Wraps ``lcov --capture`` and ``lcov --add-tracefile`` invocations,
 executing them through :class:`~otto.host.local_host.LocalHost` so
 they are fully async with proper logging and timeout handling.
 """
+
 from __future__ import annotations
 
 import logging
@@ -30,12 +31,12 @@ def _find_gcno_dirs(gcda_dir: Path, search_root: Path) -> list[Path]:
         De-duplicated list of directories containing matching ``.gcno``
         files, or ``[search_root]`` as fallback.
     """
-    gcda_stems = {p.stem for p in gcda_dir.glob('*.gcda')}
+    gcda_stems = {p.stem for p in gcda_dir.glob("*.gcda")}
     if not gcda_stems:
         return [search_root]
 
     dirs: set[Path] = set()
-    for gcno in search_root.rglob('*.gcno'):
+    for gcno in search_root.rglob("*.gcno"):
         if gcno.stem in gcda_stems:
             dirs.add(gcno.parent)
 
@@ -90,9 +91,7 @@ class LcovMerger:
         gcov = toolchain.gcov_bin if toolchain else self.gcov
 
         build_dirs = _find_gcno_dirs(gcda_dir, gcno_dir)
-        build_args = " ".join(
-            f"--build-directory {d}" for d in build_dirs
-        )
+        build_args = " ".join(f"--build-directory {d}" for d in build_dirs)
 
         cmd = (
             f"{lcov} --capture"

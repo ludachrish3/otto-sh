@@ -58,12 +58,12 @@ from ..logger import get_otto_logger, management
 logger = get_otto_logger()
 
 cov_app = typer.Typer(
-    name='cov',
+    name="cov",
     no_args_is_help=True,
     context_settings={
-        'help_option_names': ['-h', '--help'],
+        "help_option_names": ["-h", "--help"],
     },
-    help='Generate coverage reports from otto test --cov output.',
+    help="Generate coverage reports from otto test --cov output.",
 )
 
 
@@ -77,7 +77,7 @@ def cov_callback(ctx: typer.Context) -> None:
     # policy. Gated on a real subcommand so group ``--help``/no-args never
     # touches the filesystem.
     if ctx.invoked_subcommand is not None:
-        get_context().output_dir = management.create_output_dir('cov', ctx.invoked_subcommand)
+        get_context().output_dir = management.create_output_dir("cov", ctx.invoked_subcommand)
 
 
 def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:
@@ -119,65 +119,77 @@ def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:
 
 @cov_app.command()
 def report(
-    output_dirs: Annotated[list[Path], typer.Argument(
-        help='One or more otto test output directories containing cov/ subdirectories.',
-    )],
-
-    report_dir: Annotated[Path, typer.Option(
-        '--report', '-r',
-        help='Where to place the generated HTML report.',
-    )] = Path('./cov_report'),
-
-    project_name: Annotated[str, typer.Option(
-        '--project-name',
-        help='Title shown in the HTML report header.',
-    )] = 'Coverage Report',
-
-    tier: Annotated[list[str], typer.Option(
-        '--tier',
-        help=(
-            'Add a coverage tier as NAME[=PATH]. Repeatable. '
-            'Order is precedence order (first = highest). '
-            'Use "--tier system" alone to position the implicit '
-            'lcov-merged system tier. Defaults to "--tier system".'
+    output_dirs: Annotated[
+        list[Path],
+        typer.Argument(
+            help="One or more otto test output directories containing cov/ subdirectories.",
         ),
-    )] = [],
+    ],
+    report_dir: Annotated[
+        Path,
+        typer.Option(
+            "--report",
+            "-r",
+            help="Where to place the generated HTML report.",
+        ),
+    ] = Path("./cov_report"),
+    project_name: Annotated[
+        str,
+        typer.Option(
+            "--project-name",
+            help="Title shown in the HTML report header.",
+        ),
+    ] = "Coverage Report",
+    tier: Annotated[
+        list[str],
+        typer.Option(
+            "--tier",
+            help=(
+                "Add a coverage tier as NAME[=PATH]. Repeatable. "
+                "Order is precedence order (first = highest). "
+                'Use "--tier system" alone to position the implicit '
+                'lcov-merged system tier. Defaults to "--tier system".'
+            ),
+        ),
+    ] = [],
 ) -> None:
     """Generate a coverage report from otto test --cov output directories."""
     # Validate output directories
     for d in output_dirs:
         if not d.is_dir():
-            logger.error('Output directory does not exist: %s', d)
+            logger.error("Output directory does not exist: %s", d)
             raise typer.Exit(1)
 
     # Parse tier specs (defaulting to system-only)
     try:
-        tier_specs: list[TierSpec] = (
-            _parse_tier_specs(tier) if tier else [(TIER_SYSTEM, None)]
-        )
+        tier_specs: list[TierSpec] = _parse_tier_specs(tier) if tier else [(TIER_SYSTEM, None)]
     except typer.BadParameter as e:
-        logger.error('%s', e)
+        logger.error("%s", e)
         raise typer.Exit(1) from e
 
-    cov_dirs = [d / 'cov' for d in output_dirs]
+    cov_dirs = [d / "cov" for d in output_dirs]
     report_dir = report_dir.resolve()
 
-    store = asyncio.run(run_coverage_report(
-        cov_dirs, report_dir,
-        project_name=project_name, tier_specs=tier_specs,
-    ))
+    store = asyncio.run(
+        run_coverage_report(
+            cov_dirs,
+            report_dir,
+            project_name=project_name,
+            tier_specs=tier_specs,
+        )
+    )
     if store is None:
         # run_coverage_report logged the specific warning (missing meta or
         # no host dirs); for the standalone command treat that as an error.
         logger.error(
-            'Coverage report not generated — no valid coverage data in: %s',
-            ', '.join(str(d) for d in output_dirs),
+            "Coverage report not generated — no valid coverage data in: %s",
+            ", ".join(str(d) for d in output_dirs),
         )
         raise typer.Exit(1)
 
     logger.info(
-        'Coverage: %.1f%% overall (%d files)',
+        "Coverage: %.1f%% overall (%d files)",
         store.overall_pct(),
         store.file_count(),
     )
-    logger.info('Report: %s', report_dir / 'index.html')
+    logger.info("Report: %s", report_dir / "index.html")

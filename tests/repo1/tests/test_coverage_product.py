@@ -18,11 +18,9 @@ coverage alone.
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
 
 import pytest
 import pytest_asyncio
-import typer
 
 from otto.configmodule.configmodule import (
     all_hosts,
@@ -46,7 +44,7 @@ GCDA_REMOTE_DIR = "/var/coverage/product"
 # placeholders that ``register_declared_container_hosts`` synthesizes
 # at lab-load time. Coverage runs target compile-and-run hosts only —
 # placeholders fail oneshot until ``otto docker up`` populates them.
-_REAL_HOSTS = re.compile(r'^[^.]+$')
+_REAL_HOSTS = re.compile(r"^[^.]+$")
 
 
 @dataclass
@@ -108,9 +106,7 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     )
     result = await host.oneshot(cmd, timeout=10)
     if result.status != Status.Success:
-        raise RuntimeError(
-            f"Product run failed on {host.id}: {result.output}"
-        )
+        raise RuntimeError(f"Product run failed on {host.id}: {result.output}")
     return result.output.strip()
 
 
@@ -158,9 +154,7 @@ class TestCoverageProduct(OttoSuite[_Options]):
             assert not isinstance(output, BaseException), (
                 f"Error running product on {host_id}: {output}"
             )
-            assert output == expected, (
-                f"Expected {expected}, got {output!r} on {host_id}"
-            )
+            assert output == expected, f"Expected {expected}, got {output!r} on {host_id}"
 
     @pytest.mark.integration
     async def test_add(self) -> None:

@@ -12,7 +12,6 @@ from otto.utils import CommandStatus, Status
 
 
 class TestLcovMerger:
-
     @pytest.mark.asyncio
     async def test_capture_success(self, tmp_path):
         localhost = LocalHost()
@@ -24,7 +23,7 @@ class TestLcovMerger:
         gcno_dir.mkdir()
         output = tmp_path / "out.info"
 
-        with patch.object(localhost, 'oneshot', new_callable=AsyncMock) as mock_oneshot:
+        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
             mock_oneshot.return_value = CommandStatus(
                 command="lcov --capture ...",
                 output="",
@@ -41,7 +40,7 @@ class TestLcovMerger:
         localhost = LocalHost()
         merger = LcovMerger(localhost)
 
-        with patch.object(localhost, 'oneshot', new_callable=AsyncMock) as mock_oneshot:
+        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
             mock_oneshot.return_value = CommandStatus(
                 command="lcov --capture ...",
                 output="error: no gcda files found",
@@ -49,9 +48,7 @@ class TestLcovMerger:
                 retcode=1,
             )
             with pytest.raises(RuntimeError, match="lcov --capture failed"):
-                await merger.capture(
-                    tmp_path / "gcda", tmp_path / "gcno", tmp_path / "out.info"
-                )
+                await merger.capture(tmp_path / "gcda", tmp_path / "gcno", tmp_path / "out.info")
         await localhost.close()
 
     @pytest.mark.asyncio
@@ -63,7 +60,7 @@ class TestLcovMerger:
         info2 = tmp_path / "b.info"
         output = tmp_path / "merged.info"
 
-        with patch.object(localhost, 'oneshot', new_callable=AsyncMock) as mock_oneshot:
+        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
             mock_oneshot.return_value = CommandStatus(
                 command="lcov ...",
                 output="",
@@ -91,16 +88,14 @@ class TestLcovMerger:
         gcda_dir.mkdir()
         work_dir = tmp_path / "work"
 
-        with patch.object(localhost, 'oneshot', new_callable=AsyncMock) as mock_oneshot:
+        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
             mock_oneshot.return_value = CommandStatus(
                 command="lcov ...",
                 output="",
                 status=Status.Success,
                 retcode=0,
             )
-            result = await merger.capture_and_merge(
-                [gcda_dir], tmp_path / "gcno", work_dir
-            )
+            result = await merger.capture_and_merge([gcda_dir], tmp_path / "gcno", work_dir)
             # Single host = no merge step, returns the captured info directly
             assert result == work_dir / "host_0.info"
             assert mock_oneshot.call_count == 1
@@ -116,43 +111,50 @@ class TestLcovMergerToolchain:
         localhost = LocalHost()
         merger = LcovMerger(localhost)
         tc = Toolchain(
-            sysroot=Path('/opt/arm'),
-            gcov=Path('bin/arm-gcov'),
-            lcov=Path('bin/arm-lcov'),
+            sysroot=Path("/opt/arm"),
+            gcov=Path("bin/arm-gcov"),
+            lcov=Path("bin/arm-lcov"),
         )
 
-        with patch.object(localhost, 'oneshot', new_callable=AsyncMock) as mock_oneshot:
+        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
             mock_oneshot.return_value = CommandStatus(
-                command="lcov ...", output="",
-                status=Status.Success, retcode=0,
+                command="lcov ...",
+                output="",
+                status=Status.Success,
+                retcode=0,
             )
             await merger.capture(
-                tmp_path / "gcda", tmp_path / "gcno",
-                tmp_path / "out.info", toolchain=tc,
+                tmp_path / "gcda",
+                tmp_path / "gcno",
+                tmp_path / "out.info",
+                toolchain=tc,
             )
             cmd = mock_oneshot.call_args[0][0]
-            assert '/opt/arm/bin/arm-lcov' in cmd
-            assert '/opt/arm/bin/arm-gcov' in cmd
+            assert "/opt/arm/bin/arm-lcov" in cmd
+            assert "/opt/arm/bin/arm-gcov" in cmd
         await localhost.close()
 
     @pytest.mark.asyncio
     async def test_capture_without_toolchain_uses_defaults(self, tmp_path):
         """Verify capture() falls back to instance defaults without toolchain."""
         localhost = LocalHost()
-        merger = LcovMerger(localhost, lcov='my-lcov', gcov='my-gcov')
+        merger = LcovMerger(localhost, lcov="my-lcov", gcov="my-gcov")
 
-        with patch.object(localhost, 'oneshot', new_callable=AsyncMock) as mock_oneshot:
+        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
             mock_oneshot.return_value = CommandStatus(
-                command="lcov ...", output="",
-                status=Status.Success, retcode=0,
+                command="lcov ...",
+                output="",
+                status=Status.Success,
+                retcode=0,
             )
             await merger.capture(
-                tmp_path / "gcda", tmp_path / "gcno",
+                tmp_path / "gcda",
+                tmp_path / "gcno",
                 tmp_path / "out.info",
             )
             cmd = mock_oneshot.call_args[0][0]
-            assert 'my-lcov' in cmd
-            assert 'my-gcov' in cmd
+            assert "my-lcov" in cmd
+            assert "my-gcov" in cmd
         await localhost.close()
 
     @pytest.mark.asyncio
@@ -167,19 +169,21 @@ class TestLcovMergerToolchain:
         host1_dir.mkdir()
         work_dir = tmp_path / "work"
 
-        tc_arm = Toolchain(sysroot=Path('/opt/arm'), gcov=Path('bin/arm-gcov'))
-        tc_x86 = Toolchain(sysroot=Path('/opt/x86'), gcov=Path('bin/x86-gcov'))
+        tc_arm = Toolchain(sysroot=Path("/opt/arm"), gcov=Path("bin/arm-gcov"))
+        tc_x86 = Toolchain(sysroot=Path("/opt/x86"), gcov=Path("bin/x86-gcov"))
 
         commands: list[str] = []
 
         async def mock_oneshot(cmd, timeout=None):
             commands.append(cmd)
             return CommandStatus(
-                command=cmd, output="",
-                status=Status.Success, retcode=0,
+                command=cmd,
+                output="",
+                status=Status.Success,
+                retcode=0,
             )
 
-        with patch.object(localhost, 'oneshot', side_effect=mock_oneshot):
+        with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
             await merger.capture_and_merge(
                 [host0_dir, host1_dir],
                 tmp_path / "gcno",
@@ -188,9 +192,9 @@ class TestLcovMergerToolchain:
             )
 
         # First capture should use arm toolchain
-        assert '/opt/arm/bin/arm-gcov' in commands[0]
+        assert "/opt/arm/bin/arm-gcov" in commands[0]
         # Second capture should use x86 toolchain
-        assert '/opt/x86/bin/x86-gcov' in commands[1]
+        assert "/opt/x86/bin/x86-gcov" in commands[1]
         # Third command is the merge
         assert len(commands) == 3
         await localhost.close()
@@ -216,18 +220,22 @@ class TestLcovMergerToolchain:
         async def mock_oneshot(cmd, timeout=None):
             commands.append(cmd)
             return CommandStatus(
-                command=cmd, output="",
-                status=Status.Success, retcode=0,
+                command=cmd,
+                output="",
+                status=Status.Success,
+                retcode=0,
             )
 
-        with patch.object(localhost, 'oneshot', side_effect=mock_oneshot):
+        with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
             await merger.capture_and_merge(
-                [host0, host1], tmp_path / "fallback_gcno", work_dir,
+                [host0, host1],
+                tmp_path / "fallback_gcno",
+                work_dir,
                 gcno_dirs=[gcno_a, gcno_b],
             )
 
-        assert str(gcno_a) in commands[0]        # host0 -> its own gcno
-        assert str(gcno_b) in commands[1]        # host1 -> its own gcno
+        assert str(gcno_a) in commands[0]  # host0 -> its own gcno
+        assert str(gcno_b) in commands[1]  # host1 -> its own gcno
         assert str(tmp_path / "fallback_gcno") not in commands[0]
         await localhost.close()
 
@@ -239,7 +247,9 @@ class TestLcovMergerToolchain:
         try:
             with pytest.raises(ValueError, match="gcno_dirs length"):
                 await merger.capture_and_merge(
-                    [tmp_path / "host0"], tmp_path / "gcno", tmp_path / "work",
+                    [tmp_path / "host0"],
+                    tmp_path / "gcno",
+                    tmp_path / "work",
                     gcno_dirs=[],
                 )
         finally:

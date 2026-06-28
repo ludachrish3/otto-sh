@@ -26,6 +26,7 @@ def pytest_collection_modifyitems(config, items):
         if _INTEGRATION_ROOT in item.path.parents:
             item.add_marker("integration")
 
+
 # Must be set before any otto imports -- configmodule reads OTTO_SUT_DIRS at
 # import time to compute the module-level _repos singleton.
 ensure_sut_dirs()
@@ -76,14 +77,10 @@ async def _reap_orphan_docker_stacks() -> None:
             if containers:
                 await host.oneshot(f"docker rm -f {' '.join(containers)}", timeout=60)
             networks = (
-                await host.oneshot(
-                    f"docker network ls -q --filter 'name={frag}'", timeout=30
-                )
+                await host.oneshot(f"docker network ls -q --filter 'name={frag}'", timeout=30)
             ).output.split()
             if networks:
-                await host.oneshot(
-                    f"docker network rm {' '.join(networks)}", timeout=60
-                )
+                await host.oneshot(f"docker network rm {' '.join(networks)}", timeout=60)
     finally:
         await host.close()
 
@@ -99,7 +96,7 @@ def reap_orphan_docker_stacks() -> None:
     """
     try:
         asyncio.run(_reap_orphan_docker_stacks())
-    except Exception:  # noqa: BLE001 - cleanup is best-effort
+    except Exception:
         pass
 
 

@@ -25,7 +25,6 @@ from otto.host.options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from otto.host.telnet import TelnetClient
 from otto.host.transport import SshHopTransport
 
-
 N = 16
 
 
@@ -47,11 +46,15 @@ async def test_concurrent_ssh_opens_one_connection(monkeypatch):
         await ready.wait()
         return AsyncMock(spec=SSHClientConnection)
 
-    monkeypatch.setattr('otto.host.connections.ssh_connect', fake_connect)
+    monkeypatch.setattr("otto.host.connections.ssh_connect", fake_connect)
 
     cm = ConnectionManager(
-        ip='1.2.3.4', creds={'u': 'p'}, user=None,
-        term='ssh', name='t', ssh_options=SshOptions(),
+        ip="1.2.3.4",
+        creds={"u": "p"},
+        user=None,
+        term="ssh",
+        name="t",
+        ssh_options=SshOptions(),
     )
     tasks = [asyncio.create_task(cm.ssh()) for _ in range(N)]
     await _let_tasks_settle()
@@ -82,11 +85,15 @@ async def test_concurrent_sftp_opens_one_client(monkeypatch):
     async def fake_connect(*args, **kwargs):
         return fake_ssh
 
-    monkeypatch.setattr('otto.host.connections.ssh_connect', fake_connect)
+    monkeypatch.setattr("otto.host.connections.ssh_connect", fake_connect)
 
     cm = ConnectionManager(
-        ip='1.2.3.4', creds={'u': 'p'}, user=None,
-        term='ssh', name='t', sftp_options=SftpOptions(),
+        ip="1.2.3.4",
+        creds={"u": "p"},
+        user=None,
+        term="ssh",
+        name="t",
+        sftp_options=SftpOptions(),
     )
     tasks = [asyncio.create_task(cm.sftp()) for _ in range(N)]
     await _let_tasks_settle()
@@ -112,11 +119,15 @@ async def test_concurrent_ftp_opens_one_client(monkeypatch):
         instances.append(client)
         return client
 
-    monkeypatch.setattr('aioftp.Client', fake_client_factory)
+    monkeypatch.setattr("aioftp.Client", fake_client_factory)
 
     cm = ConnectionManager(
-        ip='1.2.3.4', creds={'u': 'p'}, user=None,
-        term='ssh', name='t', ftp_options=FtpOptions(),
+        ip="1.2.3.4",
+        creds={"u": "p"},
+        user=None,
+        term="ssh",
+        name="t",
+        ftp_options=FtpOptions(),
     )
     tasks = [asyncio.create_task(cm.ftp()) for _ in range(N)]
     await _let_tasks_settle()
@@ -143,11 +154,15 @@ async def test_concurrent_telnet_opens_one_client(monkeypatch):
         instances.append(client)
         return client
 
-    monkeypatch.setattr('otto.host.connections.TelnetClient', fake_telnet_factory)
+    monkeypatch.setattr("otto.host.connections.TelnetClient", fake_telnet_factory)
 
     cm = ConnectionManager(
-        ip='1.2.3.4', creds={'u': 'p'}, user=None,
-        term='telnet', name='t', telnet_options=TelnetOptions(),
+        ip="1.2.3.4",
+        creds={"u": "p"},
+        user=None,
+        term="telnet",
+        name="t",
+        telnet_options=TelnetOptions(),
     )
     tasks = [asyncio.create_task(cm.telnet()) for _ in range(N)]
     await _let_tasks_settle()

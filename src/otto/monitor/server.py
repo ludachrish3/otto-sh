@@ -13,7 +13,6 @@ POST /api/event     Record a manual event from the dashboard UI
 
 import asyncio
 import json
-import socket
 from datetime import datetime
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
@@ -32,9 +31,10 @@ from ..models.base import OttoModel
 from .collector import MetricCollector
 from .events import VALID_DASH_STYLES
 
-_STATIC_DIR = Path(__file__).parent / 'static'
+_STATIC_DIR = Path(__file__).parent / "static"
 
 logger = get_otto_logger()
+
 
 # Suppress the ASGI log from uvicorn because it clutters up the output on exit.
 class SuppressASGIWarning(Filter):
@@ -42,48 +42,50 @@ class SuppressASGIWarning(Filter):
     def filter(self, record: LogRecord):
         return "ASGI callable returned without completing" not in record.getMessage()
 
+
 getLogger("uvicorn.error").addFilter(SuppressASGIWarning())
+
 
 class _EventBody(OttoModel):
     label: str
-    color: str = '#888888'
-    dash:  str = 'dash'
+    color: str = "#888888"
+    dash: str = "dash"
 
 
 class _EventUpdateBody(OttoModel):
     label: str | None = None
     color: str | None = None
-    dash:  str | None = None
+    dash: str | None = None
 
 
 def _build_app(collector: MetricCollector) -> FastAPI:
-    app = FastAPI(title='Otto Monitor')
+    app = FastAPI(title="Otto Monitor")
 
-    app.mount('/static', StaticFiles(directory=str(_STATIC_DIR)), name='static')
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
-    @app.get('/', response_class=HTMLResponse)
-    async def dashboard() -> HTMLResponse: # type: ignore[reportUnusedFunction]
-        html = (_STATIC_DIR / 'dashboard.html').read_text()
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard() -> HTMLResponse:  # type: ignore[reportUnusedFunction]
+        html = (_STATIC_DIR / "dashboard.html").read_text()
         return HTMLResponse(html)
 
-    @app.get('/api/meta')
-    async def meta() -> JSONResponse: # type: ignore[reportUnusedFunction]
+    @app.get("/api/meta")
+    async def meta() -> JSONResponse:  # type: ignore[reportUnusedFunction]
         return JSONResponse(collector.get_meta())
 
-    @app.get('/api/data')
-    async def data() -> JSONResponse: # type: ignore[reportUnusedFunction]
+    @app.get("/api/data")
+    async def data() -> JSONResponse:  # type: ignore[reportUnusedFunction]
         payload: dict[str, Any] = {
-            'series': {
-                label: [pt.model_dump(mode='json', exclude_none=True) for pt in pts]
+            "series": {
+                label: [pt.model_dump(mode="json", exclude_none=True) for pt in pts]
                 for label, pts in collector.get_series().items()
             },
-            'events':    [e.to_dict() for e in collector.get_events()],
-            'chart_map': collector.get_chart_map(),
+            "events": [e.to_dict() for e in collector.get_events()],
+            "chart_map": collector.get_chart_map(),
         }
         return JSONResponse(payload)
 
-    @app.get('/api/stream')
-    async def stream(request: Request) -> EventSourceResponse: # type: ignore[reportUnusedFunction]
+    @app.get("/api/stream")
+    async def stream(request: Request) -> EventSourceResponse:  # type: ignore[reportUnusedFunction]
         q = collector.subscribe()
 
         async def generator():
@@ -93,36 +95,36 @@ def _build_app(collector: MetricCollector) -> FastAPI:
                         break
                     try:
                         payload = await asyncio.wait_for(q.get(), timeout=15.0)
-                        yield {'data': json.dumps(payload)}
+                        yield {"data": json.dumps(payload)}
                     except asyncio.TimeoutError:
                         # Send a keepalive comment so the browser doesn't close the connection
-                        yield {'comment': 'keepalive'}
+                        yield {"comment": "keepalive"}
             finally:
                 collector.unsubscribe(q)
 
         return EventSourceResponse(generator())
 
-    @app.post('/api/event')
-    async def add_event(body: _EventBody) -> JSONResponse: # type: ignore[reportUnusedFunction]
+    @app.post("/api/event")
+    async def add_event(body: _EventBody) -> JSONResponse:  # type: ignore[reportUnusedFunction]
         if body.dash not in VALID_DASH_STYLES:
             return JSONResponse(
-                {'error': f'Invalid dash style. Choose from: {sorted(VALID_DASH_STYLES)}'},
+                {"error": f"Invalid dash style. Choose from: {sorted(VALID_DASH_STYLES)}"},
                 status_code=422,
             )
         event = await collector.add_event(
             label=body.label,
             color=body.color,
             dash=body.dash,
-            source='manual',
+            source="manual",
         )
         return JSONResponse(event.to_dict(), status_code=201)
 
-    @app.post('/api/event/{event_id}/end')
+    @app.post("/api/event/{event_id}/end")
     async def end_event(event_id: int) -> JSONResponse:  # type: ignore[reportUnusedFunction]
         """Record the end time of a span event (uses server clock)."""
         existing = next((e for e in collector.get_events() if e.id == event_id), None)
         if existing is None:
-            return JSONResponse({'error': 'Event not found'}, status_code=404)
+            return JSONResponse({"error": "Event not found"}, status_code=404)
         updated = await collector.update_event(
             event_id=event_id,
             label=existing.label,
@@ -131,43 +133,43 @@ def _build_app(collector: MetricCollector) -> FastAPI:
             end_timestamp=datetime.now(),
         )
         if updated is None:
-            return JSONResponse({'error': 'Event not found'}, status_code=404)
+            return JSONResponse({"error": "Event not found"}, status_code=404)
         return JSONResponse(updated.to_dict())
 
-    @app.get('/api/export/json')
+    @app.get("/api/export/json")
     async def export_json() -> Response:  # type: ignore[reportUnusedFunction]
         """Download all metrics and events as a JSON file (compatible with --file)."""
         return Response(
             content=collector.to_json(),
-            media_type='application/json',
-            headers={'Content-Disposition': 'attachment; filename="otto-metrics.json"'},
+            media_type="application/json",
+            headers={"Content-Disposition": 'attachment; filename="otto-metrics.json"'},
         )
 
-    @app.delete('/api/event/{event_id}')
-    async def delete_event(event_id: int) -> Response: # type: ignore[reportUnusedFunction]
+    @app.delete("/api/event/{event_id}")
+    async def delete_event(event_id: int) -> Response:  # type: ignore[reportUnusedFunction]
         if await collector.delete_event(event_id):
             return Response(status_code=204)
-        return JSONResponse({'error': 'Event not found'}, status_code=404)
+        return JSONResponse({"error": "Event not found"}, status_code=404)
 
-    @app.patch('/api/event/{event_id}')
-    async def update_event(event_id: int, body: _EventUpdateBody) -> JSONResponse: # type: ignore[reportUnusedFunction]
+    @app.patch("/api/event/{event_id}")
+    async def update_event(event_id: int, body: _EventUpdateBody) -> JSONResponse:  # type: ignore[reportUnusedFunction]
         if body.dash is not None and body.dash not in VALID_DASH_STYLES:
             return JSONResponse(
-                {'error': f'Invalid dash style. Choose from: {sorted(VALID_DASH_STYLES)}'},
+                {"error": f"Invalid dash style. Choose from: {sorted(VALID_DASH_STYLES)}"},
                 status_code=422,
             )
         # Fetch existing event to fill in unchanged fields
         existing = next((e for e in collector.get_events() if e.id == event_id), None)
         if existing is None:
-            return JSONResponse({'error': 'Event not found'}, status_code=404)
+            return JSONResponse({"error": "Event not found"}, status_code=404)
         updated = await collector.update_event(
             event_id=event_id,
             label=body.label if body.label is not None else existing.label,
             color=body.color if body.color is not None else existing.color,
-            dash=body.dash  if body.dash  is not None else existing.dash,
+            dash=body.dash if body.dash is not None else existing.dash,
         )
         if updated is None:
-            return JSONResponse({'error': 'Event not found'}, status_code=404)
+            return JSONResponse({"error": "Event not found"}, status_code=404)
         return JSONResponse(updated.to_dict())
 
     return app
@@ -181,9 +183,10 @@ def _get_all_ips() -> list[str]:
     hostname resolves in DNS/hosts.
     """
     import subprocess
+
     try:
         out = subprocess.check_output(
-            ['ip', '-4', '-o', 'addr', 'show'],
+            ["ip", "-4", "-o", "addr", "show"],
             text=True,
             timeout=5,
         )
@@ -194,9 +197,9 @@ def _get_all_ips() -> list[str]:
         # Format: "2: eth0    inet 10.0.2.15/24 ..."
         parts = line.split()
         for i, part in enumerate(parts):
-            if part == 'inet' and i + 1 < len(parts):
-                ip = parts[i + 1].split('/')[0]
-                if not ip.startswith('127.'):
+            if part == "inet" and i + 1 < len(parts):
+                ip = parts[i + 1].split("/")[0]
+                if not ip.startswith("127."):
                     ips.append(ip)
     return ips
 
@@ -212,7 +215,7 @@ class MonitorServer:
     def __init__(
         self,
         collector: MetricCollector,
-        host: str = '0.0.0.0',
+        host: str = "0.0.0.0",
         port: int = 0,
     ) -> None:
         self._collector = collector
@@ -225,19 +228,19 @@ class MonitorServer:
     def url(self) -> str:
         """Primary URL using the first detected non-loopback IP (or the bind address)."""
         host = self._bind_host
-        if host in ('0.0.0.0', '::'):
+        if host in ("0.0.0.0", "::"):
             ips = _get_all_ips()
             host = ips[0] if ips else self._bind_host
-        return f'http://{host}:{self._port}'
+        return f"http://{host}:{self._port}"
 
     @property
     def urls(self) -> list[str]:
         """All URLs the server is reachable on (one per non-loopback interface)."""
-        if self._bind_host in ('0.0.0.0', '::'):
+        if self._bind_host in ("0.0.0.0", "::"):
             ips = _get_all_ips()
             if ips:
-                return [f'http://{ip}:{self._port}' for ip in ips]
-        return [f'http://{self._bind_host}:{self._port}']
+                return [f"http://{ip}:{self._port}" for ip in ips]
+        return [f"http://{self._bind_host}:{self._port}"]
 
     @property
     def started(self) -> bool:

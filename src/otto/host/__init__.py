@@ -10,7 +10,7 @@ from .connections import register_term_backend as register_term_backend
 from .docker_host import DockerContainerHost as DockerContainerHost
 from .embedded_host import EmbeddedHost as EmbeddedHost
 from .embedded_host import ZephyrHost as ZephyrHost
-from .transfer import EmbeddedFileTransfer as EmbeddedFileTransfer
+from .file_ops import PosixFileOps as PosixFileOps
 from .host import Host as Host
 from .host import HostFilter as HostFilter
 from .host import RunResult as RunResult
@@ -19,8 +19,6 @@ from .host import SuppressCommandOutput as SuppressCommandOutput
 from .host import is_dry_run as is_dry_run
 from .local_host import LocalHost as LocalHost
 from .os_profile import OsProfile as OsProfile
-from .file_ops import PosixFileOps as PosixFileOps
-from .privilege import PosixPrivilege as PosixPrivilege
 from .os_profile import build_host_class as build_host_class
 from .os_profile import build_os_profile as build_os_profile
 from .os_profile import get_host_class as get_host_class
@@ -33,6 +31,7 @@ from .power import PowerState as PowerState
 from .power import build_power_controller as build_power_controller
 from .power import power_control_from_spec as power_control_from_spec
 from .power import register_power_controller as register_power_controller
+from .privilege import PosixPrivilege as PosixPrivilege
 from .product import FileProduct as FileProduct
 from .product import Product as Product
 from .product import ProductProvider as ProductProvider
@@ -46,6 +45,7 @@ from .session import SessionManager as SessionManager
 from .session import ShellSession as ShellSession
 from .session import TelnetSession as TelnetSession
 from .toolchain import Toolchain as Toolchain
+from .transfer import EmbeddedFileTransfer as EmbeddedFileTransfer
 from .transfer import NcListenerCheck as NcListenerCheck
 from .transfer import NcPortStrategy as NcPortStrategy
 from .transfer import TransferProgressHandler as TransferProgressHandler

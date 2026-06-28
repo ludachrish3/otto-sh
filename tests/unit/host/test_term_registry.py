@@ -66,8 +66,11 @@ class TestRegistry:
 class TestCreate:
     def test_create_constructs_connection_manager(self):
         ctx = TermContext(
-            ip="10.0.0.5", creds={"root": "x"}, user="root",
-            term="ssh", name="h1",
+            ip="10.0.0.5",
+            creds={"root": "x"},
+            user="root",
+            term="ssh",
+            name="h1",
         )
         cm = ConnectionManager.create(ctx)
         assert isinstance(cm, ConnectionManager)

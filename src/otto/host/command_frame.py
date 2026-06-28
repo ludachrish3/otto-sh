@@ -164,11 +164,7 @@ class BashFrame(CommandFrame):
     def frame(self, cmd: str, m: SessionMarkers) -> str:
         # Bracket the command with echoes; the END sentinel embeds ``$?`` so the
         # exit code travels back inside the marker.
-        return (
-            f'echo "{m.begin}"; '
-            f'{cmd}; '
-            f'echo "{m.end_prefix}$?__"\n'
-        )
+        return f'echo "{m.begin}"; {cmd}; echo "{m.end_prefix}$?__"\n'
 
     @override
     def recover(self, m: SessionMarkers) -> str:
@@ -255,12 +251,7 @@ class ZephyrFrame(CommandFrame):
     def frame(self, cmd: str, m: SessionMarkers) -> str:
         # Four CR-separated lines (see class docstring). The order
         # BEGIN / cmd / retval / END is load-bearing.
-        return (
-            f"{m.begin}\r"
-            f"{cmd}\r"
-            f"retval\r"
-            f"{m.end_prefix}\r"
-        )
+        return f"{m.begin}\r{cmd}\rretval\r{m.end_prefix}\r"
 
     @override
     def recover(self, m: SessionMarkers) -> str:
@@ -319,7 +310,7 @@ class ZephyrFrame(CommandFrame):
                 break
 
         # [prompt, <command output...>, prompt] — drop the bracketing prompts.
-        block = lines[begin_line + 1:retcode_line]
+        block = lines[begin_line + 1 : retcode_line]
         output = block[1:-1] if len(block) >= 2 else []
         return "\n".join(output).strip()
 

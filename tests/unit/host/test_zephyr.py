@@ -76,7 +76,7 @@ class MockZephyrSession(TelnetSession):
         assert self._out_reader is not None
         self._out_reader.feed_eof()
 
-    def shell_response(self, output: str, retcode: int, prompt: str = '~$ ') -> str:
+    def shell_response(self, output: str, retcode: int, prompt: str = "~$ ") -> str:
         """Build raw shell output for a framed command, in the real format.
 
         Verified live on Zephyr 3.7.2: input is not echoed; the shell prints
@@ -84,14 +84,14 @@ class MockZephyrSession(TelnetSession):
         two rejected markers, the command, and ``retval``).
         """
         if output:
-            body = ''.join(f'{ln}\r\n' for ln in output.split('\n'))
+            body = "".join(f"{ln}\r\n" for ln in output.split("\n"))
         else:
-            body = ''
+            body = ""
         return (
-            f'\r\n{self._begin_marker}: command not found\r\n{prompt}'
-            f'\r\n{body}{prompt}'
-            f'\r\n{retcode}\r\n{prompt}'
-            f'\r\n{self._end_marker_prefix}: command not found\r\n{prompt}'
+            f"\r\n{self._begin_marker}: command not found\r\n{prompt}"
+            f"\r\n{body}{prompt}"
+            f"\r\n{retcode}\r\n{prompt}"
+            f"\r\n{self._end_marker_prefix}: command not found\r\n{prompt}"
         )
 
 
@@ -117,6 +117,7 @@ async def session() -> MockZephyrSession:
 # Framing
 # ---------------------------------------------------------------------------
 
+
 class TestFraming:
     """The :class:`ZephyrFrame` value object — render + parse — in isolation,
     without a session. Markers are a fixed :class:`SessionMarkers` so the
@@ -126,13 +127,8 @@ class TestFraming:
     M = SessionMarkers.for_session("deadbeef")
 
     def test_frame_command_is_four_cr_separated_lines(self):
-        framed = ZephyrFrame().frame('kernel version', self.M)
-        assert framed == (
-            f"{self.M.begin}\r"
-            f"kernel version\r"
-            f"retval\r"
-            f"{self.M.end_prefix}\r"
-        )
+        framed = ZephyrFrame().frame("kernel version", self.M)
+        assert framed == (f"{self.M.begin}\rkernel version\rretval\r{self.M.end_prefix}\r")
 
     def test_handshake_command_is_bare_marker(self):
         assert ZephyrFrame().handshake(self.M) == f"{self.M.ready}\n"
@@ -160,41 +156,42 @@ class TestFraming:
     async def test_run_cmd_writes_framed_command(self, session: MockZephyrSession):
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(session.shell_response('3.7.2', 0))
+            session.feed(session.shell_response("3.7.2", 0))
 
         asyncio.create_task(simulate())
-        await session.run_cmd('kernel version')
-        assert session.written[0] == ZephyrFrame().frame('kernel version', session._markers)
+        await session.run_cmd("kernel version")
+        assert session.written[0] == ZephyrFrame().frame("kernel version", session._markers)
 
 
 # ---------------------------------------------------------------------------
 # Output and return codes
 # ---------------------------------------------------------------------------
 
-class TestRunCmd:
 
+class TestRunCmd:
     @pytest.mark.asyncio
     async def test_success(self, session: MockZephyrSession):
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(session.shell_response('Zephyr version 3.7.2', 0))
+            session.feed(session.shell_response("Zephyr version 3.7.2", 0))
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd('kernel version')
+        result = await session.run_cmd("kernel version")
 
-        assert result.output == 'Zephyr version 3.7.2'
+        assert result.output == "Zephyr version 3.7.2"
         assert result.retcode == 0
         assert result.status == Status.Success
 
     @pytest.mark.asyncio
     async def test_negative_retcode_is_failure(self, session: MockZephyrSession):
         """Zephyr return codes are signed errno-style values."""
+
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(session.shell_response('usage: ...', -22))
+            session.feed(session.shell_response("usage: ...", -22))
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd('device off bad')
+        result = await session.run_cmd("device off bad")
 
         assert result.retcode == -22
         assert result.status == Status.Failed
@@ -202,55 +199,57 @@ class TestRunCmd:
     @pytest.mark.asyncio
     async def test_unknown_command_retcode(self, session: MockZephyrSession):
         """An unknown command yields the shell's -8 (-ENOEXEC)."""
+
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(session.shell_response('bogus: command not found', -8))
+            session.feed(session.shell_response("bogus: command not found", -8))
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd('bogus')
+        result = await session.run_cmd("bogus")
 
         assert result.retcode == -8
         assert result.status == Status.Failed
-        assert result.output == 'bogus: command not found'
+        assert result.output == "bogus: command not found"
 
     @pytest.mark.asyncio
     async def test_empty_output(self, session: MockZephyrSession):
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(session.shell_response('', 0))
+            session.feed(session.shell_response("", 0))
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd('kernel reboot cold')
+        result = await session.run_cmd("kernel reboot cold")
 
-        assert result.output == ''
+        assert result.output == ""
         assert result.retcode == 0
 
     @pytest.mark.asyncio
     async def test_multiline_output(self, session: MockZephyrSession):
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(session.shell_response(
-                'devices:\n- uart@3f8 (READY)\n- eth0 (READY)', 0))
+            session.feed(session.shell_response("devices:\n- uart@3f8 (READY)\n- eth0 (READY)", 0))
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd('device list')
+        result = await session.run_cmd("device list")
 
-        assert result.output == 'devices:\n- uart@3f8 (READY)\n- eth0 (READY)'
+        assert result.output == "devices:\n- uart@3f8 (READY)\n- eth0 (READY)"
         assert result.retcode == 0
 
     @pytest.mark.asyncio
     async def test_integer_in_output_not_mistaken_for_retcode(
-        self, session: MockZephyrSession,
+        self,
+        session: MockZephyrSession,
     ):
         """A bare integer in command output must not be read as the retcode."""
+
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(session.shell_response('123456', 0))
+            session.feed(session.shell_response("123456", 0))
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd('kernel uptime')
+        result = await session.run_cmd("kernel uptime")
 
-        assert result.output == '123456'
+        assert result.output == "123456"
         assert result.retcode == 0
 
     @pytest.mark.asyncio
@@ -258,15 +257,17 @@ class TestRunCmd:
         """A non-default prompt is stripped just the same — parsing is positional,
         it never reads the prompt text.
         """
+
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(session.shell_response(
-                'Zephyr version 3.7.2', 0, prompt='zephyr-board:/$ '))
+            session.feed(
+                session.shell_response("Zephyr version 3.7.2", 0, prompt="zephyr-board:/$ ")
+            )
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd('kernel version')
+        result = await session.run_cmd("kernel version")
 
-        assert result.output == 'Zephyr version 3.7.2'
+        assert result.output == "Zephyr version 3.7.2"
         assert result.retcode == 0
 
     @pytest.mark.asyncio
@@ -274,15 +275,17 @@ class TestRunCmd:
         """The Zephyr shell colours its prompt; ANSI escapes must not leak into
         the parsed output.
         """
+
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(session.shell_response(
-                'Zephyr version 3.7.2', 0, prompt='\x1b[1;32m~$ \x1b[m'))
+            session.feed(
+                session.shell_response("Zephyr version 3.7.2", 0, prompt="\x1b[1;32m~$ \x1b[m")
+            )
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd('kernel version')
+        result = await session.run_cmd("kernel version")
 
-        assert result.output == 'Zephyr version 3.7.2'
+        assert result.output == "Zephyr version 3.7.2"
         assert result.retcode == 0
 
 
@@ -290,8 +293,8 @@ class TestRunCmd:
 # Expect handling (shared engine, exercised over Zephyr framing)
 # ---------------------------------------------------------------------------
 
-class TestExpect:
 
+class TestExpect:
     @pytest.mark.asyncio
     async def test_expect_response_is_sent(self, session: MockZephyrSession):
         async def simulate():
@@ -306,7 +309,7 @@ class TestExpect:
             )
 
         asyncio.create_task(simulate())
-        result = await session.run_cmd('risky', expects=[('confirm', 'y\r')])
+        result = await session.run_cmd("risky", expects=[("confirm", "y\r")])
 
-        assert 'y\r' in session.written
+        assert "y\r" in session.written
         assert result.retcode == 0

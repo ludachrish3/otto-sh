@@ -6,7 +6,6 @@ from otto.coverage.correlator.lcov_loader import LCOVLoader
 from otto.coverage.correlator.paths import PathCorrelator, PathMapping
 from otto.coverage.store.model import CoverageStore
 
-
 SAMPLE_INFO = """\
 TN:test
 SF:/build/src/foo.c
@@ -39,12 +38,13 @@ def source_tree(tmp_path):
 
 
 class TestLCOVLoader:
-
     def test_load_basic(self, info_file, source_tree):
         store = CoverageStore()
-        correlator = PathCorrelator([
-            PathMapping("/build", str(source_tree)),
-        ])
+        correlator = PathCorrelator(
+            [
+                PathMapping("/build", str(source_tree)),
+            ]
+        )
         loader = LCOVLoader(store, correlator)
         n = loader.load(info_file, "system")
         assert n == 2
@@ -83,13 +83,9 @@ class TestLCOVLoader:
 
     def test_multi_tier_loading(self, source_tree, tmp_path):
         system_info = tmp_path / "system.info"
-        system_info.write_text(
-            f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,3\nend_of_record\n"
-        )
+        system_info.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,3\nend_of_record\n")
         unit_info = tmp_path / "unit.info"
-        unit_info.write_text(
-            f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,7\nDA:2,1\nend_of_record\n"
-        )
+        unit_info.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,7\nDA:2,1\nend_of_record\n")
 
         store = CoverageStore()
         correlator = PathCorrelator([])  # paths already local
@@ -108,9 +104,7 @@ class TestLCOVLoader:
     def test_arbitrary_tier_name(self, source_tree, tmp_path):
         """Loader should accept any tier name, not just the canonical ones."""
         info = tmp_path / "smoke.info"
-        info.write_text(
-            f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,2\nend_of_record\n"
-        )
+        info.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,2\nend_of_record\n")
         store = CoverageStore()
         loader = LCOVLoader(store, PathCorrelator([]))
         loader.load(info, "smoke")

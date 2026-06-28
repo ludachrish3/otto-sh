@@ -40,7 +40,7 @@ class SftpFileTransfer(UnixFileTransfer):
 
     def __init__(
         self,
-        connections: 'ConnectionManager',
+        connections: "ConnectionManager",
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
         max_filename_len: int = 255,
@@ -56,8 +56,12 @@ class SftpFileTransfer(UnixFileTransfer):
     @classmethod
     def create(cls, ctx: "TransferContext") -> "SftpFileTransfer":
         assert ctx.connections is not None and ctx.exec_cmd is not None
-        return cls(connections=ctx.connections, name=ctx.host_name, exec_cmd=ctx.exec_cmd,
-                   max_filename_len=ctx.max_filename_len)
+        return cls(
+            connections=ctx.connections,
+            name=ctx.host_name,
+            exec_cmd=ctx.exec_cmd,
+            max_filename_len=ctx.max_filename_len,
+        )
 
     @override
     async def _run_get(
@@ -86,14 +90,16 @@ class SftpFileTransfer(UnixFileTransfer):
         sftp_conn = await self._connections.sftp()
 
         async def _get_one(src: Path) -> tuple[Status, str]:
-            _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
+            _progress = (
+                _make_sftp_progress(progress_factory()) if progress_factory is not None else None
+            )
             _logger.debug(f"{self._name}: SFTP get {src} -> {dest_dir}")
             await sftp_conn.get(
                 str(src),
                 str(dest_dir / src.name),
                 progress_handler=_progress,
             )
-            return Status.Success, ''
+            return Status.Success, ""
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
             *(_get_one(src) for src in src_files), return_exceptions=True
@@ -109,14 +115,16 @@ class SftpFileTransfer(UnixFileTransfer):
         sftp_conn = await self._connections.sftp()
 
         async def _put_one(src: Path) -> tuple[Status, str]:
-            _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
+            _progress = (
+                _make_sftp_progress(progress_factory()) if progress_factory is not None else None
+            )
             _logger.debug(f"{self._name}: SFTP put {src} -> {dest_dir}")
             await sftp_conn.put(
                 str(src),
                 str(dest_dir / src.name),
                 progress_handler=_progress,
             )
-            return Status.Success, ''
+            return Status.Success, ""
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
             *(_put_one(src) for src in src_files), return_exceptions=True

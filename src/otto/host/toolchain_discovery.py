@@ -27,9 +27,7 @@ from ..host.toolchain import Toolchain
 logger = logging.getLogger(__name__)
 
 # Matches absolute paths to gcc/g++ or clang/clang++ inside a bin/ directory.
-_COMPILER_RE = re.compile(
-    r'(/\S+/bin/\S*(?:gcc|g\+\+|clang\+\+|clang))\b'
-)
+_COMPILER_RE = re.compile(r"(/\S+/bin/\S*(?:gcc|g\+\+|clang\+\+|clang))\b")
 
 
 async def discover_toolchain_from_gcno(
@@ -73,12 +71,15 @@ async def discover_toolchain_from_gcno(
             if match:
                 compiler_path = Path(match.group(1))
                 toolchain = _toolchain_from_compiler(
-                    compiler_path, work_dir or gcno_dir / '_toolchain_work',
+                    compiler_path,
+                    work_dir or gcno_dir / "_toolchain_work",
                 )
                 if toolchain is not None:
                     logger.info(
                         "Auto-discovered toolchain from %s: sysroot=%s gcov=%s",
-                        gcno, toolchain.sysroot, toolchain.gcov,
+                        gcno,
+                        toolchain.sysroot,
+                        toolchain.gcov,
                     )
                     return toolchain
 
@@ -108,8 +109,8 @@ def toolchain_from_gcov(gcov: Path) -> Toolchain:
     # point at a nonexistent path and the report's ``lcov --capture`` would fail
     # with ``lcov: not found``). Resolve the host lcov instead. Stored absolute,
     # so ``lcov_bin`` ignores the cross sysroot while ``gcov`` stays under it.
-    host_lcov = shutil.which('lcov')
-    lcov = Path(host_lcov) if host_lcov else Path('usr/bin/lcov')
+    host_lcov = shutil.which("lcov")
+    lcov = Path(host_lcov) if host_lcov else Path("usr/bin/lcov")
     return Toolchain(sysroot=sysroot, gcov=gcov_rel, lcov=lcov)
 
 
@@ -126,7 +127,7 @@ def _toolchain_from_compiler(compiler_path: Path, work_dir: Path) -> Toolchain |
         be identified.
     """
     name = compiler_path.name
-    bin_dir = compiler_path.parent          # e.g. /opt/arm/bin
+    bin_dir = compiler_path.parent  # e.g. /opt/arm/bin
 
     # Walk up from bin/ to find sysroot.
     # Typical layout: <sysroot>/usr/bin/gcc  or  <sysroot>/bin/gcc
@@ -142,11 +143,11 @@ def _toolchain_from_compiler(compiler_path: Path, work_dir: Path) -> Toolchain |
 
 
 def _is_gcc(name: str) -> bool:
-    return bool(re.search(r'(?:^|-)gcc$|(?:^|-)g\+\+$', name))
+    return bool(re.search(r"(?:^|-)gcc$|(?:^|-)g\+\+$", name))
 
 
 def _is_clang(name: str) -> bool:
-    return bool(re.search(r'(?:^|-)clang(?:\+\+)?$', name))
+    return bool(re.search(r"(?:^|-)clang(?:\+\+)?$", name))
 
 
 def _derive_sysroot(bin_dir: Path) -> Path:
@@ -155,20 +156,20 @@ def _derive_sysroot(bin_dir: Path) -> Path:
     Convention: if ``bin_dir`` ends in ``usr/bin``, sysroot is two
     levels up. If it ends in just ``bin``, sysroot is one level up.
     """
-    if bin_dir.parent.name == 'usr':
+    if bin_dir.parent.name == "usr":
         return bin_dir.parent.parent  # /opt/arm/usr/bin → /opt/arm
-    return bin_dir.parent              # /opt/arm/bin → /opt/arm
+    return bin_dir.parent  # /opt/arm/bin → /opt/arm
 
 
 def _gcc_toolchain(compiler_name: str, bin_dir: Path, sysroot: Path) -> Toolchain:
     """Build a :class:`Toolchain` for a GCC-family compiler."""
-    gcov_name = re.sub(r'g\+\+', 'gcov', re.sub(r'gcc', 'gcov', compiler_name))
+    gcov_name = re.sub(r"g\+\+", "gcov", re.sub(r"gcc", "gcov", compiler_name))
     gcov_abs = bin_dir / gcov_name
 
     try:
         gcov_rel = gcov_abs.relative_to(sysroot)
     except ValueError:
-        gcov_rel = Path('usr/bin/gcov')
+        gcov_rel = Path("usr/bin/gcov")
 
     return Toolchain(sysroot=sysroot, gcov=gcov_rel)
 
@@ -180,7 +181,7 @@ def _clang_toolchain(bin_dir: Path, sysroot: Path, work_dir: Path) -> Toolchain:
     equivalent is ``llvm-cov gcov`` (two words).  This function
     generates a small wrapper script in *work_dir*.
     """
-    llvm_cov = bin_dir / 'llvm-cov'
+    llvm_cov = bin_dir / "llvm-cov"
     wrapper = _create_llvm_cov_wrapper(llvm_cov, work_dir)
 
     try:
@@ -188,7 +189,7 @@ def _clang_toolchain(bin_dir: Path, sysroot: Path, work_dir: Path) -> Toolchain:
     except ValueError:
         # Wrapper lives outside sysroot — store as absolute in gcov field
         # and use '/' as sysroot so gcov_bin resolves correctly.
-        return Toolchain(sysroot=Path('/'), gcov=wrapper)
+        return Toolchain(sysroot=Path("/"), gcov=wrapper)
 
     return Toolchain(sysroot=sysroot, gcov=gcov_rel)
 
@@ -199,12 +200,10 @@ def _create_llvm_cov_wrapper(llvm_cov: Path, work_dir: Path) -> Path:
     Returns the path to the wrapper.
     """
     work_dir.mkdir(parents=True, exist_ok=True)
-    wrapper = work_dir / 'llvm-gcov-wrapper.sh'
+    wrapper = work_dir / "llvm-gcov-wrapper.sh"
 
     if not wrapper.exists():
-        wrapper.write_text(
-            f'#!/bin/sh\nexec {llvm_cov} gcov "$@"\n'
-        )
+        wrapper.write_text(f'#!/bin/sh\nexec {llvm_cov} gcov "$@"\n')
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
     return wrapper

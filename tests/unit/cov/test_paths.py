@@ -1,8 +1,5 @@
 """Tests for path correlator and auto-discovery."""
 
-from pathlib import Path
-from unittest.mock import AsyncMock
-
 import pytest
 
 from otto.coverage.correlator.paths import (
@@ -10,11 +7,9 @@ from otto.coverage.correlator.paths import (
     PathMapping,
     discover_path_mappings,
 )
-from otto.utils import CommandStatus, Status
 
 
 class TestPathMapping:
-
     def test_apply_matching(self):
         m = PathMapping("/build/workspace", "/home/user/src")
         assert m.apply("/build/workspace/foo.c") == "/home/user/src/foo.c"
@@ -29,23 +24,26 @@ class TestPathMapping:
 
 
 class TestPathCorrelator:
-
     def test_resolve_first_match_wins(self, tmp_path):
         (tmp_path / "a.c").touch()
-        c = PathCorrelator([
-            PathMapping("/first", str(tmp_path)),
-            PathMapping("/second", str(tmp_path)),
-        ])
+        c = PathCorrelator(
+            [
+                PathMapping("/first", str(tmp_path)),
+                PathMapping("/second", str(tmp_path)),
+            ]
+        )
         result = c.resolve("/first/a.c")
         assert result is not None
         assert result.name == "a.c"
 
     def test_resolve_fallthrough(self, tmp_path):
         (tmp_path / "a.c").touch()
-        c = PathCorrelator([
-            PathMapping("/nomatch", "/does/not/exist"),
-            PathMapping("/real", str(tmp_path)),
-        ])
+        c = PathCorrelator(
+            [
+                PathMapping("/nomatch", "/does/not/exist"),
+                PathMapping("/real", str(tmp_path)),
+            ]
+        )
         result = c.resolve("/real/a.c")
         assert result is not None
 
@@ -60,7 +58,6 @@ class TestPathCorrelator:
 
 
 class TestDiscoverPathMappings:
-
     @pytest.mark.asyncio
     async def test_discovers_common_prefix(self, tmp_path):
         from otto.host.local_host import LocalHost

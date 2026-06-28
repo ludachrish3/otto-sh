@@ -11,6 +11,7 @@ The ``_otto_release_connections`` fixture closes host connections in the class
 loop that created them, but only under ``--cov`` (ordinary runs keep their
 persistent sessions and pay no reconnect cost).
 """
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

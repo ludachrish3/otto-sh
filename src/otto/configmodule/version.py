@@ -6,16 +6,16 @@ from re import (
 from typing_extensions import override
 
 version_re = compile(
-    r'(?P<major>\d+)\.'
-    r'(?P<minor>\d+)\.'
-    r'(?P<patch>\d+)'
+    r"(?P<major>\d+)\."
+    r"(?P<minor>\d+)\."
+    r"(?P<patch>\d+)"
 )
+
 
 @dataclass(
     init=False,
 )
-class Version():
-
+class Version:
     major: int
     """Product major version."""
 
@@ -25,7 +25,8 @@ class Version():
     patch: int
     """Product patch version."""
 
-    def __init__(self,
+    def __init__(
+        self,
         version: str,
     ):
 
@@ -37,10 +38,10 @@ class Version():
 
         version_dict = match.groupdict()
 
-        self.major = int(version_dict['major'])
-        self.minor = int(version_dict['minor'])
-        self.patch = int(version_dict['patch'])
+        self.major = int(version_dict["major"])
+        self.minor = int(version_dict["minor"])
+        self.patch = int(version_dict["patch"])
 
     @override
     def __repr__(self):
-        return f'{self.major}.{self.minor}.{self.patch}'
+        return f"{self.major}.{self.minor}.{self.patch}"

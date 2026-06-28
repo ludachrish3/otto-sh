@@ -59,7 +59,7 @@ class ExampleReservationBackend:
     def __init__(
         self,
         *,
-        url: str | None = None,  # noqa: ARG002 — factory uniformity
+        url: str | None = None,
         reservations: dict[str, list[str]] | None = None,
     ) -> None:
         source = _DEMO_RESERVATIONS if reservations is None else reservations
@@ -72,9 +72,7 @@ class ExampleReservationBackend:
 
     def who_reserved(self, resource: str) -> list[str]:
         # Deterministic order, duplicates removed (a user holds a resource once).
-        return sorted(
-            user for user, resources in self._by_user.items() if resource in resources
-        )
+        return sorted(user for user, resources in self._by_user.items() if resource in resources)
 
     def backend_name(self) -> str:
         return "example"

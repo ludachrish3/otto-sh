@@ -16,8 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
-from otto.host.session import LocalSession, ShellSession, Expect
-from otto.utils import CommandStatus, Status
+from otto.host.session import LocalSession, ShellSession
+from otto.utils import Status
 
 
 class MockSession(ShellSession):
@@ -90,17 +90,13 @@ async def session() -> MockSession:
 # Basic run_cmd
 # ---------------------------------------------------------------------------
 
-class TestRunCmd:
 
+class TestRunCmd:
     @pytest.mark.asyncio
     async def test_basic_command_output_and_retcode(self, session: MockSession):
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"hello world\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"{session._begin_marker}\nhello world\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         result = await session.run_cmd("echo hello world")
@@ -115,9 +111,7 @@ class TestRunCmd:
         async def simulate():
             await asyncio.sleep(0.01)
             session.feed(
-                f"{session._begin_marker}\n"
-                f"command not found\n"
-                f"{session._end_marker_prefix}127__\n"
+                f"{session._begin_marker}\ncommand not found\n{session._end_marker_prefix}127__\n"
             )
 
         asyncio.create_task(simulate())
@@ -131,10 +125,7 @@ class TestRunCmd:
     async def test_empty_output_command(self, session: MockSession):
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         result = await session.run_cmd("cd /tmp")
@@ -147,11 +138,7 @@ class TestRunCmd:
         async def simulate():
             await asyncio.sleep(0.01)
             session.feed(
-                f"{session._begin_marker}\n"
-                f"line1\n"
-                f"line2\n"
-                f"line3\n"
-                f"{session._end_marker_prefix}0__\n"
+                f"{session._begin_marker}\nline1\nline2\nline3\n{session._end_marker_prefix}0__\n"
             )
 
         asyncio.create_task(simulate())
@@ -164,11 +151,7 @@ class TestRunCmd:
     async def test_prompt_noise_before_begin_marker_stripped(self, session: MockSession):
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"$ {session._begin_marker}\n"
-                f"hello\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"$ {session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         result = await session.run_cmd("echo hello")
@@ -179,10 +162,7 @@ class TestRunCmd:
     async def test_sentinel_wrapping_sent_to_stdin(self, session: MockSession):
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         await session.run_cmd("ls")
@@ -199,22 +179,16 @@ class TestRunCmd:
 # Expects
 # ---------------------------------------------------------------------------
 
-class TestExpects:
 
+class TestExpects:
     @pytest.mark.asyncio
     async def test_expect_auto_responds(self, session: MockSession):
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"Password:"
-            )
+            session.feed(f"{session._begin_marker}\nPassword:")
             # Wait for the response to be sent
             await asyncio.sleep(0.02)
-            session.feed(
-                f"\ninstalled ok\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"\ninstalled ok\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         result = await session.run_cmd(
@@ -231,7 +205,7 @@ class TestExpects:
             await asyncio.sleep(0.01)
             session.feed(f"{session._begin_marker}\nPassword:")
             await asyncio.sleep(0.02)
-            session.feed(f"\n[Y/n]")
+            session.feed("\n[Y/n]")
             await asyncio.sleep(0.02)
             session.feed(f"\ndone\n{session._end_marker_prefix}0__\n")
 
@@ -251,13 +225,10 @@ class TestExpects:
     @pytest.mark.asyncio
     async def test_unused_expect_pattern_ignored(self, session: MockSession):
         """If an expect pattern never appears, the sentinel matches normally."""
+
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"ok\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"{session._begin_marker}\nok\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         result = await session.run_cmd(
@@ -292,8 +263,8 @@ class TestExpects:
 # Timeout and recovery
 # ---------------------------------------------------------------------------
 
-class TestTimeout:
 
+class TestTimeout:
     @pytest.mark.asyncio
     async def test_timeout_returns_error_status(self, session: MockSession):
         # Don't feed any output — command will hang
@@ -350,6 +321,7 @@ class TestTimeout:
 
         # Patch _RECOVERY_TIMEOUT to something very short for the test
         import otto.host.session as session_mod
+
         original = session_mod._RECOVERY_TIMEOUT
         session_mod._RECOVERY_TIMEOUT = 0.1
         try:
@@ -365,8 +337,8 @@ class TestTimeout:
 # Send / Expect (raw)
 # ---------------------------------------------------------------------------
 
-class TestSendExpect:
 
+class TestSendExpect:
     @pytest.mark.asyncio
     async def test_send_writes_to_stdin(self, session: MockSession):
         await session.send("hello\n")
@@ -406,14 +378,14 @@ class TestSendExpect:
 # Session initialization
 # ---------------------------------------------------------------------------
 
+
 def test_shell_session_current_user_defaults_empty():
     """A freshly constructed shell session has no tracked user yet."""
     s = MockSession()
-    assert s.current_user == ''
+    assert s.current_user == ""
 
 
 class MockSessionInit:
-
     @pytest.mark.asyncio
     async def test_init_sends_stty_and_ready_marker(self):
         s = MockSession()
@@ -449,8 +421,8 @@ class MockSessionInit:
 # Session death and run_cmd error handling
 # ---------------------------------------------------------------------------
 
-class MockSessionDeath:
 
+class MockSessionDeath:
     @pytest.mark.asyncio
     async def test_eof_during_run_cmd_returns_error(self, session: MockSession):
         async def simulate():
@@ -480,8 +452,8 @@ class MockSessionDeath:
 # LocalSession — real bash subprocess
 # ---------------------------------------------------------------------------
 
-class TestLocalSession:
 
+class TestLocalSession:
     @pytest_asyncio.fixture
     async def local_session(self):
         s = LocalSession()
@@ -581,8 +553,8 @@ class TestLocalSession:
 # Command logging — incremental output streaming via _on_output
 # ---------------------------------------------------------------------------
 
-class TestCommandLogging:
 
+class TestCommandLogging:
     @pytest.mark.asyncio
     async def test_callback_called_per_line(self, session: MockSession):
         """_on_output is invoked once per output line."""
@@ -592,11 +564,7 @@ class TestCommandLogging:
         async def simulate():
             await asyncio.sleep(0.01)
             session.feed(
-                f"{session._begin_marker}\n"
-                f"alpha\n"
-                f"bravo\n"
-                f"charlie\n"
-                f"{session._end_marker_prefix}0__\n"
+                f"{session._begin_marker}\nalpha\nbravo\ncharlie\n{session._end_marker_prefix}0__\n"
             )
 
         asyncio.create_task(simulate())
@@ -613,11 +581,7 @@ class TestCommandLogging:
 
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"content\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"{session._begin_marker}\ncontent\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         await session.run_cmd("echo content")
@@ -634,10 +598,7 @@ class TestCommandLogging:
 
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"{session._begin_marker}\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         result = await session.run_cmd("cd /tmp")
@@ -677,10 +638,7 @@ class TestCommandLogging:
 
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"early line\n"
-            )
+            session.feed(f"{session._begin_marker}\nearly line\n")
             # Never send end sentinel — command will time out
 
         asyncio.create_task(simulate())
@@ -688,6 +646,7 @@ class TestCommandLogging:
         # ``_recover_session`` call doesn't block this test for the full
         # 5-second recovery window (no recovery sentinel ever arrives).
         import otto.host.session as session_mod
+
         original = session_mod._RECOVERY_TIMEOUT
         session_mod._RECOVERY_TIMEOUT = 0.05
         try:
@@ -706,12 +665,7 @@ class TestCommandLogging:
 
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"one\n"
-                f"two\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"{session._begin_marker}\none\ntwo\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         result = await session.run_cmd("test")
@@ -722,13 +676,10 @@ class TestCommandLogging:
     @pytest.mark.asyncio
     async def test_default_noop_callback(self, session: MockSession):
         """run_cmd works correctly with the default no-op _on_output."""
+
         async def simulate():
             await asyncio.sleep(0.01)
-            session.feed(
-                f"{session._begin_marker}\n"
-                f"hello\n"
-                f"{session._end_marker_prefix}0__\n"
-            )
+            session.feed(f"{session._begin_marker}\nhello\n{session._end_marker_prefix}0__\n")
 
         asyncio.create_task(simulate())
         result = await session.run_cmd("echo hello")
@@ -762,6 +713,7 @@ class TestCommandLogging:
 # ---------------------------------------------------------------------------
 # Marker handshake timeout (_ensure_initialized)
 # ---------------------------------------------------------------------------
+
 
 class TestEnsureInitializedTimeout:
     """The post-open marker handshake must be bounded.
@@ -805,6 +757,7 @@ class TestEnsureInitializedTimeout:
 
 def test_session_manager_current_user_falls_back_to_login():
     from otto.host.session import SessionManager
+
     conn = MagicMock()
     conn.credentials = ("alice", "pw")
     mgr = SessionManager(connections=conn, name="h")
@@ -813,6 +766,7 @@ def test_session_manager_current_user_falls_back_to_login():
 
 def test_session_manager_current_user_empty_without_connections():
     from otto.host.session import SessionManager
+
     mgr = SessionManager(name="local")  # connections=None (e.g. LocalHost)
     assert mgr.current_user == ""
 
@@ -822,7 +776,9 @@ def test_session_manager_current_user_tolerates_connections_without_credentials(
     manager that exposes no ``credentials`` (minimal test fakes, loginless
     transports) must fall back to '' rather than raise."""
     import types
+
     from otto.host.session import SessionManager
+
     mgr = SessionManager(connections=types.SimpleNamespace(), name="h")
     assert mgr._login_user() == ""
     assert mgr.current_user == ""
@@ -833,6 +789,7 @@ def test_session_manager_current_user_tolerates_connections_without_credentials(
 
 def test_session_manager_seed_user_stamps_login_user():
     from otto.host.session import SessionManager
+
     conn = MagicMock()
     conn.credentials = ("alice", "pw")
     mgr = SessionManager(connections=conn, name="h")
@@ -843,6 +800,7 @@ def test_session_manager_seed_user_stamps_login_user():
 
 def test_session_manager_set_current_user_updates_default_session():
     from otto.host.session import SessionManager
+
     conn = MagicMock()
     conn.credentials = ("alice", "pw")
     mgr = SessionManager(connections=conn, name="h")
@@ -855,6 +813,7 @@ def test_session_manager_set_current_user_updates_default_session():
 
 def test_session_manager_accepts_user_password_arg():
     from otto.host.session import SessionManager
+
     mgr = SessionManager(name="h", user_password=lambda u: "pw")
     assert mgr._user_password("anyone") == "pw"
 
@@ -862,6 +821,7 @@ def test_session_manager_accepts_user_password_arg():
 @pytest.mark.asyncio
 async def test_host_session_current_user_delegates_to_shell():
     from otto.host.session import HostSession
+
     shell = MockSession()
     shell.current_user = "alice"
     hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None)
@@ -871,6 +831,7 @@ async def test_host_session_current_user_delegates_to_shell():
 @pytest.mark.asyncio
 async def test_host_session_switch_user_without_resolver_raises():
     from otto.host.session import HostSession
+
     shell = MockSession()
     hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None)
     with pytest.raises(NotImplementedError):
@@ -880,11 +841,13 @@ async def test_host_session_switch_user_without_resolver_raises():
 @pytest.mark.asyncio
 async def test_host_session_switch_user_elevates_and_stamps():
     from otto.host.session import HostSession
+
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
     shell.expect.return_value = "Password:"
-    hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None,
-                     user_password=lambda u: "rootpw")
+    hs = HostSession(
+        "n", shell, lambda _: None, lambda _: None, lambda _: None, user_password=lambda u: "rootpw"
+    )
     await hs.switch_user("root")
     assert shell.current_user == "root"
     sent = [c.args[0] for c in shell.send.await_args_list]
@@ -894,11 +857,13 @@ async def test_host_session_switch_user_elevates_and_stamps():
 @pytest.mark.asyncio
 async def test_host_session_as_user_restores_previous():
     from otto.host.session import HostSession
+
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
     shell.expect.return_value = "Password:"
-    hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None,
-                     user_password=lambda u: "rootpw")
+    hs = HostSession(
+        "n", shell, lambda _: None, lambda _: None, lambda _: None, user_password=lambda u: "rootpw"
+    )
     async with hs.as_user("root"):
         assert shell.current_user == "root"
     assert shell.current_user == "alice"
@@ -908,7 +873,9 @@ async def test_host_session_as_user_restores_previous():
 async def test_default_session_seeds_current_user_from_login():
     """The default session is stamped with the login user at build time."""
     import types
+
     from otto.host.session import SessionManager
+
     conn = types.SimpleNamespace(credentials=("alice", "pw"))
     built: list[MockSession] = []
 
@@ -931,7 +898,9 @@ async def test_default_session_seeds_current_user_from_login():
 async def test_open_session_seeds_named_session_current_user_from_login():
     """A freshly opened named session is stamped with the login user."""
     import types
+
     from otto.host.session import SessionManager
+
     conn = types.SimpleNamespace(credentials=("alice", "pw"))
     built: list[MockSession] = []
 
@@ -952,30 +921,39 @@ async def test_open_session_seeds_named_session_current_user_from_login():
 async def test_named_session_elevation_does_not_touch_default():
     """Elevating a named session leaves another (default) session untouched."""
     from otto.host.session import HostSession
+
     default_shell = MockSession()
     default_shell.current_user = "alice"
     named_shell = AsyncMock(spec=ShellSession)
     named_shell.current_user = "alice"
     named_shell.expect.return_value = "Password:"
-    hs = HostSession("mon", named_shell, lambda _: None, lambda _: None, lambda _: None,
-                     user_password=lambda u: "rootpw")
+    hs = HostSession(
+        "mon",
+        named_shell,
+        lambda _: None,
+        lambda _: None,
+        lambda _: None,
+        user_password=lambda u: "rootpw",
+    )
     await hs.switch_user("root")
-    assert named_shell.current_user == "root"      # named session elevated
-    assert default_shell.current_user == "alice"   # the other session untouched
+    assert named_shell.current_user == "root"  # named session elevated
+    assert default_shell.current_user == "alice"  # the other session untouched
 
 
 @pytest.mark.asyncio
 async def test_host_session_as_user_nested_restores_each_level():
     """Nested as_user blocks restore the prior user at each level."""
     from otto.host.session import HostSession
+
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
     shell.expect.return_value = "Password:"
-    hs = HostSession("mon", shell, lambda _: None, lambda _: None, lambda _: None,
-                     user_password=lambda u: "pw")
+    hs = HostSession(
+        "mon", shell, lambda _: None, lambda _: None, lambda _: None, user_password=lambda u: "pw"
+    )
     async with hs.as_user("bob"):
         assert shell.current_user == "bob"
         async with hs.as_user("root"):
             assert shell.current_user == "root"
-        assert shell.current_user == "bob"   # inner block restored to bob
-    assert shell.current_user == "alice"     # outer block restored to alice
+        assert shell.current_user == "bob"  # inner block restored to bob
+    assert shell.current_user == "alice"  # outer block restored to alice

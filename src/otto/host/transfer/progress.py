@@ -58,8 +58,10 @@ def make_rich_progress_factory(progress: Progress, host_name: str) -> "TransferP
             factory = make_rich_progress_factory(progress, host_name=host.name)
             status, err = await host.put(files, dest)
     """
+
     def factory() -> "TransferProgressHandler":
         return make_rich_progress_handler(progress, host_name)
+
     return factory
 
 
@@ -109,6 +111,8 @@ def _make_sftp_progress(
     handler: "TransferProgressHandler",
 ) -> Callable[[bytes, bytes, int, int], None]:
     """Wrap Otto's str-path TransferProgressHandler into asyncssh's bytes-path type."""
+
     def adapted(src: bytes, dst: bytes, done: int, total: int) -> None:
         handler(src.decode(), dst.decode(), done, total)
+
     return adapted

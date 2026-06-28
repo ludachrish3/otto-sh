@@ -33,9 +33,9 @@ def test_parse_mountinfo_extracts_mountpoint_and_fstype():
 
 def test_fstype_for_path_picks_longest_prefix():
     pairs = _parse_mountinfo(_MOUNTINFO)
-    assert _fstype_for_path("/home/user/x", pairs) == "ext4"          # root
-    assert _fstype_for_path("/mnt/nfs/run/m.db", pairs) == "nfs4"     # nfs mount
-    assert _fstype_for_path("/mnt/nfs/local/m.db", pairs) == "ext4"   # nested local wins
+    assert _fstype_for_path("/home/user/x", pairs) == "ext4"  # root
+    assert _fstype_for_path("/mnt/nfs/run/m.db", pairs) == "nfs4"  # nfs mount
+    assert _fstype_for_path("/mnt/nfs/local/m.db", pairs) == "ext4"  # nested local wins
     assert _fstype_for_path("/mnt/share/m.db", pairs) == "cifs"
 
 

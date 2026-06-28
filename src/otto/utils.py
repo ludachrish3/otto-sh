@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import functools
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from enum import Enum
 from typing import (
     Any,
-    Callable,
-    Coroutine,
     Literal,
     NamedTuple,
     ParamSpec,
-    Type,
     TypeVar,
     Union,
     get_args,
@@ -20,9 +18,7 @@ from typing import (
 
 
 # TODO: add more complicated tag parsing later
-def split_on_commas(
-    values: list[str] | str
-) -> list[str]:
+def split_on_commas(values: list[str] | str) -> list[str]:
     """Split a string or list of strings on commas into a flat list.
 
     Args:
@@ -38,7 +34,6 @@ def split_on_commas(
     >>> split_on_commas("single")
     ['single']
     """
-
     allValues: list[str] = []
 
     match values:
@@ -52,6 +47,7 @@ def split_on_commas(
 
             return allValues
 
+
 def _get_literal_values(
     type: Any,
 ) -> list[TypeVar]:
@@ -59,16 +55,17 @@ def _get_literal_values(
     origin = get_origin(type)
     if origin is Literal:
         return list(get_args(type))
-    elif origin is Union:
+    if origin is Union:
         values: list[TypeVar] = []
         for arg in get_args(type):
             values += _get_literal_values(arg)
         return values
-    else:
-        raise ValueError(f"{type} is {origin}, not a Literal or Union of Literals")
+    raise ValueError(f"{type} is {origin}, not a Literal or Union of Literals")
+
 
 P = ParamSpec("P")
 R = TypeVar("R")
+
 
 def async_typer_command(f: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, R]:
     @functools.wraps(f)
@@ -83,7 +80,9 @@ def async_typer_command(f: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, R
                 return await f(*args, **kwargs)
 
         return asyncio.run(_run())
+
     return wrapper
+
 
 @dataclass(frozen=True)
 class Arg:
@@ -93,6 +92,7 @@ class Arg:
     Python-union list params Typer can't read, e.g. ``str | Sequence[...]``).
     ``elem_type`` also overrides the CLI type for a scalar union. Imports no typer.
     """
+
     variadic: bool = False
     elem_type: type | None = None
     name: str | None = None
@@ -102,6 +102,7 @@ class Arg:
 @dataclass(frozen=True)
 class Opt:
     """CLI overlay: force a parameter to a ``--option``. Imports no typer."""
+
     elem_type: type | None = None
     name: str | None = None
     help: str | None = None
@@ -109,14 +110,16 @@ class Opt:
 
 class _Exclude:
     """Sentinel: drop a parameter from the CLI (filled with its default)."""
+
     __slots__ = ()
 
 
 Exclude = _Exclude()
 
 
-def cli_exposed(fn=None, *, name: str | None = None, help: str | None = None,
-                success: str | None = None):
+def cli_exposed(
+    fn=None, *, name: str | None = None, help: str | None = None, success: str | None = None
+):
     """Mark a host coroutine method for auto-exposure as an ``otto host``
     subcommand. ``name`` defaults to the method name with underscores dashed.
     ``success`` is an optional message printed on a successful ``(Status, "")``
@@ -124,23 +127,27 @@ def cli_exposed(fn=None, *, name: str | None = None, help: str | None = None,
 
     Usable bare (``@cli_exposed``) or called (``@cli_exposed(name=..., ...)``).
     """
+
     def deco(f):
         f.__cli_exposed__ = True
         f.__cli_name__ = name or f.__name__.replace("_", "-")
         f.__cli_help__ = help
         f.__cli_success__ = success
         return f
+
     return deco(fn) if fn is not None else deco
 
 
 T = TypeVar("T")
-def is_literal(value: Any, literal_type: Type[T]) -> T:
-    """Raise a TypeError if value is not a valid member of the Literal type."""
 
+
+def is_literal(value: Any, literal_type: type[T]) -> T:
+    """Raise a TypeError if value is not a valid member of the Literal type."""
     valid = _get_literal_values(literal_type)
     if value not in valid:
         raise TypeError(f"{value!r} is not a valid value. Expected one of: {valid}")
     return value
+
 
 # TODO: Restructure this file into a directory names utils and then a file per group of functionality:
 # status for the below status enums
@@ -156,11 +163,11 @@ class Status(Enum):
     True
     """
 
-    Success  = 0
-    Failed   = 1
-    Error    = 2
+    Success = 0
+    Failed = 1
+    Error = 2
     Unstable = 3
-    Skipped  = 4
+    Skipped = 4
 
     @property
     def is_ok(self) -> bool:

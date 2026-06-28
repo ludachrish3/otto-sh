@@ -28,7 +28,6 @@ from ..configmodule.repo import DockerCompose, DockerImage
 from ..host.host import Host
 from ..utils import Status
 
-
 PARENT_ROOT = Path("/tmp/otto-docker")
 
 
@@ -61,8 +60,7 @@ async def stage_image_context(
 
     # Wipe and recreate to avoid mixing leftover files from an earlier build.
     await parent.oneshot(
-        f"rm -rf {shlex.quote(str(remote_dir))} && "
-        f"mkdir -p {shlex.quote(str(remote_dir))}"
+        f"rm -rf {shlex.quote(str(remote_dir))} && mkdir -p {shlex.quote(str(remote_dir))}"
     )
 
     with tempfile.NamedTemporaryFile(
@@ -113,9 +111,7 @@ async def stage_compose_files(
     Returns the absolute paths on the parent in the same order.
     """
     base = compose_dir(project)
-    await parent.oneshot(
-        f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}"
-    )
+    await parent.oneshot(f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}")
 
     out: list[Path] = []
     for idx, compose in enumerate(composes):
@@ -130,7 +126,5 @@ async def stage_compose_files(
 
 async def cleanup_project(parent: Host, project: str) -> Status:
     """Remove the per-project staging tree on the parent. Best-effort."""
-    result = await parent.oneshot(
-        f"rm -rf {shlex.quote(str(project_root(project)))}"
-    )
+    result = await parent.oneshot(f"rm -rf {shlex.quote(str(project_root(project)))}")
     return result.status

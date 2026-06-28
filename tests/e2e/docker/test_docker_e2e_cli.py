@@ -21,7 +21,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import textwrap
 import uuid
 from pathlib import Path
 
@@ -146,7 +145,10 @@ def teardown_after(fresh_suffix, docker_host, tmp_path):
     # created repo2 stack from a multi-repo test is cleaned up too.
     # Pass --on <docker_host> so down targets the same daemon the test used.
     _run_otto(
-        "docker", "down", "--on", docker_host,
+        "docker",
+        "down",
+        "--on",
+        docker_host,
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
         compose_suffix=fresh_suffix,
@@ -162,19 +164,17 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
     """The bug that started this whole thread: `otto docker up` must build
     images first when the compose file references locally-built ones."""
     suffix = teardown_after
-    up = _run_otto("docker", "up", "--on", docker_host,
-                   xdir=tmp_path, compose_suffix=suffix)
+    up = _run_otto("docker", "up", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert up.returncode == 0, (
-        f"`docker up` should succeed end-to-end\n"
-        f"stdout:\n{up.stdout}\nstderr:\n{up.stderr}"
+        f"`docker up` should succeed end-to-end\nstdout:\n{up.stdout}\nstderr:\n{up.stderr}"
     )
     assert "container(s) registered" in up.stdout
     assert f"{docker_host}.repo1.api" in up.stdout
-    assert "pull access denied" not in (up.stdout + up.stderr), \
+    assert "pull access denied" not in (up.stdout + up.stderr), (
         "we must build before composing — pull errors mean we didn't"
+    )
 
-    down = _run_otto("docker", "down", "--on", docker_host,
-                     xdir=tmp_path, compose_suffix=suffix)
+    down = _run_otto("docker", "down", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert down.returncode == 0, down.stderr
     assert "stack down" in down.stdout
 
@@ -182,12 +182,17 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
 def test_e2e_host_run_against_running_container(teardown_after, docker_host, tmp_path):
     """Once a stack is up, `otto host <id> run` must execute inside the container."""
     suffix = teardown_after
-    up = _run_otto("docker", "up", "--on", docker_host,
-                   xdir=tmp_path, compose_suffix=suffix)
+    up = _run_otto("docker", "up", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert up.returncode == 0, up.stderr
 
-    run = _run_otto("host", f"{docker_host}.repo1.api", "run", "cat /etc/repo1-marker.txt",
-                    xdir=tmp_path, compose_suffix=suffix)
+    run = _run_otto(
+        "host",
+        f"{docker_host}.repo1.api",
+        "run",
+        "cat /etc/repo1-marker.txt",
+        xdir=tmp_path,
+        compose_suffix=suffix,
+    )
     assert run.returncode == 0, (
         f"`otto host <container> run` should reach the running container\n"
         f"stdout:\n{run.stdout}\nstderr:\n{run.stderr}"
@@ -198,22 +203,35 @@ def test_e2e_host_run_against_running_container(teardown_after, docker_host, tmp
 def test_e2e_host_put_get_roundtrip(teardown_after, docker_host, tmp_path):
     """Two-step put / get through `docker cp` and the parent's SSH."""
     suffix = teardown_after
-    up = _run_otto("docker", "up", "--on", docker_host,
-                   xdir=tmp_path, compose_suffix=suffix)
+    up = _run_otto("docker", "up", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert up.returncode == 0, up.stderr
 
     payload = tmp_path / "payload.bin"
     payload.write_bytes(b"e2e-payload-" + b"\xab" * 256)
 
-    put = _run_otto("host", f"{docker_host}.repo1.api", "put", str(payload), "/tmp",
-                    xdir=tmp_path, compose_suffix=suffix)
+    put = _run_otto(
+        "host",
+        f"{docker_host}.repo1.api",
+        "put",
+        str(payload),
+        "/tmp",
+        xdir=tmp_path,
+        compose_suffix=suffix,
+    )
     assert put.returncode == 0, f"put failed:\n{put.stderr}"
     assert "Transfer complete" in put.stdout
 
     out_dir = tmp_path / "back"
     out_dir.mkdir()
-    get = _run_otto("host", f"{docker_host}.repo1.api", "get", "/tmp/payload.bin", str(out_dir),
-                    xdir=tmp_path, compose_suffix=suffix)
+    get = _run_otto(
+        "host",
+        f"{docker_host}.repo1.api",
+        "get",
+        "/tmp/payload.bin",
+        str(out_dir),
+        xdir=tmp_path,
+        compose_suffix=suffix,
+    )
     assert get.returncode == 0, f"get failed:\n{get.stderr}"
     assert (out_dir / "payload.bin").read_bytes() == payload.read_bytes()
 
@@ -227,12 +245,10 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
     """A second `otto docker up` against a running stack must not fail or
     re-create containers."""
     suffix = teardown_after
-    first = _run_otto("docker", "up", "--on", docker_host,
-                      xdir=tmp_path, compose_suffix=suffix)
+    first = _run_otto("docker", "up", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert first.returncode == 0, first.stderr
 
-    second = _run_otto("docker", "up", "--on", docker_host,
-                       xdir=tmp_path, compose_suffix=suffix)
+    second = _run_otto("docker", "up", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert second.returncode == 0, (
         f"second `up` against a running stack must succeed\n"
         f"stdout:\n{second.stdout}\nstderr:\n{second.stderr}"
@@ -243,24 +259,19 @@ def test_e2e_up_is_idempotent(teardown_after, docker_host, tmp_path):
 def test_e2e_build_then_build_again_is_skipped(docker_host, tmp_path):
     """`otto docker build` followed by `otto docker build` must short-circuit
     on `docker image inspect`."""
-    first = _run_otto("docker", "build", "--on", docker_host,
-                      xdir=tmp_path)
+    first = _run_otto("docker", "build", "--on", docker_host, xdir=tmp_path)
     assert first.returncode == 0, first.stderr
 
-    second = _run_otto("docker", "build", "--on", docker_host,
-                       xdir=tmp_path)
+    second = _run_otto("docker", "build", "--on", docker_host, xdir=tmp_path)
     assert second.returncode == 0, second.stderr
-    assert "cached" in second.stdout, (
-        f"second build should report cached, got:\n{second.stdout}"
-    )
+    assert "cached" in second.stdout, f"second build should report cached, got:\n{second.stdout}"
 
 
 def test_e2e_build_rebuild_forces(docker_host, tmp_path):
     """`--rebuild` must run the build even when the hash tag exists."""
     _run_otto("docker", "build", "--on", docker_host, xdir=tmp_path)
 
-    forced = _run_otto("docker", "build", "--rebuild", "--on", docker_host,
-                       xdir=tmp_path)
+    forced = _run_otto("docker", "build", "--rebuild", "--on", docker_host, xdir=tmp_path)
     assert forced.returncode == 0, forced.stderr
     assert "built" in forced.stdout, forced.stdout
     assert "cached" not in forced.stdout, "rebuild should NOT short-circuit"
@@ -278,7 +289,10 @@ def test_e2e_multi_repo_only_active_lab_runs(teardown_after, docker_host, tmp_pa
     cleanly — never raise a `host not in lab` error."""
     suffix = teardown_after
     up = _run_otto(
-        "docker", "up", "--on", docker_host,
+        "docker",
+        "up",
+        "--on",
+        docker_host,
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
         compose_suffix=suffix,
@@ -287,8 +301,9 @@ def test_e2e_multi_repo_only_active_lab_runs(teardown_after, docker_host, tmp_pa
         f"multi-repo `up` should silently skip repos targeting other labs\n"
         f"stdout:\n{up.stdout}\nstderr:\n{up.stderr}"
     )
-    assert "not in lab" not in (up.stdout + up.stderr), \
+    assert "not in lab" not in (up.stdout + up.stderr), (
         "repo2 (fruits-lab host) must be filtered, not raise"
+    )
     # repo1's stack came up on the leased host.
     assert f"{docker_host}.repo1.api" in up.stdout
     # repo2 must be skipped *entirely* — not just deployed to a different
@@ -318,13 +333,17 @@ def test_e2e_multi_repo_down_no_traceback(docker_host, tmp_path):
     the _select_repos guard.
     """
     result = _run_otto(
-        "docker", "down", "--on", docker_host,
+        "docker",
+        "down",
+        "--on",
+        docker_host,
         sut_dirs=f"{REPO1}{os.pathsep}{REPO2}",
         xdir=tmp_path,
     )
     # Even if nothing is up, the command must exit cleanly without a traceback.
-    assert "Traceback" not in (result.stdout + result.stderr), \
+    assert "Traceback" not in (result.stdout + result.stderr), (
         f"unexpected traceback:\n{result.stderr}"
+    )
     assert "not in lab" not in (result.stdout + result.stderr)
 
 
@@ -361,8 +380,12 @@ def test_e2e_run_against_unstarted_container_auto_starts(teardown_after, docker_
     """
     suffix = teardown_after
     result = _run_otto(
-        "host", f"{docker_host}.repo1.api", "run", "true",
-        xdir=tmp_path, compose_suffix=suffix,
+        "host",
+        f"{docker_host}.repo1.api",
+        "run",
+        "true",
+        xdir=tmp_path,
+        compose_suffix=suffix,
     )
     output = result.stdout + result.stderr
     assert result.returncode == 0, output
@@ -389,10 +412,8 @@ def test_e2e_up_unknown_host_clear_error(tmp_path):
 def test_e2e_ps_lists_running_containers(teardown_after, docker_host, tmp_path):
     """After `up`, `otto docker ps` must show the running container."""
     suffix = teardown_after
-    _run_otto("docker", "up", "--on", docker_host,
-              xdir=tmp_path, compose_suffix=suffix)
-    ps = _run_otto("docker", "ps", "--on", docker_host,
-                   xdir=tmp_path, compose_suffix=suffix)
+    _run_otto("docker", "up", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
+    ps = _run_otto("docker", "ps", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert ps.returncode == 0, ps.stderr
     # Expect the project name (or the container name embedding it) somewhere.
     assert f"otto-repo1-{suffix}" in ps.stdout or "repo1-api" in ps.stdout, ps.stdout

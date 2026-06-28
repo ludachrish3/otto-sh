@@ -5,5 +5,5 @@ from logging import (
 )
 
 # Define alias for levels with long names
-addLevelName(WARNING,  'WARN')
-addLevelName(CRITICAL, 'CRIT')
+addLevelName(WARNING, "WARN")
+addLevelName(CRITICAL, "CRIT")

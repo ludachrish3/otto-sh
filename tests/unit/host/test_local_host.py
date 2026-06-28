@@ -9,14 +9,14 @@ from otto.host.host import (
     SuppressCommandOutput,
     get_logging_command_output_enabled,
 )
-from tests.conftest import active_context
 from otto.host.local_host import LocalHost
 from otto.utils import Status
-
+from tests.conftest import active_context
 
 # ---------------------------------------------------------------------------
 # Basic construction
 # ---------------------------------------------------------------------------
+
 
 def test_localhost_name():
     host = LocalHost()
@@ -27,14 +27,15 @@ def test_localhost_name():
 # run (session-based)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_run_string_command():
     host = LocalHost()
     try:
-        result = (await host.run('echo hello')).only
+        result = (await host.run("echo hello")).only
         assert result.status == Status.Success
-        assert result.command == 'echo hello'
-        assert 'hello' in result.output
+        assert result.command == "echo hello"
+        assert "hello" in result.output
         assert result.retcode == 0
     finally:
         await host.close()
@@ -44,7 +45,7 @@ async def test_run_string_command():
 async def test_run_command_with_failure():
     host = LocalHost()
     try:
-        result = (await host.run('asdf_nonexistent_cmd_12345')).only
+        result = (await host.run("asdf_nonexistent_cmd_12345")).only
         assert result.status == Status.Failed
         assert result.retcode != 0
     finally:
@@ -55,7 +56,7 @@ async def test_run_command_with_failure():
 async def test_run_commands_with_success_and_failure():
     host = LocalHost()
     try:
-        cmds = ['echo ok', 'asdf_nonexistent_cmd_12345']
+        cmds = ["echo ok", "asdf_nonexistent_cmd_12345"]
         result = await host.run(cmds)
         assert result.status == Status.Failed
         assert result.statuses[0].status == Status.Success
@@ -92,6 +93,7 @@ async def test_run_multiline_output():
 # State persistence (session-based run)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_cd_persists_between_commands():
     host = LocalHost()
@@ -119,6 +121,7 @@ async def test_env_var_persists():
 # ---------------------------------------------------------------------------
 # oneshot (stateless subprocess)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_oneshot_basic():
@@ -149,6 +152,7 @@ async def test_oneshot_is_stateless():
 # send / expect
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_send_and_expect():
     host = LocalHost()
@@ -163,6 +167,7 @@ async def test_send_and_expect():
 # ---------------------------------------------------------------------------
 # open_session (named sessions)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_open_session():
@@ -181,7 +186,7 @@ async def test_open_session():
 async def test_open_session_context_manager():
     host = LocalHost()
     try:
-        async with (await host.open_session("ctx")) as sess:
+        async with await host.open_session("ctx") as sess:
             result = (await sess.run("echo ctx_test")).only
             assert result.status == Status.Success
             assert "ctx_test" in result.output
@@ -192,6 +197,7 @@ async def test_open_session_context_manager():
 # ---------------------------------------------------------------------------
 # File transfer (local copy)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_get_files(tmp_path: Path):
@@ -237,6 +243,7 @@ async def test_get_files_nonexistent_source(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # Logging suppression
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_run_command_with_global_suppression(caplog):
@@ -364,21 +371,26 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
     # it reflects the live state regardless of when the record was made.
     def make_record(host: LocalHost) -> logging.LogRecord:
         record = logging.LogRecord(
-            name='otto', level=logging.INFO, pathname='', lineno=0,
-            msg='cmd', args=(), exc_info=None,
+            name="otto",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="cmd",
+            args=(),
+            exc_info=None,
         )
         record.host = host  # type: ignore[attr-defined]
         return record
 
     both_inside = asyncio.Event()
-    pending = {'count': 2}
+    pending = {"count": 2}
     lock = asyncio.Lock()
 
     async def run_with_suppression(host: LocalHost) -> None:
         with SuppressCommandOutput(host=host):
             async with lock:
-                pending['count'] -= 1
-                if pending['count'] == 0:
+                pending["count"] -= 1
+                if pending["count"] == 0:
                     both_inside.set()
             # Wait until both tasks are inside their per-host contexts, so
             # we can assert the two contexts really do overlap.
@@ -411,6 +423,7 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
 # interact (still not implemented)
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_local_host_interact():
     host = LocalHost()
@@ -421,6 +434,7 @@ async def test_local_host_interact():
 # ---------------------------------------------------------------------------
 # close
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_close():

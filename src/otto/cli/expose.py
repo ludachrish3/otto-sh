@@ -9,11 +9,12 @@ defined on the *resolved* host's class (from ``ctx.params['host_id']``). A proje
 that registers ``MyHost`` with a ``@cli_exposed`` method gets ``otto host <id> <verb>``
 with no extra wiring (the same first/third-party symmetry otto's own verbs use).
 """
+
 from __future__ import annotations
 
 import inspect
-from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any
 
 import typer
 from typing_extensions import override
@@ -45,8 +46,11 @@ def _render_result(result: Any, success: str | None = None) -> None:
     from rich import print as rprint
 
     # RunResult and similar: status-only (output already streamed during run)
-    if not isinstance(result, tuple) and hasattr(result, "status") \
-            and hasattr(result.status, "is_ok"):
+    if (
+        not isinstance(result, tuple)
+        and hasattr(result, "status")
+        and hasattr(result.status, "is_ok")
+    ):
         if not result.status.is_ok:
             raise typer.Exit(1)
         return
@@ -103,8 +107,7 @@ def make_method_command(attr_name: str, sample_func: Callable) -> Callable:  # t
         except (ValueError, TypeError):
             method_sig = None
         if method_sig is not None and any(
-            p.kind == inspect.Parameter.VAR_KEYWORD
-            for p in method_sig.parameters.values()
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in method_sig.parameters.values()
         ):
             pass  # **kwargs — forward everything
         elif method_sig is not None:
@@ -120,9 +123,12 @@ def make_method_command(attr_name: str, sample_func: Callable) -> Callable:  # t
     ctx_param = inspect.Parameter(
         "ctx", inspect.Parameter.POSITIONAL_OR_KEYWORD, annotation=typer.Context
     )
-    _cmd.__signature__ = inspect.Signature([ctx_param, *(  # ty: ignore[unresolved-attribute]
-        p.replace(kind=inspect.Parameter.KEYWORD_ONLY) for p in binding.params
-    )])
+    _cmd.__signature__ = inspect.Signature(  # ty: ignore[unresolved-attribute]
+        [
+            ctx_param,
+            *(p.replace(kind=inspect.Parameter.KEYWORD_ONLY) for p in binding.params),
+        ]
+    )
     return _cmd
 
 
@@ -169,17 +175,20 @@ def iter_exposed_verbs() -> Iterable[tuple[str, str, str, Callable[..., Any]]]:
                 continue
             seen.add(cli_name)
             fn = inspect.getattr_static(cls, attr_name, None) or getattr(cls, attr_name)
-            help_text = getattr(fn, "__cli_help__", None) or (
-                (fn.__doc__ or "").strip().splitlines() or [""]
-            )[0]
+            help_text = (
+                getattr(fn, "__cli_help__", None)
+                or ((fn.__doc__ or "").strip().splitlines() or [""])[0]
+            )
             yield cli_name, attr_name, help_text, fn
 
 
-def _synthesize_command(cli_name: str, attr_name: str, help_text: str, sample_func: Callable[..., Any]) -> Any:
+def _synthesize_command(
+    cli_name: str, attr_name: str, help_text: str, sample_func: Callable[..., Any]
+) -> Any:
     """Build a vendored-click ``Command`` for *cli_name* via a throwaway Typer
     (the Typer-native way to convert a function — no hand-written click types).
     """
-    from ..utils import async_typer_command  # noqa: PLC0415
+    from ..utils import async_typer_command
 
     cmd_fn = make_method_command(attr_name, sample_func)
     tmp = typer.Typer()
@@ -205,7 +214,9 @@ def _make_host_group() -> type[TyperGroup]:
             for cli_name, attr_name, help_text, sample_func in iter_exposed_verbs():
                 if cli_name in self.commands:
                     continue
-                self.add_command(_synthesize_command(cli_name, attr_name, help_text, sample_func), cli_name)
+                self.add_command(
+                    _synthesize_command(cli_name, attr_name, help_text, sample_func), cli_name
+                )
                 self._dynamic_names.add(cli_name)
 
         def _class_for(self, ctx: Any) -> type | None:
@@ -233,16 +244,18 @@ def _make_host_group() -> type[TyperGroup]:
         def _class_command(self, cls: type, cmd_name: str, attr_name: str) -> Any:
             """Build (and cache) the verb's command from *cls*'s own method, so a
             verb name shared across classes can carry a different signature per
-            class. Cached per ``(cls, cmd_name)``."""
+            class. Cached per ``(cls, cmd_name)``.
+            """
             cache = getattr(self, "_class_cmd_cache", None)
             if cache is None:
                 cache = self._class_cmd_cache = {}
             key = (cls, cmd_name)
             if key not in cache:
                 fn = inspect.getattr_static(cls, attr_name, None) or getattr(cls, attr_name)
-                help_text = getattr(fn, "__cli_help__", None) or (
-                    (fn.__doc__ or "").strip().splitlines() or [""]
-                )[0]
+                help_text = (
+                    getattr(fn, "__cli_help__", None)
+                    or ((fn.__doc__ or "").strip().splitlines() or [""])[0]
+                )
                 cache[key] = _synthesize_command(cmd_name, attr_name, help_text, fn)
             return cache[key]
 

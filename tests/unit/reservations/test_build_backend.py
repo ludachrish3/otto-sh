@@ -19,7 +19,6 @@ def _write_reservations(path: Path) -> Path:
 
 
 class TestNoneBackend:
-
     def test_explicit_none(self, tmp_path):
         backend = build_backend({"backend": "none"}, tmp_path)
         assert isinstance(backend, NullReservationBackend)
@@ -30,7 +29,6 @@ class TestNoneBackend:
 
 
 class TestEnvelopeValidation:
-
     def test_non_string_backend_raises_contextual_value_error(self, tmp_path):
         # A malformed envelope is reported as a ValueError with context, not a
         # raw pydantic ValidationError dump.
@@ -39,7 +37,6 @@ class TestEnvelopeValidation:
 
 
 class TestJsonBackend:
-
     def test_absolute_path(self, tmp_path):
         f = _write_reservations(tmp_path)
         backend = build_backend(
@@ -76,7 +73,6 @@ class TestJsonBackend:
 
 
 class TestRegisteredBackend:
-
     def test_registered_name_resolved_with_url_and_kwargs(self, tmp_path):
         from otto.reservations import register_reservation_backend
         from otto.reservations.registry import _RESERVATION_BACKENDS

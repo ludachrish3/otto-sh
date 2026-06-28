@@ -33,8 +33,7 @@ def build_options(opts_cls: type, kwargs: dict[str, Any]) -> Any:
         return opts_cls(**kwargs)
     except pydantic.ValidationError as exc:
         problems = "; ".join(
-            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
-            for e in exc.errors()
+            f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}" for e in exc.errors()
         )
         raise typer.BadParameter(problems) from exc
 
@@ -52,11 +51,7 @@ def options_params(opts_cls: type) -> list[inspect.Parameter]:
     flds = {f.name: f for f in dataclasses.fields(opts_cls)}
     for name, typ in hints.items():
         f = flds[name]
-        default = (
-            f.default
-            if f.default is not dataclasses.MISSING
-            else inspect.Parameter.empty
-        )
+        default = f.default if f.default is not dataclasses.MISSING else inspect.Parameter.empty
         # An ``@options`` (pydantic dataclass) field written as
         # ``= Field(default=X, <constraint>)`` stores a ``FieldInfo`` as the
         # dataclass-field default. Unwrap it to the real value so Typer gets a
@@ -72,10 +67,12 @@ def options_params(opts_cls: type) -> list[inspect.Parameter]:
                 default = default.default
             else:
                 default = inspect.Parameter.empty
-        params.append(inspect.Parameter(
-            name,
-            inspect.Parameter.KEYWORD_ONLY,
-            default=default,
-            annotation=typ,
-        ))
+        params.append(
+            inspect.Parameter(
+                name,
+                inspect.Parameter.KEYWORD_ONLY,
+                default=default,
+                annotation=typ,
+            )
+        )
     return params

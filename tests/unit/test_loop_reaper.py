@@ -7,6 +7,7 @@ flaky, misattributed failure. Crucially it must NOT silently swallow a loop
 leaked by *product* (``otto/``) code — that is a real regression and must be
 surfaced, not masked.
 """
+
 import asyncio
 
 import pytest

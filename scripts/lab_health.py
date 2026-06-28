@@ -45,10 +45,14 @@ DEFAULT_HOSTS = Path("tests/_fixtures/lab_data/tech1/hosts.json")
 # Non-interactive SSH: no host-key prompts, no known_hosts churn (the lab VMs
 # get rebuilt often), quiet, and a bounded connect so a dead VM fails fast.
 _SSH_OPTS = [
-    "-o", "StrictHostKeyChecking=no",
-    "-o", "UserKnownHostsFile=/dev/null",
-    "-o", "LogLevel=ERROR",
-    "-o", "ConnectTimeout=10",
+    "-o",
+    "StrictHostKeyChecking=no",
+    "-o",
+    "UserKnownHostsFile=/dev/null",
+    "-o",
+    "LogLevel=ERROR",
+    "-o",
+    "ConnectTimeout=10",
 ]
 
 # Flag a Unix VM whose clock differs from this host by more than this (seconds).
@@ -105,11 +109,11 @@ def _ssh_user_pass(creds: dict[str, str]) -> tuple[str, str]:
     return user, creds[user]
 
 
-def _run_ssh(ip: str, user: str, password: str, remote_cmd: str,
-             timeout: float = 25.0) -> tuple[int, str, str]:
+def _run_ssh(
+    ip: str, user: str, password: str, remote_cmd: str, timeout: float = 25.0
+) -> tuple[int, str, str]:
     """Run ``remote_cmd`` on ``ip`` over password SSH. Returns (rc, out, err)."""
-    cmd = ["sshpass", "-p", password, "ssh", *_SSH_OPTS,
-           f"{user}@{ip}", remote_cmd]
+    cmd = ["sshpass", "-p", password, "ssh", *_SSH_OPTS, f"{user}@{ip}", remote_cmd]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return p.returncode, p.stdout.strip(), p.stderr.strip()
@@ -161,16 +165,12 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
     """Console responsiveness + uptime for an embedded QEMU guest."""
     hop = hops.get(host.get("hop", ""))
     if hop is None:
-        return {"ok": False, "status": "NO-HOP",
-                "info": f"hop {host.get('hop')!r} not in lab"}
+        return {"ok": False, "status": "NO-HOP", "info": f"hop {host.get('hop')!r} not in lab"}
     user, password = _ssh_user_pass(hop["creds"])
     # ARM serial beds carry the console on telnet_options.port (2323+); x86 net
     # beds have no telnet_options and use the in-guest shell on :23.
     port = host.get("telnet_options", {}).get("port", 23)
-    remote_cmd = (
-        f"python3 -c {shlex.quote(_CONSOLE_PROBE)} "
-        f"{shlex.quote(host['ip'])} {port}"
-    )
+    remote_cmd = f"python3 -c {shlex.quote(_CONSOLE_PROBE)} {shlex.quote(host['ip'])} {port}"
     rc, out, err = _run_ssh(hop["ip"], user, password, remote_cmd)
     if rc != 0:
         return {"ok": False, "status": "HOP-FAIL", "info": err or f"rc={rc}"}
@@ -180,8 +180,7 @@ def _check_embedded(host: dict, hops: dict[str, dict]) -> dict:
         uptime = f"up {int(ms) // 1000}s" if ms.isdigit() else "up ?"
         return {"ok": True, "status": "up", "info": uptime}
     if out.startswith("NOOUT"):
-        return {"ok": False, "status": "WEDGED",
-                "info": "TCP open, no shell output"}
+        return {"ok": False, "status": "WEDGED", "info": "TCP open, no shell output"}
     return {"ok": False, "status": "DOWN", "info": out[:40] or "no console"}
 
 
@@ -192,10 +191,7 @@ def _restart_qemu(hosts: list[dict], hops: dict[str, dict]) -> int:
     # on ``os_type == "embedded"`` here silently matched nothing once the lab
     # data moved to ``os_type: "zephyr"`` (commit 41cf70c) — the same trap
     # ``_is_ssh_host`` documents.
-    hop_ids = sorted({
-        h["hop"] for h in hosts
-        if not _is_ssh_host(h) and h.get("hop")
-    })
+    hop_ids = sorted({h["hop"] for h in hosts if not _is_ssh_host(h) and h.get("hop")})
     if not hop_ids:
         print("No embedded guests with a hop in the lab; nothing to restart.")
         return 0
@@ -242,14 +238,18 @@ def _print_report(hosts: list[dict], hops: dict[str, dict]) -> bool:
         if "drift" in res:
             drift_col = f"{res['drift']:+.2f}s"
             drifts.append((host["element"], res["drift"]))
-        print(f"{host['element']:<14}{host['ip']:<16}{ostype:<10}"
-              f"{res['status']:<13}{res['info']:<18}{drift_col}")
+        print(
+            f"{host['element']:<14}{host['ip']:<16}{ostype:<10}"
+            f"{res['status']:<13}{res['info']:<18}{drift_col}"
+        )
 
     skewed = [(ne, d) for ne, d in drifts if abs(d) > _DRIFT_WARN_S]
     if skewed:
         print()
-        print(f"⚠  clock drift > {_DRIFT_WARN_S:.0f}s on: "
-              + ", ".join(f"{ne} ({d:+.2f}s)" for ne, d in skewed))
+        print(
+            f"⚠  clock drift > {_DRIFT_WARN_S:.0f}s on: "
+            + ", ".join(f"{ne} ({d:+.2f}s)" for ne, d in skewed)
+        )
     return all_ok
 
 
@@ -259,18 +259,20 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--hosts", type=Path, default=DEFAULT_HOSTS,
+        "--hosts",
+        type=Path,
+        default=DEFAULT_HOSTS,
         help=f"lab hosts JSON (default: {DEFAULT_HOSTS})",
     )
     parser.add_argument(
-        "--restart-qemu", action="store_true",
+        "--restart-qemu",
+        action="store_true",
         help="restart Zephyr QEMU + relay units on each hop, then health-check",
     )
     args = parser.parse_args(argv)
 
     if shutil.which("sshpass") is None:
-        print("error: sshpass not found on PATH (needed for lab SSH).",
-              file=sys.stderr)
+        print("error: sshpass not found on PATH (needed for lab SSH).", file=sys.stderr)
         return 2
     if not args.hosts.exists():
         print(f"error: hosts file not found: {args.hosts}", file=sys.stderr)

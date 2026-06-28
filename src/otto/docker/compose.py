@@ -20,7 +20,8 @@ import contextlib
 import getpass
 import json
 import shlex
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from ..configmodule.lab import Lab
 from ..configmodule.repo import DockerCompose, Repo
@@ -82,7 +83,9 @@ def _safe_username() -> str:
         return "anon"
 
 
-def _resolve_parent(repo: Repo, lab: Lab, on: str | None, composes: list[DockerCompose]) -> UnixHost:
+def _resolve_parent(
+    repo: Repo, lab: Lab, on: str | None, composes: list[DockerCompose]
+) -> UnixHost:
     """Pick a parent host for *repo*'s compose stack.
 
     Order: explicit *on* > the first compose entry's ``default_host`` > error.
@@ -107,9 +110,7 @@ def _resolve_parent(repo: Repo, lab: Lab, on: str | None, composes: list[DockerC
         )
     host = lab.hosts[candidate]
     if not isinstance(host, UnixHost):
-        raise TypeError(
-            f"Docker host {candidate!r} must be a UnixHost; got {type(host).__name__}"
-        )
+        raise TypeError(f"Docker host {candidate!r} must be a UnixHost; got {type(host).__name__}")
     if not host.docker_capable:
         raise ValueError(
             f"Host {candidate!r} is not docker_capable. Mark it in hosts.json with "
@@ -118,7 +119,9 @@ def _resolve_parent(repo: Repo, lab: Lab, on: str | None, composes: list[DockerC
     return host
 
 
-async def _compose_cmd(parent: Host, project_name: str, files: list[str], action: str, *, extra: str = "") -> tuple[Status, str]:
+async def _compose_cmd(
+    parent: Host, project_name: str, files: list[str], action: str, *, extra: str = ""
+) -> tuple[Status, str]:
     file_args = " ".join(f"-f {shlex.quote(f)}" for f in files)
     cmd = f"docker compose -p {shlex.quote(project_name)} {file_args} {action}"
     if extra:
@@ -130,8 +133,7 @@ async def _compose_cmd(parent: Host, project_name: str, files: list[str], action
 async def _stack_already_up(parent: Host, project_name: str) -> bool:
     """Return True if any container is running under *project_name* on *parent*."""
     result = await parent.oneshot(
-        f"docker ps -q --filter "
-        f"label=com.docker.compose.project={shlex.quote(project_name)}"
+        f"docker ps -q --filter label=com.docker.compose.project={shlex.quote(project_name)}"
     )
     return result.status.is_ok and bool(result.output.strip())
 
@@ -195,9 +197,7 @@ async def compose_up(
     """
     settings = repo.docker_settings
     if not settings.composes:
-        raise ValueError(
-            f"Repo {repo.name!r} has no [[docker.composes]] entries; nothing to up."
-        )
+        raise ValueError(f"Repo {repo.name!r} has no [[docker.composes]] entries; nothing to up.")
 
     parent = _resolve_parent(repo, lab, on, list(settings.composes))
     proj = project_name or get_user_compose_project(repo.name)
@@ -209,11 +209,10 @@ async def compose_up(
         results = await build_images(repo, parent, rebuild=False)
         for name, (status, msg) in results.items():
             if not status.is_ok:
-                raise RuntimeError(
-                    f"build for image {name!r} failed before compose up: {msg}"
-                )
+                raise RuntimeError(f"build for image {name!r} failed before compose up: {msg}")
 
     from .staging import stage_compose_files
+
     # Stage under the compose-project key (e.g. ``otto-repo1-vagrant`` or a
     # ``OTTO_COMPOSE_SUFFIX``-suffixed variant) rather than ``repo.name`` so
     # concurrent ``otto docker up`` invocations with different suffixes
@@ -259,7 +258,9 @@ async def compose_up(
         declared_services.extend(compose.services)
     declared_services = list(dict.fromkeys(declared_services))  # dedupe, preserve order
 
-    live_status, live_out = await _compose_cmd(parent, proj, remote_file_strs, "config", extra="--services")
+    live_status, live_out = await _compose_cmd(
+        parent, proj, remote_file_strs, "config", extra="--services"
+    )
     live_services: set[str] = set()
     if live_status.is_ok:
         live_services = {s.strip() for s in live_out.splitlines() if s.strip()}
@@ -320,11 +321,15 @@ async def compose_down(
     proj = project_name or get_user_compose_project(repo.name)
 
     from .staging import stage_compose_files
+
     # See compose_up() for the staging-key rationale: keyed on the compose
     # project (suffix-aware) so concurrent stacks don't collide.
     remote_files = await stage_compose_files(parent, proj, list(settings.composes))
     status, output = await _compose_cmd(
-        parent, proj, [str(p) for p in remote_files], "down",
+        parent,
+        proj,
+        [str(p) for p in remote_files],
+        "down",
         extra=f"--timeout {int(stop_timeout)}",
     )
     if not status.is_ok:
@@ -418,8 +423,7 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
             continue
         # Build a map of docker-capable parents in the lab, by id.
         capable: list[UnixHost] = [
-            h for h in lab.hosts.values()
-            if isinstance(h, UnixHost) and h.docker_capable
+            h for h in lab.hosts.values() if isinstance(h, UnixHost) and h.docker_capable
         ]
         if not capable:
             continue

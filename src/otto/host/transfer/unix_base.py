@@ -34,7 +34,7 @@ class UnixFileTransfer(BaseFileTransfer):
 
     def __init__(
         self,
-        connections: 'ConnectionManager',
+        connections: "ConnectionManager",
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
         max_filename_len: int = 255,
@@ -65,7 +65,7 @@ class UnixFileTransfer(BaseFileTransfer):
         extra ``_exec_cmd('true')`` calls are cheap on warm sessions.
         """
         tasks: list[Coroutine[Any, Any, Any]] = [self.prepare()]
-        if self._connections.term == 'telnet':
+        if self._connections.term == "telnet":
             for _ in range(max(file_count, 1)):
-                tasks.append(self._exec_cmd('true'))
+                tasks.append(self._exec_cmd("true"))
         await asyncio.gather(*tasks, return_exceptions=True)

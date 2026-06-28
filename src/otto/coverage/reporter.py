@@ -25,6 +25,7 @@ Typical usage from the ``otto cov`` CLI command::
     )
     store = await reporter.run()
 """
+
 from __future__ import annotations
 
 import json
@@ -67,7 +68,7 @@ def _read_cov_meta(cov_dirs: list[Path]) -> dict[str, Any]:
         FileNotFoundError: If no metadata file is found in any cov dir.
     """
     for cov_dir in cov_dirs:
-        meta_path = cov_dir / '.otto_cov_meta.json'
+        meta_path = cov_dir / ".otto_cov_meta.json"
         if meta_path.is_file():
             return json.loads(meta_path.read_text())
     raise FileNotFoundError(
@@ -93,7 +94,7 @@ def read_cov_source_root(cov_dirs: list[Path]) -> Path:
         FileNotFoundError: If no metadata file is found in any cov dir.
     """
     meta = _read_cov_meta(cov_dirs)
-    return Path(meta['sut_dir'])
+    return Path(meta["sut_dir"])
 
 
 def read_cov_source_roots(cov_dirs: list[Path]) -> dict[str, Path]:
@@ -108,7 +109,7 @@ def read_cov_source_roots(cov_dirs: list[Path]) -> dict[str, Path]:
     except FileNotFoundError:
         return {}
 
-    raw: dict[str, str] = meta.get('source_roots', {})
+    raw: dict[str, str] = meta.get("source_roots", {})
     return {host_id: Path(v) for host_id, v in raw.items()}
 
 
@@ -125,11 +126,11 @@ def read_cov_toolchains(cov_dirs: list[Path]) -> dict[str, Toolchain]:
     except FileNotFoundError:
         return {}
 
-    raw_toolchains: dict[str, Any] = meta.get('toolchains', {})
+    raw_toolchains: dict[str, Any] = meta.get("toolchains", {})
     result: dict[str, Toolchain] = {}
     for host_id, tc_data in raw_toolchains.items():
         kwargs = {}
-        for key in ('sysroot', 'lcov', 'gcov'):
+        for key in ("sysroot", "lcov", "gcov"):
             if key in tc_data:
                 kwargs[key] = Path(tc_data[key])
         result[host_id] = Toolchain(**kwargs)
@@ -254,7 +255,9 @@ class CoverageReporter:
                 localhost = LocalHost()
                 try:
                     discovered_fallback = await discover_toolchain_from_gcno(
-                        self.source_root, localhost, work_dir,
+                        self.source_root,
+                        localhost,
+                        work_dir,
                     )
                 finally:
                     await localhost.close()
@@ -299,33 +302,26 @@ class CoverageReporter:
                 toolchain_list = await self._resolve_toolchains(work_dir)
 
                 # 1. Merge across hosts using lcov
-                logger.info(
-                    "=== Merging coverage across %d host(s) ===", len(self.gcda_dirs)
-                )
+                logger.info("=== Merging coverage across %d host(s) ===", len(self.gcda_dirs))
                 merger = LcovMerger(localhost)
                 filtered_toolchains = [t for t in toolchain_list if t is not None]
                 system_info = await merger.capture_and_merge(
                     host_gcda_dirs=self.gcda_dirs,
                     gcno_dir=self.source_root,
                     work_dir=work_dir,
-                    toolchains=filtered_toolchains if filtered_toolchains else None,
+                    toolchains=filtered_toolchains or None,
                     gcno_dirs=self._per_host_gcno_dirs() if self.source_roots else None,
                 )
 
                 # 2. Auto-discover path mappings
                 logger.info("=== Auto-discovering path mappings ===")
-                mappings = await discover_path_mappings(
-                    system_info, self.source_root, localhost
-                )
+                mappings = await discover_path_mappings(system_info, self.source_root, localhost)
 
             if not mappings:
-                mappings = await discover_from_gcno(
-                    self.source_root, self.source_root, localhost
-                )
+                mappings = await discover_from_gcno(self.source_root, self.source_root, localhost)
             if not mappings:
                 logger.warning(
-                    "Could not auto-discover path mappings. "
-                    "Embedded paths will be used as-is."
+                    "Could not auto-discover path mappings. Embedded paths will be used as-is."
                 )
 
             # 3. Load coverage into store
@@ -345,7 +341,8 @@ class CoverageReporter:
                     if not tier_path.exists():
                         logger.warning(
                             "Tier %r .info file not found: %s — skipping",
-                            tier_name, tier_path,
+                            tier_name,
+                            tier_path,
                         )
                         store.register_tier(tier_name)
                         continue

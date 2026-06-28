@@ -16,6 +16,7 @@ The on-wire format, per source file::
     <path>.gcda
     Gcov End
 """
+
 from __future__ import annotations
 
 import logging
@@ -71,11 +72,7 @@ def decode_cov_dump(text: str) -> dict[str, bytes]:
 
         hexdump = _HEXDUMP_RE.match(line)
         if hexdump:
-            buf.extend(
-                int(tok, 16)
-                for tok in hexdump.group(1).split()
-                if _HEXBYTE_RE.match(tok)
-            )
+            buf.extend(int(tok, 16) for tok in hexdump.group(1).split() if _HEXBYTE_RE.match(tok))
             continue
 
         # A bare `<path>.gcda` line closes the block and names the file.
@@ -107,6 +104,7 @@ async def _collect_one_embedded_host(
     the dump failed, or it produced no coverage data.
     """
     from ...host.embedded_host import EmbeddedHost
+
     if not isinstance(host, EmbeddedHost):
         return None
 
@@ -210,5 +208,7 @@ async def collect_embedded_coverage(
 
     dump_command = f"llext call_fn {extension} cov_dump"
     return await EmbeddedGcdaCollector(
-        staging_root, dump_command, pattern=pattern,
+        staging_root,
+        dump_command,
+        pattern=pattern,
     ).collect_all()

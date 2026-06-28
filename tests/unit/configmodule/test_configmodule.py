@@ -20,7 +20,7 @@ from otto.utils import CommandStatus, Status
 from tests.conftest import host_data, make_host
 
 
-@pytest.fixture()
+@pytest.fixture
 def three_hosts():
     """Set up an OttoContext with three hosts: carrot_seed, tomato_seed, pepper_seed."""
     hosts = {
@@ -37,7 +37,6 @@ def three_hosts():
 
 
 class TestAllHosts:
-
     def test_no_pattern_yields_all(self, three_hosts):
         """Default (None) returns every host."""
         result = list(all_hosts())
@@ -70,7 +69,7 @@ class TestAllHosts:
         assert len(result) == 3
 
 
-@pytest.fixture()
+@pytest.fixture
 def mixed_lab():
     """OttoContext containing one UnixHost (carrot_seed) and one EmbeddedHost (sprout)."""
     unix = make_host("carrot")
@@ -120,6 +119,7 @@ class TestAllHostsMixed:
 # Helpers for do_for_all_hosts / run_on_all_hosts tests
 # ---------------------------------------------------------------------------
 
+
 async def _echo_id(host) -> str:
     """Trivial async callable that returns the host's ID."""
     return host.id
@@ -133,7 +133,6 @@ async def _raise_for_tomato(host) -> str:
 
 
 class TestDoForAllHosts:
-
     @pytest.mark.asyncio
     async def test_serial_calls_all(self, three_hosts):
         """Serial mode calls method on every host and returns a dict keyed by ID."""
@@ -181,14 +180,16 @@ class TestDoForAllHosts:
             return (host.id, cmd, timeout)
 
         result = await do_for_all_hosts(
-            _method, "uname -a", concurrent=False, timeout=5.0,
+            _method,
+            "uname -a",
+            concurrent=False,
+            timeout=5.0,
         )
         for host_id, value in result.items():
             assert value == (host_id, "uname -a", 5.0)
 
 
 class TestRunOnAllHosts:
-
     @pytest.mark.asyncio
     async def test_serial(self, three_hosts):
         """run_on_all_hosts delegates to run and returns status tuples."""
@@ -229,7 +230,9 @@ class TestRunOnAllHosts:
             return_value=expected,
         ):
             result = await run_on_all_hosts(
-                "ls", pattern=re.compile(r"pepper"), concurrent=False,
+                "ls",
+                pattern=re.compile(r"pepper"),
+                concurrent=False,
             )
 
         assert set(result.keys()) == {"pepper_seed"}
@@ -325,6 +328,7 @@ class TestPerCallOptionOverrides:
         assert host.term == "telnet"
         # the stored instance is untouched (insulation)
         from otto.configmodule import get_lab
+
         assert get_lab().hosts["carrot_seed"].term == "ssh"
 
     def test_get_host_transfer_override_returns_validated_copy(self, three_hosts):
@@ -332,6 +336,7 @@ class TestPerCallOptionOverrides:
         host = get_host("carrot_seed", transfer="sftp")
         assert host.transfer == "sftp"
         from otto.configmodule import get_lab
+
         assert get_lab().hosts["carrot_seed"].transfer == "scp"
 
     def test_term_override_out_of_menu_raises(self, three_hosts):

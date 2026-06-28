@@ -12,6 +12,7 @@ files *already on / between locations on* the host — complementary to
 These are a *family capability*, not part of the universal ``Host`` Protocol —
 an embedded host implements only the subset its filesystem supports.
 """
+
 from __future__ import annotations
 
 import base64

@@ -27,8 +27,8 @@ extensions = [
 ]
 
 source_suffix = {
-    '.rst': 'restructuredtext',
-    '.md': 'markdown',
+    ".rst": "restructuredtext",
+    ".md": "markdown",
 }
 
 html_theme = "sphinx_immaterial"
@@ -45,7 +45,7 @@ html_theme_options = {
             "toggle": {
                 "icon": "material/brightness-auto",
                 "name": "Switch to dark mode",
-            }
+            },
         },
         {
             "media": "(prefers-color-scheme: dark)",
@@ -55,7 +55,7 @@ html_theme_options = {
             "toggle": {
                 "icon": "material/brightness-4",
                 "name": "Switch to light mode",
-            }
+            },
         },
         {
             "media": "(prefers-color-scheme: light)",
@@ -65,7 +65,7 @@ html_theme_options = {
             "toggle": {
                 "icon": "material/brightness-7",
                 "name": "Switch to system preference",
-            }
+            },
         },
     ]
 }
@@ -76,21 +76,21 @@ exclude_patterns = ["RESTRUCTURE_PLAN.md", "superpowers/**", "_inventories"]
 
 autodoc_member_order = "bysource"
 autodoc_default_options = {
-    'members': True,
-    'undoc-members': True,
-    'show-inheritance': True,
+    "members": True,
+    "undoc-members": True,
+    "show-inheritance": True,
     # model_config is pydantic boilerplate on every model class. Documenting it
     # adds ~25 unresolvable ConfigDict/SettingsConfigDict refs with no value.
-    'exclude-members': 'model_config',
+    "exclude-members": "model_config",
 }
-autodoc_typehints = 'signature'
+autodoc_typehints = "signature"
 
 # Sphinx 7.3+ auto-generates py:param cross-references; for TypeVar-typed
 # parameters (T/P/R in async_typer_command, do_for_all_hosts, is_literal) these
 # emit spurious "py:param reference target not found" warnings that -W promotes
 # to errors. ref.param is the auto-generated param-name xref only — type/class
 # resolution (ref.class/func/meth/attr) stays fully enforced under nitpicky.
-suppress_warnings = ['ref.param']
+suppress_warnings = ["ref.param"]
 
 # -- intersphinx --------------------------------------------------------------
 # Resolve stdlib + third-party type targets so nitpicky can follow them.
@@ -102,13 +102,13 @@ suppress_warnings = ['ref.param']
 #   make docs-inventories
 _INV = pathlib.Path(__file__).parent / "_inventories"
 intersphinx_mapping = {
-    'python': ('https://docs.python.org/3', str(_INV / "python.inv")),
-    'typer': ('https://typer.tiangolo.com', str(_INV / "typer.inv")),
-    'rich': ('https://rich.readthedocs.io/en/stable', str(_INV / "rich.inv")),
-    'pydantic': ('https://docs.pydantic.dev/latest', str(_INV / "pydantic.inv")),
-    'asyncssh': ('https://asyncssh.readthedocs.io/en/stable', str(_INV / "asyncssh.inv")),
-    'pytest': ('https://docs.pytest.org/en/stable', str(_INV / "pytest.inv")),
-    'telnetlib3': ('https://telnetlib3.readthedocs.io/en/latest', str(_INV / "telnetlib3.inv")),
+    "python": ("https://docs.python.org/3", str(_INV / "python.inv")),
+    "typer": ("https://typer.tiangolo.com", str(_INV / "typer.inv")),
+    "rich": ("https://rich.readthedocs.io/en/stable", str(_INV / "rich.inv")),
+    "pydantic": ("https://docs.pydantic.dev/latest", str(_INV / "pydantic.inv")),
+    "asyncssh": ("https://asyncssh.readthedocs.io/en/stable", str(_INV / "asyncssh.inv")),
+    "pytest": ("https://docs.pytest.org/en/stable", str(_INV / "pytest.inv")),
+    "telnetlib3": ("https://telnetlib3.readthedocs.io/en/latest", str(_INV / "telnetlib3.inv")),
 }
 
 # -- short-name type resolver -------------------------------------------------
@@ -132,47 +132,48 @@ intersphinx_mapping = {
 # fail to resolve it and nitpicky will correctly flag genuine doc rot.
 _SHORT_TYPE_ALIASES = {
     # stdlib
-    'Path': 'pathlib.Path',
-    'datetime': 'datetime.datetime',
-    'timedelta': 'datetime.timedelta',
-    'asyncio.queues.Queue': 'asyncio.Queue',
-    '_contextvars.Token': 'contextvars.Token',
-    'types.Annotated': 'typing.Annotated',
+    "Path": "pathlib.Path",
+    "datetime": "datetime.datetime",
+    "timedelta": "datetime.timedelta",
+    "asyncio.queues.Queue": "asyncio.Queue",
+    "_contextvars.Token": "contextvars.Token",
+    "types.Annotated": "typing.Annotated",
     # rich
-    'Panel': 'rich.panel.Panel',
-    'Progress': 'rich.progress.Progress',
+    "Panel": "rich.panel.Panel",
+    "Progress": "rich.progress.Progress",
     # asyncssh
-    'SSHClientConnection': 'asyncssh.SSHClientConnection',
-    'SFTPClient': 'asyncssh.SFTPClient',
+    "SSHClientConnection": "asyncssh.SSHClientConnection",
+    "SFTPClient": "asyncssh.SFTPClient",
     # already fully-qualified; re-dispatching through intersphinx lets it match
     # the asyncssh inventory across object types (the original xref's reftype
     # missed it).
-    'asyncssh.connect': 'asyncssh.connect',
+    "asyncssh.connect": "asyncssh.connect",
     # pytest (_pytest.* private names map to their public pytest.* aliases)
-    '_pytest.config.Config': 'pytest.Config',
-    '_pytest.nodes.Item': 'pytest.Item',
-    '_pytest.main.Session': 'pytest.Session',
-    '_pytest.stash.StashKey': 'pytest.StashKey',
-    '_pytest.reports.TestReport': 'pytest.TestReport',
-    '_pytest.runner.CallInfo': 'pytest.CallInfo',
+    "_pytest.config.Config": "pytest.Config",
+    "_pytest.nodes.Item": "pytest.Item",
+    "_pytest.main.Session": "pytest.Session",
+    "_pytest.stash.StashKey": "pytest.StashKey",
+    "_pytest.reports.TestReport": "pytest.TestReport",
+    "_pytest.runner.CallInfo": "pytest.CallInfo",
     # pydantic-settings (served by the pydantic inventory — pydantic.dev hosts a
     # combined inventory that includes pydantic-settings)
-    'NoDecode': 'pydantic_settings.NoDecode',
-    'SettingsConfigDict': 'pydantic_settings.SettingsConfigDict',
-    'PydanticBaseSettingsSource': 'pydantic_settings.PydanticBaseSettingsSource',
-    'CliSettingsSource': 'pydantic_settings.CliSettingsSource',
+    "NoDecode": "pydantic_settings.NoDecode",
+    "SettingsConfigDict": "pydantic_settings.SettingsConfigDict",
+    "PydanticBaseSettingsSource": "pydantic_settings.PydanticBaseSettingsSource",
+    "CliSettingsSource": "pydantic_settings.CliSettingsSource",
     # telnetlib3
-    'telnetlib3.open_connection': 'telnetlib3.client.open_connection',
+    "telnetlib3.open_connection": "telnetlib3.client.open_connection",
 }
 
 
 def _resolve_short_types(app, env, node, contnode):
     """Resolve short/private type names to their canonical intersphinx targets."""
-    full = _SHORT_TYPE_ALIASES.get(node.get('reftarget'))
+    full = _SHORT_TYPE_ALIASES.get(node.get("reftarget"))
     if not full:
         return None
-    node['reftarget'] = full
-    from sphinx.ext import intersphinx  # noqa: PLC0415
+    node["reftarget"] = full
+    from sphinx.ext import intersphinx
+
     return intersphinx.missing_reference(app, env, node, contnode)
 
 
@@ -183,31 +184,36 @@ def _resolve_short_types(app, env, node, contnode):
 # is ``from ..host import options as rt`` in models/options.py).
 _INTERNAL_ALIASES = {
     # otto.host.remote_host
-    'OsType': 'otto.host.remote_host.OsType',
+    "OsType": "otto.host.remote_host.OsType",
     # otto.host.transfer.base (requires transfer_base.rst to be documented)
-    'NcPortStrategy': 'otto.host.transfer.base.NcPortStrategy',
-    'NcListenerCheck': 'otto.host.transfer.base.NcListenerCheck',
+    "NcPortStrategy": "otto.host.transfer.base.NcPortStrategy",
+    "NcListenerCheck": "otto.host.transfer.base.NcListenerCheck",
     # TransferProgressHandler/Factory are re-exported from the package __init__
     # and registered there as 'attribute' objects; resolve to the package path.
-    'TransferProgressHandler': 'otto.host.transfer.TransferProgressHandler',
-    'TransferProgressFactory': 'otto.host.transfer.TransferProgressFactory',
+    "TransferProgressHandler": "otto.host.transfer.TransferProgressHandler",
+    "TransferProgressFactory": "otto.host.transfer.TransferProgressFactory",
     # otto.coverage.reporter
-    'TierSpec': 'otto.coverage.reporter.TierSpec',
+    "TierSpec": "otto.coverage.reporter.TierSpec",
     # otto.host.options (referenced via ``rt`` alias in models/options.py)
-    'rt.LocalPortForward': 'otto.host.options.LocalPortForward',
-    'rt.RemotePortForward': 'otto.host.options.RemotePortForward',
-    'rt.SocksForward': 'otto.host.options.SocksForward',
+    "rt.LocalPortForward": "otto.host.options.LocalPortForward",
+    "rt.RemotePortForward": "otto.host.options.RemotePortForward",
+    "rt.SocksForward": "otto.host.options.SocksForward",
 }
 
 
 def _resolve_internal_aliases(app, env, node, contnode):
     """Resolve internal otto type aliases via the local python domain."""
-    full = _INTERNAL_ALIASES.get(node.get('reftarget'))
+    full = _INTERNAL_ALIASES.get(node.get("reftarget"))
     if not full:
         return None
-    pydom = env.get_domain('py')
+    pydom = env.get_domain("py")
     results = pydom.resolve_any_xref(
-        env, node.get('refdoc', ''), app.builder, full, node, contnode,
+        env,
+        node.get("refdoc", ""),
+        app.builder,
+        full,
+        node,
+        contnode,
     )
     return results[0][1] if results else None
 
@@ -218,21 +224,23 @@ def _resolve_internal_aliases(app, env, node, contnode):
 # aioftp.aio-libs.org but ships no objects.inv, so intersphinx cannot serve it;
 # ``aioftp.Client`` is the public return type of ``ConnectionManager.ftp()``.
 _EXTERNAL_DOC_LINKS = {
-    'aioftp.Client': 'https://aioftp.aio-libs.org/client_api.html#aioftp.Client',
+    "aioftp.Client": "https://aioftp.aio-libs.org/client_api.html#aioftp.Client",
 }
 
 
 def _resolve_external_doc_links(app, env, node, contnode):
     """Link inventory-less external types to their published docs pages."""
-    from docutils import nodes  # noqa: PLC0415
-    uri = _EXTERNAL_DOC_LINKS.get(node.get('reftarget'))
+    from docutils import nodes
+
+    uri = _EXTERNAL_DOC_LINKS.get(node.get("reftarget"))
     if not uri:
         return None
-    return nodes.reference('', '', contnode, refuri=uri, internal=False)
+    return nodes.reference("", "", contnode, refuri=uri, internal=False)
 
 
-def _strip_inherited_pydantic_signature(app, what, name, obj, options, signature,
-                                        return_annotation):
+def _strip_inherited_pydantic_signature(
+    app, what, name, obj, options, signature, return_annotation
+):
     """Blank the class signature when it is pydantic-settings' inherited
     auto-``__init__``.
 
@@ -245,19 +253,19 @@ def _strip_inherited_pydantic_signature(app, what, name, obj, options, signature
     signature for any class whose ``__init__`` is inherited straight from
     pydantic-settings; otto-defined ``__init__`` methods are untouched.
     """
-    if what != 'class':
+    if what != "class":
         return None
-    init = getattr(obj, '__init__', None)
-    if init is not None and getattr(init, '__module__', '').startswith('pydantic_settings'):
-        return ('', return_annotation)
+    init = getattr(obj, "__init__", None)
+    if init is not None and getattr(init, "__module__", "").startswith("pydantic_settings"):
+        return ("", return_annotation)
     return None
 
 
 def setup(app):
-    app.connect('missing-reference', _resolve_short_types)
-    app.connect('missing-reference', _resolve_internal_aliases)
-    app.connect('missing-reference', _resolve_external_doc_links)
-    app.connect('autodoc-process-signature', _strip_inherited_pydantic_signature)
+    app.connect("missing-reference", _resolve_short_types)
+    app.connect("missing-reference", _resolve_internal_aliases)
+    app.connect("missing-reference", _resolve_external_doc_links)
+    app.connect("autodoc-process-signature", _strip_inherited_pydantic_signature)
 
 
 # -- napoleon -----------------------------------------------------------------

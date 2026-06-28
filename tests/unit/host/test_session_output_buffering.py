@@ -150,7 +150,6 @@ from otto.host.session import TelnetSession
 
 
 class TestWriteProgress:
-
     @pytest.mark.asyncio
     async def test_telnet_write_reports_progress_per_chunk(self):
         writes: list[bytes] = []
@@ -183,7 +182,7 @@ class TestWriteProgress:
         orig_write = s._write
 
         async def _record_write(data):
-            if s._begin_marker in data:           # the framed command write
+            if s._begin_marker in data:  # the framed command write
                 seen.append(s._write_progress)
             await orig_write(data)
 
@@ -201,5 +200,5 @@ class TestWriteProgress:
         asyncio.create_task(simulate())
         await s.run_cmd("noop", write_progress=cb)
 
-        assert seen == [cb]                # set during the framed write
-        assert s._write_progress is None   # cleared afterward
+        assert seen == [cb]  # set during the framed write
+        assert s._write_progress is None  # cleared afterward

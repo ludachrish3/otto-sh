@@ -25,10 +25,10 @@ from .parsers import DEFAULT_PARSERS, MetricParser
 from .server import MonitorServer
 
 __all__ = [
-    'MetricCollector',
-    'MetricParser',
-    'MonitorEvent',
-    'MonitorServer',
-    'DEFAULT_PARSERS',
-    'build_monitor_collector',
+    "DEFAULT_PARSERS",
+    "MetricCollector",
+    "MetricParser",
+    "MonitorEvent",
+    "MonitorServer",
+    "build_monitor_collector",
 ]

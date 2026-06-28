@@ -36,13 +36,14 @@ async def open_telnet_connection(*args: Any, **kwargs: Any) -> Any:
     ``tests/unit/host/test_lazy_network_imports.py``.
     """
     from telnetlib3 import open_connection
+
     return await open_connection(*args, **kwargs)
 
 
 # Registry of TelnetClients that want SIGWINCH-driven NAWS updates. A single
 # process-level handler iterates this set so multiple concurrent telnet
 # sessions all reflow on resize. Weak refs so closed clients drop out cleanly.
-_naws_subscribers: 'WeakSet[TelnetClient]' = WeakSet()
+_naws_subscribers: "WeakSet[TelnetClient]" = WeakSet()
 _naws_handler_installed: bool = False
 
 # Live single-client console transports — populated when TelnetOptions.
@@ -78,7 +79,7 @@ def abort_console_transports() -> int:
         try:
             transport.abort()
             count += 1
-        except Exception:  # noqa: BLE001 — best-effort cleanup; one bad transport must not block the rest
+        except Exception:
             pass
     _live_console_transports.clear()
     return count
@@ -96,7 +97,7 @@ def _sigwinch_fanout() -> None:
 
 def _install_sigwinch_handler() -> None:
     global _naws_handler_installed
-    if _naws_handler_installed or sys.platform == 'win32':
+    if _naws_handler_installed or sys.platform == "win32":
         return
     try:
         loop = asyncio.get_running_loop()
@@ -119,7 +120,7 @@ def _uninstall_sigwinch_handler_if_unused() -> None:
 
 
 @dataclass(eq=False)
-class TelnetClient():
+class TelnetClient:
     host: str
     user: str
     password: str
@@ -164,13 +165,13 @@ class TelnetClient():
         start = asyncio.get_event_loop().time()
 
         open_kwargs = self.options._open_kwargs()
-        open_kwargs['port'] = port  # override for tunneled case
+        open_kwargs["port"] = port  # override for tunneled case
         self.reader, self.writer = await open_telnet_connection(
             self.host,
             **open_kwargs,  # type: ignore[arg-type]
         )
         if self.options.single_client_console:
-            _register_console_transport(getattr(self.writer, 'transport', None))
+            _register_console_transport(getattr(self.writer, "transport", None))
 
         if not interactive:
             # Tell the server not to echo our input so commands don't appear in output,
@@ -216,7 +217,7 @@ class TelnetClient():
             return
         from telnetlib3.telopt import IAC, NAWS, SB, SE
 
-        payload = struct.pack('>HH', max(0, cols), max(0, rows))
+        payload = struct.pack(">HH", max(0, cols), max(0, rows))
         # Double any 0xFF (IAC) bytes inside the payload per telnet framing.
         payload = payload.replace(IAC, IAC + IAC)
         frame = IAC + SB + NAWS + payload + IAC + SE
@@ -236,15 +237,14 @@ class TelnetClient():
         reads through any banner/MOTD to a unique sentinel and is bounded by
         a timeout that surfaces a bad-credential login as a clear error.
         """
-
         prompt_delim = self.options.login_prompt
         # Wait for the login prompt ("login:", "Username:", etc.) — any line ending in the delimiter.
         await self.reader.readuntil(prompt_delim)
-        self.writer.write(self.user.encode() + b'\r\n')
+        self.writer.write(self.user.encode() + b"\r\n")
 
         # Wait for the password prompt ("Password:", "password:", etc.)
         await self.reader.readuntil(prompt_delim)
-        self.writer.write(self.password.encode() + b'\r\n')
+        self.writer.write(self.password.encode() + b"\r\n")
 
         if self.prompt is not None:
             # Opt-in fast path: a caller with a stable prompt can have login
@@ -279,7 +279,7 @@ class TelnetClient():
             # failure. ``transport.abort()`` skips the graceful drain and
             # releases the FD synchronously, which is fine for a half-built
             # connection we're discarding.
-            transport = getattr(self.writer, 'transport', None)
+            transport = getattr(self.writer, "transport", None)
             _unregister_console_transport(transport)
             self.writer.close()
             if transport is not None:
@@ -292,5 +292,5 @@ class TelnetClient():
         await self.connect()
         return self
 
-    async def __aexit__(self, *args: Any):
+    async def __aexit__(self, *args: object):
         await self.close()

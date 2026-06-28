@@ -5,6 +5,7 @@ gcda files embed the absolute paths used at compile time.  When run on a
 remote host those paths rarely match the local source tree — especially in
 cross-compilation scenarios.  This module handles the remapping.
 """
+
 from __future__ import annotations
 
 import logging
@@ -176,7 +177,9 @@ async def discover_from_gcno(
     except ValueError:
         return []
 
-    common_dir = common if Path(common).is_dir() or common.endswith("/") else str(Path(common).parent)
+    common_dir = (
+        common if Path(common).is_dir() or common.endswith("/") else str(Path(common).parent)
+    )
     source_str = str(source_root.resolve())
 
     if common_dir == source_str:

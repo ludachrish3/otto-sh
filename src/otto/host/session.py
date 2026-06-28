@@ -63,7 +63,8 @@ _HANDSHAKE_RETRY_BACKOFF = 2.0
 
 def _drop_output(_line: str) -> None:
     """Output sink that discards a command's streamed output — used to honor a
-    per-command ``log=False`` without mutating any shared logging state."""
+    per-command ``log=False`` without mutating any shared logging state.
+    """
 
 
 class ShellSession(ABC):
@@ -133,7 +134,7 @@ class ShellSession(ABC):
         # The OS user this shell is currently running as. Seeded by
         # SessionManager from the host's login user; mutated only by the
         # elevation flow (switch_user/as_user). '' on loginless shells.
-        self.current_user: str = ''
+        self.current_user: str = ""
 
     @property
     def alive(self) -> bool:
@@ -222,9 +223,7 @@ class ShellSession(ABC):
         # rejected marker arrives as ``\n\x1b[1;31m__OTTO_..._READY__``.
         # The group matches zero times for a plain bash shell, so this is a
         # no-op there.
-        marker = re.compile(
-            r'(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*' + re.escape(self._ready_marker)
-        )
+        marker = re.compile(r"(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*" + re.escape(self._ready_marker))
         loop = asyncio.get_running_loop()
         deadline = loop.time() + self._init_timeout
         handshake_cmd = self._frame.handshake(self._markers)
@@ -269,9 +268,7 @@ class ShellSession(ABC):
             except asyncio.IncompleteReadError:
                 # Peer EOF mid-handshake — the connection is gone; retrying
                 # cannot help.
-                logger.debug(
-                    f"{self._log_tag}: handshake hit EOF on attempt #{attempt}"
-                )
+                logger.debug(f"{self._log_tag}: handshake hit EOF on attempt #{attempt}")
                 await self._fail_init(attempt=attempt)
 
         self._initialized = True
@@ -448,7 +445,7 @@ class ShellSession(ABC):
                 # Emit any output text that precedes the sentinel on the same
                 # line (happens when a command produces no trailing newline).
                 if live and seen_begin:
-                    pre = data[:end_match.start()].replace('\r', '').strip()
+                    pre = data[: end_match.start()].replace("\r", "").strip()
                     if pre:
                         on_output(pre)
                 break
@@ -475,12 +472,10 @@ class ShellSession(ABC):
             if not expect_matched:
                 if not seen_begin:
                     if self._frame.marks_begin(data, self._markers):
-                        logger.debug(
-                            f"{self._log_tag}: begin marker matched on chunk={data!r}"
-                        )
+                        logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
                         seen_begin = True
                 elif live:
-                    line = data.rstrip('\r\n').replace('\r', '')
+                    line = data.rstrip("\r\n").replace("\r", "")
                     if line:
                         on_output(line)
 
@@ -495,7 +490,11 @@ class ShellSession(ABC):
         # Log a per-command summary at the seam. The full buffer is dumped at
         # DEBUG so a future-dialect bring-up can see exactly what the frame's
         # extract_retcode / parse_output had to work with.
-        buffer_preview = buffer if len(buffer) <= 1024 else f"{buffer[:512]}...({len(buffer)}b)...{buffer[-512:]}"
+        buffer_preview = (
+            buffer
+            if len(buffer) <= 1024
+            else f"{buffer[:512]}...({len(buffer)}b)...{buffer[-512:]}"
+        )
         logger.debug(
             f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
             f"output_len={len(output)} buffer={buffer_preview!r}"
@@ -512,7 +511,6 @@ class ShellSession(ABC):
         ``_read_until_pattern`` to return after every line, enabling
         incremental output streaming.
         """
-
         parts: list[str] = []
         if expects:
             for i, (pattern, _) in enumerate(expects):
@@ -546,9 +544,7 @@ class ShellSession(ABC):
             )
             # Session is recovered and usable for the next command
             partial = data.split(self._recover_marker)[0].strip()
-            logger.debug(
-                f"{self._log_tag}: recover_session ok partial_len={len(partial)}"
-            )
+            logger.debug(f"{self._log_tag}: recover_session ok partial_len={len(partial)}")
             return partial
 
         except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
@@ -585,12 +581,12 @@ class SshSession(ShellSession):
         if self._open_cmd is not None:
             self._process = await self._conn.create_process(
                 self._open_cmd,
-                term_type='dumb',
+                term_type="dumb",
                 stderr=asyncssh.STDOUT,
             )
         else:
             self._process = await self._conn.create_process(
-                term_type='dumb',
+                term_type="dumb",
                 stderr=asyncssh.STDOUT,
             )
 
@@ -620,7 +616,7 @@ class TelnetSession(ShellSession):
         self,
         reader: Any,
         writer: Any,
-        _owned_client: 'TelnetClient | None' = None,
+        _owned_client: "TelnetClient | None" = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         write_chunk_size: int = 0,
@@ -654,13 +650,13 @@ class TelnetSession(ShellSession):
         # before the real output arrives.  Using \r alone works for both:
         # - canonical mode (icrnl maps \r → \n, so the shell sees one newline)
         # - readline raw mode (treats \r as Enter / execute)
-        data = re.sub(r'\r?\n', '\r', data)
+        data = re.sub(r"\r?\n", "\r", data)
         encoded = data.encode()
         total = len(encoded)
         chunk = self._write_chunk_size
         if chunk and total > chunk:
             for i in range(0, total, chunk):
-                self._writer.write(encoded[i:i + chunk])
+                self._writer.write(encoded[i : i + chunk])
                 if self._write_progress is not None:
                     self._write_progress(min(i + chunk, total), total)
                 if self._write_chunk_delay:
@@ -675,7 +671,7 @@ class TelnetSession(ShellSession):
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
         bytes_pattern = re.compile(pattern.pattern.encode())
         raw: bytes = await self._reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]
-        return raw.decode('utf-8', errors='replace')
+        return raw.decode("utf-8", errors="replace")
 
     @override
     async def close(self) -> None:
@@ -709,18 +705,21 @@ class LocalSession(ShellSession):
         # reaching into the private Process._transport attribute.
         loop = asyncio.get_running_loop()
         protocol_factory = lambda: asyncio.subprocess.SubprocessStreamProtocol(
-            limit=2 ** 16, loop=loop,
+            limit=2**16,
+            loop=loop,
         )
         transport, protocol = await loop.subprocess_exec(
             protocol_factory,
-            'bash', '--norc', '--noprofile',
+            "bash",
+            "--norc",
+            "--noprofile",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
         self._transport = transport
-        self._process   = asyncio.subprocess.Process(transport, protocol, loop)
-        self._pid       = self._process.pid
+        self._process = asyncio.subprocess.Process(transport, protocol, loop)
+        self._pid = self._process.pid
 
     @override
     async def _write(self, data: str) -> None:
@@ -736,7 +735,7 @@ class LocalSession(ShellSession):
             chunk = await self._process.stdout.read(1)
             if not chunk:
                 raise asyncio.IncompleteReadError(buf.encode(), None)
-            buf += chunk.decode('utf-8', errors='replace')
+            buf += chunk.decode("utf-8", errors="replace")
             if pattern.search(buf):
                 return buf
 
@@ -744,6 +743,7 @@ class LocalSession(ShellSession):
     async def _recover_session(self) -> str:
         """Recovery via SIGINT to child processes (Ctrl+C byte doesn't work over PIPE)."""
         import signal
+
         try:
             # Send SIGINT to all children of the bash process (the hung command)
             if self._pid is not None:
@@ -766,16 +766,23 @@ class LocalSession(ShellSession):
         """Send a signal to all child processes of the given PID."""
         import os
         from pathlib import Path
+
         try:
-            for entry in Path('/proc').iterdir():
+            for entry in Path("/proc").iterdir():
                 if not entry.name.isdigit():
                     continue
                 try:
-                    ppid_line = (entry / 'stat').read_text().split()
+                    ppid_line = (entry / "stat").read_text().split()
                     # Field 4 (0-indexed: 3) is PPID
                     if int(ppid_line[3]) == parent_pid:
                         os.kill(int(entry.name), sig)
-                except (IndexError, ValueError, FileNotFoundError, ProcessLookupError, PermissionError):
+                except (
+                    IndexError,
+                    ValueError,
+                    FileNotFoundError,
+                    ProcessLookupError,
+                    PermissionError,
+                ):
                     continue
         except (FileNotFoundError, PermissionError):
             pass
@@ -787,7 +794,7 @@ class LocalSession(ShellSession):
                 # Process still running — try graceful exit
                 if self._process.stdin is not None:
                     try:
-                        self._process.stdin.write(b'exit\n')
+                        self._process.stdin.write(b"exit\n")
                         await self._process.stdin.drain()
                     except (BrokenPipeError, ConnectionResetError):
                         pass
@@ -860,7 +867,7 @@ class HostSession:
 
     Example::
 
-        async with (await host.open_session("monitor")) as mon:
+        async with await host.open_session("monitor") as mon:
             result = await mon.run("stat /tmp/file.bin")
 
     Or without a context manager::
@@ -879,7 +886,7 @@ class HostSession:
         log_command: Callable[[str], None],
         log_output: Callable[[str], None],
         deregister: Callable[[str], None],
-        user_password: 'Callable[[str], str | None] | None' = None,
+        user_password: "Callable[[str], str | None] | None" = None,
     ) -> None:
         self._name = name
         self._session = session
@@ -900,29 +907,29 @@ class HostSession:
         """User this named session is currently running as.
 
         Seeded from the host's login user; changed only via
-        :meth:`switch_user` / :meth:`as_user`."""
+        :meth:`switch_user` / :meth:`as_user`.
+        """
         return self._session.current_user
 
     async def switch_user(self, user: str = "", password: str | None = None) -> None:
         """``su`` *this* session to *user* (default root), tracking
         :attr:`current_user`. Posix-only — raises ``NotImplementedError`` on
-        hosts whose sessions do not support elevation (no password resolver)."""
+        hosts whose sessions do not support elevation (no password resolver).
+        """
         if self._user_password is None:
-            raise NotImplementedError(
-                "switch_user is not supported on this host's sessions"
-            )
+            raise NotImplementedError("switch_user is not supported on this host's sessions")
         from .privilege import _perform_su
-        target = await _perform_su(
-            self.send, self.expect, user, password, self._user_password
-        )
+
+        target = await _perform_su(self.send, self.expect, user, password, self._user_password)
         self._session.current_user = target
 
     @asynccontextmanager
     async def as_user(
         self, user: str = "root", password: str | None = None
-    ) -> 'AsyncIterator[HostSession]':
+    ) -> "AsyncIterator[HostSession]":
         """Run a block as *user* on this session, restoring the prior user on
-        exit."""
+        exit.
+        """
         prev = self.current_user
         await self.switch_user(user, password)
         try:
@@ -990,10 +997,10 @@ class HostSession:
         await self._session.close()
         self._deregister(self._name)
 
-    async def __aenter__(self) -> 'HostSession':
+    async def __aenter__(self) -> "HostSession":
         return self
 
-    async def __aexit__(self, *args: Any) -> None:
+    async def __aexit__(self, *args: object) -> None:
         await self.close()
 
 
@@ -1015,16 +1022,16 @@ class SessionManager:
 
     def __init__(
         self,
-        connections: 'ConnectionManager | None' = None,
-        name: str = '',
+        connections: "ConnectionManager | None" = None,
+        name: str = "",
         log_command: Callable[[str], None] = lambda _: None,
         log_output: Callable[[str], None] = lambda _: None,
-        session_factory: 'Callable[[], ShellSession] | None' = None,
-        oneshot_factory: 'Callable[[str, float | None], Awaitable[CommandStatus]] | None' = None,
+        session_factory: "Callable[[], ShellSession] | None" = None,
+        oneshot_factory: "Callable[[str, float | None], Awaitable[CommandStatus]] | None" = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         retry_backoff: float | None = None,
-        user_password: 'Callable[[str], str | None] | None' = None,
+        user_password: "Callable[[str], str | None] | None" = None,
     ) -> None:
         self._connections = connections
         self._name = name
@@ -1048,9 +1055,7 @@ class SessionManager:
         # Pause before the single handshake retry in ``_ensure_session``. ``None``
         # resolves to the production default; tests pass ``0`` to skip the real
         # wall-clock wait without changing the retry logic itself.
-        self._retry_backoff = (
-            _HANDSHAKE_RETRY_BACKOFF if retry_backoff is None else retry_backoff
-        )
+        self._retry_backoff = _HANDSHAKE_RETRY_BACKOFF if retry_backoff is None else retry_backoff
         self._session: ShellSession | None = None
         self._named_sessions: dict[str, HostSession] = {}
         # Free-list of idle shell sessions used by `oneshot()` for terminals
@@ -1086,13 +1091,14 @@ class SessionManager:
 
         Best-effort: session seeding runs this on every build, so it tolerates
         a connection manager that exposes no ``credentials`` (e.g. minimal test
-        fakes or a loginless transport) by falling back to ''."""
-        creds = getattr(self._connections, 'credentials', None)
+        fakes or a loginless transport) by falling back to ''.
+        """
+        creds = getattr(self._connections, "credentials", None)
         if not creds:
-            return ''
+            return ""
         return creds[0]
 
-    def _seed_user(self, session: 'ShellSession') -> None:
+    def _seed_user(self, session: "ShellSession") -> None:
         """Stamp a freshly built session with the login user."""
         session.current_user = self._login_user()
 
@@ -1111,7 +1117,8 @@ class SessionManager:
         """Private bookkeeping for the default session. Called only by the
         elevation flow (PosixPrivilege.switch_user/as_user) after a real
         ``su`` has run — never a public API (that would let callers desync
-        the tracked user from the shell's actual user)."""
+        the tracked user from the shell's actual user).
+        """
         if self._session is not None:
             self._session.current_user = user
 
@@ -1207,22 +1214,23 @@ class SessionManager:
                 assert last_exc is not None
                 raise last_exc
 
-    async def _build_session(self) -> 'ShellSession':
+    async def _build_session(self) -> "ShellSession":
         """Construct a fresh ShellSession from the configured factory or
         connection manager. Split out from ``_ensure_session`` so the retry
-        path can rebuild the transport cleanly."""
+        path can rebuild the transport cleanly.
+        """
         if self._session_factory is not None:
             return self._session_factory()
         assert self._connections is not None
         match self._connections.term:
-            case 'ssh':
+            case "ssh":
                 ssh_conn = await self._connections.ssh()
                 return SshSession(
                     ssh_conn,
                     command_frame=self._command_frame,
                     init_timeout=self._init_timeout,
                 )
-            case 'telnet':
+            case "telnet":
                 telnet_conn = await self._connections.telnet()
                 logger.debug(
                     f"SessionManager[{self._name}]: building telnet session "
@@ -1238,8 +1246,7 @@ class SessionManager:
                 )
             case _:
                 raise ValueError(
-                    f'{self._name}: unsupported terminal type '
-                    f'"{self._connections.term}"'
+                    f'{self._name}: unsupported terminal type "{self._connections.term}"'
                 )
 
     async def run_cmd(
@@ -1255,7 +1262,9 @@ class SessionManager:
             self._log_command(cmd)
         assert self._session is not None
         result = await self._session.run_cmd(
-            cmd, expects=expects, timeout=timeout,
+            cmd,
+            expects=expects,
+            timeout=timeout,
             on_output=None if log else _drop_output,
             write_progress=write_progress,
         )
@@ -1274,17 +1283,19 @@ class SessionManager:
         if log:
             self._log_command(cmd)
         match self._connections.term:
-            case 'ssh':
+            case "ssh":
                 import asyncssh
 
                 ssh_conn = await self._connections.ssh()
                 process = await ssh_conn.create_process(
-                    cmd, stderr=asyncssh.STDOUT, stdin=asyncssh.DEVNULL,
+                    cmd,
+                    stderr=asyncssh.STDOUT,
+                    stdin=asyncssh.DEVNULL,
                 )
                 lines: list[str] = []
                 try:
                     async for raw_line in process.stdout:
-                        line = raw_line.rstrip('\n')
+                        line = raw_line.rstrip("\n")
                         lines.append(line)
                         if log:
                             self._log_output(line)
@@ -1294,11 +1305,11 @@ class SessionManager:
                 status = Status.Success if result.exit_status == 0 else Status.Failed
                 return CommandStatus(
                     command=cmd,
-                    output='\n'.join(lines),
+                    output="\n".join(lines),
                     status=status,
                     retcode=result.exit_status or 0,
                 )
-            case 'telnet':
+            case "telnet":
                 # Telnet has no stateless exec primitive (unlike SSH which
                 # multiplexes channels over one connection).  Rather than open
                 # a fresh TCP+auth for every oneshot call — which in practice cost
@@ -1313,9 +1324,11 @@ class SessionManager:
                 finally:
                     self._oneshot_pool.append(oneshot_session)
             case _:
-                raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
+                raise ValueError(
+                    f'{self._name}: unsupported terminal type "{self._connections.term}"'
+                )
 
-    async def _acquire_oneshot_session(self) -> 'HostSession':
+    async def _acquire_oneshot_session(self) -> "HostSession":
         """Pop an idle oneshot session off the free-list, or open a new one.
 
         Sessions are keyed by a monotonic index so concurrent callers get
@@ -1327,9 +1340,9 @@ class SessionManager:
             if session.alive:
                 return session
         self._oneshot_pool_count += 1
-        return await self.open_session(f'__oneshot_pool_{self._oneshot_pool_count}__')
+        return await self.open_session(f"__oneshot_pool_{self._oneshot_pool_count}__")
 
-    async def open_session(self, name: str) -> 'HostSession':
+    async def open_session(self, name: str) -> "HostSession":
         """Open or reuse a named persistent shell session.
 
         Serialized via a per-name lock with a double-checked-locking
@@ -1368,14 +1381,14 @@ class SessionManager:
             else:
                 assert self._connections is not None
                 match self._connections.term:
-                    case 'ssh':
+                    case "ssh":
                         ssh_conn = await self._connections.ssh()
                         shell_session = SshSession(
                             ssh_conn,
                             command_frame=self._command_frame,
                             init_timeout=self._init_timeout,
                         )
-                    case 'telnet':
+                    case "telnet":
                         user, password = self._connections.credentials
                         client = TelnetClient(
                             self._connections.ip,
@@ -1408,7 +1421,9 @@ class SessionManager:
                             write_chunk_delay=client.options.write_chunk_delay,
                         )
                     case _:
-                        raise ValueError(f'{self._name}: unsupported terminal type "{self._connections.term}"')
+                        raise ValueError(
+                            f'{self._name}: unsupported terminal type "{self._connections.term}"'
+                        )
 
             shell_session._on_output = self._log_output
             self._seed_user(shell_session)

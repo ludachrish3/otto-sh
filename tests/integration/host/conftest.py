@@ -11,9 +11,6 @@ The same wiring is done in :mod:`tests.unit.host.test_hop_integration` for
 multi-hop UnixHost tests.
 """
 
-import sys
-from pathlib import Path
-
 import pytest
 
 from otto.configmodule.lab import Lab
@@ -21,12 +18,6 @@ from otto.context import OttoContext, set_context
 from otto.host.command_frame import register_command_frame
 from otto.host.telnet import abort_console_transports
 from otto.host.unix_host import UnixHost
-from tests.conftest import (
-    _ZEPHYR_BACKEND_NE,
-    EMBEDDED_BACKENDS,
-    embedded_param_id,
-    host_data,
-)
 from tests._fixtures._console_lock import console_access
 
 # Make repo1's custom Zephyr 2.7 dialect resolvable by the storage factory.
@@ -39,9 +30,15 @@ from tests._fixtures._console_lock import console_access
 # SUT repos depend on for this frame), adding its dir to the path the way
 # ``Repo.add_libs_to_pythonpath`` does at config-load time.
 from tests._fixtures.paths import ensure_custom_hosts_on_path
+from tests.conftest import (
+    _ZEPHYR_BACKEND_NE,
+    EMBEDDED_BACKENDS,
+    embedded_param_id,
+    host_data,
+)
 
 ensure_custom_hosts_on_path()
-from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame  # noqa: E402
+from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame
 
 register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)
 
@@ -66,16 +63,18 @@ def _install_integration_lab() -> None:
     lab = Lab(name="integration_host")
     for ne in ("carrot", "tomato", "pepper", "basil"):
         data = host_data(ne)
-        lab.add_host(UnixHost(
-            ip=data["ip"],
-            element=data["element"],
-            creds=data["creds"],
-            board=data.get("board"),
-            is_virtual=data.get("is_virtual", False),
-            term=data.get("term", "ssh"),
-            transfer=data.get("transfer", "scp"),
-            log=False,
-        ))
+        lab.add_host(
+            UnixHost(
+                ip=data["ip"],
+                element=data["element"],
+                creds=data["creds"],
+                board=data.get("board"),
+                is_virtual=data.get("is_virtual", False),
+                term=data.get("term", "ssh"),
+                transfer=data.get("transfer", "scp"),
+                log=False,
+            )
+        )
     set_context(OttoContext(lab=lab))
 
 
@@ -93,6 +92,7 @@ def _load_lab():
     module context, so the module-scoped install needs its own restore.
     """
     from otto.context import _active
+
     snapshot = _active.get()
     _install_integration_lab()
     yield
@@ -194,10 +194,7 @@ def _referenced_backends(item: pytest.Item) -> list[str]:
     callspec = getattr(item, "callspec", None)
     if callspec is None:
         return []
-    seen = {
-        v for v in callspec.params.values()
-        if isinstance(v, str) and v in _ZEPHYR_BACKEND_NE
-    }
+    seen = {v for v in callspec.params.values() if isinstance(v, str) and v in _ZEPHYR_BACKEND_NE}
     return sorted(seen)
 
 
@@ -228,6 +225,7 @@ def _referenced_backends(item: pytest.Item) -> list[str]:
 # transport a pytest-timeout'd test left half-open (abort_console_transports),
 # so one timed-out fan-out test can't wedge the bed for the rest of the run.
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _console_access_lock(request: pytest.FixtureRequest, tmp_path_factory):
@@ -321,6 +319,4 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:
     )
     for backend, reason in _BED_HEALTH.items():
         terminalreporter.write_line(f"  - {embedded_param_id(backend)}: {reason}")
-    terminalreporter.write_line(
-        "Recover: `make qemu-restart`, then re-run."
-    )
+    terminalreporter.write_line("Recover: `make qemu-restart`, then re-run.")

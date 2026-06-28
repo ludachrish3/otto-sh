@@ -11,16 +11,16 @@ from typing import TYPE_CHECKING
 # but the standard Unix convention is os.pathsep (':' on Linux). Accept both
 # so users can use whichever feels natural — and so callers building lists
 # via os.pathsep.join(...) work without surprises.
-_PATH_LIST_SEP = re.compile(rf'[,{re.escape(os.pathsep)}]')
+_PATH_LIST_SEP = re.compile(rf"[,{re.escape(os.pathsep)}]")
 
-LAB_ENV_VAR           = 'OTTO_LAB'
-SUT_DIRS_ENV_VAR      = 'OTTO_SUT_DIRS'
-FIELD_PRODUCT_ENV_VAR = 'OTTO_FIELD_PRODUCTS'
-LOG_DAYS_ENV_VAR      = 'OTTO_LOG_DAYS'
-LOG_LVL_ENV_VAR       = 'OTTO_LOG_LEVEL'
-LOG_RICH_ENV_VAR      = 'OTTO_LOG_RICH'
-XDIR_ENV_VAR          = 'OTTO_XDIR'
-FIELD_DEFAULT_ENV_VAR = 'OTTO_FIELD_DEFAULT'
+LAB_ENV_VAR = "OTTO_LAB"
+SUT_DIRS_ENV_VAR = "OTTO_SUT_DIRS"
+FIELD_PRODUCT_ENV_VAR = "OTTO_FIELD_PRODUCTS"
+LOG_DAYS_ENV_VAR = "OTTO_LOG_DAYS"
+LOG_LVL_ENV_VAR = "OTTO_LOG_LEVEL"
+LOG_RICH_ENV_VAR = "OTTO_LOG_RICH"
+XDIR_ENV_VAR = "OTTO_XDIR"
+FIELD_DEFAULT_ENV_VAR = "OTTO_FIELD_DEFAULT"
 
 DEFAULT_LOG_RETENTION_DAYS = 30
 
@@ -46,7 +46,7 @@ def validate_path(
     if not must_exist or path.exists():
         return
 
-    raise FileNotFoundError(f'Path {path} does not exist')
+    raise FileNotFoundError(f"Path {path} does not exist")
 
 
 def load_otto_env() -> "OttoEnvSettings":

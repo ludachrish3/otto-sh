@@ -4,26 +4,38 @@ from scripts.stability_campaign import build_tiers, classify_problem, main, summ
 
 
 def test_classifies_async_leak_from_text():
-    assert classify_problem(
-        "tests.x::test_a", "multiple unraisable exception warnings", ""
-    ) == "leak"
-    assert classify_problem(
-        "tests.x::test_b", "", "ResourceWarning: unclosed event loop <_UnixSelectorEventLoop ...>"
-    ) == "leak"
+    assert (
+        classify_problem("tests.x::test_a", "multiple unraisable exception warnings", "") == "leak"
+    )
+    assert (
+        classify_problem(
+            "tests.x::test_b",
+            "",
+            "ResourceWarning: unclosed event loop <_UnixSelectorEventLoop ...>",
+        )
+        == "leak"
+    )
 
 
 def test_classifies_x86_telnet_wedge():
     assert classify_problem("tests.x::test_c", "console wedged", "") == "wedge"
-    assert classify_problem(
-        "tests.x::test_d", "ConnectionError: shell never became ready after open", ""
-    ) == "wedge"
+    assert (
+        classify_problem(
+            "tests.x::test_d", "ConnectionError: shell never became ready after open", ""
+        )
+        == "wedge"
+    )
 
 
 def test_classifies_known_inner_pytest_flake():
-    assert classify_problem(
-        "tests.unit.suite.test_otto_suite.TestOttoTestDir::test_test_dir_created_per_test",
-        "AssertionError", "",
-    ) == "flake"
+    assert (
+        classify_problem(
+            "tests.unit.suite.test_otto_suite.TestOttoTestDir::test_test_dir_created_per_test",
+            "AssertionError",
+            "",
+        )
+        == "flake"
+    )
 
 
 def test_anything_else_is_real():
@@ -41,9 +53,7 @@ def _write_junit(path: Path, cases: list[tuple[str, str, str]]) -> None:
             )
         else:
             body.append(f'<testcase classname="{classname}" name="{name}"/>')
-    path.write_text(
-        f'<testsuite tests="{len(cases)}">{"".join(body)}</testsuite>'
-    )
+    path.write_text(f'<testsuite tests="{len(cases)}">{"".join(body)}</testsuite>')
 
 
 def test_summarize_green_when_no_problems(tmp_path):
@@ -56,11 +66,14 @@ def test_summarize_green_when_no_problems(tmp_path):
 
 def test_summarize_buckets_and_not_green(tmp_path):
     p = tmp_path / "dirty.xml"
-    _write_junit(p, [
-        ("tests.x", "test_real", "AssertionError: boom"),
-        ("tests.y", "test_leak", "multiple unraisable exception warnings"),
-        ("tests.z", "test_wedge", "console wedged"),
-    ])
+    _write_junit(
+        p,
+        [
+            ("tests.x", "test_real", "AssertionError: boom"),
+            ("tests.y", "test_leak", "multiple unraisable exception warnings"),
+            ("tests.z", "test_wedge", "console wedged"),
+        ],
+    )
     report = summarize_stage([p])
     assert report.counts == {"leak": 1, "wedge": 1, "flake": 0, "real": 1}
     assert report.total == 3
@@ -71,8 +84,13 @@ def test_build_tiers_threads_count():
     count = 3
     tiers = build_tiers(count=count, breadth=False)
     names = {t.name for t in tiers}
-    assert {"unit", "full-deep", "concurrency", "integration-stability",
-            "embedded-contract"} <= names
+    assert {
+        "unit",
+        "full-deep",
+        "concurrency",
+        "integration-stability",
+        "embedded-contract",
+    } <= names
     for t in tiers:
         assert (f"--count={count}" in t.argv) or (f"COUNT={count}" in t.argv), t.name
 
@@ -104,13 +122,17 @@ def test_dry_run_prints_each_tier_command(capsys):
 
 def test_run_exit_code_reflects_green_vs_dirty(tmp_path, monkeypatch):
     import scripts.stability_campaign as sc
-    clean = tmp_path / "clean.xml"; _write_junit(clean, [("t", "ok", "")])
-    dirty = tmp_path / "dirty.xml"; _write_junit(dirty, [("t", "bad", "AssertionError: x")])
+
+    clean = tmp_path / "clean.xml"
+    _write_junit(clean, [("t", "ok", "")])
+    dirty = tmp_path / "dirty.xml"
+    _write_junit(dirty, [("t", "bad", "AssertionError: x")])
     monkeypatch.setattr(sc, "_run_tier", lambda tier: None)
 
     def make_tiers(target):
         def _b(count, *, breadth):
             return [sc.Tier(name="fake", argv=["true"], junit=[str(target)])]
+
         return _b
 
     monkeypatch.setattr(sc, "build_tiers", make_tiers(clean))
@@ -121,10 +143,12 @@ def test_run_exit_code_reflects_green_vs_dirty(tmp_path, monkeypatch):
 
 def test_run_dirty_when_junit_missing(tmp_path, monkeypatch):
     import scripts.stability_campaign as sc
+
     missing = tmp_path / "nope.xml"  # never created
     monkeypatch.setattr(sc, "_run_tier", lambda tier: None)
     monkeypatch.setattr(
-        sc, "build_tiers",
+        sc,
+        "build_tiers",
         lambda count, *, breadth: [sc.Tier("fake", ["true"], [str(missing)])],
     )
     assert sc.main(["run", "--count", "1"]) == 1  # missing report => not green
@@ -132,11 +156,14 @@ def test_run_dirty_when_junit_missing(tmp_path, monkeypatch):
 
 def test_escalate_stops_on_first_dirty(tmp_path, monkeypatch):
     import scripts.stability_campaign as sc
-    dirty = tmp_path / "d.xml"; _write_junit(dirty, [("t", "bad", "AssertionError")])
+
+    dirty = tmp_path / "d.xml"
+    _write_junit(dirty, [("t", "bad", "AssertionError")])
     ran = []
     monkeypatch.setattr(sc, "_run_tier", lambda tier: ran.append(tier.name))
     monkeypatch.setattr(
-        sc, "build_tiers",
+        sc,
+        "build_tiers",
         lambda count, *, breadth: [sc.Tier("fake", ["true"], [str(dirty)])],
     )
     assert sc.main(["escalate"]) == 1

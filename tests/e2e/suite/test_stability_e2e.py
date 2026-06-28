@@ -96,9 +96,7 @@ class TestStabilityE2E:
         )
 
         # Stability report should show all iterations passed
-        assert "STABLE" in result.stdout, (
-            f"Expected STABLE in stability report:\n{result.stdout}"
-        )
+        assert "STABLE" in result.stdout, f"Expected STABLE in stability report:\n{result.stdout}"
 
     def test_single_run_baseline(self, tmp_path: Path):
         """Sanity check: TestStabilityFixture works without stability mode."""

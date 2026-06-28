@@ -17,7 +17,6 @@ Run with::
     uv run pytest tests/unit/cov/ -m integration
 """
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -28,7 +27,6 @@ from otto.coverage.reporter import CoverageReporter, discover_gcda_dirs
 from otto.host.local_host import LocalHost
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
-
 from tests.conftest import active_context
 
 
@@ -46,7 +44,6 @@ def configured_hosts(*hosts):
 PRODUCT_DIR = Path(__file__).resolve().parents[2] / "repo1" / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
 GCDA_REMOTE_DIR = "/var/coverage/product"
-
 
 
 def _gcov_prefix_strip() -> int:
@@ -131,9 +128,7 @@ class TestCoverageFetch:
             # Verify .gcda files exist
             for host_id, host_dir in host_dirs.items():
                 gcda_files = list(host_dir.glob("**/*.gcda"))
-                assert len(gcda_files) > 0, (
-                    f"No .gcda files found for host {host_id}"
-                )
+                assert len(gcda_files) > 0, f"No .gcda files found for host {host_id}"
 
         finally:
             for host in hosts:

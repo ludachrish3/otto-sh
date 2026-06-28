@@ -44,6 +44,7 @@ class _FakeBackend:
 
 # ── whoami ─────────────────────────────────────────────────────────────────────
 
+
 def test_whoami_exits_1_when_no_identity(capsys):
     res = ReservationState(backend=None, identity=None, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
@@ -83,8 +84,11 @@ def test_whoami_prints_identity_when_configured(capsys):
 
 # ── check ──────────────────────────────────────────────────────────────────────
 
+
 def test_check_exits_1_when_not_configured(capsys):
-    ctx = _make_ctx({"otto_reservation": ReservationState(backend=None, identity=None, skip_check=False)})
+    ctx = _make_ctx(
+        {"otto_reservation": ReservationState(backend=None, identity=None, skip_check=False)}
+    )
     with pytest.raises(_Exit) as exc:
         check(ctx)
     assert exc.value.exit_code == 1

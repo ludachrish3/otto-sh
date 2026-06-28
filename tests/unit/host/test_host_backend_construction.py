@@ -7,7 +7,12 @@ import pytest
 from otto.host import connections as conn_mod
 from otto.host import transfer as xfer_mod
 from otto.host.connections import ConnectionManager
-from otto.host.transfer import NcFileTransfer, ScpFileTransfer, SftpFileTransfer, register_transfer_backend
+from otto.host.transfer import (
+    NcFileTransfer,
+    ScpFileTransfer,
+    SftpFileTransfer,
+    register_transfer_backend,
+)
 from otto.host.unix_host import UnixHost
 
 
@@ -38,22 +43,33 @@ def test_unix_host_builds_registered_transfer_backend():
 
     xfer_mod._TRANSFER_BACKENDS["recording"] = RecordingTransfer
 
-    h = UnixHost(ip="10.0.0.9", creds={"root": "x"}, element="e",
-                 transfer="recording", valid_transfers=["recording"])
+    h = UnixHost(
+        ip="10.0.0.9",
+        creds={"root": "x"},
+        element="e",
+        transfer="recording",
+        valid_transfers=["recording"],
+    )
     assert isinstance(h._file_transfer, RecordingTransfer)
     assert built["name"] == "recording"
 
 
 def test_connection_factory_override_still_wins():
     """A _connection_factory test double is still used in place of the registry."""
+
     class FakeConnections(ConnectionManager):
         def __init__(self, *args, **kwargs):
             self._name = kwargs.get("name", "fake")
             self._term = kwargs.get("term", "ssh")
             self._hop = None
 
-    h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e",
-                 term="ssh", _connection_factory=FakeConnections)
+    h = UnixHost(
+        ip="10.0.0.1",
+        creds={"root": "x"},
+        element="e",
+        term="ssh",
+        _connection_factory=FakeConnections,
+    )
     assert isinstance(h._connections, FakeConnections)
 
 
@@ -75,8 +91,13 @@ class XmodemTransfer(NcFileTransfer):
 def test_transfer_override_rebuilds_to_custom_backend():
     register_transfer_backend("xmodem", XmodemTransfer)
     # xmodem must be in the menu to be selectable
-    h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e",
-                 valid_transfers=["scp", "xmodem"], transfer="scp")
+    h = UnixHost(
+        ip="10.0.0.1",
+        creds={"root": "x"},
+        element="e",
+        valid_transfers=["scp", "xmodem"],
+        transfer="scp",
+    )
     assert type(h._file_transfer) is ScpFileTransfer  # built-in to start
 
     switched = dataclasses.replace(h, transfer="xmodem")

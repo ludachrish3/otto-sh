@@ -49,9 +49,16 @@ class TestCapture(OttoSuite):
         token = set_context(mock_ctx)
         try:
             exit_code = pytest.main(
-                [str(test_file), "-o", "asyncio_mode=auto",
-                 "-o", "asyncio_default_fixture_loop_scope=function",
-                 "--no-cov", "--override-ini", "addopts="],
+                [
+                    str(test_file),
+                    "-o",
+                    "asyncio_mode=auto",
+                    "-o",
+                    "asyncio_default_fixture_loop_scope=function",
+                    "--no-cov",
+                    "--override-ini",
+                    "addopts=",
+                ],
                 plugins=[OttoPlugin(), OttoOptionsPlugin(opts)],
             )
         finally:

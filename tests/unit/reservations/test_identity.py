@@ -28,7 +28,9 @@ def test_empty_string_treated_as_not_supplied(monkeypatch):
 def test_resolved_identity_is_frozen():
     identity = resolve_username("alice")
     import dataclasses
+
     assert dataclasses.is_dataclass(identity)
     import pytest
+
     with pytest.raises(dataclasses.FrozenInstanceError):
         identity.username = "hacked"  # type: ignore[misc]

@@ -12,12 +12,14 @@ model.  A :class:`CoverageStore` also carries a ``tier_order`` list that
 defines the precedence of tiers for presentation purposes (first =
 highest precedence).
 """
+
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 TIER_SYSTEM = "system"
 """Conventional tier name used by the merged .gcda pipeline.
@@ -197,9 +199,7 @@ class FileRecord:
         hit = sum(1 for l in self.lines.values() if l.hits.is_hit(tier))
         return (hit / len(self.lines)) * 100
 
-    def branch_coverage_pct(
-        self, tier: str | None = None, conservative: bool = True
-    ) -> float:
+    def branch_coverage_pct(self, tier: str | None = None, conservative: bool = True) -> float:
         """Branch coverage percentage.
 
         *conservative=True* (default): denominator is only branches where
@@ -289,14 +289,11 @@ class CoverageStore:
         if all_lines == 0:
             return 0.0
         hit = sum(
-            sum(1 for l in f.lines.values() if l.hits.is_hit(tier))
-            for f in self._files.values()
+            sum(1 for l in f.lines.values() if l.hits.is_hit(tier)) for f in self._files.values()
         )
         return (hit / all_lines) * 100
 
-    def overall_branch_pct(
-        self, tier: str | None = None, conservative: bool = True
-    ) -> float:
+    def overall_branch_pct(self, tier: str | None = None, conservative: bool = True) -> float:
         """Overall branch coverage percentage across all files."""
         all_branches = self._all_branches()
         if not all_branches:

@@ -24,14 +24,14 @@ from otto.monitor.parsers import MetricDataPoint, MetricParser
 class EchoParser(MetricParser):
     """Trivial parser that runs a real shell command via LocalSession."""
 
-    chart = 'Test'
-    y_title = 'Value'
-    unit = ''
-    command = 'echo 42'
+    chart = "Test"
+    y_title = "Value"
+    unit = ""
+    command = "echo 42"
 
     def parse(self, output: str) -> dict[str, MetricDataPoint] | None:
         try:
-            return {'value': MetricDataPoint(float(output.strip()))}
+            return {"value": MetricDataPoint(float(output.strip()))}
         except ValueError:
             return None
 
@@ -42,7 +42,6 @@ def _local_session(host: LocalHost):
 
 
 class TestCollectorShutdown:
-
     @pytest.mark.asyncio
     async def test_close_releases_local_session_subprocess(self):
         """collector.close() must terminate the bash subprocess LocalSession
@@ -63,16 +62,14 @@ class TestCollectorShutdown:
         await task
 
         session = _local_session(host)
-        assert session is not None, 'LocalSession was never opened during collection'
-        assert session._process is not None, (
-            'Expected an active bash subprocess before close()'
-        )
+        assert session is not None, "LocalSession was never opened during collection"
+        assert session._process is not None, "Expected an active bash subprocess before close()"
 
         await collector.close()
 
         assert session._process is None, (
-            'LocalSession._process should be None after collector.close() — '
-            'otherwise its subprocess transport will be GC\'d after loop close '
+            "LocalSession._process should be None after collector.close() — "
+            "otherwise its subprocess transport will be GC'd after loop close "
             'and raise "Event loop is closed".'
         )
 
@@ -113,8 +110,8 @@ class TestCollectorShutdown:
         )
 
         old_session = _local_session(host)
-        assert old_session is not None, 'Session was never created'
-        assert old_session._process is not None, 'Session has no subprocess'
+        assert old_session is not None, "Session was never created"
+        assert old_session._process is not None, "Session has no subprocess"
 
         # Simulate session death (what _recover_session does on failure)
         old_session._alive = False
@@ -126,14 +123,12 @@ class TestCollectorShutdown:
         )
 
         new_session = _local_session(host)
-        assert new_session is not old_session, (
-            '_ensure_session should have created a new session'
-        )
+        assert new_session is not old_session, "_ensure_session should have created a new session"
 
         # The critical assertion: old session's subprocess must be closed
         assert old_session._process is None, (
-            'Old session._process should be None after replacement — '
-            'otherwise its subprocess transport will be GC\'d after loop close '
+            "Old session._process should be None after replacement — "
+            "otherwise its subprocess transport will be GC'd after loop close "
             'and raise "Event loop is closed".'
         )
 

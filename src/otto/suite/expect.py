@@ -10,9 +10,9 @@ Quick start::
     from otto.suite.expect import ExpectCollector
 
     collector = ExpectCollector()
-    collector.expect(1 == 1)          # passes — no-op
-    collector.expect(2 + 2 == 5)      # fails — recorded
-    collector.raise_if_failures()     # raises AssertionError with report
+    collector.expect(1 == 1)  # passes — no-op
+    collector.expect(2 + 2 == 5)  # fails — recorded
+    collector.raise_if_failures()  # raises AssertionError with report
 
 Or use the module-level convenience function::
 
@@ -86,30 +86,30 @@ class ExpectCollector:
         frame_info = inspect.stack(context=1)[_stack_offset]
         filename = os.path.basename(frame_info.filename)
         lineno = frame_info.lineno
-        source_line = (frame_info.code_context or [''])[0].strip()
+        source_line = (frame_info.code_context or [""])[0].strip()
 
         # Build a summary of the caller's local variables
         caller_locals = frame_info.frame.f_locals
-        locals_summary = ', '.join(
-            f'{k} = {v!r}'
+        locals_summary = ", ".join(
+            f"{k} = {v!r}"
             for k, v in caller_locals.items()
-            if not k.startswith('_') and k != 'self'
+            if not k.startswith("_") and k != "self"
         )
 
         # Assemble the failure report
-        header = f'{filename}:{lineno}'
-        parts = [header, f'  {source_line}']
+        header = f"{filename}:{lineno}"
+        parts = [header, f"  {source_line}"]
         if msg:
-            parts.append(f'  Message: {msg}')
+            parts.append(f"  Message: {msg}")
         if locals_summary:
-            parts.append(f'  Locals: {locals_summary}')
-        report = '\n'.join(parts)
+            parts.append(f"  Locals: {locals_summary}")
+        report = "\n".join(parts)
 
         self.failures.append(report)
         if self.logger is not None:
-            log_msg = f'[bold yellow]EXPECT FAILED[/bold yellow]  {header}\n  {source_line}'
+            log_msg = f"[bold yellow]EXPECT FAILED[/bold yellow]  {header}\n  {source_line}"
             if msg:
-                log_msg += f'\n  Message: {msg}'
+                log_msg += f"\n  Message: {msg}"
             self.logger.warning(log_msg)
 
     def reset(self) -> None:
@@ -123,10 +123,8 @@ class ExpectCollector:
         This is the recommended way to surface failures outside of pytest.
         """
         if self.failures:
-            summary = '\n\n'.join(self.failures)
-            raise AssertionError(
-                f'{len(self.failures)} expectation(s) failed:\n\n{summary}'
-            )
+            summary = "\n\n".join(self.failures)
+            raise AssertionError(f"{len(self.failures)} expectation(s) failed:\n\n{summary}")
 
 
 def expect(

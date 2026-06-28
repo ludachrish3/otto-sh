@@ -17,11 +17,11 @@ import typer
 from rich import print as rprint
 
 schema_app = typer.Typer(
-    name='schema',
+    name="schema",
     no_args_is_help=True,
-    help='Export JSON Schema for hosts.json / settings.toml / reservations.',
+    help="Export JSON Schema for hosts.json / settings.toml / reservations.",
     context_settings={
-        'help_option_names': ['-h', '--help'],
+        "help_option_names": ["-h", "--help"],
     },
 )
 
@@ -31,19 +31,19 @@ def schema_callback(ctx: typer.Context) -> None:
     """Export JSON Schema for hosts.json / settings.toml / reservations."""
 
 
-@schema_app.command('export')
+@schema_app.command("export")
 def export(
     out: Annotated[
         Path,
-        typer.Option('--out', '-o', help='Directory to write *.schema.json into.'),
-    ] = Path('schemas'),
+        typer.Option("--out", "-o", help="Directory to write *.schema.json into."),
+    ] = Path("schemas"),
     builtins_only: Annotated[
         bool,
         typer.Option(
-            '--builtins-only',
+            "--builtins-only",
             help=(
-                'Emit only the built-in host types (unix / embedded / zephyr), '
-                'excluding any custom types registered via init modules.'
+                "Emit only the built-in host types (unix / embedded / zephyr), "
+                "excluding any custom types registered via init modules."
             ),
         ),
     ] = False,
@@ -59,7 +59,7 @@ def export(
 
     out.mkdir(parents=True, exist_ok=True)
     for stem, doc in build_schemas(builtins_only=builtins_only).items():
-        path = out / f'{stem}.schema.json'
-        path.write_text(json.dumps(doc, indent=2) + '\n')
-        rprint(f'  wrote [cyan]{path.name}[/cyan]')
-    rprint(f'[green]Wrote schemas to[/green] {out}')
+        path = out / f"{stem}.schema.json"
+        path.write_text(json.dumps(doc, indent=2) + "\n")
+        rprint(f"  wrote [cyan]{path.name}[/cyan]")
+    rprint(f"[green]Wrote schemas to[/green] {out}")

@@ -15,7 +15,6 @@ import fcntl
 import json
 import logging
 import os
-import sqlite3
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -34,7 +33,7 @@ from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metri
 
 if TYPE_CHECKING:
     from ..host.remote_host import RemoteHost
-    from ..utils import CommandStatus, Status
+    from ..utils import CommandStatus
 
 
 class MetricView(Protocol):
@@ -46,13 +45,14 @@ class MetricView(Protocol):
     or an SNMP OID.
     """
 
-    chart:     str
-    y_title:   str
-    unit:      str
-    tab:       str
+    chart: str
+    y_title: str
+    unit: str
+    tab: str
     tab_label: str
 
-logger = logging.getLogger('otto')
+
+logger = logging.getLogger("otto")
 
 
 @dataclass
@@ -66,7 +66,7 @@ class MonitorTarget:
             host=gpu_host,
             parsers={
                 **DEFAULT_PARSERS,
-                'nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits': NvidiaGpuParser(),
+                "nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits": NvidiaGpuParser(),
             },
         )
 
@@ -80,10 +80,10 @@ class MonitorTarget:
     separate from command execution.
     """
 
-    host:       'RemoteHost'
-    parsers:    dict[str, MetricParser] = field(default_factory=lambda: copy.deepcopy(DEFAULT_PARSERS))
+    host: "RemoteHost"
+    parsers: dict[str, MetricParser] = field(default_factory=lambda: copy.deepcopy(DEFAULT_PARSERS))
     core_count: int = field(default=1)
-    snmp:       SnmpSource | None = field(default=None)
+    snmp: SnmpSource | None = field(default=None)
 
 
 _SCHEMA = """
@@ -123,18 +123,16 @@ class MetricCollector:
 
     def __init__(
         self,
-        hosts: 'Sequence[RemoteHost] | None' = None,
+        hosts: "Sequence[RemoteHost] | None" = None,
         parsers: list[MetricParser] | None = None,
         db_path: str | None = None,
-        targets: 'list[MonitorTarget] | None' = None,
+        targets: "list[MonitorTarget] | None" = None,
     ) -> None:
         if targets is not None:
             self._targets = targets
         else:
             parser_dict: dict[str, MetricParser] = (
-                {p.command: p for p in parsers}
-                if parsers is not None
-                else dict(DEFAULT_PARSERS)
+                {p.command: p for p in parsers} if parsers is not None else dict(DEFAULT_PARSERS)
             )
             self._targets = [MonitorTarget(host=h, parsers=parser_dict) for h in (hosts or [])]
 
@@ -183,7 +181,7 @@ class MetricCollector:
         # SSE subscribers: one asyncio.Queue per connected dashboard tab.
         # _publish() uses put_nowait() — safe because collection and the SSE
         # route handlers all run in the same event loop.
-        self._subscribers: list['asyncio.Queue[dict[str, Any]]'] = []
+        self._subscribers: list["asyncio.Queue[dict[str, Any]]"] = []
 
         # Persistent async DB connection — opened by init_db(), closed by close_db().
         self._db_conn: aiosqlite.Connection | None = None
@@ -205,7 +203,7 @@ class MetricCollector:
 
         # Acquire an exclusive file lock so two live collectors can't
         # write to the same database simultaneously.
-        lock_path = self._db_path + '.lock'
+        lock_path = self._db_path + ".lock"
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -217,13 +215,14 @@ class MetricCollector:
             )
 
         net_fstype = network_fs_type(self._db_path)
-        journal_mode = 'DELETE' if net_fstype else 'WAL'
+        journal_mode = "DELETE" if net_fstype else "WAL"
         if net_fstype:
             logger.debug(
                 "Monitor DB '%s' is on a network filesystem (%s); using "
                 "journal_mode=DELETE instead of WAL (WAL is unsupported over "
                 "network filesystems).",
-                self._db_path, net_fstype,
+                self._db_path,
+                net_fstype,
             )
             logger.debug(
                 "Monitor DB lock guard on '%s' is same-host only on network "
@@ -233,13 +232,13 @@ class MetricCollector:
             )
 
         conn = await aiosqlite.connect(self._db_path)
-        await conn.execute(f'PRAGMA journal_mode={journal_mode}')
-        await conn.execute('PRAGMA busy_timeout=5000')
+        await conn.execute(f"PRAGMA journal_mode={journal_mode}")
+        await conn.execute("PRAGMA busy_timeout=5000")
         await conn.executescript(_SCHEMA)
         # Migrate: add end_ts column if the events table predates span support
-        col_names = {row[1] async for row in await conn.execute('PRAGMA table_info(events)')}
-        if 'end_ts' not in col_names:
-            await conn.execute('ALTER TABLE events ADD COLUMN end_ts TEXT')
+        col_names = {row[1] async for row in await conn.execute("PRAGMA table_info(events)")}
+        if "end_ts" not in col_names:
+            await conn.execute("ALTER TABLE events ADD COLUMN end_ts TEXT")
         await conn.commit()
         self._db_conn = conn
 
@@ -270,7 +269,7 @@ class MetricCollector:
         if not self._db_conn:
             return
         await self._db_conn.execute(
-            'INSERT INTO metrics (ts, host, label, value) VALUES (?, ?, ?, ?)',
+            "INSERT INTO metrics (ts, host, label, value) VALUES (?, ?, ?, ?)",
             (ts.isoformat(), host, label, value),
         )
         await self._db_conn.commit()
@@ -280,11 +279,14 @@ class MetricCollector:
         if not self._db_conn:
             return 0
         cursor = await self._db_conn.execute(
-            'INSERT INTO events (ts, end_ts, label, source, color, dash) VALUES (?, ?, ?, ?, ?, ?)',
+            "INSERT INTO events (ts, end_ts, label, source, color, dash) VALUES (?, ?, ?, ?, ?, ?)",
             (
                 event.timestamp.isoformat(),
                 event.end_timestamp.isoformat() if event.end_timestamp else None,
-                event.label, event.source, event.color, event.dash,
+                event.label,
+                event.source,
+                event.color,
+                event.dash,
             ),
         )
         await self._db_conn.commit()
@@ -294,16 +296,18 @@ class MetricCollector:
     async def _db_delete_event(self, event_id: int) -> None:
         if not self._db_conn:
             return
-        await self._db_conn.execute('DELETE FROM events WHERE id = ?', (event_id,))
+        await self._db_conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
         await self._db_conn.commit()
 
     async def _db_update_event(self, event: MonitorEvent) -> None:
         if not self._db_conn:
             return
         await self._db_conn.execute(
-            'UPDATE events SET label = ?, color = ?, dash = ?, end_ts = ? WHERE id = ?',
+            "UPDATE events SET label = ?, color = ?, dash = ?, end_ts = ? WHERE id = ?",
             (
-                event.label, event.color, event.dash,
+                event.label,
+                event.color,
+                event.dash,
                 event.end_timestamp.isoformat() if event.end_timestamp else None,
                 event.id,
             ),
@@ -318,7 +322,7 @@ class MetricCollector:
         self,
         target: MonitorTarget,
         timeout: float,
-    ) -> 'RunResult | list[tuple[str, MetricDataPoint, SnmpMetric]] | None':
+    ) -> "RunResult | list[tuple[str, MetricDataPoint, SnmpMetric]] | None":
         """Collect metrics from a single host with a per-tick timeout.
 
         SNMP targets GET their OIDs (bounded by ``timeout`` so a stuck relay is
@@ -331,7 +335,8 @@ class MetricCollector:
         """
         if target.snmp is not None:
             values = await asyncio.wait_for(
-                target.snmp.client.get(target.snmp.oids), timeout,
+                target.snmp.client.get(target.snmp.oids),
+                timeout,
             )
             return points_from_values(values)
         return await target.host.run(
@@ -339,7 +344,8 @@ class MetricCollector:
             timeout=timeout,
         )
 
-    async def run(self,
+    async def run(
+        self,
         interval: timedelta = timedelta(seconds=5),
         duration: timedelta | None = None,
     ) -> None:
@@ -359,7 +365,7 @@ class MetricCollector:
             duration: Optional total run time.  ``None`` means run forever.
         """
         if not self._targets:
-            raise RuntimeError('Cannot start live collection: no hosts provided')
+            raise RuntimeError("Cannot start live collection: no hosts provided")
 
         await self.init_db()
 
@@ -370,7 +376,7 @@ class MetricCollector:
         # core_count stays 1 and the SNMP descriptors don't use it.
         shell_targets = [t for t in self._targets if t.snmp is None]
         setup_results = await asyncio.gather(
-            *[target.host.run(['grep -c ^processor /proc/cpuinfo']) for target in shell_targets],
+            *[target.host.run(["grep -c ^processor /proc/cpuinfo"]) for target in shell_targets],
             return_exceptions=True,
         )
         for target, result in zip(shell_targets, setup_results):
@@ -382,7 +388,7 @@ class MetricCollector:
                         pass  # keep default of 1
                 case BaseException():
                     logger.warning(
-                        'Monitor: could not determine core count for %s, defaulting to 1',
+                        "Monitor: could not determine core count for %s, defaulting to 1",
                         target.host.name,
                     )
         for target in shell_targets:
@@ -401,11 +407,15 @@ class MetricCollector:
         for target, result in zip(self._targets, initial_results):
             match result:
                 case RunResult(statuses=cmd_statuses):
-                    await self._process_host_results(target.host.name, ts, cmd_statuses, target.parsers)
+                    await self._process_host_results(
+                        target.host.name, ts, cmd_statuses, target.parsers
+                    )
                 case list():
                     await self._process_snmp_results(target.host.name, ts, result)
                 case BaseException():
-                    logger.warning('Monitor: error collecting from %s: %s', target.host.name, result)
+                    logger.warning(
+                        "Monitor: error collecting from %s: %s", target.host.name, result
+                    )
                 case _:
                     continue
 
@@ -421,18 +431,21 @@ class MetricCollector:
             for target, result in zip(self._targets, results[1:]):
                 match result:
                     case RunResult(statuses=cmd_statuses):
-                        await self._process_host_results(target.host.name, ts, cmd_statuses, target.parsers)
+                        await self._process_host_results(
+                            target.host.name, ts, cmd_statuses, target.parsers
+                        )
 
                     case list():
                         await self._process_snmp_results(target.host.name, ts, result)
 
                     case BaseException():
-                        logger.warning('Monitor: error collecting from %s: %s', target.host.name, result)
+                        logger.warning(
+                            "Monitor: error collecting from %s: %s", target.host.name, result
+                        )
                         continue
 
                     case _:
                         continue
-
 
     async def _record_point(
         self,
@@ -447,7 +460,7 @@ class MetricCollector:
         Shared by the shell and SNMP collection paths — *view* supplies the
         chart/unit/title presentation regardless of where the point came from.
         """
-        key = f'{host_name}/{label}'
+        key = f"{host_name}/{label}"
         if key not in self._series:
             self._series[key] = deque()
         # Hot path: model_construct skips validation (the values are otto's own).
@@ -455,25 +468,25 @@ class MetricCollector:
         self._chart_map[label] = view.chart
         await self._db_write_point(ts, host_name, label, dp.value)
         msg: dict[str, Any] = {
-            'type':    'metric',
-            'host':    host_name,
-            'label':   label,
-            'chart':   view.chart,
-            'y_title': view.y_title,
-            'unit':    view.unit,
-            'key':     key,
-            'ts':      ts.isoformat(),
-            'value':   dp.value,
+            "type": "metric",
+            "host": host_name,
+            "label": label,
+            "chart": view.chart,
+            "y_title": view.y_title,
+            "unit": view.unit,
+            "key": key,
+            "ts": ts.isoformat(),
+            "value": dp.value,
         }
         if dp.meta is not None:
-            msg['meta'] = dp.meta
+            msg["meta"] = dp.meta
         self._publish(msg)
 
     async def _process_host_results(
         self,
         host_name: str,
         ts: datetime,
-        cmd_statuses: 'list[CommandStatus]',
+        cmd_statuses: "list[CommandStatus]",
         parsers: dict[str, MetricParser],
     ) -> None:
         for cmd_status in cmd_statuses:
@@ -489,7 +502,7 @@ class MetricCollector:
         self,
         host_name: str,
         ts: datetime,
-        points: 'list[tuple[str, MetricDataPoint, SnmpMetric]]',
+        points: "list[tuple[str, MetricDataPoint, SnmpMetric]]",
     ) -> None:
         for label, dp, view in points:
             await self._record_point(host_name, ts, label, dp, view)
@@ -502,9 +515,9 @@ class MetricCollector:
         self,
         label: str,
         timestamp: datetime | None = None,
-        color: str = '#888888',
-        dash: str = 'dash',
-        source: str = 'manual',
+        color: str = "#888888",
+        dash: str = "dash",
+        source: str = "manual",
         end_timestamp: datetime | None = None,
     ) -> MonitorEvent:
         """Record a labeled event and push it to all dashboard subscribers."""
@@ -517,10 +530,10 @@ class MetricCollector:
             end_timestamp=end_timestamp,
         )
         rowid = await self._db_write_event(event)
-        event.id = rowid if rowid else self._next_event_id
+        event.id = rowid or self._next_event_id
         self._next_event_id += 1
         self._events.append(event)
-        self._publish({'type': 'event', **event.to_dict()})
+        self._publish({"type": "event", **event.to_dict()})
         return event
 
     async def delete_event(self, event_id: int) -> bool:
@@ -529,7 +542,7 @@ class MetricCollector:
             if ev.id == event_id:
                 self._events.pop(i)
                 await self._db_delete_event(event_id)
-                self._publish({'type': 'event_deleted', 'id': event_id})
+                self._publish({"type": "event_deleted", "id": event_id})
                 return True
         return False
 
@@ -540,16 +553,16 @@ class MetricCollector:
         color: str,
         dash: str,
         end_timestamp: datetime | None = None,
-    ) -> 'MonitorEvent | None':
+    ) -> "MonitorEvent | None":
         """Update an existing event's label, color, dash, and end_timestamp. Returns the updated event or None."""
         for ev in self._events:
             if ev.id == event_id:
-                ev.label         = label
-                ev.color         = color
-                ev.dash          = dash
+                ev.label = label
+                ev.color = color
+                ev.dash = dash
                 ev.end_timestamp = end_timestamp
                 await self._db_update_event(ev)
-                self._publish({'type': 'event_updated', **ev.to_dict()})
+                self._publish({"type": "event_updated", **ev.to_dict()})
                 return ev
         return None
 
@@ -581,10 +594,7 @@ class MetricCollector:
     def get_meta(self) -> dict[str, Any]:
         """Return metadata for the dashboard (host names, metric labels/units, tabs)."""
         # Derive host names from series keys (all series, including proc)
-        hosts = sorted({
-            key.split('/')[0] for key in self._series
-            if '/' in key
-        })
+        hosts = sorted({key.split("/")[0] for key in self._series if "/" in key})
         # Fall back to the list of live hosts if no data has arrived yet
         if not hosts and self._hosts:
             hosts = [h.name for h in self._hosts]
@@ -593,25 +603,27 @@ class MetricCollector:
         # descriptors), preserving first-encountered tab order.
         tabs_map: dict[str, dict[str, Any]] = {}
         for v in self._views:
-            tab_id    = getattr(v, 'tab',       'metrics')
-            tab_label = getattr(v, 'tab_label', 'Metrics')
+            tab_id = getattr(v, "tab", "metrics")
+            tab_label = getattr(v, "tab_label", "Metrics")
             if tab_id not in tabs_map:
-                tabs_map[tab_id] = {'id': tab_id, 'label': tab_label, 'metrics': []}
-            tabs_map[tab_id]['metrics'].append(v.chart)
+                tabs_map[tab_id] = {"id": tab_id, "label": tab_label, "metrics": []}
+            tabs_map[tab_id]["metrics"].append(v.chart)
 
         result: dict[str, Any] = {
-            'hosts': hosts,
-            'live':  bool(self._hosts),   # False when loaded from --file (no live collection)
-            'metrics': [
+            "hosts": hosts,
+            "live": bool(self._hosts),  # False when loaded from --file (no live collection)
+            "metrics": [
                 {
-                    'label': v.chart, 'y_title': v.y_title, 'unit': v.unit,
+                    "label": v.chart,
+                    "y_title": v.y_title,
+                    "unit": v.unit,
                     # Shell views key off the command; SNMP views off the OID.
-                    'command': getattr(v, 'command', None) or getattr(v, 'oid', ''),
-                    'chart': v.chart,
+                    "command": getattr(v, "command", None) or getattr(v, "oid", ""),
+                    "chart": v.chart,
                 }
                 for v in self._views
             ],
-            'tabs': list(tabs_map.values()),
+            "tabs": list(tabs_map.values()),
         }
         return result
 
@@ -619,13 +631,13 @@ class MetricCollector:
     # SSE pub/sub
     # ------------------------------------------------------------------
 
-    def subscribe(self) -> 'asyncio.Queue[dict[str, Any]]':
+    def subscribe(self) -> "asyncio.Queue[dict[str, Any]]":
         """Register a new SSE subscriber and return its queue."""
         q: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._subscribers.append(q)
         return q
 
-    def unsubscribe(self, q: 'asyncio.Queue[dict[str, Any]]') -> None:
+    def unsubscribe(self, q: "asyncio.Queue[dict[str, Any]]") -> None:
         self._subscribers = [sq for sq in self._subscribers if sq is not q]
 
     def _publish(self, payload: dict[str, Any]) -> None:
@@ -642,16 +654,18 @@ class MetricCollector:
         cls,
         path: str,
         parsers: list[MetricParser] | None = None,
-    ) -> 'MetricCollector':
+    ) -> "MetricCollector":
         """
         Load historical metrics from a JSON file.
 
         Expected format::
 
             {
-              "metrics": [{"timestamp": "...", "host": "...", "label": "...", "value": 42.0}, ...],
-              "events":  [{"timestamp": "...", "label": "...", "source": "...",
-                           "color": "...", "dash": "..."}, ...]
+                "metrics": [{"timestamp": "...", "host": "...", "label": "...", "value": 42.0}, ...],
+                "events": [
+                    {"timestamp": "...", "label": "...", "source": "...", "color": "...", "dash": "..."},
+                    ...,
+                ],
             }
 
         The ``host`` field is optional for backward compatibility.
@@ -659,20 +673,22 @@ class MetricCollector:
         collector = cls(hosts=[], parsers=parsers)
         with open(path) as f:
             data = json.load(f)
-        for point in data.get('metrics', []):
+        for point in data.get("metrics", []):
             try:
                 rec = MetricRecord.model_validate(point)
             except ValidationError:
                 continue
-            key = f'{rec.host}/{rec.label}' if rec.host else rec.label
+            key = f"{rec.host}/{rec.label}" if rec.host else rec.label
             if key not in collector._series:
                 collector._series[key] = deque()
             collector._series[key].append(
-                MetricPoint.model_validate({'ts': rec.timestamp, 'value': rec.value, 'meta': rec.meta})
+                MetricPoint.model_validate(
+                    {"ts": rec.timestamp, "value": rec.value, "meta": rec.meta}
+                )
             )
-        for label, chart in data.get('chart_map', {}).items():
+        for label, chart in data.get("chart_map", {}).items():
             collector._chart_map[label] = chart
-        for ev in data.get('events', []):
+        for ev in data.get("events", []):
             try:
                 rec = EventRecord.model_validate(ev)
             except ValidationError:
@@ -695,51 +711,55 @@ class MetricCollector:
         cls,
         path: str,
         parsers: list[MetricParser] | None = None,
-    ) -> 'MetricCollector':
+    ) -> "MetricCollector":
         """Load historical metrics and events from a SQLite database."""
         collector = cls(hosts=[], parsers=parsers)
         async with aiosqlite.connect(path) as conn:
             conn.row_factory = aiosqlite.Row
             # Support both the new schema (with host column) and the old schema (without)
-            col_names = {row[1] async for row in await conn.execute('PRAGMA table_info(metrics)')}
-            has_host  = 'host' in col_names
+            col_names = {row[1] async for row in await conn.execute("PRAGMA table_info(metrics)")}
+            has_host = "host" in col_names
             query = (
-                'SELECT ts, host, label, value FROM metrics ORDER BY ts'
-                if has_host else
-                'SELECT ts, label, value FROM metrics ORDER BY ts'
+                "SELECT ts, host, label, value FROM metrics ORDER BY ts"
+                if has_host
+                else "SELECT ts, label, value FROM metrics ORDER BY ts"
             )
             async for row in await conn.execute(query):
                 try:
                     rec = MetricRecord.model_validate(dict(row))
                 except ValidationError:
                     continue
-                key = f'{rec.host}/{rec.label}' if rec.host else rec.label
+                key = f"{rec.host}/{rec.label}" if rec.host else rec.label
                 if key not in collector._series:
                     collector._series[key] = deque()
                 collector._series[key].append(
-                    MetricPoint.model_validate({'ts': rec.timestamp, 'value': rec.value, 'meta': None})
+                    MetricPoint.model_validate(
+                        {"ts": rec.timestamp, "value": rec.value, "meta": None}
+                    )
                 )
-            event_cols = {row[1] async for row in await conn.execute('PRAGMA table_info(events)')}
-            has_end_ts = 'end_ts' in event_cols
+            event_cols = {row[1] async for row in await conn.execute("PRAGMA table_info(events)")}
+            has_end_ts = "end_ts" in event_cols
             events_query = (
-                'SELECT id, ts, end_ts, label, source, color, dash FROM events ORDER BY ts'
-                if has_end_ts else
-                'SELECT id, ts, label, source, color, dash FROM events ORDER BY ts'
+                "SELECT id, ts, end_ts, label, source, color, dash FROM events ORDER BY ts"
+                if has_end_ts
+                else "SELECT id, ts, label, source, color, dash FROM events ORDER BY ts"
             )
             async for row in await conn.execute(events_query):
                 try:
                     rec = EventRecord.model_validate(dict(row))
                 except ValidationError:
                     continue
-                collector._events.append(MonitorEvent(
-                    timestamp=rec.timestamp,
-                    label=rec.label,
-                    source=rec.source,
-                    color=rec.color,
-                    dash=rec.dash,
-                    id=rec.id if rec.id is not None else collector._next_event_id,
-                    end_timestamp=rec.end_timestamp,
-                ))
+                collector._events.append(
+                    MonitorEvent(
+                        timestamp=rec.timestamp,
+                        label=rec.label,
+                        source=rec.source,
+                        color=rec.color,
+                        dash=rec.dash,
+                        id=rec.id if rec.id is not None else collector._next_event_id,
+                        end_timestamp=rec.end_timestamp,
+                    )
+                )
             if collector._events:
                 collector._next_event_id = max(e.id for e in collector._events) + 1
         return collector
@@ -750,27 +770,26 @@ class MetricCollector:
 
     def export_json(self, path: str) -> None:
         """Export all collected data to a JSON file."""
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             f.write(self.to_json())
 
     def to_json(self) -> str:
         """Serialize all metrics and events to a JSON string compatible with ``--file``."""
         metrics: list[dict[str, Any]] = []
         for key, pts in self._series.items():
-            host  = key.split('/')[0] if '/' in key else ''
-            label = key.split('/', 1)[1] if '/' in key else key
+            host = key.split("/")[0] if "/" in key else ""
+            label = key.split("/", 1)[1] if "/" in key else key
             for pt in pts:
                 metrics.append(
                     MetricRecord(
                         timestamp=pt.ts, host=host, label=label, value=pt.value, meta=pt.meta
-                    ).model_dump(mode='json', exclude_none=True)
+                    ).model_dump(mode="json", exclude_none=True)
                 )
         return json.dumps(
             {
-                'metrics':   metrics,
-                'events':    [e.to_dict() for e in self._events],
-                'chart_map': dict(self._chart_map),
+                "metrics": metrics,
+                "events": [e.to_dict() for e in self._events],
+                "chart_map": dict(self._chart_map),
             },
             indent=2,
         )
-

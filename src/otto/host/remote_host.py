@@ -191,7 +191,7 @@ class RemoteHost(BaseHost):
     _session_mgr: SessionManager
     _lab: Lab | None
 
-    async def verify_connection(self) -> 'CommandStatus':  # pragma: no cover
+    async def verify_connection(self) -> "CommandStatus":  # pragma: no cover
         raise NotImplementedError from None
 
     ####################
@@ -232,7 +232,7 @@ class RemoteHost(BaseHost):
         """
         if dest_dir.is_absolute():
             return dest_dir
-        if str(dest_dir) in ('', '.'):
+        if str(dest_dir) in ("", "."):
             return self.default_dest_dir
         return self.default_dest_dir / dest_dir
 
@@ -254,7 +254,7 @@ class RemoteHost(BaseHost):
     def _element_id_str(self) -> str:
 
         if self.element_id is None:
-            return ''
+            return ""
 
         return f"{self.element_id}"
 
@@ -262,7 +262,7 @@ class RemoteHost(BaseHost):
     def _slot_str(self) -> str:
 
         if self.slot is None:
-            return ''
+            return ""
 
         return f"{self.slot}"
 
@@ -313,7 +313,9 @@ class RemoteHost(BaseHost):
 
         hop_id = self.hop
         if hop_id is None:
-            raise ValueError(f"_build_hop_transport called on host {self.name!r} with no hop configured")
+            raise ValueError(
+                f"_build_hop_transport called on host {self.name!r} with no hop configured"
+            )
         host_name = self.name
 
         # The outer SshHopTransport — its ``_parent`` is set lazily on the
@@ -325,11 +327,12 @@ class RemoteHost(BaseHost):
         # constructor without doing anything that requires the configmodule.
         async def _placeholder(*args, **kwargs):
             raise RuntimeError("SshHopTransport factory not initialized")
+
         outer = SshHopTransport(_placeholder)
 
         async def _create_tunnel(
             _visited: set[str] | None = None,
-        ) -> 'SSHClientConnection':
+        ) -> "SSHClientConnection":
             visited = _visited or set()
             if hop_id in visited:
                 raise ValueError(f"Circular hop detected: {hop_id!r} already in chain {visited}")
@@ -342,6 +345,7 @@ class RemoteHost(BaseHost):
                 # via the JSON loader / get_host carry their own _lab; this path
                 # supports directly-constructed hosts per the library "FD model".)
                 from ..context import try_get_context
+
                 _ctx = try_get_context()
                 lab = _ctx.lab if _ctx is not None else None
             if lab is None:
@@ -354,7 +358,7 @@ class RemoteHost(BaseHost):
                 raise KeyError(
                     f"hop {hop_id!r} not in lab {lab.name!r}; available: {sorted(lab.hosts)}"
                 )
-            hop_host = cast(RemoteHost, lab.hosts[hop_id])
+            hop_host = cast("RemoteHost", lab.hosts[hop_id])
 
             parent_tunnel = None
             if hop_host.hop:
@@ -370,7 +374,11 @@ class RemoteHost(BaseHost):
                     outer._parent = hop_host._build_hop_transport()
                 parent_tunnel = await outer._parent.get_tunnel(_visited=visited)
 
-            user, password = next(iter(hop_host.creds.items())) if hop_host.user is None else (hop_host.user, hop_host.creds[hop_host.user])
+            user, password = (
+                next(iter(hop_host.creds.items()))
+                if hop_host.user is None
+                else (hop_host.user, hop_host.creds[hop_host.user])
+            )
             logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
             conn = await _ssh_connect(
                 hop_host.ip,

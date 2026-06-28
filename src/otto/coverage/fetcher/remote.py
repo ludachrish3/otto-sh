@@ -4,6 +4,7 @@ Uses :meth:`UnixHost.get() <otto.host.unix_host.UnixHost.get>`
 which supports SCP, SFTP, FTP, and netcat with progress tracking and
 multi-hop SSH chains.
 """
+
 from __future__ import annotations
 
 import logging
@@ -32,7 +33,9 @@ async def _clean_one_host(
     )
     if result.status != Status.Success:
         logger.warning(
-            "Failed to clean .gcda files on %s: %s", label, result.output,
+            "Failed to clean .gcda files on %s: %s",
+            label,
+            result.output,
         )
     else:
         logger.info("Cleaned .gcda files on %s", label)
@@ -55,6 +58,7 @@ async def _fetch_one_host(
     # errors out on empty dirs).
     from ...host.docker_host import DockerContainerHost
     from ...host.embedded_host import EmbeddedHost
+
     if isinstance(host, (DockerContainerHost, EmbeddedHost)):
         return None
 
@@ -161,5 +165,7 @@ class GcdaFetcher:
         for host_id, result in clean_results.items():
             if isinstance(result, BaseException):
                 logger.warning(
-                    "Failed to clean .gcda files on %s: %s", host_id, result,
+                    "Failed to clean .gcda files on %s: %s",
+                    host_id,
+                    result,
                 )

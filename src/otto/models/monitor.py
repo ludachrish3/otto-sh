@@ -38,9 +38,9 @@ class MetricPoint(OttoModel):
     Consumers read ``.ts`` / ``.value`` / ``.meta`` instead of unpacking.
     """
 
-    ts:    datetime
+    ts: datetime
     value: float
-    meta:  dict[str, Any] | None = None
+    meta: dict[str, Any] | None = None
 
 
 class RowModel(BaseModel):
@@ -69,10 +69,10 @@ class MetricRecord(RowModel):
     """
 
     timestamp: datetime = Field(validation_alias=AliasChoices("timestamp", "ts"))
-    host:      str = ""
-    label:     str
-    value:     float
-    meta:      dict[str, Any] | None = None
+    host: str = ""
+    label: str
+    value: float
+    meta: dict[str, Any] | None = None
 
 
 class EventRecord(RowModel):
@@ -85,12 +85,12 @@ class EventRecord(RowModel):
     is ``None`` when absent so the collector can assign its running id.
     """
 
-    id:            int | None = None
-    timestamp:     datetime = Field(validation_alias=AliasChoices("timestamp", "ts"))
+    id: int | None = None
+    timestamp: datetime = Field(validation_alias=AliasChoices("timestamp", "ts"))
     end_timestamp: datetime | None = Field(
         default=None, validation_alias=AliasChoices("end_timestamp", "end_ts")
     )
-    label:         str = ""
-    source:        str = "manual"
-    color:         str = "#888888"
-    dash:          str = "dash"
+    label: str = ""
+    source: str = "manual"
+    color: str = "#888888"
+    dash: str = "dash"

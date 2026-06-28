@@ -40,18 +40,14 @@ def test_collect_usernames_from_capable_backend(tmp_path):
 
     register_reservation_backend("uc-test", UCBackend)
     try:
-        repo = types.SimpleNamespace(
-            reservation_settings={"backend": "uc-test"}, sut_dir=tmp_path
-        )
+        repo = types.SimpleNamespace(reservation_settings={"backend": "uc-test"}, sut_dir=tmp_path)
         assert cc.collect_reservation_usernames([repo]) == ["alice", "bob"]
     finally:
         _RESERVATION_BACKENDS.pop("uc-test", None)
 
 
 def test_collect_usernames_empty_when_capability_absent(tmp_path):
-    repo = types.SimpleNamespace(
-        reservation_settings={"backend": "none"}, sut_dir=tmp_path
-    )
+    repo = types.SimpleNamespace(reservation_settings={"backend": "none"}, sut_dir=tmp_path)
     assert cc.collect_reservation_usernames([repo]) == []
 
 

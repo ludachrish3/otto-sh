@@ -16,6 +16,7 @@ something to iterate.  All per-tier columns, percentages, and the
 winner-take-all row coloring on the annotated source view are driven by
 that list, so adding a new tier requires no changes here.
 """
+
 from __future__ import annotations
 
 import logging
@@ -69,7 +70,7 @@ class HtmlRenderer:
             loader=FileSystemLoader(str(templates_dir)),
             autoescape=select_autoescape(["html"]),
         )
-        cast(dict[str, Any], self.env.globals)["pct_class"] = self._pct_class
+        cast("dict[str, Any]", self.env.globals)["pct_class"] = self._pct_class
 
     # ------------------------------------------------------------------
     # Public entry points
@@ -188,7 +189,7 @@ class HtmlRenderer:
         """Build the template context for one row of the source table."""
         coverable = lr is not None
         if lr is None:
-            tier_hits = {t: 0 for t in tier_order}
+            tier_hits = dict.fromkeys(tier_order, 0)
             row_class = "line-uncoverable"
             branches: list[dict[str, Any]] = []
         else:
@@ -225,8 +226,7 @@ class HtmlRenderer:
         tip_parts = [f"block={branch.block} branch={branch.branch}"]
         for tier in tier_order:
             tip_parts.append(
-                f"{tier}: hits={branch.hits.for_tier(tier)} "
-                f"reach={branch.is_reachable(tier)}"
+                f"{tier}: hits={branch.hits.for_tier(tier)} reach={branch.is_reachable(tier)}"
             )
         return {
             "block": branch.block,
@@ -246,24 +246,17 @@ class HtmlRenderer:
         all_branches = [b for lr in fr.lines.values() for b in lr.branches]
         branches_total = sum(1 for b in all_branches if b.is_reachable() is True)
         branches_hit = sum(
-            1 for b in all_branches
-            if b.is_reachable() is True and b.hits.total() > 0
+            1 for b in all_branches if b.is_reachable() is True and b.hits.total() > 0
         )
 
         per_tier = {}
         for tier in tier_order:
-            lh = sum(
-                1 for l in fr.lines.values()
-                if l.hits.for_tier(tier) > 0
-            )
-            bt = sum(
-                1 for b in all_branches
-                if b.is_reachable(tier) is True
-            )
+            lh = sum(1 for l in fr.lines.values() if l.hits.for_tier(tier) > 0)
+            bt = sum(1 for b in all_branches if b.is_reachable(tier) is True)
             bh = sum(
-                1 for b in all_branches
-                if b.is_reachable(tier) is True
-                and b.hits.for_tier(tier) > 0
+                1
+                for b in all_branches
+                if b.is_reachable(tier) is True and b.hits.for_tier(tier) > 0
             )
             per_tier[tier] = {
                 "lines_total": lines_total,
@@ -290,9 +283,7 @@ class HtmlRenderer:
         lines_hit = 0
         branches_total = 0
         branches_hit = 0
-        per_tier_counts = {
-            t: {"lt": 0, "lh": 0, "bt": 0, "bh": 0} for t in tier_order
-        }
+        per_tier_counts = {t: {"lt": 0, "lh": 0, "bt": 0, "bh": 0} for t in tier_order}
 
         for fr in store.files():
             lines_total += len(fr.lines)
@@ -300,24 +291,17 @@ class HtmlRenderer:
             all_branches = [b for lr in fr.lines.values() for b in lr.branches]
             branches_total += sum(1 for b in all_branches if b.is_reachable() is True)
             branches_hit += sum(
-                1 for b in all_branches
-                if b.is_reachable() is True and b.hits.total() > 0
+                1 for b in all_branches if b.is_reachable() is True and b.hits.total() > 0
             )
             for tier in tier_order:
                 bucket = per_tier_counts[tier]
                 bucket["lt"] += len(fr.lines)
-                bucket["lh"] += sum(
-                    1 for l in fr.lines.values()
-                    if l.hits.for_tier(tier) > 0
-                )
-                bucket["bt"] += sum(
-                    1 for b in all_branches
-                    if b.is_reachable(tier) is True
-                )
+                bucket["lh"] += sum(1 for l in fr.lines.values() if l.hits.for_tier(tier) > 0)
+                bucket["bt"] += sum(1 for b in all_branches if b.is_reachable(tier) is True)
                 bucket["bh"] += sum(
-                    1 for b in all_branches
-                    if b.is_reachable(tier) is True
-                    and b.hits.for_tier(tier) > 0
+                    1
+                    for b in all_branches
+                    if b.is_reachable(tier) is True and b.hits.for_tier(tier) > 0
                 )
 
         per_tier = {

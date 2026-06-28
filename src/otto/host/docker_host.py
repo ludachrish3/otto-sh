@@ -58,7 +58,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     mocked parent.
     """
 
-    parent: 'Host'
+    parent: "Host"
     """The lab host running the docker daemon. Owns auth, hop chain, and
     the SSH connection used to reach the daemon. Typed as
     :class:`~otto.host.host.Host` (the protocol) so the type-system surface stays narrow,
@@ -84,10 +84,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     """The ``-p`` value passed to ``docker compose`` for this stack. Stored
     so other commands (``logs``, ``ps``, ``down``) can scope correctly."""
 
-    name: str = field(default='', init=False)
+    name: str = field(default="", init=False)
     """Human-readable host name. Filled in ``__post_init__``."""
 
-    id: str = field(default='', init=False)
+    id: str = field(default="", init=False)
     """Unique host id used as the key in ``Lab.hosts`` and on the CLI.
     Format: ``<parent_id>.<project>.<service>``."""
 
@@ -109,7 +109,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     """Software-under-test deployed to this host. Default empty. See
     :attr:`~otto.host.host.BaseHost.products`."""
 
-    power_control: 'PowerController | None' = field(default=None, repr=False)
+    power_control: "PowerController | None" = field(default=None, repr=False)
     """Always None — LocalHost/DockerContainerHost are not power-controlled."""
 
     _repeater: RepeatRunner = field(init=False, repr=False)
@@ -126,7 +126,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     down container trigger at most one auto-up."""
 
     def __post_init__(self) -> None:
-        parent_id = getattr(self.parent, 'id', getattr(self.parent, 'name', 'localhost'))
+        parent_id = getattr(self.parent, "id", getattr(self.parent, "name", "localhost"))
         self.id = f"{parent_id}.{self.project}.{self.service}".lower()
         self.name = f"{parent_id}:{self.service}"
         self._repeater = RepeatRunner(run_cmds=self.run)
@@ -135,12 +135,14 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     def _build_session_mgr(self) -> SessionManager:
         """Build a fresh SessionManager wired to this host. Called from
-        :meth:`__post_init__` and :meth:`rebuild_connections`."""
+        :meth:`__post_init__` and :meth:`rebuild_connections`.
+        """
 
         def _make_session() -> ShellSession:
             from .unix_host import UnixHost
-            if not (isinstance(self.parent, UnixHost) and self.parent.term == 'ssh'):
-                term = getattr(self.parent, 'term', None)
+
+            if not (isinstance(self.parent, UnixHost) and self.parent.term == "ssh"):
+                term = getattr(self.parent, "term", None)
                 raise NotImplementedError(
                     f"DockerContainerHost persistent shell requires an SSH-based "
                     f"UnixHost parent; got {type(self.parent).__name__}"
@@ -236,7 +238,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
         try:
             hosts = await compose_up(
-                repo, lab,
+                repo,
+                lab,
                 on=self.parent.id,
                 project_name=self.compose_project,
                 build=False,
@@ -261,7 +264,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     async def _docker_exec(self, cmd: str, *, interactive: bool = False) -> str:
         """Build the ``docker exec`` invocation that runs *cmd* inside the container."""
         await self._ensure_running()
-        flags = '-i' if not interactive else '-it'
+        flags = "-i" if not interactive else "-it"
         return f"docker exec {flags} {self.container_id} sh -c {shlex.quote(cmd)}"
 
     @override
@@ -303,7 +306,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     async def _run_one(
         self,
         cmd: str,
-        expects: 'list[Expect] | None' = None,
+        expects: "list[Expect] | None" = None,
         timeout: float | None = 10.0,
         log: bool = True,
     ) -> CommandStatus:
@@ -319,7 +322,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
     @override
-    async def open_session(self, name: str) -> 'HostSession':
+    async def open_session(self, name: str) -> "HostSession":
         """Open a named persistent shell session inside the container."""
         if is_dry_run():
             self._log_command(f"[DRY RUN] open_session({name!r})")
@@ -339,12 +342,14 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     @override
     async def expect(
         self,
-        pattern: 'str | re.Pattern[str]',
+        pattern: "str | re.Pattern[str]",
         timeout: float = 10.0,
     ) -> str:
         """Wait for a pattern in the container's session output stream."""
         if is_dry_run():
-            self._log_command("[DRY RUN] expect() skipped — pattern would never match without a live session")
+            self._log_command(
+                "[DRY RUN] expect() skipped — pattern would never match without a live session"
+            )
             return ""
         await self._ensure_running()
         return await self._session_mgr.expect(pattern, timeout)
@@ -365,7 +370,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 f"DockerContainerHost.interact() requires an SSH-based parent host; "
                 f"got parent of type {type(self.parent).__name__}."
             )
-        if self.parent.term != 'ssh':
+        if self.parent.term != "ssh":
             raise NotImplementedError(
                 f"DockerContainerHost.interact() requires parent.term == 'ssh'; "
                 f"got {self.parent.term!r}. Telnet parents cannot tunnel an "
@@ -393,7 +398,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     @cli_exposed(success="Transfer complete.")
     async def put(
         self,
-        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")],
+        src_files: Annotated[
+            list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
+        ],
         dest_dir: Path,
     ) -> tuple[Status, str]:
         """Upload local files into the container.
@@ -433,7 +440,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     @cli_exposed(success="Download complete.")
     async def get(
         self,
-        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Remote file(s) to download.")],
+        src_files: Annotated[
+            list[Path] | Path,
+            Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
+        ],
         dest_dir: Path,
     ) -> tuple[Status, str]:
         """Download files from the container to the local machine.

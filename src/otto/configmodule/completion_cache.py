@@ -32,21 +32,26 @@ stale entries without trusting the mtimes on-disk::
             "schema_version": 6,
             "generated_at": 1745000000,
             "instructions": [
-                {"name": "install",
-                 "options": [{"name": "debug", "flags": ["--field/--debug"],
-                              "kind": "bool", "default": false, "help": "..."},
-                             ...]},
-                ...
+                {
+                    "name": "install",
+                    "options": [
+                        {
+                            "name": "debug",
+                            "flags": ["--field/--debug"],
+                            "kind": "bool",
+                            "default": false,
+                            "help": "...",
+                        },
+                        ...,
+                    ],
+                },
+                ...,
             ],
-            "suites": [
-                {"name": "TestDevice", "options": [...]},
-                ...
-            ],
+            "suites": [{"name": "TestDevice", "options": [...]}, ...],
             "hosts": ["carrot_seed", "tomato_seed", ...],
             "docker_hosts": ["carrot_seed", ...],
             "term_backends": ["ssh", "telnet", ...],
-            "transfer_backends": [{"name": "scp", "host_families": ["unix"]},
-                                  ...]
+            "transfer_backends": [{"name": "scp", "host_families": ["unix"]}, ...],
         }
     }
 
@@ -63,6 +68,7 @@ compute even when SUTs are large.
 A stale fingerprint is always safe: the fast path is skipped, the slow path
 runs as normal and rewrites the cache afterward.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -81,13 +87,13 @@ if TYPE_CHECKING:
     from .repo import Repo
 
 
-COMPLETION_ENV_VAR = '_OTTO_COMPLETE'
-CACHE_FILENAME = 'completion_cache.json'
+COMPLETION_ENV_VAR = "_OTTO_COMPLETE"
+CACHE_FILENAME = "completion_cache.json"
 
 # Bump when the on-disk schema changes in a way older readers can't parse.
 SCHEMA_VERSION = 6
 
-HOSTS_FILENAME = 'hosts.json'
+HOSTS_FILENAME = "hosts.json"
 
 # Cache entries older than this (seconds) are treated as a miss. Forces the
 # slow path to run periodically so annotation / option changes that don't
@@ -101,11 +107,11 @@ CACHE_TTL_SECONDS = 24 * 60 * 60
 # purposes — the option is logged at DEBUG and dropped from the cached
 # schema; completion still works on the slow path.
 _TYPE_TO_KIND: dict[Any, str] = {
-    str: 'str',
-    int: 'int',
-    float: 'float',
-    bool: 'bool',
-    Path: 'path',
+    str: "str",
+    int: "int",
+    float: "float",
+    bool: "bool",
+    Path: "path",
 }
 _KIND_TO_TYPE: dict[str, Any] = {v: k for k, v in _TYPE_TO_KIND.items()}
 
@@ -130,7 +136,7 @@ def _cache_path() -> Path | None:
     xdir = OttoEnvSettings().xdir  # Path | None ("" normalized to None)
     if xdir is None:
         return None
-    return xdir / '.otto' / CACHE_FILENAME
+    return xdir / ".otto" / CACHE_FILENAME
 
 
 def clear_cache() -> bool:
@@ -149,42 +155,42 @@ def clear_cache() -> bool:
         return False
 
 
-def _hash_file(h: 'hashlib._Hash', path: Path) -> None:
+def _hash_file(h: "hashlib._Hash", path: Path) -> None:
     try:
         st = path.stat()
     except OSError:
-        h.update(f'missing:{path}\n'.encode())
+        h.update(f"missing:{path}\n".encode())
         return
-    h.update(f'{path}|{st.st_mtime_ns}|{st.st_size}\n'.encode())
+    h.update(f"{path}|{st.st_mtime_ns}|{st.st_size}\n".encode())
 
 
-def compute_fingerprint(repos: list['Repo']) -> str:
+def compute_fingerprint(repos: list["Repo"]) -> str:
     """Stat-based sha256 of every file that contributes instruction/suite names."""
     h = hashlib.sha256()
     for repo in sorted(repos, key=lambda r: str(r.sut_dir)):
-        _hash_file(h, repo.sut_dir / '.otto' / 'settings.toml')
+        _hash_file(h, repo.sut_dir / ".otto" / "settings.toml")
 
         # Init-module files: resolve each `init` name under the configured
         # `libs` directories. Either a package directory or a plain .py file.
         for init_mod in repo.init:
-            mod_base = init_mod.split('.')[0]
+            mod_base = init_mod.split(".")[0]
             resolved = False
             for lib in repo.libs:
                 mod_dir = lib / mod_base
-                mod_file = lib / f'{mod_base}.py'
+                mod_file = lib / f"{mod_base}.py"
                 if mod_dir.is_dir():
-                    for py in sorted(mod_dir.rglob('*.py')):
+                    for py in sorted(mod_dir.rglob("*.py")):
                         _hash_file(h, py)
                     resolved = True
                 elif mod_file.is_file():
                     _hash_file(h, mod_file)
                     resolved = True
             if not resolved:
-                h.update(f'unresolved:{init_mod}\n'.encode())
+                h.update(f"unresolved:{init_mod}\n".encode())
 
         for test_dir in repo.tests:
             if test_dir.is_dir():
-                for t in sorted(test_dir.glob('test_*.py')):
+                for t in sorted(test_dir.glob("test_*.py")):
                     _hash_file(h, t)
 
         # Host-ID sources: hosts.json under each configured lab search path.
@@ -201,6 +207,7 @@ def compute_fingerprint(repos: list['Repo']) -> str:
 # Option serialization — convert a live Typer command callback's signature
 # into a JSON-safe list of {name, flags, kind, default, help} dicts.
 # ---------------------------------------------------------------------------
+
 
 def _unwrap_optional(t: Any) -> Any:
     """Strip a single ``Optional[...]`` wrapper, leaving other types intact."""
@@ -220,7 +227,7 @@ def _type_to_kind(base: Any) -> str | None:
     if base in _TYPE_TO_KIND:
         return _TYPE_TO_KIND[base]
     if get_origin(base) is list and get_args(base) == (str,):
-        return 'str_list'
+        return "str_list"
     return None
 
 
@@ -232,10 +239,10 @@ def _extract_flags(option_info: Any) -> list[str]:
     the rebuilder reproduces the original call.
     """
     flags: list[str] = []
-    primary = getattr(option_info, 'default', None)
-    if isinstance(primary, str) and (primary.startswith('-') or '/' in primary):
+    primary = getattr(option_info, "default", None)
+    if isinstance(primary, str) and (primary.startswith("-") or "/" in primary):
         flags.append(primary)
-    flags.extend(getattr(option_info, 'param_decls', ()) or ())
+    flags.extend(getattr(option_info, "param_decls", ()) or ())
     return flags
 
 
@@ -273,8 +280,7 @@ def _serialize_options(
         sig = inspect.signature(callback)
     except (TypeError, ValueError) as e:  # pragma: no cover — paranoia
         log.debug(
-            f'completion-cache: skipping {command_name!r}, '
-            f'signature inspection failed: {e!r}',
+            f"completion-cache: skipping {command_name!r}, signature inspection failed: {e!r}",
         )
         return None
 
@@ -291,8 +297,8 @@ def _serialize_options(
             continue
         if get_origin(ann) is not Annotated:
             log.debug(
-                f'completion-cache: skipping option {command_name}.{pname!r} — '
-                f'annotation {ann!r} is not Annotated[...]',
+                f"completion-cache: skipping option {command_name}.{pname!r} — "
+                f"annotation {ann!r} is not Annotated[...]",
             )
             return None
         args = get_args(ann)
@@ -300,31 +306,33 @@ def _serialize_options(
         # OptionInfo lives at module path typer.models.OptionInfo; match on
         # attribute shape to avoid importing typer at module load.
         meta = next(
-            (a for a in args[1:] if hasattr(a, 'param_decls')),
+            (a for a in args[1:] if hasattr(a, "param_decls")),
             None,
         )
         if meta is None:
             log.debug(
-                f'completion-cache: skipping option {command_name}.{pname!r} — '
-                f'no typer.Option metadata in annotation',
+                f"completion-cache: skipping option {command_name}.{pname!r} — "
+                f"no typer.Option metadata in annotation",
             )
             return None
 
         kind = _type_to_kind(base)
         if kind is None:
             log.debug(
-                f'completion-cache: skipping option {command_name}.{pname!r} — '
-                f'unsupported annotation type {base!r}',
+                f"completion-cache: skipping option {command_name}.{pname!r} — "
+                f"unsupported annotation type {base!r}",
             )
             return None
 
-        options.append({
-            'name': pname,
-            'flags': _extract_flags(meta),
-            'kind': kind,
-            'default': _json_safe_default(param.default),
-            'help': getattr(meta, 'help', None) or '',
-        })
+        options.append(
+            {
+                "name": pname,
+                "flags": _extract_flags(meta),
+                "kind": kind,
+                "default": _json_safe_default(param.default),
+                "help": getattr(meta, "help", None) or "",
+            }
+        )
     return options
 
 
@@ -332,7 +340,8 @@ def _serialize_options(
 # Read / write
 # ---------------------------------------------------------------------------
 
-def read_cache(repos: list['Repo']) -> dict[str, Any] | None:
+
+def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
     """Return the cached command lists for the current fingerprint, or ``None``.
 
     ``None`` means any of: caching disabled, empty repos (would produce the
@@ -365,41 +374,43 @@ def read_cache(repos: list['Repo']) -> dict[str, Any] | None:
     entry = data.get(fingerprint)
     if not isinstance(entry, dict):
         return None
-    if entry.get('schema_version') != SCHEMA_VERSION:
+    if entry.get("schema_version") != SCHEMA_VERSION:
         return None
-    generated_at = entry.get('generated_at')
+    generated_at = entry.get("generated_at")
     if not isinstance(generated_at, (int, float)):
         return None
     if time.time() - generated_at > CACHE_TTL_SECONDS:
         return None
-    instructions = entry.get('instructions')
-    suites = entry.get('suites')
-    hosts = entry.get('hosts')
-    docker_hosts = entry.get('docker_hosts', [])
-    term_backends = entry.get('term_backends', [])
-    transfer_backends = entry.get('transfer_backends', [])
-    usernames = entry.get('usernames', [])
-    if (not isinstance(instructions, list)
-            or not isinstance(suites, list)
-            or not isinstance(hosts, list)
-            or not isinstance(docker_hosts, list)
-            or not isinstance(term_backends, list)
-            or not isinstance(transfer_backends, list)
-            or not isinstance(usernames, list)):
+    instructions = entry.get("instructions")
+    suites = entry.get("suites")
+    hosts = entry.get("hosts")
+    docker_hosts = entry.get("docker_hosts", [])
+    term_backends = entry.get("term_backends", [])
+    transfer_backends = entry.get("transfer_backends", [])
+    usernames = entry.get("usernames", [])
+    if (
+        not isinstance(instructions, list)
+        or not isinstance(suites, list)
+        or not isinstance(hosts, list)
+        or not isinstance(docker_hosts, list)
+        or not isinstance(term_backends, list)
+        or not isinstance(transfer_backends, list)
+        or not isinstance(usernames, list)
+    ):
         return None
     return {
-        'instructions': instructions,
-        'suites': suites,
-        'hosts': hosts,
-        'docker_hosts': docker_hosts,
-        'term_backends': term_backends,
-        'transfer_backends': transfer_backends,
-        'usernames': usernames,
+        "instructions": instructions,
+        "suites": suites,
+        "hosts": hosts,
+        "docker_hosts": docker_hosts,
+        "term_backends": term_backends,
+        "transfer_backends": transfer_backends,
+        "usernames": usernames,
     }
 
 
 def write_cache(
-    repos: list['Repo'],
+    repos: list["Repo"],
     instructions: list[dict[str, Any]],
     suites: list[dict[str, Any]],
     hosts: list[str],
@@ -438,23 +449,23 @@ def write_cache(
 
     fingerprint = compute_fingerprint(repos)
     existing[fingerprint] = {
-        'schema_version': SCHEMA_VERSION,
-        'generated_at': int(time.time()),
-        'instructions': instructions,
-        'suites': suites,
-        'hosts': hosts,
-        'docker_hosts': docker_hosts or [],
-        'term_backends': term_backends or [],
-        'transfer_backends': transfer_backends or [],
-        'usernames': usernames or [],
+        "schema_version": SCHEMA_VERSION,
+        "generated_at": int(time.time()),
+        "instructions": instructions,
+        "suites": suites,
+        "hosts": hosts,
+        "docker_hosts": docker_hosts or [],
+        "term_backends": term_backends or [],
+        "transfer_backends": transfer_backends or [],
+        "usernames": usernames or [],
     }
 
     tmp = tempfile.NamedTemporaryFile(
-        mode='w',
+        mode="w",
         dir=cache_path.parent,
         delete=False,
-        prefix='.completion_cache_',
-        suffix='.tmp',
+        prefix=".completion_cache_",
+        suffix=".tmp",
     )
     try:
         json.dump(existing, tmp)
@@ -472,6 +483,7 @@ def write_cache(
 # Live-registry introspection (writer side)
 # ---------------------------------------------------------------------------
 
+
 def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Read the currently-registered instructions and suites with options.
 
@@ -487,20 +499,22 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
     import sys
 
     instructions: list[dict[str, Any]] = []
-    run_mod = sys.modules.get('otto.cli.run')
+    run_mod = sys.modules.get("otto.cli.run")
     if run_mod is not None:
         for group in run_mod.run_app.registered_groups:
             for cmd in group.typer_instance.registered_commands:
                 name = cmd.name
                 if name is None and cmd.callback is not None:
-                    name = cmd.callback.__name__.replace('_', '-')
+                    name = cmd.callback.__name__.replace("_", "-")
                 if not name:
                     continue
                 options = _serialize_options(cmd.callback, command_name=name)
-                instructions.append({
-                    'name': name,
-                    'options': options if options is not None else [],
-                })
+                instructions.append(
+                    {
+                        "name": name,
+                        "options": options if options is not None else [],
+                    }
+                )
 
     suites: list[dict[str, Any]] = []
     try:
@@ -511,15 +525,13 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
         callback = None
         if sub_app.registered_commands:
             callback = sub_app.registered_commands[0].callback
-        options = (
-            _serialize_options(callback, command_name=name)
-            if callback is not None
-            else None
+        options = _serialize_options(callback, command_name=name) if callback is not None else None
+        suites.append(
+            {
+                "name": name,
+                "options": options if options is not None else [],
+            }
         )
-        suites.append({
-            'name': name,
-            'options': options if options is not None else [],
-        })
 
     return instructions, suites
 
@@ -544,7 +556,7 @@ def collect_backend_names() -> dict[str, Any]:
     }
 
 
-def collect_reservation_usernames(repos: list['Repo']) -> list[str]:
+def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
     """Best-effort usernames for ``--as-user`` completion (cached).
 
     Builds the selected reservation backend (first repo with a
@@ -558,7 +570,7 @@ def collect_reservation_usernames(repos: list['Repo']) -> list[str]:
     from ..reservations.protocol import SupportsUsernameCompletion
 
     for repo in repos:
-        settings = getattr(repo, 'reservation_settings', None)
+        settings = getattr(repo, "reservation_settings", None)
         if not settings:
             continue
         try:
@@ -571,7 +583,7 @@ def collect_reservation_usernames(repos: list['Repo']) -> list[str]:
     return []
 
 
-def collect_docker_capable_host_ids(repos: list['Repo']) -> list[str]:
+def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
     """Enumerate host IDs whose ``hosts.json`` entry has ``docker_capable: true``.
 
     Used as the completion source for ``otto docker --on <TAB>`` and any
@@ -596,7 +608,7 @@ def collect_docker_capable_host_ids(repos: list['Repo']) -> list[str]:
             for host_data in data:
                 if not isinstance(host_data, dict):
                     continue
-                if not host_data.get('docker_capable'):
+                if not host_data.get("docker_capable"):
                     continue
                 try:
                     validate_host_dict(host_data)
@@ -607,7 +619,7 @@ def collect_docker_capable_host_ids(repos: list['Repo']) -> list[str]:
     return sorted(ids)
 
 
-def collect_host_ids(repos: list['Repo']) -> list[str]:
+def collect_host_ids(repos: list["Repo"]) -> list[str]:
     """Enumerate every host ID reachable via the configured lab search paths.
 
     Reads each repo's ``labs`` directories for a ``hosts.json`` file and
@@ -650,10 +662,10 @@ def collect_host_ids(repos: list['Repo']) -> list[str]:
                 except (ValueError, TypeError):
                     continue
                 ids.add(host.id)
-                if getattr(host, 'docker_capable', False):
+                if getattr(host, "docker_capable", False):
                     docker_capable_ids.append(host.id)
 
-        docker = getattr(repo, 'docker_settings', None)
+        docker = getattr(repo, "docker_settings", None)
         if docker is None or not docker.composes:
             continue
         for compose in docker.composes:

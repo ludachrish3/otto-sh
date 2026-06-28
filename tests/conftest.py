@@ -47,6 +47,7 @@ def pytest_collection_modifyitems(config, items) -> None:  # type: ignore[no-unt
     stamps embedded xdist_group markers, so all markers are applied before the
     reorder (LIFO conftest registration guarantees this).
     """
+
     def _group_of(item):
         m = item.get_closest_marker("xdist_group")
         return m.args[0] if (m and m.args) else None
@@ -65,21 +66,21 @@ os.environ["TERM"] = "dumb"
 for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
     os.environ.pop(_var, None)
 
-import asyncio  # noqa: E402
-import sys  # noqa: E402
-import weakref  # noqa: E402
-from dataclasses import dataclass  # noqa: E402
+import asyncio
+import sys
+import weakref
+from dataclasses import dataclass
 
-import pytest  # noqa: E402
-import pytest_asyncio  # noqa: E402
+import pytest
+import pytest_asyncio
 
-from otto.context import OttoContext, reset_context, set_context  # noqa: E402
-from otto.configmodule.lab import Lab  # noqa: E402
-from otto.host.local_host import LocalHost  # noqa: E402
-from otto.host.unix_host import UnixHost  # noqa: E402
-from otto.logger import get_otto_logger  # noqa: E402
-from otto.storage.factory import create_host_from_dict  # noqa: E402
-from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise  # noqa: E402
+from otto.configmodule.lab import Lab
+from otto.context import OttoContext, reset_context, set_context
+from otto.host.local_host import LocalHost
+from otto.host.unix_host import UnixHost
+from otto.logger import get_otto_logger
+from otto.storage.factory import create_host_from_dict
+from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise
 
 _logger = get_otto_logger()
 
@@ -99,19 +100,17 @@ def pytest_runtest_call(item: pytest.Item):
     retry succeeded.
     """
     outcome = yield
-    retry_marker = item.get_closest_marker('retry')
+    retry_marker = item.get_closest_marker("retry")
     if retry_marker is None or outcome.excinfo is None:
         return
     n = int(retry_marker.args[0]) if retry_marker.args else 1
     first_exc = outcome.excinfo[1]
-    _logger.warning(f'retry: {item.nodeid} attempt 1/{n} failed: {first_exc}')
+    _logger.warning(f"retry: {item.nodeid} attempt 1/{n} failed: {first_exc}")
     for attempt in range(1, n):
         try:
             item.runtest()
         except Exception as exc:
-            _logger.warning(
-                f'retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}'
-            )
+            _logger.warning(f"retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}")
             outcome.force_exception(exc)
             continue
         outcome.force_result(None)
@@ -144,10 +143,13 @@ def _install_sigint_traceback_dump() -> None:
     import signal
     import sys
 
-    if not hasattr(faulthandler, 'register'):  # not available on Windows
+    if not hasattr(faulthandler, "register"):  # not available on Windows
         return
     faulthandler.register(
-        signal.SIGINT, file=sys.stderr, all_threads=True, chain=True,
+        signal.SIGINT,
+        file=sys.stderr,
+        all_threads=True,
+        chain=True,
     )
 
 
@@ -155,7 +157,7 @@ def pytest_unconfigure(config):  # type: ignore[no-untyped-def]
     import faulthandler
     import signal
 
-    if hasattr(faulthandler, 'unregister'):
+    if hasattr(faulthandler, "unregister"):
         faulthandler.unregister(signal.SIGINT)
 
 
@@ -218,7 +220,7 @@ def _install_loop_origin_tracker() -> None:
     global _tracker_installed
     if _tracker_installed:
         return
-    import asyncio.base_events as base_events
+    from asyncio import base_events
 
     orig_init = base_events.BaseEventLoop.__init__
 
@@ -304,8 +306,7 @@ def pytest_runtest_teardown(item):
     # this guard is belt-and-suspenders, but it keeps the "product leaks are
     # never masked" invariant local and self-evident.
     reapable = [
-        loop for loop in _LOOP_INFO.keys()
-        if loop not in owned or origin_of(loop) == "product"
+        loop for loop in _LOOP_INFO.keys() if loop not in owned or origin_of(loop) == "product"
     ]
     _loops_reaped += reap_or_raise(reapable, origin_of, describe=describe)
     return result
@@ -324,6 +325,7 @@ def pytest_terminal_summary(terminalreporter):  # type: ignore[no-untyped-def]
 # Asyncio leak detector (diagnostic, autouse on host tests)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _detect_asyncio_leaks(request):
     """Attribute leaked asyncio transports to the test that created them.
@@ -340,36 +342,41 @@ def _detect_asyncio_leaks(request):
     """
     yield
     import os
-    if not os.environ.get('OTTO_DETECT_ASYNCIO_LEAKS'):
+
+    if not os.environ.get("OTTO_DETECT_ASYNCIO_LEAKS"):
         return
     import gc
     from asyncio.base_subprocess import BaseSubprocessTransport
     from asyncio.selector_events import _SelectorTransport
+
     gc.collect()
     leaks = []
     for o in gc.get_objects():
         if not isinstance(o, (BaseSubprocessTransport, _SelectorTransport)):
             continue
-        loop = getattr(o, '_loop', None)
+        loop = getattr(o, "_loop", None)
         if loop is None or not loop.is_closed():
             continue
         # Filter to ones that would actually emit a ResourceWarning from
         # __del__: i.e., the transport is still "open" (closing flag unset).
         # Already-closed transports don't warn even if they linger in GC.
-        closing = getattr(o, '_closing', None)
-        sock = getattr(o, '_sock', None)
-        details = f' closing={closing} sock={sock!r}'
+        closing = getattr(o, "_closing", None)
+        sock = getattr(o, "_sock", None)
+        details = f" closing={closing} sock={sock!r}"
         # Show what's referencing this transport so we can find the leak.
         referrers = gc.get_referrers(o)
-        ref_summary = ', '.join(
-            f'{type(r).__module__}.{type(r).__name__}'
-            for r in referrers[:5] if r is not gc.get_referrers and r is not leaks
+        ref_summary = ", ".join(
+            f"{type(r).__module__}.{type(r).__name__}"
+            for r in referrers[:5]
+            if r is not gc.get_referrers and r is not leaks
         )
         leaks.append(f"{o!r}{details}\n    referrers: {ref_summary}")
     if leaks:
         # Print rather than raise: we want to *attribute* the leak, not
         # fail the test that detected it.
-        print(f"\nLEAK after {request.node.nodeid}: {len(leaks)} live transport(s) bound to closed loop:")
+        print(
+            f"\nLEAK after {request.node.nodeid}: {len(leaks)} live transport(s) bound to closed loop:"
+        )
         for l in leaks:
             print(f"  {l}")
 
@@ -378,7 +385,7 @@ def _detect_asyncio_leaks(request):
 # active_context: test helper for installing an OttoContext in a block.
 # ---------------------------------------------------------------------------
 
-import contextlib  # noqa: E402
+import contextlib
 
 
 @contextlib.contextmanager
@@ -408,6 +415,7 @@ def _reset_otto_context():
     tests can land on a worker that previously ran integration tests.
     """
     from otto.context import _active
+
     snapshot = _active.get()
     try:
         yield
@@ -422,6 +430,7 @@ def _reset_otto_logger_retention():
     root cause of the old test_cov ENOTDIR flakes)."""
     yield
     from otto.logger import management
+
     management.reset()
 
 
@@ -429,9 +438,8 @@ def _reset_otto_logger_retention():
 # Lab-data helpers
 # ---------------------------------------------------------------------------
 
-from tests._fixtures.labdata import host_data, make_host, lab_data_path  # noqa: F401
-from tests._fixtures._host_pool import lease_unix_host  # noqa: F401
-
+from tests._fixtures._host_pool import lease_unix_host
+from tests._fixtures.labdata import host_data, lab_data_path, make_host  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Parameterized host fixtures (driven by @pytest.mark.parametrize + indirect)
@@ -642,6 +650,7 @@ async def transfer_host(request, tmp_path_factory):
 # behavior while each backend's kit supplies the actual commands.
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class HostKit:
     """Backend-appropriate command strings for OS-agnostic contract tests.
@@ -723,6 +732,7 @@ _ZEPHYR_STABILITY = {
     "stability_large_size": 32 * 1024,
 }
 
+
 def _zephyr_kit(backend_id: str) -> HostKit:
     """Build the contract kit for a Zephyr backend from its lab data.
 
@@ -742,7 +752,8 @@ def _zephyr_kit(backend_id: str) -> HostKit:
     fs = build_filesystem(data.get("filesystem", "none"))
     if fs.mount is None:
         return HostKit(
-            temp_remote_dir=None, **_ZEPHYR_COMMON,
+            temp_remote_dir=None,
+            **_ZEPHYR_COMMON,
             stability_iterations=20,
             stability_cycle_count=0,
             stability_large_size=0,

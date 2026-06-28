@@ -109,8 +109,7 @@ def build_backend(
         path_raw = json_settings.get("path")
         if not isinstance(path_raw, str) or not path_raw:
             raise ValueError(
-                "[reservations.json] requires a 'path' string pointing at the "
-                "reservation file"
+                "[reservations.json] requires a 'path' string pointing at the reservation file"
             )
         path = Path(path_raw)
         if not path.is_absolute():

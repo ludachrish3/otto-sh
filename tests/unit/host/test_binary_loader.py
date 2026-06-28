@@ -17,7 +17,9 @@ class TestLlextHexLoader:
         assert LlextHexLoader.type_name == "llext-hex"
 
     def test_load_command_hex_encodes_payload(self):
-        assert self.loader.load_command("cov_ext", b"\x01\xab\xff") == "llext load_hex cov_ext 01abff"
+        assert (
+            self.loader.load_command("cov_ext", b"\x01\xab\xff") == "llext load_hex cov_ext 01abff"
+        )
 
     def test_check_loaded_true_on_success_marker(self):
         ok, reason = self.loader.check_loaded("uart:~$ Successfully loaded extension cov_ext")

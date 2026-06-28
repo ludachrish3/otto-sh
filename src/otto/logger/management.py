@@ -35,7 +35,7 @@ from .formatters import RichFormatter, format_log_time
 # Matches the timestamp directory names ``create_output_dir`` writes:
 # ``YYYYMMDD_HHMMSS_mmm`` optionally followed by ``_<subcommand>``. Fail-safe so
 # a misconfigured ``xdir`` can't lead to rmtree'ing unrelated subtrees.
-_LOG_DIR_NAME_RE = re.compile(r'^\d{8}_\d{6}_\d{3}(_.+)?$')
+_LOG_DIR_NAME_RE = re.compile(r"^\d{8}_\d{6}_\d{3}(_.+)?$")
 
 # Max wall-clock seconds ``remove_old_logs`` may spend scanning per call — a
 # safety valve against stat storms on large/slow (e.g. NFS) trees; a backlog
@@ -79,7 +79,7 @@ def reset() -> None:
     """
     atexit.unregister(_stop_listener)
     atexit.unregister(_print_output_dir)
-    otto = getLogger('otto')
+    otto = getLogger("otto")
     for h in list(otto.handlers):
         otto.removeHandler(h)
     if _state.listener is not None:
@@ -110,11 +110,11 @@ def init_cli_logging(
     verbose: bool = False,
 ) -> None:
     """Configure the ``'otto'`` logger for a CLI invocation (was init_otto_logger)."""
-    logger = getLogger('otto')
+    logger = getLogger("otto")
     logger.setLevel(log_level)
     # CLI has its own handlers; don't double-log to the root logger.
     logger.propagate = False
-    is_debug = log_level == 'DEBUG'
+    is_debug = log_level == "DEBUG"
 
     stdout_handler = RichHandler(
         level=log_level,
@@ -138,7 +138,7 @@ def init_cli_logging(
 
 
 def _command_to_dir_name(command: str) -> str:
-    return command.replace('-', '_')
+    return command.replace("-", "_")
 
 
 def create_output_dir(command: str, subcommand: str | None = None) -> Path:
@@ -146,15 +146,13 @@ def create_output_dir(command: str, subcommand: str | None = None) -> Path:
     logs, and return the dir. The caller records it on ``OttoContext.output_dir``.
     """
     if _state.xdir is None:
-        raise RuntimeError(
-            "init_cli_logging() must run before create_output_dir() (xdir unset)"
-        )
+        raise RuntimeError("init_cli_logging() must run before create_output_dir() (xdir unset)")
 
     # Name the dir down to the millisecond (%f is microseconds; drop last 3).
-    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
     command = _command_to_dir_name(command)
-    sub = f'_{_command_to_dir_name(subcommand)}' if subcommand is not None else ''
-    output_dir = _state.xdir / command / f'{timestamp}{sub}'
+    sub = f"_{_command_to_dir_name(subcommand)}" if subcommand is not None else ""
+    output_dir = _state.xdir / command / f"{timestamp}{sub}"
     output_dir.mkdir(parents=True)
     _state.last_output_dir = output_dir
 
@@ -179,7 +177,7 @@ def _add_log_handlers(output_dir: Path) -> None:
     present on the logger (e.g. pytest's log-capture handler) are left in place
     so that test-infrastructure capture keeps working with ``propagate=False``.
     """
-    logger = getLogger('otto')
+    logger = getLogger("otto")
     # Remove only the handlers we own: the NullHandler, any QueueHandler from a
     # previous create_output_dir call, and the console handler (which is fanned
     # into the listener below — leaving it on the logger too would double-emit
@@ -191,7 +189,7 @@ def _add_log_handlers(output_dir: Path) -> None:
 
     # Build the new async fan-out: console (non-blocking) + file.
     console_handlers = [_state.console_handler] if _state.console_handler is not None else []
-    log_file = FileHandler(output_dir / 'otto.log', mode='x')
+    log_file = FileHandler(output_dir / "otto.log", mode="x")
     rich_formatter = RichFormatter()
     rich_formatter.rich = _state.rich_log_file
     log_file.setFormatter(rich_formatter)
@@ -215,7 +213,7 @@ def remove_old_logs(
     When the budget is exceeded the scan stops early and resumes on the next
     call, bounding the per-run cost on large/slow (e.g. NFS) trees.
     """
-    logger = getLogger('otto')
+    logger = getLogger("otto")
     xdir = _state.xdir
     if xdir is None or not xdir.is_dir():
         return
@@ -243,10 +241,9 @@ def remove_old_logs(
             if output_dir.stat().st_mtime < oldest:
                 if not logged_deletion:
                     days = seconds / 60 / 60 / 24
-                    days_str = f'{days:0.0f} {"day" if days == 1 else "days"}'
+                    days_str = f"{days:0.0f} {'day' if days == 1 else 'days'}"
                     logger.info(
-                        f"[magenta]Deleting log directories that are more than "
-                        f"{days_str} old"
+                        f"[magenta]Deleting log directories that are more than {days_str} old"
                     )
                     logged_deletion = True
                 rmtree(output_dir)

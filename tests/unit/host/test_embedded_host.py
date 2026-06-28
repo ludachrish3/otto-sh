@@ -15,15 +15,15 @@ import pytest
 from otto.host import EmbeddedHost, RemoteHost, ZephyrHost
 from otto.host.binary_loader import LlextHexLoader
 from otto.host.command_frame import ZephyrFrame
-from tests.conftest import active_context
 from otto.host.options import TelnetOptions
 from otto.utils import CommandStatus, Status
+from tests.conftest import active_context
 
 
 @pytest.fixture
 def host():
     """Bare ZephyrHost, no connections established."""
-    h = ZephyrHost(ip='192.0.2.1', element='sprout', log=False)
+    h = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
     yield h
     # Several tests swap internals for AsyncMocks. A mocked ``_connections``
     # makes ``__del__``'s ``connected`` check truthy, so at GC it would churn
@@ -35,19 +35,22 @@ def host():
 # Generic embedded host: fail-loud without a command_frame
 # ---------------------------------------------------------------------------
 
+
 class TestGenericEmbeddedFailsLoud:
     def test_no_command_frame_raises(self):
-        with pytest.raises(ValueError, match='command_frame'):
-            EmbeddedHost(ip='192.0.2.1', element='sprout', log=False)
+        with pytest.raises(ValueError, match="command_frame"):
+            EmbeddedHost(ip="192.0.2.1", element="sprout", log=False)
 
     def test_explicit_frame_builds_generic_embedded(self):
         h = EmbeddedHost(
-            ip='192.0.2.1', element='sprout', log=False,
+            ip="192.0.2.1",
+            element="sprout",
+            log=False,
             command_frame=ZephyrFrame(),
         )
         h._connections = None  # type: ignore[assignment]
-        assert h.os_name is None          # generic: no implicit OS name
-        assert h.os_type == 'embedded'
+        assert h.os_name is None  # generic: no implicit OS name
+        assert h.os_type == "embedded"
         assert isinstance(h.command_frame, ZephyrFrame)
 
 
@@ -55,11 +58,11 @@ class TestGenericEmbeddedFailsLoud:
 # Initialization
 # ---------------------------------------------------------------------------
 
-class TestInit:
 
+class TestInit:
     def test_default_values(self, host: EmbeddedHost):
-        assert host.ip == '192.0.2.1'
-        assert host.element == 'sprout'
+        assert host.ip == "192.0.2.1"
+        assert host.element == "sprout"
         assert host.creds == {}
         assert host.hop is None
         assert host.resources == set()
@@ -69,26 +72,31 @@ class TestInit:
         assert isinstance(host, RemoteHost)
 
     def test_os_schema_defaults(self, host: EmbeddedHost):
-        assert host.os_type == 'zephyr'
-        assert host.os_name == 'Zephyr'
+        assert host.os_type == "zephyr"
+        assert host.os_name == "Zephyr"
         assert host.os_version is None
 
     def test_os_schema_overrides(self):
         host = ZephyrHost(
-            ip='192.0.2.1', element='sprout', log=False,
-            os_name='Zephyr', os_version='3.7.0',
+            ip="192.0.2.1",
+            element="sprout",
+            log=False,
+            os_name="Zephyr",
+            os_version="3.7.0",
         )
-        assert host.os_name == 'Zephyr'
-        assert host.os_version == '3.7.0'
+        assert host.os_name == "Zephyr"
+        assert host.os_version == "3.7.0"
 
     def test_telnet_connection_manager(self, host: EmbeddedHost):
         """An embedded host always uses a telnet transport."""
-        assert host._connections.term == 'telnet'
+        assert host._connections.term == "telnet"
         assert host._connections._telnet_conn is None
 
     def test_custom_telnet_options(self):
         host = ZephyrHost(
-            ip='192.0.2.1', element='sprout', log=False,
+            ip="192.0.2.1",
+            element="sprout",
+            log=False,
             telnet_options=TelnetOptions(port=2323),
         )
         assert host.telnet_options.port == 2323
@@ -98,36 +106,36 @@ class TestInit:
 # ID and name generation (inherited from RemoteHost)
 # ---------------------------------------------------------------------------
 
-class TestIdAndNameGeneration:
 
+class TestIdAndNameGeneration:
     def test_id_no_board(self):
-        host = ZephyrHost(ip='192.0.2.1', element='Sprout', log=False)
-        assert host.id == 'sprout'
-        assert host.name == 'Sprout'
+        host = ZephyrHost(ip="192.0.2.1", element="Sprout", log=False)
+        assert host.id == "sprout"
+        assert host.name == "Sprout"
 
     def test_id_with_board(self):
-        host = ZephyrHost(ip='192.0.2.1', element='Sprout', board='Mote', log=False)
-        assert host.id == 'sprout_mote'
-        assert host.name == 'Sprout Mote'
+        host = ZephyrHost(ip="192.0.2.1", element="Sprout", board="Mote", log=False)
+        assert host.id == "sprout_mote"
+        assert host.name == "Sprout Mote"
 
     def test_custom_name_preserved(self):
-        host = ZephyrHost(ip='192.0.2.1', element='sprout', name='custom', log=False)
-        assert host.name == 'custom'
+        host = ZephyrHost(ip="192.0.2.1", element="sprout", name="custom", log=False)
+        assert host.name == "custom"
 
 
 # ---------------------------------------------------------------------------
 # Hop configuration
 # ---------------------------------------------------------------------------
 
-class TestHop:
 
+class TestHop:
     def test_no_hop_means_no_transport(self, host: EmbeddedHost):
         assert host._connections._hop is None
 
     def test_hop_builds_transport(self):
         """A configured hop produces an SshHopTransport on the ConnectionManager."""
-        host = ZephyrHost(ip='192.0.2.1', element='sprout', hop='basil_seed', log=False)
-        assert host.hop == 'basil_seed'
+        host = ZephyrHost(ip="192.0.2.1", element="sprout", hop="basil_seed", log=False)
+        assert host.hop == "basil_seed"
         assert host._connections._hop is not None
 
 
@@ -135,18 +143,18 @@ class TestHop:
 # Dry-run command execution
 # ---------------------------------------------------------------------------
 
-class TestDryRun:
 
+class TestDryRun:
     @pytest.mark.asyncio
     async def test_run_in_dry_run_skips(self, host: EmbeddedHost):
         with active_context(dry_run=True):
-            result = await host.run('kernel version')
+            result = await host.run("kernel version")
         assert result.only.status == Status.Skipped
 
     @pytest.mark.asyncio
     async def test_oneshot_in_dry_run_skips(self, host: EmbeddedHost):
         with active_context(dry_run=True):
-            result = await host.oneshot('kernel uptime')
+            result = await host.oneshot("kernel uptime")
         assert result.status == Status.Skipped
 
 
@@ -154,8 +162,8 @@ class TestDryRun:
 # Not-yet-implemented surfaces
 # ---------------------------------------------------------------------------
 
-class TestNotImplemented:
 
+class TestNotImplemented:
     @pytest.mark.asyncio
     async def test_interact_raises(self, host: EmbeddedHost):
         with pytest.raises(NotImplementedError):
@@ -166,37 +174,41 @@ class TestNotImplemented:
 # File transfer
 # ---------------------------------------------------------------------------
 
-class TestFileTransfer:
 
+class TestFileTransfer:
     def test_console_backend_by_default(self, host: EmbeddedHost):
         from otto.host.transfer import ConsoleFileTransfer
-        assert host.transfer == 'console'
+
+        assert host.transfer == "console"
         assert isinstance(host._file_transfer, ConsoleFileTransfer)
 
     def test_transfer_backend_is_configurable(self):
         from otto.host.transfer import TftpFileTransfer
-        host = ZephyrHost(ip='192.0.2.1', element='sprout', log=False,
-                          transfer='tftp', valid_transfers=['tftp'])
+
+        host = ZephyrHost(
+            ip="192.0.2.1", element="sprout", log=False, transfer="tftp", valid_transfers=["tftp"]
+        )
         host._connections = None  # type: ignore[assignment]  # avoid __del__ churn
-        assert host.transfer == 'tftp'
+        assert host.transfer == "tftp"
         assert isinstance(host._file_transfer, TftpFileTransfer)
 
     @pytest.mark.asyncio
     async def test_get_dry_run_skips(self, host: EmbeddedHost, tmp_path):
         with active_context(dry_run=True):
-            status, _ = await host.get(tmp_path / 'f', tmp_path)
+            status, _ = await host.get(tmp_path / "f", tmp_path)
         assert status == Status.Skipped
 
     @pytest.mark.asyncio
     async def test_put_dry_run_skips(self, host: EmbeddedHost, tmp_path):
         with active_context(dry_run=True):
-            status, _ = await host.put(tmp_path / 'f', tmp_path)
+            status, _ = await host.put(tmp_path / "f", tmp_path)
         assert status == Status.Skipped
 
 
 # ---------------------------------------------------------------------------
 # default_dest_dir resolution
 # ---------------------------------------------------------------------------
+
 
 class TestDefaultDestDir:
     """``default_dest_dir`` lets a fan-out caller pass a generic
@@ -215,59 +227,70 @@ class TestDefaultDestDir:
         """Lab JSON stores ``default_dest_dir`` as a string; ``__post_init__``
         must coerce it so ``_resolve_dest`` can use Path arithmetic."""
         h = ZephyrHost(
-            ip='192.0.2.1', element='sprout', log=False,
-            default_dest_dir='/RAM:',  # type: ignore[arg-type]
+            ip="192.0.2.1",
+            element="sprout",
+            log=False,
+            default_dest_dir="/RAM:",  # type: ignore[arg-type]
         )
         h._connections = None  # type: ignore[assignment]  # avoid __del__ churn
-        assert h.default_dest_dir == Path('/RAM:')
+        assert h.default_dest_dir == Path("/RAM:")
 
     def test_resolve_empty_returns_default(self):
         h = ZephyrHost(
-            ip='192.0.2.1', element='sprout', log=False,
-            default_dest_dir=Path('/RAM:'),
+            ip="192.0.2.1",
+            element="sprout",
+            log=False,
+            default_dest_dir=Path("/RAM:"),
         )
         h._connections = None  # type: ignore[assignment]
-        assert h._resolve_dest(Path()) == Path('/RAM:')
+        assert h._resolve_dest(Path()) == Path("/RAM:")
 
     def test_resolve_absolute_passes_through(self):
         h = ZephyrHost(
-            ip='192.0.2.1', element='sprout', log=False,
-            default_dest_dir=Path('/RAM:'),
+            ip="192.0.2.1",
+            element="sprout",
+            log=False,
+            default_dest_dir=Path("/RAM:"),
         )
         h._connections = None  # type: ignore[assignment]
         # Explicit absolute path overrides the default — caller knows where
         # they want it.
-        assert h._resolve_dest(Path('/lfs/elsewhere')) == Path('/lfs/elsewhere')
+        assert h._resolve_dest(Path("/lfs/elsewhere")) == Path("/lfs/elsewhere")
 
     def test_resolve_relative_joins_under_default(self):
         h = ZephyrHost(
-            ip='192.0.2.1', element='sprout', log=False,
-            default_dest_dir=Path('/RAM:'),
+            ip="192.0.2.1",
+            element="sprout",
+            log=False,
+            default_dest_dir=Path("/RAM:"),
         )
         h._connections = None  # type: ignore[assignment]
-        assert h._resolve_dest(Path('subdir')) == Path('/RAM:/subdir')
+        assert h._resolve_dest(Path("subdir")) == Path("/RAM:/subdir")
 
     @pytest.mark.asyncio
     async def test_put_resolves_empty_dest_before_delegating(
-        self, host: EmbeddedHost, tmp_path,
+        self,
+        host: EmbeddedHost,
+        tmp_path,
     ):
         """End-to-end: ``put(..., dest_dir=Path())`` on a host configured
         with ``default_dest_dir=/RAM:`` must hand ``Path('/RAM:')`` to the
         file-transfer layer, not ``Path()``. This is the failing case from
         ``otto -l embedded run test-instruction``."""
-        host.default_dest_dir = Path('/RAM:')
+        host.default_dest_dir = Path("/RAM:")
         host._file_transfer = AsyncMock()
-        host._file_transfer.put_files.return_value = (Status.Success, '')
-        src = tmp_path / 'output1.bin'
-        src.write_bytes(b'x')
+        host._file_transfer.put_files.return_value = (Status.Success, "")
+        src = tmp_path / "output1.bin"
+        src.write_bytes(b"x")
         await host.put(src, Path())
         passed_dest = host._file_transfer.put_files.call_args.args[1]
-        assert passed_dest == Path('/RAM:')
+        assert passed_dest == Path("/RAM:")
 
 
 # ---------------------------------------------------------------------------
 # Delegation to the session manager
 # ---------------------------------------------------------------------------
+
 
 class TestDelegation:
     """The Host API surface delegates to the SessionManager / ConnectionManager."""
@@ -276,10 +299,13 @@ class TestDelegation:
     async def test_run_delegates_to_session_manager(self, host: EmbeddedHost):
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandStatus(
-            command='kernel version', output='3.7.0', status=Status.Success, retcode=0,
+            command="kernel version",
+            output="3.7.0",
+            status=Status.Success,
+            retcode=0,
         )
-        result = await host.run('kernel version')
-        assert result.only.output == '3.7.0'
+        result = await host.run("kernel version")
+        assert result.only.output == "3.7.0"
         host._session_mgr.run_cmd.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -287,24 +313,27 @@ class TestDelegation:
         """oneshot shares the single console — it goes through run_cmd, not a pool."""
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandStatus(
-            command='kernel uptime', output='42', status=Status.Success, retcode=0,
+            command="kernel uptime",
+            output="42",
+            status=Status.Success,
+            retcode=0,
         )
-        result = await host.oneshot('kernel uptime')
-        assert result.output == '42'
+        result = await host.oneshot("kernel uptime")
+        assert result.output == "42"
         host._session_mgr.run_cmd.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_send_delegates(self, host: EmbeddedHost):
         host._session_mgr = AsyncMock()
-        await host.send('help\r')
-        host._session_mgr.send.assert_awaited_once_with('help\r', log=True)
+        await host.send("help\r")
+        host._session_mgr.send.assert_awaited_once_with("help\r", log=True)
 
     @pytest.mark.asyncio
     async def test_expect_delegates(self, host: EmbeddedHost):
         host._session_mgr = AsyncMock()
-        host._session_mgr.expect.return_value = 'uart:~$'
-        out = await host.expect('uart')
-        assert out == 'uart:~$'
+        host._session_mgr.expect.return_value = "uart:~$"
+        out = await host.expect("uart")
+        assert out == "uart:~$"
         host._session_mgr.expect.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -312,9 +341,9 @@ class TestDelegation:
         host._session_mgr = AsyncMock()
         sentinel = object()
         host._session_mgr.open_session.return_value = sentinel
-        result = await host.open_session('monitor')
+        result = await host.open_session("monitor")
         assert result is sentinel
-        host._session_mgr.open_session.assert_awaited_once_with('monitor')
+        host._session_mgr.open_session.assert_awaited_once_with("monitor")
 
     @pytest.mark.asyncio
     async def test_close_tears_down_repeater_sessions_connections(self, host: EmbeddedHost):
@@ -330,18 +359,26 @@ class TestDelegation:
     async def test_oneshot_forwards_log_false(self, host):
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandStatus(
-            command="c", output="", status=Status.Success, retcode=0,
+            command="c",
+            output="",
+            status=Status.Success,
+            retcode=0,
         )
         await host.oneshot("llext load_hex foo DEADBEEF", log=False)
         host._session_mgr.run_cmd.assert_awaited_once_with(
-            "llext load_hex foo DEADBEEF", timeout=None, log=False,
+            "llext load_hex foo DEADBEEF",
+            timeout=None,
+            log=False,
         )
 
     @pytest.mark.asyncio
     async def test_run_forwards_log_false(self, host):
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandStatus(
-            command="c", output="", status=Status.Success, retcode=0,
+            command="c",
+            output="",
+            status=Status.Success,
+            retcode=0,
         )
         await host.run("llext load_hex foo DEADBEEF", log=False)
         _, kwargs = host._session_mgr.run_cmd.await_args
@@ -352,8 +389,8 @@ class TestDelegation:
 # verify_connection (dry-run connectivity check)
 # ---------------------------------------------------------------------------
 
-class TestVerifyConnection:
 
+class TestVerifyConnection:
     @pytest.mark.asyncio
     async def test_success(self, host: EmbeddedHost):
         host._connections = AsyncMock()
@@ -364,18 +401,18 @@ class TestVerifyConnection:
     @pytest.mark.asyncio
     async def test_failure_is_reported(self, host: EmbeddedHost):
         host._connections = AsyncMock()
-        host._connections.telnet.side_effect = ConnectionError('no route to host')
+        host._connections.telnet.side_effect = ConnectionError("no route to host")
         result = await host.verify_connection()
         assert result.status == Status.Error
-        assert 'no route to host' in result.output
+        assert "no route to host" in result.output
 
 
 # ---------------------------------------------------------------------------
 # Task 3: loader field + coercion + _require_loader
 # ---------------------------------------------------------------------------
 
-class TestLoaderField:
 
+class TestLoaderField:
     def test_loader_string_coerced_to_instance(self):
         h = ZephyrHost(ip="192.0.2.1", element="sprout", log=False, loader="llext-hex")
         assert isinstance(h.loader, LlextHexLoader)
@@ -394,12 +431,12 @@ class TestLoaderField:
 # Task 4: load() / unload()
 # ---------------------------------------------------------------------------
 
+
 def _ok(output: str) -> CommandStatus:
     return CommandStatus(command="c", output=output, status=Status.Success, retcode=0)
 
 
 class TestLoad:
-
     @pytest.mark.asyncio
     async def test_load_runs_loader_command_with_log_false(self, host, tmp_path):
         host.loader = LlextHexLoader()
@@ -441,6 +478,7 @@ class TestLoad:
     @pytest.mark.asyncio
     async def test_load_show_progress_passes_write_progress(self, host, tmp_path, monkeypatch):
         from contextlib import asynccontextmanager
+
         import otto.host.embedded_host as eh
 
         @asynccontextmanager
@@ -448,7 +486,9 @@ class TestLoad:
             yield object()
 
         monkeypatch.setattr(eh, "_acquire_shared_progress", _fake_progress)
-        monkeypatch.setattr(eh, "make_rich_progress_handler", lambda progress, name: (lambda *a: None))
+        monkeypatch.setattr(
+            eh, "make_rich_progress_handler", lambda progress, name: lambda *a: None
+        )
         host.loader = LlextHexLoader()
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = _ok("Successfully loaded extension cov_ext")
@@ -461,7 +501,6 @@ class TestLoad:
 
 
 class TestUnload:
-
     @pytest.mark.asyncio
     async def test_unload_drains_until_fully_unloaded(self, host):
         host.loader = LlextHexLoader()

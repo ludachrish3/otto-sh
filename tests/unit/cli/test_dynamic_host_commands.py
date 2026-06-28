@@ -1,6 +1,8 @@
 """Unit tests for dynamic host-method CLI exposure."""
+
 import inspect
 from pathlib import Path
+from typing import Annotated
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,18 +14,16 @@ from otto.cli.expose import (
     _render_result,
     collect_exposed_methods,
     exposed_cli_names,
-    host_class_for_id,
     make_method_command,
 )
 from otto.host.unix_host import UnixHost
 from otto.utils import Arg, Status, cli_exposed
-from typing import Annotated
 
 
 def test_cli_exposed_sets_markers_with_dashed_default_name():
     @cli_exposed
-    async def soft_reboot(self):
-        ...
+    async def soft_reboot(self): ...
+
     assert soft_reboot.__cli_exposed__ is True
     assert soft_reboot.__cli_name__ == "soft-reboot"
     assert soft_reboot.__cli_help__ is None
@@ -31,21 +31,18 @@ def test_cli_exposed_sets_markers_with_dashed_default_name():
 
 def test_cli_exposed_accepts_explicit_name_and_help():
     @cli_exposed(name="pwr", help="power it")
-    async def power(self, state=None):
-        ...
+    async def power(self, state=None): ...
+
     assert power.__cli_name__ == "pwr"
     assert power.__cli_help__ == "power it"
 
 
 class _Sample:
     @cli_exposed
-    async def reboot(self, hard: bool = False):
-        ...
+    async def reboot(self, hard: bool = False): ...
     @cli_exposed(name="pwr")
-    async def power(self, state: str):
-        ...
-    async def not_exposed(self):
-        ...
+    async def power(self, state: str): ...
+    async def not_exposed(self): ...
 
 
 def test_collect_finds_only_exposed_methods():
@@ -57,10 +54,11 @@ def test_collect_finds_only_exposed_methods():
 # make_method_command — new two-arg form
 # ---------------------------------------------------------------------------
 
+
 def test_make_method_command_signature_has_real_params():
     @cli_exposed
-    async def reboot(self, hard: bool = False) -> tuple:
-        ...
+    async def reboot(self, hard: bool = False) -> tuple: ...
+
     cmd = make_method_command("reboot", reboot)
     params = inspect.signature(cmd).parameters
     assert "ctx" in params and "hard" in params
@@ -85,8 +83,8 @@ async def test_make_method_command_dispatches_kwargs_and_closes():
         obj = host
 
     @cli_exposed
-    async def reboot(self, hard: bool = False):
-        ...
+    async def reboot(self, hard: bool = False): ...
+
     cmd = make_method_command("reboot", reboot)
     await cmd(_Ctx(), hard=True)
     assert seen["hard"] is True
@@ -108,8 +106,8 @@ async def test_make_method_command_failure_tuple_exits_nonzero():
         obj = host
 
     @cli_exposed
-    async def reboot(self, hard: bool = False):
-        ...
+    async def reboot(self, hard: bool = False): ...
+
     cmd = make_method_command("reboot", reboot)
     with pytest.raises(typer.Exit) as ei:
         await cmd(_Ctx(), hard=False)
@@ -126,8 +124,8 @@ async def test_make_method_command_unsupported_method_errors():
         obj = host
 
     @cli_exposed
-    async def flash_firmware(self, path: str):
-        ...
+    async def flash_firmware(self, path: str): ...
+
     cmd = make_method_command("flash_firmware", flash_firmware)
     with pytest.raises(typer.Exit):
         await cmd(_Ctx(), path="/some/file")
@@ -137,10 +135,12 @@ async def test_make_method_command_unsupported_method_errors():
 # _render_result
 # ---------------------------------------------------------------------------
 
+
 def test_render_runresult_failure_exits_nonzero():
     class _RR:
         class status:
             is_ok = False
+
     with pytest.raises(typer.Exit):
         _render_result(_RR())
 
@@ -149,6 +149,7 @@ def test_render_runresult_ok_returns_silently():
     class _RR:
         class status:
             is_ok = True
+
     # no exception, no output
     _render_result(_RR())
 
@@ -169,12 +170,12 @@ def test_render_failure_tuple_exits_nonzero():
 # Positional-argument end-to-end smoke tests (Refinement #3)
 # ---------------------------------------------------------------------------
 
+
 def test_positional_scalar_arg_routes_correctly():
     """A no-default positional param becomes a CLI Argument and parses correctly."""
 
     @cli_exposed
-    async def greet(self, name: str) -> tuple:
-        ...
+    async def greet(self, name: str) -> tuple: ...
 
     seen: dict = {}
 
@@ -197,7 +198,8 @@ def test_positional_scalar_arg_routes_correctly():
         ctx.obj = host
 
     cmd_fn = make_method_command("greet", greet)
-    from otto.utils import async_typer_command  # noqa: PLC0415
+    from otto.utils import async_typer_command
+
     app.command("greet")(async_typer_command(cmd_fn))
 
     r = CliRunner().invoke(app, ["greet", "Alice"])
@@ -207,7 +209,8 @@ def test_positional_scalar_arg_routes_correctly():
 
 def test_variadic_then_scalar_routes_correctly():
     """Variadic list arg followed by a no-default scalar routes positionals correctly."""
-    from typing import Annotated, Sequence
+    from collections.abc import Sequence
+    from typing import Annotated
 
     from otto.utils import Arg
 
@@ -216,8 +219,7 @@ def test_variadic_then_scalar_routes_correctly():
         self,
         sources: Annotated[str | Sequence[str], Arg(variadic=True, elem_type=str)],
         dest: str,
-    ) -> tuple:
-        ...
+    ) -> tuple: ...
 
     seen: dict = {}
 
@@ -241,7 +243,8 @@ def test_variadic_then_scalar_routes_correctly():
         ctx.obj = host
 
     cmd_fn = make_method_command("transfer", transfer)
-    from otto.utils import async_typer_command  # noqa: PLC0415
+    from otto.utils import async_typer_command
+
     app.command("transfer")(async_typer_command(cmd_fn))
 
     r = CliRunner().invoke(app, ["transfer", "A", "B", "DEST"])
@@ -254,24 +257,23 @@ def test_variadic_then_scalar_routes_correctly():
 # Class scoping and HostGroup tests
 # ---------------------------------------------------------------------------
 
+
 class _FakeUnix:
     id = "u1"
 
     @cli_exposed
-    async def reboot(self):
-        ...
+    async def reboot(self): ...
 
     @cli_exposed
-    async def mkdir(self, path: str):
-        ...
+    async def mkdir(self, path: str): ...
 
 
 class _FakeEmbedded:
     id = "e1"
 
     @cli_exposed
-    async def reboot(self):
-        ...
+    async def reboot(self): ...
+
     # no mkdir
 
 
@@ -335,9 +337,22 @@ def test_lifecycle_and_fileops_verbs_are_exposed():
     # UnixHost's own `shutdown` override.
     unix = set(collect_exposed_methods(UnixHost))
     assert {
-        "reboot", "power", "shutdown", "install", "uninstall", "stage",
-        "is-installed", "is-uninstalled",
-        "exists", "ls", "mkdir", "cp", "mv", "read-file", "write-file", "rm",
+        "reboot",
+        "power",
+        "shutdown",
+        "install",
+        "uninstall",
+        "stage",
+        "is-installed",
+        "is-uninstalled",
+        "exists",
+        "ls",
+        "mkdir",
+        "cp",
+        "mv",
+        "read-file",
+        "write-file",
+        "rm",
     } <= unix
 
 
@@ -362,7 +377,6 @@ def test_run_cli_binding_markers():
     - sudo is an option (flag-style, bool default False)
     - expects and log are in binding.excluded
     """
-    import inspect
     import typer
 
     from otto.cli.param_synth import build_cli_binding
@@ -380,13 +394,17 @@ def test_run_cli_binding_markers():
     ann_args = getattr(cmds_p.annotation, "__args__", ())
     assert ann_args and ann_args[0] == list[str], f"Expected list[str] base, got {ann_args}"
     meta = getattr(cmds_p.annotation, "__metadata__", ())
-    assert any(isinstance(m, typer.models.ArgumentInfo) for m in meta), "cmds must be a positional Argument"
+    assert any(isinstance(m, typer.models.ArgumentInfo) for m in meta), (
+        "cmds must be a positional Argument"
+    )
 
     # timeout: option
     assert "timeout" in param_names
     timeout_p = by_name["timeout"]
     timeout_meta = getattr(timeout_p.annotation, "__metadata__", ())
-    assert any(isinstance(m, typer.models.OptionInfo) for m in timeout_meta), "timeout must be an Option"
+    assert any(isinstance(m, typer.models.OptionInfo) for m in timeout_meta), (
+        "timeout must be an Option"
+    )
 
     # sudo: option (bool with default False — synthesised as a flag)
     assert "sudo" in param_names
@@ -418,6 +436,7 @@ def test_end_to_end_dispatch_through_host_group(monkeypatch):
             close_calls.append(None)
 
     import otto.host.os_profile as op
+
     monkeypatch.setattr(op, "_HOST_CLASSES", {"unix": _FakeUnixLocal})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _FakeUnixLocal)
 
@@ -440,6 +459,7 @@ def test_end_to_end_dispatch_through_host_group(monkeypatch):
 # ---------------------------------------------------------------------------
 # Task 7: concrete put/get @cli_exposed decoration
 # ---------------------------------------------------------------------------
+
 
 def test_put_get_success_markers():
     """UnixHost.put/__cli_success__ == 'Transfer complete.' and get == 'Download complete.'"""
@@ -536,6 +556,7 @@ def test_build_cli_binding_docker_put_no_show_progress():
 # Task 8: ls path and power state stay positional
 # ---------------------------------------------------------------------------
 
+
 def test_ls_path_and_power_state_real_binding():
     """build_cli_binding on the REAL PosixFileOps.ls / BaseHost.power proves Arg() markers."""
     import typer
@@ -588,6 +609,7 @@ def test_ls_path_stays_positional_and_power_state_positional(monkeypatch):
             pass
 
     import otto.host.os_profile as op
+
     monkeypatch.setattr(op, "_HOST_CLASSES", {"h": _H})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _H)
     app = typer.Typer(name="host", cls=HostGroup)
@@ -616,9 +638,7 @@ def test_class_for_skips_host_build_during_completion(monkeypatch):
     from otto.cli import expose as expose_mod
 
     calls: list[str | None] = []
-    monkeypatch.setattr(
-        expose_mod, "host_class_for_id", lambda hid: calls.append(hid) or None
-    )
+    monkeypatch.setattr(expose_mod, "host_class_for_id", lambda hid: calls.append(hid) or None)
     grp = HostGroup(name="host")
 
     class _CompletionCtx:
@@ -640,40 +660,40 @@ def test_class_for_skips_host_build_during_completion(monkeypatch):
 # Task 1: Per-class CLI parsers
 # ---------------------------------------------------------------------------
 
+
 def test_class_command_builds_parser_from_the_given_class():
     """The same verb name on two classes yields parsers shaped by each class."""
     from typing import Annotated
+
     from otto.cli.expose import HostGroup
-    from otto.utils import cli_exposed, Arg, Opt
+    from otto.utils import Arg, Opt, cli_exposed
 
     class HostX:
         @cli_exposed
-        async def frob(self, target: Annotated[str, Arg()]) -> None:
-            ...
+        async def frob(self, target: Annotated[str, Arg()]) -> None: ...
 
     class HostY:
         @cli_exposed
-        async def frob(self, target: Annotated[str | None, Opt()] = None) -> None:
-            ...
+        async def frob(self, target: Annotated[str | None, Opt()] = None) -> None: ...
 
     g = HostGroup(name="host")
     cmd_x = g._class_command(HostX, "frob", "frob")
     cmd_y = g._class_command(HostY, "frob", "frob")
     px = {p.name: p for p in cmd_x.params}
     py = {p.name: p for p in cmd_y.params}
-    assert px["target"].param_type_name == "argument"   # required positional
-    assert py["target"].param_type_name == "option"      # --target
+    assert px["target"].param_type_name == "argument"  # required positional
+    assert py["target"].param_type_name == "option"  # --target
 
 
 def test_class_command_caches_per_class_and_verb():
     from typing import Annotated
+
     from otto.cli.expose import HostGroup
-    from otto.utils import cli_exposed, Arg
+    from otto.utils import Arg, cli_exposed
 
     class HostX:
         @cli_exposed
-        async def frob(self, target: Annotated[str, Arg()]) -> None:
-            ...
+        async def frob(self, target: Annotated[str, Arg()]) -> None: ...
 
     g = HostGroup(name="host")
     first = g._class_command(HostX, "frob", "frob")
@@ -684,13 +704,13 @@ def test_class_command_caches_per_class_and_verb():
 def test_get_command_uses_resolved_class_parser(monkeypatch):
     from typing import Annotated
     from unittest.mock import MagicMock
+
     from otto.cli.expose import HostGroup
-    from otto.utils import cli_exposed, Opt
+    from otto.utils import Opt, cli_exposed
 
     class HostY:
         @cli_exposed
-        async def frob(self, target: Annotated[str | None, Opt()] = None) -> None:
-            ...
+        async def frob(self, target: Annotated[str | None, Opt()] = None) -> None: ...
 
     g = HostGroup(name="host")
     monkeypatch.setattr(g, "_class_for", lambda ctx: HostY)
@@ -703,6 +723,7 @@ def test_get_command_uses_resolved_class_parser(monkeypatch):
 # Task 5: Embedded load/unload CLI retrofit
 # ---------------------------------------------------------------------------
 
+
 def test_embedded_and_unix_load_have_per_class_signatures():
     """Same verb name, divergent signatures: embedded `load` requires a
     positional `name`; unix `load` exposes it as the `--name` option."""
@@ -713,13 +734,14 @@ def test_embedded_and_unix_load_have_per_class_signatures():
     g = HostGroup(name="host")
     emb = {p.name: p for p in g._class_command(ZephyrHost, "load", "load").params}
     unix = {p.name: p for p in g._class_command(UnixHost, "load", "load").params}
-    assert emb["name"].param_type_name == "argument"   # embedded: required positional
+    assert emb["name"].param_type_name == "argument"  # embedded: required positional
     assert emb["name"].required is True
-    assert unix["name"].param_type_name == "option"      # unix: --name
+    assert unix["name"].param_type_name == "option"  # unix: --name
 
 
 def test_embedded_load_unload_are_cli_exposed():
     from otto.cli.expose import collect_exposed_methods
     from otto.host.embedded_host import ZephyrHost
+
     verbs = collect_exposed_methods(ZephyrHost)
     assert "load" in verbs and "unload" in verbs

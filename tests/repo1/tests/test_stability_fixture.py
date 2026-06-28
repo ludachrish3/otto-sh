@@ -32,6 +32,7 @@ from otto.utils import Status
 
 logger = get_otto_logger()
 
+
 @dataclass
 class _Options(RepoOptions):
     pass
@@ -54,9 +55,7 @@ class TestStabilityFixture(OttoSuite[_Options]):
 
         # Run a command to force the SSH connection open
         result = await host.oneshot("echo stability_setup_ok", timeout=10)
-        assert result.status.is_ok, (
-            f"Failed to establish connection during setup: {result.output}"
-        )
+        assert result.status.is_ok, f"Failed to establish connection during setup: {result.output}"
 
         self.__class__._host = host
         yield
@@ -65,11 +64,10 @@ class TestStabilityFixture(OttoSuite[_Options]):
     async def test_connection_alive(self, suite_options: _Options) -> None:
         """The SSH connection from class setup must still work on each iteration."""
 
-        logger.info(f'{suite_options=}')
+        logger.info(f"{suite_options=}")
 
         result = await self._host.oneshot("echo iteration_ok", timeout=10)
         assert result.status == Status.Success, (
-            f"SSH connection failed (likely torn down between iterations): "
-            f"{result.output}"
+            f"SSH connection failed (likely torn down between iterations): {result.output}"
         )
         assert "iteration_ok" in result.output

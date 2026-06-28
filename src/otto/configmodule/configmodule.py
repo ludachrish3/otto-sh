@@ -1,11 +1,9 @@
 import dataclasses
 import re
+from collections.abc import Awaitable, Callable, Generator
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
-    Callable,
-    Generator,
     TypeVar,
     cast,
 )
@@ -30,19 +28,18 @@ T = TypeVar("T")
 logger = get_otto_logger()
 
 
-
 def _apply_option_overrides(
-    host: 'RemoteHost',
+    host: "RemoteHost",
     *,
     term: str | None = None,
     transfer: str | None = None,
-    ssh_options: 'SshOptions | None' = None,
-    telnet_options: 'TelnetOptions | None' = None,
-    sftp_options: 'SftpOptions | None' = None,
-    scp_options: 'ScpOptions | None' = None,
-    ftp_options: 'FtpOptions | None' = None,
-    nc_options: 'NcOptions | None' = None,
-) -> 'RemoteHost':
+    ssh_options: "SshOptions | None" = None,
+    telnet_options: "TelnetOptions | None" = None,
+    sftp_options: "SftpOptions | None" = None,
+    scp_options: "ScpOptions | None" = None,
+    ftp_options: "FtpOptions | None" = None,
+    nc_options: "NcOptions | None" = None,
+) -> "RemoteHost":
     """Return a copy of *host* with the given ``*_options`` fields replaced.
 
     Each non-``None`` argument **replaces** the corresponding field on the
@@ -80,14 +77,14 @@ def _apply_option_overrides(
     candidates: dict[str, Any] = {
         k: v
         for k, v in (
-            ('term', term),
-            ('transfer', transfer),
-            ('ssh_options', ssh_options),
-            ('telnet_options', telnet_options),
-            ('sftp_options', sftp_options),
-            ('scp_options', scp_options),
-            ('ftp_options', ftp_options),
-            ('nc_options', nc_options),
+            ("term", term),
+            ("transfer", transfer),
+            ("ssh_options", ssh_options),
+            ("telnet_options", telnet_options),
+            ("sftp_options", sftp_options),
+            ("scp_options", scp_options),
+            ("ftp_options", ftp_options),
+            ("nc_options", nc_options),
         )
         if v is not None
     }
@@ -95,12 +92,12 @@ def _apply_option_overrides(
         return host
     # RemoteHost subclasses (UnixHost, EmbeddedHost) are all dataclasses,
     # but RemoteHost itself isn't decorated — cast around the type checker.
-    host_any = cast(Any, host)
+    host_any = cast("Any", host)
     host_fields = {f.name for f in dataclasses.fields(host_any)}
     overrides = {k: v for k, v in candidates.items() if k in host_fields}
     if not overrides:
         return host
-    return cast('RemoteHost', dataclasses.replace(host_any, **overrides))
+    return cast("RemoteHost", dataclasses.replace(host_any, **overrides))
 
 
 def all_hosts(
@@ -109,13 +106,13 @@ def all_hosts(
     include_containers: bool = False,
     term: str | None = None,
     transfer: str | None = None,
-    ssh_options: 'SshOptions | None' = None,
-    telnet_options: 'TelnetOptions | None' = None,
-    sftp_options: 'SftpOptions | None' = None,
-    scp_options: 'ScpOptions | None' = None,
-    ftp_options: 'FtpOptions | None' = None,
-    nc_options: 'NcOptions | None' = None,
-) -> Generator['RemoteHost', Any, Any]:
+    ssh_options: "SshOptions | None" = None,
+    telnet_options: "TelnetOptions | None" = None,
+    sftp_options: "SftpOptions | None" = None,
+    scp_options: "ScpOptions | None" = None,
+    ftp_options: "FtpOptions | None" = None,
+    nc_options: "NcOptions | None" = None,
+) -> Generator["RemoteHost", Any, Any]:
     """Yield the active lab's real remote hosts, optionally filtered by regex.
 
     This is the *fleet* generator: it yields every network-reached
@@ -161,9 +158,11 @@ def all_hosts(
         :doc:`/guide/library-usage` for a runnable, in-memory example)::
 
             import re
+
             seeds = list(all_hosts(re.compile(r"tomato")))
     """
     from ..context import get_context
+
     yield from get_context().all_hosts(
         pattern,
         include_containers=include_containers,
@@ -177,6 +176,7 @@ def all_hosts(
         nc_options=nc_options,
     )
 
+
 async def do_for_all_hosts(
     method: Callable[..., Awaitable[T]],
     *args: Any,
@@ -185,12 +185,12 @@ async def do_for_all_hosts(
     include_containers: bool = False,
     term: str | None = None,
     transfer: str | None = None,
-    ssh_options: 'SshOptions | None' = None,
-    telnet_options: 'TelnetOptions | None' = None,
-    sftp_options: 'SftpOptions | None' = None,
-    scp_options: 'ScpOptions | None' = None,
-    ftp_options: 'FtpOptions | None' = None,
-    nc_options: 'NcOptions | None' = None,
+    ssh_options: "SshOptions | None" = None,
+    telnet_options: "TelnetOptions | None" = None,
+    sftp_options: "SftpOptions | None" = None,
+    scp_options: "ScpOptions | None" = None,
+    ftp_options: "FtpOptions | None" = None,
+    nc_options: "NcOptions | None" = None,
     **kwargs: Any,
 ) -> dict[str, T | BaseException]:
     """Call an async host method on every matching host.
@@ -221,12 +221,15 @@ async def do_for_all_hosts(
 
             import re
             from otto.host import UnixHost
+
             results = await do_for_all_hosts(
-                UnixHost.oneshot, "uname -a",
+                UnixHost.oneshot,
+                "uname -a",
                 pattern=re.compile(r"router"),
             )
     """
     from ..context import get_context
+
     return await get_context().do_for_all_hosts(
         method,
         *args,
@@ -254,13 +257,13 @@ async def run_on_all_hosts(
     include_containers: bool = False,
     term: str | None = None,
     transfer: str | None = None,
-    ssh_options: 'SshOptions | None' = None,
-    telnet_options: 'TelnetOptions | None' = None,
-    sftp_options: 'SftpOptions | None' = None,
-    scp_options: 'ScpOptions | None' = None,
-    ftp_options: 'FtpOptions | None' = None,
-    nc_options: 'NcOptions | None' = None,
-) -> 'dict[str, RunResult | BaseException]':
+    ssh_options: "SshOptions | None" = None,
+    telnet_options: "TelnetOptions | None" = None,
+    sftp_options: "SftpOptions | None" = None,
+    scp_options: "ScpOptions | None" = None,
+    ftp_options: "FtpOptions | None" = None,
+    nc_options: "NcOptions | None" = None,
+) -> "dict[str, RunResult | BaseException]":
     """Run commands on every matching host via :meth:`~otto.host.host.BaseHost.run`.
 
     Convenience wrapper around :func:`do_for_all_hosts` for the most
@@ -290,6 +293,7 @@ async def run_on_all_hosts(
             results = await run_on_all_hosts("uname -a")
     """
     from ..context import get_context
+
     return await get_context().run_on_all_hosts(
         cmds,
         pattern=pattern,
@@ -312,13 +316,13 @@ def get_host(
     *,
     term: str | None = None,
     transfer: str | None = None,
-    ssh_options: 'SshOptions | None' = None,
-    telnet_options: 'TelnetOptions | None' = None,
-    sftp_options: 'SftpOptions | None' = None,
-    scp_options: 'ScpOptions | None' = None,
-    ftp_options: 'FtpOptions | None' = None,
-    nc_options: 'NcOptions | None' = None,
-) -> 'UnixHost':
+    ssh_options: "SshOptions | None" = None,
+    telnet_options: "TelnetOptions | None" = None,
+    sftp_options: "SftpOptions | None" = None,
+    scp_options: "ScpOptions | None" = None,
+    ftp_options: "FtpOptions | None" = None,
+    nc_options: "NcOptions | None" = None,
+) -> "UnixHost":
     """Return the host registered under *host_id* in the active lab.
 
     Args:
@@ -337,8 +341,8 @@ def get_host(
             ``get_host('x') is get_host('x')`` still holds. Hop
             resolution is internal and is *not* affected by overrides.
     """
-
     from ..context import get_context
+
     return get_context().get_host(
         host_id,
         term=term,
@@ -355,4 +359,5 @@ def get_host(
 def get_lab() -> Lab:
     """Return the active lab from the current OttoContext."""
     from ..context import get_context
+
     return get_context().lab

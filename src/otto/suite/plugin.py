@@ -29,13 +29,14 @@ Additional hooks:
 import asyncio
 import re
 import time
+from collections.abc import AsyncGenerator, Generator
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, AsyncGenerator, Generator, cast
+from typing import Any, cast
 
 import pytest
 import pytest_asyncio
-from _pytest.runner import call_and_report, runtestprotocol, show_test_item
+from _pytest.runner import call_and_report, show_test_item
 
 from ..logger import get_otto_logger
 
@@ -152,7 +153,7 @@ class OttoPlugin:
     def pytest_ignore_collect(
         self,
         collection_path: Path,
-        config: pytest.Config,  # noqa: ARG002
+        config: pytest.Config,
     ) -> bool | None:
         """Ignore any path not under a configured SUT test directory.
 
@@ -171,7 +172,9 @@ class OttoPlugin:
         return True
 
     @pytest.hookimpl(tryfirst=True)
-    def pytest_runtest_protocol(self, item: pytest.Item, nextitem: pytest.Item | None) -> bool | None:
+    def pytest_runtest_protocol(
+        self, item: pytest.Item, nextitem: pytest.Item | None
+    ) -> bool | None:
         """Repeat each test item when stability mode is active.
 
         When ``--iterations`` or ``--duration`` (or both) are specified,
@@ -193,28 +196,28 @@ class OttoPlugin:
         if self._iterations <= 0 and self._duration <= 0:
             return None
 
-        max_iters = self._iterations if self._iterations > 0 else float('inf')
-        deadline = (time.monotonic() + self._duration) if self._duration > 0 else float('inf')
+        max_iters = self._iterations if self._iterations > 0 else float("inf")
+        deadline = (time.monotonic() + self._duration) if self._duration > 0 else float("inf")
 
         # _request, _initrequest, funcargs live on pytest.Function (private
         # API not surfaced on pytest.Item). Duck-type via hasattr and route
         # all access through an Any-cast alias so ty stays out of the way.
-        item_any = cast(Any, item)
-        hasrequest = hasattr(item, '_request')
+        item_any = cast("Any", item)
+        hasrequest = hasattr(item, "_request")
         if hasrequest and not item_any._request:
             item_any._initrequest()
 
         # ── Setup (once) ──────────────────────────────────────────────
-        setup_report = call_and_report(item, 'setup', log=True)
+        setup_report = call_and_report(item, "setup", log=True)
         if not setup_report.passed:
             # Teardown even on setup failure, then exit
-            call_and_report(item, 'teardown', log=True, nextitem=nextitem)
+            call_and_report(item, "teardown", log=True, nextitem=nextitem)
             if hasrequest:
                 item_any._request = False
                 item_any.funcargs = None
             return True
 
-        if item.config.getoption('setupshow', False):
+        if item.config.getoption("setupshow", False):
             show_test_item(item, add_space=False)
 
         # ── Call (repeated) ───────────────────────────────────────────
@@ -222,14 +225,12 @@ class OttoPlugin:
         is_stability = self._iterations > 1 or self._duration > 0
         while iteration < max_iters and time.monotonic() < deadline:
             if is_stability:
-                logger.info(
-                    f'[bold cyan]--- {item.name} iteration {iteration + 1} ---[/bold cyan]'
-                )
-            call_and_report(item, 'call', log=True)
+                logger.info(f"[bold cyan]--- {item.name} iteration {iteration + 1} ---[/bold cyan]")
+            call_and_report(item, "call", log=True)
             iteration += 1
 
         # ── Teardown (once) ───────────────────────────────────────────
-        call_and_report(item, 'teardown', log=True, nextitem=nextitem)
+        call_and_report(item, "teardown", log=True, nextitem=nextitem)
         if hasrequest:
             item_any._request = False
             item_any.funcargs = None
@@ -242,7 +243,7 @@ class OttoPlugin:
         Stops on the first success.  Re-raises the last exception if all
         attempts fail.  Each failed attempt is logged at WARNING level.
         """
-        retry_marker = item.get_closest_marker('retry')
+        retry_marker = item.get_closest_marker("retry")
         if retry_marker is None:
             return  # normal execution via other hooks
 
@@ -254,16 +255,14 @@ class OttoPlugin:
                 return  # success — stop retrying
             except Exception as exc:
                 last_exc = exc
-                logger.warning(
-                    f'retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}'
-                )
+                logger.warning(f"retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}")
         if last_exc is not None:
             raise last_exc
 
     def pytest_report_teststatus(
         self,
         report: pytest.TestReport,
-        config: pytest.Config,  # noqa: ARG002
+        config: pytest.Config,
     ) -> tuple[str, str, str] | None:
         """Suppress pytest's per-test progress characters.
 
@@ -275,18 +274,18 @@ class OttoPlugin:
         stopping the terminal reporter from writing anything per test.
         """
         if report.passed:
-            return ('passed', '', 'PASSED')
+            return ("passed", "", "PASSED")
         if report.failed:
-            return ('failed', '', 'FAILED')
+            return ("failed", "", "FAILED")
         if report.skipped:
-            return ('skipped', '', 'SKIPPED')
+            return ("skipped", "", "SKIPPED")
         return None
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         """In stability mode, accumulate per-test pass/fail counts."""
         if self._stability_collector is None:
             return
-        if report.when != 'call':
+        if report.when != "call":
             return
         self._stability_collector.record(report.nodeid, passed=report.passed)
 
@@ -294,18 +293,18 @@ class OttoPlugin:
     def pytest_runtest_makereport(
         self,
         item: pytest.Item,
-        call: pytest.CallInfo[None],  # noqa: ARG002
+        call: pytest.CallInfo[None],
     ) -> Generator[None, None, None]:
         outcome = yield
         # hookwrapper=True: yield returns a pluggy Result whose
         # get_result() surfaces the TestReport; the pytest stubs type it
         # as None, so cast to access the runtime API.
-        rep = cast(Any, outcome).get_result()
-        setattr(item, f'rep_{rep.when}', rep)
+        rep = cast("Any", outcome).get_result()
+        setattr(item, f"rep_{rep.when}", rep)
 
     @pytest_asyncio.fixture(
-        scope='session',
-        loop_scope='session',
+        scope="session",
+        loop_scope="session",
         autouse=True,
     )
     async def _otto_session_monitor(self) -> AsyncGenerator[None, None]:
@@ -336,31 +335,31 @@ class OttoPlugin:
         # targets don't expose the metric-collection commands it issues.
         hosts = [h for h in all_hosts(pattern=pattern) if isinstance(h, UnixHost)]
         if not hosts:
-            label = f'matching "{self._monitor_hosts}"' if self._monitor_hosts else ''
-            logger.warning(f'--monitor: no hosts {label} — collection disabled.')
+            label = f'matching "{self._monitor_hosts}"' if self._monitor_hosts else ""
+            logger.warning(f"--monitor: no hosts {label} — collection disabled.")
             yield
             return
 
         output = self._monitor_output
-        db_path = output if output is not None and output.suffix.lower() == '.db' else None
+        db_path = output if output is not None and output.suffix.lower() == ".db" else None
         collector = build_monitor_collector(hosts=hosts, db_path=db_path)
 
         OttoSuite._session_monitor_collector = collector
         try:
             yield
         finally:
-            if output is not None and output.suffix.lower() != '.db':
+            if output is not None and output.suffix.lower() != ".db":
                 output.parent.mkdir(parents=True, exist_ok=True)
                 collector.export_json(str(output))
-                logger.info(f'Monitor data written to {output}')
+                logger.info(f"Monitor data written to {output}")
             elif db_path is not None:
-                logger.info(f'Monitor data written to {db_path}')
+                logger.info(f"Monitor data written to {db_path}")
             await collector.close()
             OttoSuite._session_monitor_collector = None
 
     @pytest_asyncio.fixture(
-        scope='class',
-        loop_scope='class',
+        scope="class",
+        loop_scope="class",
         autouse=True,
     )
     async def _otto_class_monitor_task(self) -> AsyncGenerator[None, None]:
@@ -377,7 +376,8 @@ class OttoPlugin:
         Between classes, collection pauses — gaps are expected.
         """
         from .suite import OttoSuite
-        collector = getattr(OttoSuite, '_session_monitor_collector', None)
+
+        collector = getattr(OttoSuite, "_session_monitor_collector", None)
         if not self._monitor or collector is None:
             yield
             return

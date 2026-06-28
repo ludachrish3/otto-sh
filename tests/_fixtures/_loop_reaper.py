@@ -15,6 +15,7 @@ for all current and future harness leak sites) while refusing to mask a
 *product* leak: a loop whose creation stack runs through ``otto/`` is reported,
 never closed, so a genuine product regression fails loudly with attribution.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable

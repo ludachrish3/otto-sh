@@ -55,7 +55,7 @@ class FtpFileTransfer(UnixFileTransfer):
 
     def __init__(
         self,
-        connections: 'ConnectionManager',
+        connections: "ConnectionManager",
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
         max_filename_len: int = 255,
@@ -77,8 +77,12 @@ class FtpFileTransfer(UnixFileTransfer):
     @classmethod
     def create(cls, ctx: "TransferContext") -> "FtpFileTransfer":
         assert ctx.connections is not None and ctx.exec_cmd is not None
-        return cls(connections=ctx.connections, name=ctx.host_name, exec_cmd=ctx.exec_cmd,
-                   max_filename_len=ctx.max_filename_len)
+        return cls(
+            connections=ctx.connections,
+            name=ctx.host_name,
+            exec_cmd=ctx.exec_cmd,
+            max_filename_len=ctx.max_filename_len,
+        )
 
     @override
     async def _run_get(
@@ -129,12 +133,12 @@ class FtpFileTransfer(UnixFileTransfer):
                         total = await _ftp_size(ftp_conn, str(src))
                         bytes_done = 0
                         async with ftp_conn.download_stream(str(src)) as stream:
-                            with open(dst, 'wb') as f:
+                            with open(dst, "wb") as f:
                                 async for block in stream.iter_by_block():
                                     f.write(block)
                                     bytes_done += len(block)
                                     handler(str(src), str(dst), bytes_done, total)
-                return Status.Success, ''
+                return Status.Success, ""
             except Exception as e:
                 return Status.Error, str(e)
 
@@ -160,7 +164,7 @@ class FtpFileTransfer(UnixFileTransfer):
                         total = src.stat().st_size
                         bytes_done = 0
                         async with ftp_conn.upload_stream(str(dst)) as stream:
-                            with open(src, 'rb') as f:
+                            with open(src, "rb") as f:
                                 while True:
                                     block = f.read(aioftp.DEFAULT_BLOCK_SIZE)
                                     if not block:
@@ -168,7 +172,7 @@ class FtpFileTransfer(UnixFileTransfer):
                                     await stream.write(block)
                                     bytes_done += len(block)
                                     handler(str(src), str(dst), bytes_done, total)
-                return Status.Success, ''
+                return Status.Success, ""
             except Exception as e:
                 return Status.Error, str(e)
 

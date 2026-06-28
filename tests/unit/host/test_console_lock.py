@@ -1,4 +1,5 @@
 """Unit tests for the writer-fair console lock (lab-free, multiprocessing)."""
+
 from __future__ import annotations
 
 import multiprocessing as mp
@@ -39,10 +40,7 @@ def test_two_readers_hold_shared_concurrently(tmp_path):
 
 def test_writer_not_starved_by_reader_churn(tmp_path):
     stop = mp.Event()
-    readers = [
-        mp.Process(target=_reader_churn, args=(str(tmp_path), stop))
-        for _ in range(4)
-    ]
+    readers = [mp.Process(target=_reader_churn, args=(str(tmp_path), stop)) for _ in range(4)]
     for r in readers:
         r.start()
     try:

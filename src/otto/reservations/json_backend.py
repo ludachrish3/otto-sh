@@ -11,11 +11,11 @@ Intended for two audiences:
 File format (``version: 1``)::
 
     {
-      "version": 1,
-      "reservations": [
-        {"user": "alice", "resources": ["rack3-psu"], "expires": "2026-05-01T00:00:00Z"},
-        {"user": "bob",   "resources": ["rack4-psu"]}
-      ]
+        "version": 1,
+        "reservations": [
+            {"user": "alice", "resources": ["rack3-psu"], "expires": "2026-05-01T00:00:00Z"},
+            {"user": "bob", "resources": ["rack4-psu"]},
+        ],
     }
 
 * ``reservations`` is a list so one user may appear multiple times (useful
@@ -48,8 +48,9 @@ class JsonReservationBackend:
         Location of the reservation file on disk.  Required.
     """
 
-    def __init__(self,
-        url: str | None = None,  # noqa: ARG002 — protocol/factory uniformity
+    def __init__(
+        self,
+        url: str | None = None,
         *,
         path: Path,
     ) -> None:
@@ -58,7 +59,8 @@ class JsonReservationBackend:
     def backend_name(self) -> str:
         return "json"
 
-    def get_reserved_resources(self,
+    def get_reserved_resources(
+        self,
         username: str,
     ) -> set[str]:
         resources: set[str] = set()
@@ -67,7 +69,8 @@ class JsonReservationBackend:
                 resources.update(entry.resources)
         return resources
 
-    def who_reserved(self,
+    def who_reserved(
+        self,
         resource: str,
     ) -> list[str]:
         holders: list[str] = []
@@ -106,6 +109,4 @@ class JsonReservationBackend:
         try:
             return ReservationFile.model_validate(data)
         except ValidationError as e:
-            raise ReservationBackendError(
-                f"Invalid reservation file {self._path}: {e}"
-            ) from e
+            raise ReservationBackendError(f"Invalid reservation file {self._path}: {e}") from e

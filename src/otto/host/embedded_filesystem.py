@@ -99,7 +99,7 @@ class EmbeddedFileSystem(ABC):
 
     def read_command(self, path: str) -> str:
         """Render the shell command that reads *path* as a hexdump."""
-        return f'fs read {path}'
+        return f"fs read {path}"
 
     def write_command(self, path: str, offset: int, hexbytes: str) -> str:
         """Render the chunked-write command for *path*.
@@ -110,19 +110,19 @@ class EmbeddedFileSystem(ABC):
         :mod:`otto.host.transfer`); a vendor FS that uses a
         positional offset can override this method.
         """
-        return f'fs write {path} -o {offset} {hexbytes}'
+        return f"fs write {path} -o {offset} {hexbytes}"
 
     def rm_command(self, path: str) -> str:
         """Render the command that removes *path*."""
-        return f'fs rm {path}'
+        return f"fs rm {path}"
 
     def trunc_command(self, path: str, length: int) -> str:
         """Render the command that truncates *path* to *length* bytes."""
-        return f'fs trunc {path} {length}'
+        return f"fs trunc {path} {length}"
 
     def ls_command(self, path: str) -> str:
         """Render the command that lists *path*."""
-        return f'fs ls {path}'
+        return f"fs ls {path}"
 
     def statvfs_command(self) -> str | None:
         """Render the command that reports filesystem usage stats, or
@@ -132,7 +132,7 @@ class EmbeddedFileSystem(ABC):
         """
         if not self.supports_disk_metric or self.mount is None:
             return None
-        return f'fs statvfs {self.mount}'
+        return f"fs statvfs {self.mount}"
 
 
 class NoFileSystem(EmbeddedFileSystem):
@@ -144,7 +144,8 @@ class NoFileSystem(EmbeddedFileSystem):
     a hang or a garbled response from running ``fs`` against a target that
     doesn't have it.
     """
-    type_name = 'none'
+
+    type_name = "none"
     mount = None
 
 
@@ -155,9 +156,10 @@ class FatRamFileSystem(EmbeddedFileSystem):
     required because the ``zephyr,fstab`` binding in 3.7 LTS does not
     handle FAT — otto issues ``fs mount fat /RAM:`` once on first transfer.
     """
-    type_name = 'fat-ram'
-    mount = '/RAM:'
-    mount_cmd = 'fs mount fat /RAM:'
+
+    type_name = "fat-ram"
+    mount = "/RAM:"
+    mount_cmd = "fs mount fat /RAM:"
 
 
 class LittleFsFileSystem(EmbeddedFileSystem):
@@ -166,8 +168,9 @@ class LittleFsFileSystem(EmbeddedFileSystem):
     Used by the ``sprout_lfs`` test target. Auto-mounted via
     ``zephyr,fstab`` at boot, so no ``mount_cmd`` is needed.
     """
-    type_name = 'littlefs'
-    mount = '/lfs'
+
+    type_name = "littlefs"
+    mount = "/lfs"
 
 
 # Seeded empty here and populated by ``_register_builtin_filesystems()`` at
@@ -216,7 +219,7 @@ def build_filesystem(type_name: str) -> EmbeddedFileSystem:
     try:
         cls = _FILESYSTEM_CLASSES[type_name]
     except KeyError:
-        known = ', '.join(sorted(_FILESYSTEM_CLASSES))
+        known = ", ".join(sorted(_FILESYSTEM_CLASSES))
         raise ValueError(
             f"Unknown embedded filesystem type {type_name!r}. "
             f"Registered types: {known}. "

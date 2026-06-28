@@ -14,7 +14,7 @@ from typing_extensions import override
 
 from ...logger import get_otto_logger
 from ...utils import CommandStatus, Status
-from ..embedded_filesystem import EmbeddedFileSystem, NoFileSystem
+from ..embedded_filesystem import EmbeddedFileSystem
 from .base import TransferContext, TransferProgressFactory, TransferProgressHandler
 from .embedded_base import EmbeddedFileTransfer
 from .registry import register_transfer_backend
@@ -39,6 +39,7 @@ def _label_errno(retcode: int) -> str:
         return str(retcode)
     return f"{retcode} (-{name}, {os.strerror(code)})"
 
+
 logger = get_otto_logger()
 
 # Bytes per `fs write` invocation. Each byte costs three characters of hex
@@ -51,7 +52,7 @@ _WRITE_CHUNK = 32
 _HEXDUMP_COLS = 16
 
 # A hexdump line: an 8-hex-digit offset, then the hex/ascii columns.
-_HEX_LINE_RE = re.compile(r'^\s*([0-9A-Fa-f]{8})\s\s(.*)$')
+_HEX_LINE_RE = re.compile(r"^\s*([0-9A-Fa-f]{8})\s\s(.*)$")
 
 _NO_FILESYSTEM_MSG = (
     "console file transfer requires an on-device filesystem; this host's "
@@ -134,7 +135,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             status, err = await self._console_get_one(src, dest_dir, handler)
             if not status.is_ok:
                 return status, err
-        return Status.Success, ''
+        return Status.Success, ""
 
     @override
     async def _run_put(
@@ -158,14 +159,16 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             status, err = await self._console_put_one(src, dest_dir, handler)
             if not status.is_ok:
                 return status, err
-        return Status.Success, ''
+        return Status.Success, ""
 
-# ------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # console backend — get
     # ------------------------------------------------------------------
 
     async def _console_get_one(
-        self, src: Path, dest_dir: Path,
+        self,
+        src: Path,
+        dest_dir: Path,
         progress_handler: TransferProgressHandler | None = None,
     ) -> tuple[Status, str]:
         """Read one file off the target via ``fs read`` and write it locally.
@@ -195,14 +198,16 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         dest.write_bytes(data)
         if progress_handler is not None:
             progress_handler(src_path, dest.as_posix(), len(data), len(data))
-        return Status.Success, ''
+        return Status.Success, ""
 
     # ------------------------------------------------------------------
     # console backend — put
     # ------------------------------------------------------------------
 
     async def _console_put_one(
-        self, src: Path, dest_dir: Path,
+        self,
+        src: Path,
+        dest_dir: Path,
         progress_handler: TransferProgressHandler | None = None,
     ) -> tuple[Status, str]:
         """Write one local file onto the target via chunked ``fs write``.
@@ -216,9 +221,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         dest_path = (dest_dir / src.name).as_posix()
         src_str = str(src)
         total = len(data)
-        logger.debug(
-            f"{self._name}: fs write {src} -> {dest_path} ({total} bytes)"
-        )
+        logger.debug(f"{self._name}: fs write {src} -> {dest_path} ({total} bytes)")
 
         # `fs write` seeks to an offset but never truncates, so a shorter new
         # file would leave a stale tail behind. Remove the destination first;
@@ -237,7 +240,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         # via the underlying `fs_open(... O_CREAT | O_WRITE)`.
         if not data:
             result = await self._exec_cmd(
-                self._filesystem.write_command(dest_path, 0, ''),
+                self._filesystem.write_command(dest_path, 0, ""),
                 timeout=_WRITE_TIMEOUT,
             )
             status, err = self._check_write(result, dest_path, 0)
@@ -246,8 +249,8 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             return status, err
 
         for offset in range(0, total, _WRITE_CHUNK):
-            chunk = data[offset:offset + _WRITE_CHUNK]
-            hexbytes = ' '.join(f'{b:02x}' for b in chunk)
+            chunk = data[offset : offset + _WRITE_CHUNK]
+            hexbytes = " ".join(f"{b:02x}" for b in chunk)
             result = await self._exec_cmd(
                 self._filesystem.write_command(dest_path, offset, hexbytes),
                 timeout=_WRITE_TIMEOUT,
@@ -263,7 +266,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
                 return status, err
             if progress_handler is not None:
                 progress_handler(src_str, dest_path, offset + len(chunk), total)
-        return Status.Success, ''
+        return Status.Success, ""
 
     async def _cleanup_partial(self, dest_path: str) -> None:
         """Best-effort removal of a half-written destination file after a
@@ -275,12 +278,14 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             await self._exec_cmd(self._filesystem.rm_command(dest_path), timeout=_RM_TIMEOUT)
         except Exception as exc:
             logger.debug(
-                f"{self._name}: cleanup `fs rm {dest_path}` failed "
-                f"after a transfer error: {exc!r}"
+                f"{self._name}: cleanup `fs rm {dest_path}` failed after a transfer error: {exc!r}"
             )
 
     def _check_write(
-        self, result: CommandStatus, dest_path: str, offset: int,
+        self,
+        result: CommandStatus,
+        dest_path: str,
+        offset: int,
     ) -> tuple[Status, str]:
         """Classify an ``fs write`` result into a transfer status."""
         if not result.status.is_ok:
@@ -289,7 +294,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
                 f"(retcode={_label_errno(result.retcode)}): "
                 f"{result.output.strip()}"
             )
-        return Status.Success, ''
+        return Status.Success, ""
 
     # ------------------------------------------------------------------
     # Helpers
@@ -334,10 +339,10 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             rest = m.group(2)
             # The shell separates the hex column from the ASCII gutter with a
             # tab; fall back to the fixed hex-field width if a tab is absent.
-            if '\t' in rest:
-                hex_field = rest.split('\t', 1)[0]
+            if "\t" in rest:
+                hex_field = rest.split("\t", 1)[0]
             else:
-                hex_field = rest[:_HEXDUMP_COLS * 3]
+                hex_field = rest[: _HEXDUMP_COLS * 3]
             tokens = hex_field.split()
             try:
                 chunks[offset] = bytes(int(t, 16) for t in tokens)

@@ -61,8 +61,8 @@ def _build_fake_ssh_remote_host():
             self._sftp_conn = None
             self._ftp_conn = None
             self._telnet_conn = None
-            self._name = kwargs.get('name', 'fake')
-            self._term = kwargs.get('term', 'ssh')
+            self._name = kwargs.get("name", "fake")
+            self._term = kwargs.get("term", "ssh")
             self._hop = None
 
         async def ssh(self):
@@ -80,6 +80,7 @@ def _build_fake_ssh_remote_host():
 # ---------------------------------------------------------------------------
 # Construction & identity
 # ---------------------------------------------------------------------------
+
 
 def test_id_format():
     h = _make_container(_mock_parent("pepper_seed"))
@@ -104,6 +105,7 @@ def test_is_virtual_default():
 # ---------------------------------------------------------------------------
 # oneshot — single command
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_oneshot_wraps_in_docker_exec():
@@ -140,6 +142,7 @@ async def test_oneshot_quotes_dangerous_chars():
 # run — persistent-shell dispatch
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_run_rejects_non_ssh_remote_parent():
     """run() requires an SSH-based UnixHost parent (telnet → NotImplementedError)."""
@@ -153,6 +156,7 @@ async def test_run_rejects_non_ssh_remote_parent():
 async def test_run_rejects_localhost_parent():
     """run() requires a UnixHost parent — LocalHost is rejected."""
     from otto.host.local_host import LocalHost
+
     h = DockerContainerHost(
         parent=LocalHost(),
         container_id="abc123",
@@ -168,6 +172,7 @@ async def test_run_rejects_localhost_parent():
 async def test_run_with_ssh_parent_uses_docker_session():
     """run() against an SSH-based UnixHost parent opens a _DockerSshSession."""
     from otto.host.session import _DockerSshSession
+
     parent = _build_fake_ssh_remote_host()
     h = _make_container(parent)
 
@@ -201,6 +206,7 @@ async def test_session_factory_resolves_container_id_lazily():
 # ---------------------------------------------------------------------------
 # Placeholder (container_id == "") — auto-up behavior
 # ---------------------------------------------------------------------------
+
 
 def _mock_repos(repo_name: str | None = "repo1"):
     """Return a fake repos list optionally including *repo_name*."""
@@ -303,6 +309,7 @@ async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
 # Sessions / send / expect — gated on SSH-based UnixHost parent
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_open_session_rejects_non_remote_parent():
     h = _make_container()  # MagicMock parent
@@ -327,6 +334,7 @@ async def test_expect_rejects_non_remote_parent():
 # ---------------------------------------------------------------------------
 # put / get — two-step staging
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_put_stages_then_docker_cps_then_cleans_up(tmp_path):
@@ -358,6 +366,7 @@ async def test_put_failure_still_cleans_up(tmp_path):
         if "docker cp" in cmd:
             return _fail(cmd, out="cp failed")
         return _ok()
+
     parent.oneshot.side_effect = oneshot_side_effect
 
     status, msg = await h.put([f], Path("/srv/in"))
@@ -385,6 +394,7 @@ async def test_get_two_step_via_parent():
 # ---------------------------------------------------------------------------
 # interact() preconditions
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_interact_requires_remote_ssh_parent():

@@ -19,7 +19,7 @@ host→models edge resolves cleanly. Root cause is os_profile's eager
 module-load registration; see ``todo/registry_builtin_registration_symmetry.md``.
 """
 
-import otto.host.os_profile as _os_profile  # noqa: F401 — boot host registry before models.host (breaks an import cycle)
+import otto.host.os_profile as _os_profile
 
 from .base import OttoModel
 from .host import (
@@ -56,29 +56,29 @@ from .settings import (
 )
 
 __all__ = [
-    "OttoModel",
-    "SshOptionsSpec",
-    "TelnetOptionsSpec",
-    "SftpOptionsSpec",
-    "ScpOptionsSpec",
-    "FtpOptionsSpec",
-    "NcOptionsSpec",
-    "SnmpOptionsSpec",
-    "TftpOptionsSpec",
-    "ToolchainSpec",
-    "HostSpec",
-    "UnixHostSpec",
-    "EmbeddedHostSpec",
     "DockerComposeSpec",
     "DockerImageSpec",
     "DockerSettingsSpec",
+    "EmbeddedHostSpec",
+    "EventRecord",
+    "FtpOptionsSpec",
+    "HostSpec",
+    "MetricPoint",
+    "MetricRecord",
+    "NcOptionsSpec",
     "OsProfileSpec",
     "OttoEnvSettings",
+    "OttoModel",
     "ReservationConfigSpec",
     "ReservationEntry",
     "ReservationFile",
+    "ScpOptionsSpec",
     "SettingsModel",
-    "MetricPoint",
-    "MetricRecord",
-    "EventRecord",
+    "SftpOptionsSpec",
+    "SnmpOptionsSpec",
+    "SshOptionsSpec",
+    "TelnetOptionsSpec",
+    "TftpOptionsSpec",
+    "ToolchainSpec",
+    "UnixHostSpec",
 ]

@@ -1,4 +1,5 @@
 """The @options alias and build_options validation surfacing."""
+
 import dataclasses
 
 
@@ -75,18 +76,18 @@ def test_build_options_plain_dataclass_unaffected():
 
 # ── End-to-end through the suite CLI path ─────────────────────────────────────
 
-from typing import Annotated  # noqa: E402
+from typing import Annotated
 
-import pydantic  # noqa: E402
-import pytest  # noqa: E402
-import typer  # noqa: E402
-from typer.testing import CliRunner  # noqa: E402
+import pydantic
+import pytest
+import typer
+from typer.testing import CliRunner
 
-from otto import options  # noqa: E402
-from otto.cli.test import suite_app  # noqa: E402
-from otto.configmodule.lab import Lab  # noqa: E402
-from otto.context import OttoContext, reset_context, set_context  # noqa: E402
-from otto.suite.register import _SUITE_REGISTRY, register_suite  # noqa: E402
+from otto import options
+from otto.cli.test import suite_app
+from otto.configmodule.lab import Lab
+from otto.context import OttoContext, reset_context, set_context
+from otto.suite.register import _SUITE_REGISTRY, register_suite
 
 
 def _attach(suite_cls) -> None:
@@ -107,7 +108,7 @@ def _stub_cli_bootstrap(monkeypatch):
     raise.
     """
     monkeypatch.setattr("otto.logger.management.create_output_dir", lambda *a, **k: None)
-    ctx = OttoContext(lab=Lab(name='_test_stub'))
+    ctx = OttoContext(lab=Lab(name="_test_stub"))
     token = set_context(ctx)
     yield
     reset_context(token)
@@ -118,8 +119,10 @@ def test_suite_pydantic_options_reject_bad_value(monkeypatch):
     class _ValSuite:
         @options
         class Options:
-            count: Annotated[int, typer.Option(help="positive count")] = \
-                pydantic.Field(default=1, gt=0)
+            count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(
+                default=1, gt=0
+            )
+
     _attach(_ValSuite)
 
     # run_suite is never reached — validation fails first at construction.
@@ -136,8 +139,10 @@ def test_suite_pydantic_options_accept_good_value(monkeypatch):
     class _OkSuite:
         @options
         class Options:
-            count: Annotated[int, typer.Option(help="positive count")] = \
-                pydantic.Field(default=1, gt=0)
+            count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(
+                default=1, gt=0
+            )
+
     _attach(_OkSuite)
 
     # run_suite signature: (suite_cls, suite_file, opts_instance, ctx).
@@ -161,6 +166,7 @@ def test_suite_field_default_used_when_flag_omitted(monkeypatch):
         @options
         class Options:
             count: Annotated[int, typer.Option()] = pydantic.Field(default=7, ge=0)
+
     _attach(_DefSuite)
 
     monkeypatch.setattr(
@@ -183,6 +189,7 @@ def test_suite_plain_dataclass_options_still_work(monkeypatch):
         @dataclass
         class Options:
             label: Annotated[str, typer.Option()] = "x"
+
     _attach(_PlainSuite)
 
     monkeypatch.setattr(

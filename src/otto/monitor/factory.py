@@ -46,11 +46,15 @@ def build_monitor_collector(
                 address=host.address_for(snmp.address or host.ip),
                 port=snmp.port,
                 community=snmp.community,
-                version=cast(SnmpVersion, snmp.version),
+                version=cast("SnmpVersion", snmp.version),
             )
-            targets.append(MonitorTarget(
-                host=host, parsers={}, snmp=SnmpSource(client=client, oids=list(snmp.oids)),
-            ))
+            targets.append(
+                MonitorTarget(
+                    host=host,
+                    parsers={},
+                    snmp=SnmpSource(client=client, oids=list(snmp.oids)),
+                )
+            )
         else:
             targets.append(MonitorTarget(host=host, parsers=get_host_parsers(host.id)))
 

@@ -13,26 +13,29 @@ from asyncssh import SSHClientConnection
 
 from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions
-from otto.host.unix_host import UnixHost
 from otto.host.transport import SshHopTransport
-
+from otto.host.unix_host import UnixHost
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def host() -> UnixHost:
     """A simple host with no hop."""
-    return UnixHost(ip='10.0.0.1', element='target', creds={'user': 'pass'}, log=False)
+    return UnixHost(ip="10.0.0.1", element="target", creds={"user": "pass"}, log=False)
 
 
 @pytest.fixture
 def hop_host() -> UnixHost:
     """A host configured with a hop."""
     return UnixHost(
-        ip='10.0.0.2', element='target', creds={'user': 'pass'},
-        hop='jumpbox', log=False,
+        ip="10.0.0.2",
+        element="target",
+        creds={"user": "pass"},
+        hop="jumpbox",
+        log=False,
     )
 
 
@@ -40,13 +43,13 @@ def hop_host() -> UnixHost:
 # Data model
 # ---------------------------------------------------------------------------
 
-class TestHopField:
 
+class TestHopField:
     def test_default_hop_is_none(self, host: UnixHost):
         assert host.hop is None
 
     def test_hop_field_set(self, hop_host: UnixHost):
-        assert hop_host.hop == 'jumpbox'
+        assert hop_host.hop == "jumpbox"
 
     def test_no_tunnel_when_no_hop(self, host: UnixHost):
         assert not host._connections.has_tunnel
@@ -59,20 +62,27 @@ class TestHopField:
 # ConnectionManager tunnel wiring
 # ---------------------------------------------------------------------------
 
-class TestConnectionManagerTunnel:
 
+class TestConnectionManagerTunnel:
     def test_no_tunnel_factory_by_default(self):
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test',
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
         )
         assert not cm.has_tunnel
 
     def test_tunnel_factory_stored(self):
         factory = AsyncMock(return_value=MagicMock(spec=SSHClientConnection))
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test', hop=SshHopTransport(factory),
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
+            hop=SshHopTransport(factory),
         )
         assert cm.has_tunnel
 
@@ -81,8 +91,12 @@ class TestConnectionManagerTunnel:
         mock_conn = MagicMock(spec=SSHClientConnection)
         factory = AsyncMock(return_value=mock_conn)
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test', hop=SshHopTransport(factory),
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
+            hop=SshHopTransport(factory),
         )
         tunnel1 = await cm._ensure_tunnel()
         tunnel2 = await cm._ensure_tunnel()
@@ -94,17 +108,21 @@ class TestConnectionManagerTunnel:
         mock_tunnel = MagicMock(spec=SSHClientConnection)
         factory = AsyncMock(return_value=mock_tunnel)
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test', hop=SshHopTransport(factory),
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
+            hop=SshHopTransport(factory),
         )
-        with patch('otto.host.connections.ssh_connect', new_callable=AsyncMock) as mock_connect:
+        with patch("otto.host.connections.ssh_connect", new_callable=AsyncMock) as mock_connect:
             mock_ssh = MagicMock(spec=SSHClientConnection)
             mock_connect.return_value = mock_ssh
             result = await cm.ssh()
             mock_connect.assert_awaited_once_with(
-                '10.0.0.1',
-                username='user',
-                password='pass',
+                "10.0.0.1",
+                username="user",
+                password="pass",
                 tunnel=mock_tunnel,
                 port=22,
                 known_hosts=None,
@@ -114,17 +132,20 @@ class TestConnectionManagerTunnel:
     @pytest.mark.asyncio
     async def test_ssh_no_tunnel_when_not_configured(self):
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test',
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
         )
-        with patch('otto.host.connections.ssh_connect', new_callable=AsyncMock) as mock_connect:
+        with patch("otto.host.connections.ssh_connect", new_callable=AsyncMock) as mock_connect:
             mock_ssh = MagicMock(spec=SSHClientConnection)
             mock_connect.return_value = mock_ssh
             result = await cm.ssh()
             mock_connect.assert_awaited_once_with(
-                '10.0.0.1',
-                username='user',
-                password='pass',
+                "10.0.0.1",
+                username="user",
+                password="pass",
                 tunnel=None,
                 port=22,
                 known_hosts=None,
@@ -139,21 +160,25 @@ class TestConnectionManagerTunnel:
         factory = AsyncMock(return_value=mock_tunnel)
 
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='telnet', name='test', hop=SshHopTransport(factory),
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="telnet",
+            name="test",
+            hop=SshHopTransport(factory),
         )
-        with patch('otto.host.connections.TelnetClient') as MockTelnet:
+        with patch("otto.host.connections.TelnetClient") as MockTelnet:
             mock_tc = MagicMock()
             mock_tc.connect = AsyncMock()
             MockTelnet.return_value = mock_tc
             result = await cm.telnet()
             MockTelnet.assert_called_once()
             call_args = MockTelnet.call_args
-            assert call_args.args == ('localhost',)
-            assert call_args.kwargs['user'] == 'user'
-            assert call_args.kwargs['password'] == 'pass'
-            assert call_args.kwargs['connect_port'] == 54321
-            mock_tunnel.forward_local_port.assert_awaited_once_with('', 0, '10.0.0.1', 23)
+            assert call_args.args == ("localhost",)
+            assert call_args.kwargs["user"] == "user"
+            assert call_args.kwargs["password"] == "pass"
+            assert call_args.kwargs["connect_port"] == 54321
+            mock_tunnel.forward_local_port.assert_awaited_once_with("", 0, "10.0.0.1", 23)
 
     @pytest.mark.asyncio
     async def test_ftp_uses_tunneled_client_when_hop_present(self):
@@ -167,15 +192,21 @@ class TestConnectionManagerTunnel:
 
         hop = SshHopTransport(factory)
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test', hop=hop,
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
+            hop=hop,
         )
-        with patch.object(TunneledFtpClient, 'connect', new_callable=AsyncMock) as mock_connect, \
-             patch.object(TunneledFtpClient, 'login', new_callable=AsyncMock) as mock_login:
+        with (
+            patch.object(TunneledFtpClient, "connect", new_callable=AsyncMock) as mock_connect,
+            patch.object(TunneledFtpClient, "login", new_callable=AsyncMock) as mock_login,
+        ):
             result = await cm.ftp()
             assert isinstance(result, TunneledFtpClient)
-            mock_connect.assert_awaited_once_with('localhost', 54322)
-            mock_tunnel.forward_local_port.assert_awaited_once_with('', 0, '10.0.0.1', 21)
+            mock_connect.assert_awaited_once_with("localhost", 54322)
+            mock_tunnel.forward_local_port.assert_awaited_once_with("", 0, "10.0.0.1", 21)
 
     @pytest.mark.asyncio
     async def test_forward_port_public_api(self):
@@ -186,18 +217,25 @@ class TestConnectionManagerTunnel:
         factory = AsyncMock(return_value=mock_tunnel)
 
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test', hop=SshHopTransport(factory),
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
+            hop=SshHopTransport(factory),
         )
         port = await cm.forward_port(8080)
         assert port == 55555
-        mock_tunnel.forward_local_port.assert_awaited_once_with('', 0, '10.0.0.1', 8080)
+        mock_tunnel.forward_local_port.assert_awaited_once_with("", 0, "10.0.0.1", 8080)
 
     @pytest.mark.asyncio
     async def test_forward_port_raises_without_tunnel(self):
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test',
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
         )
         with pytest.raises(RuntimeError, match="requires a tunnel"):
             await cm.forward_port(8080)
@@ -207,8 +245,8 @@ class TestConnectionManagerTunnel:
 # TunneledFtpClient data port forwarding
 # ---------------------------------------------------------------------------
 
-class TestTunneledFtpClient:
 
+class TestTunneledFtpClient:
     @pytest.mark.asyncio
     async def test_open_connection_forwards_data_port(self):
         """_open_connection opens a direct SSH channel to the PASV data port."""
@@ -219,15 +257,15 @@ class TestTunneledFtpClient:
         mock_hop = MagicMock()
         mock_hop.get_tunnel = AsyncMock(return_value=mock_conn)
 
-        client = TunneledFtpClient(hop=mock_hop, dest_host='10.0.0.1')
+        client = TunneledFtpClient(hop=mock_hop, dest_host="10.0.0.1")
         client._tunnel_data = True  # Simulate post-connect state
 
-        await client._open_connection('10.0.0.1', 7725)
+        await client._open_connection("10.0.0.1", 7725)
 
         mock_hop.get_tunnel.assert_awaited_once()
         # Should open a direct channel to the PASV data port via the tunnel —
         # no local listener, no proxied socket pair.
-        mock_conn.open_connection.assert_awaited_once_with('10.0.0.1', 7725)
+        mock_conn.open_connection.assert_awaited_once_with("10.0.0.1", 7725)
 
     @pytest.mark.asyncio
     async def test_open_connection_uses_dest_host_not_pasv_host(self):
@@ -239,13 +277,13 @@ class TestTunneledFtpClient:
         mock_hop = MagicMock()
         mock_hop.get_tunnel = AsyncMock(return_value=mock_conn)
 
-        client = TunneledFtpClient(hop=mock_hop, dest_host='10.0.0.1')
+        client = TunneledFtpClient(hop=mock_hop, dest_host="10.0.0.1")
         client._tunnel_data = True  # Simulate post-connect state
 
         # PASV response might return 0.0.0.0 — we ignore that and use dest_host
-        await client._open_connection('0.0.0.0', 9999)
+        await client._open_connection("0.0.0.0", 9999)
 
-        mock_conn.open_connection.assert_awaited_once_with('10.0.0.1', 9999)
+        mock_conn.open_connection.assert_awaited_once_with("10.0.0.1", 9999)
 
     @pytest.mark.asyncio
     async def test_open_connection_passthrough_before_connect(self):
@@ -255,24 +293,24 @@ class TestTunneledFtpClient:
         mock_hop = MagicMock()
         mock_hop.forward_port = AsyncMock()
 
-        client = TunneledFtpClient(hop=mock_hop, dest_host='10.0.0.1')
+        client = TunneledFtpClient(hop=mock_hop, dest_host="10.0.0.1")
         # _tunnel_data is False by default (pre-connect)
 
-        with patch('aioftp.Client._open_connection', new_callable=AsyncMock) as mock_super:
+        with patch("aioftp.Client._open_connection", new_callable=AsyncMock) as mock_super:
             mock_super.return_value = (MagicMock(), MagicMock())
-            await client._open_connection('localhost', 54321)
+            await client._open_connection("localhost", 54321)
 
             # Should NOT forward — just pass through to super
             mock_hop.forward_port.assert_not_awaited()
-            mock_super.assert_awaited_once_with('localhost', 54321)
+            mock_super.assert_awaited_once_with("localhost", 54321)
 
 
 # ---------------------------------------------------------------------------
 # Close / cleanup
 # ---------------------------------------------------------------------------
 
-class TestTunnelCleanup:
 
+class TestTunnelCleanup:
     @pytest.mark.asyncio
     async def test_close_cleans_up_tunnel(self):
         mock_tunnel = MagicMock(spec=SSHClientConnection)
@@ -281,8 +319,12 @@ class TestTunnelCleanup:
         factory = AsyncMock(return_value=mock_tunnel)
 
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test', hop=SshHopTransport(factory),
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
+            hop=SshHopTransport(factory),
         )
         # Establish the tunnel
         await cm._ensure_tunnel()
@@ -302,8 +344,12 @@ class TestTunnelCleanup:
         factory = AsyncMock(return_value=mock_tunnel)
 
         cm = ConnectionManager(
-            ip='10.0.0.1', creds={'user': 'pass'}, user=None,
-            term='ssh', name='test', hop=SshHopTransport(factory),
+            ip="10.0.0.1",
+            creds={"user": "pass"},
+            user=None,
+            term="ssh",
+            name="test",
+            hop=SshHopTransport(factory),
         )
         await cm.forward_port(8080)
         await cm.close()
@@ -314,20 +360,23 @@ class TestTunnelCleanup:
 # Rebuild connections (CLI --hop support)
 # ---------------------------------------------------------------------------
 
-class TestRebuildConnections:
 
+class TestRebuildConnections:
     def test_rebuild_adds_tunnel(self):
-        host = UnixHost(ip='10.0.0.1', element='target', creds={'user': 'pass'}, log=False)
+        host = UnixHost(ip="10.0.0.1", element="target", creds={"user": "pass"}, log=False)
         assert not host._connections.has_tunnel
 
-        host.hop = 'some_hop'
+        host.hop = "some_hop"
         host.rebuild_connections()
         assert host._connections.has_tunnel
 
     def test_rebuild_removes_tunnel(self):
         host = UnixHost(
-            ip='10.0.0.1', element='target', creds={'user': 'pass'},
-            hop='some_hop', log=False,
+            ip="10.0.0.1",
+            element="target",
+            creds={"user": "pass"},
+            hop="some_hop",
+            log=False,
         )
         assert host._connections.has_tunnel
 
@@ -340,8 +389,8 @@ class TestRebuildConnections:
 # Netcat hop guards and support
 # ---------------------------------------------------------------------------
 
-class TestNetcatGetThroughHop:
 
+class TestNetcatGetThroughHop:
     @pytest.mark.asyncio
     async def test_nc_get_uses_forward_port_when_tunneled(self, tmp_path):
         """Netcat GET through a hop uses SSH port forwarding (reversed-listener approach)."""
@@ -352,54 +401,56 @@ class TestNetcatGetThroughHop:
 
         mock_connections = MagicMock(spec=ConnectionManager)
         mock_connections.has_tunnel = True
-        mock_connections.ip = '10.0.0.1'
-        mock_connections.term = 'ssh'
-        mock_connections._name = 'test'
+        mock_connections.ip = "10.0.0.1"
+        mock_connections.term = "ssh"
+        mock_connections._name = "test"
         mock_connections.forward_port = AsyncMock(return_value=44444)
 
         # exec_cmd handles every control + transfer command: file-size stat,
         # port-find, and the nc listener.
         async def mock_exec(cmd: str, *a, **kw) -> CommandStatus:
-            if cmd.startswith('stat -c %s'):
-                output = '9\n'
-            elif 'nc ' in cmd:
-                output = ''
+            if cmd.startswith("stat -c %s"):
+                output = "9\n"
+            elif "nc " in cmd:
+                output = ""
             else:  # port-find
-                output = '55555\n'
+                output = "55555\n"
             return CommandStatus(command=cmd, output=output, status=Status.Success, retcode=0)
 
         mock_exec = AsyncMock(side_effect=mock_exec)
 
         ft = NcFileTransfer(
             connections=mock_connections,
-            name='test',
-            transfer='nc',
+            name="test",
+            transfer="nc",
             nc_options=NcOptions(
-                exec_name='nc',
+                exec_name="nc",
                 port=9000,
-                port_strategy='python',
+                port_strategy="python",
                 port_cmd=None,
-                listener_check='ss',
+                listener_check="ss",
                 listener_cmd=None,
             ),
-            get_local_ip=lambda: '127.0.0.1',
+            get_local_ip=lambda: "127.0.0.1",
             exec_cmd=mock_exec,
         )
 
         with (
-            patch.object(ft, '_wait_for_remote_listener', new_callable=AsyncMock) as mock_wait,
-            patch('otto.host.transfer.nc._connect_with_retry', new_callable=AsyncMock) as mock_connect,
+            patch.object(ft, "_wait_for_remote_listener", new_callable=AsyncMock) as mock_wait,
+            patch(
+                "otto.host.transfer.nc._connect_with_retry", new_callable=AsyncMock
+            ) as mock_connect,
         ):
             # Mock reader that returns file data then EOF.
             mock_reader = AsyncMock()
-            mock_reader.read = AsyncMock(side_effect=[b'test data', b''])
+            mock_reader.read = AsyncMock(side_effect=[b"test data", b""])
             mock_writer = MagicMock()
             mock_writer.close = MagicMock()
             mock_writer.wait_closed = AsyncMock()
             mock_connect.return_value = (mock_reader, mock_writer)
 
             dst = tmp_path
-            status, err = await ft.get_files([Path('/remote/a.txt')], dst, show_progress=False)
+            status, err = await ft.get_files([Path("/remote/a.txt")], dst, show_progress=False)
 
             assert status == Status.Success, f"Unexpected error: {err}"
             # Verify port forwarding was used.
@@ -407,10 +458,10 @@ class TestNetcatGetThroughHop:
             # Verify connection went through the forwarded port.
             mock_connect.assert_awaited_once()
             call_args = mock_connect.call_args
-            assert call_args[0][0] == 'localhost'
+            assert call_args[0][0] == "localhost"
             assert call_args[0][1] == 44444
             # Verify the downloaded file was written.
-            assert (dst / 'a.txt').read_bytes() == b'test data'
+            assert (dst / "a.txt").read_bytes() == b"test data"
 
     @pytest.mark.asyncio
     async def test_nc_get_without_tunnel_uses_start_server(self, tmp_path):
@@ -422,37 +473,37 @@ class TestNetcatGetThroughHop:
 
         mock_connections = MagicMock(spec=ConnectionManager)
         mock_connections.has_tunnel = False
-        mock_connections.ip = '10.0.0.1'
-        mock_connections.term = 'ssh'
-        mock_connections._name = 'test'
+        mock_connections.ip = "10.0.0.1"
+        mock_connections.term = "ssh"
+        mock_connections._name = "test"
 
         # exec_cmd handles the file-size stat and the nc -N send command.
         async def mock_exec(cmd: str, *a, **kw) -> CommandStatus:
-            output = '9\n' if cmd.startswith('stat -c %s') else ''
+            output = "9\n" if cmd.startswith("stat -c %s") else ""
             return CommandStatus(command=cmd, output=output, status=Status.Success, retcode=0)
 
         mock_exec = AsyncMock(side_effect=mock_exec)
 
         ft = NcFileTransfer(
             connections=mock_connections,
-            name='test',
-            transfer='nc',
+            name="test",
+            transfer="nc",
             nc_options=NcOptions(
-                exec_name='nc',
+                exec_name="nc",
                 port=9000,
-                port_strategy='python',
+                port_strategy="python",
                 port_cmd=None,
-                listener_check='ss',
+                listener_check="ss",
                 listener_cmd=None,
             ),
-            get_local_ip=lambda: '127.0.0.1',
+            get_local_ip=lambda: "127.0.0.1",
             exec_cmd=mock_exec,
         )
 
-        with patch('asyncio.start_server', new_callable=AsyncMock) as mock_start_server:
+        with patch("asyncio.start_server", new_callable=AsyncMock) as mock_start_server:
             # Simulate the server accepting a connection that sends data.
             mock_socket = MagicMock()
-            mock_socket.getsockname.return_value = ('0.0.0.0', 12345)
+            mock_socket.getsockname.return_value = ("0.0.0.0", 12345)
             mock_server = AsyncMock()
             mock_server.sockets = [mock_socket]
             mock_server.close = MagicMock()
@@ -464,18 +515,20 @@ class TestNetcatGetThroughHop:
             async def fake_start_server(callback, host, port):
                 # Simulate a connection by calling the callback.
                 mock_reader = AsyncMock()
-                mock_reader.read = AsyncMock(side_effect=[b'test data', b''])
+                mock_reader.read = AsyncMock(side_effect=[b"test data", b""])
                 mock_writer = MagicMock()
                 mock_writer.close = MagicMock()
+
                 # Schedule the callback to run after start_server returns.
                 async def _run_callback():
                     await callback(mock_reader, mock_writer)
+
                 asyncio.get_running_loop().call_soon(lambda: asyncio.create_task(_run_callback()))
                 return mock_server
 
             mock_start_server.side_effect = fake_start_server
 
-            status, err = await ft.get_files([Path('/remote/a.txt')], tmp_path, show_progress=False)
+            status, err = await ft.get_files([Path("/remote/a.txt")], tmp_path, show_progress=False)
 
             assert status == Status.Success, f"Unexpected error: {err}"
             # Verify start_server was called (direct path), not forward_port.
@@ -484,55 +537,62 @@ class TestNetcatGetThroughHop:
 
 
 class TestNetcatPutThroughHop:
-
     @pytest.mark.asyncio
     async def test_nc_put_uses_forward_port_when_tunneled(self):
         """Netcat PUT through a hop uses SSH port forwarding to reach the remote listener."""
-        from otto.host.transfer import NcFileTransfer
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from otto.host.transfer import NcFileTransfer
 
         mock_connections = MagicMock(spec=ConnectionManager)
         mock_connections.has_tunnel = True
-        mock_connections.ip = '10.0.0.1'
-        mock_connections.term = 'ssh'
-        mock_connections._name = 'test'
+        mock_connections.ip = "10.0.0.1"
+        mock_connections.term = "ssh"
+        mock_connections._name = "test"
         mock_connections.forward_port = AsyncMock(return_value=44444)
 
         # Simulate the remote nc command succeeding
         from otto.utils import CommandStatus, Status
-        mock_exec = AsyncMock(side_effect=[
-            # _find_free_port
-            CommandStatus(command='python3 ...', output='55555\n', status=Status.Success, retcode=0),
-            # nc -l listen command
-            CommandStatus(command='nc -l ...', output='', status=Status.Success, retcode=0),
-        ])
+
+        mock_exec = AsyncMock(
+            side_effect=[
+                # _find_free_port
+                CommandStatus(
+                    command="python3 ...", output="55555\n", status=Status.Success, retcode=0
+                ),
+                # nc -l listen command
+                CommandStatus(command="nc -l ...", output="", status=Status.Success, retcode=0),
+            ]
+        )
 
         ft = NcFileTransfer(
             connections=mock_connections,
-            name='test',
-            transfer='nc',
+            name="test",
+            transfer="nc",
             nc_options=NcOptions(
-                exec_name='nc',
+                exec_name="nc",
                 port=9000,
-                port_strategy='python',
+                port_strategy="python",
                 port_cmd=None,
-                listener_check='ss',
+                listener_check="ss",
                 listener_cmd=None,
             ),
-            get_local_ip=lambda: '127.0.0.1',
+            get_local_ip=lambda: "127.0.0.1",
             exec_cmd=mock_exec,
         )
 
         # Create a small temp file to transfer
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
-            tmp.write(b'test data')
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp:
+            tmp.write(b"test data")
             tmp_path = Path(tmp.name)
 
         try:
             with (
-                patch.object(ft, '_wait_for_remote_listener', new_callable=AsyncMock),
-                patch('otto.host.transfer.nc._connect_with_retry', new_callable=AsyncMock) as mock_connect,
+                patch.object(ft, "_wait_for_remote_listener", new_callable=AsyncMock),
+                patch(
+                    "otto.host.transfer.nc._connect_with_retry", new_callable=AsyncMock
+                ) as mock_connect,
             ):
                 mock_writer = MagicMock()
                 mock_writer.write = MagicMock()
@@ -541,14 +601,14 @@ class TestNetcatPutThroughHop:
                 mock_writer.wait_closed = AsyncMock()
                 mock_connect.return_value = (MagicMock(), mock_writer)
 
-                status, err = await ft.put_files([tmp_path], Path('/tmp'), show_progress=False)
+                status, err = await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
 
                 # Verify port forwarding was used
                 mock_connections.forward_port.assert_awaited_once_with(55555)
                 # Verify connection went to localhost via the forwarded port
                 mock_connect.assert_awaited_once()
                 call_args = mock_connect.call_args
-                assert call_args[0][0] == 'localhost'
+                assert call_args[0][0] == "localhost"
                 assert call_args[0][1] == 44444
         finally:
             tmp_path.unlink()
@@ -556,44 +616,52 @@ class TestNetcatPutThroughHop:
     @pytest.mark.asyncio
     async def test_nc_put_without_tunnel_connects_directly(self):
         """Without a hop, netcat PUT connects directly to the target IP."""
-        from otto.host.transfer import NcFileTransfer
-        from pathlib import Path
         import tempfile
+        from pathlib import Path
+
+        from otto.host.transfer import NcFileTransfer
 
         mock_connections = MagicMock(spec=ConnectionManager)
         mock_connections.has_tunnel = False
-        mock_connections.ip = '10.0.0.1'
-        mock_connections.term = 'ssh'
-        mock_connections._name = 'test'
+        mock_connections.ip = "10.0.0.1"
+        mock_connections.term = "ssh"
+        mock_connections._name = "test"
 
         from otto.utils import CommandStatus, Status
-        mock_exec = AsyncMock(side_effect=[
-            CommandStatus(command='python3 ...', output='55555\n', status=Status.Success, retcode=0),
-            CommandStatus(command='nc -l ...', output='', status=Status.Success, retcode=0),
-        ])
+
+        mock_exec = AsyncMock(
+            side_effect=[
+                CommandStatus(
+                    command="python3 ...", output="55555\n", status=Status.Success, retcode=0
+                ),
+                CommandStatus(command="nc -l ...", output="", status=Status.Success, retcode=0),
+            ]
+        )
 
         ft = NcFileTransfer(
             connections=mock_connections,
-            name='test',
-            transfer='nc',
+            name="test",
+            transfer="nc",
             nc_options=NcOptions(
-                exec_name='nc',
+                exec_name="nc",
                 port=9000,
-                port_strategy='python',
+                port_strategy="python",
                 port_cmd=None,
-                listener_check='ss',
+                listener_check="ss",
                 listener_cmd=None,
             ),
-            get_local_ip=lambda: '127.0.0.1',
+            get_local_ip=lambda: "127.0.0.1",
             exec_cmd=mock_exec,
         )
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as tmp:
-            tmp.write(b'test data')
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt") as tmp:
+            tmp.write(b"test data")
             tmp_path = Path(tmp.name)
 
         try:
-            with patch('otto.host.transfer.nc._connect_with_retry', new_callable=AsyncMock) as mock_connect:
+            with patch(
+                "otto.host.transfer.nc._connect_with_retry", new_callable=AsyncMock
+            ) as mock_connect:
                 mock_writer = MagicMock()
                 mock_writer.write = MagicMock()
                 mock_writer.drain = AsyncMock()
@@ -601,12 +669,12 @@ class TestNetcatPutThroughHop:
                 mock_writer.wait_closed = AsyncMock()
                 mock_connect.return_value = (MagicMock(), mock_writer)
 
-                status, err = await ft.put_files([tmp_path], Path('/tmp'), show_progress=False)
+                status, err = await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
 
                 # Verify direct connection (no forward_port called)
                 mock_connections.forward_port.assert_not_awaited()
                 call_args = mock_connect.call_args
-                assert call_args[0][0] == '10.0.0.1'
+                assert call_args[0][0] == "10.0.0.1"
                 assert call_args[0][1] == 55555
         finally:
             tmp_path.unlink()
@@ -616,8 +684,8 @@ class TestNetcatPutThroughHop:
 # Cycle detection
 # ---------------------------------------------------------------------------
 
-class TestCycleDetection:
 
+class TestCycleDetection:
     @pytest.mark.asyncio
     async def test_cycle_detection_in_tunnel_factory(self):
         """Verify that circular hop references are detected.
@@ -628,8 +696,12 @@ class TestCycleDetection:
         """
         from otto.configmodule.lab import Lab
 
-        host_a = UnixHost(ip='10.0.0.1', element='hostA', creds={'user': 'pass'}, hop='hostb', log=False)
-        host_b = UnixHost(ip='10.0.0.2', element='hostB', creds={'user': 'pass'}, hop='hosta', log=False)
+        host_a = UnixHost(
+            ip="10.0.0.1", element="hostA", creds={"user": "pass"}, hop="hostb", log=False
+        )
+        host_b = UnixHost(
+            ip="10.0.0.2", element="hostB", creds={"user": "pass"}, hop="hosta", log=False
+        )
 
         # Capture the transport built at construction time (with _lab=None).
         transport_a = host_a._connections._hop
@@ -661,9 +733,13 @@ class TestCycleDetection:
         # Patch asyncssh.connect BEFORE construction so the closure captures the mock.
         # _build_hop_transport does `from asyncssh import connect as _ssh_connect`
         # at call time — patching asyncssh.connect makes the import pick up the mock.
-        with patch('asyncssh.connect', AsyncMock(return_value=mock_ssh_conn)):
-            jumpbox = UnixHost(ip='10.10.0.1', element='jumpbox', creds={'admin': 'secret'}, log=False)
-            target = UnixHost(ip='10.10.0.2', element='target', creds={'user': 'pass'}, hop='jumpbox', log=False)
+        with patch("asyncssh.connect", AsyncMock(return_value=mock_ssh_conn)):
+            jumpbox = UnixHost(
+                ip="10.10.0.1", element="jumpbox", creds={"admin": "secret"}, log=False
+            )
+            target = UnixHost(
+                ip="10.10.0.2", element="target", creds={"user": "pass"}, hop="jumpbox", log=False
+            )
 
             # Capture the transport built at __post_init__ time — _lab was None then.
             transport = target._connections._hop
@@ -685,8 +761,8 @@ class TestCycleDetection:
 # Standalone host: hop resolution via active OttoContext (FD-model)
 # ---------------------------------------------------------------------------
 
-class TestStandaloneHostHopResolution:
 
+class TestStandaloneHostHopResolution:
     @pytest.mark.asyncio
     async def test_standalone_host_resolves_hop_from_active_context_lab(self):
         """A host constructed standalone (not add_host'd) with a hop must resolve the
@@ -700,9 +776,11 @@ class TestStandaloneHostHopResolution:
 
         mock_ssh_conn = MagicMock(spec=SSHClientConnection)
 
-        with patch('asyncssh.connect', AsyncMock(return_value=mock_ssh_conn)):
+        with patch("asyncssh.connect", AsyncMock(return_value=mock_ssh_conn)):
             # Build the hop TARGET and add it to a Lab.
-            jumpbox = UnixHost(ip='10.20.0.1', element='jumpbox', creds={'admin': 'secret'}, log=False)
+            jumpbox = UnixHost(
+                ip="10.20.0.1", element="jumpbox", creds={"admin": "secret"}, log=False
+            )
             lab = Lab(name="fd_model_test")
             lab.add_host(jumpbox)
 
@@ -713,8 +791,11 @@ class TestStandaloneHostHopResolution:
                 # Build the host-under-test STANDALONE — do NOT add_host it.
                 # Its _lab remains None; the hop target must come from the active context.
                 standalone = UnixHost(
-                    ip='10.20.0.2', element='target', creds={'user': 'pass'},
-                    hop='jumpbox', log=False,
+                    ip="10.20.0.2",
+                    element="target",
+                    creds={"user": "pass"},
+                    hop="jumpbox",
+                    log=False,
                 )
                 assert standalone._lab is None, "standalone host must have no lab back-reference"
 

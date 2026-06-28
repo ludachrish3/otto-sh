@@ -51,32 +51,32 @@ logger = get_otto_logger()
 
 # Ctrl+] — the classic telnet(1) escape character. Single byte, no common
 # shell/editor binding, leaves Ctrl+D free to act as the normal remote EOT.
-_ESCAPE_BYTE = 0x1d
+_ESCAPE_BYTE = 0x1D
 
 # CSI (``\x1b[...``), OSC (``\x1b]...\x07`` or ``\x1b]...\x1b\\``) and
 # two-byte ``\x1b<char>`` escape sequences. Mirrors
 # ``otto.logger.formatters._ANSI`` so log output renders the same way
 # whether it came from the normal logger path or from this module.
 _ANSI_ESCAPE_RE = re.compile(
-    rb'\x1b'
-    rb'(?:'
-    rb'\[[0-9;]*[a-zA-Z]'
-    rb'|\][^\x07\x1b]*'
-    rb'(?:\x07|\x1b\\)'
-    rb'|[@-_][^@-_]*'
-    rb')'
+    rb"\x1b"
+    rb"(?:"
+    rb"\[[0-9;]*[a-zA-Z]"
+    rb"|\][^\x07\x1b]*"
+    rb"(?:\x07|\x1b\\)"
+    rb"|[@-_][^@-_]*"
+    rb")"
 )
 
 
 def _strip_ansi(data: bytes) -> bytes:
     """Remove ANSI escape sequences from ``data``.
 
-    >>> _strip_ansi(b'\\x1b[31mred\\x1b[0m')
+    >>> _strip_ansi(b"\\x1b[31mred\\x1b[0m")
     b'red'
-    >>> _strip_ansi(b'plain text')
+    >>> _strip_ansi(b"plain text")
     b'plain text'
     """
-    return _ANSI_ESCAPE_RE.sub(b'', data)
+    return _ANSI_ESCAPE_RE.sub(b"", data)
 
 
 class _LineBuffer:
@@ -87,7 +87,7 @@ class _LineBuffer:
 
     >>> emitted: list[str] = []
     >>> buf = _LineBuffer(emitted.append)
-    >>> buf.feed(b'hello\\nworld')
+    >>> buf.feed(b"hello\\nworld")
     >>> emitted
     ['hello']
     >>> buf.flush()
@@ -103,11 +103,11 @@ class _LineBuffer:
         """Append ``data`` to the buffer and emit any completed lines."""
         self._buf.extend(data)
         while True:
-            idx = self._buf.find(b'\n')
+            idx = self._buf.find(b"\n")
             if idx < 0:
                 return
             line = bytes(self._buf[:idx])
-            del self._buf[:idx + 1]
+            del self._buf[: idx + 1]
             self._emit(line)
 
     def flush(self) -> None:
@@ -117,7 +117,7 @@ class _LineBuffer:
             self._buf.clear()
 
     def _emit(self, line: bytes) -> None:
-        cleaned = _strip_ansi(line).decode('utf-8', errors='replace').rstrip('\r')
+        cleaned = _strip_ansi(line).decode("utf-8", errors="replace").rstrip("\r")
         if cleaned:
             self._on_line(cleaned)
 
@@ -140,14 +140,17 @@ class _SessionLogFile:
         self._file: Any | None = None
         self._host_name = host_name
         try:
-            self._file = log_path.open('a', encoding='utf-8')
+            self._file = log_path.open("a", encoding="utf-8")
         except OSError as exc:
             logger.debug(f"Interactive session log unavailable ({log_path}): {exc}")
 
     def write_line(self, line: str) -> None:
         if self._file is None:
             return
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.') + f"{datetime.now().microsecond // 1000:03d}"
+        timestamp = (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S.")
+            + f"{datetime.now().microsecond // 1000:03d}"
+        )
         record = f"{timestamp} [ INFO  ] @{self._host_name} > | {line}\n"
         try:
             self._file.write(record)
@@ -159,7 +162,10 @@ class _SessionLogFile:
         """Write a bookend line without the ``@host > |`` output preamble."""
         if self._file is None:
             return
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.') + f"{datetime.now().microsecond // 1000:03d}"
+        timestamp = (
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S.")
+            + f"{datetime.now().microsecond // 1000:03d}"
+        )
         record = f"{timestamp} [ INFO  ] @{self._host_name}   | {text}\n"
         try:
             self._file.write(record)
@@ -182,11 +188,11 @@ def _session_log_path() -> Path | None:
     output_dir = ctx.output_dir if ctx is not None else None
     if output_dir is None:
         return None
-    return Path(output_dir) / 'otto.log'
+    return Path(output_dir) / "otto.log"
 
 
 async def _pump_stdin_to_remote(
-    stdin_queue: 'asyncio.Queue[bytes | None]',
+    stdin_queue: "asyncio.Queue[bytes | None]",
     write_remote: Callable[[bytes], Awaitable[None]],
 ) -> None:
     """Forward stdin chunks to the remote side until EOF or ``Ctrl+]``.
@@ -230,9 +236,9 @@ async def _pump_remote_to_stdout(
 
 def _spawn_stdin_reader(
     loop: asyncio.AbstractEventLoop,
-    stdin_queue: 'asyncio.Queue[bytes | None]',
+    stdin_queue: "asyncio.Queue[bytes | None]",
     shutdown: threading.Event,
-) -> 'asyncio.Future[None]':
+) -> "asyncio.Future[None]":
     """Spawn a worker thread that feeds stdin chunks into ``stdin_queue``.
 
     The thread polls ``select`` on fd 0 with a short timeout so it can
@@ -267,6 +273,7 @@ def _spawn_stdin_reader(
 def _initial_term_size() -> tuple[int, int]:
     """Return the current local terminal size, falling back to 80x24."""
     import shutil
+
     try:
         size = shutil.get_terminal_size((80, 24))
         return size.columns, size.lines
@@ -276,7 +283,7 @@ def _initial_term_size() -> tuple[int, int]:
 
 def _setup_raw_mode(fd: int) -> Any:
     """Put ``fd`` into raw mode. Returns saved attrs, or ``None`` on no-op."""
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         return None
     try:
         import termios
@@ -296,7 +303,7 @@ def _setup_raw_mode(fd: int) -> Any:
 
 def _restore_terminal(fd: int, saved: Any) -> None:
     """Restore ``fd`` to the attrs returned by :func:`_setup_raw_mode`."""
-    if saved is None or sys.platform == 'win32':
+    if saved is None or sys.platform == "win32":
         return
     try:
         import termios
@@ -310,7 +317,7 @@ def _restore_terminal(fd: int, saved: Any) -> None:
 
 def _print_stderr(msg: str) -> None:
     try:
-        sys.stderr.write(msg + '\n')
+        sys.stderr.write(msg + "\n")
         sys.stderr.flush()
     except OSError:
         pass
@@ -340,7 +347,7 @@ async def _run_bridge(
     session log before ``Ctrl+]`` races ahead.
     """
     loop = asyncio.get_running_loop()
-    stdin_is_tty = sys.stdin.isatty() and sys.platform != 'win32'
+    stdin_is_tty = sys.stdin.isatty() and sys.platform != "win32"
     stdin_fd = sys.stdin.fileno()
 
     saved_attrs = _setup_raw_mode(stdin_fd) if stdin_is_tty else None
@@ -355,7 +362,7 @@ async def _run_bridge(
         except (NotImplementedError, RuntimeError) as exc:
             logger.debug(f"SIGWINCH forwarding unavailable: {exc}")
 
-    stdin_queue: 'asyncio.Queue[bytes | None]' = asyncio.Queue()
+    stdin_queue: "asyncio.Queue[bytes | None]" = asyncio.Queue()
     shutdown = threading.Event()
     reader_future = _spawn_stdin_reader(loop, stdin_queue, shutdown)
 
@@ -418,18 +425,18 @@ async def run_ssh_login(
     """
     import asyncssh
 
-    term_type = os.environ.get('TERM') or 'xterm'
+    term_type = os.environ.get("TERM") or "xterm"
     cols, rows = _initial_term_size()
 
     process_kwargs: dict[str, Any] = dict(
-        request_pty='force',
+        request_pty="force",
         term_type=term_type,
         term_size=(cols, rows),
         stderr=asyncssh.STDOUT,
         encoding=None,
     )
     if command is not None:
-        process_kwargs['command'] = command
+        process_kwargs["command"] = command
     process = await conn.create_process(**process_kwargs)
 
     async def write_remote(data: bytes) -> None:
@@ -439,7 +446,7 @@ async def run_ssh_login(
         try:
             return await process.stdout.read(4096)
         except (asyncssh.misc.ConnectionLost, asyncio.IncompleteReadError):
-            return b''
+            return b""
 
     def install_sigwinch() -> Callable[[], None]:
         loop = asyncio.get_running_loop()
@@ -463,7 +470,9 @@ async def run_ssh_login(
 
     _log_path = _session_log_path()
     log_file = _SessionLogFile(_log_path, host_name) if _log_path is not None else None
-    log_file_effective = log_file if log_file is not None else _SessionLogFile(Path(os.devnull), host_name)
+    log_file_effective = (
+        log_file if log_file is not None else _SessionLogFile(Path(os.devnull), host_name)
+    )
     log_file_effective.write_marker("Entering interactive session")
 
     try:
@@ -507,7 +516,7 @@ async def run_telnet_login(
         try:
             return await reader.read(4096)
         except Exception:
-            return b''
+            return b""
 
     def install_sigwinch() -> Callable[[], None]:
         loop = asyncio.get_running_loop()
@@ -535,7 +544,11 @@ async def run_telnet_login(
         return remove
 
     log_path = _session_log_path()
-    log_file = _SessionLogFile(log_path, host_name) if log_path else _SessionLogFile(Path(os.devnull), host_name)
+    log_file = (
+        _SessionLogFile(log_path, host_name)
+        if log_path
+        else _SessionLogFile(Path(os.devnull), host_name)
+    )
     log_file.write_marker("Entering interactive session")
 
     try:

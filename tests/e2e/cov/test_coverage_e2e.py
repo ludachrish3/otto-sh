@@ -28,6 +28,7 @@ would race on the shared Vagrant VMs (both running ``_cov_clean_remotes``
 and ``_run_coverage`` against the same ``/var/coverage/product`` directory),
 which deadlocks asyncssh transfers.
 """
+
 from __future__ import annotations
 
 import os
@@ -51,6 +52,7 @@ OTTO_BIN = Path(sys.executable).parent / "otto"
 # ---------------------------------------------------------------------------
 # Subprocess runner — mirrors the pattern in test_completion_cache.py
 # ---------------------------------------------------------------------------
+
 
 def _otto_env(xdir: Path) -> dict[str, str]:
     """Env for an ``otto`` subprocess with subprocess-coverage enabled."""
@@ -100,8 +102,7 @@ def _find_test_log_dir(xdir: Path) -> Path:
     candidates = sorted((xdir / "test").glob("*"))
     if len(candidates) != 1:
         raise AssertionError(
-            f"Expected exactly one ``test`` output dir under {xdir}, "
-            f"found {candidates}"
+            f"Expected exactly one ``test`` output dir under {xdir}, found {candidates}"
         )
     return candidates[0]
 
@@ -109,6 +110,7 @@ def _find_test_log_dir(xdir: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Fixture: run the real CLI, return (store, report_dir, cov_dir)
 # ---------------------------------------------------------------------------
+
 
 def _find_file_record(store: CoverageStore, suffix: str) -> FileRecord:
     for fr in store.files():
@@ -158,17 +160,16 @@ def coverage_run(tmp_path_factory):
     )
 
     store_path = report_dir / "store.json"
-    assert store_path.is_file(), (
-        f"CoverageReporter did not write {store_path}"
-    )
+    assert store_path.is_file(), f"CoverageReporter did not write {store_path}"
     store = CoverageStore.load(store_path)
 
-    yield store, report_dir, cov_dir
+    return store, report_dir, cov_dir
 
 
 # ---------------------------------------------------------------------------
 # Test Class 1: HTML Report Structure
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
@@ -226,9 +227,7 @@ class TestHtmlReportStructure:
         # Source rows carry class="line ..." — the leading space disambiguates
         # from summary-table rows which use class="summary-row ...".
         tr_count = html.count('<tr class="line ')
-        source_line_count = len(
-            PRODUCT_DIR.joinpath("math_ops.c").read_text().splitlines()
-        )
+        source_line_count = len(PRODUCT_DIR.joinpath("math_ops.c").read_text().splitlines())
         assert tr_count == source_line_count, (
             f"Expected {source_line_count} <tr> rows, found {tr_count}"
         )
@@ -266,6 +265,7 @@ class TestHtmlReportStructure:
 # Test Class 2: Line Hit Counts
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
 class TestLineHitCounts:
@@ -276,18 +276,18 @@ class TestLineHitCounts:
     # First host (carrot): extra div 1 0 (divide-by-zero)
     # Last host (pepper): 3 clamp calls (below, above, in-range)
     MATH_OPS_EXPECTED = {
-        4: 3,    # return a + b (3 hosts × 1 add)
-        8: 3,    # return a - b (3 hosts × 1 sub)
-        12: 3,   # return a * b (3 hosts × 1 mul)
-        16: 4,   # if (b == 0): 3 normal div + 1 div-by-zero
-        17: 1,   # return -1: only the div-by-zero on first host
-        19: 3,   # *result = a / b: 3 normal divides
-        20: 3,   # return 0: 3 normal divides
-        24: 3,   # if (value < lo): 3 clamp calls on last host
-        25: 1,   # return lo: clamp(1,5,10) -> 5
-        27: 2,   # if (value > hi): 2 remaining clamp calls
-        28: 1,   # return hi: clamp(15,5,10) -> 10
-        30: 1,   # return value: clamp(7,5,10) -> 7
+        4: 3,  # return a + b (3 hosts × 1 add)
+        8: 3,  # return a - b (3 hosts × 1 sub)
+        12: 3,  # return a * b (3 hosts × 1 mul)
+        16: 4,  # if (b == 0): 3 normal div + 1 div-by-zero
+        17: 1,  # return -1: only the div-by-zero on first host
+        19: 3,  # *result = a / b: 3 normal divides
+        20: 3,  # return 0: 3 normal divides
+        24: 3,  # if (value < lo): 3 clamp calls on last host
+        25: 1,  # return lo: clamp(1,5,10) -> 5
+        27: 2,  # if (value > hi): 2 remaining clamp calls
+        28: 1,  # return hi: clamp(15,5,10) -> 10
+        30: 1,  # return value: clamp(7,5,10) -> 7
     }
 
     def test_store_has_exactly_two_files(self, coverage_run):
@@ -308,9 +308,7 @@ class TestLineHitCounts:
         store, *_ = coverage_run
         rec = _find_file_record(store, "main.c")
         actual = rec.lines[23].hits.for_tier("system")
-        assert actual == 3, (
-            f"main.c:23 (add printf): expected 3, got {actual}"
-        )
+        assert actual == 3, f"main.c:23 (add printf): expected 3, got {actual}"
 
     def test_main_c_untaken_paths_are_zero(self, coverage_run):
         store, *_ = coverage_run
@@ -341,25 +339,20 @@ class TestLineHitCounts:
             for lineno, lr in fr.lines.items():
                 unit = lr.hits.for_tier("unit")
                 manual = lr.hits.for_tier("manual")
-                assert unit == 0, (
-                    f"{fr.path}:{lineno}: unexpected unit hits ({unit})"
-                )
-                assert manual == 0, (
-                    f"{fr.path}:{lineno}: unexpected manual hits ({manual})"
-                )
+                assert unit == 0, f"{fr.path}:{lineno}: unexpected unit hits ({unit})"
+                assert manual == 0, f"{fr.path}:{lineno}: unexpected manual hits ({manual})"
 
     def test_hits_are_additive_not_max(self, coverage_run):
         store, *_ = coverage_run
         rec = _find_file_record(store, "math_ops.c")
         actual = rec.lines[4].hits.for_tier("system")
-        assert actual == 3, (
-            f"Line 4 hits = {actual}, expected 3 (additive across 3 hosts)"
-        )
+        assert actual == 3, f"Line 4 hits = {actual}, expected 3 (additive across 3 hosts)"
 
 
 # ---------------------------------------------------------------------------
 # Test Class 3: Branch Coverage
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
@@ -376,9 +369,7 @@ class TestBranchCoverage:
         store, *_ = coverage_run
         rec = _find_file_record(store, "math_ops.c")
         for b in rec.lines[16].branches:
-            assert b.hits.for_tier("system") > 0, (
-                f"Line 16 branch ({b.block}.{b.branch}) not taken"
-            )
+            assert b.hits.for_tier("system") > 0, f"Line 16 branch ({b.block}.{b.branch}) not taken"
 
     def test_clamp_lt_lo_both_branches_taken(self, coverage_run):
         store, *_ = coverage_run
@@ -449,6 +440,7 @@ class TestBranchCoverage:
 # Test Class 4: Coverage Integrity
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
 class TestCoverageIntegrity:
@@ -463,9 +455,8 @@ class TestCoverageIntegrity:
         assert loaded.overall_pct() == pytest.approx(store.overall_pct())
         orig = _find_file_record(store, "math_ops.c")
         roundtripped = _find_file_record(loaded, "math_ops.c")
-        assert (
-            roundtripped.lines[4].hits.for_tier("system")
-            == orig.lines[4].hits.for_tier("system")
+        assert roundtripped.lines[4].hits.for_tier("system") == orig.lines[4].hits.for_tier(
+            "system"
         )
 
     def test_single_host_data_preserved_in_merge(self, coverage_run):
@@ -521,7 +512,7 @@ class TestGcdaFetchStructure:
     def test_every_host_has_subdirectory(self, coverage_run):
         *_, cov_dir = coverage_run
         actual_dirs = {d.name for d in cov_dir.iterdir() if d.is_dir()}
-        assert EXPECTED_HOST_IDS == actual_dirs, (
+        assert actual_dirs == EXPECTED_HOST_IDS, (
             f"Expected host dirs {EXPECTED_HOST_IDS}, found {actual_dirs}"
         )
 
@@ -557,6 +548,7 @@ class TestGcdaFetchStructure:
 # ---------------------------------------------------------------------------
 # Test Class 6: Suite Runner Integration
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def suite_run_exit_code(tmp_path_factory):

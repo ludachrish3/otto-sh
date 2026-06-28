@@ -83,11 +83,12 @@ def _messages(caplog: pytest.LogCaptureFixture) -> str:
 # Handshake logging
 # ---------------------------------------------------------------------------
 
-class TestHandshakeLogging:
 
+class TestHandshakeLogging:
     @pytest.mark.asyncio
     async def test_handshake_start_and_match_logged_at_debug(
-        self, caplog: pytest.LogCaptureFixture,
+        self,
+        caplog: pytest.LogCaptureFixture,
     ):
         """A successful handshake logs the start (cmd + marker + timeout)
         and the match (timing + bytes received)."""
@@ -102,14 +103,16 @@ class TestHandshakeLogging:
 
         log = _messages(caplog)
         assert "handshake start" in log
-        assert s._ready_marker in log              # marker echoed in the log
-        assert "stty -echo" in log                  # the bash handshake command
+        assert s._ready_marker in log  # marker echoed in the log
+        assert "stty -echo" in log  # the bash handshake command
         assert "handshake matched" in log
-        assert "attempts=1" in log                  # SSH/local-like single-probe path
+        assert "attempts=1" in log  # SSH/local-like single-probe path
 
     @pytest.mark.asyncio
     async def test_handshake_failure_logs_attempt_count(
-        self, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch,
+        self,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
     ):
         """A handshake that never sees the marker logs the FAILED line with
         the attempt count, then raises ConnectionError."""
@@ -134,11 +137,13 @@ class TestHandshakeLogging:
 # run_cmd framing-seam logging
 # ---------------------------------------------------------------------------
 
-class TestRunCmdLogging:
 
+class TestRunCmdLogging:
     @pytest.mark.asyncio
     async def test_framed_write_and_summary_logged_at_debug(
-        self, initialized_session: MockSession, caplog: pytest.LogCaptureFixture,
+        self,
+        initialized_session: MockSession,
+        caplog: pytest.LogCaptureFixture,
     ):
         """run_cmd logs the framed payload at write time and a per-command
         summary (cmd + retcode + output length + buffer preview) at the end."""
@@ -171,11 +176,13 @@ class TestRunCmdLogging:
 # recover_session logging
 # ---------------------------------------------------------------------------
 
-class TestRecoverSessionLogging:
 
+class TestRecoverSessionLogging:
     @pytest.mark.asyncio
     async def test_recover_session_entry_and_outcome_logged(
-        self, initialized_session: MockSession, caplog: pytest.LogCaptureFixture,
+        self,
+        initialized_session: MockSession,
+        caplog: pytest.LogCaptureFixture,
     ):
         """recover_session logs its marker + recover command on entry and the
         partial-output length on success."""
@@ -201,8 +208,8 @@ class TestRecoverSessionLogging:
 # Log-tag stability
 # ---------------------------------------------------------------------------
 
-class TestLogTag:
 
+class TestLogTag:
     def test_log_tag_includes_class_and_session_id(self):
         """``_log_tag`` is ``<class>@<session_id>`` — both pieces are
         load-bearing for telling concurrent sessions apart in a single log."""
@@ -232,6 +239,7 @@ class _AliveStubSession(ShellSession):
     async def _write(self, data: str) -> None: ...
     async def _read_until_pattern(self, pattern):  # pragma: no cover - unused
         raise AssertionError("stub does not read")
+
     async def close(self) -> None:
         self._alive = False
         self._initialized = False
@@ -250,7 +258,7 @@ def _logging_mgr():
     cmds: list[str] = []
     outs: list[str] = []
     mgr = SessionManager(
-        connections=cast(ConnectionManager, SimpleNamespace(term="telnet")),
+        connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=_AliveStubSession,
         log_command=cmds.append,
         log_output=outs.append,
@@ -259,7 +267,6 @@ def _logging_mgr():
 
 
 class TestPerCommandLogSuppression:
-
     @pytest.mark.asyncio
     async def test_log_true_records_command_and_output(self):
         mgr, cmds, outs = _logging_mgr()

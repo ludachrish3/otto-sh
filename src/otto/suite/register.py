@@ -14,7 +14,7 @@ reach ``run_suite`` only when the CLI command is invoked, by which time
 
 import dataclasses
 import inspect
-from typing import Any, get_type_hints
+from typing import Any
 
 import pytest
 import typer
@@ -41,12 +41,12 @@ class OttoOptionsPlugin:
             assert suite_options.device_type == "router"
     """
 
-    __name__ = 'otto-options'
+    __name__ = "otto-options"
 
     def __init__(self, options: Any | None) -> None:
         self.options = options
 
-    @pytest.fixture(scope='session')
+    @pytest.fixture(scope="session")
     def suite_options(self) -> Any:
         """The Options dataclass instance populated from CLI arguments."""
         return self.options
@@ -55,6 +55,7 @@ class OttoOptionsPlugin:
     def ctx(self) -> Any:
         """Return the active OttoContext for this invocation."""
         from ..context import get_context
+
         return get_context()
 
 
@@ -75,6 +76,7 @@ def _options_params(opts_cls: type) -> list[inspect.Parameter]:
 # ---------------------------------------------------------------------------
 # register_suite() decorator
 # ---------------------------------------------------------------------------
+
 
 def register_suite(*args: Any, **kwargs: Any):
     """Class decorator that registers an OttoSuite subclass as a ``suite_app`` subcommand.
@@ -101,8 +103,9 @@ def register_suite(*args: Any, **kwargs: Any):
     class (if present) and appends it to ``_SUITE_REGISTRY``.  ``cli/test.py``
     reads the registry at module load time and adds the sub-apps to ``suite_app``.
     """
+
     def decorator(suite_class: type) -> type:
-        opts_cls   = getattr(suite_class, 'Options', None)
+        opts_cls = getattr(suite_class, "Options", None)
         suite_file = inspect.getfile(suite_class)
 
         # Build the full parameter list for the Typer command. The leading
@@ -111,7 +114,8 @@ def register_suite(*args: Any, **kwargs: Any):
         # shared run options the ``otto test`` callback stored in ``ctx.meta``.
         params: list[inspect.Parameter] = [
             inspect.Parameter(
-                'ctx', inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                "ctx",
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
                 annotation=typer.Context,
             )
         ]
@@ -119,12 +123,12 @@ def register_suite(*args: Any, **kwargs: Any):
             params.extend(_options_params(opts_cls))
 
         # Capture values for the closure — avoids late-binding bugs
-        _opts_cls   = opts_cls
-        _suite_cls  = suite_class
+        _opts_cls = opts_cls
+        _suite_cls = suite_class
         _suite_file = suite_file
 
         def runner(**kw: Any) -> None:
-            ctx = kw.pop('ctx')
+            ctx = kw.pop("ctx")
             opts_instance = (
                 build_options(_opts_cls, kw)
                 if (_opts_cls is not None and dataclasses.is_dataclass(_opts_cls))
@@ -132,15 +136,13 @@ def register_suite(*args: Any, **kwargs: Any):
             )
 
             # Lazy import — cli/test.py is fully loaded by the time any command runs
-            from ..cli.test import run_suite  # noqa: PLC0415
+            from ..cli.test import run_suite
+
             run_suite(_suite_cls, _suite_file, opts_instance, ctx)
 
-        setattr(runner, '__signature__', inspect.Signature(params))
+        runner.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
         runner.__name__ = suite_class.__name__
-        runner.__doc__  = (
-            suite_class.__doc__
-            or f'Run the {suite_class.__name__} test suite.'
-        )
+        runner.__doc__ = suite_class.__doc__ or f"Run the {suite_class.__name__} test suite."
 
         sub_app = typer.Typer()
         sub_app.command(suite_class.__name__, *args, **kwargs)(runner)

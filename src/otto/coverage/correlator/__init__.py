@@ -1,5 +1,5 @@
-from .paths import PathCorrelator, PathMapping
 from .lcov_loader import LCOVLoader
 from .merger import LcovMerger
+from .paths import PathCorrelator, PathMapping
 
-__all__ = ["PathCorrelator", "PathMapping", "LCOVLoader", "LcovMerger"]
+__all__ = ["LCOVLoader", "LcovMerger", "PathCorrelator", "PathMapping"]

@@ -52,9 +52,23 @@ class ToolchainSpec(OttoModel):
 # Conversions for default_dest_dir/resources/telnet_options/snmp/toolchain are
 # applied separately in _common_host_kwargs.
 _COMMON_PLAIN_FIELDS = (
-    "ip", "element", "creds", "name", "os_type", "os_name", "os_version",
-    "user", "element_id", "board", "slot", "hop", "is_virtual",
-    "max_filename_len", "log", "log_stdout", "power_control",
+    "ip",
+    "element",
+    "creds",
+    "name",
+    "os_type",
+    "os_name",
+    "os_version",
+    "user",
+    "element_id",
+    "board",
+    "slot",
+    "hop",
+    "is_virtual",
+    "max_filename_len",
+    "log",
+    "log_stdout",
+    "power_control",
 )
 
 
@@ -62,14 +76,10 @@ def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
     """Validate a transfer selector against the registry and host-family applicability."""
     if v not in _TRANSFER_BACKENDS:
         known = ", ".join(sorted(_TRANSFER_BACKENDS))
-        raise ValueError(
-            f"transfer {v!r} is not a registered transfer backend. Known: {known}"
-        )
+        raise ValueError(f"transfer {v!r} is not a registered transfer backend. Known: {known}")
     if family not in _TRANSFER_BACKENDS[v].host_families:
         fam = ", ".join(sorted(_TRANSFER_BACKENDS[v].host_families))
-        raise ValueError(
-            f"transfer {v!r} is not valid on {host_label} (it serves: {fam})."
-        )
+        raise ValueError(f"transfer {v!r} is not valid on {host_label} (it serves: {fam}).")
     return v
 
 
@@ -77,14 +87,10 @@ def _validate_term_for_family(v: str, family: str, host_label: str) -> str:
     """Validate a term selector against the registry and host-family applicability."""
     if v not in _TERM_BACKENDS:
         known = ", ".join(sorted(_TERM_BACKENDS))
-        raise ValueError(
-            f"term {v!r} is not a registered term backend. Known: {known}"
-        )
+        raise ValueError(f"term {v!r} is not a registered term backend. Known: {known}")
     if family not in _TERM_FAMILIES[v]:
         fam = ", ".join(sorted(_TERM_FAMILIES[v]))
-        raise ValueError(
-            f"term {v!r} is not valid on {host_label} (it serves: {fam})."
-        )
+        raise ValueError(f"term {v!r} is not valid on {host_label} (it serves: {fam}).")
     return v
 
 
@@ -156,9 +162,7 @@ class HostSpec(OttoModel):
             try:
                 ip_address(addr)
             except ValueError:
-                raise ValueError(
-                    f"interface {name!r} address {addr!r} is not a valid IP"
-                ) from None
+                raise ValueError(f"interface {name!r} address {addr!r} is not a valid IP") from None
         return v
 
     @field_validator("command_frame")
@@ -166,9 +170,7 @@ class HostSpec(OttoModel):
     def _validate_command_frame_name(cls, v: str | None) -> str | None:
         if v is not None and v not in _FRAME_CLASSES:
             known = ", ".join(sorted(_FRAME_CLASSES))
-            raise ValueError(
-                f"command_frame {v!r} is not a registered frame. Known: {known}"
-            )
+            raise ValueError(f"command_frame {v!r} is not a registered frame. Known: {known}")
         return v
 
     def _common_host_kwargs(self) -> dict[str, Any]:
@@ -198,8 +200,9 @@ class HostSpec(OttoModel):
             kw["command_frame"] = build_command_frame(self.command_frame)
         return kw
 
-    def to_host(self, cls: Any = None, *,
-                preferences: dict[str, list[str]] | None = None) -> RemoteHost:
+    def to_host(
+        self, cls: Any = None, *, preferences: dict[str, list[str]] | None = None
+    ) -> RemoteHost:
         """Build the runtime host this spec describes.
 
         Overridden by the concrete family specs (:class:`UnixHostSpec`,
@@ -219,8 +222,8 @@ class UnixHostSpec(HostSpec):
     sw_version: str | None = None
     valid_terms: list[str] = ["ssh", "telnet"]
     valid_transfers: list[str] = ["scp", "sftp", "ftp", "nc"]
-    term: str | None = None       # optional active pin; resolved at to_host
-    transfer: str | None = None   # optional active pin; resolved at to_host
+    term: str | None = None  # optional active pin; resolved at to_host
+    transfer: str | None = None  # optional active pin; resolved at to_host
     docker_capable: bool = False
     ssh_options: SshOptionsSpec = SshOptionsSpec()
     sftp_options: SftpOptionsSpec = SftpOptionsSpec()
@@ -246,8 +249,9 @@ class UnixHostSpec(HostSpec):
         return _validate_transfer_menu(v, cls._host_family, "a unix host")
 
     @override
-    def to_host(self, cls: type[UnixHost] = UnixHost, *,
-                preferences: dict[str, list[str]] | None = None) -> UnixHost:
+    def to_host(
+        self, cls: type[UnixHost] = UnixHost, *, preferences: dict[str, list[str]] | None = None
+    ) -> UnixHost:
         kw = self._common_host_kwargs()
         s = self.model_fields_set
         prefs = preferences or {}
@@ -258,14 +262,15 @@ class UnixHostSpec(HostSpec):
         # the menu); else the menu's first entry. Out-of-menu preferences are
         # skipped by the resolver.
         kw["term"] = TERM_RESOLVER.resolve_active(
-            self.valid_terms, pin=self.term, preference=prefs.get("term"))
+            self.valid_terms, pin=self.term, preference=prefs.get("term")
+        )
         kw["transfer"] = TRANSFER_RESOLVER.resolve_active(
-            self.valid_transfers, pin=self.transfer, preference=prefs.get("transfer"))
+            self.valid_transfers, pin=self.transfer, preference=prefs.get("transfer")
+        )
         for n in ("hw_version", "sw_version", "docker_capable"):
             if n in s:
                 kw[n] = getattr(self, n)
-        for n in ("ssh_options", "sftp_options", "scp_options",
-                  "ftp_options", "nc_options"):
+        for n in ("ssh_options", "sftp_options", "scp_options", "ftp_options", "nc_options"):
             if n in s:
                 kw[n] = getattr(self, n).to_runtime()
         return cls(**kw)
@@ -302,14 +307,16 @@ class EmbeddedHostSpec(HostSpec):
     def _validate_filesystem_name(cls, v: str | None) -> str | None:
         if v is not None and v not in _FILESYSTEM_CLASSES:
             known = ", ".join(sorted(_FILESYSTEM_CLASSES))
-            raise ValueError(
-                f"filesystem {v!r} is not a registered filesystem. Known: {known}"
-            )
+            raise ValueError(f"filesystem {v!r} is not a registered filesystem. Known: {known}")
         return v
 
     @override
-    def to_host(self, cls: type[EmbeddedHost] = EmbeddedHost, *,
-                preferences: dict[str, list[str]] | None = None) -> EmbeddedHost:
+    def to_host(
+        self,
+        cls: type[EmbeddedHost] = EmbeddedHost,
+        *,
+        preferences: dict[str, list[str]] | None = None,
+    ) -> EmbeddedHost:
         kw = self._common_host_kwargs()
         s = self.model_fields_set
         prefs = preferences or {}
@@ -318,9 +325,11 @@ class EmbeddedHostSpec(HostSpec):
         # Same precedence as UnixHostSpec.to_host: pin -> product preference
         # present in the menu -> menu[0].
         kw["term"] = TERM_RESOLVER.resolve_active(
-            self.valid_terms, pin=self.term, preference=prefs.get("term"))
+            self.valid_terms, pin=self.term, preference=prefs.get("term")
+        )
         kw["transfer"] = TRANSFER_RESOLVER.resolve_active(
-            self.valid_transfers, pin=self.transfer, preference=prefs.get("transfer"))
+            self.valid_transfers, pin=self.transfer, preference=prefs.get("transfer")
+        )
         if "filesystem" in s and self.filesystem is not None:
             kw["filesystem"] = build_filesystem(self.filesystem)
         if "loader" in s and self.loader is not None:

@@ -17,6 +17,7 @@ Rules:
 
 Usage: python scripts/lint_markdown_doctests.py docs/
 """
+
 from __future__ import annotations
 
 import re
@@ -31,9 +32,9 @@ SKIP_PARTS = ("_build", "superpowers")
 
 def lint_file(path: Path) -> list[tuple[int, str]]:
     offenses: list[tuple[int, str]] = []
-    open_ticks = 0          # length of the open fence, 0 if none
-    info = ""               # info string of the open fence
-    ignored = False         # the open fence is exempt
+    open_ticks = 0  # length of the open fence, 0 if none
+    info = ""  # info string of the open fence
+    ignored = False  # the open fence is exempt
     pending_ignore = False  # the previous line was the ignore comment
     for n, line in enumerate(path.read_text().splitlines(), 1):
         m = FENCE.match(line)
@@ -54,7 +55,9 @@ def lint_file(path: Path) -> list[tuple[int, str]]:
                 ignored = False
                 continue
             if open_ticks == 3 and info != "{doctest}" and not ignored and PROMPT.match(line):
-                offenses.append((n, f"doctest prompt in ```{info or '(plain)'} fence (not {{doctest}})"))
+                offenses.append(
+                    (n, f"doctest prompt in ```{info or '(plain)'} fence (not {{doctest}})")
+                )
     return offenses
 
 

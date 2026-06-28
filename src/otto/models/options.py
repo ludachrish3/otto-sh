@@ -90,9 +90,7 @@ class SftpOptionsSpec(OttoModel):
     extra: dict[str, Any] = {}
 
     def to_runtime(self) -> rt.SftpOptions:
-        return rt.SftpOptions(
-            env=self.env, send_env=self.send_env, extra=dict(self.extra)
-        )
+        return rt.SftpOptions(env=self.env, send_env=self.send_env, extra=dict(self.extra))
 
 
 class ScpOptionsSpec(OttoModel):

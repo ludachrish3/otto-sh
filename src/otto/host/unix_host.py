@@ -122,17 +122,17 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     element: str = field(repr=False)
     """Network element to which this host belongs."""
 
-    os_type: OsType = 'unix'
+    os_type: OsType = "unix"
     """Default profile selector for a bare :class:`UnixHost`. A custom
     unix-based profile (e.g. ``ubuntu-22.04``) records its own name here."""
 
-    os_name: str | None = 'Linux'
+    os_name: str | None = "Linux"
     """Kernel/OS name. Defaults to ``Linux`` (the concrete Unix kernel today)."""
 
     os_version: str | None = None
     """OS/kernel version string, or None if unspecified."""
 
-    name: str = None # type: ignore
+    name: str = None  # type: ignore
     """Human readable name to represent the host. Automatically generated if not provided."""
 
     user: str | None = None
@@ -154,7 +154,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     sw_version: str | None = None
     """Software version description."""
 
-    term: str = 'ssh'
+    term: str = "ssh"
     """Protocol used to issue terminal commands."""
 
     is_virtual: bool = False
@@ -165,13 +165,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     and the configured user can talk to it). Containers declared by projects
     are scheduled onto docker-capable hosts; non-capable hosts are skipped."""
 
-    transfer: str = 'scp'
+    transfer: str = "scp"
     """Protocol used to transfer files."""
 
-    valid_terms: list[str] = field(default_factory=lambda: ['ssh', 'telnet'])
+    valid_terms: list[str] = field(default_factory=lambda: ["ssh", "telnet"])
     """Closed menu of term backends this host supports (active is ``term``)."""
 
-    valid_transfers: list[str] = field(default_factory=lambda: ['scp', 'sftp', 'ftp', 'nc'])
+    valid_transfers: list[str] = field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
     """Closed menu of transfer backends this host supports (active is ``transfer``)."""
 
     default_dest_dir: Path = field(default_factory=Path)
@@ -236,11 +236,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Named secondary interface addresses (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
     Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 
-    products: list['Product'] = field(default_factory=list)
+    products: list["Product"] = field(default_factory=list)
     """Software-under-test deployed to this host. Default empty. See
     :attr:`~otto.host.host.BaseHost.products`."""
 
-    power_control: 'PowerController | None' = None
+    power_control: "PowerController | None" = None
     """Pluggable power backend. Lab data declares it by string (a config-free
     controller type) or a ``[power]`` table (``{type, on_cmd, off_cmd, ...}``);
     ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
@@ -387,18 +387,21 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         (and the override-copy seam, via ``dataclasses.replace``) so a custom
         transfer backend builds the right class.
         """
-        return cast(UnixFileTransfer, build_transfer_backend(self.transfer).create(
-            TransferContext(
-                transfer=self.transfer,
-                host_name=self.name,
-                connections=self._connections,
-                nc_options=self.nc_options,
-                scp_options=self.scp_options,
-                get_local_ip=lambda: self._get_local_ip(),
-                exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
-                max_filename_len=self.max_filename_len,
-            )
-        ))
+        return cast(
+            "UnixFileTransfer",
+            build_transfer_backend(self.transfer).create(
+                TransferContext(
+                    transfer=self.transfer,
+                    host_name=self.name,
+                    connections=self._connections,
+                    nc_options=self.nc_options,
+                    scp_options=self.scp_options,
+                    get_local_ip=lambda: self._get_local_ip(),
+                    exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
+                    max_filename_len=self.max_filename_len,
+                )
+            ),
+        )
 
     def _get_local_ip(self) -> str:
         """Return the local IP address used to reach this host, via OS routing lookup.
@@ -414,16 +417,18 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     async def verify_connection(self) -> CommandStatus:
         """Attempt to connect without running any commands. Used by dry-run mode."""
         try:
-            if self.term == 'ssh':
+            if self.term == "ssh":
                 await self._connections.ssh()
             else:
                 await self._connections.telnet()
 
-            if self.transfer == 'ftp':
+            if self.transfer == "ftp":
                 await self._connections.ftp()
 
             self._log_command("[DRY RUN] Connection verified")
-            return CommandStatus(command="connect", output="Connection successful", status=Status.Success, retcode=0)
+            return CommandStatus(
+                command="connect", output="Connection successful", status=Status.Success, retcode=0
+            )
         except Exception as e:
             self._log_command(f"[DRY RUN] Connection FAILED: {e}")
             return CommandStatus(command="connect", output=str(e), status=Status.Error, retcode=1)
@@ -462,7 +467,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
         See :mod:`otto.host.interact` for the bridge details.
         """
-        if self.term == 'ssh':
+        if self.term == "ssh":
             conn = await self._connections.ssh()
             await run_ssh_login(conn=conn, host_name=self.name)
             return
@@ -472,7 +477,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         remote_port = interactive_options.port
         if self._connections.has_tunnel:
             local_port = await self._connections._forward_port(remote_port)
-            connect_host = 'localhost'
+            connect_host = "localhost"
             connect_port: int | None = local_port
         else:
             connect_host = self._connections.ip
@@ -602,7 +607,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         Call :meth:`~otto.host.session.HostSession.close` when done, or use the async context
         manager protocol::
 
-            async with (await host.open_session("monitor")) as mon:
+            async with await host.open_session("monitor") as mon:
                 result = await mon.run("stat /tmp/file.bin")
 
         Args:
@@ -638,7 +643,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
         if is_dry_run():
-            self._log_command(f"[DRY RUN] expect() skipped — pattern would never match without a live connection")
+            self._log_command(
+                "[DRY RUN] expect() skipped — pattern would never match without a live connection"
+            )
             return ""
         return await self._session_mgr.expect(pattern, timeout)
 
@@ -650,7 +657,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     @cli_exposed(success="Download complete.")
     async def get(
         self,
-        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Remote file(s) to download.")],
+        src_files: Annotated[
+            list[Path] | Path,
+            Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
+        ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
@@ -659,7 +669,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             src_files = [src_files]
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
-        with SuppressCommandOutput(host=cast(Host, self)):
+        with SuppressCommandOutput(host=cast("Host", self)):
             return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
 
     # TODO: Look into a way to batch a single list of files that goes to different hosts
@@ -670,7 +680,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     @cli_exposed(success="Transfer complete.")
     async def put(
         self,
-        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")],
+        src_files: Annotated[
+            list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
+        ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
@@ -680,7 +692,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         dest_dir = self._resolve_dest(dest_dir)
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir)
-        with SuppressCommandOutput(host=cast(Host, self)):
+        with SuppressCommandOutput(host=cast("Host", self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
 
     ####################
@@ -698,7 +710,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         one is the module name, already ``-``→``_`` normalized by the kernel.
         Returns ``[]`` under dry-run (the live module set is unknowable, and the
         skipped read would otherwise echo the dry-run banner). ``log=False``
-        keeps the (potentially long) module dump out of the console/log."""
+        keeps the (potentially long) module dump out of the console/log.
+        """
         if is_dry_run():
             return []
         result = await self.oneshot("cat /proc/modules", log=False)
@@ -741,7 +754,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ) -> tuple[Status, str]:
         """Remove a kernel module (``rmmod``). Idempotent: removing a module that
         is not resident succeeds without running ``rmmod`` (mirrors
-        :meth:`~otto.host.embedded_host.EmbeddedHost.unload`)."""
+        :meth:`~otto.host.embedded_host.EmbeddedHost.unload`).
+        """
         resolved = name.replace("-", "_")
         if not is_dry_run() and resolved not in await self._loaded_modules():
             return Status.Success, ""

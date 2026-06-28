@@ -1,4 +1,5 @@
 """Product-provider registry + ingest application (code-customization model)."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -35,9 +36,7 @@ def test_registered_provider_attaches_products():
 
 
 def test_provider_keys_on_host_attributes():
-    register_product_provider(
-        lambda host: [_prod("linux-app")] if host.os_type == "unix" else None
-    )
+    register_product_provider(lambda host: [_prod("linux-app")] if host.os_type == "unix" else None)
     unix, embedded = _host(os_type="unix"), _host(os_type="embedded")
     apply_product_providers(unix)
     apply_product_providers(embedded)
@@ -79,6 +78,7 @@ def test_none_and_empty_returns_are_noops():
 def test_provider_exception_propagates():
     def boom(host):
         raise RuntimeError("bad provider")
+
     register_product_provider(boom)
     with pytest.raises(RuntimeError, match="bad provider"):
         apply_product_providers(_host())
@@ -92,5 +92,6 @@ def test_no_providers_is_noop():
 
 def test_public_reexports_available():
     import otto.host as host_pkg
+
     assert hasattr(host_pkg, "register_product_provider")
     assert hasattr(host_pkg, "ProductProvider")

@@ -1,4 +1,5 @@
 """Unit tests for the Product lifecycle strategy and orchestration."""
+
 from pathlib import Path
 
 import pytest
@@ -9,10 +10,13 @@ from otto.utils import Status
 
 class _DummyFileProduct(FileProduct):
     """FileProduct with the abstract halves stubbed so it can instantiate."""
+
     async def install(self, host):
         return Status.Success, ""
+
     async def uninstall(self, host):
         return Status.Success, ""
+
     async def is_installed(self, host):
         return True
 
@@ -35,6 +39,7 @@ def test_product_cannot_be_instantiated_directly():
 @pytest.mark.asyncio
 async def test_fileproduct_stage_delegates_to_host_put():
     from unittest.mock import AsyncMock
+
     p = _DummyFileProduct(artifact=Path("/builds/app.bin"), dest_dir=Path("/opt"))
     host = AsyncMock()
     host.put.return_value = (Status.Success, "")
@@ -44,9 +49,9 @@ async def test_fileproduct_stage_delegates_to_host_put():
 
 
 def test_every_host_has_empty_products_by_default():
+    from otto.host.embedded_host import ZephyrHost
     from otto.host.local_host import LocalHost
     from otto.host.unix_host import UnixHost
-    from otto.host.embedded_host import ZephyrHost
 
     assert LocalHost().products == []
     assert UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False).products == []
@@ -55,6 +60,7 @@ def test_every_host_has_empty_products_by_default():
 
 def test_products_can_be_injected_at_construction():
     from otto.host.local_host import LocalHost
+
     p = _DummyFileProduct(artifact=Path("/b/app.bin"))
     host = LocalHost()
     host.products = [p]
@@ -86,6 +92,7 @@ class _FakeProduct(Product):
 
 def _host_with(products):
     from otto.host.local_host import LocalHost
+
     h = LocalHost()
     h.products = list(products)
     return h
@@ -141,10 +148,18 @@ async def test_uninstall_is_best_effort_across_products():
 
 @pytest.mark.asyncio
 async def test_is_installed_true_only_when_all_installed():
-    assert await _host_with([_FakeProduct("a", installed=True),
-                             _FakeProduct("b", installed=True)]).is_installed() is True
-    assert await _host_with([_FakeProduct("a", installed=True),
-                             _FakeProduct("b", installed=False)]).is_installed() is False
+    assert (
+        await _host_with(
+            [_FakeProduct("a", installed=True), _FakeProduct("b", installed=True)]
+        ).is_installed()
+        is True
+    )
+    assert (
+        await _host_with(
+            [_FakeProduct("a", installed=True), _FakeProduct("b", installed=False)]
+        ).is_installed()
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -166,8 +181,10 @@ async def test_install_under_dry_run_does_not_transfer(tmp_path):
     class _StageOnlyProduct(FileProduct):
         async def install(self, host):
             return Status.Success, ""
+
         async def uninstall(self, host):
             return Status.Success, ""
+
         async def is_installed(self, host):
             return False
 

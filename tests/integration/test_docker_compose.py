@@ -22,7 +22,6 @@ from otto.host.unix_host import UnixHost
 from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
 
-
 REPO1_DIR = Path(__file__).parent.parent / "repo1"
 
 # All docker integration tests share /tmp/otto-docker/repo1/ on pepper

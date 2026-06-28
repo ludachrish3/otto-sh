@@ -1,4 +1,5 @@
 """Unit tests for posix remote file operations (run against a real LocalHost)."""
+
 from unittest.mock import AsyncMock
 
 import pytest
@@ -32,7 +33,6 @@ async def test_ls_all_includes_dotfiles(tmp_path):
     (tmp_path / "visible").write_text("y")
     assert ".hidden" in await host.ls(tmp_path, all=True)
     assert ".hidden" not in await host.ls(tmp_path, all=False)
-
 
 
 @pytest.mark.asyncio
@@ -168,15 +168,18 @@ def _zephyr_with_fs():
     """Build a ZephyrHost whose filesystem supports transfer (FAT/RAM)."""
     from otto.host.embedded_filesystem import build_filesystem
     from otto.host.embedded_host import ZephyrHost
-    return ZephyrHost(ip="192.0.2.1", element="sprout", log=False,
-                      filesystem=build_filesystem("fat-ram"))
+
+    return ZephyrHost(
+        ip="192.0.2.1", element="sprout", log=False, filesystem=build_filesystem("fat-ram")
+    )
 
 
 @pytest.mark.asyncio
 async def test_embedded_rm_uses_filesystem_rm_command():
     host = _zephyr_with_fs()
     host._run_one = AsyncMock(  # type: ignore[method-assign]
-        return_value=CommandStatus("fs rm /RAM:/f", "", Status.Success, 0))
+        return_value=CommandStatus("fs rm /RAM:/f", "", Status.Success, 0)
+    )
     status, _ = await host.rm("/RAM:/f")
     assert status is Status.Success
     issued = host._run_one.await_args.args[0]
@@ -187,7 +190,8 @@ async def test_embedded_rm_uses_filesystem_rm_command():
 async def test_embedded_ls_uses_filesystem_ls_command():
     host = _zephyr_with_fs()
     host._run_one = AsyncMock(  # type: ignore[method-assign]
-        return_value=CommandStatus("fs ls /RAM:", "a.bin\nb.bin", Status.Success, 0))
+        return_value=CommandStatus("fs ls /RAM:", "a.bin\nb.bin", Status.Success, 0)
+    )
     names = await host.ls("/RAM:")
     assert names == ["a.bin", "b.bin"]
     assert host._run_one.await_args.args[0] == host.filesystem.ls_command("/RAM:")
@@ -197,7 +201,8 @@ async def test_embedded_ls_uses_filesystem_ls_command():
 async def test_embedded_exists_true_via_ls():
     host = _zephyr_with_fs()
     host._run_one = AsyncMock(  # type: ignore[method-assign]
-        return_value=CommandStatus("fs ls /RAM:/a.bin", "a.bin", Status.Success, 0))
+        return_value=CommandStatus("fs ls /RAM:/a.bin", "a.bin", Status.Success, 0)
+    )
     assert await host.exists("/RAM:/a.bin") is True
 
 
@@ -205,14 +210,20 @@ async def test_embedded_exists_true_via_ls():
 async def test_embedded_exists_false_when_fs_ls_fails():
     host = _zephyr_with_fs()
     host._run_one = AsyncMock(  # type: ignore[method-assign]
-        return_value=CommandStatus("fs ls /RAM:/nope", "", Status.Error, 1))
+        return_value=CommandStatus("fs ls /RAM:/nope", "", Status.Error, 1)
+    )
     assert await host.exists("/RAM:/nope") is False
 
 
 @pytest.mark.asyncio
 async def test_embedded_unsupported_ops_fail_loud():
     host = _zephyr_with_fs()
-    for coro in (host.mkdir("/RAM:/d"), host.cp("/a", "/b"),
-                 host.mv("/a", "/b"), host.read_file("/a"), host.write_file("/a", "x")):
+    for coro in (
+        host.mkdir("/RAM:/d"),
+        host.cp("/a", "/b"),
+        host.mv("/a", "/b"),
+        host.read_file("/a"),
+        host.write_file("/a", "x"),
+    ):
         with pytest.raises(NotImplementedError):
             await coro

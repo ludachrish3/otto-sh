@@ -22,9 +22,7 @@ import pytest
 
 from otto.host.unix_host import UnixHost
 from otto.utils import CommandStatus, Status
-
 from tests.integration.host._transfer_retry import transfer_with_retry
-
 
 # Real I/O is meaningfully slower than mocked; bump the per-test ceiling.
 # These tests double as a regression guard for the concurrent lazy-init race
@@ -60,7 +58,9 @@ _NC_SERIAL_GROUP = pytest.mark.xdist_group("nc-serial")
 _TRANSFERS = pytest.mark.parametrize(
     "transfer_host",
     [
-        "scp", "sftp", "ftp",
+        "scp",
+        "sftp",
+        "ftp",
         pytest.param(("nc", "telnet"), id="nc-telnet", marks=_NC_SERIAL_GROUP),
     ],
     indirect=True,
@@ -74,6 +74,7 @@ _NC_TELNET = pytest.mark.parametrize(
 
 
 # ── 1. Oneshot pool fan-out ───────────────────────────────────────────────────
+
 
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
@@ -91,33 +92,32 @@ async def test_real_oneshot_pool_high_fanout(host1: UnixHost) -> None:
     """
     N = 8
     results = await asyncio.gather(
-        *(host1.oneshot(f'echo concurrent_{i}') for i in range(N)),
+        *(host1.oneshot(f"echo concurrent_{i}") for i in range(N)),
         return_exceptions=True,
     )
 
     exceptions = [r for r in results if isinstance(r, BaseException)]
     assert not exceptions, f"{len(exceptions)} oneshots raised; first: {exceptions[0]!r}"
 
-    statuses = cast(list[CommandStatus], results)
+    statuses = cast("list[CommandStatus]", results)
     failed = [(i, r) for i, r in enumerate(statuses) if not r.status.is_ok]
     assert not failed, f"{len(failed)} non-ok statuses; first: {failed[0]}"
 
     for i, r in enumerate(statuses):
-        assert f'concurrent_{i}' in r.output, (
-            f"oneshot {i} got mangled output: {r.output!r}"
-        )
+        assert f"concurrent_{i}" in r.output, f"oneshot {i} got mangled output: {r.output!r}"
 
 
 # ── 2. Named session resurrection ─────────────────────────────────────────────
+
 
 @_SSH_ONLY
 @pytest.mark.asyncio
 async def test_real_named_session_resurrect(host1: UnixHost) -> None:
     """``open_session(name)`` must return a fresh live session after transport death."""
-    s1 = await host1.open_session('resurrect_test')
+    s1 = await host1.open_session("resurrect_test")
     initial_id = id(s1._session)
 
-    result = (await s1.run('echo first')).only
+    result = (await s1.run("echo first")).only
     assert result.status.is_ok
     assert s1.alive
 
@@ -125,17 +125,18 @@ async def test_real_named_session_resurrect(host1: UnixHost) -> None:
     # closes the real TCP/process, mirroring server-side close + flips alive).
     await s1._session.close()
 
-    s2 = await host1.open_session('resurrect_test')
+    s2 = await host1.open_session("resurrect_test")
     try:
         assert id(s2._session) != initial_id, "open_session returned the dead session"
-        result = (await s2.run('echo recovered')).only
+        result = (await s2.run("echo recovered")).only
         assert result.status.is_ok
-        assert 'recovered' in result.output
+        assert "recovered" in result.output
     finally:
         await s2.close()
 
 
 # ── 3. Default-session recreation under load ──────────────────────────────────
+
 
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
@@ -150,7 +151,7 @@ async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None
     proves the lock-protected path holds up under real I/O without
     hangs / exceptions / broken-session aftermath.
     """
-    await host1.run('echo init')
+    await host1.run("echo init")
     mgr = host1._session_mgr
     sess = mgr._session
     assert sess is not None and sess.alive
@@ -175,14 +176,15 @@ async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None
 
     # Sequential commands prove the recreated session is fully usable.
     for i in range(3):
-        result = (await host1.run(f'echo serial_{i}')).only
+        result = (await host1.run(f"echo serial_{i}")).only
         assert result.status.is_ok, f"serial command {i} failed: {result}"
-        assert f'serial_{i}' in result.output, (
+        assert f"serial_{i}" in result.output, (
             f"serial command {i} got mangled output: {result.output!r}"
         )
 
 
 # ── 4. Long telnet oneshot vs concurrent short oneshots ───────────────────────
+
 
 @_TELNET_ONLY
 @pytest.mark.asyncio
@@ -193,7 +195,7 @@ async def test_real_long_telnet_oneshot_vs_concurrent(host1: UnixHost) -> None:
     pool dispatch is sane; this version proves the *actual* telnetlib3
     reader/writer state holds up under the same workload.
     """
-    long_task = asyncio.create_task(host1.oneshot('sleep 5', timeout=None))
+    long_task = asyncio.create_task(host1.oneshot("sleep 5", timeout=None))
     try:
         # Give the long oneshot a moment to acquire its session.
         await asyncio.sleep(0.5)
@@ -201,17 +203,17 @@ async def test_real_long_telnet_oneshot_vs_concurrent(host1: UnixHost) -> None:
         # 10 short oneshots must complete while the long one is still pinned.
         results = await asyncio.wait_for(
             asyncio.gather(
-                *(host1.oneshot(f'echo short_{i}', timeout=10.0) for i in range(10)),
+                *(host1.oneshot(f"echo short_{i}", timeout=10.0) for i in range(10)),
                 return_exceptions=True,
             ),
             timeout=15.0,
         )
         exceptions = [r for r in results if isinstance(r, BaseException)]
         assert not exceptions, f"{len(exceptions)} short oneshots raised; first: {exceptions[0]!r}"
-        statuses = cast(list[CommandStatus], results)
+        statuses = cast("list[CommandStatus]", results)
         for i, r in enumerate(statuses):
             assert r.status.is_ok, f"short oneshot {i} failed: {r}"
-            assert f'short_{i}' in r.output
+            assert f"short_{i}" in r.output
     finally:
         # Wait for the long oneshot to finish so the pool isn't left mid-flight.
         await asyncio.wait_for(long_task, timeout=15.0)
@@ -219,10 +221,12 @@ async def test_real_long_telnet_oneshot_vs_concurrent(host1: UnixHost) -> None:
 
 # ── 5. Concurrent file transfers ──────────────────────────────────────────────
 
+
 @_TRANSFERS
 @pytest.mark.asyncio
 async def test_real_concurrent_transfers(
-    transfer_host: UnixHost, tmp_path: Path,
+    transfer_host: UnixHost,
+    tmp_path: Path,
 ) -> None:
     """5 concurrent ``put`` calls over each transfer protocol must all complete.
 
@@ -240,13 +244,12 @@ async def test_real_concurrent_transfers(
     token = uuid.uuid4().hex[:8]
     files = []
     for i in range(5):
-        src = tmp_path / f'concurrent_{i}_{transfer_host.transfer}_{transfer_host.term}_{token}.txt'
-        src.write_text(f'content_{i}')
+        src = tmp_path / f"concurrent_{i}_{transfer_host.transfer}_{transfer_host.term}_{token}.txt"
+        src.write_text(f"content_{i}")
         files.append(src)
 
     statuses = await asyncio.gather(
-        *(transfer_with_retry(lambda f=f: transfer_host.put([f], Path('/tmp')))
-          for f in files),
+        *(transfer_with_retry(lambda f=f: transfer_host.put([f], Path("/tmp"))) for f in files),
         return_exceptions=True,
     )
 
@@ -254,26 +257,27 @@ async def test_real_concurrent_transfers(
     assert not exceptions, f"{len(exceptions)} transfers raised; first: {exceptions[0]!r}"
 
     for i, item in enumerate(statuses):
-        status, msg = cast(tuple[Status, str], item)
+        status, msg = cast("tuple[Status, str]", item)
         assert status == Status.Success, f"transfer {i} failed: {msg}"
 
     # Verify all files arrived intact.
     for i, src in enumerate(files):
-        remote_path = f'/tmp/{src.name}'
-        result = (await transfer_host.run(f'cat {remote_path}')).only
-        assert f'content_{i}' in result.output, f"file {i} corrupt: {result.output!r}"
-        await transfer_host.run(f'rm -f {remote_path}')
+        remote_path = f"/tmp/{src.name}"
+        result = (await transfer_host.run(f"cat {remote_path}")).only
+        assert f"content_{i}" in result.output, f"file {i} corrupt: {result.output!r}"
+        await transfer_host.run(f"rm -f {remote_path}")
 
     # nc-only leak check: any leftover listener processes are a bug.
-    if transfer_host.transfer == 'nc':
-        result = (await transfer_host.run(
-            'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
-        )).only
+    if transfer_host.transfer == "nc":
+        result = (
+            await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true')
+        ).only
         leftover = result.output.strip()
         assert not leftover, f"leftover nc listeners after concurrent put: {leftover}"
 
 
 # ── 6. Cancellation recovery ──────────────────────────────────────────────────
+
 
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
@@ -286,7 +290,7 @@ async def test_real_cancel_mid_run_recovers(host1: UnixHost) -> None:
     timeout.
     """
     try:
-        await asyncio.wait_for(host1.run('sleep 30'), timeout=0.5)
+        await asyncio.wait_for(host1.run("sleep 30"), timeout=0.5)
     except asyncio.TimeoutError:
         pass  # expected
     except Exception as e:
@@ -296,19 +300,21 @@ async def test_real_cancel_mid_run_recovers(host1: UnixHost) -> None:
     # state recovered cleanly. If any command hangs or returns garbage,
     # the cancellation left the session in a bad state.
     for i in range(5):
-        result = (await host1.run(f'echo recovered_{i}', timeout=10.0)).only
+        result = (await host1.run(f"echo recovered_{i}", timeout=10.0)).only
         assert result.status.is_ok, f"recovery iter {i} failed: {result}"
-        assert f'recovered_{i}' in result.output, (
+        assert f"recovered_{i}" in result.output, (
             f"recovery iter {i} got mangled output: {result.output!r}"
         )
 
 
 # ── 7. nc — concurrent gets ───────────────────────────────────────────────────
 
+
 @_NC_TELNET
 @pytest.mark.asyncio
 async def test_real_nc_concurrent_gets(
-    transfer_host: UnixHost, tmp_path: Path,
+    transfer_host: UnixHost,
+    tmp_path: Path,
 ) -> None:
     """5 concurrent nc gets must all complete with intact content.
 
@@ -319,57 +325,59 @@ async def test_real_nc_concurrent_gets(
     """
     remote_paths = []
     for i in range(5):
-        remote = f'/tmp/get_test_{i}_{transfer_host.term}.txt'
-        await transfer_host.run(f'echo content_{i} > {remote}')
+        remote = f"/tmp/get_test_{i}_{transfer_host.term}.txt"
+        await transfer_host.run(f"echo content_{i} > {remote}")
         remote_paths.append(Path(remote))
 
     try:
         statuses = await asyncio.gather(
-            *(transfer_with_retry(lambda p=p: transfer_host.get([p], tmp_path))
-              for p in remote_paths),
+            *(
+                transfer_with_retry(lambda p=p: transfer_host.get([p], tmp_path))
+                for p in remote_paths
+            ),
             return_exceptions=True,
         )
 
         exceptions = [s for s in statuses if isinstance(s, BaseException)]
-        assert not exceptions, (
-            f"{len(exceptions)} gets raised; first: {exceptions[0]!r}"
-        )
+        assert not exceptions, f"{len(exceptions)} gets raised; first: {exceptions[0]!r}"
 
         for i, item in enumerate(statuses):
-            status, msg = cast(tuple[Status, str], item)
+            status, msg = cast("tuple[Status, str]", item)
             assert status == Status.Success, f"get {i} failed: {msg}"
 
         for i, p in enumerate(remote_paths):
             local = tmp_path / p.name
             assert local.exists(), f"local file {local} missing after get"
             content = local.read_text().strip()
-            assert content == f'content_{i}', (
-                f"get {i} content mismatch: got {content!r}"
-            )
+            assert content == f"content_{i}", f"get {i} content mismatch: got {content!r}"
 
         # Local-listener leak check: with ``_get_files_nc`` we listen locally
         # and have the remote ``nc`` connect to us. Any leftover ``nc -l``
         # *on the local box* would indicate the orchestrator's local listener
         # wasn't reaped.
         import subprocess
+
         local_listeners = subprocess.run(
-            ['pgrep', '-af', 'nc -l'],
-            capture_output=True, text=True,
+            ["pgrep", "-af", "nc -l"],
+            capture_output=True,
+            text=True,
         ).stdout.strip()
         assert not local_listeners, (
             f"leftover local nc listeners after concurrent get: {local_listeners}"
         )
     finally:
         for p in remote_paths:
-            await transfer_host.run(f'rm -f {p}')
+            await transfer_host.run(f"rm -f {p}")
 
 
 # ── 8. nc — high fan-out put ──────────────────────────────────────────────────
 
+
 @_NC_TELNET
 @pytest.mark.asyncio
 async def test_real_nc_high_fanout_put(
-    transfer_host: UnixHost, tmp_path: Path,
+    transfer_host: UnixHost,
+    tmp_path: Path,
 ) -> None:
     """20 concurrent nc puts stress port allocation + listener cleanup.
 
@@ -383,13 +391,12 @@ async def test_real_nc_high_fanout_put(
     N = 20
     files = []
     for i in range(N):
-        src = tmp_path / f'fanout_{i}_{transfer_host.term}.txt'
-        src.write_text(f'fanout_content_{i}')
+        src = tmp_path / f"fanout_{i}_{transfer_host.term}.txt"
+        src.write_text(f"fanout_content_{i}")
         files.append(src)
 
     statuses = await asyncio.gather(
-        *(transfer_with_retry(lambda f=f: transfer_host.put([f], Path('/tmp')))
-          for f in files),
+        *(transfer_with_retry(lambda f=f: transfer_host.put([f], Path("/tmp"))) for f in files),
         return_exceptions=True,
     )
 
@@ -397,33 +404,31 @@ async def test_real_nc_high_fanout_put(
     assert not exceptions, f"{len(exceptions)} puts raised; first: {exceptions[0]!r}"
 
     for i, item in enumerate(statuses):
-        status, msg = cast(tuple[Status, str], item)
+        status, msg = cast("tuple[Status, str]", item)
         assert status == Status.Success, f"put {i} failed: {msg}"
 
     # Verify all files arrived intact.
     for i, src in enumerate(files):
-        remote_path = f'/tmp/{src.name}'
-        result = (await transfer_host.run(f'cat {remote_path}')).only
-        assert f'fanout_content_{i}' in result.output, (
-            f"file {i} corrupt: {result.output!r}"
-        )
-        await transfer_host.run(f'rm -f {remote_path}')
+        remote_path = f"/tmp/{src.name}"
+        result = (await transfer_host.run(f"cat {remote_path}")).only
+        assert f"fanout_content_{i}" in result.output, f"file {i} corrupt: {result.output!r}"
+        await transfer_host.run(f"rm -f {remote_path}")
 
-    result = (await transfer_host.run(
-        'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
-    )).only
+    result = (
+        await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true')
+    ).only
     leftover = result.output.strip()
-    assert not leftover, (
-        f"leftover nc listeners after N={N} concurrent puts: {leftover}"
-    )
+    assert not leftover, f"leftover nc listeners after N={N} concurrent puts: {leftover}"
 
 
 # ── 9. nc — cancellation cleans up listener ───────────────────────────────────
 
+
 @_NC_TELNET
 @pytest.mark.asyncio
 async def test_real_nc_cancel_cleans_up_listener(
-    transfer_host: UnixHost, tmp_path: Path,
+    transfer_host: UnixHost,
+    tmp_path: Path,
 ) -> None:
     """External cancellation mid-transfer must reap the spawned ``nc -l``.
 
@@ -434,20 +439,22 @@ async def test_real_nc_cancel_cleans_up_listener(
     """
     # 20MB file: large enough that the transfer is reliably mid-flight when
     # the cancel timeout fires, small enough not to slow the test down.
-    src = tmp_path / 'cancel_target.bin'
-    with open(src, 'wb') as f:
+    src = tmp_path / "cancel_target.bin"
+    with open(src, "wb") as f:
         f.seek(20 * 1024 * 1024 - 1)
-        f.write(b'\0')
+        f.write(b"\0")
 
     # Snapshot listener count before — if the remote already has stray
     # listeners from a prior test, attribute that separately.
-    before = (await transfer_host.run(
-        'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
-    )).only.output.strip().splitlines()
+    before = (
+        (await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'))
+        .only.output.strip()
+        .splitlines()
+    )
 
     try:
         await asyncio.wait_for(
-            transfer_host.put([src], Path('/tmp')),
+            transfer_host.put([src], Path("/tmp")),
             timeout=0.2,
         )
     except (asyncio.TimeoutError, asyncio.CancelledError):
@@ -456,13 +463,13 @@ async def test_real_nc_cancel_cleans_up_listener(
     # Allow a brief grace period for cleanup to settle before checking.
     await asyncio.sleep(2.0)
 
-    after = (await transfer_host.run(
-        'pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'
-    )).only.output.strip().splitlines()
-    new_listeners = [line for line in after if line not in before]
-    assert not new_listeners, (
-        f"cancellation orphaned remote nc listener(s): {new_listeners}"
+    after = (
+        (await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'))
+        .only.output.strip()
+        .splitlines()
     )
+    new_listeners = [line for line in after if line not in before]
+    assert not new_listeners, f"cancellation orphaned remote nc listener(s): {new_listeners}"
 
     # Cleanup any partial file from the cancelled put.
-    await transfer_host.run('rm -f /tmp/cancel_target.bin')
+    await transfer_host.run("rm -f /tmp/cancel_target.bin")

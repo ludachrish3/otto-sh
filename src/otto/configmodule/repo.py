@@ -23,7 +23,6 @@ from ..utils import (
 from .version import Version
 
 if TYPE_CHECKING:
-    import pytest
     from rich.panel import Panel
     from rich.text import Text
 
@@ -32,11 +31,11 @@ if TYPE_CHECKING:
 
 logger = get_otto_logger()
 
-SETTINGS_FILENAME  = 'settings.toml'
-TOML_SETTINGS_PATH = Path('.otto') / SETTINGS_FILENAME
+SETTINGS_FILENAME = "settings.toml"
+TOML_SETTINGS_PATH = Path(".otto") / SETTINGS_FILENAME
 
 
-def _test_run_syntax(t: 'CollectedTest', sut_dir: Path) -> str:
+def _test_run_syntax(t: "CollectedTest", sut_dir: Path) -> str:
     """Build the ``otto test`` path argument for a single collected test.
 
     Uses a path relative to ``sut_dir`` so panels show short, copy-pasteable
@@ -45,8 +44,8 @@ def _test_run_syntax(t: 'CollectedTest', sut_dir: Path) -> str:
     """
     rel_path = t.path.relative_to(sut_dir.resolve())
     if t.cls_name:
-        return f'{rel_path}::{t.cls_name}::{t.name}'
-    return f'{rel_path}::{t.name}'
+        return f"{rel_path}::{t.cls_name}::{t.name}"
+    return f"{rel_path}::{t.name}"
 
 
 @dataclass(frozen=True)
@@ -119,15 +118,14 @@ class CollectedTest:
         Class name if the test belongs to a class, else ``None``.
     """
 
-    nodeid:   str
-    name:     str
-    path:     Path
+    nodeid: str
+    name: str
+    path: Path
     cls_name: str | None
 
 
 @dataclass
-class Repo():
-
+class Repo:
     sut_dir: Path
     """SUT directory from which the settings came."""
 
@@ -178,7 +176,7 @@ class Repo():
     selections (forwarded to the resolver) and option-value defaults (applied
     per-key, product-wins)."""
 
-    os_profiles: dict[str, 'OsProfile'] = field(
+    os_profiles: dict[str, "OsProfile"] = field(
         default_factory=dict,
         init=False,
     )
@@ -201,7 +199,7 @@ class Repo():
     def __post_init__(self):
         self.parse_settings()
 
-    def get_lab_panel(self) -> 'Panel':
+    def get_lab_panel(self) -> "Panel":
         from rich.panel import Panel
         from rich.text import Text
 
@@ -217,18 +215,18 @@ class Repo():
             # host source; surface the reason in-panel instead of a traceback.
             lab_name_text = Text(f"⚠ host source unavailable: {e}", style="red")
         else:
-            lab_name_text = Text('\n'.join(f"• {lab_name}" for lab_name in lab_names))
+            lab_name_text = Text("\n".join(f"• {lab_name}" for lab_name in lab_names))
 
         panel = Panel(
             lab_name_text,
-            title=Text(f'{self.name} {self.version}', style="bold not dim"),
+            title=Text(f"{self.name} {self.version}", style="bold not dim"),
             border_style="dim",
-            padding=(1,5,1,1),
+            padding=(1, 5, 1, 1),
             expand=True,
         )
         return panel
 
-    def get_instructions_panel(self) -> 'Panel':
+    def get_instructions_panel(self) -> "Panel":
         """Build a Rich panel listing all instructions contributed by this repo.
 
         Instructions are attributed to this repo by matching each registered
@@ -246,13 +244,13 @@ class Repo():
                 if cmd.callback is None:
                     continue
                 module: str = cmd.callback.__module__
-                if any(module == m or module.startswith(m + '.') for m in self.init):
-                    name = cmd.name or getattr(cmd.callback, '__name__', '').replace('_', '-')
+                if any(module == m or module.startswith(m + ".") for m in self.init):
+                    name = cmd.name or getattr(cmd.callback, "__name__", "").replace("_", "-")
                     instruction_names.append(name)
 
-        lines = [f'• {n}' for n in instruction_names]
-        content = Text('\n'.join(lines)) if lines else Text('no instructions found', style='dim')
-        return self._make_test_panel(f'{self.name} {self.version}', content)
+        lines = [f"• {n}" for n in instruction_names]
+        content = Text("\n".join(lines)) if lines else Text("no instructions found", style="dim")
+        return self._make_test_panel(f"{self.name} {self.version}", content)
 
     def collect_tests(self) -> list[CollectedTest]:
         """Collect all tests from this repo's configured test directories.
@@ -268,7 +266,6 @@ class Repo():
         """
         import pytest
 
-
         class _Collector:
             def __init__(self) -> None:
                 self.items: list[pytest.Item] = []
@@ -280,6 +277,7 @@ class Repo():
         paths = [str(d) for d in self.tests if d.exists()]
         if paths:
             import gc
+
             saved_modules = sys.modules.copy()
             # pytest-asyncio installs a session-scoped event loop on first
             # async test collection. The inner pytest.main() session leaves
@@ -288,51 +286,70 @@ class Repo():
             # later as PytestUnraisableExceptionWarning when an outer
             # gc.collect() breaks the cycle. Same pattern as the fix in
             # tests/unit/suite/test_plugin.py.
-            loops_before = {o for o in gc.get_objects()
-                            if isinstance(o, asyncio.AbstractEventLoop)
-                            and not o.is_closed()}
+            loops_before = {
+                o
+                for o in gc.get_objects()
+                if isinstance(o, asyncio.AbstractEventLoop) and not o.is_closed()
+            }
             try:
-                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with (
+                    contextlib.redirect_stdout(io.StringIO()),
+                    contextlib.redirect_stderr(io.StringIO()),
+                ):
                     pytest.main(
-                        paths + ['--collect-only', '-p', 'no:terminal', '-p', 'no:cov',
-                                 '--override-ini', 'addopts=',
-                                 '-o', 'asyncio_default_fixture_loop_scope=function'],
+                        paths
+                        + [
+                            "--collect-only",
+                            "-p",
+                            "no:terminal",
+                            "-p",
+                            "no:cov",
+                            "--override-ini",
+                            "addopts=",
+                            "-o",
+                            "asyncio_default_fixture_loop_scope=function",
+                        ],
                         plugins=[collector],
                     )
             finally:
                 sys.modules.clear()
                 sys.modules.update(saved_modules)
-                for leaked in [o for o in gc.get_objects()
-                               if isinstance(o, asyncio.AbstractEventLoop)
-                               and not o.is_closed()
-                               and o not in loops_before]:
+                for leaked in [
+                    o
+                    for o in gc.get_objects()
+                    if isinstance(o, asyncio.AbstractEventLoop)
+                    and not o.is_closed()
+                    and o not in loops_before
+                ]:
                     leaked.close()
 
         tests: list[CollectedTest] = []
         for item in collector.items:
-            item_cls = getattr(item, 'cls', None)
+            item_cls = getattr(item, "cls", None)
             cls_name = item_cls.__name__ if item_cls is not None else None
-            tests.append(CollectedTest(
-                nodeid=item.nodeid,
-                name=item.name,
-                path=item.path,
-                cls_name=cls_name,
-            ))
+            tests.append(
+                CollectedTest(
+                    nodeid=item.nodeid,
+                    name=item.name,
+                    path=item.path,
+                    cls_name=cls_name,
+                )
+            )
         return tests
 
-    def _make_test_panel(self, title: str, content: 'Text') -> 'Panel':
+    def _make_test_panel(self, title: str, content: "Text") -> "Panel":
         from rich.panel import Panel
         from rich.text import Text
 
         return Panel(
             content,
-            title=Text(title, style='bold not dim'),
-            border_style='dim',
+            title=Text(title, style="bold not dim"),
+            border_style="dim",
             padding=(1, 5, 1, 1),
             expand=True,
         )
 
-    def get_tests_panel(self, items: list[CollectedTest]) -> 'Panel':
+    def get_tests_panel(self, items: list[CollectedTest]) -> "Panel":
         """Rich panel listing every individual test with its full run syntax.
 
         Each line shows ``otto test <absolute-path>::[Class::]test_fn`` which
@@ -346,11 +363,11 @@ class Repo():
         """
         from rich.text import Text
 
-        lines = [f'• {_test_run_syntax(t, self.sut_dir)}' for t in items]
-        content = Text('\n'.join(lines)) if lines else Text('(no tests found)', style='dim')
-        return self._make_test_panel(f'{self.name} {self.version}', content)
+        lines = [f"• {_test_run_syntax(t, self.sut_dir)}" for t in items]
+        content = Text("\n".join(lines)) if lines else Text("(no tests found)", style="dim")
+        return self._make_test_panel(f"{self.name} {self.version}", content)
 
-    def get_test_files_panel(self, items: list[CollectedTest]) -> 'Panel':
+    def get_test_files_panel(self, items: list[CollectedTest]) -> "Panel":
         """Rich panel listing unique test files with their run syntax.
 
         Each line shows ``otto test <absolute-path>`` which runs all tests
@@ -367,11 +384,11 @@ class Repo():
         sut_dir = self.sut_dir.resolve()
         for t in items:
             seen.setdefault(t.path.relative_to(sut_dir), None)
-        lines = [f'• {p}' for p in seen]
-        content = Text('\n'.join(lines)) if lines else Text('(no tests found)', style='dim')
-        return self._make_test_panel(f'{self.name} {self.version}', content)
+        lines = [f"• {p}" for p in seen]
+        content = Text("\n".join(lines)) if lines else Text("(no tests found)", style="dim")
+        return self._make_test_panel(f"{self.name} {self.version}", content)
 
-    def get_test_suites_panel(self, items: list[CollectedTest]) -> 'Panel':
+    def get_test_suites_panel(self, items: list[CollectedTest]) -> "Panel":
         """Rich panel listing unique test suites with their run syntax.
 
         Only class-based tests are listed, using just ``ClassName`` — the
@@ -391,11 +408,12 @@ class Repo():
         for t in items:
             if t.cls_name:
                 seen.setdefault(t.cls_name, None)
-        lines = [f'• {k}' for k in seen]
-        content = Text('\n'.join(lines)) if lines else Text('(no tests found)', style='dim')
-        return self._make_test_panel(f'{self.name} {self.version}', content)
+        lines = [f"• {k}" for k in seen]
+        content = Text("\n".join(lines)) if lines else Text("(no tests found)", style="dim")
+        return self._make_test_panel(f"{self.name} {self.version}", content)
 
-    def get_otto_settings_path(self,
+    def get_otto_settings_path(
+        self,
     ) -> Path:
         """
         Create the path to the `otto` settings TOML file.
@@ -409,7 +427,6 @@ class Repo():
         FileNotFoundError
             If the TOML file is not found.
         """
-
         ottoSettingsPath = self.sut_dir / TOML_SETTINGS_PATH
         if not ottoSettingsPath.exists():
             raise FileNotFoundError(
@@ -418,8 +435,8 @@ class Repo():
 
         return ottoSettingsPath
 
-
-    def read_settings(self,
+    def read_settings(
+        self,
     ) -> str:
 
         ottoSettingsPath = self.get_otto_settings_path()
@@ -448,23 +465,21 @@ class Repo():
         # valid_labs are lab *names*, not paths — populate from the raw dict so
         # they are NOT ${sut_dir}-expanded (the model still validates them as a
         # list[str]). Preserves the pre-pydantic behavior.
-        self.valid_labs = list(self.settings.get('valid_labs', []))
+        self.valid_labs = list(self.settings.get("valid_labs", []))
         self.libs = list(model.libs)
         self.tests = list(model.tests)
         self.init = list(model.init)
         self.host_preferences = {
-            sel: {
-                k: (list(v) if isinstance(v, list) else dict(v))
-                for k, v in entries.items()
-            }
+            sel: {k: (list(v) if isinstance(v, list) else dict(v)) for k, v in entries.items()}
             for sel, entries in model.host_preferences.items()
         }
         self.os_profiles = self._register_os_profiles(model.os_profiles)
         self.docker_settings = model.docker.to_runtime()
 
     def _register_os_profiles(
-        self, profiles: dict[str, 'OsProfileSpec'],
-    ) -> dict[str, 'OsProfile']:
+        self,
+        profiles: dict[str, "OsProfileSpec"],
+    ) -> dict[str, "OsProfile"]:
         """Register each validated os-profile into the global registry and
         return the built profiles, keyed by name. Runs at settings-parse time,
         before init modules import, so a code registration can override a data
@@ -477,9 +492,7 @@ class Repo():
             try:
                 register_os_profile(name, prof.base, prof.defaults)
             except ValueError as e:
-                raise ValueError(
-                    f"{TOML_SETTINGS_PATH}: [os_profiles.{name}]: {e}"
-                ) from e
+                raise ValueError(f"{TOML_SETTINGS_PATH}: [os_profiles.{name}]: {e}") from e
             result[name] = build_os_profile(name)
         return result
 
@@ -492,7 +505,7 @@ class Repo():
         reservation backend can use the same path-expansion convention as
         the other repo settings.
         """
-        raw = self.settings.get('reservations', {}) or {}
+        raw = self.settings.get("reservations", {}) or {}
         return self._expand_recursive(raw)
 
     @property
@@ -503,10 +516,11 @@ class Repo():
         factory falls back to the built-in ``json`` backend over this repo's
         ``labs`` search paths.
         """
-        raw = self.settings.get('lab', {}) or {}
+        raw = self.settings.get("lab", {}) or {}
         return self._expand_recursive(raw)
 
-    def _expand_recursive(self,
+    def _expand_recursive(
+        self,
         value: Any,
     ) -> Any:
         """Recursively walk a dict/list, expanding every string via :meth:`_expand_string`."""
@@ -520,9 +534,8 @@ class Repo():
 
     def add_libs_to_pythonpath(self) -> None:
         """Add configured library directories to the PYTHONPATH"""
-
         for lib in self.libs:
-            sys.path.append(f'{lib}')
+            sys.path.append(f"{lib}")
 
     def import_init_modules(self) -> None:
 
@@ -537,11 +550,12 @@ class Repo():
         is later consumed by ``cli/test.py`` to add sub-Typers to ``testing_app``.
         """
         import importlib.util
+
         for test_dir in self.tests:
             if not test_dir.is_dir():
                 continue
-            for test_file in sorted(test_dir.glob('test_*.py')):
-                mod_name = f'_otto_suite_{test_file.stem}'
+            for test_file in sorted(test_dir.glob("test_*.py")):
+                mod_name = f"_otto_suite_{test_file.stem}"
                 if mod_name in sys.modules:
                     continue
                 spec = importlib.util.spec_from_file_location(mod_name, test_file)
@@ -551,7 +565,8 @@ class Repo():
                 sys.modules[mod_name] = mod
                 spec.loader.exec_module(mod)  # type: ignore[union-attr]
 
-    def _expand_string(self,
+    def _expand_string(
+        self,
         field: str,
     ) -> str:
         """
@@ -568,8 +583,7 @@ class Repo():
         -------
         `str` object after all supported substitutions.
         """
-
-        field = field.replace('${sut_dir}', f'{self.sut_dir}')
+        field = field.replace("${sut_dir}", f"{self.sut_dir}")
 
         return field
 
@@ -581,20 +595,19 @@ class Repo():
 
     async def set_git_description(self):
 
-        commandStatus = await self.run_git_command('describe')
+        commandStatus = await self.run_git_command("describe")
         if commandStatus.status == Status.Success:
-            self._git_description = f'({commandStatus.output.strip()})'
+            self._git_description = f"({commandStatus.output.strip()})"
 
         # `git describe` can fail if no names or tags exist for the repo.
         # In this case, which is expected and can happen, set the description
         # to an empty string
         else:
-            self._git_description = ''
-
+            self._git_description = ""
 
     async def set_commit_hash(self):
 
-        commandStatus = await self.run_git_command('log -1 --format=%H')
+        commandStatus = await self.run_git_command("log -1 --format=%H")
         self._git_hash = commandStatus.output
 
     @property
@@ -618,16 +631,17 @@ class Repo():
         from ..host.host import SuppressCommandOutput
 
         with SuppressCommandOutput():
-            return f'{self.commit} ({self.description})'
+            return f"{self.commit} ({self.description})"
 
-    async def run_git_command(self,
+    async def run_git_command(
+        self,
         cmd: str,
     ) -> CommandStatus:
         from ..host.local_host import LocalHost
 
         host = LocalHost(log=False)
         try:
-            return (await host.run(f'git -C {self.sut_dir} {cmd}')).only
+            return (await host.run(f"git -C {self.sut_dir} {cmd}")).only
         finally:
             await host.close()
 
@@ -658,5 +672,4 @@ def get_repos(
     FileNotFoundError
         If a repo's settings TOML file is not found.
     """
-
-    return [ Repo(sut_dir=repo) for repo in repos ]
+    return [Repo(sut_dir=repo) for repo in repos]

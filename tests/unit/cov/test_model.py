@@ -12,7 +12,6 @@ from otto.coverage.store.model import (
 
 
 class TestLineHits:
-
     def test_defaults(self):
         h = LineHits()
         assert h.counts == {}
@@ -47,7 +46,6 @@ class TestLineHits:
 
 
 class TestBranchHits:
-
     def test_defaults(self):
         bh = BranchHits(block=0, branch=1)
         assert bh.branch_id == (0, 1)
@@ -97,7 +95,6 @@ class TestBranchHits:
 
 
 class TestLineRecord:
-
     def test_merge(self):
         a = LineRecord(line_number=10, hits=LineHits(counts={"system": 1}))
         b = LineRecord(line_number=10, hits=LineHits(counts={"unit": 2}))
@@ -107,16 +104,10 @@ class TestLineRecord:
 
     def test_merge_branches(self):
         a = LineRecord(line_number=5)
-        a.branches.append(
-            BranchHits(block=0, branch=0, hits=LineHits(counts={"system": 1}))
-        )
+        a.branches.append(BranchHits(block=0, branch=0, hits=LineHits(counts={"system": 1})))
         b = LineRecord(line_number=5)
-        b.branches.append(
-            BranchHits(block=0, branch=0, hits=LineHits(counts={"unit": 2}))
-        )
-        b.branches.append(
-            BranchHits(block=0, branch=1, hits=LineHits(counts={"system": 3}))
-        )
+        b.branches.append(BranchHits(block=0, branch=0, hits=LineHits(counts={"unit": 2})))
+        b.branches.append(BranchHits(block=0, branch=1, hits=LineHits(counts={"system": 3})))
         a.merge(b)
         assert len(a.branches) == 2
         assert a.branches[0].hits.for_tier("system") == 1
@@ -124,7 +115,6 @@ class TestLineRecord:
 
 
 class TestFileRecord:
-
     def test_get_or_create_line(self):
         fr = FileRecord(path=Path("/a.c"))
         lr = fr.get_or_create_line(10)
@@ -162,7 +152,6 @@ class TestFileRecord:
 
 
 class TestCoverageStore:
-
     def test_get_or_create_file(self):
         store = CoverageStore()
         fr = store.get_or_create_file(Path("/a.c"))

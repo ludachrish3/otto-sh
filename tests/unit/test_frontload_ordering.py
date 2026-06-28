@@ -8,8 +8,6 @@ Validated by the Phase-3 spike (docs/superpowers/specs/2026-06-23-frontload-spik
 collection order is the xdist LoadGroupScheduling dispatch order.
 """
 
-import pytest
-
 
 def test_frontload_key_heavy_groups_return_zero():
     """All named heavy groups map to priority 0."""
@@ -58,8 +56,10 @@ def test_sort_puts_heavy_item_first():
 
         def get_closest_marker(self, name: str):
             if name == "xdist_group" and self._group is not None:
+
                 class _M:
                     args = (self._group,)
+
                 return _M()
             return None
 
@@ -68,12 +68,12 @@ def test_sort_puts_heavy_item_first():
         return m.args[0] if (m and m.args) else None
 
     items = [
-        _FakeItem("unit_thing"),   # plain — should sort to back
-        _FakeItem("docker_e2e"),   # heavy — should sort to front
-        _FakeItem(None),           # plain (no marker) — should sort to back
-        _FakeItem("sprout_cov"),   # heavy — should sort to front
+        _FakeItem("unit_thing"),  # plain — should sort to back
+        _FakeItem("docker_e2e"),  # heavy — should sort to front
+        _FakeItem(None),  # plain (no marker) — should sort to back
+        _FakeItem("sprout_cov"),  # heavy — should sort to front
         _FakeItem("other_group"),  # plain — should sort to back
-        _FakeItem("zephyr_fanout"),# heavy — should sort to front
+        _FakeItem("zephyr_fanout"),  # heavy — should sort to front
     ]
 
     items.sort(key=lambda it: _frontload_key(group_of(it)))
@@ -81,12 +81,8 @@ def test_sort_puts_heavy_item_first():
     # All heavy items should come before all plain items.
     groups = [group_of(it) for it in items]
     heavy_groups = {"sprout_cov", "docker_e2e", "coverage_e2e", "zephyr_fanout"}
-    first_plain_idx = next(
-        (i for i, g in enumerate(groups) if g not in heavy_groups), len(groups)
-    )
-    last_heavy_idx = max(
-        (i for i, g in enumerate(groups) if g in heavy_groups), default=-1
-    )
+    first_plain_idx = next((i for i, g in enumerate(groups) if g not in heavy_groups), len(groups))
+    last_heavy_idx = max((i for i, g in enumerate(groups) if g in heavy_groups), default=-1)
     assert last_heavy_idx < first_plain_idx, (
         f"Heavy items did not all precede plain items. Order: {groups}"
     )
@@ -96,6 +92,7 @@ def test_frontload_groups_contains_expected_names():
     """_FRONTLOAD_GROUPS contains exactly the four validated heavy groups."""
     from tests.conftest import _FRONTLOAD_GROUPS
 
-    assert _FRONTLOAD_GROUPS == frozenset(
-        {"sprout_cov", "docker_e2e", "coverage_e2e", "zephyr_fanout"}
+    assert (
+        frozenset({"sprout_cov", "docker_e2e", "coverage_e2e", "zephyr_fanout"})
+        == _FRONTLOAD_GROUPS
     )

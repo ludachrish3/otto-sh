@@ -14,7 +14,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
-from ..utils import CommandStatus, Status
+from ..utils import CommandStatus
 from .host import RunResult
 
 # deque of (timestamp, results) pairs for one named repeat task
@@ -54,7 +54,7 @@ class RepeatRunner:
         on_result: Callable[[str, datetime, list[CommandStatus]], None] | None,
     ) -> None:
         if interval <= timedelta():
-            raise ValueError('Command interval must be a positive time interval')
+            raise ValueError("Command interval must be a positive time interval")
 
         try:
             duration_end_time = datetime.now() + duration
@@ -98,7 +98,7 @@ class RepeatRunner:
     def _store_result(
         self,
         name: str,
-        task: 'asyncio.Task[RunResult]',
+        task: "asyncio.Task[RunResult]",
         on_result: Callable[[str, datetime, list[CommandStatus]], None] | None,
     ) -> None:
         """Store result and fire optional user callback."""
@@ -134,8 +134,13 @@ class RepeatRunner:
 
         self._repeat_tasks[name] = asyncio.create_task(
             self._run_loop(
-                cmds=cmds, interval=interval, times=times, duration=duration,
-                until=until, name=name, on_result=on_result,
+                cmds=cmds,
+                interval=interval,
+                times=times,
+                duration=duration,
+                until=until,
+                name=name,
+                on_result=on_result,
             ),
             name=name,
         )
@@ -149,13 +154,8 @@ class RepeatRunner:
 
     async def stop_all(self) -> None:
         """Cancel all running periodic tasks."""
-        await asyncio.gather(*[
-            self.stop(name)
-            for name in list(self._repeat_tasks)
-        ])
+        await asyncio.gather(*[self.stop(name) for name in list(self._repeat_tasks)])
 
-    def get_results(
-        self, name: str
-    ) -> list[tuple[datetime, list[CommandStatus]]]:
+    def get_results(self, name: str) -> list[tuple[datetime, list[CommandStatus]]]:
         """Return a snapshot of stored results for a named repeat task."""
         return list(self._repeat_results.get(name, []))

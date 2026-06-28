@@ -15,22 +15,20 @@ Tests verify:
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-import otto.suite.suite as suite_module
 from otto.configmodule.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.suite.plugin import OttoPlugin
 from otto.suite.register import OttoOptionsPlugin
 from otto.suite.suite import _sanitize_node_name
 
-
 # ── _sanitize_node_name ──────────────────────────────────────────────────────
 
-class TestSanitizeNodeName:
 
+class TestSanitizeNodeName:
     def test_brackets_replaced(self):
         assert _sanitize_node_name("test_foo[router-True]") == "test_foo_router-True_"
 
@@ -52,8 +50,8 @@ class TestSanitizeNodeName:
 
 # ── Inner pytest session helpers ─────────────────────────────────────────────
 
-def _run_inner_pytest(test_file: Path, tmp_path: Path,
-                      options: object | None = None) -> int:
+
+def _run_inner_pytest(test_file: Path, tmp_path: Path, options: object | None = None) -> int:
     """Run an inner pytest session with OttoPlugin + OttoOptionsPlugin.
 
     The inner session runs in-process via ``pytest.main()``, so it shares the
@@ -75,13 +73,21 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path,
     ``tests/_loop_reaper.py``) closes any orphaned harness loop at the outer
     test's teardown boundary.
     """
-    ctx = OttoContext(lab=Lab(name='_test_stub'), output_dir=tmp_path)
+    ctx = OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path)
     token = set_context(ctx)
     try:
         exit_code = pytest.main(
-            [str(test_file), "-o", "asyncio_mode=auto",
-             "-o", "asyncio_default_fixture_loop_scope=function",
-             "--no-cov", "--override-ini", "addopts=", "-x"],
+            [
+                str(test_file),
+                "-o",
+                "asyncio_mode=auto",
+                "-o",
+                "asyncio_default_fixture_loop_scope=function",
+                "--no-cov",
+                "--override-ini",
+                "addopts=",
+                "-x",
+            ],
             plugins=[OttoPlugin(), OttoOptionsPlugin(options)],
         )
     finally:
@@ -92,8 +98,8 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path,
 
 # ── Autouse fixtures ─────────────────────────────────────────────────────────
 
-class TestOttoTestDir:
 
+class TestOttoTestDir:
     def test_test_dir_created_per_test(self, tmp_path: Path) -> None:
         """Each test gets a unique testDir under suiteDir/tests/."""
         capture_file = tmp_path / "dirs.txt"
@@ -149,10 +155,11 @@ class TestParamDirs(OttoSuite):
 
 # ── suite_options fixture ────────────────────────────────────────────────────
 
-class TestSuiteOptionsFixture:
 
+class TestSuiteOptionsFixture:
     def test_suite_options_injected_via_fixture(self, tmp_path: Path) -> None:
         """Tests can request suite_options as a fixture parameter."""
+
         @dataclass
         class Opts:
             device_type: str = "router"
@@ -191,8 +198,8 @@ class TestNoneOpts(OttoSuite):
 
 # ── teardown_method ──────────────────────────────────────────────────────────
 
-class TestTeardownMethod:
 
+class TestTeardownMethod:
     def test_teardown_method_called(self, tmp_path: Path) -> None:
         """teardown_method() is called after each test."""
         capture_file = tmp_path / "teardown.txt"
@@ -223,8 +230,8 @@ class TestTeardown(OttoSuite):
 
 # ── Parametrize ──────────────────────────────────────────────────────────────
 
-class TestParametrize:
 
+class TestParametrize:
     def test_parametrize_runs_all_variants(self, tmp_path: Path) -> None:
         """@pytest.mark.parametrize produces one test per parameter value."""
         capture_file = tmp_path / "params.txt"
@@ -249,6 +256,7 @@ class TestParams(OttoSuite):
 
     def test_parametrize_with_options(self, tmp_path: Path) -> None:
         """Parametrized tests can also receive suite_options fixture."""
+
         @dataclass
         class Opts:
             prefix: str = "hello"
@@ -277,8 +285,8 @@ class TestParamOpts(OttoSuite):
 
 # ── expect() non-fatal assertions ───────────────────────────────────────────
 
-class TestExpect:
 
+class TestExpect:
     def test_passing_expect_does_not_fail(self, tmp_path: Path) -> None:
         """A truthy expect() should not cause the test to fail."""
         test_file = tmp_path / "test_pass.py"
@@ -430,6 +438,7 @@ class TestReset(OttoSuite):
 
 # ── _active_monitor_collector accessor ─────────────────────────────────────────
 
+
 class TestActiveMonitorCollector:
     """Per-suite ``_monitor_collector`` takes precedence; falls back to the
     class-level session collector set by ``OttoPlugin._otto_session_monitor``."""
@@ -441,7 +450,7 @@ class TestActiveMonitorCollector:
         class _Suite(OttoSuite):
             pass
 
-        ctx = OttoContext(lab=Lab(name='_test_stub'), output_dir=tmp_path)
+        ctx = OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path)
         token = set_context(ctx)
         try:
             s = _Suite()
@@ -457,8 +466,8 @@ class TestActiveMonitorCollector:
     def test_per_suite_collector_takes_precedence(self, tmp_path: Path):
         from otto.suite.suite import OttoSuite
 
-        per_suite = MagicMock(name='per_suite')
-        session = MagicMock(name='session')
+        per_suite = MagicMock(name="per_suite")
+        session = MagicMock(name="session")
         try:
             OttoSuite._session_monitor_collector = session
             s = self._make_suite(tmp_path)
@@ -470,7 +479,7 @@ class TestActiveMonitorCollector:
     def test_falls_back_to_session_collector(self, tmp_path: Path):
         from otto.suite.suite import OttoSuite
 
-        session = MagicMock(name='session')
+        session = MagicMock(name="session")
         try:
             OttoSuite._session_monitor_collector = session
             s = self._make_suite(tmp_path)

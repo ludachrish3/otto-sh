@@ -5,14 +5,14 @@ Built-in parsers cover the most common Linux host metrics. To add support for a
 custom command, subclass MetricParser and override parse()::
 
     class MyAppParser(MetricParser):
-        chart   = 'Connections'
-        unit    = ''
-        command = 'ss -s | grep estab'
+        chart = "Connections"
+        unit = ""
+        command = "ss -s | grep estab"
 
         def parse(self, output: str) -> float | None:
             # output is the raw stdout/stderr string from the command
             for line in output.splitlines():
-                if 'estab' in line.lower():
+                if "estab" in line.lower():
                     return float(line.split()[0])
             return None
 
@@ -22,10 +22,13 @@ from an init module listed in .otto/settings.toml::
     from otto.monitor.parsers import DEFAULT_PARSERS, TopCpuParser, register_host_parsers
     from my_repo.parsers import NvidiaGpuParser
 
-    register_host_parsers('gpu-01', {
-        **DEFAULT_PARSERS,
-        'nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits': NvidiaGpuParser(),
-    })
+    register_host_parsers(
+        "gpu-01",
+        {
+            **DEFAULT_PARSERS,
+            "nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits": NvidiaGpuParser(),
+        },
+    )
 
 Hosts with no registered parsers fall back to DEFAULT_PARSERS.
 """
@@ -48,7 +51,7 @@ class MetricDataPoint(NamedTuple):
     value: float
     """The numeric measurement for this tick."""
 
-    meta:  dict[str, Any] | None = None
+    meta: dict[str, Any] | None = None
     """Optional supplementary data forwarded to the dashboard as hover text
     (e.g. ``{'used': '4.2 GB', 'total': '16 GB'}`` for memory)."""
 
@@ -69,13 +72,13 @@ def human_readable(value: float, precision: int = 1) -> str:
     >>> human_readable(1073741824)
     '1 G'
     """
-    suffix = 'P'
-    for suffix in ('B', 'K', 'M', 'G', 'T', 'P'):
-        if value < 1024.0 or suffix == 'P':
+    suffix = "P"
+    for suffix in ("B", "K", "M", "G", "T", "P"):
+        if value < 1024.0 or suffix == "P":
             break
         value /= 1024.0
-    formatted = f'{value:.{precision}f}'.rstrip('0').rstrip('.')
-    return (formatted or '0') + f' {suffix}'
+    formatted = f"{value:.{precision}f}".rstrip("0").rstrip(".")
+    return (formatted or "0") + f" {suffix}"
 
 
 # TODO: Consider changing this to a dataclass
@@ -87,24 +90,24 @@ class MetricParser(ABC):
     extract a single numeric value from the raw command output string.
     """
 
-    y_title:   str
+    y_title: str
     """Y-axis title shown to the left of the chart, e.g. 'CPU'."""
 
     # TODO: Make the unit optionally derived from parsing
-    unit:      str
+    unit: str
     """Unit suffix for chart annotations, e.g. '%', 'MB', 'GB'. Empty string for dimensionless values."""
 
-    command:   str
+    command: str
     """The exact shell command whose output this parser handles."""
 
     # TODO: Have a single `tab` value and derive the tab_label from the tab
-    tab:       str = 'metrics'
+    tab: str = "metrics"
     """Dashboard tab id this metric belongs to, e.g. 'cpu'. Defaults to 'metrics'."""
 
-    tab_label: str = 'Metrics'
+    tab_label: str = "Metrics"
     """Human-readable label for the tab button, e.g. 'CPU'. Defaults to 'Metrics'."""
 
-    chart:     str
+    chart: str
     """Chart group id. Series with the same chart value share one Plotly chart.
     Single-series parsers set this to their series label; multi-series parsers set it
     to a shared group name (e.g. ``'Load'``)."""
@@ -135,6 +138,7 @@ class MetricParser(ABC):
 # Built-in parsers
 # ---------------------------------------------------------------------------
 
+
 class TopCpuParser(MetricParser):
     """
     Parse overall and per-process CPU usage from ``top -d{delay} -bn2`` output.
@@ -147,47 +151,48 @@ class TopCpuParser(MetricParser):
         top_n: Maximum number of processes to include per collection tick.
         delay: Seconds between top iterations (controls accuracy vs latency trade-off).
     """
-    y_title   = 'Usage %'
-    unit      = '%'
-    tab       = 'cpu'
-    tab_label = 'CPU'
-    chart     = 'CPU'
+
+    y_title = "Usage %"
+    unit = "%"
+    tab = "cpu"
+    tab_label = "CPU"
+    chart = "CPU"
 
     def __init__(self, top_n: int = 5, delay: float = 0.5) -> None:
-        self.top_n      = top_n
-        self._delay     = delay
+        self.top_n = top_n
+        self._delay = delay
 
     @override
     @property  # type: ignore[override]
     def command(self) -> str:  # type: ignore[override]
-        return f'top -d {self._delay} -bn2'
+        return f"top -d {self._delay} -bn2"
 
     @override
     def parse(self, output: str) -> dict[str, MetricDataPoint]:
-        result:    dict[str, MetricDataPoint] = {}
-        block      = 0
-        in_table   = False
+        result: dict[str, MetricDataPoint] = {}
+        block = 0
+        in_table = False
         proc_count = 0
 
         for line in output.splitlines():
             # Block boundary — "Tasks:" appears once per top iteration
-            if line.lstrip().startswith('Tasks:'):
-                block     += 1
-                in_table   = False
+            if line.lstrip().startswith("Tasks:"):
+                block += 1
+                in_table = False
                 proc_count = 0
                 continue
 
             # Aggregate CPU line (no -1): "%Cpu(s):  2.5 us, ..., 95.8 id, ..."
-            if line.startswith('%Cpu(s)') and block == 2:
-                m = re.search(r'(\d+\.?\d*)\s*id', line)
+            if line.startswith("%Cpu(s)") and block == 2:
+                m = re.search(r"(\d+\.?\d*)\s*id", line)
                 if m:
-                    result['Overall CPU'] = MetricDataPoint(
+                    result["Overall CPU"] = MetricDataPoint(
                         value=round(100.0 - float(m.group(1)), 2)
                     )
                 continue
 
             # Process table header
-            if 'PID' in line and '%CPU' in line:
+            if "PID" in line and "%CPU" in line:
                 in_table = True
                 continue
 
@@ -198,15 +203,15 @@ class TopCpuParser(MetricParser):
                 if len(parts) < 12:
                     continue
                 try:
-                    result[f'proc/{parts[0]}'] = MetricDataPoint(
+                    result[f"proc/{parts[0]}"] = MetricDataPoint(
                         value=round(float(parts[8]) / self.core_count, 2),
                         meta={
-                            'Command':  parts[11],
-                            'User':     parts[1],
-                            'Mem':      f'{float(parts[9]):.1f}%',
-                            'RSS':      human_readable(int(parts[5]) * 1024, precision=0),
-                            'Stat':     parts[7],
-                            'CPU Time': parts[10],
+                            "Command": parts[11],
+                            "User": parts[1],
+                            "Mem": f"{float(parts[9]):.1f}%",
+                            "RSS": human_readable(int(parts[5]) * 1024, precision=0),
+                            "Stat": parts[7],
+                            "CPU Time": parts[10],
                         },
                     )
                     proc_count += 1
@@ -222,29 +227,32 @@ class MemParser(MetricParser):
 
     Reads the 'Mem:' line and computes used/total as a percentage.
     """
-    y_title   = 'Memory'
-    unit      = '%'
-    command   = 'free -b'
-    tab       = 'memory'
-    tab_label = 'Memory'
-    chart     = 'Memory Usage'
+
+    y_title = "Memory"
+    unit = "%"
+    command = "free -b"
+    tab = "memory"
+    tab_label = "Memory"
+    chart = "Memory Usage"
 
     @override
     def parse(self, output: str) -> dict[str, MetricDataPoint]:
         for line in output.splitlines():
-            if line.lower().startswith('mem:'):
+            if line.lower().startswith("mem:"):
                 parts = line.split()
                 # free -b: Mem: total used free shared buff/cache available
                 if len(parts) >= 3:
                     try:
                         total = float(parts[1])
-                        used  = float(parts[2])
+                        used = float(parts[2])
                         if total > 0:
-                            meta = {'Used': human_readable(used), 'Total': human_readable(total)}
-                            return {self.chart: MetricDataPoint(
-                                value=round(used / total * 100.0, 2),
-                                meta=meta,
-                            )}
+                            meta = {"Used": human_readable(used), "Total": human_readable(total)}
+                            return {
+                                self.chart: MetricDataPoint(
+                                    value=round(used / total * 100.0, 2),
+                                    meta=meta,
+                                )
+                            }
                     except ValueError:
                         pass
         return {}
@@ -257,20 +265,21 @@ class DiskParser(MetricParser):
     Reads the data row (second line) and extracts the Use% column.
     parse_meta() returns the already human-readable Size/Used strings from df -h.
     """
-    y_title   = 'Disk'
-    unit      = '%'
-    command   = 'df -h'
-    tab       = 'disk'
-    tab_label = 'Disk'
-    chart     = 'Disk Usage'
+
+    y_title = "Disk"
+    unit = "%"
+    command = "df -h"
+    tab = "disk"
+    tab_label = "Disk"
+    chart = "Disk Usage"
 
     _regex = re.compile(
         r"\s+"
-        rf'(?P<Total>{_mem_size_re_str})\s+'
-        rf'(?P<Used>{_mem_size_re_str})\s+'
-        rf'(?P<Available>{_mem_size_re_str})\s+'
-        rf'(?P<used_percent>{_float_re_str})%\s+'
-        rf'(?P<Mount>\S+)'
+        rf"(?P<Total>{_mem_size_re_str})\s+"
+        rf"(?P<Used>{_mem_size_re_str})\s+"
+        rf"(?P<Available>{_mem_size_re_str})\s+"
+        rf"(?P<used_percent>{_float_re_str})%\s+"
+        rf"(?P<Mount>\S+)"
     )
 
     @override
@@ -286,7 +295,7 @@ class DiskParser(MetricParser):
             m = self._regex.search(line)
             if m:
                 meta = m.groupdict()
-                series[m['Mount']] = MetricDataPoint(value=float(m['used_percent']), meta=meta)
+                series[m["Mount"]] = MetricDataPoint(value=float(m["used_percent"]), meta=meta)
 
         return series
 
@@ -298,21 +307,22 @@ class LoadParser(MetricParser):
     Output format: '0.52 0.58 0.59 1/432 12345'
     Returns 1-minute, 5-minute, and 15-minute load averages as separate series.
     """
-    y_title   = 'Load'
-    unit      = ''
-    command   = 'cat /proc/loadavg'
-    tab       = 'cpu'
-    tab_label = 'CPU'
-    chart     = 'Load'
+
+    y_title = "Load"
+    unit = ""
+    command = "cat /proc/loadavg"
+    tab = "cpu"
+    tab_label = "CPU"
+    chart = "Load"
 
     @override
     def parse(self, output: str) -> dict[str, MetricDataPoint]:
         parts = output.strip().split()
         try:
             return {
-                'Load (1m)':  MetricDataPoint(value=float(parts[0])),
-                'Load (5m)':  MetricDataPoint(value=float(parts[1])),
-                'Load (15m)': MetricDataPoint(value=float(parts[2])),
+                "Load (1m)": MetricDataPoint(value=float(parts[0])),
+                "Load (5m)": MetricDataPoint(value=float(parts[1])),
+                "Load (15m)": MetricDataPoint(value=float(parts[2])),
             }
         except (IndexError, ValueError):
             return {}
@@ -323,8 +333,7 @@ class LoadParser(MetricParser):
 # ---------------------------------------------------------------------------
 
 DEFAULT_PARSERS: dict[str, MetricParser] = {
-    p.command: p
-    for p in [TopCpuParser(), MemParser(), DiskParser(), LoadParser()]
+    p.command: p for p in [TopCpuParser(), MemParser(), DiskParser(), LoadParser()]
 }
 
 
@@ -332,10 +341,10 @@ DEFAULT_PARSERS: dict[str, MetricParser] = {
 # Per-host parser registry
 # ---------------------------------------------------------------------------
 
-_host_parser_registry: dict[str, dict[str, 'MetricParser']] = {}
+_host_parser_registry: dict[str, dict[str, "MetricParser"]] = {}
 
 
-def register_host_parsers(host_id: str, parsers: dict[str, 'MetricParser']) -> None:
+def register_host_parsers(host_id: str, parsers: dict[str, "MetricParser"]) -> None:
     """Associate a custom parser dict with a host ID.
 
     Call this from an init module (listed in ``.otto/settings.toml``) to override
@@ -347,8 +356,6 @@ def register_host_parsers(host_id: str, parsers: dict[str, 'MetricParser']) -> N
     _host_parser_registry[host_id] = parsers
 
 
-def get_host_parsers(host_id: str) -> dict[str, 'MetricParser']:
+def get_host_parsers(host_id: str) -> dict[str, "MetricParser"]:
     """Return the parser dict registered for *host_id*, or a copy of DEFAULT_PARSERS."""
     return copy.deepcopy(_host_parser_registry.get(host_id, DEFAULT_PARSERS))
-
-

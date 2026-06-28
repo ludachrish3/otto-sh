@@ -19,7 +19,7 @@ def _make_mock_host(host_id: str = "host1") -> MagicMock:
     return host
 
 
-@pytest.fixture()
+@pytest.fixture
 def fake_config_module():
     """Install an OttoContext so all_hosts() returns test hosts.
 
@@ -30,6 +30,7 @@ def fake_config_module():
 
     class _FakeHostsDict(dict):
         """Dict that always reflects the latest `current` mapping."""
+
         def values(self):
             return list(current.values())
 
@@ -48,7 +49,6 @@ def fake_config_module():
 
 
 class TestGcdaFetcher:
-
     @pytest.mark.asyncio
     async def test_fetch_all_happy_path(self, tmp_path, fake_config_module):
         host = _make_mock_host("host1")

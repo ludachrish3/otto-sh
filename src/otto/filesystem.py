@@ -15,40 +15,47 @@ This module imports nothing from ``otto`` so it can never create an import cycle
 
 from pathlib import Path
 
-_MOUNTINFO_PATH = '/proc/self/mountinfo'
+_MOUNTINFO_PATH = "/proc/self/mountinfo"
 
 # Filesystem types treated as "network/shared". Deliberately an explicit set —
 # we do NOT blanket-flag all ``fuse.*`` because local FUSE mounts are common.
-_NETWORK_FSTYPES = frozenset({
-    'nfs', 'nfs4',
-    'cifs', 'smb3', 'smbfs',
-    'fuse.sshfs',
-    'glusterfs', 'fuse.glusterfs',
-    'lustre',
-    'ceph', 'fuse.ceph',
-    'afs',
-    '9p',
-    'beegfs',
-    'ocfs2',
-    'gpfs',
-})
+_NETWORK_FSTYPES = frozenset(
+    {
+        "nfs",
+        "nfs4",
+        "cifs",
+        "smb3",
+        "smbfs",
+        "fuse.sshfs",
+        "glusterfs",
+        "fuse.glusterfs",
+        "lustre",
+        "ceph",
+        "fuse.ceph",
+        "afs",
+        "9p",
+        "beegfs",
+        "ocfs2",
+        "gpfs",
+    }
+)
 
 
 def _unescape_mountinfo(field: str) -> str:
     """Decode the octal escapes (``\\040`` space, ``\\011`` tab, …) mountinfo uses."""
-    if '\\' not in field:
+    if "\\" not in field:
         return field
     out: list[str] = []
     i = 0
     n = len(field)
     while i < n:
-        if field[i] == '\\' and i + 4 <= n and all(c in '01234567' for c in field[i + 1:i + 4]):
-            out.append(chr(int(field[i + 1:i + 4], 8)))
+        if field[i] == "\\" and i + 4 <= n and all(c in "01234567" for c in field[i + 1 : i + 4]):
+            out.append(chr(int(field[i + 1 : i + 4], 8)))
             i += 4
         else:
             out.append(field[i])
             i += 1
-    return ''.join(out)
+    return "".join(out)
 
 
 def _parse_mountinfo(text: str) -> list[tuple[str, str]]:
@@ -65,7 +72,7 @@ def _parse_mountinfo(text: str) -> list[tuple[str, str]]:
     for line in text.splitlines():
         if not line.strip():
             continue
-        parts = line.split(' - ', 1)
+        parts = line.split(" - ", 1)
         if len(parts) != 2:
             continue
         left_fields = parts[0].split()
@@ -77,16 +84,16 @@ def _parse_mountinfo(text: str) -> list[tuple[str, str]]:
 
 
 def _fstype_for_path(path_str: str, pairs: list[tuple[str, str]]) -> str | None:
-    """fstype of the longest mount-point prefix of ``path_str`` (or ``None``)."""
+    """Fstype of the longest mount-point prefix of ``path_str`` (or ``None``)."""
     best_len = -1
     best_fstype: str | None = None
     for mountpoint, fstype in pairs:
-        if mountpoint == '/':
+        if mountpoint == "/":
             is_under = True
             mp_len = 1
         else:
-            mp = mountpoint.rstrip('/')
-            is_under = path_str == mp or path_str.startswith(mp + '/')
+            mp = mountpoint.rstrip("/")
+            is_under = path_str == mp or path_str.startswith(mp + "/")
             mp_len = len(mp)
         if is_under and mp_len > best_len:
             best_len = mp_len
@@ -96,7 +103,7 @@ def _fstype_for_path(path_str: str, pairs: list[tuple[str, str]]) -> str | None:
 
 def _read_mountinfo() -> str | None:
     try:
-        with open(_MOUNTINFO_PATH, encoding='utf-8') as f:
+        with open(_MOUNTINFO_PATH, encoding="utf-8") as f:
             return f.read()
     except OSError:
         return None

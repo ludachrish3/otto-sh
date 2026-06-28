@@ -30,9 +30,7 @@ import pytest
 # from) otto.host.transfer.progress; patch it there, not on the package re-export.
 import otto.host.transfer.progress as transfer_mod
 from otto.utils import Status
-
 from tests.conftest import EMBEDDED_BACKENDS, remote_name
-
 
 # Backend ids that carry the `embedded` marker (the Zephyr QEMU instances on
 # the `zephyr` Vagrant VM). Single-sourced from :data:`tests.conftest` so the
@@ -76,9 +74,9 @@ pytestmark = pytest.mark.timeout(45)
 # run / oneshot
 # ---------------------------------------------------------------------------
 
+
 @_ALL_BACKENDS
 class TestRunContract:
-
     @pytest.mark.asyncio
     async def test_successful_command_returns_status_success(self, host1, host1_kit):
         """A command that exits 0 must yield ``Status.Success`` with retcode
@@ -124,12 +122,16 @@ class TestRunContract:
 # File transfer: get / put round-trip (or graceful-degradation on no-FS)
 # ---------------------------------------------------------------------------
 
+
 @_ALL_BACKENDS
 class TestTransferContract:
-
     @pytest.mark.asyncio
     async def test_put_get_roundtrip_byte_identical(
-        self, host1, host1_kit, worker_id, tmp_path: Path,
+        self,
+        host1,
+        host1_kit,
+        worker_id,
+        tmp_path: Path,
     ):
         """``put`` then ``get`` must round-trip a small binary file
         byte-identically. Skipped for backends with no filesystem — they
@@ -143,7 +145,8 @@ class TestTransferContract:
         local_src.write_bytes(payload)
 
         put_status, put_err = await host1.put(
-            [local_src], Path(host1_kit.temp_remote_dir),
+            [local_src],
+            Path(host1_kit.temp_remote_dir),
         )
         assert put_status == Status.Success, f"put failed: {put_err}"
 
@@ -157,7 +160,11 @@ class TestTransferContract:
 
     @pytest.mark.asyncio
     async def test_put_get_roundtrip_survives_back_to_back_calls(
-        self, host1, host1_kit, worker_id, tmp_path: Path,
+        self,
+        host1,
+        host1_kit,
+        worker_id,
+        tmp_path: Path,
     ):
         """A second ``put → get`` against the same host must succeed. The
         first round-trip warms whatever per-host state exists (the
@@ -185,26 +192,27 @@ class TestTransferContract:
         put_a_status, put_a_err = await host1.put([local_a], remote_dir)
         assert put_a_status == Status.Success, f"first put failed: {put_a_err}"
         get_a_status, get_a_err = await host1.get(
-            [remote_dir / name_a], landing,
+            [remote_dir / name_a],
+            landing,
         )
         assert get_a_status == Status.Success, f"first get failed: {get_a_err}"
         assert (landing / name_a).read_bytes() == payload_a
 
         put_b_status, put_b_err = await host1.put([local_b], remote_dir)
-        assert put_b_status == Status.Success, (
-            f"second put on hot host failed: {put_b_err}"
-        )
+        assert put_b_status == Status.Success, f"second put on hot host failed: {put_b_err}"
         get_b_status, get_b_err = await host1.get(
-            [remote_dir / name_b], landing,
+            [remote_dir / name_b],
+            landing,
         )
-        assert get_b_status == Status.Success, (
-            f"second get on hot host failed: {get_b_err}"
-        )
+        assert get_b_status == Status.Success, f"second get on hot host failed: {get_b_err}"
         assert (landing / name_b).read_bytes() == payload_b
 
     @pytest.mark.asyncio
     async def test_no_filesystem_backend_surfaces_clear_error(
-        self, host1, host1_kit, tmp_path: Path,
+        self,
+        host1,
+        host1_kit,
+        tmp_path: Path,
     ):
         """On a backend whose target has no filesystem (e.g. a Zephyr build
         without ``CONFIG_FILE_SYSTEM_SHELL``), ``put`` / ``get`` must
@@ -219,13 +227,13 @@ class TestTransferContract:
         # acceptable. Silent Success is not.
         try:
             status, err = await host1.put(
-                [local_src], Path("/nonexistent_otto_contract"),
+                [local_src],
+                Path("/nonexistent_otto_contract"),
             )
         except Exception:
             return  # exception is one acceptable failure mode
         assert status != Status.Success, (
-            f"no-FS backend reported Success for put — expected an error "
-            f"(err={err!r})"
+            f"no-FS backend reported Success for put — expected an error (err={err!r})"
         )
 
 
@@ -237,12 +245,16 @@ class TestTransferContract:
 # backend that accepts the factory but forgets to invoke it still fails.
 # ---------------------------------------------------------------------------
 
+
 @_ALL_BACKENDS
 class TestTransferProgressContract:
-
     @pytest.mark.asyncio
     async def test_put_emits_completion_event(
-        self, host1, host1_kit, worker_id, tmp_path: Path,
+        self,
+        host1,
+        host1_kit,
+        worker_id,
+        tmp_path: Path,
     ):
         """Backend-agnostic contract: ``host.put(...)`` must invoke the
         per-file progress handler at least once with ``bytes_done ==
@@ -266,30 +278,38 @@ class TestTransferProgressContract:
             def factory():
                 def handler(src, dst, done, total):
                     events.append((src, dst, done, total))
+
                 return handler
+
             return factory
 
         with patch.object(
-            transfer_mod, 'make_rich_progress_factory', new=spy_factory,
+            transfer_mod,
+            "make_rich_progress_factory",
+            new=spy_factory,
         ):
             status, err = await host1.put(
-                [local_src], Path(host1_kit.temp_remote_dir),
+                [local_src],
+                Path(host1_kit.temp_remote_dir),
             )
         assert status == Status.Success, f"put failed: {err}"
         assert events, (
-            f"backend produced no progress events — "
-            f"`_run_put` ignored the progress_factory parameter"
+            "backend produced no progress events — "
+            "`_run_put` ignored the progress_factory parameter"
         )
         # At least one event marks file completion (done == total > 0).
         completions = [(d, t) for _, _, d, t in events if d == t > 0]
         assert completions, (
-            f"backend never emitted a completion event (done == total > 0). "
-            f"Events: {events}"
+            f"backend never emitted a completion event (done == total > 0). Events: {events}"
         )
 
     @pytest.mark.asyncio
     async def test_get_emits_completion_event(
-        self, host1, host1_kit, worker_id, tmp_path: Path,
+        self,
+        host1,
+        host1_kit,
+        worker_id,
+        tmp_path: Path,
     ):
         """Symmetric to the put case: ``get`` must report file completion
         through the progress handler. Round-trips via put so the source
@@ -313,21 +333,24 @@ class TestTransferProgressContract:
             def factory():
                 def handler(src, dst, done, total):
                     events.append((src, dst, done, total))
+
                 return handler
+
             return factory
 
         with patch.object(
-            transfer_mod, 'make_rich_progress_factory', new=spy_factory,
+            transfer_mod,
+            "make_rich_progress_factory",
+            new=spy_factory,
         ):
             status, err = await host1.get(
-                [remote_dir / name], landing,
+                [remote_dir / name],
+                landing,
             )
         assert status == Status.Success, f"get failed: {err}"
         assert events, (
-            f"backend produced no progress events on get — "
-            f"`_run_get` ignored the progress_factory parameter"
+            "backend produced no progress events on get — "
+            "`_run_get` ignored the progress_factory parameter"
         )
         completions = [(d, t) for _, _, d, t in events if d == t > 0]
-        assert completions, (
-            f"backend never emitted a get completion event. Events: {events}"
-        )
+        assert completions, f"backend never emitted a get completion event. Events: {events}"

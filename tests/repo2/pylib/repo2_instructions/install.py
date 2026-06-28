@@ -12,10 +12,12 @@ logger = get_otto_logger()
 
 @instruction()
 def install_repo2(
-    debug: Annotated[bool,
-        typer.Option('--field/--debug',
-            help='Use field or debug products.',
-        )
+    debug: Annotated[
+        bool,
+        typer.Option(
+            "--field/--debug",
+            help="Use field or debug products.",
+        ),
     ] = False,
 ):
 

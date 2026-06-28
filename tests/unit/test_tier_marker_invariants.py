@@ -7,9 +7,7 @@ G2 proves no VM-only marker leaks into the unit tier.
 import ast
 from pathlib import Path
 
-import pytest
-
-_TESTS = Path(__file__).resolve().parents[1]          # tests/
+_TESTS = Path(__file__).resolve().parents[1]  # tests/
 _UNIT = _TESTS / "unit"
 
 # Markers that mean "needs a VM" — must never appear on a unit-tier test.

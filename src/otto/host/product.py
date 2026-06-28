@@ -20,6 +20,7 @@ product repo registers a :func:`register_product_provider` callback from a
 independently of product code; declaring products *in* lab data is deliberately
 **not** supported.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -137,7 +138,8 @@ def apply_product_providers(host: "Host") -> None:
             if product.name in seen:
                 logger.debug(
                     "product provider: skipping duplicate %r on host %s",
-                    product.name, host.id,
+                    product.name,
+                    host.id,
                 )
                 continue
             host.products.append(product)

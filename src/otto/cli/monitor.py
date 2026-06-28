@@ -31,39 +31,51 @@ from ..monitor.server import MonitorServer
 logger = get_otto_logger()
 
 monitor_app = typer.Typer(
-    help='Launch an interactive performance dashboard.',
+    help="Launch an interactive performance dashboard.",
 )
 
-@monitor_app.command(
-)
+
+@monitor_app.command()
 def monitor(
     ctx: typer.Context,
-
     # ── Live mode ─────────────────────────────────────────────────────────
-    hosts: Annotated[str | None, typer.Option(
-        '--hosts', metavar='REGEX',
-        help='Regex matched against host IDs (via re.search). Default: all hosts.',
-    )] = None,
-
-    interval: Annotated[float, typer.Option(
-        '--interval', '-i', metavar='SECONDS',
-        help='Collection interval in seconds.',
-        min=1.0,
-    )] = 5.0,
-
+    hosts: Annotated[
+        str | None,
+        typer.Option(
+            "--hosts",
+            metavar="REGEX",
+            help="Regex matched against host IDs (via re.search). Default: all hosts.",
+        ),
+    ] = None,
+    interval: Annotated[
+        float,
+        typer.Option(
+            "--interval",
+            "-i",
+            metavar="SECONDS",
+            help="Collection interval in seconds.",
+            min=1.0,
+        ),
+    ] = 5.0,
     # ── Historical mode ───────────────────────────────────────────────────
-    file: Annotated[Path | None, typer.Option(
-        '--file', '-f', metavar='PATH',
-        help='Load historical data from a .db or .json file.',
-        exists=True,
-    )] = None,
-
-    db: Annotated[Path | None, typer.Option(
-        help='SQLite file to persist live metric data for later historical viewing.',
-    )] = None,
+    file: Annotated[
+        Path | None,
+        typer.Option(
+            "--file",
+            "-f",
+            metavar="PATH",
+            help="Load historical data from a .db or .json file.",
+            exists=True,
+        ),
+    ] = None,
+    db: Annotated[
+        Path | None,
+        typer.Option(
+            help="SQLite file to persist live metric data for later historical viewing.",
+        ),
+    ] = None,
 ):
     """Launch an interactive performance monitoring dashboard."""
-
     if ctx.resilient_parsing:
         return
 
@@ -78,22 +90,23 @@ def monitor(
         return
 
     from ..reservations import gate
+
     gate(ctx)
 
     from ..host import UnixHost
+
     pattern = re.compile(hosts) if hosts else None
     # Monitorable hosts: any Unix host (shell metrics), plus any host declaring
     # an `snmp` block (collected over SNMP — this is how embedded targets, which
     # can't share their single shell session, get monitored).
     selected = [
-        h for h in all_hosts(pattern=pattern)
-        if isinstance(h, UnixHost) or getattr(h, 'snmp', None) is not None
+        h
+        for h in all_hosts(pattern=pattern)
+        if isinstance(h, UnixHost) or getattr(h, "snmp", None) is not None
     ]
     if not selected:
         msg = (
-            f'No hosts match regex "{hosts}".'
-            if hosts
-            else 'No hosts available in the active lab.'
+            f'No hosts match regex "{hosts}".' if hosts else "No hosts available in the active lab."
         )
         typer.echo(msg, err=True)
         raise typer.Exit(1)
@@ -110,13 +123,12 @@ def monitor(
 
 async def _load_historical(path: Path) -> MetricCollector:
     suffix = path.suffix.lower()
-    if suffix == '.db':
+    if suffix == ".db":
         return await MetricCollector.from_sqlite(str(path))
-    elif suffix == '.json':
+    if suffix == ".json":
         return MetricCollector.from_json(str(path))
-    else:
-        logger.error(f'Unsupported file format "{suffix}". Use .db or .json.')
-        raise typer.Exit(1)
+    logger.error(f'Unsupported file format "{suffix}". Use .db or .json.')
+    raise typer.Exit(1)
 
 
 async def _serve_historical(path: Path) -> None:

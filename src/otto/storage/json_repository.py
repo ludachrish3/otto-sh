@@ -58,7 +58,7 @@ class JsonFileLabRepository:
         matching = [h for h in all_hosts_data if name in h.get("labs", [])]
 
         if not matching:
-            searched = '\n  '.join(str(p) for p in self.search_paths)
+            searched = "\n  ".join(str(p) for p in self.search_paths)
             raise LabNotFoundError(
                 f"Lab '{name}' not found in any search path:\n  {searched}"
             ) from None
@@ -79,9 +79,7 @@ class JsonFileLabRepository:
                 lab.add_host(host)
                 lab.resources.update(host.resources)
             except Exception as e:
-                logger.error(
-                    f"Failed to create host at index {idx} in lab '{name}': {e}"
-                )
+                logger.error(f"Failed to create host at index {idx} in lab '{name}': {e}")
                 raise LabRepositoryError(
                     f"Failed to create host at index {idx} in lab '{name}': {e}"
                 ) from e
@@ -129,7 +127,7 @@ class JsonFileLabRepository:
                 found.append(candidate)
 
         if not found:
-            searched = '\n  '.join(str(p) for p in self.search_paths)
+            searched = "\n  ".join(str(p) for p in self.search_paths)
             raise FileNotFoundError(
                 f"No {HOSTS_FILENAME} found in any search path:\n  {searched}"
             ) from None
@@ -155,8 +153,7 @@ class JsonFileLabRepository:
 
         if not isinstance(data, list):
             raise LabRepositoryError(
-                f"Hosts file '{hosts_file}' must contain a JSON array, "
-                f"got {type(data).__name__}"
+                f"Hosts file '{hosts_file}' must contain a JSON array, got {type(data).__name__}"
             )
 
         return data

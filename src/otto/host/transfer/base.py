@@ -44,7 +44,9 @@ class TransferContext:
 
 
 def validate_filename_lengths(
-    files: list[Path], limit: int, host_name: str,
+    files: list[Path],
+    limit: int,
+    host_name: str,
 ) -> tuple[Status, str]:
     """Reject files whose basename exceeds the host's filesystem cap.
 
@@ -73,7 +75,7 @@ def validate_filename_lengths(
                 f"``CONFIG_FS_LITTLEFS_NAME_MAX`` for LittleFS; ``NAME_MAX`` "
                 f"on POSIX)."
             )
-    return Status.Success, ''
+    return Status.Success, ""
 
 
 class BaseFileTransfer(ABC):
@@ -138,8 +140,11 @@ class BaseFileTransfer(ABC):
         show_progress: bool = True,
     ) -> tuple[Status, str]:
         from .progress import _acquire_shared_progress, make_rich_progress_factory
+
         status, err = validate_filename_lengths(
-            src_files, self._max_filename_len, self._name,
+            src_files,
+            self._max_filename_len,
+            self._name,
         )
         if not status.is_ok:
             return status, err
@@ -147,7 +152,8 @@ class BaseFileTransfer(ABC):
             return await self._run_put(src_files, dest_dir, None)
         async with _acquire_shared_progress() as progress:
             return await self._run_put(
-                src_files, dest_dir,
+                src_files,
+                dest_dir,
                 make_rich_progress_factory(progress, self._name),
             )
 
@@ -158,8 +164,11 @@ class BaseFileTransfer(ABC):
         show_progress: bool = True,
     ) -> tuple[Status, str]:
         from .progress import _acquire_shared_progress, make_rich_progress_factory
+
         status, err = validate_filename_lengths(
-            src_files, self._max_filename_len, self._name,
+            src_files,
+            self._max_filename_len,
+            self._name,
         )
         if not status.is_ok:
             return status, err
@@ -167,7 +176,8 @@ class BaseFileTransfer(ABC):
             return await self._run_get(src_files, dest_dir, None)
         async with _acquire_shared_progress() as progress:
             return await self._run_get(
-                src_files, dest_dir,
+                src_files,
+                dest_dir,
                 make_rich_progress_factory(progress, self._name),
             )
 
@@ -176,7 +186,7 @@ class BaseFileTransfer(ABC):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: 'TransferProgressFactory | None',
+        progress_factory: "TransferProgressFactory | None",
     ) -> tuple[Status, str]:
         """Backend-specific put implementation.
 
@@ -192,14 +202,14 @@ class BaseFileTransfer(ABC):
         self,
         src_files: list[Path],
         dest_dir: Path,
-        progress_factory: 'TransferProgressFactory | None',
+        progress_factory: "TransferProgressFactory | None",
     ) -> tuple[Status, str]:
         """Backend-specific get implementation. Same progress contract as
         :meth:`_run_put`.
         """
 
 
-NcPortStrategy = Literal['auto', 'ss', 'netstat', 'python', 'proc', 'custom']
+NcPortStrategy = Literal["auto", "ss", "netstat", "python", "proc", "custom"]
 """Strategy for finding free ports on the remote host for netcat transfers.
 
 Available strategies:
@@ -216,7 +226,7 @@ Available strategies:
   must print a free port number to stdout.
 """
 
-NcListenerCheck = Literal['auto', 'ss', 'netstat', 'proc', 'custom']
+NcListenerCheck = Literal["auto", "ss", "netstat", "proc", "custom"]
 """Strategy for checking if a remote nc listener is ready.
 
 Available strategies:
@@ -241,4 +251,4 @@ def _first_error(
             return Status.Error, str(result)
         if not result[0].is_ok:
             return result
-    return Status.Success, ''
+    return Status.Success, ""

@@ -16,7 +16,6 @@ import getpass
 from dataclasses import dataclass
 from typing import Literal
 
-
 IdentitySource = Literal["--as-user", "$USER"]
 
 

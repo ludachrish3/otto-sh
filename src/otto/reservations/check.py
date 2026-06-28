@@ -117,8 +117,7 @@ def check_reservations(
 
     holders: dict[str, list[str]] = {r: backend.who_reserved(r) for r in sorted(missing)}
     lines = [
-        f"User {username!r} does not hold all resources required by lab "
-        f"{lab.name!r}. Missing:"
+        f"User {username!r} does not hold all resources required by lab {lab.name!r}. Missing:"
     ]
     for resource, who in holders.items():
         if not who:
@@ -150,13 +149,16 @@ def gate(ctx: typer.Context) -> None:
         username = res.identity.username if res.identity is not None else "<unknown>"
         needed = required_resources(lab)
         from rich import print as rprint
+
         rprint(
             f"[bold red]\N{WARNING SIGN}  Reservation check SKIPPED for user "
             f"{username!r} on lab {lab.name!r}. Required resources: {sorted(needed)!r}[/bold red]"
         )
         logger.warning(
             "Reservation check skipped for user %r on lab %r. Required: %r",
-            username, lab.name, sorted(needed),
+            username,
+            lab.name,
+            sorted(needed),
         )
         return
 

@@ -1,11 +1,12 @@
 """Cross-worker host-pool lease mechanics (no VM — flock over a tmp dir)."""
+
 from __future__ import annotations
 
 import multiprocessing as mp
 import time
 from pathlib import Path
 
-from tests._fixtures._host_pool import lease_unix_host, UNIX_POOL
+from tests._fixtures._host_pool import UNIX_POOL, lease_unix_host
 
 
 def test_lease_yields_a_pool_member(tmp_path: Path) -> None:
@@ -14,9 +15,8 @@ def test_lease_yields_a_pool_member(tmp_path: Path) -> None:
 
 
 def test_two_leases_pick_distinct_hosts(tmp_path: Path) -> None:
-    with lease_unix_host(tmp_path) as a:
-        with lease_unix_host(tmp_path) as b:
-            assert a != b  # second lease skips the busy first host
+    with lease_unix_host(tmp_path) as a, lease_unix_host(tmp_path) as b:
+        assert a != b  # second lease skips the busy first host
 
 
 def test_lease_releases_on_exit(tmp_path: Path) -> None:

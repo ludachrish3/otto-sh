@@ -5,14 +5,16 @@ scope. Propagated via a ContextVar so the bare module accessors
 (otto.configmodule.all_hosts/get_host) can stay zero-argument, while explicit
 passing (OttoContext methods, open_context) is first-class.
 """
+
 from __future__ import annotations
 
 import asyncio
 import re
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import asynccontextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Iterator, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,7 +39,7 @@ class HostScope:
         self._hosts: list[RemoteHost] = []
 
     def register(self, host: RemoteHost) -> None:
-        if any(host is h for h in self._hosts):   # dedup by object identity
+        if any(host is h for h in self._hosts):  # dedup by object identity
             return
         self._hosts.append(host)
 
@@ -94,12 +96,12 @@ class OttoContext:
 
     def get_host(self, host_id: str, **overrides: Any) -> "UnixHost":
         from .configmodule.configmodule import _apply_option_overrides
+
         try:
             host = self.lab.hosts[host_id]
         except KeyError:
             raise KeyError(
-                f"No host {host_id!r} in lab {self.lab.name!r}. "
-                f"Available: {sorted(self.lab.hosts)}"
+                f"No host {host_id!r} in lab {self.lab.name!r}. Available: {sorted(self.lab.hosts)}"
             ) from None
         resolved = _apply_option_overrides(cast("Any", host), **overrides)
         self.scope.register(resolved)
@@ -114,6 +116,7 @@ class OttoContext:
     ) -> "Iterator[RemoteHost]":
         from .configmodule.configmodule import _apply_option_overrides
         from .host.docker_host import DockerContainerHost
+
         for host in self.lab.hosts.values():
             if pattern is not None and not pattern.search(host.id):
                 continue
@@ -140,18 +143,20 @@ class OttoContext:
         nc_options: "Any" = None,
         **kwargs: Any,
     ) -> "dict[str, T | BaseException]":
-        hosts = list(self.all_hosts(
-            pattern=pattern,
-            include_containers=include_containers,
-            term=term,
-            transfer=transfer,
-            ssh_options=ssh_options,
-            telnet_options=telnet_options,
-            sftp_options=sftp_options,
-            scp_options=scp_options,
-            ftp_options=ftp_options,
-            nc_options=nc_options,
-        ))
+        hosts = list(
+            self.all_hosts(
+                pattern=pattern,
+                include_containers=include_containers,
+                term=term,
+                transfer=transfer,
+                ssh_options=ssh_options,
+                telnet_options=telnet_options,
+                sftp_options=sftp_options,
+                scp_options=scp_options,
+                ftp_options=ftp_options,
+                nc_options=nc_options,
+            )
+        )
         if concurrent:
             results = await asyncio.gather(
                 *(method(h, *args, **kwargs) for h in hosts),
@@ -162,7 +167,7 @@ class OttoContext:
         for h in hosts:
             try:
                 out[h.id] = await method(h, *args, **kwargs)
-            except BaseException as exc:  # noqa: BLE001 — mirror existing fan-out semantics
+            except BaseException as exc:
                 out[h.id] = exc
         return out
 

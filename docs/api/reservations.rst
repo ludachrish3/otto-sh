@@ -4,8 +4,10 @@ reservations
 The reservations package gates every live-lab subcommand on whether the
 effective user actually holds the resources the selected lab needs.
 It is pluggable: the check itself is fixed, but the "who has what
-reserved?" query is answered by a :class:`~otto.reservations.protocol.ReservationBackend`
-implementation — shipped ones, or your own class selected by registered name in ``.otto/settings.toml``.
+reserved?" query is answered by a
+:class:`~otto.reservations.protocol.ReservationBackend`
+implementation — shipped ones, or your own class selected by registered name in
+``.otto/settings.toml``.
 
 For narrative setup, configuration, and writing a custom backend, see
 the :doc:`user guide <../guide/reservations>`.

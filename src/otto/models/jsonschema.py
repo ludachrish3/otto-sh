@@ -28,8 +28,8 @@ from ..host.transfer import _TRANSFER_BACKENDS
 from .host import HostSpec
 from .settings import ReservationFile, SettingsModel
 
-_SCHEMA_DIALECT = 'https://json-schema.org/draft/2020-12/schema'
-_ID_BASE = 'https://otto-sh.readthedocs.io/schemas'
+_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
+_ID_BASE = "https://otto-sh.readthedocs.io/schemas"
 
 
 def _stem(spec_cls: type) -> str:
@@ -38,10 +38,10 @@ def _stem(spec_cls: type) -> str:
     Handles runs of capitals too (``ACMEHostSpec`` -> ``acme-host``), so a
     contrib author's custom spec name still yields a clean stem.
     """
-    name = re.sub(r'Spec$', '', spec_cls.__name__)          # UnixHost
-    name = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1-\2', name)  # ACMEHost -> ACME-Host
-    name = re.sub(r'([a-z\d])([A-Z])', r'\1-\2', name)      # UnixHost -> Unix-Host
-    return name.lower()                                     # unix-host
+    name = re.sub(r"Spec$", "", spec_cls.__name__)  # UnixHost
+    name = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1-\2", name)  # ACMEHost -> ACME-Host
+    name = re.sub(r"([a-z\d])([A-Z])", r"\1-\2", name)  # UnixHost -> Unix-Host
+    return name.lower()  # unix-host
 
 
 def _decorate(doc: dict[str, Any], stem: str, title: str) -> dict[str, Any]:
@@ -53,9 +53,9 @@ def _decorate(doc: dict[str, Any], stem: str, title: str) -> dict[str, Any]:
     """
     return {
         **doc,
-        '$schema': _SCHEMA_DIALECT,
-        '$id': f'{_ID_BASE}/{stem}.schema.json',
-        'title': title,
+        "$schema": _SCHEMA_DIALECT,
+        "$id": f"{_ID_BASE}/{stem}.schema.json",
+        "title": title,
     }
 
 
@@ -95,47 +95,43 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
         return
     family = getattr(spec_cls, "_host_family", None)
     if "valid_terms" in props:
-        names = sorted(
-            n for n, fams in _TERM_FAMILIES.items()
-            if family is None or family in fams
-        )
+        names = sorted(n for n, fams in _TERM_FAMILIES.items() if family is None or family in fams)
         props["valid_terms"] = _scalar_or_list_with_enum(props["valid_terms"], names)
     if "valid_transfers" in props:
         names = sorted(
-            n for n, c in _TRANSFER_BACKENDS.items()
-            if family is None or family in c.host_families
+            n for n, c in _TRANSFER_BACKENDS.items() if family is None or family in c.host_families
         )
         props["valid_transfers"] = _scalar_or_list_with_enum(props["valid_transfers"], names)
 
 
-def _host_array_schema(distinct: list[type[HostSpec]],
-                       names: dict[str, type[HostSpec]]) -> dict[str, Any]:
+def _host_array_schema(
+    distinct: list[type[HostSpec]], names: dict[str, type[HostSpec]]
+) -> dict[str, Any]:
     """Build the ``hosts.json`` array schema.
 
     Uses ``anyOf`` over the distinct specs with a shared ``$defs`` and an
     ``os_type`` discriminator mapping covering every registered name.
     """
     defs_map, top = models_json_schema(
-        [(s, 'validation') for s in distinct],
-        ref_template='#/$defs/{model}',
+        [(s, "validation") for s in distinct],
+        ref_template="#/$defs/{model}",
     )
     for s in distinct:
-        key = defs_map[(s, 'validation')]['$ref'].rsplit('/', 1)[-1]
-        if key in top['$defs']:
-            _inject_selector_enums(top['$defs'][key], s)
+        key = defs_map[(s, "validation")]["$ref"].rsplit("/", 1)[-1]
+        if key in top["$defs"]:
+            _inject_selector_enums(top["$defs"][key], s)
     return {
-        'type': 'array',
-        'items': {
-            'anyOf': [defs_map[(s, 'validation')] for s in distinct],
-            'discriminator': {
-                'propertyName': 'os_type',
-                'mapping': {
-                    name: defs_map[(spec, 'validation')]['$ref']
-                    for name, spec in names.items()
+        "type": "array",
+        "items": {
+            "anyOf": [defs_map[(s, "validation")] for s in distinct],
+            "discriminator": {
+                "propertyName": "os_type",
+                "mapping": {
+                    name: defs_map[(spec, "validation")]["$ref"] for name, spec in names.items()
                 },
             },
         },
-        '$defs': top['$defs'],
+        "$defs": top["$defs"],
     }
 
 
@@ -154,15 +150,13 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
         stem = _stem(spec)
         doc = spec.model_json_schema()
         _inject_selector_enums(doc, spec)
-        docs[stem] = _decorate(doc, stem, f'otto {stem}')
+        docs[stem] = _decorate(doc, stem, f"otto {stem}")
 
-    docs['hosts'] = _decorate(
-        _host_array_schema(distinct, names), 'hosts', 'otto hosts.json'
+    docs["hosts"] = _decorate(_host_array_schema(distinct, names), "hosts", "otto hosts.json")
+    docs["settings"] = _decorate(
+        SettingsModel.model_json_schema(), "settings", "otto settings.toml"
     )
-    docs['settings'] = _decorate(
-        SettingsModel.model_json_schema(), 'settings', 'otto settings.toml'
-    )
-    docs['reservations'] = _decorate(
-        ReservationFile.model_json_schema(), 'reservations', 'otto reservations'
+    docs["reservations"] = _decorate(
+        ReservationFile.model_json_schema(), "reservations", "otto reservations"
     )
     return docs

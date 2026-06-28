@@ -46,32 +46,36 @@ def test_otto_model_accepts_known_fields():
 
 
 def test_local_port_forward_from_dict_and_positional():
-    fwd = LocalPortForward(**{
-        "listen_host": "127.0.0.1", "listen_port": 8080,
-        "dest_host": "10.0.0.1", "dest_port": 80,
-    })
+    fwd = LocalPortForward(
+        listen_host="127.0.0.1", listen_port=8080, dest_host="10.0.0.1", dest_port=80
+    )
     assert fwd == LocalPortForward("127.0.0.1", 8080, "10.0.0.1", 80)
 
 
 def test_remote_port_forward_from_dict_and_positional():
-    fwd = RemotePortForward(**{
-        "listen_host": "0.0.0.0", "listen_port": 2222,
-        "dest_host": "127.0.0.1", "dest_port": 22,
-    })
+    fwd = RemotePortForward(
+        listen_host="0.0.0.0", listen_port=2222, dest_host="127.0.0.1", dest_port=22
+    )
     assert fwd == RemotePortForward("0.0.0.0", 2222, "127.0.0.1", 22)
 
 
 def test_socks_forward_from_dict_and_positional():
-    assert SocksForward(listen_host="127.0.0.1", listen_port=1080) == \
-        SocksForward("127.0.0.1", 1080)
+    assert SocksForward(listen_host="127.0.0.1", listen_port=1080) == SocksForward(
+        "127.0.0.1", 1080
+    )
 
 
 def test_forward_rejects_unknown_key():
     with pytest.raises(ValidationError):
-        LocalPortForward(**{  # type: ignore[call-arg]
-            "listen_host": "x", "listen_port": 1,
-            "dest_host": "y", "dest_port": 2, "bogus": 3,
-        })
+        LocalPortForward(
+            **{  # type: ignore[call-arg]
+                "listen_host": "x",
+                "listen_port": 1,
+                "dest_host": "y",
+                "dest_port": 2,
+                "bogus": 3,
+            }
+        )
 
 
 def test_ssh_spec_defaults_match_runtime_defaults():
@@ -86,10 +90,14 @@ def test_ssh_spec_builds_forwards_and_extra():
     spec = SshOptionsSpec(
         port=2222,
         connect_timeout=5.0,
-        local_forwards=[{
-            "listen_host": "127.0.0.1", "listen_port": 8080,
-            "dest_host": "10.0.0.1", "dest_port": 80,
-        }],
+        local_forwards=[
+            {
+                "listen_host": "127.0.0.1",
+                "listen_port": 8080,
+                "dest_host": "10.0.0.1",
+                "dest_port": 80,
+            }
+        ],
         extra={"rekey_bytes": 1000000},
     )
     rt_obj = spec.to_runtime()
@@ -199,8 +207,7 @@ def test_spec_fields_subset_of_runtime(spec_cls, runtime_cls):
     runtime_fields = {f.name for f in dataclasses.fields(runtime_cls)}
     missing = spec_fields - runtime_fields
     assert not missing, (
-        f"{spec_cls.__name__} has fields absent from "
-        f"{runtime_cls.__name__}: {sorted(missing)}"
+        f"{spec_cls.__name__} has fields absent from {runtime_cls.__name__}: {sorted(missing)}"
     )
 
 

@@ -8,6 +8,7 @@ so every Zephyr host fell into the SSH check and crashed on the missing
 without its own ``creds`` must be probed via the hop/console path, never the
 direct-SSH path.
 """
+
 from scripts import lab_health
 from scripts.lab_health import DEFAULT_HOSTS, _hop_index, _load_hosts, _print_report
 

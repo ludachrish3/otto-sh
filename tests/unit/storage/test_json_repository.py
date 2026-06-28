@@ -19,16 +19,19 @@ class TestJsonFileLabRepository:
     """Tests for JsonFileLabRepository (construct-time search paths)."""
 
     def test_load_lab_simple(self, tmp_path):
-        _hosts_file(tmp_path, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "board": "seed",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["orange"],
-                "labs": ["testlab"],
-            },
-        ])
+        _hosts_file(
+            tmp_path,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "board": "seed",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["orange"],
+                    "labs": ["testlab"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("testlab")
@@ -39,24 +42,27 @@ class TestJsonFileLabRepository:
         assert "orange" in lab.resources
 
     def test_load_lab_multiple_hosts(self, tmp_path):
-        _hosts_file(tmp_path, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "board": "seed",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["orange"],
-                "labs": ["multilab"],
-            },
-            {
-                "ip": "10.10.200.12",
-                "element": "tomato",
-                "board": "seed",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["tomato"],
-                "labs": ["multilab"],
-            },
-        ])
+        _hosts_file(
+            tmp_path,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "board": "seed",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["orange"],
+                    "labs": ["multilab"],
+                },
+                {
+                    "ip": "10.10.200.12",
+                    "element": "tomato",
+                    "board": "seed",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["tomato"],
+                    "labs": ["multilab"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("multilab")
@@ -78,15 +84,18 @@ class TestJsonFileLabRepository:
 
     def test_load_lab_not_found_lab_absent(self, tmp_path):
         """hosts.json exists but the lab name is not present -> LabNotFoundError."""
-        _hosts_file(tmp_path, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["orange"],
-                "labs": ["other_lab"],
-            },
-        ])
+        _hosts_file(
+            tmp_path,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["orange"],
+                    "labs": ["other_lab"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([tmp_path])
 
@@ -96,22 +105,25 @@ class TestJsonFileLabRepository:
         assert "nonexistent" in str(exc_info.value)
 
     def test_load_lab_only_returns_matching_hosts(self, tmp_path):
-        _hosts_file(tmp_path, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["orange"],
-                "labs": ["lab_a"],
-            },
-            {
-                "ip": "10.10.200.12",
-                "element": "tomato",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["tomato"],
-                "labs": ["lab_b"],
-            },
-        ])
+        _hosts_file(
+            tmp_path,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["orange"],
+                    "labs": ["lab_a"],
+                },
+                {
+                    "ip": "10.10.200.12",
+                    "element": "tomato",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["tomato"],
+                    "labs": ["lab_b"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("lab_a")
@@ -125,15 +137,18 @@ class TestJsonFileLabRepository:
         path1.mkdir()
         path2.mkdir()
 
-        _hosts_file(path2, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["orange"],
-                "labs": ["testlab"],
-            },
-        ])
+        _hosts_file(
+            path2,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["orange"],
+                    "labs": ["testlab"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([path1, path2])
         lab = repo.load_lab("testlab")
@@ -163,13 +178,16 @@ class TestJsonFileLabRepository:
 
     def test_load_lab_invalid_host_data(self, tmp_path):
         """Invalid host data raises LabRepositoryError with index context."""
-        _hosts_file(tmp_path, [
-            {
-                "element": "orange",
-                "creds": {"vagrant": "vagrant"},
-                "labs": ["badlab"],
-            },
-        ])
+        _hosts_file(
+            tmp_path,
+            [
+                {
+                    "element": "orange",
+                    "creds": {"vagrant": "vagrant"},
+                    "labs": ["badlab"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([tmp_path])
 
@@ -180,22 +198,25 @@ class TestJsonFileLabRepository:
         assert "ip" in str(exc_info.value)
 
     def test_load_lab_resource_aggregation(self, tmp_path):
-        _hosts_file(tmp_path, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["orange", "citrus"],
-                "labs": ["resourcelab"],
-            },
-            {
-                "ip": "10.10.200.12",
-                "element": "tomato",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["tomato", "vegetable"],
-                "labs": ["resourcelab"],
-            },
-        ])
+        _hosts_file(
+            tmp_path,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["orange", "citrus"],
+                    "labs": ["resourcelab"],
+                },
+                {
+                    "ip": "10.10.200.12",
+                    "element": "tomato",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["tomato", "vegetable"],
+                    "labs": ["resourcelab"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("resourcelab")
@@ -206,17 +227,20 @@ class TestJsonFileLabRepository:
         assert "vegetable" in lab.resources
 
     def test_load_lab_host_ids_generated(self, tmp_path):
-        _hosts_file(tmp_path, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "board": "seed",
-                "slot": 0,
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["orange"],
-                "labs": ["idlab"],
-            },
-        ])
+        _hosts_file(
+            tmp_path,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "board": "seed",
+                    "slot": 0,
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["orange"],
+                    "labs": ["idlab"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([tmp_path])
         lab = repo.load_lab("idlab")
@@ -224,22 +248,25 @@ class TestJsonFileLabRepository:
         assert "orange_seed0" in lab.hosts
 
     def test_list_labs(self, tmp_path):
-        _hosts_file(tmp_path, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["orange"],
-                "labs": ["alpha"],
-            },
-            {
-                "ip": "10.10.200.12",
-                "element": "tomato",
-                "creds": {"vagrant": "vagrant"},
-                "resources": ["tomato"],
-                "labs": ["beta"],
-            },
-        ])
+        _hosts_file(
+            tmp_path,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["orange"],
+                    "labs": ["alpha"],
+                },
+                {
+                    "ip": "10.10.200.12",
+                    "element": "tomato",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": ["tomato"],
+                    "labs": ["beta"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([tmp_path])
         assert repo.list_labs() == ["alpha", "beta"]
@@ -250,24 +277,30 @@ class TestJsonFileLabRepository:
         path1.mkdir()
         path2.mkdir()
 
-        _hosts_file(path1, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "creds": {"vagrant": "vagrant"},
-                "resources": [],
-                "labs": ["alpha"],
-            },
-        ])
-        _hosts_file(path2, [
-            {
-                "ip": "10.10.200.12",
-                "element": "tomato",
-                "creds": {"vagrant": "vagrant"},
-                "resources": [],
-                "labs": ["beta"],
-            },
-        ])
+        _hosts_file(
+            path1,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": [],
+                    "labs": ["alpha"],
+                },
+            ],
+        )
+        _hosts_file(
+            path2,
+            [
+                {
+                    "ip": "10.10.200.12",
+                    "element": "tomato",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": [],
+                    "labs": ["beta"],
+                },
+            ],
+        )
 
         repo = JsonFileLabRepository([path1, path2])
         assert repo.list_labs() == ["alpha", "beta"]
@@ -292,16 +325,19 @@ class TestLoadLabWithPreferences:
     """End-to-end tests for the unified ``preferences=`` parameter on ``load_lab``."""
 
     def _hosts(self, tmp_path):
-        _hosts_file(tmp_path, [
-            {
-                "ip": "10.10.200.11",
-                "element": "orange",
-                "creds": {"vagrant": "vagrant"},
-                "resources": [],
-                "labs": ["testlab"],
-                "ssh_options": {"port": 9000},
-            },
-        ])
+        _hosts_file(
+            tmp_path,
+            [
+                {
+                    "ip": "10.10.200.11",
+                    "element": "orange",
+                    "creds": {"vagrant": "vagrant"},
+                    "resources": [],
+                    "labs": ["testlab"],
+                    "ssh_options": {"port": 9000},
+                },
+            ],
+        )
 
     def test_defaults_apply_during_load(self, tmp_path):
         """Product preferences (option tables) merge into hosts during load_lab.
@@ -314,7 +350,7 @@ class TestLoadLabWithPreferences:
             preferences={".*": {"ssh_options": {"connect_timeout": 99.0}}},
         )
         host = next(iter(lab.hosts.values()))
-        assert host.ssh_options.port == 9000          # host-only key preserved
+        assert host.ssh_options.port == 9000  # host-only key preserved
         assert host.ssh_options.connect_timeout == 99.0  # preferences wins
 
     def test_defaults_none_unchanged_behavior(self, tmp_path):
@@ -325,4 +361,5 @@ class TestLoadLabWithPreferences:
         host = next(iter(lab.hosts.values()))
         assert host.ssh_options.port == 9000
         from otto.host.options import SshOptions
+
         assert host.ssh_options.connect_timeout == SshOptions().connect_timeout

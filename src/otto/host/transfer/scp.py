@@ -41,10 +41,10 @@ class ScpFileTransfer(UnixFileTransfer):
 
     def __init__(
         self,
-        connections: 'ConnectionManager',
+        connections: "ConnectionManager",
         name: str,
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
-        scp_options: 'ScpOptions',
+        scp_options: "ScpOptions",
         max_filename_len: int = 255,
     ) -> None:
         super().__init__(
@@ -58,9 +58,16 @@ class ScpFileTransfer(UnixFileTransfer):
     @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "ScpFileTransfer":
-        assert ctx.connections is not None and ctx.exec_cmd is not None and ctx.scp_options is not None
-        return cls(connections=ctx.connections, name=ctx.host_name, exec_cmd=ctx.exec_cmd,
-                   scp_options=ctx.scp_options, max_filename_len=ctx.max_filename_len)
+        assert (
+            ctx.connections is not None and ctx.exec_cmd is not None and ctx.scp_options is not None
+        )
+        return cls(
+            connections=ctx.connections,
+            name=ctx.host_name,
+            exec_cmd=ctx.exec_cmd,
+            scp_options=ctx.scp_options,
+            max_filename_len=ctx.max_filename_len,
+        )
 
     @override
     async def _run_get(
@@ -91,7 +98,9 @@ class ScpFileTransfer(UnixFileTransfer):
         ssh_conn = await self._connections.ssh()
 
         async def _get_one(src: Path) -> tuple[Status, str]:
-            _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
+            _progress = (
+                _make_sftp_progress(progress_factory()) if progress_factory is not None else None
+            )
             _logger.debug(f"{self._name}: SCP get {src} -> {dest_dir}")
             await asyncssh.scp(
                 (ssh_conn, str(src)),
@@ -99,7 +108,7 @@ class ScpFileTransfer(UnixFileTransfer):
                 progress_handler=_progress,
                 **self._scp_options._kwargs(),
             )
-            return Status.Success, ''
+            return Status.Success, ""
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
             *(_get_one(src) for src in src_files), return_exceptions=True
@@ -117,7 +126,9 @@ class ScpFileTransfer(UnixFileTransfer):
         ssh_conn = await self._connections.ssh()
 
         async def _put_one(src: Path) -> tuple[Status, str]:
-            _progress = _make_sftp_progress(progress_factory()) if progress_factory is not None else None
+            _progress = (
+                _make_sftp_progress(progress_factory()) if progress_factory is not None else None
+            )
             _logger.debug(f"{self._name}: SCP put {src} -> {dest_dir}")
             await asyncssh.scp(
                 str(src),
@@ -125,7 +136,7 @@ class ScpFileTransfer(UnixFileTransfer):
                 progress_handler=_progress,
                 **self._scp_options._kwargs(),
             )
-            return Status.Success, ''
+            return Status.Success, ""
 
         results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
             *(_put_one(src) for src in src_files), return_exceptions=True

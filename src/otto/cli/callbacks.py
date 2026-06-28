@@ -10,5 +10,5 @@ def list_hosts_callback(value: bool) -> None:
     lab = get_lab()
     print()
     for host in lab.hosts:
-        print(f'\u2022 {host}')
+        print(f"\u2022 {host}")
     print()

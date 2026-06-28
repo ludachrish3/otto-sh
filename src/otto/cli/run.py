@@ -1,11 +1,10 @@
 import dataclasses
 import functools
 import inspect
+from collections.abc import Callable, Coroutine
 from typing import (
     Annotated,
     Any,
-    Callable,
-    Coroutine,
     ParamSpec,
     get_type_hints,
 )
@@ -25,10 +24,10 @@ from ..utils import (
 P = ParamSpec("P")
 
 run_app = typer.Typer(
-    name='run',
+    name="run",
     no_args_is_help=True,
     context_settings={
-        'help_option_names': ['-h', '--help'],
+        "help_option_names": ["-h", "--help"],
     },
 )
 
@@ -37,6 +36,7 @@ def list_instructions_callback(value: bool) -> None:
     if not value:
         return
     from ..configmodule import get_repos  # lazy import — avoids circular dependency
+
     panels = [repo.get_instructions_panel() for repo in get_repos()]
     table = Table(show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1))
     for _ in panels:
@@ -46,16 +46,17 @@ def list_instructions_callback(value: bool) -> None:
     raise typer.Exit()
 
 
-@run_app.callback(
-)
+@run_app.callback()
 def main(
     ctx: typer.Context,
-    list_instructions: Annotated[bool,
-        typer.Option('--list-instructions',
+    list_instructions: Annotated[
+        bool,
+        typer.Option(
+            "--list-instructions",
             callback=list_instructions_callback,
             is_eager=True,
-            help='List available instructions and exit.',
-        )
+            help="List available instructions and exit.",
+        ),
     ] = False,
 ):
     if ctx.resilient_parsing:
@@ -64,12 +65,14 @@ def main(
     if ctx.invoked_subcommand is not None:
         get_context().output_dir = management.create_output_dir("run", f"{ctx.invoked_subcommand}")
         from ..reservations import gate
+
         gate(ctx)
 
 
 def _ctx_param_name(func: Callable[..., Any]) -> str | None:
     """Return the name of any parameter annotated as OttoContext, or None."""
     from ..context import OttoContext
+
     hints = get_type_hints(func)
     for name, hint in hints.items():
         if hint is OttoContext:
@@ -82,6 +85,7 @@ def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
     at call time and hidden from the Typer-facing signature.
     """
     from ..context import get_context
+
     sig = inspect.signature(func)
     exposed = [p for n, p in sig.parameters.items() if n != ctx_name]
 
@@ -92,10 +96,8 @@ def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
 
     # Drop ctx_name from __annotations__ too so get_type_hints() on the
     # wrapper doesn't see it (important when _wrap_with_options composes on top).
-    wrapper.__annotations__ = {
-        k: v for k, v in func.__annotations__.items() if k != ctx_name
-    }
-    setattr(wrapper, "__signature__", inspect.Signature(exposed))
+    wrapper.__annotations__ = {k: v for k, v in func.__annotations__.items() if k != ctx_name}
+    wrapper.__signature__ = inspect.Signature(exposed)  # ty: ignore[unresolved-attribute]
     return wrapper
 
 
@@ -116,14 +118,14 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any):
     Usage without options (unchanged from before)::
 
         @instruction()
-        async def deploy(debug: Annotated[bool, typer.Option()] = False):
-            ...
+        async def deploy(debug: Annotated[bool, typer.Option()] = False): ...
 
     Usage with an options dataclass::
 
         @dataclass
         class _Opts(RepoOptions):
             debug: Annotated[bool, typer.Option()] = False
+
 
         @instruction(options=_Opts)
         async def deploy(opts: _Opts):
@@ -140,7 +142,10 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any):
     class, giving both ``otto test`` and ``otto run`` subcommands a
     uniform set of repo-wide flags.
     """
-    def decorator(func: Callable[P, Coroutine[Any, Any, CommandStatus]]) -> Callable[P, CommandStatus]:
+
+    def decorator(
+        func: Callable[P, Coroutine[Any, Any, CommandStatus]],
+    ) -> Callable[P, CommandStatus]:
         ctx_name = _ctx_param_name(func)
         target: Callable[..., Any] = func
         if ctx_name is not None:
@@ -206,5 +211,5 @@ def _wrap_with_options(
         kw[opts_param_name] = opts_instance
         return await func(**kw)
 
-    setattr(wrapper, '__signature__', inspect.Signature(new_params))
+    wrapper.__signature__ = inspect.Signature(new_params)  # ty: ignore[unresolved-attribute]
     return wrapper

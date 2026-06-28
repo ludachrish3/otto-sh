@@ -1,4 +1,5 @@
 """CapabilityResolver — menu validation + active-selection resolution."""
+
 import pytest
 
 from otto.host.capability import (
@@ -87,12 +88,11 @@ class TestSelectPreferences:
         }
         # zephyr host: term from the base, transfer overridden by the specific
         assert select_preferences(table, "zephyr1_board") == {
-            "term": ["ssh"], "transfer": ["console"]
+            "term": ["ssh"],
+            "transfer": ["console"],
         }
         # non-zephyr host: only the base applies
-        assert select_preferences(table, "test1") == {
-            "term": ["ssh"], "transfer": ["sftp", "scp"]
-        }
+        assert select_preferences(table, "test1") == {"term": ["ssh"], "transfer": ["sftp", "scp"]}
 
     def test_definition_order_breaks_ties(self):
         table = {
@@ -123,9 +123,7 @@ class TestSelectOptionDefaults:
         assert select_option_defaults(table, "router1") == {
             "ssh_options": {"connect_timeout": 5.0, "port": 2222}
         }
-        assert select_option_defaults(table, "test1") == {
-            "ssh_options": {"connect_timeout": 5.0}
-        }
+        assert select_option_defaults(table, "test1") == {"ssh_options": {"connect_timeout": 5.0}}
 
 
 def test_select_preferences_ignores_option_tables():

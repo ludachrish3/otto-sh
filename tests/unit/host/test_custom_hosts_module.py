@@ -21,7 +21,6 @@ ensure_custom_hosts_on_path()
 def custom_hosts_on_path():
     """Put the third-party module dir on the path and import it (registers)."""
     import custom_hosts  # noqa: F401  (import side effect: registers frames)
-    yield
 
 
 def test_custom_hosts_registers_zephyr_inline(custom_hosts_on_path):

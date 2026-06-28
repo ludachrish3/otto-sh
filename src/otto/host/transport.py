@@ -89,7 +89,7 @@ class SshHopTransport:
         Returns the local port number to connect to.
         """
         conn = await self.get_tunnel()
-        listener = await conn.forward_local_port('', 0, dest_host, dest_port)
+        listener = await conn.forward_local_port("", 0, dest_host, dest_port)
         self._port_forwards.append(listener)
         return listener.get_port()
 
@@ -109,7 +109,7 @@ class SshHopTransport:
             # pytest's ``[unraisable]`` plugin escalates into a flake on
             # the *next* test. Capture the asyncio transport before close
             # and explicitly ``close()`` it after.
-            asyncio_transport = getattr(self._conn, '_transport', None)
+            asyncio_transport = getattr(self._conn, "_transport", None)
             self._conn.close()
             await self._conn.wait_closed()
             if asyncio_transport is not None:

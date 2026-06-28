@@ -28,13 +28,13 @@ class Toolchain:
             relative to *sysroot*.
     """
 
-    sysroot: Path = Path('/')
+    sysroot: Path = Path("/")
     """Root directory of the toolchain installation."""
 
-    lcov: Path = Path('usr/bin/lcov')
+    lcov: Path = Path("usr/bin/lcov")
     """Path to ``lcov``, relative to *sysroot*."""
 
-    gcov: Path = Path('usr/bin/gcov')
+    gcov: Path = Path("usr/bin/gcov")
     """Path to ``gcov`` (or ``llvm-cov`` wrapper), relative to *sysroot*."""
 
     @property
@@ -63,11 +63,11 @@ class Toolchain:
         name = self.gcov.name
 
         # Clang: llvm-cov → clang (sibling in same directory)
-        if 'llvm-cov' in name:
-            return self.sysroot / self.gcov.parent / 'clang'
+        if "llvm-cov" in name:
+            return self.sysroot / self.gcov.parent / "clang"
 
         # GCC: *gcov* → *gcc*
-        gcc_name = re.sub(r'gcov', 'gcc', name)
+        gcc_name = re.sub(r"gcov", "gcc", name)
         if gcc_name != name:
             return self.sysroot / self.gcov.parent / gcc_name
 

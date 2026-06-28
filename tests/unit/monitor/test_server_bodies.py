@@ -8,9 +8,9 @@ from otto.monitor.server import _EventBody, _EventUpdateBody
 
 class TestEventBodies:
     def test_event_body_defaults(self):
-        b = _EventBody(label='deploy')
-        assert b.color == '#888888'
-        assert b.dash == 'dash'
+        b = _EventBody(label="deploy")
+        assert b.color == "#888888"
+        assert b.dash == "dash"
 
     def test_event_body_requires_label(self):
         with pytest.raises(ValidationError):
@@ -18,7 +18,7 @@ class TestEventBodies:
 
     def test_event_body_rejects_unknown_field(self):
         with pytest.raises(ValidationError):
-            _EventBody(label='deploy', colour='#fff')  # typo'd 'color'
+            _EventBody(label="deploy", colour="#fff")  # typo'd 'color'
 
     def test_update_body_all_optional(self):
         b = _EventUpdateBody()
@@ -28,4 +28,4 @@ class TestEventBodies:
 
     def test_update_body_rejects_unknown_field(self):
         with pytest.raises(ValidationError):
-            _EventUpdateBody(dashh='dot')
+            _EventUpdateBody(dashh="dot")

@@ -20,6 +20,7 @@ from rich import print as rprint
 from rich.table import Table
 
 from ..configmodule import Repo, get_lab, get_repos
+from ..context import get_context
 from ..docker import (
     build_images,
     compose_down,
@@ -27,7 +28,6 @@ from ..docker import (
     compose_up,
     get_user_compose_project,
 )
-from ..context import get_context
 from ..host.unix_host import UnixHost
 from ..logger import get_otto_logger, management
 from ..utils import Status, async_typer_command
@@ -35,11 +35,11 @@ from ..utils import Status, async_typer_command
 logger = get_otto_logger()
 
 docker_app = typer.Typer(
-    name='docker',
-    help='Build images and orchestrate compose stacks on docker-capable lab hosts.',
+    name="docker",
+    help="Build images and orchestrate compose stacks on docker-capable lab hosts.",
     no_args_is_help=True,
     context_settings={
-        'help_option_names': ['-h', '--help'],
+        "help_option_names": ["-h", "--help"],
     },
 )
 
@@ -53,7 +53,7 @@ def docker_callback(ctx: typer.Context) -> None:
     # (which also prunes old logs per the retention policy), only for a real
     # subcommand — never on group ``--help``/no-args.
     if ctx.invoked_subcommand is not None:
-        get_context().output_dir = management.create_output_dir('docker', ctx.invoked_subcommand)
+        get_context().output_dir = management.create_output_dir("docker", ctx.invoked_subcommand)
 
 
 def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
@@ -69,8 +69,8 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     from ..configmodule.completion_cache import collect_docker_capable_host_ids
 
     cached = get_completion_names()
-    if cached is not None and isinstance(cached.get('docker_hosts'), list):
-        ids = cached['docker_hosts']
+    if cached is not None and isinstance(cached.get("docker_hosts"), list):
+        ids = cached["docker_hosts"]
     else:
         ids = collect_docker_capable_host_ids(get_repos())
 
@@ -104,7 +104,9 @@ def _select_repos(repo_name: str | None, on: str | None = None):
         )
         raise typer.Exit(1)
 
-    docker_repos = [r for r in get_repos() if r.docker_settings.composes or r.docker_settings.images]
+    docker_repos = [
+        r for r in get_repos() if r.docker_settings.composes or r.docker_settings.images
+    ]
     if repo_name is not None:
         matches = [r for r in docker_repos if r.name == repo_name]
         if not matches:
@@ -136,14 +138,26 @@ def _select_repos(repo_name: str | None, on: str | None = None):
 def _resolve_parent_for_repo(repo, lab, on: str | None) -> UnixHost:
     """Reuse compose._resolve_parent — public via private import to avoid duplicate logic."""
     from ..docker.compose import _resolve_parent
+
     return _resolve_parent(repo, lab, on, list(repo.docker_settings.composes))
 
 
 async def _build(
-    repo: Annotated[str | None, typer.Option('--repo', help='Restrict to a single repo by name.')] = None,
-    on: Annotated[str | None, typer.Option('--on', help='Lab host id to build on.', autocompletion=_docker_host_completer)] = None,
-    rebuild: Annotated[bool, typer.Option('--rebuild', help='Force rebuild even if context-hash tag exists.')] = False,
-    image: Annotated[list[str] | None, typer.Argument(help='Image names to build (default: all).')] = None,
+    repo: Annotated[
+        str | None, typer.Option("--repo", help="Restrict to a single repo by name.")
+    ] = None,
+    on: Annotated[
+        str | None,
+        typer.Option(
+            "--on", help="Lab host id to build on.", autocompletion=_docker_host_completer
+        ),
+    ] = None,
+    rebuild: Annotated[
+        bool, typer.Option("--rebuild", help="Force rebuild even if context-hash tag exists.")
+    ] = False,
+    image: Annotated[
+        list[str] | None, typer.Argument(help="Image names to build (default: all).")
+    ] = None,
 ) -> None:
     """Build docker images declared in selected repos."""
     lab = get_lab()
@@ -167,9 +181,18 @@ async def _build(
 
 
 async def _up(
-    repo: Annotated[str | None, typer.Option('--repo', help='Restrict to a single repo by name.')] = None,
-    on: Annotated[str | None, typer.Option('--on', help='Lab host id to compose on.', autocompletion=_docker_host_completer)] = None,
-    no_build: Annotated[bool, typer.Option('--no-build', help='Skip the implicit build step before compose up.')] = False,
+    repo: Annotated[
+        str | None, typer.Option("--repo", help="Restrict to a single repo by name.")
+    ] = None,
+    on: Annotated[
+        str | None,
+        typer.Option(
+            "--on", help="Lab host id to compose on.", autocompletion=_docker_host_completer
+        ),
+    ] = None,
+    no_build: Annotated[
+        bool, typer.Option("--no-build", help="Skip the implicit build step before compose up.")
+    ] = False,
 ) -> None:
     """Bring up compose stacks for selected repos and register their containers.
 
@@ -190,8 +213,15 @@ async def _up(
 
 
 async def _down(
-    repo: Annotated[str | None, typer.Option('--repo', help='Restrict to a single repo by name.')] = None,
-    on: Annotated[str | None, typer.Option('--on', help='Lab host id to compose on.', autocompletion=_docker_host_completer)] = None,
+    repo: Annotated[
+        str | None, typer.Option("--repo", help="Restrict to a single repo by name.")
+    ] = None,
+    on: Annotated[
+        str | None,
+        typer.Option(
+            "--on", help="Lab host id to compose on.", autocompletion=_docker_host_completer
+        ),
+    ] = None,
 ) -> None:
     """Tear down compose stacks for selected repos."""
     lab = get_lab()
@@ -213,7 +243,14 @@ async def _down(
 
 
 async def _ps(
-    on: Annotated[str | None, typer.Option('--on', help='Specific docker-capable host to query (default: all).', autocompletion=_docker_host_completer)] = None,
+    on: Annotated[
+        str | None,
+        typer.Option(
+            "--on",
+            help="Specific docker-capable host to query (default: all).",
+            autocompletion=_docker_host_completer,
+        ),
+    ] = None,
 ) -> None:
     """List running containers on docker-capable lab hosts."""
     lab = get_lab()
@@ -225,26 +262,23 @@ async def _ps(
             raise typer.Exit(1)
         parents = [host]
     else:
-        parents = [
-            h for h in lab.hosts.values()
-            if isinstance(h, UnixHost) and h.docker_capable
-        ]
+        parents = [h for h in lab.hosts.values() if isinstance(h, UnixHost) and h.docker_capable]
 
-    table = Table('host', 'container_id', 'image', 'status', 'names')
+    table = Table("host", "container_id", "image", "status", "names")
     for parent in parents:
         rows = await compose_ps(parent)
         for row in rows:
             table.add_row(
                 parent.id,
-                str(row.get('ID', ''))[:12],
-                str(row.get('Image', '')),
-                str(row.get('Status', '')),
-                str(row.get('Names', '')),
+                str(row.get("ID", ""))[:12],
+                str(row.get("Image", "")),
+                str(row.get("Status", "")),
+                str(row.get("Names", "")),
             )
     rprint(table)
 
 
-docker_app.command(name='build')(async_typer_command(_build))
-docker_app.command(name='up')(async_typer_command(_up))
-docker_app.command(name='down')(async_typer_command(_down))
-docker_app.command(name='ps')(async_typer_command(_ps))
+docker_app.command(name="build")(async_typer_command(_build))
+docker_app.command(name="up")(async_typer_command(_up))
+docker_app.command(name="down")(async_typer_command(_down))
+docker_app.command(name="ps")(async_typer_command(_ps))

@@ -9,7 +9,7 @@ share the exact same code path so semantics never diverge.
 from __future__ import annotations
 
 import shlex
-from typing import Iterable
+from collections.abc import Iterable
 
 from ..configmodule.repo import DockerImage, DockerSettings, Repo
 from ..host.host import Host
@@ -68,9 +68,7 @@ async def _build_one(
     if not rebuild and await _image_exists(parent, full_tag):
         logger.info(f"[docker] {full_tag}: already built, skipping")
         # Make sure :latest also points at the cached digest.
-        await parent.oneshot(
-            f"docker tag {shlex.quote(full_tag)} {shlex.quote(latest_tag)}"
-        )
+        await parent.oneshot(f"docker tag {shlex.quote(full_tag)} {shlex.quote(latest_tag)}")
         return Status.Skipped, full_tag
 
     logger.info(f"[docker] building {full_tag}")
@@ -85,9 +83,12 @@ async def _build_one(
         dockerfile_rel = image.dockerfile.name
 
     flags: list[str] = [
-        "-t", shlex.quote(full_tag),
-        "-t", shlex.quote(latest_tag),
-        "-f", shlex.quote(str(remote_ctx / dockerfile_rel)),
+        "-t",
+        shlex.quote(full_tag),
+        "-t",
+        shlex.quote(latest_tag),
+        "-f",
+        shlex.quote(str(remote_ctx / dockerfile_rel)),
     ]
     if image.target:
         flags.extend(["--target", shlex.quote(image.target)])
@@ -138,6 +139,10 @@ async def build_images(
     results: dict[str, tuple[Status, str]] = {}
     for image in selected:
         results[image.name] = await _build_one(
-            parent, repo.name, settings, image, rebuild=rebuild,
+            parent,
+            repo.name,
+            settings,
+            image,
+            rebuild=rebuild,
         )
     return results

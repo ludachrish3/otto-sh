@@ -5,6 +5,7 @@ options (e.g. ``valid_transfers = ["scp", "nc"]``) and the active selection is
 resolved from that menu. One ``CapabilityResolver`` handles one field; it is
 stateless apart from the field name it carries for error messages.
 """
+
 from __future__ import annotations
 
 import re
@@ -22,8 +23,7 @@ class CapabilityResolver:
         """Return *choice* if it is in *menu*, else raise a fail-loud ValueError."""
         if choice not in menu:
             raise ValueError(
-                f"{self.field} {choice!r} is not in this host's "
-                f"{self.field} menu {list(menu)}"
+                f"{self.field} {choice!r} is not in this host's {self.field} menu {list(menu)}"
             )
         return choice
 

@@ -10,8 +10,6 @@ rebuilt with ``tests/firmware/zephyr/patches/v2_7-shell-retcode.patch``.
 
 import re
 
-import pytest
-
 from otto.host.command_frame import SessionMarkers
 
 # The shared custom_hosts module carries the frame (a third-party-style package,
@@ -19,7 +17,7 @@ from otto.host.command_frame import SessionMarkers
 from tests._fixtures.paths import ensure_custom_hosts_on_path
 
 ensure_custom_hosts_on_path()
-from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame  # noqa: E402
+from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame
 
 M = SessionMarkers.for_session("2700beef")
 FRAME = ZephyrInlineRetcodeFrame()
@@ -42,7 +40,6 @@ def inline_response(output: str, retcode: int, prompt: str = "~$ ") -> str:
 
 
 class TestFraming:
-
     def test_frame_drops_retval_line(self):
         # Three CR-separated lines: BEGIN / cmd / END — no `retval`.
         assert FRAME.frame("version", M) == f"{M.begin}\rversion\r{M.end_prefix}\r"
@@ -60,7 +57,6 @@ class TestFraming:
 
 
 class TestRetcode:
-
     def test_success(self):
         buf = inline_response("Zephyr version 2.7.6", 0)
         assert FRAME.extract_retcode(buf, M) == 0
@@ -89,7 +85,6 @@ class TestRetcode:
 
 
 class TestOutput:
-
     def test_single_line(self):
         buf = inline_response("Zephyr version 2.7.6", 0)
         assert FRAME.parse_output(buf, "version", M) == "Zephyr version 2.7.6"

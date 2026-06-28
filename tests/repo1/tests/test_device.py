@@ -21,13 +21,19 @@ from otto.suite import OttoSuite, register_suite
 
 @dataclass
 class _Options(RepoOptions):
-    firmware: Annotated[str, typer.Option(
-        help="Firmware version to validate against.",
-    )] = "latest"
+    firmware: Annotated[
+        str,
+        typer.Option(
+            help="Firmware version to validate against.",
+        ),
+    ] = "latest"
 
-    check_interfaces: Annotated[bool, typer.Option(
-        help="When True, verify all expected interfaces are up.",
-    )] = True
+    check_interfaces: Annotated[
+        bool,
+        typer.Option(
+            help="When True, verify all expected interfaces are up.",
+        ),
+    ] = True
 
 
 @register_suite()
@@ -42,7 +48,7 @@ class TestDevice(OttoSuite[_Options]):
             f"[bold]Checking reachability[/bold] — "
             f"device_type={suite_options.device_type!r}  "
             f"lab_env={suite_options.lab_env!r}",
-            extra={'markup': True},
+            extra={"markup": True},
         )
         # Placeholder: replace with real host connectivity check
         assert True

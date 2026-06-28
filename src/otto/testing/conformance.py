@@ -17,10 +17,9 @@ Usage::
         assert_reservation_backend_conforms,
     )
 
+
     def test_my_backend_conforms():
-        assert_reservation_backend_conforms(
-            MyBackend(), known_user="alice", known_resources=["lab-a"]
-        )
+        assert_reservation_backend_conforms(MyBackend(), known_user="alice", known_resources=["lab-a"])
 """
 
 from ..configmodule.lab import Lab
@@ -80,8 +79,7 @@ def assert_lab_repository_conforms(
         for n in names:
             c.expect(
                 isinstance(n, str),
-                f"LabRepository: list_labs() entries must be str, got "
-                f"{type(n).__name__} ({n!r})",
+                f"LabRepository: list_labs() entries must be str, got {type(n).__name__} ({n!r})",
             )
 
         for n in names:
@@ -89,13 +87,14 @@ def assert_lab_repository_conforms(
                 continue
             try:
                 lab = repo.load_lab(n)
-            except Exception as e:  # noqa: BLE001 — record, never abort the suite
-                c.expect(False, f"LabRepository: load_lab({n!r}) raised "
-                                f"{type(e).__name__}: {e}")
+            except Exception as e:
+                c.expect(False, f"LabRepository: load_lab({n!r}) raised {type(e).__name__}: {e}")
                 continue
             is_lab = isinstance(lab, Lab)
-            c.expect(is_lab, f"LabRepository: load_lab({n!r}) must return a Lab, "
-                             f"got {type(lab).__name__}")
+            c.expect(
+                is_lab,
+                f"LabRepository: load_lab({n!r}) must return a Lab, got {type(lab).__name__}",
+            )
             if is_lab:
                 for host_id, host in lab.hosts.items():
                     c.expect(
@@ -110,7 +109,7 @@ def assert_lab_repository_conforms(
                     )
                 try:
                     lab2 = repo.load_lab(n)
-                except Exception as e:  # noqa: BLE001 — record, never abort the suite
+                except Exception as e:
                     c.expect(
                         False,
                         f"LabRepository: load_lab({n!r}) idempotency re-call raised "
@@ -118,8 +117,7 @@ def assert_lab_repository_conforms(
                     )
                 else:
                     c.expect(
-                        sorted(lab.hosts) == sorted(lab2.hosts)
-                        and lab.resources == lab2.resources,
+                        sorted(lab.hosts) == sorted(lab2.hosts) and lab.resources == lab2.resources,
                         f"LabRepository: load_lab({n!r}) must be idempotent "
                         f"(two calls must yield equivalent labs)",
                     )
@@ -134,7 +132,7 @@ def assert_lab_repository_conforms(
         )
     except LabNotFoundError:
         pass
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         c.expect(
             False,
             f"LabRepository: an unknown lab must raise LabNotFoundError, got "
@@ -144,13 +142,13 @@ def assert_lab_repository_conforms(
     if expected_labs is not None:
         listed = set(names) if names_ok else set()
         for n in expected_labs:
-            c.expect(n in listed,
-                     f"LabRepository: expected lab {n!r} to appear in list_labs()")
+            c.expect(n in listed, f"LabRepository: expected lab {n!r} to appear in list_labs()")
             try:
                 repo.load_lab(n)
-            except Exception as e:  # noqa: BLE001
-                c.expect(False, f"LabRepository: expected lab {n!r} to load, got "
-                                f"{type(e).__name__}: {e}")
+            except Exception as e:
+                c.expect(
+                    False, f"LabRepository: expected lab {n!r} to load, got {type(e).__name__}: {e}"
+                )
 
     c.raise_if_failures()
 
@@ -185,12 +183,18 @@ def assert_reservation_backend_conforms(
         isinstance(backend, ReservationBackend),
         "ReservationBackend: must satisfy the runtime_checkable ReservationBackend protocol",
     )
-    c.expect(callable(getattr(backend, "get_reserved_resources", None)),
-             "ReservationBackend: get_reserved_resources must be callable")
-    c.expect(callable(getattr(backend, "who_reserved", None)),
-             "ReservationBackend: who_reserved must be callable")
-    c.expect(callable(getattr(backend, "backend_name", None)),
-             "ReservationBackend: backend_name must be callable")
+    c.expect(
+        callable(getattr(backend, "get_reserved_resources", None)),
+        "ReservationBackend: get_reserved_resources must be callable",
+    )
+    c.expect(
+        callable(getattr(backend, "who_reserved", None)),
+        "ReservationBackend: who_reserved must be callable",
+    )
+    c.expect(
+        callable(getattr(backend, "backend_name", None)),
+        "ReservationBackend: backend_name must be callable",
+    )
 
     _backend_name_callable = callable(getattr(backend, "backend_name", None))
     name = backend.backend_name() if _backend_name_callable else ""
@@ -199,8 +203,10 @@ def assert_reservation_backend_conforms(
         f"ReservationBackend: backend_name() must return a non-empty str, got {name!r}",
     )
     if _backend_name_callable:
-        c.expect(name == backend.backend_name(),
-                 "ReservationBackend: backend_name() must be stable across calls")
+        c.expect(
+            name == backend.backend_name(),
+            "ReservationBackend: backend_name() must be stable across calls",
+        )
 
     probe_user = known_user if known_user is not None else _PROBE_USER
     reserved = (
@@ -216,9 +222,11 @@ def assert_reservation_backend_conforms(
     )
     if reserved_ok:
         for r in reserved:
-            c.expect(isinstance(r, str),
-                     f"ReservationBackend: get_reserved_resources() entries must be str, "
-                     f"got {type(r).__name__}")
+            c.expect(
+                isinstance(r, str),
+                f"ReservationBackend: get_reserved_resources() entries must be str, "
+                f"got {type(r).__name__}",
+            )
 
     probe_resource = known_resources[0] if known_resources else _PROBE_RESOURCE
     holders = (
@@ -234,9 +242,10 @@ def assert_reservation_backend_conforms(
     )
     if holders_ok:
         for u in holders:
-            c.expect(isinstance(u, str),
-                     f"ReservationBackend: who_reserved() entries must be str, "
-                     f"got {type(u).__name__}")
+            c.expect(
+                isinstance(u, str),
+                f"ReservationBackend: who_reserved() entries must be str, got {type(u).__name__}",
+            )
 
     if known_user is not None and known_resources is not None:
         held = (
@@ -246,9 +255,7 @@ def assert_reservation_backend_conforms(
         )
         for r in known_resources:
             r_holders = (
-                backend.who_reserved(r)
-                if callable(getattr(backend, "who_reserved", None))
-                else []
+                backend.who_reserved(r) if callable(getattr(backend, "who_reserved", None)) else []
             )
             c.expect(
                 isinstance(r_holders, list) and known_user in r_holders,
@@ -283,8 +290,10 @@ def assert_reservation_backend_conforms(
         )
         if u_ok:
             for u in usernames:
-                c.expect(isinstance(u, str),
-                         f"SupportsUsernameCompletion: list_usernames() entries must be "
-                         f"str, got {type(u).__name__}")
+                c.expect(
+                    isinstance(u, str),
+                    f"SupportsUsernameCompletion: list_usernames() entries must be "
+                    f"str, got {type(u).__name__}",
+                )
 
     c.raise_if_failures()

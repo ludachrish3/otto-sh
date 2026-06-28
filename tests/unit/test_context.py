@@ -3,11 +3,19 @@ from pathlib import Path
 
 import pytest
 
-from otto.context import HostScope, OttoContext, get_context, reset_context, set_context, try_get_context
+from otto.context import (
+    HostScope,
+    OttoContext,
+    get_context,
+    reset_context,
+    set_context,
+    try_get_context,
+)
 
 
 class _FakeHost:
     """Minimal stand-in for a RemoteHost: has _connected and an idempotent close()."""
+
     def __init__(self, host_id: str, connected: bool = True):
         self.id = host_id
         self._is_connected = connected
@@ -51,6 +59,7 @@ async def test_hostscope_isolates_errors():
     class _Boom(_FakeHost):
         async def close(self):
             raise RuntimeError("boom")
+
     boom = _Boom("boom")
     ok = _FakeHost("ok")
     scope = HostScope()
@@ -66,11 +75,14 @@ async def test_hostscope_closes_hosts_without_connected_attr():
     """A host lacking the RemoteHost-private ``_connected`` (e.g. a
     DockerContainerHost / LocalHost, which are BaseHosts) must still be closed by
     the scope rather than crash with AttributeError."""
+
     class _NoConnFlag:
         def __init__(self) -> None:
             self.close_calls = 0
+
         async def close(self) -> None:
             self.close_calls += 1
+
     h = _NoConnFlag()
     assert not hasattr(h, "_connected")
     scope = HostScope()
@@ -86,6 +98,7 @@ from otto.configmodule.lab import Lab
 def _lab_with(*ne_names: str) -> Lab:
     """Build a Lab with real UnixHosts from available NE names in the test lab data."""
     from tests.conftest import make_host
+
     lab = Lab(name="t")
     for ne in ne_names:
         lab.add_host(make_host(ne))
@@ -94,6 +107,7 @@ def _lab_with(*ne_names: str) -> Lab:
 
 def test_get_host_unknown_id_raises_helpful_keyerror():
     import pytest
+
     ctx = OttoContext(lab=_lab_with("carrot"))
     with pytest.raises(KeyError, match="Available"):
         ctx.get_host("does-not-exist")
@@ -181,7 +195,7 @@ async def test_run_on_all_hosts_normalizes_str_to_list():
     lab.hosts["h1"] = h
     ctx = OttoContext(lab=lab)
     results = await ctx.run_on_all_hosts("uname -a")
-    assert h.run_calls == [(["uname -a"], None)]   # str normalized to a single-element list
+    assert h.run_calls == [(["uname -a"], None)]  # str normalized to a single-element list
     assert results["h1"] == "ran:h1"
 
 
@@ -202,11 +216,13 @@ def test_async_typer_command_enters_and_exits_scope():
     ctx.scope.register(fake)
     token = set_context(ctx)
     try:
+
         async def _cmd():
             return "ok"
+
         result = async_typer_command(_cmd)()
         assert result == "ok"
-        assert fake.close_calls == 1   # wrapper entered ctx.scope; exit swept the connected host
+        assert fake.close_calls == 1  # wrapper entered ctx.scope; exit swept the connected host
     finally:
         reset_context(token)
 
@@ -216,7 +232,8 @@ def test_async_typer_command_runs_without_active_context():
 
     async def _cmd():
         return 42
-    assert async_typer_command(_cmd)() == 42   # no context set → still runs, no scope
+
+    assert async_typer_command(_cmd)() == 42  # no context set → still runs, no scope
 
 
 def test_bare_accessors_delegate_to_active_context():
@@ -237,11 +254,12 @@ def test_bare_accessors_delegate_to_active_context():
 
 def test_addhost_wires_lab_backref_and_survives_override_copy():
     import dataclasses
+
     lab = _lab_with("carrot")
     host = next(iter(lab.hosts.values()))
     assert host._lab is lab
-    copy = dataclasses.replace(host)            # *_options overrides use replace
-    assert copy._lab is lab                     # field must carry forward
+    copy = dataclasses.replace(host)  # *_options overrides use replace
+    assert copy._lab is lab  # field must carry forward
 
 
 @pytest.mark.asyncio
@@ -262,6 +280,7 @@ async def test_base_host_async_cm_delegates_to_close():
 
     class _MinimalHost(BaseHost):
         """Minimal BaseHost concrete subclass: tracks close() calls."""
+
         def __init__(self) -> None:
             self.close_calls = 0
 
@@ -284,8 +303,8 @@ async def test_open_context_sets_and_tears_down():
     assert try_get_context() is None
     async with otto.open_context(lab=lab) as ctx:
         assert try_get_context() is ctx
-        list(ctx.all_hosts())          # registers into ctx.scope
-    assert try_get_context() is None   # contextvar reset on exit
+        list(ctx.all_hosts())  # registers into ctx.scope
+    assert try_get_context() is None  # contextvar reset on exit
 
 
 @pytest.mark.asyncio
@@ -314,5 +333,5 @@ def test_otto_context_output_dir_defaults_none_and_is_settable():
     # OttoContext requires a lab; use a minimal stand-in via the dataclass.
     ctx = OttoContext(lab=None)  # type: ignore[arg-type]
     assert ctx.output_dir is None
-    ctx.output_dir = Path('/tmp/otto-run-xyz')
-    assert ctx.output_dir == Path('/tmp/otto-run-xyz')
+    ctx.output_dir = Path("/tmp/otto-run-xyz")
+    assert ctx.output_dir == Path("/tmp/otto-run-xyz")

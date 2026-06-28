@@ -13,13 +13,14 @@ so new readers block at the gate while in-flight readers drain — the writer
 can't be starved. Readers drop the gate the instant they hold the SHARED
 resource lock, so they still run concurrently.
 """
+
 from __future__ import annotations
 
 import fcntl
 import os
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 GATE_NAME = "zephyr_console.gate"
 RESOURCE_NAME = "zephyr_console.resource"

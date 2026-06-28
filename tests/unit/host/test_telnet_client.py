@@ -15,13 +15,13 @@ from unittest.mock import MagicMock
 import pytest
 from telnetlib3.telopt import IAC, NAWS, SB, SE
 
-from otto.host.telnet import TelnetClient
 from otto.host import telnet as telnet_mod
+from otto.host.telnet import TelnetClient
 
 
 @pytest.fixture
 def client() -> TelnetClient:
-    c = TelnetClient(host='10.0.0.1', user='u', password='p')
+    c = TelnetClient(host="10.0.0.1", user="u", password="p")
     # _send_naws() only touches self.writer — install a mock that mirrors
     # the telnetlib3 TelnetWriter surface area we care about.
     c.writer = MagicMock()
@@ -55,7 +55,7 @@ class TestSendNaws:
         of the command framing bytes."""
         client._send_naws(80, 24)
         frame = client.writer.send_iac.call_args.args[0]
-        assert frame == IAC + SB + NAWS + struct.pack('>HH', 80, 24) + IAC + SE
+        assert frame == IAC + SB + NAWS + struct.pack(">HH", 80, 24) + IAC + SE
 
     def test_frame_starts_with_single_iac_sb(self, client: TelnetClient):
         """The regression symptom: the old code wrote the frame through
@@ -91,7 +91,7 @@ class TestSendNaws:
 
     def test_missing_writer_is_noop(self):
         """Degrade gracefully if called before connect/after close."""
-        c = TelnetClient(host='10.0.0.1', user='u', password='p')
+        c = TelnetClient(host="10.0.0.1", user="u", password="p")
         assert c.writer is None
         c._send_naws(80, 24)  # must not raise
 
@@ -101,7 +101,7 @@ class TestSendNaws:
         client._send_naws(-1, -5)
         frame = client.writer.send_iac.call_args.args[0]
         payload = frame[3:-2]
-        assert payload == b'\x00\x00\x00\x00'
+        assert payload == b"\x00\x00\x00\x00"
 
 
 class TestLogin:
@@ -115,7 +115,7 @@ class TestLogin:
 
     @staticmethod
     def _login_client(prompt: str | None = None) -> TelnetClient:
-        c = TelnetClient(host='10.0.0.1', user='u', password='p', prompt=prompt)
+        c = TelnetClient(host="10.0.0.1", user="u", password="p", prompt=prompt)
         c.reader = asyncio.StreamReader()
         c.writer = MagicMock()
         return c
@@ -126,26 +126,26 @@ class TestLogin:
         no silence-drain, so a tight timeout must not trip."""
         c = self._login_client(prompt=None)
         # login: prompt, then password: prompt — both end in the ':' delimiter.
-        c.reader.feed_data(b'login:Password:')
+        c.reader.feed_data(b"login:Password:")
 
         await asyncio.wait_for(c.login(), timeout=0.5)
 
-        writes = b''.join(call.args[0] for call in c.writer.write.call_args_list)
-        assert b'u\r\n' in writes
-        assert b'p\r\n' in writes
+        writes = b"".join(call.args[0] for call in c.writer.write.call_args_list)
+        assert b"u\r\n" in writes
+        assert b"p\r\n" in writes
 
     @pytest.mark.asyncio
     async def test_prompt_fast_path_waits_for_prompt(self):
         """With ``prompt`` set, login blocks until the prompt string appears."""
-        c = self._login_client(prompt='ready> ')
-        c.reader.feed_data(b'login:Password:')
+        c = self._login_client(prompt="ready> ")
+        c.reader.feed_data(b"login:Password:")
 
         login_task = asyncio.create_task(c.login())
         # Not done yet — the prompt hasn't arrived.
         await asyncio.sleep(0.05)
         assert not login_task.done()
 
-        c.reader.feed_data(b'banner text\nready> ')
+        c.reader.feed_data(b"banner text\nready> ")
         await asyncio.wait_for(login_task, timeout=0.5)
 
 
@@ -187,6 +187,7 @@ class TestConsoleTransportRegistry:
     @pytest.mark.asyncio
     async def test_connect_registers_when_single_client_console(self, monkeypatch):
         from otto.host.options import TelnetOptions
+
         fake_writer = MagicMock()
         fake_writer.transport = MagicMock()
 
@@ -195,7 +196,9 @@ class TestConsoleTransportRegistry:
 
         monkeypatch.setattr(telnet_mod, "open_telnet_connection", fake_open)
         c = TelnetClient(
-            host="h", user="u", password="p",
+            host="h",
+            user="u",
+            password="p",
             options=TelnetOptions(login=False, single_client_console=True),
         )
         await c.connect(interactive=True)  # interactive=True skips ECHO negotiation
@@ -204,6 +207,7 @@ class TestConsoleTransportRegistry:
     @pytest.mark.asyncio
     async def test_connect_does_not_register_plain_telnet(self, monkeypatch):
         from otto.host.options import TelnetOptions
+
         fake_writer = MagicMock()
         fake_writer.transport = MagicMock()
 
@@ -212,7 +216,9 @@ class TestConsoleTransportRegistry:
 
         monkeypatch.setattr(telnet_mod, "open_telnet_connection", fake_open)
         c = TelnetClient(
-            host="h", user="u", password="p",
+            host="h",
+            user="u",
+            password="p",
             options=TelnetOptions(login=False, single_client_console=False),
         )
         await c.connect(interactive=True)
@@ -221,6 +227,7 @@ class TestConsoleTransportRegistry:
     @pytest.mark.asyncio
     async def test_close_deregisters(self, monkeypatch):
         from otto.host.options import TelnetOptions
+
         fake_writer = MagicMock()
         fake_writer.transport = MagicMock()
 
@@ -229,7 +236,9 @@ class TestConsoleTransportRegistry:
 
         monkeypatch.setattr(telnet_mod, "open_telnet_connection", fake_open)
         c = TelnetClient(
-            host="h", user="u", password="p",
+            host="h",
+            user="u",
+            password="p",
             options=TelnetOptions(login=False, single_client_console=True),
         )
         await c.connect(interactive=True)

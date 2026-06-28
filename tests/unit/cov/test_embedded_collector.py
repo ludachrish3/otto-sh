@@ -28,7 +28,7 @@ def _mock_embedded_host(host_id: str, console_output: str) -> MagicMock:
     return host
 
 
-@pytest.fixture()
+@pytest.fixture
 def fake_config_module():
     """Install an OttoContext so ``all_hosts()`` returns test hosts.
 
@@ -79,7 +79,9 @@ async def test_collect_one_host_lays_out_decoded_gcda_under_per_host_dir(tmp_pat
     host = _mock_embedded_host("sprout_cov", console)
 
     dest = await _collect_one_embedded_host(
-        host, "llext call_fn cov cov_dump", tmp_path,
+        host,
+        "llext call_fn cov cov_dump",
+        tmp_path,
     )
 
     assert dest == tmp_path / "sprout_cov"
@@ -95,7 +97,9 @@ async def test_collect_one_host_skips_non_embedded_hosts(tmp_path):
     unix_host.oneshot = AsyncMock()
 
     dest = await _collect_one_embedded_host(
-        unix_host, "llext call_fn cov cov_dump", tmp_path,
+        unix_host,
+        "llext call_fn cov cov_dump",
+        tmp_path,
     )
 
     assert dest is None
@@ -104,14 +108,16 @@ async def test_collect_one_host_skips_non_embedded_hosts(tmp_path):
 
 @pytest.mark.asyncio
 async def test_collect_all_stages_embedded_hosts_and_skips_others(
-    tmp_path, fake_config_module,
+    tmp_path,
+    fake_config_module,
 ):
     """collect_all dumps every embedded host into ``staging_root/<id>/`` and
     leaves non-embedded hosts untouched, returning ``{host_id: dir}`` like
     GcdaFetcher.fetch_all.
     """
     embedded = _mock_embedded_host(
-        "sprout_cov", (FIXTURES / "cov_dump_console.txt").read_text(),
+        "sprout_cov",
+        (FIXTURES / "cov_dump_console.txt").read_text(),
     )
     unix = MagicMock()  # not an EmbeddedHost
     unix.id = "carrot"
@@ -119,7 +125,8 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
     fake_config_module(embedded, unix)
 
     collector = EmbeddedGcdaCollector(
-        tmp_path / "staging", "llext call_fn cov cov_dump",
+        tmp_path / "staging",
+        "llext call_fn cov cov_dump",
     )
     result = await collector.collect_all()
 
@@ -131,11 +138,13 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
 
 @pytest.mark.asyncio
 async def test_collect_embedded_coverage_drives_configured_extension(
-    tmp_path, fake_config_module,
+    tmp_path,
+    fake_config_module,
 ):
     """The [coverage.embedded].extension config drives `llext call_fn <ext> cov_dump`."""
     embedded = _mock_embedded_host(
-        "sprout_cov", (FIXTURES / "cov_dump_console.txt").read_text(),
+        "sprout_cov",
+        (FIXTURES / "cov_dump_console.txt").read_text(),
     )
     fake_config_module(embedded)
     cov_config = {"embedded": {"extension": "cov_ext"}}
@@ -155,7 +164,8 @@ async def test_collect_embedded_coverage_noop_without_embedded_config(tmp_path):
 
 @pytest.mark.asyncio
 async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
-    tmp_path, fake_config_module,
+    tmp_path,
+    fake_config_module,
 ):
     """A coverage host-id ``pattern`` selects which embedded hosts are dumped.
 
@@ -165,16 +175,20 @@ async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
     import re
 
     target = _mock_embedded_host(
-        "sprout_cov", (FIXTURES / "cov_dump_console.txt").read_text(),
+        "sprout_cov",
+        (FIXTURES / "cov_dump_console.txt").read_text(),
     )
     other = _mock_embedded_host(
-        "sprout_other", (FIXTURES / "cov_dump_console.txt").read_text(),
+        "sprout_other",
+        (FIXTURES / "cov_dump_console.txt").read_text(),
     )
     fake_config_module(target, other)
     cov_config = {"embedded": {"extension": "cov_ext"}}
 
     result = await collect_embedded_coverage(
-        cov_config, tmp_path / "cov", pattern=re.compile("sprout_cov"),
+        cov_config,
+        tmp_path / "cov",
+        pattern=re.compile("sprout_cov"),
     )
 
     assert set(result) == {"sprout_cov"}

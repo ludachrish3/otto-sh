@@ -92,7 +92,7 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         """
         lines = self._region_before_end(buffer, m)
         begin = self._begin_line(lines, m)
-        for ln in reversed(lines[begin + 1:]):
+        for ln in reversed(lines[begin + 1 :]):
             match = _RETCODE_RE.search(ln)
             if match:
                 return int(match.group(1))
@@ -118,14 +118,12 @@ class ZephyrInlineRetcodeFrame(ZephyrFrame):
         """
         lines = self._region_before_end(buffer, m)
         begin = self._begin_line(lines, m)
-        rc_idx = [
-            i for i in range(begin + 1, len(lines)) if _RETCODE_RE.search(lines[i])
-        ]
+        rc_idx = [i for i in range(begin + 1, len(lines)) if _RETCODE_RE.search(lines[i])]
         if len(rc_idx) < 2:
             # Need both BEGIN's and the command's code to bracket the output.
             return ""
         begin_rc, cmd_rc = rc_idx[0], rc_idx[-1]
         # Between the two codes: [prompt, <output...>] once empties are dropped.
-        block = [ln for ln in lines[begin_rc + 1:cmd_rc] if ln.strip()]
+        block = [ln for ln in lines[begin_rc + 1 : cmd_rc] if ln.strip()]
         output = block[1:] if block else []  # drop the bracketing prompt
         return "\n".join(output).strip()

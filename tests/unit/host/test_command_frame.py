@@ -26,7 +26,6 @@ M = SessionMarkers.for_session("cafef00d")
 
 
 class TestSessionMarkers:
-
     def test_for_session_derives_all_four_tokens(self):
         m = SessionMarkers.for_session("abc123")
         assert m.begin == "__OTTO_abc123_BEGIN__"
@@ -40,7 +39,6 @@ class TestSessionMarkers:
 
 
 class TestBashFrame:
-
     frame = BashFrame()
 
     def test_type_name(self):
@@ -62,9 +60,9 @@ class TestBashFrame:
         assert pat.search(f"{M.end_prefix}127__").group(1) == "127"
 
     def test_extract_retcode_reads_end_marker_digits(self):
-        buf = f'{M.begin}\nhi\n{M.end_prefix}0__\n'
+        buf = f"{M.begin}\nhi\n{M.end_prefix}0__\n"
         assert self.frame.extract_retcode(buf, M) == 0
-        buf_fail = f'{M.begin}\nboom\n{M.end_prefix}127__\n'
+        buf_fail = f"{M.begin}\nboom\n{M.end_prefix}127__\n"
         assert self.frame.extract_retcode(buf_fail, M) == 127
 
     def test_extract_retcode_missing_marker_is_minus_one(self):
@@ -76,14 +74,14 @@ class TestBashFrame:
         assert not self.frame.marks_begin("unrelated output", M)
 
     def test_parse_output_slices_between_markers(self):
-        buf = f'{M.begin}\nline one\nline two\n{M.end_prefix}0__\n'
+        buf = f"{M.begin}\nline one\nline two\n{M.end_prefix}0__\n"
         assert self.frame.parse_output(buf, "cmd", M) == "line one\nline two"
 
     def test_parse_output_uses_last_begin_marker(self):
         # Echoed wrapped command means the marker appears twice; rfind wins.
         buf = (
-            f'echo "{M.begin}"; cmd\n'   # echoed command line (false marker)
-            f'{M.begin}\nreal output\n{M.end_prefix}0__\n'
+            f'echo "{M.begin}"; cmd\n'  # echoed command line (false marker)
+            f"{M.begin}\nreal output\n{M.end_prefix}0__\n"
         )
         assert self.frame.parse_output(buf, "cmd", M) == "real output"
 
@@ -93,7 +91,6 @@ class TestBashFrame:
 
 
 class TestZephyrFrame:
-
     frame = ZephyrFrame()
 
     def test_type_name(self):
@@ -173,7 +170,6 @@ class TestZephyrSerialFrame:
 
 
 class TestRegistry:
-
     def test_stock_frames_resolve_by_name(self):
         assert isinstance(build_command_frame("bash"), BashFrame)
         assert isinstance(build_command_frame("zephyr"), ZephyrFrame)

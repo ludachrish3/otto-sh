@@ -108,7 +108,7 @@ class EmbeddedHost(RemoteHost):
     element: str = field(repr=False)
     """Network element to which this host belongs."""
 
-    os_type: OsType = 'embedded'
+    os_type: OsType = "embedded"
     """Default profile selector for a bare :class:`EmbeddedHost`. Subclasses
     (e.g. :class:`ZephyrHost`) override this to their registered name."""
 
@@ -141,18 +141,18 @@ class EmbeddedHost(RemoteHost):
     is_virtual: bool = False
     """Determines whether a host is a VM/emulator (e.g. QEMU) or not."""
 
-    term: str = 'telnet'
+    term: str = "telnet"
     """Active session transport. Embedded hosts speak telnet today; the command
     frame is transport-independent, so this is not a hard coupling."""
 
-    transfer: str = 'console'
+    transfer: str = "console"
     """File-transfer backend. ``console`` (default) drives the device shell's
     ``fs`` commands; ``tftp`` is reserved and not yet implemented."""
 
-    valid_terms: list[str] = field(default_factory=lambda: ['telnet'])
+    valid_terms: list[str] = field(default_factory=lambda: ["telnet"])
     """Closed menu of term backends this host supports (active is ``term``)."""
 
-    valid_transfers: list[str] = field(default_factory=lambda: ['console'])
+    valid_transfers: list[str] = field(default_factory=lambda: ["console"])
     """Closed menu of transfer backends this host supports (active is ``transfer``)."""
 
     filesystem: EmbeddedFileSystem = field(default_factory=NoFileSystem)
@@ -235,11 +235,11 @@ class EmbeddedHost(RemoteHost):
     """Named secondary interface addresses (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
     Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 
-    products: list['Product'] = field(default_factory=list)
+    products: list["Product"] = field(default_factory=list)
     """Software-under-test deployed to this host. Default empty. See
     :attr:`~otto.host.host.BaseHost.products`."""
 
-    power_control: 'PowerController | None' = None
+    power_control: "PowerController | None" = None
     """Pluggable power backend. Lab data declares it by string (a config-free
     controller type) or a ``[power]`` table (``{type, on_cmd, off_cmd, ...}``);
     ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
@@ -284,17 +284,20 @@ class EmbeddedHost(RemoteHost):
         # constructed EmbeddedHost may still pass a string here. Coerce.
         if isinstance(self.filesystem, str):
             from .embedded_filesystem import build_filesystem
+
             self.filesystem = build_filesystem(self.filesystem)
 
         # Same for ``command_frame`` — lab JSON declares the dialect by name.
         if isinstance(self.command_frame, str):
             from .command_frame import build_command_frame
+
             self.command_frame = build_command_frame(self.command_frame)
 
         # Same for ``loader`` — lab JSON declares the binary-load strategy by
         # name. Optional, so no fail-loud here (load()/unload() check at call).
         if isinstance(self.loader, str):
             from .binary_loader import build_binary_loader
+
             self.loader = build_binary_loader(self.loader)
 
         self.power_control = power_control_from_spec(self.power_control)
@@ -306,7 +309,7 @@ class EmbeddedHost(RemoteHost):
             raise ValueError(
                 f"EmbeddedHost {self.name!r} has no command_frame. A bare "
                 f"'embedded' host carries no shell-framing dialect. Set os_type "
-                f"to a profile that supplies one (e.g. \"zephyr\"), or pass an "
+                f'to a profile that supplies one (e.g. "zephyr"), or pass an '
                 f"explicit command_frame."
             )
 
@@ -346,15 +349,18 @@ class EmbeddedHost(RemoteHost):
             command_frame=self.command_frame,
             init_timeout=_EMBEDDED_INIT_TIMEOUT,
         )
-        self._file_transfer = cast(EmbeddedFileTransfer, build_transfer_backend(self.transfer).create(
-            TransferContext(
-                transfer=self.transfer,
-                host_name=self.name,
-                exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),
-                filesystem=self.filesystem,
-                max_filename_len=self.max_filename_len,
-            )
-        ))
+        self._file_transfer = cast(
+            "EmbeddedFileTransfer",
+            build_transfer_backend(self.transfer).create(
+                TransferContext(
+                    transfer=self.transfer,
+                    host_name=self.name,
+                    exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),
+                    filesystem=self.filesystem,
+                    max_filename_len=self.max_filename_len,
+                )
+            ),
+        )
 
     ####################
     #  Connection
@@ -366,7 +372,9 @@ class EmbeddedHost(RemoteHost):
         try:
             await self._connections.telnet()
             self._log_command("[DRY RUN] Connection verified")
-            return CommandStatus(command="connect", output="Connection successful", status=Status.Success, retcode=0)
+            return CommandStatus(
+                command="connect", output="Connection successful", status=Status.Success, retcode=0
+            )
         except Exception as e:
             self._log_command(f"[DRY RUN] Connection FAILED: {e}")
             return CommandStatus(command="connect", output=str(e), status=Status.Error, retcode=1)
@@ -459,7 +467,9 @@ class EmbeddedHost(RemoteHost):
     ) -> str:
         """Wait for a pattern in the host's session output stream."""
         if is_dry_run():
-            self._log_command("[DRY RUN] expect() skipped — pattern would never match without a live connection")
+            self._log_command(
+                "[DRY RUN] expect() skipped — pattern would never match without a live connection"
+            )
             return ""
         return await self._session_mgr.expect(pattern, timeout)
 
@@ -481,7 +491,10 @@ class EmbeddedHost(RemoteHost):
     @cli_exposed(success="Download complete.")
     async def get(
         self,
-        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Remote file(s) to download.")],
+        src_files: Annotated[
+            list[Path] | Path,
+            Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
+        ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
@@ -496,14 +509,16 @@ class EmbeddedHost(RemoteHost):
             src_files = [src_files]
         if is_dry_run():
             return self._dry_run_transfer("GET", src_files, dest_dir)
-        with SuppressCommandOutput(host=cast(Host, self)):
+        with SuppressCommandOutput(host=cast("Host", self)):
             return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
 
     @override
     @cli_exposed(success="Transfer complete.")
     async def put(
         self,
-        src_files: Annotated[list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")],
+        src_files: Annotated[
+            list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
+        ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
     ) -> tuple[Status, str]:
@@ -524,7 +539,7 @@ class EmbeddedHost(RemoteHost):
         dest_dir = self._resolve_dest(dest_dir)
         if is_dry_run():
             return self._dry_run_transfer("PUT", src_files, dest_dir)
-        with SuppressCommandOutput(host=cast(Host, self)):
+        with SuppressCommandOutput(host=cast("Host", self)):
             return await self._file_transfer.put_files(src_files, dest_dir, show_progress)
 
     ####################
@@ -562,8 +577,9 @@ class EmbeddedHost(RemoteHost):
     async def mkdir(self, path: "str | Path", parents: bool = True) -> tuple[Status, str]:
         self._no_fileop("mkdir")
 
-    async def cp(self, src: "str | Path", dst: "str | Path",
-                 recursive: bool = False) -> tuple[Status, str]:
+    async def cp(
+        self, src: "str | Path", dst: "str | Path", recursive: bool = False
+    ) -> tuple[Status, str]:
         self._no_fileop("cp")
 
     async def mv(self, src: "str | Path", dst: "str | Path") -> tuple[Status, str]:
@@ -572,8 +588,9 @@ class EmbeddedHost(RemoteHost):
     async def read_file(self, path: "str | Path") -> str:
         self._no_fileop("read_file")
 
-    async def write_file(self, path: "str | Path", data: str,
-                         append: bool = False) -> tuple[Status, str]:
+    async def write_file(
+        self, path: "str | Path", data: str, append: bool = False
+    ) -> tuple[Status, str]:
         self._no_fileop("write_file")
 
     ####################
@@ -618,7 +635,10 @@ class EmbeddedHost(RemoteHost):
                     handler(str(file), f"{self.name}:{name}", done, total)
 
                 result = await self._session_mgr.run_cmd(
-                    cmd, timeout=timeout, log=False, write_progress=_wp,
+                    cmd,
+                    timeout=timeout,
+                    log=False,
+                    write_progress=_wp,
                 )
         else:
             result = await self._session_mgr.run_cmd(cmd, timeout=timeout, log=False)
@@ -653,8 +673,7 @@ class EmbeddedHost(RemoteHost):
             if loader.is_fully_unloaded(result.output):
                 return Status.Success, ""
         return Status.Error, (
-            f"{name} still resident after {loader.max_unload_rounds} unload "
-            f"rounds: {last.strip()}"
+            f"{name} still resident after {loader.max_unload_rounds} unload rounds: {last.strip()}"
         )
 
 
@@ -671,10 +690,10 @@ class ZephyrHost(EmbeddedHost):
     per-build ``OsProfile`` data bundles over them.
     """
 
-    os_type: OsType = 'zephyr'
+    os_type: OsType = "zephyr"
     """Profile selector recorded on the host. ``zephyr`` for this class."""
 
-    os_name: str | None = 'Zephyr'
+    os_name: str | None = "Zephyr"
     """Kernel/OS name — ``Zephyr`` for this class."""
 
     command_frame: CommandFrame = field(default_factory=ZephyrFrame)

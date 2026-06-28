@@ -13,9 +13,7 @@ from otto.reservations import (
 
 
 def _repo(reservation_settings, sut_dir):
-    return types.SimpleNamespace(
-        reservation_settings=reservation_settings, sut_dir=sut_dir
-    )
+    return types.SimpleNamespace(reservation_settings=reservation_settings, sut_dir=sut_dir)
 
 
 def test_skip_does_not_build_backend(tmp_path, monkeypatch):

@@ -33,11 +33,11 @@ def _junitxml(session: nox.Session, group: str) -> str:
     """Return a `--junitxml=` arg pointing at reports/junit/<group>/<session>.xml."""
     return f"--junitxml={JUNIT_DIR / group / f'{session.name}.xml'}"
 
+
 nox.options.default_venv_backend = "uv"
-# `lint` is intentionally opt-in (`nox -s lint`) until the existing ruff
-# violations under tests/ and src/otto/ have been swept; running it by
-# default would block the matrix on pre-existing style debt.
-nox.options.sessions = ["tests_unit", "typecheck", "docs"]
+# `lint` runs ruff check + format --check; it is part of the default gate now
+# that the strict config (select=ALL minus the deny-list) is green.
+nox.options.sessions = ["lint", "tests_unit", "typecheck", "docs"]
 
 UNIT_TEST_ARGS = (
     "tests/unit",

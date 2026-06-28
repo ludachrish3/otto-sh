@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
+.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck lint format clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -130,8 +130,9 @@ nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. R
 nox: ## Run the FULL test suite (all environments) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 
-validate: ## Run validation (clean-dist, typecheck, coverage, docs) without building dist
+validate: ## Run validation (clean-dist, lint, typecheck, coverage, docs) without building dist
 	@$(MAKE) clean-dist \
+		&& $(MAKE) lint \
 		&& $(MAKE) typecheck \
 		&& $(MAKE) $(COVERAGE_TARGET) \
 		&& $(MAKE) docs
@@ -226,6 +227,13 @@ vm-health: ## Probe every lab VM + Zephyr QEMU instance; prints per-host timesta
 
 qemu-restart: ## Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded bed.
 	uv run python scripts/lab_health.py --restart-qemu
+
+lint: ## Run ruff lint + format checks (part of validate/ci/all)
+	uv run ruff check .
+	uv run ruff format --check .
+
+format: ## Apply ruff autoformat to the tree
+	uv run ruff format .
 
 typecheck: ## Run ty type checker (advisory during trial; not wired into `all`)
 	uv run ty check

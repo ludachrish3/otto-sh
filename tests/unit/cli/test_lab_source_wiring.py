@@ -27,24 +27,30 @@ def test_no_lab_block_defaults_to_json_over_merged_paths(tmp_path):
     p2 = tmp_path / "r2"
     p1.mkdir()
     p2.mkdir()
-    _hosts_file(p1, [
-        {
-            "ip": "10.10.200.11",
-            "element": "orange",
-            "creds": {"vagrant": "vagrant"},
-            "resources": ["orange"],
-            "labs": ["merged"],
-        },
-    ])
-    _hosts_file(p2, [
-        {
-            "ip": "10.10.200.12",
-            "element": "tomato",
-            "creds": {"vagrant": "vagrant"},
-            "resources": ["tomato"],
-            "labs": ["merged"],
-        },
-    ])
+    _hosts_file(
+        p1,
+        [
+            {
+                "ip": "10.10.200.11",
+                "element": "orange",
+                "creds": {"vagrant": "vagrant"},
+                "resources": ["orange"],
+                "labs": ["merged"],
+            },
+        ],
+    )
+    _hosts_file(
+        p2,
+        [
+            {
+                "ip": "10.10.200.12",
+                "element": "tomato",
+                "creds": {"vagrant": "vagrant"},
+                "resources": ["tomato"],
+                "labs": ["merged"],
+            },
+        ],
+    )
 
     # lab_settings == {} (no [lab] block); aggregated search paths from both repos.
     repository = build_lab_repository({}, tmp_path, search_paths=[p1, p2])
@@ -65,6 +71,7 @@ def test_custom_backend_selected_by_name(tmp_path):
 
         def load_lab(self, name, preferences=None):
             from otto.configmodule.lab import Lab
+
             return Lab(name=name)
 
         def list_labs(self):
@@ -73,8 +80,7 @@ def test_custom_backend_selected_by_name(tmp_path):
     register_lab_repository("dict-wiring-test", DictRepo)
     try:
         repository = build_lab_repository(
-            {"backend": "dict-wiring-test",
-             "dict-wiring-test": {"names": [sentinel_lab_name]}},
+            {"backend": "dict-wiring-test", "dict-wiring-test": {"names": [sentinel_lab_name]}},
             tmp_path,
             search_paths=[tmp_path],
         )

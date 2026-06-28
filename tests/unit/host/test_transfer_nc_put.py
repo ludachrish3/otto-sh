@@ -34,8 +34,8 @@ from otto.host.transfer import NcFileTransfer
 from otto.utils import CommandStatus, Status
 
 
-def _ok(output: str = '') -> CommandStatus:
-    return CommandStatus(command='', output=output, status=Status.Success, retcode=0)
+def _ok(output: str = "") -> CommandStatus:
+    return CommandStatus(command="", output=output, status=Status.Success, retcode=0)
 
 
 class _FakeWriter:
@@ -70,27 +70,27 @@ def _make_ft(
     exec_cmd: AsyncMock,
     *,
     has_tunnel: bool = False,
-    term: str = 'ssh',
+    term: str = "ssh",
     listener_timeout: float = 30.0,
 ) -> NcFileTransfer:
     mock_connections = MagicMock(spec=ConnectionManager)
     mock_connections.has_tunnel = has_tunnel
-    mock_connections.ip = '10.0.0.1'
+    mock_connections.ip = "10.0.0.1"
     mock_connections.term = term
     return NcFileTransfer(
         connections=mock_connections,
-        name='tomato',
-        transfer='nc',
+        name="tomato",
+        transfer="nc",
         nc_options=NcOptions(
-            exec_name='nc',
+            exec_name="nc",
             port=9000,
-            port_strategy='ss',
+            port_strategy="ss",
             port_cmd=None,
-            listener_check='ss',
+            listener_check="ss",
             listener_cmd=None,
             listener_timeout=listener_timeout,
         ),
-        get_local_ip=lambda: '127.0.0.1',
+        get_local_ip=lambda: "127.0.0.1",
         exec_cmd=exec_cmd,
     )
 
@@ -102,23 +102,25 @@ class TestNcPutDrain:
     async def test_drains_periodically(self, tmp_path: Path):
         # 8 KB blocks × 256 = 2 MB. At drain_every=64, that's 4 drain calls
         # during the loop (one per 64 blocks) plus the final drain.
-        src = tmp_path / 'payload.bin'
-        src.write_bytes(b'x' * (8192 * 256))
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * (8192 * 256))
 
         fake_writer = _FakeWriter()
 
         async def fake_connect(host: str, port: int, timeout: float = 2.0):
             return None, fake_writer
 
-        exec_cmd = AsyncMock(return_value=_ok('9000\n'))
+        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
         ft = _make_ft(exec_cmd)
 
-        with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(NcFileTransfer, '_wait_for_remote_listener',
-                          new=AsyncMock(return_value=None)), \
-             patch.object(NcFileTransfer, '_verify_nc_dest_size',
-                          new=AsyncMock(return_value=None)):
-            status, msg = await ft._put_files_nc([src], tmp_path / 'dst')
+        with (
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
+        ):
+            status, msg = await ft._put_files_nc([src], tmp_path / "dst")
 
         assert status == Status.Success, msg
         # Pre-fix the loop drained exactly once (at the end) — the whole file
@@ -141,19 +143,21 @@ class TestNcPutDrain:
         to ``total`` before any drain happens, so Rich's TransferSpeedColumn
         reports an impossibly-fast speed.
         """
-        src = tmp_path / 'payload.bin'
-        src.write_bytes(b'x' * (8192 * 128))  # 1 MB
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * (8192 * 128))  # 1 MB
 
         fake_writer = _FakeWriter()
         handler_calls: list[tuple[int, int]] = []  # (bytes_done, drained_so_far)
 
         def handler(s: str, d: str, bytes_done: int, total: int) -> None:
-            handler_calls.append((bytes_done, fake_writer.drain_calls[-1] if fake_writer.drain_calls else 0))
+            handler_calls.append(
+                (bytes_done, fake_writer.drain_calls[-1] if fake_writer.drain_calls else 0)
+            )
 
         async def fake_connect(host: str, port: int, timeout: float = 2.0):
             return None, fake_writer
 
-        exec_cmd = AsyncMock(return_value=_ok('9000\n'))
+        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
         ft = _make_ft(exec_cmd)
 
         # Call the internal nc put directly with a pre-built factory that
@@ -161,12 +165,14 @@ class TestNcPutDrain:
         def factory():
             return handler
 
-        with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(NcFileTransfer, '_wait_for_remote_listener',
-                          new=AsyncMock(return_value=None)), \
-             patch.object(NcFileTransfer, '_verify_nc_dest_size',
-                          new=AsyncMock(return_value=None)):
-            status, _ = await ft._put_files_nc([src], tmp_path / 'dst', factory)
+        with (
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
+        ):
+            status, _ = await ft._put_files_nc([src], tmp_path / "dst", factory)
 
         assert status == Status.Success
         # Progress callbacks must span more than one drain boundary — i.e.
@@ -187,31 +193,32 @@ class TestNcPutListenerWait:
     @pytest.mark.asyncio
     async def test_non_tunnel_calls_wait_before_connect(self, tmp_path: Path):
         """``_wait_for_remote_listener`` must run before ``_connect_with_retry``."""
-        src = tmp_path / 'small.bin'
-        src.write_bytes(b'hello world')
+        src = tmp_path / "small.bin"
+        src.write_bytes(b"hello world")
 
         order: list[str] = []
 
         async def fake_wait(self, port: int, *a, **kw) -> None:
-            order.append(f'wait:{port}')
+            order.append(f"wait:{port}")
 
         async def fake_connect(host: str, port: int, timeout: float = 2.0):
-            order.append(f'connect:{host}:{port}')
+            order.append(f"connect:{host}:{port}")
             return None, _FakeWriter()
 
-        exec_cmd = AsyncMock(return_value=_ok('9000\n'))
+        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
         ft = _make_ft(exec_cmd, has_tunnel=False)
 
-        with patch.object(NcFileTransfer, '_wait_for_remote_listener', new=fake_wait), \
-             patch.object(NcFileTransfer, '_verify_nc_dest_size',
-                          new=AsyncMock(return_value=None)), \
-             patch.object(transfer_mod, '_connect_with_retry', new=fake_connect):
-            status, msg = await ft._put_files_nc([src], tmp_path / 'dst')
+        with (
+            patch.object(NcFileTransfer, "_wait_for_remote_listener", new=fake_wait),
+            patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+        ):
+            status, msg = await ft._put_files_nc([src], tmp_path / "dst")
 
         assert status == Status.Success, msg
 
-        waits = [c for c in order if c.startswith('wait:')]
-        connects = [c for c in order if c.startswith('connect:')]
+        waits = [c for c in order if c.startswith("wait:")]
+        connects = [c for c in order if c.startswith("connect:")]
         assert waits, f"expected _wait_for_remote_listener to run; order={order}"
         assert connects, f"expected _connect_with_retry to run; order={order}"
         assert order.index(waits[0]) < order.index(connects[0]), (
@@ -240,9 +247,9 @@ class TestNcPutListenerWait:
             return _ok()
 
         exec_cmd = AsyncMock(side_effect=tracking_exec)
-        ft = _make_ft(exec_cmd, term='telnet')
+        ft = _make_ft(exec_cmd, term="telnet")
 
-        await asyncio.gather(*(ft._control_run('probe') for _ in range(5)))
+        await asyncio.gather(*(ft._control_run("probe") for _ in range(5)))
 
         assert exec_cmd.await_count == 5, "every control op must route through _exec_cmd"
         assert max_in_flight == 1, (
@@ -265,9 +272,9 @@ class TestNcPutListenerWait:
             return _ok()
 
         exec_cmd = AsyncMock(side_effect=tracking_exec)
-        ft = _make_ft(exec_cmd, term='ssh')
+        ft = _make_ft(exec_cmd, term="ssh")
 
-        await asyncio.gather(*(ft._control_run('probe') for _ in range(5)))
+        await asyncio.gather(*(ft._control_run("probe") for _ in range(5)))
 
         assert exec_cmd.await_count == 5
         assert max_in_flight > 1, "SSH control ops should not be serialized"
@@ -280,8 +287,8 @@ class TestNcPutListenerWait:
         2 s ``_connect_with_retry`` timeout is too short to cover SSH session
         setup + remote process spawn + bind() on a contended system.
         """
-        src = tmp_path / 'small.bin'
-        src.write_bytes(b'hello')
+        src = tmp_path / "small.bin"
+        src.write_bytes(b"hello")
 
         listener_ready = asyncio.Event()
 
@@ -293,17 +300,20 @@ class TestNcPutListenerWait:
         async def gated_connect(host: str, port: int, timeout: float = 2.0):
             # Mirror real behavior: if the listener isn't ready, connect fails.
             if not listener_ready.is_set():
-                raise ConnectionError(f"Remote nc listener on {host}:{port} not ready within {timeout}s")
+                raise ConnectionError(
+                    f"Remote nc listener on {host}:{port} not ready within {timeout}s"
+                )
             return None, _FakeWriter()
 
-        exec_cmd = AsyncMock(return_value=_ok('9000\n'))
+        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
         ft = _make_ft(exec_cmd, has_tunnel=False)
 
-        with patch.object(NcFileTransfer, '_wait_for_remote_listener', new=slow_wait), \
-             patch.object(NcFileTransfer, '_verify_nc_dest_size',
-                          new=AsyncMock(return_value=None)), \
-             patch.object(transfer_mod, '_connect_with_retry', new=gated_connect):
-            status, msg = await ft._put_files_nc([src], tmp_path / 'dst')
+        with (
+            patch.object(NcFileTransfer, "_wait_for_remote_listener", new=slow_wait),
+            patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
+            patch.object(transfer_mod, "_connect_with_retry", new=gated_connect),
+        ):
+            status, msg = await ft._put_files_nc([src], tmp_path / "dst")
 
         assert status == Status.Success, msg
 
@@ -334,17 +344,13 @@ class TestNcPutPortRace:
             p = 9000
             while p in reserved:
                 p += 1
-            return _ok(f'{p}\n')
+            return _ok(f"{p}\n")
 
         exec_cmd = AsyncMock(side_effect=ss_emulator)
         ft = _make_ft(exec_cmd)
 
-        port_a, port_b = await asyncio.gather(
-            ft._find_free_port(), ft._find_free_port()
-        )
-        assert port_a != port_b, (
-            f"concurrent port allocation collided: both returned {port_a}"
-        )
+        port_a, port_b = await asyncio.gather(ft._find_free_port(), ft._find_free_port())
+        assert port_a != port_b, f"concurrent port allocation collided: both returned {port_a}"
 
 
 class TestNcPutOrphanedListener:
@@ -358,14 +364,14 @@ class TestNcPutOrphanedListener:
 
     @pytest.mark.asyncio
     async def test_put_errors_when_listener_never_exits(self, tmp_path: Path):
-        src = tmp_path / 'payload.bin'
-        src.write_bytes(b'x' * 32)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 32)
 
         async def exec_side(cmd: str, *a, **kw):
-            if 'nc -l' in cmd:
+            if "nc -l" in cmd:
                 # Orphaned listener: nc never sees a client, never exits.
                 await asyncio.Event().wait()
-            return _ok('9000\n')
+            return _ok("9000\n")
 
         async def fake_connect(host: str, port: int, timeout: float = 2.0):
             return None, _FakeWriter()
@@ -373,44 +379,48 @@ class TestNcPutOrphanedListener:
         exec_cmd = AsyncMock(side_effect=exec_side)
         ft = _make_ft(exec_cmd, listener_timeout=0.1)
 
-        with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(NcFileTransfer, '_wait_for_remote_listener',
-                          new=AsyncMock(return_value=None)), \
-             patch.object(NcFileTransfer, '_verify_nc_dest_size',
-                          new=AsyncMock(return_value=None)):
+        with (
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
+        ):
             status, msg = await asyncio.wait_for(
-                ft._put_files_nc([src], tmp_path / 'dst'), timeout=5.0,
+                ft._put_files_nc([src], tmp_path / "dst"),
+                timeout=5.0,
             )
 
         assert status == Status.Error, msg
-        assert 'orphaned listener' in msg
+        assert "orphaned listener" in msg
 
     @pytest.mark.asyncio
     async def test_listener_command_carries_idle_timeout(self, tmp_path: Path):
         """The remote ``nc -l`` invocation must include ``-w`` so the listener
         self-terminates rather than leaking when no client connects."""
-        src = tmp_path / 'payload.bin'
-        src.write_bytes(b'x' * 16)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 16)
 
         async def fake_connect(host: str, port: int, timeout: float = 2.0):
             return None, _FakeWriter()
 
-        exec_cmd = AsyncMock(return_value=_ok('9000\n'))
+        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
         ft = _make_ft(exec_cmd, listener_timeout=30.0)
 
-        with patch.object(transfer_mod, '_connect_with_retry', new=fake_connect), \
-             patch.object(NcFileTransfer, '_wait_for_remote_listener',
-                          new=AsyncMock(return_value=None)), \
-             patch.object(NcFileTransfer, '_verify_nc_dest_size',
-                          new=AsyncMock(return_value=None)):
-            await ft._put_files_nc([src], tmp_path / 'dst')
+        with (
+            patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
+        ):
+            await ft._put_files_nc([src], tmp_path / "dst")
 
         listen_cmds = [
-            c.args[0] for c in exec_cmd.await_args_list
-            if c.args and 'nc -l' in c.args[0]
+            c.args[0] for c in exec_cmd.await_args_list if c.args and "nc -l" in c.args[0]
         ]
         assert listen_cmds, "expected an `nc -l` listener invocation"
-        assert all('-w 30' in cmd for cmd in listen_cmds), listen_cmds
+        assert all("-w 30" in cmd for cmd in listen_cmds), listen_cmds
 
 
 class TestNcPutCancellation:
@@ -424,17 +434,17 @@ class TestNcPutCancellation:
 
     @pytest.mark.asyncio
     async def test_cancellation_reaps_listener(self, tmp_path: Path):
-        src = tmp_path / 'payload.bin'
-        src.write_bytes(b'x' * 1024)
+        src = tmp_path / "payload.bin"
+        src.write_bytes(b"x" * 1024)
 
         listener_started = asyncio.Event()
 
         async def exec_side_effect(cmd: str, *args, **kwargs) -> CommandStatus:
-            if 'nc -l' in cmd:
+            if "nc -l" in cmd:
                 # The listener "runs" until its task is cancelled.
                 listener_started.set()
                 await asyncio.Event().wait()
-            return _ok('9000\n')
+            return _ok("9000\n")
 
         exec_cmd = AsyncMock(side_effect=exec_side_effect)
         ft = _make_ft(exec_cmd)
@@ -450,10 +460,15 @@ class TestNcPutCancellation:
         # _wait_for_remote_listener blocks forever, so the cancellation lands
         # after listen_task is spawned but before any sender connects — the
         # window the fix targets.
-        with patch.object(ft, '_reap_nc_listener', new=fake_reap), \
-             patch.object(NcFileTransfer, '_wait_for_remote_listener',
-                          new=AsyncMock(side_effect=block_forever)):
-            task = asyncio.create_task(ft._put_files_nc([src], tmp_path / 'dst'))
+        with (
+            patch.object(ft, "_reap_nc_listener", new=fake_reap),
+            patch.object(
+                NcFileTransfer,
+                "_wait_for_remote_listener",
+                new=AsyncMock(side_effect=block_forever),
+            ),
+        ):
+            task = asyncio.create_task(ft._put_files_nc([src], tmp_path / "dst"))
             await asyncio.wait_for(listener_started.wait(), timeout=2.0)
             await asyncio.sleep(0)  # let _attempt reach _wait_for_remote_listener
             task.cancel()

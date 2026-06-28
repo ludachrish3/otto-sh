@@ -6,14 +6,15 @@ whichever pool member is free, spreading load off the historical favourite
 ``LOCK_EX`` on a per-host lock file claims it; closing the fd in ``finally``
 releases it even if a pytest-timeout signal interrupts the holder.
 """
+
 from __future__ import annotations
 
 import fcntl
 import os
 import time
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Sequence
 
 # The veggies-lab Unix peers with identical transfer backends. Pepper is leased
 # directly (no carrot hop — see the Phase-1 lab-data simplification).
@@ -23,9 +24,7 @@ _POLL_SECONDS = 0.05
 
 
 @contextmanager
-def lease_unix_host(
-    lock_dir: Path, candidates: Sequence[str] = UNIX_POOL
-) -> Iterator[str]:
+def lease_unix_host(lock_dir: Path, candidates: Sequence[str] = UNIX_POOL) -> Iterator[str]:
     """Lease the first free host in ``candidates``; yield its element name.
 
     ``lock_dir`` must be common to every xdist worker (use

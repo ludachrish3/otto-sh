@@ -46,7 +46,8 @@ from typing import (
 class ReservationBackend(Protocol):
     """Read-only view over a reservation scheduler."""
 
-    def get_reserved_resources(self,
+    def get_reserved_resources(
+        self,
         username: str,
     ) -> set[str]:
         """Return the set of resource identifiers currently reserved by ``username``.
@@ -75,7 +76,8 @@ class ReservationBackend(Protocol):
         """
         ...
 
-    def who_reserved(self,
+    def who_reserved(
+        self,
         resource: str,
     ) -> list[str]:
         """Return the usernames currently holding ``resource``.

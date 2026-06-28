@@ -7,6 +7,7 @@ JUnit output, and gates escalation (COUNT 1 -> 3 -> 10) on a clean stage.
 See docs/superpowers/specs/2026-06-06-merge-readiness-stability-verification-design.md
 The tier commands mirror the Makefile stability/nox targets; keep them in sync.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -86,7 +87,7 @@ DEEP_PYTHON = "3.10"  # pinned deep-escalation version (oldest supported floor)
 class Tier:
     name: str
     argv: list[str]
-    junit: list[str]          # JUnit path(s) this tier produces
+    junit: list[str]  # JUnit path(s) this tier produces
     env: dict[str, str] = field(default_factory=dict)
 
 
@@ -116,9 +117,14 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
         Tier(
             name="concurrency",
             argv=[
-                "uv", "run", "pytest",
-                "-m", "concurrency",
-                f"--count={count}", "-p", "no:cacheprovider",
+                "uv",
+                "run",
+                "pytest",
+                "-m",
+                "concurrency",
+                f"--count={count}",
+                "-p",
+                "no:cacheprovider",
                 f"--junitxml={cdir}/concurrency.xml",
             ],
             junit=[f"{cdir}/concurrency.xml"],
@@ -130,10 +136,14 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
         Tier(
             name="integration-stability",
             argv=[
-                "uv", "run", "pytest",
-                "-m", "stability and integration and not embedded",
+                "uv",
+                "run",
+                "pytest",
+                "-m",
+                "stability and integration and not embedded",
                 f"--count={count}",
-                "-p", "no:cacheprovider",
+                "-p",
+                "no:cacheprovider",
                 f"--junitxml={cdir}/integration-stability.xml",
             ],
             junit=[f"{cdir}/integration-stability.xml"],
@@ -147,12 +157,23 @@ def build_tiers(count: int, *, breadth: bool) -> list[Tier]:
         ),
     ]
     if breadth:
-        tiers.insert(2, Tier(
-            name="full-breadth",
-            argv=["uv", "run", "nox", "-s", "tests_all", "--",
-                  "--count=1", "--repeat-scope=session"],
-            junit=[f"reports/junit/nox/tests_all-{py}.xml" for py in PYTHONS],
-        ))
+        tiers.insert(
+            2,
+            Tier(
+                name="full-breadth",
+                argv=[
+                    "uv",
+                    "run",
+                    "nox",
+                    "-s",
+                    "tests_all",
+                    "--",
+                    "--count=1",
+                    "--repeat-scope=session",
+                ],
+                junit=[f"reports/junit/nox/tests_all-{py}.xml" for py in PYTHONS],
+            ),
+        )
     return tiers
 
 
@@ -180,10 +201,11 @@ def run_stage(count: int, *, breadth: bool, dry_run: bool) -> StageReport:
         return StageReport()
     report = summarize_stage(all_junit)
     if report.missing:
-        print(f"  WARNING: {len(report.missing)} expected JUnit report(s) missing "
-              f"(tier crashed before writing?): {', '.join(report.missing)}")
-    print(f"\n== stage count={count}: {report.counts} "
-          f"=> {'GREEN' if report.green else 'DIRTY'} ==")
+        print(
+            f"  WARNING: {len(report.missing)} expected JUnit report(s) missing "
+            f"(tier crashed before writing?): {', '.join(report.missing)}"
+        )
+    print(f"\n== stage count={count}: {report.counts} => {'GREEN' if report.green else 'DIRTY'} ==")
     return report
 
 
@@ -192,8 +214,9 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run", help="run one stage (all tiers at --count)")
     run.add_argument("--count", type=int, required=True)
-    run.add_argument("--breadth", action="store_true",
-                     help="add the all-Pythons full-suite pass (Stage 1)")
+    run.add_argument(
+        "--breadth", action="store_true", help="add the all-Pythons full-suite pass (Stage 1)"
+    )
     run.add_argument("--dry-run", action="store_true")
     esc = sub.add_parser("escalate", help="run 1 -> 3 -> 10, stop on a dirty stage")
     esc.add_argument("--dry-run", action="store_true")

@@ -10,5 +10,7 @@ Kept out of a global ``.pth`` file intentionally: enabling subprocess coverage
 project-wide deadlocks ``test_coverage_e2e.py`` because every asyncssh
 subprocess would also try to start coverage.
 """
+
 import coverage
+
 coverage.process_startup()

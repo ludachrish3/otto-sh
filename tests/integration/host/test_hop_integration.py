@@ -41,6 +41,7 @@ pytestmark = [pytest.mark.timeout(30)]
 # (configmodule.get_host) can find the hop hosts by ID.
 # ---------------------------------------------------------------------------
 
+
 def _build_host(ne: str, **overrides) -> UnixHost:
     data = host_data(ne)
     return UnixHost(
@@ -64,6 +65,7 @@ def _load_lab():
     test rather than forcing None).
     """
     from otto.context import _active
+
     lab = Lab(name="hops_test")
     for ne in ("carrot", "tomato", "pepper"):
         lab.add_host(_build_host(ne))
@@ -77,14 +79,21 @@ def _load_lab():
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest_asyncio.fixture
 async def single_hop_ssh():
     """Target reached through one SSH hop: otto -> carrot -> tomato (SSH)."""
     data = host_data("tomato")
     h = UnixHost(
-        ip=data["ip"], element=data["element"], creds=data["creds"],
-        board=data.get("board"), is_virtual=True,
-        term="ssh", transfer="scp", hop="carrot_seed", log=False,
+        ip=data["ip"],
+        element=data["element"],
+        creds=data["creds"],
+        board=data.get("board"),
+        is_virtual=True,
+        term="ssh",
+        transfer="scp",
+        hop="carrot_seed",
+        log=False,
     )
     yield h
     await h.close()
@@ -95,9 +104,15 @@ async def single_hop_telnet():
     """Target reached via SSH hop, using telnet to the target: otto -> carrot -> tomato (telnet)."""
     data = host_data("tomato")
     h = UnixHost(
-        ip=data["ip"], element=data["element"], creds=data["creds"],
-        board=data.get("board"), is_virtual=True,
-        term="telnet", transfer="ftp", hop="carrot_seed", log=False,
+        ip=data["ip"],
+        element=data["element"],
+        creds=data["creds"],
+        board=data.get("board"),
+        is_virtual=True,
+        term="telnet",
+        transfer="ftp",
+        hop="carrot_seed",
+        log=False,
     )
     yield h
     await h.close()
@@ -115,9 +130,15 @@ async def two_hop_ssh():
     lab.add_host(_build_host("carrot"))
     tomato_data = host_data("tomato")
     tomato_with_hop = UnixHost(
-        ip=tomato_data["ip"], element=tomato_data["element"], creds=tomato_data["creds"],
-        board=tomato_data.get("board"), is_virtual=True,
-        term="ssh", transfer="scp", hop="carrot_seed", log=False,
+        ip=tomato_data["ip"],
+        element=tomato_data["element"],
+        creds=tomato_data["creds"],
+        board=tomato_data.get("board"),
+        is_virtual=True,
+        term="ssh",
+        transfer="scp",
+        hop="carrot_seed",
+        log=False,
     )
     lab.add_host(tomato_with_hop)
     lab.add_host(_build_host("pepper"))
@@ -125,9 +146,15 @@ async def two_hop_ssh():
 
     pepper_data = host_data("pepper")
     h = UnixHost(
-        ip=pepper_data["ip"], element=pepper_data["element"], creds=pepper_data["creds"],
-        board=pepper_data.get("board"), is_virtual=True,
-        term="ssh", transfer="scp", hop="tomato_seed", log=False,
+        ip=pepper_data["ip"],
+        element=pepper_data["element"],
+        creds=pepper_data["creds"],
+        board=pepper_data.get("board"),
+        is_virtual=True,
+        term="ssh",
+        transfer="scp",
+        hop="tomato_seed",
+        log=False,
     )
     yield h
     await h.close()
@@ -143,8 +170,8 @@ async def two_hop_ssh():
 # Single-hop SSH tests
 # ---------------------------------------------------------------------------
 
-class TestSingleHopSsh:
 
+class TestSingleHopSsh:
     @pytest.mark.asyncio
     @pytest.mark.hops
     async def test_echo_through_hop(self, single_hop_ssh: UnixHost):
@@ -181,8 +208,8 @@ class TestSingleHopSsh:
 # Single-hop telnet target tests
 # ---------------------------------------------------------------------------
 
-class TestSingleHopTelnet:
 
+class TestSingleHopTelnet:
     @pytest.mark.asyncio
     @pytest.mark.hops
     async def test_telnet_through_ssh_hop(self, single_hop_telnet: UnixHost):
@@ -209,8 +236,8 @@ class TestSingleHopTelnet:
 # attempt is bounded by ``asyncio.wait_for`` and retried once before failing.
 # ---------------------------------------------------------------------------
 
-class TestFileTransferThroughHop:
 
+class TestFileTransferThroughHop:
     @pytest.mark.asyncio
     @pytest.mark.hops
     async def test_scp_get_through_hop(self, single_hop_ssh: UnixHost, tmp_path: Path):
@@ -233,9 +260,7 @@ class TestFileTransferThroughHop:
         src.write_text(content)
         remote_path = "/tmp/hop_upload.txt"
 
-        status, msg = await transfer_with_retry(
-            lambda: single_hop_ssh.put([src], Path("/tmp"))
-        )
+        status, msg = await transfer_with_retry(lambda: single_hop_ssh.put([src], Path("/tmp")))
         assert status == Status.Success, f"SCP put failed: {msg}"
 
         result = (await single_hop_ssh.run(f"cat {remote_path}")).only
@@ -248,9 +273,15 @@ class TestFileTransferThroughHop:
         """Download a file through an SSH hop via SFTP."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], element=data["element"], creds=data["creds"],
-            board=data.get("board"), is_virtual=True,
-            term="ssh", transfer="sftp", hop="carrot_seed", log=False,
+            ip=data["ip"],
+            element=data["element"],
+            creds=data["creds"],
+            board=data.get("board"),
+            is_virtual=True,
+            term="ssh",
+            transfer="sftp",
+            hop="carrot_seed",
+            log=False,
         )
         try:
             result = (await h.run("hostname")).only
@@ -270,9 +301,15 @@ class TestFileTransferThroughHop:
         """Upload a file through an SSH hop via FTP (port-forwarded)."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], element=data["element"], creds=data["creds"],
-            board=data.get("board"), is_virtual=True,
-            term="ssh", transfer="ftp", hop="carrot_seed", log=False,
+            ip=data["ip"],
+            element=data["element"],
+            creds=data["creds"],
+            board=data.get("board"),
+            is_virtual=True,
+            term="ssh",
+            transfer="ftp",
+            hop="carrot_seed",
+            log=False,
         )
         try:
             content = "ftp_hop_test"
@@ -280,9 +317,7 @@ class TestFileTransferThroughHop:
             src.write_text(content)
             remote_path = "/tmp/ftp_hop_upload.txt"
 
-            status, msg = await transfer_with_retry(
-                lambda: h.put([src], Path("/tmp"))
-            )
+            status, msg = await transfer_with_retry(lambda: h.put([src], Path("/tmp")))
             assert status == Status.Success, f"FTP put failed: {msg}"
 
             result = (await h.run(f"cat {remote_path}")).only
@@ -297,9 +332,15 @@ class TestFileTransferThroughHop:
         """Download a file through an SSH hop via FTP (port-forwarded)."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], element=data["element"], creds=data["creds"],
-            board=data.get("board"), is_virtual=True,
-            term="ssh", transfer="ftp", hop="carrot_seed", log=False,
+            ip=data["ip"],
+            element=data["element"],
+            creds=data["creds"],
+            board=data.get("board"),
+            is_virtual=True,
+            term="ssh",
+            transfer="ftp",
+            hop="carrot_seed",
+            log=False,
         )
         try:
             result = (await h.run("hostname")).only
@@ -320,9 +361,15 @@ class TestFileTransferThroughHop:
         """Upload a file through an SSH hop via netcat (port-forwarded)."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], element=data["element"], creds=data["creds"],
-            board=data.get("board"), is_virtual=True,
-            term="ssh", transfer="nc", hop="carrot_seed", log=False,
+            ip=data["ip"],
+            element=data["element"],
+            creds=data["creds"],
+            board=data.get("board"),
+            is_virtual=True,
+            term="ssh",
+            transfer="nc",
+            hop="carrot_seed",
+            log=False,
         )
         try:
             content = "nc_hop_put_test"
@@ -330,9 +377,7 @@ class TestFileTransferThroughHop:
             src.write_text(content)
             remote_path = "/tmp/nc_hop_upload.txt"
 
-            status, msg = await transfer_with_retry(
-                lambda: h.put([src], Path("/tmp"))
-            )
+            status, msg = await transfer_with_retry(lambda: h.put([src], Path("/tmp")))
             assert status == Status.Success, f"NC put failed: {msg}"
 
             # Verify via SSH session (switch to scp for the read-back)
@@ -349,9 +394,15 @@ class TestFileTransferThroughHop:
         """Download a file through an SSH hop via netcat (reversed-listener)."""
         data = host_data("tomato")
         h = UnixHost(
-            ip=data["ip"], element=data["element"], creds=data["creds"],
-            board=data.get("board"), is_virtual=True,
-            term="ssh", transfer="nc", hop="carrot_seed", log=False,
+            ip=data["ip"],
+            element=data["element"],
+            creds=data["creds"],
+            board=data.get("board"),
+            is_virtual=True,
+            term="ssh",
+            transfer="nc",
+            hop="carrot_seed",
+            log=False,
         )
         try:
             result = (await h.run("hostname")).only
@@ -374,8 +425,8 @@ class TestFileTransferThroughHop:
 # ``transfer_with_retry`` for the same reason as the single-hop class above.
 # ---------------------------------------------------------------------------
 
-class TestTwoHopChain:
 
+class TestTwoHopChain:
     @pytest.mark.asyncio
     @pytest.mark.hops
     async def test_echo_through_two_hops(self, two_hop_ssh: UnixHost):
@@ -413,9 +464,7 @@ class TestTwoHopChain:
         src.write_text(content)
         remote_path = "/tmp/two_hop_upload.txt"
 
-        status, msg = await transfer_with_retry(
-            lambda: two_hop_ssh.put([src], Path("/tmp"))
-        )
+        status, msg = await transfer_with_retry(lambda: two_hop_ssh.put([src], Path("/tmp")))
         assert status == Status.Success, f"SCP put through 2 hops failed: {msg}"
 
         result = (await two_hop_ssh.run(f"cat {remote_path}")).only

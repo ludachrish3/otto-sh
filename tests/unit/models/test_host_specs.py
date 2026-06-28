@@ -61,7 +61,7 @@ def test_hostspec_accepts_labs_and_coerces_resources_to_set():
 def test_common_host_kwargs_omits_unset_and_excludes_labs():
     spec = HostSpec(ip="10.0.0.1", element="lab", labs=["a"])
     kw = spec._common_host_kwargs()
-    assert "labs" not in kw                  # membership, never a host field
+    assert "labs" not in kw  # membership, never a host field
     assert kw["ip"] == "10.0.0.1"
     assert kw["element"] == "lab"
     # unset common fields are omitted so the host class's own default applies
@@ -71,8 +71,11 @@ def test_common_host_kwargs_omits_unset_and_excludes_labs():
 
 def test_common_host_kwargs_builds_nested_when_set():
     spec = HostSpec(
-        ip="10.0.0.1", element="lab",
-        resources=["r1"], telnet_options={"port": 99}, toolchain={"sysroot": "/opt"},
+        ip="10.0.0.1",
+        element="lab",
+        resources=["r1"],
+        telnet_options={"port": 99},
+        toolchain={"sysroot": "/opt"},
     )
     kw = spec._common_host_kwargs()
     assert kw["resources"] == {"r1"}
@@ -99,10 +102,13 @@ def test_unix_spec_builds_unix_host_with_defaults():
 
 def test_unix_spec_builds_nested_options_and_snmp():
     spec = UnixHostSpec(
-        ip="10.0.0.1", element="lab", creds={"u": "p"},
+        ip="10.0.0.1",
+        element="lab",
+        creds={"u": "p"},
         ssh_options={"port": 2222, "extra": {"x": 1}},
         snmp={"oids": ["1.3.6.1.2.1.1.3.0"], "port": 16101},
-        resources=["r1"], labs=["veggies"],
+        resources=["r1"],
+        labs=["veggies"],
     )
     host = spec.to_host()
     assert host.ssh_options.port == 2222
@@ -140,7 +146,10 @@ def test_embedded_spec_rejects_unknown_filesystem():
 def test_embedded_spec_accepts_registered_filesystem():
     # A registered filesystem name validates (resolved to an instance at build).
     spec = EmbeddedHostSpec(
-        ip="192.0.2.1", element="dut", command_frame="zephyr", filesystem="none",
+        ip="192.0.2.1",
+        element="dut",
+        command_frame="zephyr",
+        filesystem="none",
     )
     assert spec.filesystem == "none"
     # the validated name still resolves to its instance through build_filesystem
@@ -150,7 +159,9 @@ def test_embedded_spec_accepts_registered_filesystem():
 def test_hostspec_rejects_unregistered_command_frame():
     with pytest.raises(ValidationError) as exc:
         UnixHostSpec(
-            ip="10.0.0.1", element="lab", creds={"u": "p"},
+            ip="10.0.0.1",
+            element="lab",
+            creds={"u": "p"},
             command_frame="nonesuch",
         )
     assert "nonesuch" in str(exc.value)
@@ -177,8 +188,7 @@ def test_host_spec_fields_match_runtime_init(spec_cls, runtime_cls):
     """
     spec_fields = set(spec_cls.model_fields) - {"labs"}
     init_fields = {
-        f.name for f in dataclasses.fields(runtime_cls)
-        if f.init and not f.name.startswith("_")
+        f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")
     } - _NON_SPEC_RUNTIME_FIELDS
     assert spec_fields == init_fields, (
         f"{spec_cls.__name__} <-> {runtime_cls.__name__} field mismatch — "
@@ -195,7 +205,9 @@ def test_hostspec_interfaces_default_empty_and_passes_to_host():
 
 def test_hostspec_interfaces_resolve_on_built_host():
     spec = UnixHostSpec(
-        ip="10.0.0.1", element="lab", creds={"u": "p"},
+        ip="10.0.0.1",
+        element="lab",
+        creds={"u": "p"},
         interfaces={"mgmt": "10.9.9.9"},
     )
     host = spec.to_host()
@@ -216,24 +228,47 @@ def test_hostspec_interfaces_rejects_non_ip_value():
 
 def test_unix_to_host_matches_factory():
     d = {
-        "ip": "10.10.200.11", "element": "carrot", "os_type": "unix",
-        "board": "seed", "term": "ssh", "transfer": "scp", "is_virtual": True,
-        "creds": {"vagrant": "vagrant"}, "resources": ["carrot"], "labs": ["veggies"],
+        "ip": "10.10.200.11",
+        "element": "carrot",
+        "os_type": "unix",
+        "board": "seed",
+        "term": "ssh",
+        "transfer": "scp",
+        "is_virtual": True,
+        "creds": {"vagrant": "vagrant"},
+        "resources": ["carrot"],
+        "labs": ["veggies"],
         "ssh_options": {"port": 2200},
     }
     spec_host = UnixHostSpec.model_validate(d).to_host()
     factory_host = create_host_from_dict(d)
-    for attr in ("ip", "element", "os_type", "os_name", "os_version", "board",
-                 "term", "transfer", "is_virtual", "creds", "resources", "name",
-                 "hop", "user"):
+    for attr in (
+        "ip",
+        "element",
+        "os_type",
+        "os_name",
+        "os_version",
+        "board",
+        "term",
+        "transfer",
+        "is_virtual",
+        "creds",
+        "resources",
+        "name",
+        "hop",
+        "user",
+    ):
         assert getattr(spec_host, attr) == getattr(factory_host, attr), attr
     assert spec_host.ssh_options.port == factory_host.ssh_options.port == 2200
 
 
 def test_embedded_to_host_matches_factory():
     d = {
-        "ip": "192.0.2.1", "element": "dut", "os_type": "embedded",
-        "command_frame": "zephyr", "telnet_options": {"port": 9023},
+        "ip": "192.0.2.1",
+        "element": "dut",
+        "os_type": "embedded",
+        "command_frame": "zephyr",
+        "telnet_options": {"port": 9023},
     }
     spec_host = EmbeddedHostSpec.model_validate(d).to_host()
     factory_host = create_host_from_dict(d)
@@ -244,8 +279,12 @@ def test_embedded_to_host_matches_factory():
 
 def test_unix_spec_accepts_command_frame_string():
     from otto.host.command_frame import BashFrame
+
     spec = UnixHostSpec(
-        ip="10.0.0.1", element="lab", creds={"u": "p"}, command_frame="bash",
+        ip="10.0.0.1",
+        element="lab",
+        creds={"u": "p"},
+        command_frame="bash",
     )
     host = spec.to_host()
     assert isinstance(host.command_frame, BashFrame)
@@ -261,10 +300,17 @@ def test_unix_spec_omits_command_frame_when_unset():
 def test_spec_power_control_coerces_through_to_host():
     """A lab-data ``[power]`` table on the spec builds a runtime controller."""
     from otto.host.power import CommandPowerController
+
     spec = UnixHostSpec(
-        ip="10.0.0.1", element="lab", creds={"u": "p"},
-        power_control={"type": "command", "on_cmd": "on {name}",
-                       "off_cmd": "off {name}", "controller": "hyp"},
+        ip="10.0.0.1",
+        element="lab",
+        creds={"u": "p"},
+        power_control={
+            "type": "command",
+            "on_cmd": "on {name}",
+            "off_cmd": "off {name}",
+            "controller": "hyp",
+        },
     )
     host = spec.to_host()
     assert isinstance(host.power_control, CommandPowerController)
@@ -294,12 +340,12 @@ def test_registered_pairs_drift_guard():
     live registry so it covers built-ins registered through register_host_class.
     """
     from otto.host.os_profile import _HOST_CLASSES, _HOST_SPECS
+
     for name, spec_cls in _HOST_SPECS.items():
         runtime_cls = _HOST_CLASSES[name]
         spec_fields = set(spec_cls.model_fields) - {"labs"}
         init_fields = {
-            f.name for f in dataclasses.fields(runtime_cls)
-            if f.init and not f.name.startswith("_")
+            f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")
         } - _NON_SPEC_RUNTIME_FIELDS
         assert spec_fields == init_fields, (
             f"{name}: {spec_cls.__name__} <-> {runtime_cls.__name__} mismatch — "
@@ -322,15 +368,20 @@ class TestMenuValidation:
 
     def test_scalar_coerces_to_one_element_menu(self):
         spec = UnixHostSpec(
-            ip="10.0.0.1", element="x", creds={"u": "p"},
-            valid_terms="ssh", valid_transfers="scp",
+            ip="10.0.0.1",
+            element="x",
+            creds={"u": "p"},
+            valid_terms="ssh",
+            valid_transfers="scp",
         )
         assert spec.valid_terms == ["ssh"]
         assert spec.valid_transfers == ["scp"]
 
     def test_list_menu_preserved_in_order(self):
         spec = UnixHostSpec(
-            ip="10.0.0.1", element="x", creds={"u": "p"},
+            ip="10.0.0.1",
+            element="x",
+            creds={"u": "p"},
             valid_transfers=["nc", "scp"],
         )
         assert spec.valid_transfers == ["nc", "scp"]
@@ -357,51 +408,64 @@ class TestMenuValidation:
 
     def test_embedded_rejects_unix_only_term_in_menu(self):
         with pytest.raises(ValueError, match=r"term 'ssh' is not valid on an embedded host"):
-            EmbeddedHostSpec(ip="1.1.1.1", element="e", command_frame="zephyr",
-                             valid_terms=["ssh"])
+            EmbeddedHostSpec(ip="1.1.1.1", element="e", command_frame="zephyr", valid_terms=["ssh"])
 
     def test_unix_accepts_telnet_term(self):
-        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
-                            valid_terms=["telnet"])
+        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"}, valid_terms=["telnet"])
         assert spec.valid_terms == ["telnet"]
 
     def test_embedded_accepts_telnet_term(self):
-        spec = EmbeddedHostSpec(ip="1.1.1.1", element="e", command_frame="zephyr",
-                                valid_terms=["telnet"])
+        spec = EmbeddedHostSpec(
+            ip="1.1.1.1", element="e", command_frame="zephyr", valid_terms=["telnet"]
+        )
         assert spec.valid_terms == ["telnet"]
 
 
 class TestPreferenceResolution:
     def test_preference_in_menu_becomes_active(self):
-        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
-                            valid_transfers=["scp", "sftp"])
+        spec = UnixHostSpec(
+            ip="1.1.1.1", element="e", creds={"root": "x"}, valid_transfers=["scp", "sftp"]
+        )
         host = spec.to_host(preferences={"transfer": ["sftp"]})
         assert host.transfer == "sftp"
 
     def test_preference_out_of_menu_is_skipped(self):
-        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
-                            valid_transfers=["scp", "nc"])
+        spec = UnixHostSpec(
+            ip="1.1.1.1", element="e", creds={"root": "x"}, valid_transfers=["scp", "nc"]
+        )
         host = spec.to_host(preferences={"transfer": ["sftp", "nc"]})
         # sftp not in menu -> skipped; nc is the first preference in the menu
         assert host.transfer == "nc"
 
     def test_preference_beats_pin(self):
         # Product preference now wins over the lab pin when the preference is in menu.
-        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
-                            valid_transfers=["scp", "sftp"], transfer="scp")
+        spec = UnixHostSpec(
+            ip="1.1.1.1",
+            element="e",
+            creds={"root": "x"},
+            valid_transfers=["scp", "sftp"],
+            transfer="scp",
+        )
         host = spec.to_host(preferences={"transfer": ["sftp"]})
         assert host.transfer == "sftp"
 
     def test_pin_still_validated_when_preference_overrides(self):
         # A bad lab pin is still fail-loud even when a preference would override it.
-        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
-                            valid_transfers=["scp", "sftp"], transfer="nc")
+        spec = UnixHostSpec(
+            ip="1.1.1.1",
+            element="e",
+            creds={"root": "x"},
+            valid_transfers=["scp", "sftp"],
+            transfer="nc",
+        )
         import pytest
+
         with pytest.raises(ValueError, match="transfer 'nc' is not in"):
             spec.to_host(preferences={"transfer": ["sftp"]})
 
     def test_no_preference_uses_menu_first(self):
-        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"},
-                            valid_terms=["telnet", "ssh"])
+        spec = UnixHostSpec(
+            ip="1.1.1.1", element="e", creds={"root": "x"}, valid_terms=["telnet", "ssh"]
+        )
         host = spec.to_host()
         assert host.term == "telnet"

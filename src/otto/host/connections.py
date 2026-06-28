@@ -151,6 +151,7 @@ async def ssh_connect(*args: Any, **kwargs: Any) -> Any:
     ``tests/unit/host/test_lazy_network_imports.py``.
     """
     from asyncssh import connect
+
     return await connect(*args, **kwargs)
 
 
@@ -177,6 +178,7 @@ class ConnectionManager:
 
             async def ssh(self):
                 return self._ssh_conn
+
 
         host = UnixHost(..., _connection_factory=FakeConnections)
     """
@@ -261,7 +263,7 @@ class ConnectionManager:
         """
         if self._user is None:
             if not self._creds_dict:
-                return ('', '')
+                return ("", "")
             return next(iter(self._creds_dict.items()))
         return self._user, self._creds_dict[self._user]
 
@@ -280,12 +282,7 @@ class ConnectionManager:
     @property
     def connected(self) -> bool:
         """Whether any raw connection is currently open."""
-        return bool(
-            self._ssh_conn
-            or self._telnet_conn
-            or self._sftp_conn
-            or self._ftp_conn
-        )
+        return bool(self._ssh_conn or self._telnet_conn or self._sftp_conn or self._ftp_conn)
 
     @property
     def has_tunnel(self) -> bool:
@@ -307,7 +304,9 @@ class ConnectionManager:
         """
         assert self._hop is not None
         local_port = await self._hop.forward_port(self._ip, dest_port)
-        logger.debug(f"Forwarding localhost:{local_port} -> {self._ip}:{dest_port} for {self._name}")
+        logger.debug(
+            f"Forwarding localhost:{local_port} -> {self._ip}:{dest_port} for {self._name}"
+        )
         return local_port
 
     async def ssh(self) -> SSHClientConnection:
@@ -363,11 +362,12 @@ class ConnectionManager:
             if self._hop is not None:
                 local_port = await self._forward_port(ftp_port)
                 client: aioftp.Client = _build_tunneled_ftp_client_cls()(
-                    hop=self._hop, dest_host=self._ip,
+                    hop=self._hop,
+                    dest_host=self._ip,
                     **client_kwargs,
                 )
                 logger.debug(f"Connecting to {self._name} via FTP (tunneled)")
-                await client.connect('localhost', local_port)
+                await client.connect("localhost", local_port)
             else:
                 client = aioftp.Client(**client_kwargs)
                 logger.debug(f"Connecting to {self._name} via FTP")
@@ -405,7 +405,7 @@ class ConnectionManager:
             remote_port = self._telnet_options.port
             if self._hop is not None:
                 local_port = await self._forward_port(remote_port)
-                connect_host = 'localhost'
+                connect_host = "localhost"
                 connect_port = local_port
             else:
                 connect_host = self._ip
@@ -470,7 +470,7 @@ class ConnectionManager:
             # whichever next test happens to be running. Grab the asyncio
             # transport before close and explicitly close() it after — this
             # sets ``_closing=True`` so ``__del__`` is a no-op.
-            asyncio_transport = getattr(self._ssh_conn, '_transport', None)
+            asyncio_transport = getattr(self._ssh_conn, "_transport", None)
             self._ssh_conn.close()
             await self._ssh_conn.wait_closed()
             if asyncio_transport is not None:

@@ -51,6 +51,7 @@ To ship a host subclass from an external repo:
 subclasses :class:`~otto.host.embedded_host.EmbeddedHost`, declares Zephyr-
 specific defaults, and is registered under ``"zephyr"`` at module load.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -119,12 +120,14 @@ def _all_slots(cls: type) -> frozenset[str]:
     """
     names: set[str] = set()
     for klass in cls.__mro__:
-        names.update(getattr(klass, '__slots__', ()))
+        names.update(getattr(klass, "__slots__", ()))
     return frozenset(names)
 
 
 def register_host_class(
-    name: str, cls: type, spec: type[HostSpec] | None = None,
+    name: str,
+    cls: type,
+    spec: type[HostSpec] | None = None,
 ) -> None:
     """Register a host class (and its boundary spec) so lab data can select it
     by ``os_type``.
@@ -157,10 +160,10 @@ def register_host_class(
         *cls* has a registered spec.
     """
     from .remote_host import RemoteHost
+
     if not (isinstance(cls, type) and issubclass(cls, RemoteHost)):
         raise ValueError(
-            f"register_host_class({name!r}): cls must be a RemoteHost "
-            f"subclass, got {cls!r}"
+            f"register_host_class({name!r}): cls must be a RemoteHost subclass, got {cls!r}"
         )
     if spec is None:
         spec = _nearest_registered_spec(cls)
@@ -171,15 +174,13 @@ def register_host_class(
             )
     else:
         from ..models.host import HostSpec
+
         if not (isinstance(spec, type) and issubclass(spec, HostSpec)):
             raise ValueError(
-                f"register_host_class({name!r}): spec must be a HostSpec "
-                f"subclass, got {spec!r}"
+                f"register_host_class({name!r}): spec must be a HostSpec subclass, got {spec!r}"
             )
     if name in _BUILTIN_NAMES and name in _HOST_CLASSES:
-        logger.warning(
-            f"register_host_class: overriding built-in host class {name!r}"
-        )
+        logger.warning(f"register_host_class: overriding built-in host class {name!r}")
     _HOST_CLASSES[name] = cls
     _HOST_SPECS[name] = spec
     # Auto-register a selector profile so os_type:<name> works immediately.
@@ -202,7 +203,7 @@ def build_host_spec(name: str) -> type[HostSpec]:
     try:
         return _HOST_SPECS[name]
     except KeyError:
-        known = ', '.join(sorted(_HOST_SPECS))
+        known = ", ".join(sorted(_HOST_SPECS))
         raise ValueError(
             f"No host spec registered for {name!r}. Registered: {known}. "
             f"Add one via register_host_class()."
@@ -228,10 +229,9 @@ def build_host_class(name: str) -> type:
     try:
         return _HOST_CLASSES[name]
     except KeyError:
-        known = ', '.join(sorted(_HOST_CLASSES))
+        known = ", ".join(sorted(_HOST_CLASSES))
         raise ValueError(
-            f"Unknown host class {name!r}. Registered: {known}. "
-            f"Add one via register_host_class()."
+            f"Unknown host class {name!r}. Registered: {known}. Add one via register_host_class()."
         ) from None
 
 
@@ -278,7 +278,7 @@ def register_os_profile(
         is not a field on the base class (a likely typo).
     """
     if base not in _HOST_CLASSES:
-        known = ', '.join(sorted(_HOST_CLASSES))
+        known = ", ".join(sorted(_HOST_CLASSES))
         raise ValueError(
             f"register_os_profile({name!r}): base must name a registered "
             f"host class (one of {known}), got {base!r}"
@@ -294,9 +294,7 @@ def register_os_profile(
         )
 
     if name in _BUILTIN_NAMES and name in _OS_PROFILES:
-        logger.warning(
-            f"register_os_profile: overriding built-in profile {name!r}"
-        )
+        logger.warning(f"register_os_profile: overriding built-in profile {name!r}")
 
     _OS_PROFILES[name] = OsProfile(name=name, base=base, defaults=defaults)
 
@@ -316,7 +314,7 @@ def build_os_profile(name: str) -> OsProfile:
     try:
         return _OS_PROFILES[name]
     except KeyError:
-        known = ', '.join(sorted(_OS_PROFILES))
+        known = ", ".join(sorted(_OS_PROFILES))
         raise ValueError(
             f"Unknown os_type {name!r}. Registered profiles: {known}. "
             f"Custom profiles can be added via register_os_profile() or an "
@@ -346,7 +344,7 @@ def registered_profile_names() -> list[str]:
 # which re-declares the Zephyr-specific defaults on the class itself. Registering
 # each class also auto-registers a same-named trivial :class:`OsProfile`, so
 # ``os_type: <name>`` resolves with no extra config.
-_BUILTIN_NAMES: frozenset[str] = frozenset(('unix', 'embedded', 'zephyr'))
+_BUILTIN_NAMES: frozenset[str] = frozenset(("unix", "embedded", "zephyr"))
 
 
 def _register_builtin_host_classes() -> None:
@@ -358,9 +356,10 @@ def _register_builtin_host_classes() -> None:
     from ..models.host import EmbeddedHostSpec, UnixHostSpec
     from .embedded_host import EmbeddedHost, ZephyrHost
     from .unix_host import UnixHost
-    register_host_class('unix', UnixHost, UnixHostSpec)
-    register_host_class('embedded', EmbeddedHost, EmbeddedHostSpec)
-    register_host_class('zephyr', ZephyrHost, EmbeddedHostSpec)
+
+    register_host_class("unix", UnixHost, UnixHostSpec)
+    register_host_class("embedded", EmbeddedHost, EmbeddedHostSpec)
+    register_host_class("zephyr", ZephyrHost, EmbeddedHostSpec)
 
 
 _register_builtin_host_classes()

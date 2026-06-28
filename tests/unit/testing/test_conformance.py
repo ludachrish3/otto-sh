@@ -18,28 +18,45 @@ from otto.testing import (
 
 
 def _hosts_file(path: Path) -> None:
-    (path / "hosts.json").write_text(json.dumps([
-        {"ip": "10.0.0.1", "element": "a", "creds": {"u": "p"},
-         "resources": ["a"], "labs": ["alpha"]},
-        {"ip": "10.0.0.2", "element": "b", "creds": {"u": "p"},
-         "resources": ["b"], "labs": ["beta"]},
-    ]))
+    (path / "hosts.json").write_text(
+        json.dumps(
+            [
+                {
+                    "ip": "10.0.0.1",
+                    "element": "a",
+                    "creds": {"u": "p"},
+                    "resources": ["a"],
+                    "labs": ["alpha"],
+                },
+                {
+                    "ip": "10.0.0.2",
+                    "element": "b",
+                    "creds": {"u": "p"},
+                    "resources": ["b"],
+                    "labs": ["beta"],
+                },
+            ]
+        )
+    )
 
 
 def _reservations_file(path: Path) -> Path:
     f = path / "reservations.json"
-    f.write_text(json.dumps({
-        "version": 1,
-        "reservations": [
-            {"user": "alice", "resources": ["lab-a", "shared"]},
-            {"user": "bob", "resources": ["lab-b", "shared"]},
-        ],
-    }))
+    f.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "reservations": [
+                    {"user": "alice", "resources": ["lab-a", "shared"]},
+                    {"user": "bob", "resources": ["lab-b", "shared"]},
+                ],
+            }
+        )
+    )
     return f
 
 
 class TestLabRepositoryConformance:
-
     def test_json_builtin_conforms(self, tmp_path):
         _hosts_file(tmp_path)
         repo = JsonFileLabRepository([tmp_path])
@@ -61,6 +78,7 @@ class TestLabRepositoryConformance:
     def test_missing_list_labs_raises_assertion_not_attribute_error(self):
         """A repo with no list_labs at all must aggregate an AssertionError,
         not propagate an AttributeError before raise_if_failures()."""
+
         class NoListLabs:
             def load_lab(self, name, preferences=None):
                 raise KeyError(name)
@@ -93,7 +111,6 @@ class TestLabRepositoryConformance:
 
 
 class TestReservationBackendConformance:
-
     def test_null_builtin_conforms(self):
         assert_reservation_backend_conforms(NullReservationBackend())
 
@@ -123,6 +140,7 @@ class TestReservationBackendConformance:
         """A backend whose get_reserved_resources returns None (not a set) must
         aggregate an AssertionError via raise_if_failures(), not crash the helper
         with a TypeError when the round-trip path does `r in None`."""
+
         class NoneReturner:
             def get_reserved_resources(self, username):
                 return None  # non-set — triggers the round-trip guard

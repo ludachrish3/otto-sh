@@ -23,7 +23,6 @@ from .base import (
     TransferContext,
     TransferProgressFactory,
     _first_error,
-    validate_filename_lengths,
 )
 from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
@@ -50,65 +49,64 @@ _logger = get_otto_logger()
 _SS_PORT_SCRIPT = (
     '( used=$(ss -tln | grep -oE ":[0-9]+ " | tr -d ": " | sort -un); '
     'reserved=" {reserved} "; '
-    'p={base_port}; '
-    'while [ $p -le 65535 ]; do '
+    "p={base_port}; "
+    "while [ $p -le 65535 ]; do "
     '  case "$reserved" in *" $p "*) p=$((p+1)); continue;; esac; '
     '  echo "$used" | grep -qx "$p" || {{ echo $p; exit 0; }}; '
-    '  p=$((p+1)); '
-    'done; '
-    'exit 1 )'
+    "  p=$((p+1)); "
+    "done; "
+    "exit 1 )"
 )
 
 _NETSTAT_PORT_SCRIPT = (
     '( used=$(netstat -tln | grep -oE ":[0-9]+ " | tr -d ": " | sort -un); '
     'reserved=" {reserved} "; '
-    'p={base_port}; '
-    'while [ $p -le 65535 ]; do '
+    "p={base_port}; "
+    "while [ $p -le 65535 ]; do "
     '  case "$reserved" in *" $p "*) p=$((p+1)); continue;; esac; '
     '  echo "$used" | grep -qx "$p" || {{ echo $p; exit 0; }}; '
-    '  p=$((p+1)); '
-    'done; '
-    'exit 1 )'
+    "  p=$((p+1)); "
+    "done; "
+    "exit 1 )"
 )
 
 _PYTHON_PORT_CMD = (
-    "import socket; s=socket.socket(); s.bind(('',0)); "
-    "print(s.getsockname()[1]); s.close()"
+    "import socket; s=socket.socket(); s.bind(('',0)); print(s.getsockname()[1]); s.close()"
 )
 
 _PROC_PORT_SCRIPT = (
     '( used=""; '
-    'while read line; do '
-    '  set -- $line; '
+    "while read line; do "
+    "  set -- $line; "
     '  case $2 in *:*) h=${{2##*:}}; used="$used $(printf "%d" "0x$h")";; esac; '
-    'done < /proc/net/tcp; '
+    "done < /proc/net/tcp; "
     'reserved=" {reserved} "; '
-    'p={base_port}; '
-    'while [ $p -le 65535 ]; do '
+    "p={base_port}; "
+    "while [ $p -le 65535 ]; do "
     '  case "$reserved" in *" $p "*) p=$((p+1)); continue;; esac; '
     '  case " $used " in *" $p "*) ;; *) echo $p; exit 0;; esac; '
-    '  p=$((p+1)); '
-    'done; '
-    'exit 1 )'
+    "  p=$((p+1)); "
+    "done; "
+    "exit 1 )"
 )
 
 # ---------------------------------------------------------------------------
 # Shell script templates for listener-check strategies
 # ---------------------------------------------------------------------------
 
-_SS_LISTENER_CHECK = 'ss -tln sport = :{port} | grep -q LISTEN'
+_SS_LISTENER_CHECK = "ss -tln sport = :{port} | grep -q LISTEN"
 _NETSTAT_LISTENER_CHECK = 'netstat -tln | grep -q ":{port} "'
 
 # Precompute hex port in Python, then scan /proc/net/tcp for LISTEN state (0A).
 _PROC_LISTENER_CHECK = (
-    'while read line; do '
-    'set -- $line; '
-    'case $2 in *:{hex_port}) case $4 in 0A) exit 0;; esac;; esac; '
-    'done < /proc/net/tcp; exit 1'
+    "while read line; do "
+    "set -- $line; "
+    "case $2 in *:{hex_port}) case $4 in 0A) exit 0;; esac;; esac; "
+    "done < /proc/net/tcp; exit 1"
 )
 
-_PORT_STRATEGY_ORDER: list[NcPortStrategy] = ['ss', 'netstat', 'python', 'proc']
-_LISTENER_CHECK_ORDER: list[NcListenerCheck] = ['ss', 'netstat', 'proc']
+_PORT_STRATEGY_ORDER: list[NcPortStrategy] = ["ss", "netstat", "python", "proc"]
+_LISTENER_CHECK_ORDER: list[NcListenerCheck] = ["ss", "netstat", "proc"]
 
 # Single-round-trip probe that picks a port-finding strategy and a
 # listener-check strategy in one shell invocation. `command -v` is POSIX
@@ -116,12 +114,12 @@ _LISTENER_CHECK_ORDER: list[NcListenerCheck] = ['ss', 'netstat', 'proc']
 # hit, and treats exit-code as the availability signal. Output is one line of
 # the form "<port> <listener>", e.g. "ss ss" or "python proc".
 _STRATEGY_PROBE = (
-    'port=proc; listener=proc; '
-    'if command -v ss >/dev/null 2>&1; then port=ss; listener=ss; '
-    'elif command -v netstat >/dev/null 2>&1; then port=netstat; listener=netstat; '
-    'elif command -v python >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; '
-    'then port=python; '
-    'fi; '
+    "port=proc; listener=proc; "
+    "if command -v ss >/dev/null 2>&1; then port=ss; listener=ss; "
+    "elif command -v netstat >/dev/null 2>&1; then port=netstat; listener=netstat; "
+    "elif command -v python >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1; "
+    "then port=python; "
+    "fi; "
     'echo "$port $listener"'
 )
 
@@ -164,10 +162,10 @@ class NcFileTransfer(UnixFileTransfer):
 
     def __init__(
         self,
-        connections: 'ConnectionManager',
+        connections: "ConnectionManager",
         name: str,
         transfer: str,
-        nc_options: 'NcOptions',
+        nc_options: "NcOptions",
         get_local_ip: Callable[[], str],
         exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
         max_filename_len: int = 255,
@@ -224,7 +222,7 @@ class NcFileTransfer(UnixFileTransfer):
         return self._nc_options.port
 
     @property
-    def _nc_port_strategy(self) -> 'NcPortStrategy':
+    def _nc_port_strategy(self) -> "NcPortStrategy":
         return self._nc_options.port_strategy
 
     @property
@@ -232,7 +230,7 @@ class NcFileTransfer(UnixFileTransfer):
         return self._nc_options.port_cmd
 
     @property
-    def _nc_listener_check(self) -> 'NcListenerCheck':
+    def _nc_listener_check(self) -> "NcListenerCheck":
         return self._nc_options.listener_check
 
     @property
@@ -286,15 +284,17 @@ class NcFileTransfer(UnixFileTransfer):
         caches stay unset and the lazy cascades in `_find_free_port_auto` /
         `_resolve_listener_strategy` still kick in as fallbacks.
         """
-        port_auto = self._nc_port_strategy == 'auto' and self._resolved_port_strategy is None
-        listener_auto = self._nc_listener_check == 'auto' and self._resolved_listener_check is None
+        port_auto = self._nc_port_strategy == "auto" and self._resolved_port_strategy is None
+        listener_auto = self._nc_listener_check == "auto" and self._resolved_listener_check is None
         if not (port_auto or listener_auto):
             return
         async with self._prepare_lock:
             # Re-check under the lock — another coroutine may have finished
             # while we waited.
-            port_auto = self._nc_port_strategy == 'auto' and self._resolved_port_strategy is None
-            listener_auto = self._nc_listener_check == 'auto' and self._resolved_listener_check is None
+            port_auto = self._nc_port_strategy == "auto" and self._resolved_port_strategy is None
+            listener_auto = (
+                self._nc_listener_check == "auto" and self._resolved_listener_check is None
+            )
             if not (port_auto or listener_auto):
                 return
             result = await self._control_run(_STRATEGY_PROBE)
@@ -312,20 +312,17 @@ class NcFileTransfer(UnixFileTransfer):
                 )
                 return
             port_choice, listener_choice = parts
-            if port_auto and port_choice in ('ss', 'netstat', 'python', 'proc'):
+            if port_auto and port_choice in ("ss", "netstat", "python", "proc"):
                 self._resolved_port_strategy = cast(
-                    Literal['ss', 'netstat', 'python', 'proc'], port_choice
+                    'Literal["ss", "netstat", "python", "proc"]', port_choice
                 )
-                _logger.debug(
-                    f"{self._name}: cached port strategy '{port_choice}' via probe"
-                )
-            if listener_auto and listener_choice in ('ss', 'netstat', 'proc'):
+                _logger.debug(f"{self._name}: cached port strategy '{port_choice}' via probe")
+            if listener_auto and listener_choice in ("ss", "netstat", "proc"):
                 self._resolved_listener_check = cast(
-                    Literal['ss', 'netstat', 'proc'], listener_choice
+                    'Literal["ss", "netstat", "proc"]', listener_choice
                 )
                 _logger.debug(
-                    f"{self._name}: cached listener check strategy "
-                    f"'{listener_choice}' via probe"
+                    f"{self._name}: cached listener check strategy '{listener_choice}' via probe"
                 )
 
     async def _control_run(self, cmd: str) -> CommandStatus:
@@ -344,7 +341,7 @@ class NcFileTransfer(UnixFileTransfer):
         On SSH, exec channels over the existing connection are cheap, so the
         calls run directly with no serialization.
         """
-        if self._connections.term == 'ssh':
+        if self._connections.term == "ssh":
             return await self._exec_cmd(cmd)
         async with self._control_lock:
             return await self._exec_cmd(cmd)
@@ -362,7 +359,7 @@ class NcFileTransfer(UnixFileTransfer):
         """
         async with self._port_lock:
             strategy = self._nc_port_strategy
-            if strategy == 'auto':
+            if strategy == "auto":
                 port = await self._find_free_port_auto()
             else:
                 port = await self._find_free_port_with(strategy)
@@ -398,28 +395,27 @@ class NcFileTransfer(UnixFileTransfer):
             except (RuntimeError, ValueError) as e:
                 errors.append(f"{strategy}: {e}")
         raise RuntimeError(
-            f"All port-finding strategies failed on {self._name}: "
-            + "; ".join(errors)
+            f"All port-finding strategies failed on {self._name}: " + "; ".join(errors)
         )
 
     async def _find_free_port_with(self, strategy: NcPortStrategy) -> int:
         """Dispatch to a specific port-finding strategy."""
         match strategy:
-            case 'ss':
+            case "ss":
                 return await self._find_free_port_ss()
-            case 'netstat':
+            case "netstat":
                 return await self._find_free_port_netstat()
-            case 'python':
+            case "python":
                 return await self._find_free_port_python()
-            case 'proc':
+            case "proc":
                 return await self._find_free_port_proc()
-            case 'custom':
+            case "custom":
                 return await self._find_free_port_custom()
             case _:
                 raise ValueError(f"Unknown port strategy: {strategy}")
 
     def _reserved_str(self) -> str:
-        return ' '.join(str(p) for p in self._reserved_ports)
+        return " ".join(str(p) for p in self._reserved_ports)
 
     async def _find_free_port_ss(self) -> int:
         script = _SS_PORT_SCRIPT.format(base_port=self._nc_port, reserved=self._reserved_str())
@@ -437,8 +433,8 @@ class NcFileTransfer(UnixFileTransfer):
 
     async def _find_free_port_python(self) -> int:
         """Try ``python``, then ``python3`` for the bind-to-0 one-liner."""
-        last_output = ''
-        for exe in ('python', 'python3'):
+        last_output = ""
+        for exe in ("python", "python3"):
             result = await self._control_run(f'{exe} -c "{_PYTHON_PORT_CMD}"')
             if result.retcode == 0:
                 return int(result.output.strip())
@@ -504,7 +500,7 @@ class NcFileTransfer(UnixFileTransfer):
     async def _get_listener_check_cmd(self, port: int) -> str:
         """Return the shell command string for checking a listener on *port*."""
         strategy = self._nc_listener_check
-        if strategy == 'auto':
+        if strategy == "auto":
             strategy = await self._resolve_listener_strategy()
         return self._listener_cmd_for(strategy, port)
 
@@ -521,38 +517,36 @@ class NcFileTransfer(UnixFileTransfer):
         if self._resolved_listener_check is not None:
             return self._resolved_listener_check
         for candidate in _LISTENER_CHECK_ORDER:
-            if candidate == 'proc':
-                self._resolved_listener_check = 'proc'
+            if candidate == "proc":
+                self._resolved_listener_check = "proc"
                 _logger.debug(f"{self._name}: cached listener check strategy 'proc'")
-                return 'proc'
+                return "proc"
             tool = candidate  # 'ss' or 'netstat'
-            result = await self._control_run(f'type {tool} >/dev/null 2>&1')
+            result = await self._control_run(f"type {tool} >/dev/null 2>&1")
             if result.retcode == 0:
                 self._resolved_listener_check = candidate
                 _logger.debug(f"{self._name}: cached listener check strategy '{candidate}'")
                 return candidate
-        return 'proc'  # pragma: no cover
+        return "proc"  # pragma: no cover
 
     def _listener_cmd_for(self, strategy: NcListenerCheck, port: int) -> str:
         """Build the check command for a concrete (non-auto) strategy."""
         match strategy:
-            case 'ss':
+            case "ss":
                 return _SS_LISTENER_CHECK.format(port=port)
-            case 'netstat':
+            case "netstat":
                 return _NETSTAT_LISTENER_CHECK.format(port=port)
-            case 'proc':
+            case "proc":
                 hex_port = f"{port:04X}"
                 return _PROC_LISTENER_CHECK.format(hex_port=hex_port)
-            case 'custom':
+            case "custom":
                 if self._nc_listener_cmd is None:
                     raise ValueError("nc_listener_check is 'custom' but nc_listener_cmd is None")
                 return self._nc_listener_cmd.format(port=port)
             case _:
                 raise ValueError(f"Unknown listener check strategy: {strategy}")
 
-    async def _verify_nc_dest_size(
-        self, dst: Path, expected: int
-    ) -> tuple[Status, str] | None:
+    async def _verify_nc_dest_size(self, dst: Path, expected: int) -> tuple[Status, str] | None:
         """Stat the remote destination and verify it matches *expected* bytes.
 
         Returns ``None`` on success or an ``(Status.Error, msg)`` tuple
@@ -560,16 +554,20 @@ class NcFileTransfer(UnixFileTransfer):
         drive ``_put_files_nc`` with mocked exec_cmd can patch the verify
         step without hand-rolling a stat response.
         """
-        verify = await self._exec_cmd(
-            f"stat -c %s {dst} 2>/dev/null || echo MISSING"
-        )
+        verify = await self._exec_cmd(f"stat -c %s {dst} 2>/dev/null || echo MISSING")
         actual_output = verify.output.strip()
         if actual_output == "MISSING":
-            return Status.Error, f"nc transfer to {dst}: destination file missing after listen_task exit"
+            return (
+                Status.Error,
+                f"nc transfer to {dst}: destination file missing after listen_task exit",
+            )
         try:
             actual = int(actual_output)
         except ValueError:
-            return Status.Error, f"nc transfer to {dst}: stat returned unparseable output {actual_output!r}"
+            return (
+                Status.Error,
+                f"nc transfer to {dst}: stat returned unparseable output {actual_output!r}",
+            )
         if actual != expected:
             return Status.Error, f"nc transfer to {dst}: expected {expected} bytes, got {actual}"
         return None
@@ -590,7 +588,7 @@ class NcFileTransfer(UnixFileTransfer):
         # warm pooled session; ssh: direct exec).
         sizes: dict[Path, int] = {}
         for src in src_files:
-            stat_result = await self._control_run(f'stat -c %s {src}')
+            stat_result = await self._control_run(f"stat -c %s {src}")
             sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
 
         async def _get_one(src: Path) -> tuple[Status, str]:
@@ -601,10 +599,12 @@ class NcFileTransfer(UnixFileTransfer):
 
             done: asyncio.Future[tuple[Status, str]] = asyncio.get_running_loop().create_future()
 
-            async def _on_connect(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            async def _on_connect(
+                reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+            ) -> None:
                 try:
                     bytes_done = 0
-                    with open(dst, 'wb') as f:
+                    with open(dst, "wb") as f:
                         while True:
                             block = await reader.read(_NC_BLOCK_SIZE)
                             if not block:
@@ -614,19 +614,19 @@ class NcFileTransfer(UnixFileTransfer):
                             if handler is not None:
                                 handler(str(src), str(dst), bytes_done, total)
                     writer.close()
-                    done.set_result((Status.Success, ''))
+                    done.set_result((Status.Success, ""))
                 except Exception as e:
                     done.set_result((Status.Error, str(e)))
 
             # Port 0 lets the OS assign a free port — no collisions when
             # multiple hosts transfer concurrently.  asyncio.start_server
             # returns once the socket is bound, so no sleep is needed.
-            server = await asyncio.start_server(_on_connect, '0.0.0.0', 0)
+            server = await asyncio.start_server(_on_connect, "0.0.0.0", 0)
             port = server.sockets[0].getsockname()[1]
             try:
                 send_task = asyncio.create_task(
                     self._exec_cmd(
-                        f'{self._nc_exec} -N {local_ip} {port} < {src} 2>/dev/null',
+                        f"{self._nc_exec} -N {local_ip} {port} < {src} 2>/dev/null",
                         timeout=None,
                     )
                 )
@@ -669,7 +669,7 @@ class NcFileTransfer(UnixFileTransfer):
         # `_get_files_nc` for the rationale.
         sizes: dict[Path, int] = {}
         for src in src_files:
-            stat_result = await self._control_run(f'stat -c %s {src}')
+            stat_result = await self._control_run(f"stat -c %s {src}")
             sizes[src] = int(stat_result.output.strip()) if stat_result.retcode == 0 else 0
 
         async def _get_one(src: Path) -> tuple[Status, str]:
@@ -686,8 +686,8 @@ class NcFileTransfer(UnixFileTransfer):
                 # than leaking and hanging the `await listen_task` below.
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
-                        f'{self._nc_exec} -Nl -w {self._nc_listener_timeout} '
-                        f'{port} < {src} 2>/dev/null',
+                        f"{self._nc_exec} -Nl -w {self._nc_listener_timeout} "
+                        f"{port} < {src} 2>/dev/null",
                         timeout=None,
                     )
                 )
@@ -703,7 +703,9 @@ class NcFileTransfer(UnixFileTransfer):
 
                 try:
                     reader, writer = await _connect_with_retry(
-                        'localhost', local_port, timeout=5.0,
+                        "localhost",
+                        local_port,
+                        timeout=5.0,
                     )
                 except ConnectionError:
                     listen_task.cancel()
@@ -712,7 +714,7 @@ class NcFileTransfer(UnixFileTransfer):
 
                 try:
                     bytes_done = 0
-                    with open(dst, 'wb') as f:
+                    with open(dst, "wb") as f:
                         while True:
                             block = await reader.read(_NC_BLOCK_SIZE)
                             if not block:
@@ -730,7 +732,8 @@ class NcFileTransfer(UnixFileTransfer):
                 # `-w` caps it remote-side, this is the asyncio backstop.
                 try:
                     await asyncio.wait_for(
-                        listen_task, timeout=self._nc_options.listener_timeout,
+                        listen_task,
+                        timeout=self._nc_options.listener_timeout,
                     )
                 except (asyncio.TimeoutError, TimeoutError):
                     listen_task.cancel()
@@ -740,7 +743,7 @@ class NcFileTransfer(UnixFileTransfer):
                         f"{self._nc_options.listener_timeout}s of transfer end "
                         f"(orphaned listener — likely a remote port collision)"
                     )
-                return Status.Success, ''
+                return Status.Success, ""
             finally:
                 self._release_port(port)
 
@@ -765,7 +768,7 @@ class NcFileTransfer(UnixFileTransfer):
         """
         if self._connections.has_tunnel:
             try:
-                host = 'localhost'
+                host = "localhost"
                 target_port = await self._connections.forward_port(port)
             except Exception:
                 return
@@ -805,8 +808,8 @@ class NcFileTransfer(UnixFileTransfer):
                 # makes it self-terminate instead of leaking and hanging us.
                 listen_task = asyncio.create_task(
                     self._exec_cmd(
-                        f'{self._nc_exec} -l -w {self._nc_listener_timeout} {port} '
-                        f'< /dev/null > {dst} 2>/dev/null',
+                        f"{self._nc_exec} -l -w {self._nc_listener_timeout} {port} "
+                        f"< /dev/null > {dst} 2>/dev/null",
                         timeout=None,
                     )
                 )
@@ -822,7 +825,7 @@ class NcFileTransfer(UnixFileTransfer):
                 await self._wait_for_remote_listener(port)
                 if self._connections.has_tunnel:
                     local_port = await self._connections.forward_port(port)
-                    connect_host = 'localhost'
+                    connect_host = "localhost"
                     connect_port = local_port
                 else:
                     connect_host = self._connections.ip
@@ -830,16 +833,16 @@ class NcFileTransfer(UnixFileTransfer):
 
                 # Adaptive retry — connects as soon as the remote nc listener is
                 # ready. Allow more time when tunneled (extra hop latency).
-                if self._connections.has_tunnel:
-                    timeout = 5.0
-                elif self._connections.term == 'telnet':
+                if self._connections.has_tunnel or self._connections.term == "telnet":
                     timeout = 5.0
                 else:
                     timeout = 2.0
 
                 try:
                     _, writer = await _connect_with_retry(
-                        connect_host, connect_port, timeout=timeout,
+                        connect_host,
+                        connect_port,
+                        timeout=timeout,
                     )
                 except ConnectionError:
                     listen_task.cancel()
@@ -851,7 +854,7 @@ class NcFileTransfer(UnixFileTransfer):
                 handler = progress_factory() if progress_factory is not None else None
 
                 try:
-                    with open(src, 'rb') as f:
+                    with open(src, "rb") as f:
                         blocks_since_drain = 0
                         while True:
                             block = f.read(_NC_BLOCK_SIZE)
@@ -880,7 +883,8 @@ class NcFileTransfer(UnixFileTransfer):
                 # `_put_one`'s retry take another port.
                 try:
                     await asyncio.wait_for(
-                        listen_task, timeout=self._nc_options.listener_timeout,
+                        listen_task,
+                        timeout=self._nc_options.listener_timeout,
                     )
                 except (asyncio.TimeoutError, TimeoutError):
                     listen_task.cancel()
@@ -902,7 +906,7 @@ class NcFileTransfer(UnixFileTransfer):
                 verify_error = await self._verify_nc_dest_size(dst, total)
                 if verify_error is not None:
                     return verify_error
-                return Status.Success, ''
+                return Status.Success, ""
             except asyncio.CancelledError:
                 # External cancellation mid-transfer skips listen_task's
                 # normal join points (the success / ConnectionError / timeout
@@ -940,7 +944,7 @@ class NcFileTransfer(UnixFileTransfer):
         )
         r = _first_error(results)
         if r[0].is_ok:
-            _logger.debug('Finished nc transfers')
+            _logger.debug("Finished nc transfers")
         return r
 
 

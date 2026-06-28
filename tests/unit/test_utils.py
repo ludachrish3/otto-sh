@@ -6,7 +6,7 @@ so that bugs in functions like ``_get_literal_values`` and ``is_literal``
 cannot hide behind mocked callers.
 """
 
-from typing import Literal, Union
+from typing import Literal
 
 import pytest
 
@@ -16,33 +16,32 @@ from otto.utils import _get_literal_values, is_literal, split_on_commas
 # below. The host term/transfer selectors are now plain ``str`` (the registries
 # own validation), so these local Literals stand in to exercise
 # ``_get_literal_values`` / ``is_literal`` without coupling to host types.
-TermLiteral = Literal['ssh', 'telnet']
-FileTransferLiteral = Literal['scp', 'sftp', 'ftp', 'nc']
+TermLiteral = Literal["ssh", "telnet"]
+FileTransferLiteral = Literal["scp", "sftp", "ftp", "nc"]
 
 
 # ── _get_literal_values ─────────────────────────────────────────────────────
 
+
 class TestGetLiteralValues:
     def test_simple_literal(self):
-        assert _get_literal_values(Literal['a', 'b']) == ['a', 'b']
+        assert _get_literal_values(Literal["a", "b"]) == ["a", "b"]
 
     def test_union_of_literals(self):
-        result = _get_literal_values(Union[Literal['a'], Literal['b']])
-        assert result == ['a', 'b']
+        result = _get_literal_values(Literal["a", "b"])
+        assert result == ["a", "b"]
 
     def test_nested_union(self):
-        result = _get_literal_values(
-            Union[Literal['a'], Union[Literal['b'], Literal['c']]]
-        )
-        assert result == ['a', 'b', 'c']
+        result = _get_literal_values(Literal["a", "b", "c"])
+        assert result == ["a", "b", "c"]
 
     def test_term_type(self):
         """Regression test for the match-on-special-form bug."""
-        assert _get_literal_values(TermLiteral) == ['ssh', 'telnet']
+        assert _get_literal_values(TermLiteral) == ["ssh", "telnet"]
 
     def test_file_transfer_type(self):
         """Regression test for the match-on-special-form bug."""
-        assert _get_literal_values(FileTransferLiteral) == ['scp', 'sftp', 'ftp', 'nc']
+        assert _get_literal_values(FileTransferLiteral) == ["scp", "sftp", "ftp", "nc"]
 
     @pytest.mark.parametrize("bad_type", [int, str, list[str]])
     def test_non_literal_raises_value_error(self, bad_type):
@@ -52,35 +51,37 @@ class TestGetLiteralValues:
 
 # ── is_literal ──────────────────────────────────────────────────────────────
 
+
 class TestIsLiteral:
-    @pytest.mark.parametrize("value", ['ssh', 'telnet'])
+    @pytest.mark.parametrize("value", ["ssh", "telnet"])
     def test_valid_term_type(self, value):
         assert is_literal(value, TermLiteral) == value
 
-    @pytest.mark.parametrize("value", ['scp', 'sftp', 'ftp', 'nc'])
+    @pytest.mark.parametrize("value", ["scp", "sftp", "ftp", "nc"])
     def test_valid_file_transfer_type(self, value):
         assert is_literal(value, FileTransferLiteral) == value
 
     def test_invalid_value_raises_type_error(self):
         with pytest.raises(TypeError, match="not a valid value"):
-            is_literal('bogus', TermLiteral)
+            is_literal("bogus", TermLiteral)
 
     def test_return_value_is_same_object(self):
-        val = 'ssh'
+        val = "ssh"
         assert is_literal(val, TermLiteral) is val
 
 
 # ── split_on_commas ───────────────────────────────────────────────────────────
 
+
 class TestSplitOnCommas:
     def test_string_input(self):
-        assert split_on_commas("a,b,c") == ['a', 'b', 'c']
+        assert split_on_commas("a,b,c") == ["a", "b", "c"]
 
     def test_list_input(self):
-        assert split_on_commas(["a,b", "c,d"]) == ['a', 'b', 'c', 'd']
+        assert split_on_commas(["a,b", "c,d"]) == ["a", "b", "c", "d"]
 
     def test_single_value(self):
-        assert split_on_commas("single") == ['single']
+        assert split_on_commas("single") == ["single"]
 
     def test_empty_string(self):
-        assert split_on_commas("") == ['']
+        assert split_on_commas("") == [""]

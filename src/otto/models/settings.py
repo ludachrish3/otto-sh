@@ -48,6 +48,7 @@ class DockerImageSpec(OttoModel):
 
     def to_runtime(self) -> DockerImage:
         from ..configmodule.repo import DockerImage
+
         return DockerImage(
             name=self.name,
             dockerfile=self.dockerfile,
@@ -56,9 +57,7 @@ class DockerImageSpec(OttoModel):
             # frozen, sorted, all-string tuple-of-tuples so the runtime object
             # stays hashable and order-stable for the docker context hash;
             # ``str(v)`` coerces TOML scalars (ints/bools) like the old parser.
-            build_args=tuple(
-                (k, str(v)) for k, v in sorted(self.build_args.items())
-            ),
+            build_args=tuple((k, str(v)) for k, v in sorted(self.build_args.items())),
         )
 
 
@@ -69,6 +68,7 @@ class DockerComposeSpec(OttoModel):
 
     def to_runtime(self) -> DockerCompose:
         from ..configmodule.repo import DockerCompose
+
         return DockerCompose(
             path=self.path,
             default_host=self.default_host,
@@ -83,6 +83,7 @@ class DockerSettingsSpec(OttoModel):
 
     def to_runtime(self) -> DockerSettings:
         from ..configmodule.repo import DockerSettings
+
         return DockerSettings(
             registry_url=self.registry_url,
             images=tuple(i.to_runtime() for i in self.images),
@@ -242,16 +243,12 @@ class SettingsModel(OttoModel):
             # ``configmodule.version.Version`` parser, which Repo builds from
             # this same string — a trailing SemVer suffix (``1.2.3-rc1``) is
             # accepted by both, so the message says "start with".
-            raise ValueError(
-                f"version {v!r} must start with MAJOR.MINOR.PATCH (e.g. 1.2.3)"
-            )
+            raise ValueError(f"version {v!r} must start with MAJOR.MINOR.PATCH (e.g. 1.2.3)")
         return v
 
     @field_validator("host_preferences")
     @classmethod
-    def _validate_host_preferences(
-        cls, v: dict[str, dict[str, Any]]
-    ) -> dict[str, dict[str, Any]]:
+    def _validate_host_preferences(cls, v: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """Validate each ``[host_preferences."<selector>"]`` block. The selector
         must be a compilable regex (``re.fullmatch`` against the host ``id``).
         Inner keys partition by name: a capability (``term``/``transfer``) takes
@@ -275,9 +272,7 @@ class SettingsModel(OttoModel):
             validated: dict[str, Any] = {}
             for key, val in entries.items():
                 if key in _HOST_PREFERENCE_CAPABILITIES:
-                    if not isinstance(val, list) or not all(
-                        isinstance(x, str) for x in val
-                    ):
+                    if not isinstance(val, list) or not all(isinstance(x, str) for x in val):
                         raise ValueError(
                             f"[host_preferences] capability {key!r} under selector "
                             f"{selector!r} must be a list of backend names"
@@ -285,9 +280,7 @@ class SettingsModel(OttoModel):
                     validated[key] = list(val)
                 elif key in _HOST_DEFAULT_OPTION_SPECS:
                     spec_cls = _HOST_DEFAULT_OPTION_SPECS[key]
-                    validated[key] = spec_cls.model_validate(val).model_dump(
-                        exclude_unset=True
-                    )
+                    validated[key] = spec_cls.model_validate(val).model_dump(exclude_unset=True)
                 else:
                     raise ValueError(
                         f"unknown [host_preferences] key {key!r} under selector "
@@ -322,9 +315,7 @@ class OttoEnvSettings(BaseSettings):
     # "cleared in my shell profile" case) means "unset" → use the field default,
     # rather than failing to parse "" as int/bool. Matches the historical reads
     # (os.environ.get(...) falsiness / Typer's envvar handling).
-    model_config = SettingsConfigDict(
-        env_prefix="OTTO_", extra="ignore", env_ignore_empty=True
-    )
+    model_config = SettingsConfigDict(env_prefix="OTTO_", extra="ignore", env_ignore_empty=True)
 
     # NoDecode: stop pydantic-settings from JSON-decoding the env string for this
     # "complex" (list) field, so the raw OTTO_SUT_DIRS value reaches the

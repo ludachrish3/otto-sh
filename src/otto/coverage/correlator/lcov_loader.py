@@ -14,6 +14,7 @@ Format summary::
     BRH:<hit>,<found>
     end_of_record
 """
+
 from __future__ import annotations
 
 import logging
@@ -44,7 +45,7 @@ class LCOVLoader:
         loader = LCOVLoader(store, correlator)
 
         loader.load("system_merged.info", "system")
-        loader.load("unit_tests.info",    "unit")
+        loader.load("unit_tests.info", "unit")
     """
 
     def __init__(self, store: CoverageStore, correlator: PathCorrelator) -> None:

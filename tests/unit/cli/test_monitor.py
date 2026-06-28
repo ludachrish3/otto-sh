@@ -11,12 +11,10 @@ The monitor command is tested via ``monitor_app`` directly so the main
 callback (which requires a real lab) is not involved.
 """
 
-import asyncio
 import json
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,14 +33,15 @@ runner = CliRunner()
 
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
-def _make_host(name: str = 'box') -> UnixHost:
+
+def _make_host(name: str = "box") -> UnixHost:
     """Return a real UnixHost (no connection is made on construction)."""
-    return UnixHost(ip='10.0.0.1', element=name, creds={'admin': 'secret'}, log=True)
+    return UnixHost(ip="10.0.0.1", element=name, creds={"admin": "secret"}, log=True)
 
 
 def _close_coro(coro):
     """Close a coroutine without running it (suppresses 'never awaited' warnings)."""
-    if hasattr(coro, 'close'):
+    if hasattr(coro, "close"):
         coro.close()
 
 
@@ -57,31 +56,33 @@ def live_mode_mocks():
     mock_server = MagicMock()
 
     with (
-        patch('otto.cli.monitor.all_hosts', return_value=iter([mock_host])),
-        patch('otto.cli.monitor.build_monitor_collector', return_value=mock_collector),
-        patch('otto.cli.monitor.MonitorServer', return_value=mock_server),
-        patch('asyncio.run', side_effect=_close_coro),
+        patch("otto.cli.monitor.all_hosts", return_value=iter([mock_host])),
+        patch("otto.cli.monitor.build_monitor_collector", return_value=mock_collector),
+        patch("otto.cli.monitor.MonitorServer", return_value=mock_server),
+        patch("asyncio.run", side_effect=_close_coro),
     ):
         yield {
-            'host': mock_host,
-            'collector': mock_collector,
-            'server': mock_server,
+            "host": mock_host,
+            "collector": mock_collector,
+            "server": mock_server,
         }
 
 
 # ── Help / basic smoke ────────────────────────────────────────────────────────
 
+
 class TestMonitorHelp:
     def test_help_flag(self):
-        result = runner.invoke(monitor_app, ['--help'])
+        result = runner.invoke(monitor_app, ["--help"])
         assert result.exit_code == 0
 
     def test_help_mentions_interval(self):
-        result = runner.invoke(monitor_app, ['--help'])
-        assert '--interval' in result.output or '-i' in result.output
+        result = runner.invoke(monitor_app, ["--help"])
+        assert "--interval" in result.output or "-i" in result.output
 
 
 # ── --interval validation ─────────────────────────────────────────────────────
+
 
 class TestIntervalOption:
     def test_default_interval_accepted(self, live_mode_mocks):
@@ -90,87 +91,90 @@ class TestIntervalOption:
         assert result.exit_code == 0
 
     def test_custom_interval_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ['--interval', '10'])
+        result = runner.invoke(monitor_app, ["--interval", "10"])
         assert result.exit_code == 0
 
     def test_interval_short_flag(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ['-i', '3'])
+        result = runner.invoke(monitor_app, ["-i", "3"])
         assert result.exit_code == 0
 
     def test_interval_below_min_rejected(self):
-        result = runner.invoke(monitor_app, ['--interval', '0.5'])
+        result = runner.invoke(monitor_app, ["--interval", "0.5"])
         assert result.exit_code == 2
 
     def test_interval_at_min_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ['--interval', '1.0'])
+        result = runner.invoke(monitor_app, ["--interval", "1.0"])
         assert result.exit_code == 0
 
 
 # ── --hosts regex option ──────────────────────────────────────────────────────
 
+
 class TestHostsArgument:
     def test_single_host_regex_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ['--hosts', 'host1'])
+        result = runner.invoke(monitor_app, ["--hosts", "host1"])
         assert result.exit_code == 0
 
     def test_alternation_regex_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ['--hosts', 'host1|host2'])
+        result = runner.invoke(monitor_app, ["--hosts", "host1|host2"])
         assert result.exit_code == 0
 
     def test_no_hosts_option_uses_all_hosts(self, live_mode_mocks):
         """Without --hosts, all_hosts() provides the list (called with pattern=None)."""
         with patch(
-            'otto.cli.monitor.all_hosts',
-            return_value=iter([live_mode_mocks['host']]),
+            "otto.cli.monitor.all_hosts",
+            return_value=iter([live_mode_mocks["host"]]),
         ) as p:
             runner.invoke(monitor_app, [])
         p.assert_called_once()
-        assert p.call_args.kwargs.get('pattern') is None
+        assert p.call_args.kwargs.get("pattern") is None
 
     def test_hosts_regex_passed_to_all_hosts(self, live_mode_mocks):
         """A --hosts regex is compiled and forwarded to all_hosts(pattern=...)."""
         with patch(
-            'otto.cli.monitor.all_hosts',
-            return_value=iter([live_mode_mocks['host']]),
+            "otto.cli.monitor.all_hosts",
+            return_value=iter([live_mode_mocks["host"]]),
         ) as p:
-            runner.invoke(monitor_app, ['--hosts', 'router'])
+            runner.invoke(monitor_app, ["--hosts", "router"])
         p.assert_called_once()
-        pattern = p.call_args.kwargs.get('pattern')
+        pattern = p.call_args.kwargs.get("pattern")
         assert pattern is not None
-        assert pattern.search('router1')
-        assert pattern.search('switch1') is None
+        assert pattern.search("router1")
+        assert pattern.search("switch1") is None
 
     def test_no_matching_hosts_exits_nonzero(self, live_mode_mocks):
-        with patch('otto.cli.monitor.all_hosts', return_value=iter([])):
-            result = runner.invoke(monitor_app, ['--hosts', 'nope'])
+        with patch("otto.cli.monitor.all_hosts", return_value=iter([])):
+            result = runner.invoke(monitor_app, ["--hosts", "nope"])
         assert result.exit_code != 0
 
 
 # ── --db option ───────────────────────────────────────────────────────────────
 
+
 class TestDbOption:
     def test_db_option_accepted(self, live_mode_mocks, tmp_path):
-        db_file = tmp_path / 'metrics.db'
-        result = runner.invoke(monitor_app, ['--db', str(db_file)])
+        db_file = tmp_path / "metrics.db"
+        result = runner.invoke(monitor_app, ["--db", str(db_file)])
         assert result.exit_code == 0
 
 
 # ── --file option (historical mode) ──────────────────────────────────────────
 
+
 class TestFileOption:
     def test_nonexistent_file_rejected(self):
-        result = runner.invoke(monitor_app, ['--file', '/nonexistent/path/data.db'])
+        result = runner.invoke(monitor_app, ["--file", "/nonexistent/path/data.db"])
         assert result.exit_code != 0
 
     def test_json_file_accepted(self, tmp_path):
-        json_file = tmp_path / 'metrics.json'
+        json_file = tmp_path / "metrics.json"
         json_file.write_text('{"metrics": [], "events": []}')
-        with patch('asyncio.run', side_effect=_close_coro):
-            result = runner.invoke(monitor_app, ['--file', str(json_file)])
+        with patch("asyncio.run", side_effect=_close_coro):
+            result = runner.invoke(monitor_app, ["--file", str(json_file)])
         assert result.exit_code == 0
 
     def test_db_file_accepted(self, tmp_path):
-        db_file = tmp_path / 'metrics.db'
+        db_file = tmp_path / "metrics.db"
         # Create a valid SQLite file with the expected schema
         with closing(sqlite3.connect(str(db_file))) as conn, conn:
             conn.executescript("""
@@ -186,19 +190,20 @@ class TestFileOption:
                     color TEXT NOT NULL DEFAULT '#888888', dash TEXT NOT NULL DEFAULT 'dash'
                 );
             """)
-        with patch('asyncio.run', side_effect=_close_coro):
-            result = runner.invoke(monitor_app, ['--file', str(db_file)])
+        with patch("asyncio.run", side_effect=_close_coro):
+            result = runner.invoke(monitor_app, ["--file", str(db_file)])
         assert result.exit_code == 0
 
 
 # ── _load_historical() unit tests ─────────────────────────────────────────────
+
 
 class TestLoadHistorical:
     """Direct unit tests for the private _load_historical() helper."""
 
     @pytest.mark.asyncio
     async def test_json_extension_uses_from_json(self, tmp_path):
-        json_file = tmp_path / 'data.json'
+        json_file = tmp_path / "data.json"
         json_file.write_text('{"metrics": [], "events": []}')
         collector = await _load_historical(json_file)
         assert collector is not None
@@ -206,7 +211,7 @@ class TestLoadHistorical:
 
     @pytest.mark.asyncio
     async def test_sqlite_extension_uses_from_sqlite(self, tmp_path):
-        db_file = tmp_path / 'data.db'
+        db_file = tmp_path / "data.db"
         with closing(sqlite3.connect(str(db_file))) as conn, conn:
             conn.executescript("""
                 CREATE TABLE metrics (
@@ -228,31 +233,36 @@ class TestLoadHistorical:
     @pytest.mark.asyncio
     async def test_unsupported_extension_raises_exit(self, tmp_path):
         import typer
-        txt_file = tmp_path / 'data.txt'
-        txt_file.write_text('garbage')
+
+        txt_file = tmp_path / "data.txt"
+        txt_file.write_text("garbage")
         with pytest.raises(typer.Exit):
             await _load_historical(txt_file)
 
     @pytest.mark.asyncio
     async def test_json_with_data_loads_metrics(self, tmp_path):
-        ts = '2024-01-01T12:00:00'
-        json_file = tmp_path / 'data.json'
-        json_file.write_text(json.dumps({
-            'metrics': [
-                {'timestamp': ts, 'host': 'router1', 'label': 'CPU %', 'value': 42.0},
-            ],
-            'events': [],
-        }))
+        ts = "2024-01-01T12:00:00"
+        json_file = tmp_path / "data.json"
+        json_file.write_text(
+            json.dumps(
+                {
+                    "metrics": [
+                        {"timestamp": ts, "host": "router1", "label": "CPU %", "value": 42.0},
+                    ],
+                    "events": [],
+                }
+            )
+        )
         collector = await _load_historical(json_file)
         series = collector.get_series()
-        assert 'router1/CPU %' in series
-        assert len(series['router1/CPU %']) == 1
-        value = series['router1/CPU %'][0].value
+        assert "router1/CPU %" in series
+        assert len(series["router1/CPU %"]) == 1
+        value = series["router1/CPU %"][0].value
         assert value == 42.0
 
     @pytest.mark.asyncio
     async def test_sqlite_with_data_loads_metrics(self, tmp_path):
-        db_file = tmp_path / 'data.db'
+        db_file = tmp_path / "data.db"
         ts = datetime(2024, 1, 1, 12, 0, 0).isoformat()
         with closing(sqlite3.connect(str(db_file))) as conn, conn:
             conn.executescript("""
@@ -270,17 +280,18 @@ class TestLoadHistorical:
                 );
             """)
             conn.execute(
-                'INSERT INTO metrics (ts, host, label, value) VALUES (?, ?, ?, ?)',
-                (ts, 'host1', 'CPU %', 55.0),
+                "INSERT INTO metrics (ts, host, label, value) VALUES (?, ?, ?, ?)",
+                (ts, "host1", "CPU %", 55.0),
             )
         collector = await _load_historical(db_file)
         series = collector.get_series()
-        assert 'host1/CPU %' in series
-        value = series['host1/CPU %'][0].value
+        assert "host1/CPU %" in series
+        value = series["host1/CPU %"][0].value
         assert value == 55.0
 
 
 # ── build_monitor_collector() unit tests ──────────────────────────────────────
+
 
 class TestBuildCollector:
     """Direct unit tests for the build_monitor_collector() factory."""
@@ -294,7 +305,7 @@ class TestBuildCollector:
     @pytest.mark.asyncio
     async def test_db_path_forwarded(self, tmp_path):
         host = _make_host()
-        db_file = tmp_path / 'out.db'
+        db_file = tmp_path / "out.db"
         collector = build_monitor_collector(hosts=[host], db_path=db_file)
         # DB is created lazily on init_db(), not on construction
         await collector.init_db()
@@ -320,7 +331,7 @@ _LOADAVG_OUTPUT = "0.52 0.58 0.59 1/432 12345"
 _CPUINFO_OUTPUT = "4"
 
 
-def _make_monitor_host(name: str = 'router1') -> MagicMock:
+def _make_monitor_host(name: str = "router1") -> MagicMock:
     """Return a mock UnixHost whose run returns canned metric output.
 
     The mock boundary is at the host I/O layer — the collector, parsers,
@@ -332,20 +343,20 @@ def _make_monitor_host(name: str = 'router1') -> MagicMock:
     host.log = True
 
     responses: dict[str, CommandStatus] = {
-        'grep -c ^processor /proc/cpuinfo': CommandStatus(
-            command='grep -c ^processor /proc/cpuinfo',
+        "grep -c ^processor /proc/cpuinfo": CommandStatus(
+            command="grep -c ^processor /proc/cpuinfo",
             output=_CPUINFO_OUTPUT,
             status=Status.Success,
             retcode=0,
         ),
-        'free -b': CommandStatus(
-            command='free -b',
+        "free -b": CommandStatus(
+            command="free -b",
             output=_FREE_OUTPUT,
             status=Status.Success,
             retcode=0,
         ),
-        'cat /proc/loadavg': CommandStatus(
-            command='cat /proc/loadavg',
+        "cat /proc/loadavg": CommandStatus(
+            command="cat /proc/loadavg",
             output=_LOADAVG_OUTPUT,
             status=Status.Success,
             retcode=0,
@@ -360,8 +371,10 @@ def _make_monitor_host(name: str = 'router1') -> MagicMock:
             if cmd in responses:
                 results.append(responses[cmd])
             else:
-                results.append(CommandStatus(cmd, '', Status.Failed, 1))
-        overall = Status.Success if all(r.status == Status.Success for r in results) else Status.Failed
+                results.append(CommandStatus(cmd, "", Status.Failed, 1))
+        overall = (
+            Status.Success if all(r.status == Status.Success for r in results) else Status.Failed
+        )
         return RunResult(status=overall, statuses=results)
 
     host.run = AsyncMock(side_effect=fake_run_cmds)
@@ -369,6 +382,7 @@ def _make_monitor_host(name: str = 'router1') -> MagicMock:
 
 
 # ── MetricCollector live run tests ───────────────────────────────────────────
+
 
 class TestCollectorLiveRun:
     """Tests that let MetricCollector.run() execute for real with mock hosts.
@@ -379,7 +393,7 @@ class TestCollectorLiveRun:
 
     @pytest.mark.asyncio
     async def test_single_cycle_parses_metrics(self):
-        host = _make_monitor_host('router1')
+        host = _make_monitor_host("router1")
         collector = MetricCollector(
             hosts=[host],
             parsers=[MemParser(), LoadParser()],
@@ -392,22 +406,22 @@ class TestCollectorLiveRun:
 
         series = collector.get_series()
         # MemParser produces "Memory Usage" keyed by chart name
-        assert 'router1/Memory Usage' in series
-        mem_pt = series['router1/Memory Usage'][0]
+        assert "router1/Memory Usage" in series
+        mem_pt = series["router1/Memory Usage"][0]
         assert abs(mem_pt.value - 62.5) < 0.1  # 10B / 16B = 62.5%
         assert mem_pt.meta is not None
 
         # LoadParser produces three load average series
-        assert 'router1/Load (1m)' in series
-        assert 'router1/Load (5m)' in series
-        assert 'router1/Load (15m)' in series
-        load_1m = series['router1/Load (1m)'][0].value
+        assert "router1/Load (1m)" in series
+        assert "router1/Load (5m)" in series
+        assert "router1/Load (15m)" in series
+        load_1m = series["router1/Load (1m)"][0].value
         assert abs(load_1m - 0.52) < 0.01
 
     @pytest.mark.asyncio
     async def test_collection_stores_to_sqlite(self, tmp_path):
-        host = _make_monitor_host('router1')
-        db_file = tmp_path / 'test_metrics.db'
+        host = _make_monitor_host("router1")
+        db_file = tmp_path / "test_metrics.db"
         collector = MetricCollector(
             hosts=[host],
             parsers=[MemParser(), LoadParser()],
@@ -422,17 +436,17 @@ class TestCollectorLiveRun:
 
         assert db_file.exists()
         with closing(sqlite3.connect(str(db_file))) as conn, conn:
-            rows = conn.execute('SELECT host, label, value FROM metrics').fetchall()
+            rows = conn.execute("SELECT host, label, value FROM metrics").fetchall()
         # 1 Memory Usage + 3 Load averages = 4 rows
         assert len(rows) >= 4
         labels = {row[1] for row in rows}
-        assert 'Memory Usage' in labels
-        assert 'Load (1m)' in labels
+        assert "Memory Usage" in labels
+        assert "Load (1m)" in labels
 
     @pytest.mark.asyncio
     async def test_multiple_hosts_collected(self):
-        host1 = _make_monitor_host('host1')
-        host2 = _make_monitor_host('host2')
+        host1 = _make_monitor_host("host1")
+        host2 = _make_monitor_host("host2")
         collector = MetricCollector(
             hosts=[host1, host2],
             parsers=[LoadParser()],
@@ -444,20 +458,22 @@ class TestCollectorLiveRun:
         )
 
         series = collector.get_series()
-        assert 'host1/Load (1m)' in series
-        assert 'host2/Load (1m)' in series
+        assert "host1/Load (1m)" in series
+        assert "host2/Load (1m)" in series
 
     @pytest.mark.asyncio
     async def test_failed_command_does_not_crash_collector(self):
-        host = _make_monitor_host('router1')
+        host = _make_monitor_host("router1")
         # Override host.run to always return failures with empty output
-        host.run = AsyncMock(return_value=RunResult(
-            status=Status.Failed,
-            statuses=[
-                CommandStatus('free -b', '', Status.Failed, 1),
-                CommandStatus('cat /proc/loadavg', '', Status.Failed, 1),
-            ],
-        ))
+        host.run = AsyncMock(
+            return_value=RunResult(
+                status=Status.Failed,
+                statuses=[
+                    CommandStatus("free -b", "", Status.Failed, 1),
+                    CommandStatus("cat /proc/loadavg", "", Status.Failed, 1),
+                ],
+            )
+        )
         collector = MetricCollector(
             hosts=[host],
             parsers=[MemParser(), LoadParser()],

@@ -13,9 +13,9 @@ plus a ``post_connect`` hook together forward the full power of asyncssh
 Example::
 
     host = UnixHost(
-        ip='10.0.0.1',
-        creds={'admin': 'secret'},
-        element='lab',
+        ip="10.0.0.1",
+        creds={"admin": "secret"},
+        element="lab",
         ssh_options=SshOptions(port=2222, connect_timeout=5),
         telnet_options=TelnetOptions(auto_window_resize=True),
     )
@@ -47,6 +47,7 @@ _FORWARD_CONFIG = ConfigDict(extra="forbid")
 @pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
 class LocalPortForward:
     """An SSH local port forward: listen locally, send to host:port via the remote."""
+
     listen_host: str
     listen_port: int
     dest_host: str
@@ -56,6 +57,7 @@ class LocalPortForward:
 @pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
 class RemotePortForward:
     """An SSH remote port forward: listen on the remote, send to host:port locally."""
+
     listen_host: str
     listen_port: int
     dest_host: str
@@ -65,6 +67,7 @@ class RemotePortForward:
 @pydantic_dataclass(frozen=True, config=_FORWARD_CONFIG)
 class SocksForward:
     """A dynamic SOCKS forward listening on the given local address."""
+
     listen_host: str
     listen_port: int
 
@@ -135,7 +138,7 @@ class SshOptions:
     ``x509_trusted_certs``, ``gss_host``, etc.) can be set here. Values in
     ``extra`` override curated fields on conflict."""
 
-    post_connect: Callable[['SSHClientConnection'], Awaitable[None]] | None = None
+    post_connect: Callable[["SSHClientConnection"], Awaitable[None]] | None = None
     """Optional async hook called with the freshly opened connection,
     after the structured forward lists have been applied. Use for anything
     not expressible as a kwarg or a structured forward — e.g. UNIX-socket
@@ -150,33 +153,33 @@ class SshOptions:
         otto behavior callers rely on.
         """
         kw: dict[str, Any] = {
-            'port': self.port,
-            'known_hosts': self.known_hosts,
+            "port": self.port,
+            "known_hosts": self.known_hosts,
         }
         if self.connect_timeout is not None:
-            kw['connect_timeout'] = self.connect_timeout
+            kw["connect_timeout"] = self.connect_timeout
         if self.keepalive_interval is not None:
-            kw['keepalive_interval'] = self.keepalive_interval
+            kw["keepalive_interval"] = self.keepalive_interval
         if self.keepalive_count_max is not None:
-            kw['keepalive_count_max'] = self.keepalive_count_max
+            kw["keepalive_count_max"] = self.keepalive_count_max
         if self.client_keys is not None:
-            kw['client_keys'] = self.client_keys
+            kw["client_keys"] = self.client_keys
         if self.client_host_keys is not None:
-            kw['client_host_keys'] = self.client_host_keys
+            kw["client_host_keys"] = self.client_host_keys
         if self.agent_forwarding:
-            kw['agent_forwarding'] = True
+            kw["agent_forwarding"] = True
         if self.preferred_auth is not None:
-            kw['preferred_auth'] = self.preferred_auth
+            kw["preferred_auth"] = self.preferred_auth
         if self.encryption_algs is not None:
-            kw['encryption_algs'] = self.encryption_algs
+            kw["encryption_algs"] = self.encryption_algs
         if self.server_host_key_algs is not None:
-            kw['server_host_key_algs'] = self.server_host_key_algs
+            kw["server_host_key_algs"] = self.server_host_key_algs
         if self.compression_algs is not None:
-            kw['compression_algs'] = self.compression_algs
+            kw["compression_algs"] = self.compression_algs
         kw.update(self.extra)
         return kw
 
-    async def _apply_post_connect(self, conn: 'SSHClientConnection') -> None:
+    async def _apply_post_connect(self, conn: "SSHClientConnection") -> None:
         """Apply structured forwards and run the ``post_connect`` hook."""
         for f in self.local_forwards:
             await conn.forward_local_port(f.listen_host, f.listen_port, f.dest_host, f.dest_port)
@@ -232,7 +235,7 @@ class TelnetOptions:
     echo_negotiation_timeout: float = 3.0
     """Seconds to wait for the remote to honor ``DONT ECHO`` during connect."""
 
-    login_prompt: bytes = b':'
+    login_prompt: bytes = b":"
     """Byte delimiter that terminates the login/password prompts. Anything
     ending in a colon matches ``login:``, ``Username:``, ``Password:``, etc."""
 
@@ -262,10 +265,10 @@ class TelnetOptions:
     def _open_kwargs(self) -> dict[str, Any]:
         """Build the kwargs dict passed to ``telnetlib3.open_connection()``."""
         kw: dict[str, Any] = {
-            'port': self.port,
-            'encoding': self.encoding,
-            'cols': self.cols,
-            'rows': self.rows,
+            "port": self.port,
+            "encoding": self.encoding,
+            "cols": self.cols,
+            "rows": self.rows,
         }
         kw.update(self.extra)
         return kw
@@ -297,9 +300,9 @@ class SftpOptions:
     def _kwargs(self) -> dict[str, Any]:
         kw: dict[str, Any] = {}
         if self.env is not None:
-            kw['env'] = self.env
+            kw["env"] = self.env
         if self.send_env is not None:
-            kw['send_env'] = self.send_env
+            kw["send_env"] = self.send_env
         kw.update(self.extra)
         return kw
 
@@ -331,9 +334,9 @@ class ScpOptions:
 
     def _kwargs(self) -> dict[str, Any]:
         kw: dict[str, Any] = {
-            'preserve': self.preserve,
-            'recurse': self.recurse,
-            'block_size': self.block_size,
+            "preserve": self.preserve,
+            "recurse": self.recurse,
+            "block_size": self.block_size,
         }
         kw.update(self.extra)
         return kw
@@ -355,7 +358,7 @@ class FtpOptions:
     port: int = 21
     """TCP port for the FTP control connection."""
 
-    encoding: str = 'utf-8'
+    encoding: str = "utf-8"
     """Text encoding for FTP commands and paths."""
 
     socket_timeout: float | None = None
@@ -376,7 +379,7 @@ class FtpOptions:
     ssl: Any = None
     """``ssl.SSLContext``, ``True``, or ``None``. Use an SSLContext for FTPS."""
 
-    passive_commands: tuple[str, ...] = ('epsv', 'pasv')
+    passive_commands: tuple[str, ...] = ("epsv", "pasv")
     """Passive-mode commands to attempt, in order."""
 
     extra: dict[str, Any] = field(default_factory=dict)
@@ -389,21 +392,21 @@ class FtpOptions:
         """
         kw: dict[str, Any] = {}
         if self.socket_timeout is not None:
-            kw['socket_timeout'] = self.socket_timeout
+            kw["socket_timeout"] = self.socket_timeout
         if self.connection_timeout is not None:
-            kw['connection_timeout'] = self.connection_timeout
+            kw["connection_timeout"] = self.connection_timeout
         if self.path_timeout is not None:
-            kw['path_timeout'] = self.path_timeout
+            kw["path_timeout"] = self.path_timeout
         if self.read_speed_limit is not None:
-            kw['read_speed_limit'] = self.read_speed_limit
+            kw["read_speed_limit"] = self.read_speed_limit
         if self.write_speed_limit is not None:
-            kw['write_speed_limit'] = self.write_speed_limit
+            kw["write_speed_limit"] = self.write_speed_limit
         if self.ssl is not None:
-            kw['ssl'] = self.ssl
-        if self.encoding != 'utf-8':
-            kw['encoding'] = self.encoding
-        if self.passive_commands != ('epsv', 'pasv'):
-            kw['passive_commands'] = self.passive_commands
+            kw["ssl"] = self.ssl
+        if self.encoding != "utf-8":
+            kw["encoding"] = self.encoding
+        if self.passive_commands != ("epsv", "pasv"):
+            kw["passive_commands"] = self.passive_commands
         kw.update(self.extra)
         return kw
 
@@ -422,7 +425,7 @@ class NcOptions:
     the same behavior as the old individual fields.
     """
 
-    exec_name: str = 'nc'
+    exec_name: str = "nc"
     """Netcat executable on both sides (e.g. ``nc``, ``ncat``, ``netcat``).
     Listener syntax is assumed to be OpenBSD-style (``nc -l PORT``)."""
 
@@ -430,7 +433,7 @@ class NcOptions:
     """Base port for netcat transfers. Used as the scan-start for the
     ss/netstat/python/proc port-finding strategies."""
 
-    port_strategy: 'NcPortStrategy' = 'auto'
+    port_strategy: "NcPortStrategy" = "auto"
     """Strategy for finding free ports on the remote host. ``'auto'``
     probes ss → netstat → python → proc and caches the first that works."""
 
@@ -438,7 +441,7 @@ class NcOptions:
     """Shell command that prints a free port to stdout. Only used when
     ``port_strategy == 'custom'``."""
 
-    listener_check: 'NcListenerCheck' = 'auto'
+    listener_check: "NcListenerCheck" = "auto"
     """Strategy for verifying that a remote ``nc`` listener is ready
     before sending data. ``'auto'`` probes ss → netstat → proc."""
 
@@ -508,13 +511,13 @@ class SnmpOptions:
     oids: tuple[str, ...] = ()
     """OIDs to GET each tick (e.g. ``("1.3.6.1.2.1.1.3.0", ...)``)."""
 
-    community: str = 'public'
+    community: str = "public"
     """SNMP v2c community string."""
 
     port: int = 161
     """UDP port of the agent (or of a relay standing in for it)."""
 
-    version: str = '2c'
+    version: str = "2c"
     """SNMP version — ``"2c"`` (default) or ``"1"``."""
 
     address: str | None = None

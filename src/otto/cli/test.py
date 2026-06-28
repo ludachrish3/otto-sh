@@ -143,6 +143,7 @@ class TestRunOptions:
     context chain by click's design) rather than ``ctx.obj`` (whose
     parent->subcommand propagation broke under click 8.3).
     """
+
     markers: str = ""
     iterations: int = 0
     duration: int = 0
@@ -165,16 +166,17 @@ class TestRunOptions:
 # Helpers shared with register.py runner functions
 # ---------------------------------------------------------------------------
 
+
 def resolve_suite(suite: str, repos: list[Repo]) -> str:
     """Expand a sut_dir-relative suite path to an absolute path for pytest."""
-    file_part, _, suffix = suite.partition('::')
+    file_part, _, suffix = suite.partition("::")
     p = Path(file_part)
     if p.is_absolute():
         return suite
     for repo in repos:
         candidate = (repo.sut_dir / p).resolve()
         if candidate.exists():
-            return f'{candidate}::{suffix}' if suffix else str(candidate)
+            return f"{candidate}::{suffix}" if suffix else str(candidate)
     return suite
 
 
@@ -221,7 +223,7 @@ def run_suite(
     if _log_dir is None:
         raise RuntimeError("output_dir is not set; create_output_dir must run before run_suite")
     log_dir: Path = _log_dir
-    results_path = results or str(log_dir / 'junit.xml')
+    results_path = results or str(log_dir / "junit.xml")
 
     # Pre-run cleanup of .gcda files on remotes
     if cov and cov_clean:
@@ -231,44 +233,53 @@ def run_suite(
         # don't carry the same connection lifecycle so skip them.
         from ..configmodule import all_hosts
         from ..host import UnixHost
+
         for host in all_hosts():
             if isinstance(host, UnixHost):
                 host.rebuild_connections()
 
     base_args: list[str] = [
         suite_file,
-        '-k', suite_class.__name__,
-        '-s',
-        '-o', 'asyncio_mode=auto',
+        "-k",
+        suite_class.__name__,
+        "-s",
+        "-o",
+        "asyncio_mode=auto",
         # pytest-timeout honors @pytest.mark.timeout(N) on tests/classes. No
         # global default is imposed here — timeouts in user suites stay opt-in,
         # as they were before — but signal method ensures a fired timeout
         # interrupts blocking calls and the session still reaches sessionfinish.
-        '-o', 'timeout_method=signal',
-        '--no-cov',
-        '--no-header',
-        '--override-ini', 'log_cli=false',
-        '--override-ini', 'addopts=',
+        "-o",
+        "timeout_method=signal",
+        "--no-cov",
+        "--no-header",
+        "--override-ini",
+        "log_cli=false",
+        "--override-ini",
+        "addopts=",
         # Restrict conftest loading to the suite file's directory tree so that
         # otto's own tests/conftest.py (which resets logging management state)
         # is not picked up by the inner session when the suite lives inside the
         # otto project tree.
-        f'--confcutdir={Path(suite_file).resolve().parent}',
+        f"--confcutdir={Path(suite_file).resolve().parent}",
         # pytest-asyncio registers anyio for assertion rewriting, but anyio is
         # already imported by the time pytest.main() is called from within otto.
         # The warning is harmless (anyio's internals don't affect test results)
         # so suppress it here rather than polluting suite output.
-        '--override-ini', 'filterwarnings=ignore::pytest.PytestAssertRewriteWarning',
+        "--override-ini",
+        "filterwarnings=ignore::pytest.PytestAssertRewriteWarning",
     ]
     if markers:
-        base_args += ['-m', markers]
+        base_args += ["-m", markers]
 
     is_stability = iterations > 0 or duration > 0
     if monitor and monitor_output is None:
-        monitor_output = log_dir / 'monitor.json'
+        monitor_output = log_dir / "monitor.json"
     otto_plugin = OttoPlugin(
-        sut_test_dirs=sut_test_dirs, cov=cov,
-        iterations=iterations, duration=duration,
+        sut_test_dirs=sut_test_dirs,
+        cov=cov,
+        iterations=iterations,
+        duration=duration,
         monitor=monitor,
         monitor_interval=monitor_interval,
         monitor_output=monitor_output,
@@ -276,20 +287,22 @@ def run_suite(
     )
     options_plugin = OttoOptionsPlugin(opts_instance)
 
-    collector: 'StabilityCollector | None' = None
+    collector: "StabilityCollector | None" = None
     if is_stability:
         from ..suite.plugin import StabilityCollector as _StabilityCollector
+
         collector = _StabilityCollector()
         otto_plugin._stability_collector = collector
 
     pytest.main(
-        base_args + [f'--junitxml={results_path}'],
+        base_args + [f"--junitxml={results_path}"],
         plugins=[otto_plugin, options_plugin],
     )
 
     if is_stability and collector is not None:
-        _print_stability_report(suite_class.__name__, collector,
-                                iterations, duration, threshold, log_dir)
+        _print_stability_report(
+            suite_class.__name__, collector, iterations, duration, threshold, log_dir
+        )
 
     # Post-test coverage collection
     if cov:
@@ -297,25 +310,31 @@ def run_suite(
 
     if cov_report:
         from ..coverage.reporter import run_coverage_report
-        cov_dir = cov_dir_override if cov_dir_override else log_dir / 'cov'
-        report_dir = (cov_report_dir if cov_report_dir is not None
-                      else log_dir / 'cov_report')
+
+        cov_dir = cov_dir_override or log_dir / "cov"
+        report_dir = cov_report_dir if cov_report_dir is not None else log_dir / "cov_report"
         # Default path lives inside freshly-created log_dir → always empty;
         # explicit path was validated in the callback. Safe to call either way.
-        _prepare_empty_dir(report_dir, overwrite=overwrite_cov_report_dir,
-                           flag_name='--cov-report-dir')
-        store = asyncio.run(run_coverage_report(
-            [cov_dir], report_dir, project_name=project_name,
-        ))
+        _prepare_empty_dir(
+            report_dir, overwrite=overwrite_cov_report_dir, flag_name="--cov-report-dir"
+        )
+        store = asyncio.run(
+            run_coverage_report(
+                [cov_dir],
+                report_dir,
+                project_name=project_name,
+            )
+        )
         if store is not None:
-            logger.info('Coverage: %.1f%% overall (%d files)',
-                        store.overall_pct(), store.file_count())
-            logger.info('Report: %s', report_dir / 'index.html')
+            logger.info(
+                "Coverage: %.1f%% overall (%d files)", store.overall_pct(), store.file_count()
+            )
+            logger.info("Report: %s", report_dir / "index.html")
 
 
 def _print_stability_report(
     suite_name: str,
-    collector: 'StabilityCollector',
+    collector: "StabilityCollector",
     iterations: int,
     duration: int,
     threshold: float,
@@ -330,26 +349,26 @@ def _print_stability_report(
     """
     mode_parts: list[str] = []
     if iterations > 0:
-        mode_parts.append(f'{iterations} iterations')
+        mode_parts.append(f"{iterations} iterations")
     if duration > 0:
-        mode_parts.append(f'{duration}s duration')
-    mode = ', '.join(mode_parts) or 'stability'
+        mode_parts.append(f"{duration}s duration")
+    mode = ", ".join(mode_parts) or "stability"
 
     lines: list[str] = [
-        f'Stability Results for {suite_name} ({mode}, threshold {threshold:.0f}%):',
+        f"Stability Results for {suite_name} ({mode}, threshold {threshold:.0f}%):",
     ]
     any_unstable = False
     for test_name, (passed, total) in collector.results.items():
         rate_pct = (passed / total * 100) if total else 0.0
-        status = 'STABLE' if rate_pct >= threshold else 'UNSTABLE'
-        if status == 'UNSTABLE':
+        status = "STABLE" if rate_pct >= threshold else "UNSTABLE"
+        if status == "UNSTABLE":
             any_unstable = True
-        lines.append(f'  {test_name:<40} {passed}/{total} ({rate_pct:.0f}%)  {status}')
-    lines.append(f'Overall: {"FAIL" if any_unstable else "PASS"}')
+        lines.append(f"  {test_name:<40} {passed}/{total} ({rate_pct:.0f}%)  {status}")
+    lines.append(f"Overall: {'FAIL' if any_unstable else 'PASS'}")
 
-    report = '\n'.join(lines)
+    report = "\n".join(lines)
     logger.info(report)
-    report_path = log_dir / 'stability_report.txt'
+    report_path = log_dir / "stability_report.txt"
     report_path.write_text(report)
 
     if any_unstable:
@@ -359,6 +378,7 @@ def _print_stability_report(
 # ---------------------------------------------------------------------------
 # Listing helpers (shared between callback eager options)
 # ---------------------------------------------------------------------------
+
 
 def _list_tests_display(panel_method: str) -> None:
     panels = [getattr(repo, panel_method)(repo.collect_tests()) for repo in get_repos()]
@@ -372,7 +392,7 @@ def _list_tests_display(panel_method: str) -> None:
 def list_suites_callback(value: bool) -> None:
     if not value:
         return
-    _list_tests_display('get_test_suites_panel')
+    _list_tests_display("get_test_suites_panel")
     raise typer.Exit()
 
 
@@ -381,10 +401,10 @@ def list_suites_callback(value: bool) -> None:
 # ---------------------------------------------------------------------------
 
 suite_app = typer.Typer(
-    name='test',
+    name="test",
     no_args_is_help=True,
     context_settings={
-        'help_option_names': ['-h', '--help'],
+        "help_option_names": ["-h", "--help"],
     },
 )
 
@@ -392,117 +412,179 @@ suite_app = typer.Typer(
 @suite_app.callback()
 def main(
     ctx: typer.Context,
-    list_suites: Annotated[bool,
-        typer.Option('--list-suites',
+    list_suites: Annotated[
+        bool,
+        typer.Option(
+            "--list-suites",
             callback=list_suites_callback,
             is_eager=True,
-            help='List test suites with run syntax and exit.',
-        )
+            help="List test suites with run syntax and exit.",
+        ),
     ] = False,
-    markers: Annotated[str, typer.Option(
-        '--markers', '-m', metavar='EXPRESSION',
-        help='pytest -m marker expression applied after collection.',
-    )] = '',
-    iterations: Annotated[int, typer.Option(
-        '--iterations', '-i',
-        help='Repeat each test N times within a single setup/teardown cycle (0 = disabled).',
-    )] = 0,
-    duration: Annotated[int, typer.Option(
-        '--duration', '-d',
-        help='Repeat tests for N seconds within a single setup/teardown cycle (0 = disabled).',
-    )] = 0,
-    threshold: Annotated[float, typer.Option(
-        '--threshold',
-        help='Minimum per-test pass rate percentage required in stability mode (0-100).',
-    )] = 100.0,
-    results: Annotated[str, typer.Option(
-        '--results', metavar='PATH',
-        help='Write test results (JUnit XML) to PATH (default: auto in log dir).',
-    )] = '',
-    cov: Annotated[bool, typer.Option(
-        '--cov',
-        help='Collect gcov coverage from remote hosts after the suite finishes.',
-    )] = False,
-    cov_dir: Annotated[Path | None, typer.Option(
-        '--cov-dir',
-        help=(
-            'Directory to write coverage data to. Implies --cov. '
-            'Default when --cov is used alone: <output_dir>/cov.'
+    markers: Annotated[
+        str,
+        typer.Option(
+            "--markers",
+            "-m",
+            metavar="EXPRESSION",
+            help="pytest -m marker expression applied after collection.",
         ),
-        file_okay=False,
-        dir_okay=True,
-        resolve_path=True,
-    )] = None,
-    overwrite_cov_dir: Annotated[bool, typer.Option(
-        '--overwrite-cov-dir',
-        help=(
-            'Allow --cov-dir to target an existing non-empty directory '
-            '(its contents will be cleared before the run).'
+    ] = "",
+    iterations: Annotated[
+        int,
+        typer.Option(
+            "--iterations",
+            "-i",
+            help="Repeat each test N times within a single setup/teardown cycle (0 = disabled).",
         ),
-    )] = False,
-    cov_clean: Annotated[bool, typer.Option(
-        help='Delete .gcda files on remote hosts before the test run.',
-    )] = True,
-    cov_report: Annotated[bool, typer.Option(
-        '--cov-report', '-r',
-        help=(
-            'Generate an HTML coverage report after the suite finishes. '
-            'Implies --cov. Default location: <output_dir>/cov_report.'
+    ] = 0,
+    duration: Annotated[
+        int,
+        typer.Option(
+            "--duration",
+            "-d",
+            help="Repeat tests for N seconds within a single setup/teardown cycle (0 = disabled).",
         ),
-    )] = False,
-    cov_report_dir: Annotated[Path | None, typer.Option(
-        '--cov-report-dir',
-        help=(
-            'Directory to write the HTML coverage report to. '
-            'Implies --cov-report (and --cov). '
-            'Default when --cov-report is used alone: <output_dir>/cov_report.'
+    ] = 0,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            help="Minimum per-test pass rate percentage required in stability mode (0-100).",
         ),
-        file_okay=False,
-        dir_okay=True,
-        resolve_path=True,
-    )] = None,
-    overwrite_cov_report_dir: Annotated[bool, typer.Option(
-        '--overwrite-cov-report-dir',
-        help=(
-            'Allow --cov-report-dir to target an existing non-empty directory '
-            '(its contents will be cleared before the report is rendered).'
+    ] = 100.0,
+    results: Annotated[
+        str,
+        typer.Option(
+            "--results",
+            metavar="PATH",
+            help="Write test results (JUnit XML) to PATH (default: auto in log dir).",
         ),
-    )] = False,
-    project_name: Annotated[str, typer.Option(
-        '--project-name',
-        help='Title shown in the HTML report header (only used with --cov-report).',
-    )] = 'Coverage Report',
-    monitor: Annotated[bool, typer.Option(
-        help='Collect host performance metrics for the entire test run.',
-    )] = False,
-    monitor_interval: Annotated[float, typer.Option(
-        '--monitor-interval', metavar='SECONDS',
-        help='Sampling interval for --monitor.',
-        min=1.0,
-    )] = 5.0,
-    monitor_output: Annotated[Path | None, typer.Option(
-        '--monitor-output', metavar='PATH',
-        help=(
-            'Override the destination for monitor data. Format inferred from '
-            'suffix (.json or .db). Default: <output_dir>/monitor.json.'
+    ] = "",
+    cov: Annotated[
+        bool,
+        typer.Option(
+            "--cov",
+            help="Collect gcov coverage from remote hosts after the suite finishes.",
         ),
-    )] = None,
-    monitor_hosts: Annotated[str | None, typer.Option(
-        '--monitor-hosts', metavar='REGEX',
-        help='Regex matched against host IDs to restrict --monitor (re.search).',
-    )] = None,
+    ] = False,
+    cov_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--cov-dir",
+            help=(
+                "Directory to write coverage data to. Implies --cov. "
+                "Default when --cov is used alone: <output_dir>/cov."
+            ),
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ] = None,
+    overwrite_cov_dir: Annotated[
+        bool,
+        typer.Option(
+            "--overwrite-cov-dir",
+            help=(
+                "Allow --cov-dir to target an existing non-empty directory "
+                "(its contents will be cleared before the run)."
+            ),
+        ),
+    ] = False,
+    cov_clean: Annotated[
+        bool,
+        typer.Option(
+            help="Delete .gcda files on remote hosts before the test run.",
+        ),
+    ] = True,
+    cov_report: Annotated[
+        bool,
+        typer.Option(
+            "--cov-report",
+            "-r",
+            help=(
+                "Generate an HTML coverage report after the suite finishes. "
+                "Implies --cov. Default location: <output_dir>/cov_report."
+            ),
+        ),
+    ] = False,
+    cov_report_dir: Annotated[
+        Path | None,
+        typer.Option(
+            "--cov-report-dir",
+            help=(
+                "Directory to write the HTML coverage report to. "
+                "Implies --cov-report (and --cov). "
+                "Default when --cov-report is used alone: <output_dir>/cov_report."
+            ),
+            file_okay=False,
+            dir_okay=True,
+            resolve_path=True,
+        ),
+    ] = None,
+    overwrite_cov_report_dir: Annotated[
+        bool,
+        typer.Option(
+            "--overwrite-cov-report-dir",
+            help=(
+                "Allow --cov-report-dir to target an existing non-empty directory "
+                "(its contents will be cleared before the report is rendered)."
+            ),
+        ),
+    ] = False,
+    project_name: Annotated[
+        str,
+        typer.Option(
+            "--project-name",
+            help="Title shown in the HTML report header (only used with --cov-report).",
+        ),
+    ] = "Coverage Report",
+    monitor: Annotated[
+        bool,
+        typer.Option(
+            help="Collect host performance metrics for the entire test run.",
+        ),
+    ] = False,
+    monitor_interval: Annotated[
+        float,
+        typer.Option(
+            "--monitor-interval",
+            metavar="SECONDS",
+            help="Sampling interval for --monitor.",
+            min=1.0,
+        ),
+    ] = 5.0,
+    monitor_output: Annotated[
+        Path | None,
+        typer.Option(
+            "--monitor-output",
+            metavar="PATH",
+            help=(
+                "Override the destination for monitor data. Format inferred from "
+                "suffix (.json or .db). Default: <output_dir>/monitor.json."
+            ),
+        ),
+    ] = None,
+    monitor_hosts: Annotated[
+        str | None,
+        typer.Option(
+            "--monitor-hosts",
+            metavar="REGEX",
+            help="Regex matched against host IDs to restrict --monitor (re.search).",
+        ),
+    ] = None,
 ) -> None:
     if ctx.resilient_parsing:
         return
 
     if cov_dir is not None:
-        _prepare_empty_dir(cov_dir, overwrite=overwrite_cov_dir,
-                           flag_name='--cov-dir')
+        _prepare_empty_dir(cov_dir, overwrite=overwrite_cov_dir, flag_name="--cov-dir")
 
     cov_report_effective = cov_report or cov_report_dir is not None
     if cov_report_dir is not None:
-        _prepare_empty_dir(cov_report_dir, overwrite=overwrite_cov_report_dir,
-                           flag_name='--cov-report-dir')
+        _prepare_empty_dir(
+            cov_report_dir, overwrite=overwrite_cov_report_dir, flag_name="--cov-report-dir"
+        )
 
     monitor_effective = monitor or monitor_output is not None or monitor_hosts is not None
 
@@ -525,8 +607,9 @@ def main(
         monitor_hosts=monitor_hosts,
     )
     if ctx.invoked_subcommand is not None:
-        get_context().output_dir = management.create_output_dir('test', ctx.invoked_subcommand)
+        get_context().output_dir = management.create_output_dir("test", ctx.invoked_subcommand)
         from ..reservations import gate
+
         gate(ctx)
 
 
@@ -541,6 +624,7 @@ for _, _suite_sub_app in _SUITE_REGISTRY:
 # ---------------------------------------------------------------------------
 # Coverage helpers
 # ---------------------------------------------------------------------------
+
 
 def _prepare_empty_dir(path: Path, *, overwrite: bool, flag_name: str) -> None:
     """Ensure ``path`` is an empty, existing directory.
@@ -557,10 +641,9 @@ def _prepare_empty_dir(path: Path, *, overwrite: bool, flag_name: str) -> None:
     if not any(path.iterdir()):
         return
     if not overwrite:
-        overwrite_flag = f'--overwrite-{flag_name.lstrip("-")}'
+        overwrite_flag = f"--overwrite-{flag_name.lstrip('-')}"
         raise typer.BadParameter(
-            f'{flag_name} target {path} is not empty; '
-            f'pass {overwrite_flag} to clear it.',
+            f"{flag_name} target {path} is not empty; pass {overwrite_flag} to clear it.",
             param_hint=flag_name,
         )
     for child in path.iterdir():
@@ -570,7 +653,7 @@ def _prepare_empty_dir(path: Path, *, overwrite: bool, flag_name: str) -> None:
             child.unlink()
 
 
-async def _cov_clean_remotes(repos: list['Repo']) -> None:
+async def _cov_clean_remotes(repos: list["Repo"]) -> None:
     """Delete .gcda files on all configured remote hosts before a test run."""
     from ..configmodule import all_hosts
     from ..coverage.fetcher.remote import GcdaFetcher
@@ -579,20 +662,20 @@ async def _cov_clean_remotes(repos: list['Repo']) -> None:
     if not cov_config:
         return
 
-    gcda_remote_dir = cov_config.get('gcda_remote_dir', '')
+    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
     if not gcda_remote_dir:
-        logger.warning('coverage.gcda_remote_dir not configured — skipping pre-run cleanup')
+        logger.warning("coverage.gcda_remote_dir not configured — skipping pre-run cleanup")
         return
 
     if not any(all_hosts()):
         return
 
-    fetcher = GcdaFetcher(Path('/tmp'))
+    fetcher = GcdaFetcher(Path("/tmp"))
     await fetcher.clean_remote(gcda_remote_dir)
 
 
 async def _run_coverage(
-    repos: list['Repo'],
+    repos: list["Repo"],
     log_dir: Path,
     cov_dir_override: Path | None = None,
 ) -> None:
@@ -613,12 +696,10 @@ async def _run_coverage(
 
     cov_config = _get_cov_config(repos)
     if not cov_config:
-        logger.warning(
-            '--cov was specified but no [coverage] section found in .otto/settings.toml'
-        )
+        logger.warning("--cov was specified but no [coverage] section found in .otto/settings.toml")
         return
 
-    cov_dir = cov_dir_override if cov_dir_override else log_dir / 'cov'
+    cov_dir = cov_dir_override or log_dir / "cov"
     host_dirs: dict[str, Path] = {}
 
     # The set of hosts to collect coverage from is repo-declared: an optional
@@ -626,14 +707,14 @@ async def _run_coverage(
     # defaulting to every host in the lab. This is how a lab's SSH **hop** (e.g.
     # `basil` fronting `sprout_cov`) is kept out of the coverage set — it is
     # excluded by the pattern, not inferred from the fact that it emits no .gcda.
-    hosts_pattern = cov_config.get('hosts')
+    hosts_pattern = cov_config.get("hosts")
     cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
 
     # Unix hosts compile the SUT and emit .gcda to a filesystem we fetch over
     # the network. EmbeddedHost/DockerContainerHost are skipped by the fetcher.
     cov_hosts = list(all_hosts(pattern=cov_pattern))
     unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
-    gcda_remote_dir = cov_config.get('gcda_remote_dir', '')
+    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
     # Unix hosts that actually produced .gcda (host id -> dir). Keying the meta
     # below off *collected coverage* (rather than lab membership) is a safety net
     # behind the ``[coverage].hosts`` selector above: should an infrastructure
@@ -658,14 +739,15 @@ async def _run_coverage(
     host_dirs.update(embedded_dirs)
 
     if not host_dirs:
-        logger.warning('No coverage data collected from any host')
+        logger.warning("No coverage data collected from any host")
         return
 
-    logger.info('Coverage data collected to %s (%d hosts)', cov_dir, len(host_dirs))
+    logger.info("Coverage data collected to %s (%d hosts)", cov_dir, len(host_dirs))
 
     # Write metadata so ``otto cov report`` can find the source root and
     # per-host toolchains without relying on the working directory.
     import json
+
     cov_repo = _get_cov_repo(repos)
     if not cov_repo:
         return
@@ -678,9 +760,9 @@ async def _run_coverage(
             continue
         tc = host.toolchain
         toolchains[host.id] = {
-            'sysroot': str(tc.sysroot),
-            'lcov': str(tc.lcov),
-            'gcov': str(tc.gcov),
+            "sysroot": str(tc.sysroot),
+            "lcov": str(tc.lcov),
+            "gcov": str(tc.gcov),
         }
 
     sut_dir = str(cov_repo.sut_dir.resolve())
@@ -696,14 +778,14 @@ async def _run_coverage(
     # selects its own root, recorded in ``source_roots`` so the reporter can
     # resolve the correct .gcno tree per host. The single ``build_dir`` remains
     # supported as a legacy/fallback for single-version labs.
-    embedded_cfg = cov_config.get('embedded') or {}
-    embedded_build_dir = embedded_cfg.get('build_dir')          # single legacy/fallback
-    embedded_builds = embedded_cfg.get('builds') or {}          # {"3.7": {"build_dir": ...}}
+    embedded_cfg = cov_config.get("embedded") or {}
+    embedded_build_dir = embedded_cfg.get("build_dir")  # single legacy/fallback
+    embedded_builds = embedded_cfg.get("builds") or {}  # {"3.7": {"build_dir": ...}}
 
     def _resolve_build_dir(host) -> str | None:
-        ver = getattr(host, 'os_version', None)
+        ver = getattr(host, "os_version", None)
         if ver and ver in embedded_builds:
-            bd = embedded_builds[ver].get('build_dir')
+            bd = embedded_builds[ver].get("build_dir")
             if bd:
                 return bd
         return embedded_build_dir
@@ -715,9 +797,7 @@ async def _run_coverage(
         from ..host.toolchain import Toolchain
         from ..host.toolchain_discovery import discover_toolchain_from_gcno
 
-        embedded_hosts = {
-            h.id: h for h in cov_hosts if isinstance(h, EmbeddedHost)
-        }
+        embedded_hosts = {h.id: h for h in cov_hosts if isinstance(h, EmbeddedHost)}
         # Cache .gcno-discovery per build dir so hosts sharing a build dir do
         # not re-trigger the (potentially slow) filesystem scan.
         discovery_cache: dict[str, Toolchain | None] = {}
@@ -726,27 +806,24 @@ async def _run_coverage(
             host_build_dir = _resolve_build_dir(host) if host is not None else embedded_build_dir
             if host_build_dir:
                 source_roots[host_id] = str(Path(host_build_dir).resolve())
-            tc = (
-                host.toolchain
-                if host is not None and host.toolchain != Toolchain()
-                else None
-            )
+            tc = host.toolchain if host is not None and host.toolchain != Toolchain() else None
             if tc is None:
-                bd_key = host_build_dir or ''
+                bd_key = host_build_dir or ""
                 if bd_key not in discovery_cache:
                     if host_build_dir:
                         discovery_cache[bd_key] = await discover_toolchain_from_gcno(
-                            Path(host_build_dir), LocalHost(),
-                            cov_dir / '_toolchain_work',
+                            Path(host_build_dir),
+                            LocalHost(),
+                            cov_dir / "_toolchain_work",
                         )
                     else:
                         discovery_cache[bd_key] = None
                 tc = discovery_cache[bd_key]
             if tc is not None:
                 toolchains[host_id] = {
-                    'sysroot': str(tc.sysroot),
-                    'lcov': str(tc.lcov),
-                    'gcov': str(tc.gcov),
+                    "sysroot": str(tc.sysroot),
+                    "lcov": str(tc.lcov),
+                    "gcov": str(tc.gcov),
                 }
         if not unix_dirs:
             # Use the single fallback if present; otherwise the first resolved root.
@@ -756,23 +833,23 @@ async def _run_coverage(
                 sut_dir = next(iter(source_roots.values()))
 
     meta: dict[str, object] = {
-        'repo_name': cov_repo.name,
-        'sut_dir': sut_dir,
-        'toolchains': toolchains,
-        'source_roots': source_roots,
+        "repo_name": cov_repo.name,
+        "sut_dir": sut_dir,
+        "toolchains": toolchains,
+        "source_roots": source_roots,
     }
-    (cov_dir / '.otto_cov_meta.json').write_text(json.dumps(meta, indent=2))
+    (cov_dir / ".otto_cov_meta.json").write_text(json.dumps(meta, indent=2))
 
 
-def _get_cov_repo(repos: list['Repo']) -> 'Repo | None':
+def _get_cov_repo(repos: list["Repo"]) -> "Repo | None":
     """Return the first repo with a ``[coverage]`` section in its settings."""
     for repo in repos:
-        if repo.settings.get('coverage'):
+        if repo.settings.get("coverage"):
             return repo
     return None
 
 
-def _get_cov_config(repos: list['Repo']) -> dict[str, Any]:
+def _get_cov_config(repos: list["Repo"]) -> dict[str, Any]:
     """Extract the ``[coverage]`` config from the first repo that has one."""
     repo = _get_cov_repo(repos)
-    return repo.settings['coverage'] if repo else {}
+    return repo.settings["coverage"] if repo else {}

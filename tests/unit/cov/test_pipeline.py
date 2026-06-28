@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -15,25 +14,24 @@ from otto.coverage.reporter import (
 
 
 class TestReadCovSourceRoot:
-
     def test_reads_from_meta_file(self, tmp_path):
-        cov_dir = tmp_path / 'cov'
+        cov_dir = tmp_path / "cov"
         cov_dir.mkdir()
-        meta = {'repo_name': 'myrepo', 'sut_dir': str(tmp_path)}
-        (cov_dir / '.otto_cov_meta.json').write_text(json.dumps(meta))
+        meta = {"repo_name": "myrepo", "sut_dir": str(tmp_path)}
+        (cov_dir / ".otto_cov_meta.json").write_text(json.dumps(meta))
         assert read_cov_source_root([cov_dir]) == tmp_path
 
     def test_searches_multiple_cov_dirs(self, tmp_path):
-        cov1 = tmp_path / 'run1' / 'cov'
+        cov1 = tmp_path / "run1" / "cov"
         cov1.mkdir(parents=True)
-        cov2 = tmp_path / 'run2' / 'cov'
+        cov2 = tmp_path / "run2" / "cov"
         cov2.mkdir(parents=True)
-        meta = {'repo_name': 'myrepo', 'sut_dir': '/some/path'}
-        (cov2 / '.otto_cov_meta.json').write_text(json.dumps(meta))
-        assert read_cov_source_root([cov1, cov2]) == Path('/some/path')
+        meta = {"repo_name": "myrepo", "sut_dir": "/some/path"}
+        (cov2 / ".otto_cov_meta.json").write_text(json.dumps(meta))
+        assert read_cov_source_root([cov1, cov2]) == Path("/some/path")
 
     def test_raises_when_no_meta(self, tmp_path):
-        with pytest.raises(FileNotFoundError, match='otto_cov_meta'):
+        with pytest.raises(FileNotFoundError, match="otto_cov_meta"):
             read_cov_source_root([tmp_path])
 
     def test_raises_on_empty_list(self):
@@ -42,7 +40,6 @@ class TestReadCovSourceRoot:
 
 
 class TestDiscoverGcdaDirs:
-
     def test_discovers_host_dirs(self, tmp_path):
         cov_dir = tmp_path / "run1" / "cov"
         (cov_dir / "host_a").mkdir(parents=True)
@@ -78,16 +75,22 @@ class TestDiscoverGcdaDirs:
 
 
 class TestReadCovSourceRoots:
-
     def test_read_cov_source_roots(self, tmp_path):
         cov = tmp_path / "cov"
         cov.mkdir()
-        (cov / ".otto_cov_meta.json").write_text(json.dumps({
-            "sut_dir": "/x", "toolchains": {},
-            "source_roots": {"sprout": "/b/v3_7", "sprout44": "/b/v4_4"},
-        }))
-        assert read_cov_source_roots([cov]) == {"sprout": Path("/b/v3_7"),
-                                                "sprout44": Path("/b/v4_4")}
+        (cov / ".otto_cov_meta.json").write_text(
+            json.dumps(
+                {
+                    "sut_dir": "/x",
+                    "toolchains": {},
+                    "source_roots": {"sprout": "/b/v3_7", "sprout44": "/b/v4_4"},
+                }
+            )
+        )
+        assert read_cov_source_roots([cov]) == {
+            "sprout": Path("/b/v3_7"),
+            "sprout44": Path("/b/v4_4"),
+        }
 
     def test_read_cov_source_roots_missing_meta_returns_empty(self, tmp_path):
         assert read_cov_source_roots([tmp_path / "nope"]) == {}
@@ -100,22 +103,25 @@ class TestReadCovSourceRoots:
 
 
 class TestCoverageReporterPerHostGcno:
-
     def test_per_host_gcno_dirs_uses_source_roots_then_fallback(self, tmp_path):
-        gcda_dirs = [tmp_path / "cov" / "sprout", tmp_path / "cov" / "sprout44",
-                     tmp_path / "cov" / "other"]
+        gcda_dirs = [
+            tmp_path / "cov" / "sprout",
+            tmp_path / "cov" / "sprout44",
+            tmp_path / "cov" / "other",
+        ]
         root_a = tmp_path / "build_v3_7"
         root_b = tmp_path / "build_v4_4"
         fallback = tmp_path / "fallback"
         r = CoverageReporter(
-            gcda_dirs=gcda_dirs, source_root=fallback, output_dir=tmp_path / "out",
+            gcda_dirs=gcda_dirs,
+            source_root=fallback,
+            output_dir=tmp_path / "out",
             source_roots={"sprout": root_a, "sprout44": root_b},
         )
         assert r._per_host_gcno_dirs() == [root_a, root_b, fallback]  # 3rd falls back
 
 
 class TestCoverageReporter:
-
     @pytest.mark.asyncio
     async def test_run_empty_dirs(self, tmp_path):
         reporter = CoverageReporter(

@@ -18,7 +18,6 @@ catch it?"  If no, move the mock boundary closer to I/O.
 """
 
 import json
-import logging
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -58,14 +57,15 @@ def no_logger_output_dir():
 
     from otto.configmodule.lab import Lab
     from otto.context import OttoContext, reset_context, set_context, try_get_context
+
     token = None
     if try_get_context() is None:
-        token = set_context(OttoContext(lab=Lab(name='_test_stub')))
+        token = set_context(OttoContext(lab=Lab(name="_test_stub")))
     # Mirror the propagate=False that init_cli_logging sets so that mocked-
     # init_cli_logging tests don't accidentally emit live logs into pytest's
     # capture machinery while a CliRunner invocation is in progress.
-    getLogger('otto').propagate = False
-    with patch('otto.logger.management.create_output_dir'):
+    getLogger("otto").propagate = False
+    with patch("otto.logger.management.create_output_dir"):
         yield
     if token is not None:
         reset_context(token)
@@ -74,12 +74,14 @@ def no_logger_output_dir():
 # ── Helpers for real filesystem fixtures ─────────────────────────────────────
 
 HOSTS_DATA = [
-    {"ip": "10.0.0.1", "element": "host1", "labs": ["test_lab"],
-     "creds": {"admin": "pass"}},
-    {"ip": "10.0.0.2", "element": "host2", "labs": ["test_lab", "lab2"],
-     "creds": {"admin": "pass"}},
-    {"ip": "10.0.0.3", "element": "host3", "labs": ["lab2"],
-     "creds": {"admin": "pass"}},
+    {"ip": "10.0.0.1", "element": "host1", "labs": ["test_lab"], "creds": {"admin": "pass"}},
+    {
+        "ip": "10.0.0.2",
+        "element": "host2",
+        "labs": ["test_lab", "lab2"],
+        "creds": {"admin": "pass"},
+    },
+    {"ip": "10.0.0.3", "element": "host3", "labs": ["lab2"], "creds": {"admin": "pass"}},
 ]
 
 
@@ -88,18 +90,16 @@ def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
 
     Returns ``(sut_dir, lab_data_dir)`` so callers can reference both.
     """
-    lab_data_dir = tmp_path / 'lab_data'
+    lab_data_dir = tmp_path / "lab_data"
     lab_data_dir.mkdir()
-    (lab_data_dir / 'hosts.json').write_text(json.dumps(HOSTS_DATA))
+    (lab_data_dir / "hosts.json").write_text(json.dumps(HOSTS_DATA))
 
-    sut_dir = tmp_path / 'sut'
+    sut_dir = tmp_path / "sut"
     sut_dir.mkdir()
-    otto_dir = sut_dir / '.otto'
+    otto_dir = sut_dir / ".otto"
     otto_dir.mkdir()
-    (otto_dir / 'settings.toml').write_text(
-        'name = "test_repo"\n'
-        'version = "1.0.0"\n'
-        'labs = ["${sut_dir}/../lab_data"]\n'
+    (otto_dir / "settings.toml").write_text(
+        'name = "test_repo"\nversion = "1.0.0"\nlabs = ["${sut_dir}/../lab_data"]\n'
     )
 
     return sut_dir, lab_data_dir
@@ -126,9 +126,8 @@ def real_main_mocks(tmp_path):
     # Strip the user's OTTO_* env so test outcomes don't drift with the shell;
     # point OTTO_XDIR at tmp_path so init_cli_logging never writes to the project
     # root (--xdir is optional and defaults to CWD, which we don't want here).
-    clean_env = {k: v for k, v in os.environ.items()
-                 if not k.startswith('OTTO_')}
-    clean_env['OTTO_XDIR'] = str(tmp_path)
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
+    clean_env["OTTO_XDIR"] = str(tmp_path)
 
     logger = get_otto_logger()
     original_level = logger.level
@@ -136,30 +135,32 @@ def real_main_mocks(tmp_path):
 
     with (
         patch.dict(os.environ, clean_env, clear=True),
-        patch('otto.logger.management.remove_old_logs') as p_remove,
-        patch('otto.logger.management.RichHandler') as p_rich,
-        patch('otto.cli.main.get_repos', return_value=[repo]),
+        patch("otto.logger.management.remove_old_logs") as p_remove,
+        patch("otto.logger.management.RichHandler") as p_rich,
+        patch("otto.cli.main.get_repos", return_value=[repo]),
         patch(
-            'otto.host.local_host.LocalHost.run',
+            "otto.host.local_host.LocalHost.run",
             new_callable=AsyncMock,
             return_value=RunResult(
                 status=Status.Success,
-                statuses=[CommandStatus(
-                    command='git log',
-                    output='abc123',
-                    status=Status.Success,
-                    retcode=0,
-                )],
+                statuses=[
+                    CommandStatus(
+                        command="git log",
+                        output="abc123",
+                        status=Status.Success,
+                        retcode=0,
+                    )
+                ],
             ),
         ),
     ):
         yield {
-            'tmp_path': tmp_path,
-            'sut_dir': sut_dir,
-            'lab_data_dir': lab_data_dir,
-            'repo': repo,
-            'remove_old_logs': p_remove,
-            'RichHandler': p_rich,
+            "tmp_path": tmp_path,
+            "sut_dir": sut_dir,
+            "lab_data_dir": lab_data_dir,
+            "repo": repo,
+            "remove_old_logs": p_remove,
+            "RichHandler": p_rich,
         }
 
     # Teardown: restore logger to pre-test state

@@ -12,7 +12,7 @@ Tests verify:
 
 import inspect
 from dataclasses import dataclass
-from typing import Annotated, Optional
+from typing import Annotated
 from unittest.mock import patch
 
 import typer
@@ -30,6 +30,7 @@ runner = CliRunner()
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _make_app_with_suite(suite_class: type) -> typer.Typer:
     """Wrap a registered suite in a fresh Typer app for isolated CliRunner tests."""
     # Find the most-recently added entry in _SUITE_REGISTRY for this class
@@ -38,13 +39,13 @@ def _make_app_with_suite(suite_class: type) -> typer.Typer:
             app = typer.Typer()
             app.add_typer(sub_app)
             return app
-    raise LookupError(f'{suite_class.__name__} not found in _SUITE_REGISTRY')
+    raise LookupError(f"{suite_class.__name__} not found in _SUITE_REGISTRY")
 
 
 # ── @register_suite() decorator ───────────────────────────────────────────────
 
-class TestRegisterSuiteDecorator:
 
+class TestRegisterSuiteDecorator:
     def test_adds_entry_to_registry(self):
         initial = len(_SUITE_REGISTRY)
 
@@ -53,7 +54,7 @@ class TestRegisterSuiteDecorator:
             pass
 
         assert len(_SUITE_REGISTRY) == initial + 1
-        assert _SUITE_REGISTRY[-1][0] == '_SuiteA'
+        assert _SUITE_REGISTRY[-1][0] == "_SuiteA"
         assert isinstance(_SUITE_REGISTRY[-1][1], typer.Typer)
 
     def test_returns_class_unchanged(self):
@@ -72,8 +73,8 @@ class TestRegisterSuiteDecorator:
         cmd = sub_app.registered_commands[0]
         sig = inspect.signature(cmd.callback)
         # Only the Typer-injected context param remains; no CLI option params.
-        assert set(sig.parameters) == {'ctx'}
-        assert sig.parameters['ctx'].annotation is typer.Context
+        assert set(sig.parameters) == {"ctx"}
+        assert sig.parameters["ctx"].annotation is typer.Context
 
     def test_suite_with_options_includes_option_fields(self):
         @register_suite()
@@ -86,21 +87,21 @@ class TestRegisterSuiteDecorator:
         _, sub_app = _SUITE_REGISTRY[-1]
         cmd = sub_app.registered_commands[0]
         sig = inspect.signature(cmd.callback)
-        assert 'device_type' in sig.parameters
-        assert 'count' in sig.parameters
+        assert "device_type" in sig.parameters
+        assert "count" in sig.parameters
 
     def test_suite_docstring_used_as_command_help(self):
         @register_suite()
         class _SuiteDocstring:
             """My suite docstring."""
-            pass
 
         _, sub_app = _SUITE_REGISTRY[-1]
         cmd = sub_app.registered_commands[0]
-        assert cmd.callback.__doc__ == 'My suite docstring.'
+        assert cmd.callback.__doc__ == "My suite docstring."
 
 
 # ── Parameter types ───────────────────────────────────────────────────────────
+
 
 class TestOptionsParamTypes:
     """Verify that _options_params() produces Parameters with the right annotations."""
@@ -113,10 +114,10 @@ class TestOptionsParamTypes:
         params = _options_params(Opts)
         assert len(params) == 1
         p = params[0]
-        assert p.name == 'name'
-        assert p.default == 'default'
+        assert p.name == "name"
+        assert p.default == "default"
         # Annotation should be Annotated[str, ...]
-        origin = getattr(p.annotation, '__args__', None)
+        origin = getattr(p.annotation, "__args__", None)
         assert origin is not None and origin[0] is str
 
     def test_int_field(self):
@@ -126,7 +127,7 @@ class TestOptionsParamTypes:
 
         params = _options_params(Opts)
         p = params[0]
-        origin = getattr(p.annotation, '__args__', None)
+        origin = getattr(p.annotation, "__args__", None)
         assert origin is not None and origin[0] is int
 
     def test_float_field(self):
@@ -136,7 +137,7 @@ class TestOptionsParamTypes:
 
         params = _options_params(Opts)
         p = params[0]
-        origin = getattr(p.annotation, '__args__', None)
+        origin = getattr(p.annotation, "__args__", None)
         assert origin is not None and origin[0] is float
 
     def test_bool_field(self):
@@ -146,13 +147,13 @@ class TestOptionsParamTypes:
 
         params = _options_params(Opts)
         p = params[0]
-        origin = getattr(p.annotation, '__args__', None)
+        origin = getattr(p.annotation, "__args__", None)
         assert origin is not None and origin[0] is bool
 
     def test_optional_field(self):
         @dataclass
         class Opts:
-            name: Annotated[Optional[str], typer.Option()] = None
+            name: Annotated[str | None, typer.Option()] = None
 
         params = _options_params(Opts)
         p = params[0]
@@ -161,8 +162,8 @@ class TestOptionsParamTypes:
 
 # ── Dataclass inheritance ─────────────────────────────────────────────────────
 
-class TestInheritedOptions:
 
+class TestInheritedOptions:
     def test_parent_fields_present(self):
         @dataclass
         class ParentOpts:
@@ -177,8 +178,8 @@ class TestInheritedOptions:
         _, sub_app = _SUITE_REGISTRY[-1]
         cmd = sub_app.registered_commands[0]
         sig = inspect.signature(cmd.callback)
-        assert 'device_type' in sig.parameters
-        assert 'firmware' in sig.parameters
+        assert "device_type" in sig.parameters
+        assert "firmware" in sig.parameters
 
     def test_multiple_parent_fields_combined(self):
         @dataclass
@@ -195,13 +196,13 @@ class TestInheritedOptions:
 
         params = _options_params(CombinedOpts)
         names = {p.name for p in params}
-        assert {'vlan', 'username', 'extra'} == names
+        assert {"vlan", "username", "extra"} == names
 
 
 # ── Runner invocation and Options construction ────────────────────────────────
 
-class TestRunnerInvocation:
 
+class TestRunnerInvocation:
     def test_runner_calls_run_suite_with_options(self):
         """Invoking a suite command constructs the Options instance and calls run_suite."""
 
@@ -216,16 +217,16 @@ class TestRunnerInvocation:
         captured: dict[str, object] = {}
 
         def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
-            captured['opts'] = opts_instance
-            captured['suite_class'] = suite_class
+            captured["opts"] = opts_instance
+            captured["suite_class"] = suite_class
 
-        with patch('otto.cli.test.run_suite', fake_run_suite):
-            result = runner.invoke(app, ['_SuiteRunner', '--device-type', 'switch'])
+        with patch("otto.cli.test.run_suite", fake_run_suite):
+            result = runner.invoke(app, ["_SuiteRunner", "--device-type", "switch"])
 
         assert result.exit_code == 0
-        opts = captured.get('opts')
+        opts = captured.get("opts")
         assert opts is not None
-        assert opts.device_type == 'switch'  # type: ignore[union-attr]
+        assert opts.device_type == "switch"  # type: ignore[union-attr]
 
     def test_runner_uses_defaults_when_options_omitted(self):
         @register_suite()
@@ -238,18 +239,19 @@ class TestRunnerInvocation:
         captured: dict[str, object] = {}
 
         def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
-            captured['opts'] = opts_instance
+            captured["opts"] = opts_instance
 
-        with patch('otto.cli.test.run_suite', fake_run_suite):
-            result = runner.invoke(app, ['_SuiteDefaults'])
+        with patch("otto.cli.test.run_suite", fake_run_suite):
+            result = runner.invoke(app, ["_SuiteDefaults"])
 
         assert result.exit_code == 0
-        opts = captured.get('opts')
+        opts = captured.get("opts")
         assert opts is not None
         assert opts.count == 7  # type: ignore[union-attr]
 
     def test_runner_called_with_four_args(self):
         """The runner invokes run_suite with (suite_cls, file, opts, ctx)."""
+
         @register_suite()
         class _SuiteArity:
             pass
@@ -258,24 +260,24 @@ class TestRunnerInvocation:
         captured: dict[str, object] = {}
 
         def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
-            captured['args'] = (suite_class, suite_file, opts_instance, ctx)
+            captured["args"] = (suite_class, suite_file, opts_instance, ctx)
 
-        with patch('otto.cli.test.run_suite', fake_run_suite):
-            result = runner.invoke(app, ['_SuiteArity'])
+        with patch("otto.cli.test.run_suite", fake_run_suite):
+            result = runner.invoke(app, ["_SuiteArity"])
 
         assert result.exit_code == 0
-        args = captured['args']
+        args = captured["args"]
         assert isinstance(args, tuple) and len(args) == 4
         assert args[0] is _SuiteArity
         assert args[2] is None  # no Options dataclass
         # 4th arg is the Typer-injected context (carries ctx.meta run options).
-        assert args[3] is not None and hasattr(args[3], 'meta')
+        assert args[3] is not None and hasattr(args[3], "meta")
 
 
 # ── OttoOptionsPlugin ─────────────────────────────────────────────────────────
 
-class TestOttoOptionsPlugin:
 
+class TestOttoOptionsPlugin:
     def test_stores_options(self):
         opts = object()
         plugin = OttoOptionsPlugin(opts)
@@ -288,17 +290,17 @@ class TestOttoOptionsPlugin:
     def test_provides_suite_options_fixture(self):
         """OttoOptionsPlugin exposes a session-scoped suite_options fixture."""
         plugin = OttoOptionsPlugin({"key": "value"})
-        assert hasattr(plugin, 'suite_options')
+        assert hasattr(plugin, "suite_options")
         # Verify it's a pytest fixture wrapper
         method = type(plugin).suite_options
-        assert 'pytest_fixture' in repr(method)
+        assert "pytest_fixture" in repr(method)
 
     def test_provides_ctx_fixture(self):
         """OttoOptionsPlugin exposes a ctx fixture."""
         plugin = OttoOptionsPlugin(None)
-        assert hasattr(plugin, 'ctx')
+        assert hasattr(plugin, "ctx")
         method = type(plugin).ctx
-        assert 'pytest_fixture' in repr(method)
+        assert "pytest_fixture" in repr(method)
 
     def test_ctx_fixture_returns_active_context(self):
         """The ctx fixture body returns the active OttoContext."""
@@ -306,7 +308,7 @@ class TestOttoOptionsPlugin:
         from otto.context import OttoContext, reset_context, set_context
 
         plugin = OttoOptionsPlugin(None)
-        ctx = OttoContext(lab=Lab(name='test'))
+        ctx = OttoContext(lab=Lab(name="test"))
         token = set_context(ctx)
         try:
             # Call the underlying fixture function directly (bypassing pytest machinery)
@@ -317,6 +319,7 @@ class TestOttoOptionsPlugin:
 
 
 # ── Annotated[T, typer.Option(...)] field help text ───────────────────────────
+
 
 class TestTyperAnnotatedFields:
     """Verify that Annotated[T, typer.Option(help=...)] help text is preserved."""
@@ -347,5 +350,5 @@ class TestTyperAnnotatedFields:
 
         params = _options_params(_MixedAnnotatedOpts)
         by_name = {p.name: p.annotation.__metadata__[0] for p in params}
-        assert by_name['labeled'].help == "Has help."
-        assert by_name['unlabeled'].help is None
+        assert by_name["labeled"].help == "Has help."
+        assert by_name["unlabeled"].help is None

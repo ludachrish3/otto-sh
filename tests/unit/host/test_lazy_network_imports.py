@@ -16,6 +16,7 @@ These run in a clean subprocess because ``sys.modules`` is process-global: a
 library imported by any earlier test in the parent process would mask the
 regression.
 """
+
 from __future__ import annotations
 
 import json
@@ -27,8 +28,8 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-COVERAGERC = PROJECT_ROOT / '.coveragerc'
-COVERAGE_BOOTSTRAP = PROJECT_ROOT / 'tests' / '_coverage_bootstrap'
+COVERAGERC = PROJECT_ROOT / ".coveragerc"
+COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
 # Importing the host package + a concrete host class is exactly what the
 # dynamic-CLI / registration path does. We then introspect the unix host's
@@ -55,15 +56,15 @@ print(json.dumps({m: m in sys.modules for m in ("asyncssh", "aioftp", "telnetlib
 
 def _loaded_network_libs() -> dict[str, bool]:
     env = {
-        'PATH': os.environ.get('PATH', ''),
-        'HOME': os.environ.get('HOME', ''),
-        'COVERAGE_PROCESS_START': str(COVERAGERC),
-        'PYTHONPATH': os.pathsep.join(
-            [str(COVERAGE_BOOTSTRAP), os.environ.get('PYTHONPATH', '')]
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": os.environ.get("HOME", ""),
+        "COVERAGE_PROCESS_START": str(COVERAGERC),
+        "PYTHONPATH": os.pathsep.join(
+            [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
         ).rstrip(os.pathsep),
     }
     result = subprocess.run(
-        [sys.executable, '-c', _PROBE],
+        [sys.executable, "-c", _PROBE],
         env=env,
         capture_output=True,
         text=True,

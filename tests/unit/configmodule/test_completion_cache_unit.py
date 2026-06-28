@@ -9,6 +9,7 @@ annotations`` — ``_serialize_options`` introspects ``Annotated[...]`` forms
 at runtime, and PEP 563 would stringify them, making the serializer skip the
 option entirely.
 """
+
 import json
 import time
 from pathlib import Path
@@ -21,27 +22,31 @@ from otto.configmodule import completion_cache as cc
 
 def test_read_cache_returns_none_for_empty_repos(tmp_path: Path, monkeypatch) -> None:
     """Empty-repo fingerprints poison the cache if allowed; read must skip them."""
-    monkeypatch.setenv('OTTO_XDIR', str(tmp_path))
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
     # Write a plausible-looking cache entry keyed on the empty fingerprint.
     cache_file = cc._cache_path()
     assert cache_file is not None
     cache_file.parent.mkdir(parents=True, exist_ok=True)
-    cache_file.write_text(json.dumps({
-        cc.compute_fingerprint([]): {
-            'schema_version': cc.SCHEMA_VERSION,
-            'generated_at': int(time.time()),
-            'instructions': [{'name': 'poisoned', 'options': []}],
-            'suites': [],
-        },
-    }))
+    cache_file.write_text(
+        json.dumps(
+            {
+                cc.compute_fingerprint([]): {
+                    "schema_version": cc.SCHEMA_VERSION,
+                    "generated_at": int(time.time()),
+                    "instructions": [{"name": "poisoned", "options": []}],
+                    "suites": [],
+                },
+            }
+        )
+    )
 
     assert cc.read_cache([]) is None
 
 
 def test_write_cache_skips_empty_repos(tmp_path: Path, monkeypatch) -> None:
     """Writing for empty repos must be a no-op — no file, no poisoned entry."""
-    monkeypatch.setenv('OTTO_XDIR', str(tmp_path))
-    cc.write_cache([], instructions=[{'name': 'x', 'options': []}], suites=[], hosts=[])
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    cc.write_cache([], instructions=[{"name": "x", "options": []}], suites=[], hosts=[])
     assert not cc._cache_path().exists()  # type: ignore[union-attr]
 
 
@@ -50,26 +55,30 @@ def test_read_cache_rejects_schema_mismatch(tmp_path: Path, monkeypatch) -> None
     from unittest.mock import MagicMock
 
     fake_repo = MagicMock()
-    fake_repo.sut_dir = tmp_path / 'sut'
+    fake_repo.sut_dir = tmp_path / "sut"
     fake_repo.sut_dir.mkdir()
-    (fake_repo.sut_dir / '.otto').mkdir()
-    (fake_repo.sut_dir / '.otto' / 'settings.toml').write_text('')
+    (fake_repo.sut_dir / ".otto").mkdir()
+    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
     fake_repo.init = []
     fake_repo.libs = []
     fake_repo.tests = []
     fake_repo.labs = []
 
-    monkeypatch.setenv('OTTO_XDIR', str(tmp_path))
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
     cache_file = cc._cache_path()
     cache_file.parent.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
-    cache_file.write_text(json.dumps({  # type: ignore[union-attr]
-        cc.compute_fingerprint([fake_repo]): {
-            'schema_version': cc.SCHEMA_VERSION - 1,
-            'generated_at': int(time.time()),
-            'instructions': [],
-            'suites': [],
-        },
-    }))
+    cache_file.write_text(
+        json.dumps(
+            {  # type: ignore[union-attr]
+                cc.compute_fingerprint([fake_repo]): {
+                    "schema_version": cc.SCHEMA_VERSION - 1,
+                    "generated_at": int(time.time()),
+                    "instructions": [],
+                    "suites": [],
+                },
+            }
+        )
+    )
 
     assert cc.read_cache([fake_repo]) is None
 
@@ -78,18 +87,18 @@ def test_serialize_options_handles_supported_kinds() -> None:
     """Every kind in the type-map should produce a non-None schema."""
 
     def source(
-        s: Annotated[str,   typer.Option('--s')] = '',
-        i: Annotated[int,   typer.Option('--i')] = 0,
-        f: Annotated[float, typer.Option('--f')] = 0.0,
-        b: Annotated[bool,  typer.Option('--b/--no-b')] = False,
-        p: Annotated[Path,  typer.Option('--p')] = Path('.'),
-        l: Annotated[list[str], typer.Option('--l')] = [],
+        s: Annotated[str, typer.Option("--s")] = "",
+        i: Annotated[int, typer.Option("--i")] = 0,
+        f: Annotated[float, typer.Option("--f")] = 0.0,
+        b: Annotated[bool, typer.Option("--b/--no-b")] = False,
+        p: Annotated[Path, typer.Option("--p")] = Path(),
+        l: Annotated[list[str], typer.Option("--l")] = [],
     ) -> None: ...
 
-    schema = cc._serialize_options(source, command_name='source')
+    schema = cc._serialize_options(source, command_name="source")
     assert schema is not None
-    kinds = [entry['kind'] for entry in schema]
-    assert kinds == ['str', 'int', 'float', 'bool', 'path', 'str_list']
+    kinds = [entry["kind"] for entry in schema]
+    assert kinds == ["str", "int", "float", "bool", "path", "str_list"]
 
 
 def test_serialize_options_returns_none_on_unsupported() -> None:
@@ -97,26 +106,26 @@ def test_serialize_options_returns_none_on_unsupported() -> None:
     from decimal import Decimal
 
     def source(
-        ok: Annotated[str, typer.Option('--ok')] = '',
-        bad: Annotated[Decimal, typer.Option('--bad')] = Decimal('0'),
+        ok: Annotated[str, typer.Option("--ok")] = "",
+        bad: Annotated[Decimal, typer.Option("--bad")] = Decimal(0),
     ) -> None: ...
 
-    assert cc._serialize_options(source, command_name='source') is None
+    assert cc._serialize_options(source, command_name="source") is None
 
 
 def test_clear_cache_returns_false_when_missing(tmp_path: Path, monkeypatch) -> None:
     """clear_cache reports False when there's nothing to remove."""
-    monkeypatch.setenv('OTTO_XDIR', str(tmp_path))
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
     assert cc.clear_cache() is False
 
 
 def test_clear_cache_removes_existing(tmp_path: Path, monkeypatch) -> None:
     """clear_cache unlinks a present cache file and reports True."""
-    monkeypatch.setenv('OTTO_XDIR', str(tmp_path))
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
     path = cc._cache_path()
     assert path is not None
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text('{}')
+    path.write_text("{}")
     assert cc.clear_cache() is True
     assert not path.exists()
 
@@ -148,7 +157,10 @@ def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch)
     fake_repo.labs = []
 
     cc.write_cache(
-        [fake_repo], instructions=[], suites=[], hosts=[],
+        [fake_repo],
+        instructions=[],
+        suites=[],
+        hosts=[],
         term_backends=["ssh", "telnet"],
         transfer_backends=[{"name": "scp", "host_families": ["unix"]}],
     )

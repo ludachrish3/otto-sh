@@ -64,7 +64,6 @@ def _series_by_label(collector) -> dict[str, float]:
 
 @_SNMP_PARAMS
 class TestSnmpCollection:
-
     @pytest.mark.asyncio
     async def test_collects_sane_metrics_over_snmp(self, backend):
         """A single collection tick yields decodable, in-range metrics.
@@ -119,9 +118,9 @@ class TestSnmpCollection:
         client_src = build_monitor_collector([host])._targets[0].snmp
         assert client_src is not None
         try:
-            first = (await client_src.client.get([client_src.oids[0]]))
+            first = await client_src.client.get([client_src.oids[0]])
             await asyncio.sleep(1.5)
-            second = (await client_src.client.get([client_src.oids[0]]))
+            second = await client_src.client.get([client_src.oids[0]])
         finally:
             pass
 

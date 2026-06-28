@@ -5,7 +5,6 @@ from otto.reservations import (
     NullReservationBackend,
     check_reservations,
 )
-
 from tests.conftest import make_host
 
 
@@ -25,6 +24,10 @@ def test_backend_name():
 
 def test_check_reservations_is_noop_with_null_backend():
     """Even when the lab has required resources, the null backend skips the check."""
-    lab = Lab(name="test_lab", resources={"rack1"}, hosts={"carrot_seed": make_host("carrot", resources={"carrot"})})
+    lab = Lab(
+        name="test_lab",
+        resources={"rack1"},
+        hosts={"carrot_seed": make_host("carrot", resources={"carrot"})},
+    )
     # Should not raise — the null backend short-circuits the check.
     check_reservations(lab, username="alice", backend=NullReservationBackend())

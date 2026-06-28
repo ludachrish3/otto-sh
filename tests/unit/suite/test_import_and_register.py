@@ -37,19 +37,20 @@ runner = CliRunner()
 # ---------------------------------------------------------------------------
 
 # tests/unit/suite/ → tests/unit/ → tests/ → repo1/
-_REPO1_DIR: Path = Path(__file__).parents[2] / 'repo1'
-_REPO1_TESTS_DIR: Path = _REPO1_DIR / 'tests'
+_REPO1_DIR: Path = Path(__file__).parents[2] / "repo1"
+_REPO1_TESTS_DIR: Path = _REPO1_DIR / "tests"
 
 # Stable module names used by import_test_files for the two repo1 test files
-_MOD_DEVICE  = '_otto_suite_test_device'
-_MOD_EXAMPLE = '_otto_suite_test_example'
+_MOD_DEVICE = "_otto_suite_test_device"
+_MOD_EXAMPLE = "_otto_suite_test_example"
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture()
+
+@pytest.fixture
 def clean_registry():
     """Snapshot and restore _SUITE_REGISTRY; remove injected sys.modules entries."""
     before_len = len(_SUITE_REGISTRY)
@@ -57,19 +58,19 @@ def clean_registry():
     yield
     del _SUITE_REGISTRY[before_len:]
     for key in set(sys.modules) - before_mods:
-        if key.startswith('_otto_suite_'):
+        if key.startswith("_otto_suite_"):
             sys.modules.pop(key, None)
 
 
-@pytest.fixture()
-def repo1(clean_registry) -> Repo:  # noqa: F811
+@pytest.fixture
+def repo1(clean_registry) -> Repo:
     """Return a Repo for tests/repo1 with libs on sys.path.
 
     Uses ``clean_registry`` so each test starts with a predictable
     ``_SUITE_REGISTRY`` state and ``sys.modules`` is restored afterwards.
     """
     # Evict any previously cached module so we get a fresh import each test
-    sys.modules.pop(_MOD_DEVICE,  None)
+    sys.modules.pop(_MOD_DEVICE, None)
     sys.modules.pop(_MOD_EXAMPLE, None)
 
     repo = Repo(sut_dir=_REPO1_DIR)
@@ -83,6 +84,7 @@ def repo1(clean_registry) -> Repo:  # noqa: F811
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _app_for(suite_name: str) -> typer.Typer:
     """Wrap the named suite's sub-app in a fresh Typer app for CliRunner tests."""
     for name, sub_app in reversed(_SUITE_REGISTRY):
@@ -90,12 +92,13 @@ def _app_for(suite_name: str) -> typer.Typer:
             app = typer.Typer(no_args_is_help=True)
             app.add_typer(sub_app)
             return app
-    raise LookupError(f'{suite_name!r} not found in _SUITE_REGISTRY')
+    raise LookupError(f"{suite_name!r} not found in _SUITE_REGISTRY")
 
 
 # ---------------------------------------------------------------------------
 # TestSuiteAutoScan
 # ---------------------------------------------------------------------------
+
 
 class TestSuiteAutoScan:
     """``import_test_files()`` registers suites from external paths (bug-fix coverage)."""
@@ -104,7 +107,7 @@ class TestSuiteAutoScan:
         """TestDevice must appear in _SUITE_REGISTRY after import_test_files()."""
         repo1.import_test_files()
         names = [n for n, _ in _SUITE_REGISTRY]
-        assert 'TestDevice' in names
+        assert "TestDevice" in names
 
     def test_tests_dir_not_on_syspath_before_import(self, repo1: Repo):
         """Pre-condition: repo1's tests directory must NOT be on sys.path.
@@ -121,9 +124,9 @@ class TestSuiteAutoScan:
         repo1.import_test_files()
 
         names = [n for n, _ in _SUITE_REGISTRY]
-        assert 'TestDevice' in names, (
-            'TestDevice not registered — import_test_files() may have fallen back '
-            'to the broken sys.path-relative logic'
+        assert "TestDevice" in names, (
+            "TestDevice not registered — import_test_files() may have fallen back "
+            "to the broken sys.path-relative logic"
         )
 
     def test_plain_test_file_without_decorator_not_registered(self, repo1: Repo):
@@ -131,9 +134,9 @@ class TestSuiteAutoScan:
         before = len(_SUITE_REGISTRY)
         repo1.import_test_files()
         added_names = [n for n, _ in _SUITE_REGISTRY[before:]]
-        assert 'test_example' not in added_names
+        assert "test_example" not in added_names
         # test_device.py adds TestDevice; test_coverage_product.py adds TestCoverageProduct
-        assert 'TestDevice' in added_names
+        assert "TestDevice" in added_names
         assert len(added_names) >= 1
 
     def test_duplicate_import_is_skipped(self, repo1: Repo):
@@ -148,6 +151,7 @@ class TestSuiteAutoScan:
 # TestSuiteOptionsInHelp
 # ---------------------------------------------------------------------------
 
+
 class TestSuiteOptionsInHelp:
     """The TestDevice --help output must list the complete, correct set of options."""
 
@@ -157,29 +161,29 @@ class TestSuiteOptionsInHelp:
 
     def test_runner_options_absent_from_suite_help(self):
         """Runner options live on the parent callback, not individual suites."""
-        app = _app_for('TestDevice')
-        result = runner.invoke(app, ['TestDevice', '--help'])
+        app = _app_for("TestDevice")
+        result = runner.invoke(app, ["TestDevice", "--help"])
         assert result.exit_code == 0
-        for flag in ('--markers', '--iterations', '--duration', '--threshold', '--results'):
+        for flag in ("--markers", "--iterations", "--duration", "--threshold", "--results"):
             assert flag not in result.output, (
-                f'{flag!r} should live on `otto test --help`, not suite help'
+                f"{flag!r} should live on `otto test --help`, not suite help"
             )
 
     def test_suite_specific_options_present(self):
         """Options declared in TestDevice.Options must appear."""
-        app = _app_for('TestDevice')
-        result = runner.invoke(app, ['TestDevice', '--help'])
+        app = _app_for("TestDevice")
+        result = runner.invoke(app, ["TestDevice", "--help"])
         assert result.exit_code == 0
-        assert '--firmware' in result.output
-        assert '--check-interfaces' in result.output
+        assert "--firmware" in result.output
+        assert "--check-interfaces" in result.output
 
     def test_inherited_repo_wide_options_present(self):
         """Fields from RepoOptions (the parent dataclass) must also appear."""
-        app = _app_for('TestDevice')
-        result = runner.invoke(app, ['TestDevice', '--help'])
+        app = _app_for("TestDevice")
+        result = runner.invoke(app, ["TestDevice", "--help"])
         assert result.exit_code == 0
-        assert '--device-type' in result.output
-        assert '--lab-env' in result.output
+        assert "--device-type" in result.output
+        assert "--lab-env" in result.output
 
     def test_bool_option_generates_flag_pair(self):
         """check_interfaces: bool must produce --check-interfaces / --no-check-interfaces.
@@ -187,21 +191,23 @@ class TestSuiteOptionsInHelp:
         The negative flag may be truncated by Rich's column layout when the help
         table is wide, so we check for the unambiguous prefix '--no-check-inter'.
         """
-        app = _app_for('TestDevice')
-        result = runner.invoke(app, ['TestDevice', '--help'])
+        app = _app_for("TestDevice")
+        result = runner.invoke(app, ["TestDevice", "--help"])
         assert result.exit_code == 0
-        assert '--check-interfaces' in result.output
+        assert "--check-interfaces" in result.output
         # Rich may truncate the pair to '--no-check-inter…' in narrow columns
-        assert '--no-check-inter' in result.output
+        assert "--no-check-inter" in result.output
 
     def test_all_options_present(self):
         """Full regression: all suite-specific options (2 suite + 2 repo-wide) must be listed."""
-        app = _app_for('TestDevice')
-        result = runner.invoke(app, ['TestDevice', '--help'])
+        app = _app_for("TestDevice")
+        result = runner.invoke(app, ["TestDevice", "--help"])
         assert result.exit_code == 0
         expected = (
-            '--firmware', '--check-interfaces',  # suite-specific
-            '--device-type', '--lab-env',        # repo-wide
+            "--firmware",
+            "--check-interfaces",  # suite-specific
+            "--device-type",
+            "--lab-env",  # repo-wide
         )
         missing = [f for f in expected if f not in result.output]
-        assert not missing, f'Options missing from --help: {missing}'
+        assert not missing, f"Options missing from --help: {missing}"

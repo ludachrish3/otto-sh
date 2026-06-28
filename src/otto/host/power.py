@@ -10,6 +10,7 @@ command-based backend); projects register richer ones (IPMI/redfish/libvirt/
 cloud/PDU) via :func:`register_power_controller`, the same extension hook
 :func:`otto.host.binary_loader.register_binary_loader` uses.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 
 class PowerState(Enum):
     """A host's power state as reported by a controller."""
+
     ON = "on"
     OFF = "off"
 
@@ -79,10 +81,12 @@ class CommandPowerController(PowerController):
     async def _runner(self, host: "Host") -> "Host":
         if self.controller is None:
             from .local_host import LocalHost
+
             return LocalHost()
         lab = getattr(host, "_lab", None)
         if lab is None:
             from ..context import try_get_context
+
             ctx = try_get_context()
             lab = ctx.lab if ctx is not None else None
         if lab is None or self.controller not in lab.hosts:

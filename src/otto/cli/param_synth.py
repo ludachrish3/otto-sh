@@ -6,14 +6,16 @@ list (a mix of arguments, options, flags, and variadics), and let a wrapper with
 assigned ``__signature__`` reconstruct the bound-method call. Typer owns parsing,
 help, validation, completion, and exit codes.
 """
+
 from __future__ import annotations
 
 import inspect
 import types
 import typing
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Annotated, Any, Callable, Union, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 import typer
 
@@ -155,12 +157,18 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
                 )
             elem = arg.elem_type or str
             ann = Annotated[list[elem], typer.Argument(help=arg.help)]
-            binding.params.append(inspect.Parameter(
-                name, inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                default=(sp.default if sp.default is not inspect.Parameter.empty
-                         else inspect.Parameter.empty),
-                annotation=ann,
-            ))
+            binding.params.append(
+                inspect.Parameter(
+                    name,
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    default=(
+                        sp.default
+                        if sp.default is not inspect.Parameter.empty
+                        else inspect.Parameter.empty
+                    ),
+                    annotation=ann,
+                )
+            )
             continue
 
         origin = get_origin(base)
@@ -170,14 +178,19 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
             elem = (get_args(base) or (str,))[-1]
             if origin is list:
                 binding.converters[name] = lambda raw, e=elem: parse_comma_list(raw, e)
-                help_txt = (opt.help if opt else None)
+                help_txt = opt.help if opt else None
             else:
                 binding.converters[name] = lambda raw, e=elem: parse_kv_dict(raw, e)
-                help_txt = (opt.help if opt else None)
-            ann = Annotated[typing.Optional[str], typer.Option(help=help_txt)]
-            binding.params.append(inspect.Parameter(
-                name, inspect.Parameter.KEYWORD_ONLY, default=None, annotation=ann,
-            ))
+                help_txt = opt.help if opt else None
+            ann = Annotated[str | None, typer.Option(help=help_txt)]
+            binding.params.append(
+                inspect.Parameter(
+                    name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=None,
+                    annotation=ann,
+                )
+            )
             continue
 
         # --- scalar: normalize union, then arg/opt/inference ---
@@ -194,8 +207,13 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
             else:
                 ann = Annotated[norm, typer.Option()]
             kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
-        binding.params.append(inspect.Parameter(
-            name, kind, default=default, annotation=ann,
-        ))
+        binding.params.append(
+            inspect.Parameter(
+                name,
+                kind,
+                default=default,
+                annotation=ann,
+            )
+        )
 
     return binding

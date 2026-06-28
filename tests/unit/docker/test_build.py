@@ -44,10 +44,14 @@ def _img(tmp: Path) -> DockerImage:
 # Tag helpers
 # ---------------------------------------------------------------------------
 
+
 def test_default_registry_omits_prefix(tmp_path):
     img = _img(tmp_path)
     assert image_latest_tag("docker.io", "repo1", img) == "repo1-api:latest"
-    assert image_full_tag("docker.io", "repo1", img, "abcdef0123456789ff") == "repo1-api:abcdef0123456789"
+    assert (
+        image_full_tag("docker.io", "repo1", img, "abcdef0123456789ff")
+        == "repo1-api:abcdef0123456789"
+    )
 
 
 def test_empty_registry_omits_prefix(tmp_path):
@@ -64,6 +68,7 @@ def test_custom_registry_prefixes(tmp_path):
 # _build_one — skip vs build
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_build_one_skipped_when_image_exists(tmp_path):
     parent = _mock_parent()
@@ -74,6 +79,7 @@ async def test_build_one_skipped_when_image_exists(tmp_path):
         if cmd.startswith("docker image inspect"):
             return _ok()
         return _ok()
+
     parent.oneshot.side_effect = oneshot
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
@@ -94,6 +100,7 @@ async def test_build_one_runs_when_image_missing(tmp_path):
         if cmd.startswith("docker image inspect"):
             return _fail("not found")
         return _ok()
+
     parent.oneshot.side_effect = oneshot
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
@@ -128,6 +135,7 @@ async def test_build_failure_propagates(tmp_path):
         if cmd.startswith("docker build "):
             return _fail("syntax error in dockerfile")
         return _ok()
+
     parent.oneshot.side_effect = oneshot
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())

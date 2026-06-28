@@ -33,8 +33,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.configmodule import all_hosts
 from otto.configmodule import get_repos
+from otto.configmodule.configmodule import all_hosts
 from otto.host import LocalHost
 from otto.host.embedded_host import EmbeddedHost
 from otto.logger import get_otto_logger
@@ -65,9 +65,7 @@ def _extension_path_from(build_dir: str) -> Path:
     """Path of the pre-built, stripped LLEXT extension for *build_dir* (passed to host.load)."""
     llext = Path(build_dir) / "zephyr" / f"{_extension()}.stripped.llext"
     if not llext.exists():
-        raise RuntimeError(
-            f"extension not built: {llext} — build product/ first (see its README)"
-        )
+        raise RuntimeError(f"extension not built: {llext} — build product/ first (see its README)")
     return llext
 
 
@@ -91,7 +89,7 @@ def _build_dir_for(host: EmbeddedHost) -> str:
     return build_dir
 
 
-def _zver_for(host: EmbeddedHost) -> 'str | None':
+def _zver_for(host: EmbeddedHost) -> "str | None":
     """Map *host*'s ``os_version`` to ``build.sh``'s ``zver`` positional argument.
 
     Returns ``"v" + os_version.replace(".", "_")`` (e.g. ``"3.7"`` → ``"v3_7"``,
@@ -103,7 +101,7 @@ def _zver_for(host: EmbeddedHost) -> 'str | None':
     return "v" + host.os_version.replace(".", "_")
 
 
-async def _build_extension_for(build_dir: str, zver: 'str | None') -> None:
+async def _build_extension_for(build_dir: str, zver: "str | None") -> None:
     """Rebuild the LLEXT coverage extension into *build_dir* for Zephyr *zver*.
 
     The embedded analogue of repo1's ``_compile_product``: the suite keeps the
@@ -121,15 +119,13 @@ async def _build_extension_for(build_dir: str, zver: 'str | None') -> None:
     try:
         result = await localhost.oneshot(cmd, timeout=900)
         if result.status != Status.Success:
-            raise RuntimeError(
-                f"extension build failed (see {BUILD_SCRIPT}):\n{result.output}"
-            )
+            raise RuntimeError(f"extension build failed (see {BUILD_SCRIPT}):\n{result.output}")
         logger.info("Rebuilt %s into %s (zver=%s)", _extension(), build_dir, zver)
     finally:
         await localhost.close()
 
 
-def _coverage_host_pattern() -> 're.Pattern[str] | None':
+def _coverage_host_pattern() -> "re.Pattern[str] | None":
     """Return the repo-declared ``[coverage].hosts`` selector, compiled (or ``None``)."""
     for repo in get_repos():
         hosts = (repo.settings.get("coverage") or {}).get("hosts")
@@ -156,7 +152,6 @@ async def _call(host: EmbeddedHost, fn: str, timeout: float = 60) -> None:
     result = await host.oneshot(f"llext call_fn {ext} {fn}", timeout=timeout)
     if result.status != Status.Success:
         raise RuntimeError(f"call_fn {fn} failed on {host.id}: {result.output}")
-
 
 
 @dataclass
@@ -193,7 +188,7 @@ class TestEmbeddedCoverage(OttoSuite[_Options]):
         # compiles its binary the same way. Build before reading the artifact
         # below so the loaded extension always reflects the current source.
         # Cache by (build_dir, zver) so same-version hosts share one build.
-        built: set[tuple[str, 'str | None']] = set()
+        built: set[tuple[str, "str | None"]] = set()
         host_llext: dict[str, Path] = {}
         host_build_dir: dict[str, str] = {}
         for host in hosts:

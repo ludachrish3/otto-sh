@@ -21,11 +21,11 @@ from ..reservations import (
 )
 
 reservation_app = typer.Typer(
-    name='reservation',
+    name="reservation",
     no_args_is_help=True,
-    help='Inspect and verify lab reservations.',
+    help="Inspect and verify lab reservations.",
     context_settings={
-        'help_option_names': ['-h', '--help'],
+        "help_option_names": ["-h", "--help"],
     },
 )
 
@@ -39,19 +39,20 @@ def reservation_callback(ctx: typer.Context) -> None:
     # (which also prunes old logs per the retention policy), only for a real
     # subcommand — never on group ``--help``/no-args.
     if ctx.invoked_subcommand is not None:
-        get_context().output_dir = management.create_output_dir('reservation', ctx.invoked_subcommand)
+        get_context().output_dir = management.create_output_dir(
+            "reservation", ctx.invoked_subcommand
+        )
 
 
 @reservation_app.command()
 def whoami(ctx: typer.Context) -> None:
     """Show the resolved reservation identity and backend."""
     from ..configmodule import get_lab
+
     res = ctx.meta.get("otto_reservation")
     backend = None
     if res is not None:
-        backend = res.backend or (
-            res.backend_factory() if res.backend_factory else None
-        )
+        backend = res.backend or (res.backend_factory() if res.backend_factory else None)
     backend_name = backend.backend_name() if backend else "<none>"
     identity = res.identity if res else None
     if identity is None:
@@ -70,13 +71,12 @@ def whoami(ctx: typer.Context) -> None:
 def check(ctx: typer.Context) -> None:
     """Run the reservation check for the top-level ``--lab`` and report."""
     from ..configmodule import get_lab
+
     res = ctx.meta.get("otto_reservation")
 
     backend = None
     if res is not None:
-        backend = res.backend or (
-            res.backend_factory() if res.backend_factory else None
-        )
+        backend = res.backend or (res.backend_factory() if res.backend_factory else None)
     if res is None or backend is None or res.identity is None:
         rprint("[red]Reservation backend or identity not configured.[/red]")
         raise typer.Exit(1)
@@ -85,10 +85,7 @@ def check(ctx: typer.Context) -> None:
     username = res.identity.username
     needed = required_resources(lab)
 
-    rprint(
-        f"Checking reservations for [bold]{username}[/bold] "
-        f"against lab [bold]{lab.name}[/bold]"
-    )
+    rprint(f"Checking reservations for [bold]{username}[/bold] against lab [bold]{lab.name}[/bold]")
     rprint(f"Required resources: {sorted(needed)}")
 
     try:
