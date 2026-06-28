@@ -12,6 +12,8 @@ from errno import (
 from pathlib import Path
 from typing import Annotated
 
+from typing_extensions import override
+
 from ..logger import get_otto_logger
 from ..utils import Arg, CommandStatus, Exclude, Status, cli_exposed
 from .file_ops import PosixFileOps
@@ -60,9 +62,11 @@ class LocalFileTransfer(BaseFileTransfer):
         except Exception as e:
             return Status.Error, str(e)
 
+    @override
     async def _run_put(self, src_files, dest_dir, progress_factory):
         return await self._do_copy(src_files, dest_dir, progress_factory)
 
+    @override
     async def _run_get(self, src_files, dest_dir, progress_factory):
         return await self._do_copy(src_files, dest_dir, progress_factory)
 
@@ -117,6 +121,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     #  Command execution
     ####################
 
+    @override
     async def _run_one(
         self,
         cmd: str,
@@ -133,6 +138,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             return self._dry_run_result(cmd)
         return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
+    @override
     async def oneshot(
         self,
         cmd: str,
@@ -201,12 +207,14 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
         return CommandStatus(command=cmd, output="\n".join(lines), retcode=proc.returncode, status=status)
 
+    @override
     async def open_session(self, name: str) -> HostSession:
         """Open a named persistent shell session."""
         if is_dry_run():
             self._log_command(f"[DRY RUN] open_session({name!r})")
         return await self._session_mgr.open_session(name)
 
+    @override
     async def send(self, text: str, log: bool = True) -> None:
         """Send raw text to the host's persistent session."""
         if is_dry_run():
@@ -215,6 +223,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             return
         await self._session_mgr.send(text, log=log)
 
+    @override
     async def expect(
         self,
         pattern: str | re.Pattern[str],
@@ -230,6 +239,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     #  File transfer
     ####################
 
+    @override
     @cli_exposed(success="Download complete.")
     async def get(
         self,
@@ -250,6 +260,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             src_files, dest_dir, show_progress,
         )
 
+    @override
     @cli_exposed(success="Transfer complete.")
     async def put(
         self,
@@ -272,6 +283,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     #  Power / reachability
     ####################
 
+    @override
     async def is_reachable(self, timeout: float = 10.0) -> bool:
         """Return ``True`` — the local machine is always reachable."""
         return True
@@ -280,6 +292,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     #  Cleanup
     ####################
 
+    @override
     async def close(self) -> None:
         await self._repeater.stop_all()
         await self._session_mgr.close_all()

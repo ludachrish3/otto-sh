@@ -9,6 +9,8 @@ and :class:`~otto.host.transfer.TftpFileTransfer`. Subclasses implement
 from collections.abc import Callable, Coroutine
 from typing import Any
 
+from typing_extensions import override
+
 from ...utils import CommandStatus
 from ..embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .base import BaseFileTransfer, TransferContext
@@ -56,6 +58,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         # silently accepted by ``_ensure_mounted``.
         self._mount_done = False
 
+    @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "EmbeddedFileTransfer":
         """Construct from a :class:`TransferContext`.

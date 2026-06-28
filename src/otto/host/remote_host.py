@@ -28,6 +28,8 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from typing_extensions import override
+
 from ..logger import get_otto_logger
 from .host import BaseHost
 
@@ -201,6 +203,7 @@ class RemoteHost(BaseHost):
         """Whether the host has any current connections or live sessions."""
         return self._session_mgr.has_live_sessions or self._connections.connected
 
+    @override
     async def is_reachable(self, timeout: float = 10.0) -> bool:
         """Probe by attempting a connection (no command), bounded by *timeout*."""
         try:

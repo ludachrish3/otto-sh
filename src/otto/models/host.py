@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from pydantic import field_validator
+from typing_extensions import override
 
 from ..host.binary_loader import build_binary_loader
 from ..host.capability import TERM_RESOLVER, TRANSFER_RESOLVER
@@ -244,6 +245,7 @@ class UnixHostSpec(HostSpec):
     def _validate_unix_valid_transfers(cls, v: list[str]) -> list[str]:
         return _validate_transfer_menu(v, cls._host_family, "a unix host")
 
+    @override
     def to_host(self, cls: type[UnixHost] = UnixHost, *,
                 preferences: dict[str, list[str]] | None = None) -> UnixHost:
         kw = self._common_host_kwargs()
@@ -305,6 +307,7 @@ class EmbeddedHostSpec(HostSpec):
             )
         return v
 
+    @override
     def to_host(self, cls: type[EmbeddedHost] = EmbeddedHost, *,
                 preferences: dict[str, list[str]] | None = None) -> EmbeddedHost:
         kw = self._common_host_kwargs()

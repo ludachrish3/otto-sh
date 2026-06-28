@@ -13,6 +13,7 @@ from rich.console import (
     Console,
 )
 from rich.text import Text
+from typing_extensions import override
 
 from ..console import CONSOLE
 
@@ -41,6 +42,7 @@ def format_log_time(dt: datetime) -> Text:
 
 class MultilineFormatter(Formatter):
 
+    @override
     def format(self, record: LogRecord) -> str:
 
         # Store the original full message to restore later
@@ -79,6 +81,7 @@ class RichFormatter(MultilineFormatter):
     ):
         super().__init__(fmt=fmt, style=style, **kwargs)
 
+    @override
     def format(self, record: LogRecord) -> str:
         msg = super().format(record=self._stylize(record))
 

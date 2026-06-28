@@ -52,6 +52,8 @@ from typing import (
     cast,
 )
 
+from typing_extensions import override
+
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
@@ -284,11 +286,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     #  Privilege
     ####################
 
+    @override
     def _sudo_password(self) -> str | None:
         """The login user's password, used for ``sudo -S``."""
         _user, password = self._connections.credentials
         return password or None
 
+    @override
     def _user_password(self, user: str) -> str | None:
         """Password for ``su <user>`` from this host's creds, if present."""
         return self.creds.get(user)
@@ -406,6 +410,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             s.connect((self.ip, 80))
             return s.getsockname()[0]
 
+    @override
     async def verify_connection(self) -> CommandStatus:
         """Attempt to connect without running any commands. Used by dry-run mode."""
         try:
@@ -423,6 +428,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             self._log_command(f"[DRY RUN] Connection FAILED: {e}")
             return CommandStatus(command="connect", output=str(e), status=Status.Error, retcode=1)
 
+    @override
     async def close(self) -> None:
 
         await self._repeater.stop_all()
@@ -435,6 +441,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     # TODO: Make sync versions of cmd and file methods that just wraps the async def
 
+    @override
     async def _interact(self) -> None:
         """Open an interactive shell on this host, bridged to the local terminal.
 
@@ -485,6 +492,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         finally:
             await client.close()
 
+    @override
     async def _run_one(
         self,
         cmd: str,
@@ -524,6 +532,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return self._dry_run_result(cmd)
         return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
+    @override
     async def oneshot(
         self,
         cmd: str,
@@ -581,6 +590,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return self._dry_run_result(cmd)
         return await self._session_mgr.oneshot(cmd, timeout=timeout, log=log)
 
+    @override
     async def open_session(self, name: str) -> HostSession:
         """Open a named persistent shell session.
 
@@ -611,6 +621,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             self._log_command(f"[DRY RUN] open_session({name!r})")
         return await self._session_mgr.open_session(name)
 
+    @override
     async def send(self, text: str, log: bool = True) -> None:
         """Send raw text to the host's persistent session."""
         if is_dry_run():
@@ -619,6 +630,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return
         await self._session_mgr.send(text, log=log)
 
+    @override
     async def expect(
         self,
         pattern: str | re.Pattern[str],
@@ -634,6 +646,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     #  File transfer
     ####################
 
+    @override
     @cli_exposed(success="Download complete.")
     async def get(
         self,
@@ -653,6 +666,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     # The main use case is lists of products or tools. These are the same binaries, and
     # go to multiple hosts. It would be most efficient if they could all be done in a
     # single asyncio.gather() rather than multiple.
+    @override
     @cli_exposed(success="Transfer complete.")
     async def put(
         self,
@@ -741,10 +755,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     #  Power / reboot
     ####################
 
+    @override
     async def _soft_reboot(self) -> tuple[Status, str]:
         await self.run("reboot", sudo=True, timeout=10.0)
         return Status.Success, ""
 
+    @override
     @cli_exposed
     async def shutdown(self) -> tuple[Status, str]:
         await self.run("shutdown -h now", sudo=True, timeout=10.0)

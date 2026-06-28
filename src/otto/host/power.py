@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from typing_extensions import override
+
 from ..utils import Status
 
 if TYPE_CHECKING:
@@ -98,12 +100,15 @@ class CommandPowerController(PowerController):
         result = await runner.oneshot(self._fmt(template, host))
         return result.status, result.output
 
+    @override
     async def on(self, host: "Host") -> tuple[Status, str]:
         return await self._exec(self.on_cmd, host)
 
+    @override
     async def off(self, host: "Host") -> tuple[Status, str]:
         return await self._exec(self.off_cmd, host)
 
+    @override
     async def status(self, host: "Host") -> PowerState | None:
         if self.status_cmd is None:
             return None

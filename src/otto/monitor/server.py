@@ -25,6 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
+from typing_extensions import override
 
 from ..logger import get_otto_logger
 from ..models.base import OttoModel
@@ -37,6 +38,7 @@ logger = get_otto_logger()
 
 # Suppress the ASGI log from uvicorn because it clutters up the output on exit.
 class SuppressASGIWarning(Filter):
+    @override
     def filter(self, record: LogRecord):
         return "ASGI callable returned without completing" not in record.getMessage()
 

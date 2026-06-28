@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from ..connections import ConnectionManager
     from ..options import ScpOptions
 
+from typing_extensions import override
+
 from ...logger import get_otto_logger
 from ...utils import CommandStatus, Status
 from .base import (
@@ -53,12 +55,14 @@ class ScpFileTransfer(UnixFileTransfer):
         )
         self._scp_options = scp_options
 
+    @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "ScpFileTransfer":
         assert ctx.connections is not None and ctx.exec_cmd is not None and ctx.scp_options is not None
         return cls(connections=ctx.connections, name=ctx.host_name, exec_cmd=ctx.exec_cmd,
                    scp_options=ctx.scp_options, max_filename_len=ctx.max_filename_len)
 
+    @override
     async def _run_get(
         self,
         src_files: list[Path],
@@ -67,6 +71,7 @@ class ScpFileTransfer(UnixFileTransfer):
     ) -> tuple[Status, str]:
         return await self._get_files_scp(src_files, dest_dir, progress_factory)
 
+    @override
     async def _run_put(
         self,
         src_files: list[Path],

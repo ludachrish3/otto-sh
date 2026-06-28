@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Callable
 
 import typer
+from typing_extensions import override
 
 if TYPE_CHECKING:
     from typer.core import TyperGroup
@@ -218,6 +219,7 @@ def _make_host_group() -> type[TyperGroup]:
                 return None
             return host_class_for_id((ctx.params or {}).get("host_id"))
 
+        @override
         def list_commands(self, ctx: Any) -> list[str]:
             self._ensure_dynamic()
             cls = self._class_for(ctx)
@@ -244,6 +246,7 @@ def _make_host_group() -> type[TyperGroup]:
                 cache[key] = _synthesize_command(cmd_name, attr_name, help_text, fn)
             return cache[key]
 
+        @override
         def get_command(self, ctx: Any, cmd_name: str) -> Any:
             self._ensure_dynamic()
             cls = self._class_for(ctx)

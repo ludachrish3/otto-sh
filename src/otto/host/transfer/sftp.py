@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..connections import ConnectionManager
 
+from typing_extensions import override
+
 from ...logger import get_otto_logger
 from ...utils import CommandStatus, Status
 from .base import (
@@ -50,12 +52,14 @@ class SftpFileTransfer(UnixFileTransfer):
             max_filename_len=max_filename_len,
         )
 
+    @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "SftpFileTransfer":
         assert ctx.connections is not None and ctx.exec_cmd is not None
         return cls(connections=ctx.connections, name=ctx.host_name, exec_cmd=ctx.exec_cmd,
                    max_filename_len=ctx.max_filename_len)
 
+    @override
     async def _run_get(
         self,
         src_files: list[Path],
@@ -64,6 +68,7 @@ class SftpFileTransfer(UnixFileTransfer):
     ) -> tuple[Status, str]:
         return await self._get_files_sftp(src_files, dest_dir, progress_factory)
 
+    @override
     async def _run_put(
         self,
         src_files: list[Path],

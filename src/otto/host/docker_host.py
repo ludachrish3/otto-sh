@@ -30,6 +30,8 @@ from dataclasses import (
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
+from typing_extensions import override
+
 from ..logger import get_otto_logger
 from ..utils import Arg, CommandStatus, Status, cli_exposed
 from .file_ops import PosixFileOps
@@ -262,6 +264,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         flags = '-i' if not interactive else '-it'
         return f"docker exec {flags} {self.container_id} sh -c {shlex.quote(cmd)}"
 
+    @override
     async def oneshot(
         self,
         cmd: str,
@@ -296,6 +299,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             retcode=result.retcode,
         )
 
+    @override
     async def _run_one(
         self,
         cmd: str,
@@ -314,6 +318,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         await self._ensure_running()
         return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
+    @override
     async def open_session(self, name: str) -> 'HostSession':
         """Open a named persistent shell session inside the container."""
         if is_dry_run():
@@ -321,6 +326,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         await self._ensure_running()
         return await self._session_mgr.open_session(name)
 
+    @override
     async def send(self, text: str, log: bool = True) -> None:
         """Send raw text to the container's persistent session."""
         if is_dry_run():
@@ -330,6 +336,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         await self._ensure_running()
         await self._session_mgr.send(text, log=log)
 
+    @override
     async def expect(
         self,
         pattern: 'str | re.Pattern[str]',
@@ -346,6 +353,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     #  Interactive shell
     ####################
 
+    @override
     async def _interact(self) -> None:
         """Open an interactive shell inside the container via the parent's SSH conn."""
         # Importing here to keep this module importable without asyncssh.
@@ -381,6 +389,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Per-container staging directory on the parent filesystem."""
         return Path(f"/tmp/otto-docker-stage/{container_id}")
 
+    @override
     @cli_exposed(success="Transfer complete.")
     async def put(
         self,
@@ -420,6 +429,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         finally:
             await self.parent.oneshot(f"rm -rf {shlex.quote(str(stage))}")
 
+    @override
     @cli_exposed(success="Download complete.")
     async def get(
         self,
@@ -475,6 +485,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     #  Cleanup
     ####################
 
+    @override
     async def close(self) -> None:
         """Stop background tasks and tear down the persistent session.
 

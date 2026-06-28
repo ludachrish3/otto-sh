@@ -42,6 +42,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
 
+from typing_extensions import override
+
 
 @dataclass(frozen=True)
 class SessionMarkers:
@@ -152,11 +154,13 @@ class BashFrame(CommandFrame):
     type_name = "bash"
     streams_output_live = True  # echo off + single prompt: raw stream == clean output
 
+    @override
     def handshake(self, m: SessionMarkers) -> str:
         # Silence echo so the probe command text doesn't come back, then print
         # the READY marker.
         return f"stty -echo 2>/dev/null; echo {m.ready}\n"
 
+    @override
     def frame(self, cmd: str, m: SessionMarkers) -> str:
         # Bracket the command with echoes; the END sentinel embeds ``$?`` so the
         # exit code travels back inside the marker.
@@ -166,13 +170,16 @@ class BashFrame(CommandFrame):
             f'echo "{m.end_prefix}$?__"\n'
         )
 
+    @override
     def recover(self, m: SessionMarkers) -> str:
         return f"echo {m.recover}\n"
 
+    @override
     def end_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
         # ``__OTTO_<id>_END__<code>__`` — the digits carry the exit code.
         return re.compile(re.escape(m.end_prefix) + r"(\d+)__")
 
+    @override
     def marks_begin(self, data: str, m: SessionMarkers) -> bool:
         # bash emits the marker on a line of its own, so equality (or suffix,
         # for a marker printed after same-line text) is the right test — and it
@@ -180,6 +187,7 @@ class BashFrame(CommandFrame):
         stripped = data.rstrip("\r\n")
         return stripped == m.begin or stripped.endswith(m.begin)
 
+    @override
     def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:
         # Find the LAST BEGIN marker — if the shell echoes the wrapped command,
         # the marker appears twice (echoed command text + actual output);
@@ -197,6 +205,7 @@ class BashFrame(CommandFrame):
         # Strip carriage returns left over from PTY \r\n line endings.
         return buffer[start:end].rstrip("\r\n").replace("\r", "")
 
+    @override
     def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
         match = self.end_pattern(m).search(buffer)
         if match and match.groups():
@@ -236,11 +245,13 @@ class ZephyrFrame(CommandFrame):
 
     type_name = "zephyr"
 
+    @override
     def handshake(self, m: SessionMarkers) -> str:
         # An unknown token: the shell's error handler echoes it back, which is
         # all the readiness probe needs. No `stty`, no `echo`.
         return f"{m.ready}\n"
 
+    @override
     def frame(self, cmd: str, m: SessionMarkers) -> str:
         # Four CR-separated lines (see class docstring). The order
         # BEGIN / cmd / retval / END is load-bearing.
@@ -251,20 +262,24 @@ class ZephyrFrame(CommandFrame):
             f"{m.end_prefix}\r"
         )
 
+    @override
     def recover(self, m: SessionMarkers) -> str:
         return f"{m.recover}\n"
 
+    @override
     def end_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
         # The Zephyr END marker carries no exit code — `retval` reports it on
         # its own line — so the end pattern is the bare token, not the bash
         # form's `..._END__(\d+)__`.
         return re.compile(re.escape(m.end_prefix))
 
+    @override
     def marks_begin(self, data: str, m: SessionMarkers) -> bool:
         # The Zephyr shell rejects the BEGIN token as `<token>: command not
         # found`, so the marker is a substring of the line, not the whole line.
         return m.begin in data
 
+    @override
     def extract_retcode(self, buffer: str, m: SessionMarkers) -> int:
         """Recover the exit code from ``retval``'s output.
 
@@ -278,6 +293,7 @@ class ZephyrFrame(CommandFrame):
                 return int(stripped)
         return -1
 
+    @override
     def parse_output(self, buffer: str, cmd: str, m: SessionMarkers) -> str:
         """Extract the command's output from the framed response, positionally.
 
@@ -339,6 +355,7 @@ class ZephyrSerialFrame(ZephyrFrame):
 
     type_name = "zephyr-serial"
 
+    @override
     def handshake(self, m: SessionMarkers) -> str:
         return f"shell echo off\r{m.ready}\n"
 

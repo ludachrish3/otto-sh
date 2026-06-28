@@ -22,6 +22,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import override
+
 from .command_frame import BashFrame, CommandFrame, SessionMarkers
 from .telnet import TelnetClient
 
@@ -575,6 +577,7 @@ class SshSession(ShellSession):
         # create_process() instead of opening the channel's default shell.
         self._open_cmd: str | None = None
 
+    @override
     async def _open(self) -> None:
         import asyncssh
 
@@ -591,14 +594,17 @@ class SshSession(ShellSession):
                 stderr=asyncssh.STDOUT,
             )
 
+    @override
     async def _write(self, data: str) -> None:
         assert self._process is not None
         self._process.stdin.write(data)
 
+    @override
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         assert self._process is not None
         return await self._process.stdout.readuntil(pattern, _MAX_SEPARATOR_LEN)
 
+    @override
     async def close(self) -> None:
         if self._process is not None:
             self._process.close()
@@ -634,10 +640,12 @@ class TelnetSession(ShellSession):
         self._write_chunk_size = write_chunk_size
         self._write_chunk_delay = write_chunk_delay
 
+    @override
     async def _open(self) -> None:
         # Transport already established by TelnetClient login — nothing to open
         pass
 
+    @override
     async def _write(self, data: str) -> None:
         # Use CR (\r) as the sole line terminator. Sending \r\n causes two
         # inputs: the \r executes the command in readline raw mode, and the
@@ -662,12 +670,14 @@ class TelnetSession(ShellSession):
             if self._write_progress is not None:
                 self._write_progress(total, total)
 
+    @override
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         # telnetlib3 operates in bytes mode — compile a bytes version of the pattern
         bytes_pattern = re.compile(pattern.pattern.encode())
         raw: bytes = await self._reader.readuntil_pattern(bytes_pattern)  # type: ignore[attr-defined]
         return raw.decode('utf-8', errors='replace')
 
+    @override
     async def close(self) -> None:
         if self._writer:
             self._writer.close()
@@ -691,6 +701,7 @@ class LocalSession(ShellSession):
         self._transport: asyncio.SubprocessTransport | None = None
         self._pid: int | None = None
 
+    @override
     async def _open(self) -> None:
         # Drive loop.subprocess_exec() directly (rather than the higher-level
         # asyncio.create_subprocess_exec) so that we hold an explicit reference
@@ -711,11 +722,13 @@ class LocalSession(ShellSession):
         self._process   = asyncio.subprocess.Process(transport, protocol, loop)
         self._pid       = self._process.pid
 
+    @override
     async def _write(self, data: str) -> None:
         assert self._process is not None and self._process.stdin is not None
         self._process.stdin.write(data.encode())
         await self._process.stdin.drain()
 
+    @override
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         assert self._process is not None and self._process.stdout is not None
         buf = ""
@@ -727,6 +740,7 @@ class LocalSession(ShellSession):
             if pattern.search(buf):
                 return buf
 
+    @override
     async def _recover_session(self) -> str:
         """Recovery via SIGINT to child processes (Ctrl+C byte doesn't work over PIPE)."""
         import signal
@@ -766,6 +780,7 @@ class LocalSession(ShellSession):
         except (FileNotFoundError, PermissionError):
             pass
 
+    @override
     async def close(self) -> None:
         if self._process is not None:
             if self._process.returncode is None:
@@ -822,6 +837,7 @@ class _DockerSshSession(SshSession):
         self._conn_provider = conn_provider
         self._cid_getter = container_id_getter
 
+    @override
     async def _open(self) -> None:
         import shlex
 

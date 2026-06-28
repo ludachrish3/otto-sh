@@ -35,6 +35,8 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, NamedTuple
 
+from typing_extensions import override
+
 _float_re_str = r"[\d]+(\.\d+)?"
 _mem_size_re_str = rf"{_float_re_str}(?:\s*[KMGT]B?)?"
 _percent_re_str = rf"{_float_re_str}%"
@@ -155,10 +157,12 @@ class TopCpuParser(MetricParser):
         self.top_n      = top_n
         self._delay     = delay
 
+    @override
     @property  # type: ignore[override]
     def command(self) -> str:  # type: ignore[override]
         return f'top -d {self._delay} -bn2'
 
+    @override
     def parse(self, output: str) -> dict[str, MetricDataPoint]:
         result:    dict[str, MetricDataPoint] = {}
         block      = 0
@@ -225,6 +229,7 @@ class MemParser(MetricParser):
     tab_label = 'Memory'
     chart     = 'Memory Usage'
 
+    @override
     def parse(self, output: str) -> dict[str, MetricDataPoint]:
         for line in output.splitlines():
             if line.lower().startswith('mem:'):
@@ -268,6 +273,7 @@ class DiskParser(MetricParser):
         rf'(?P<Mount>\S+)'
     )
 
+    @override
     def parse(self, output: str) -> dict[str, MetricDataPoint]:
         lines = [l for l in output.splitlines() if l.strip()]
         # Typical output (df -h):
@@ -299,6 +305,7 @@ class LoadParser(MetricParser):
     tab_label = 'CPU'
     chart     = 'Load'
 
+    @override
     def parse(self, output: str) -> dict[str, MetricDataPoint]:
         parts = output.strip().split()
         try:

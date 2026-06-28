@@ -189,6 +189,7 @@ Otto's direct runtime dependencies (declared in `pyproject.toml` under
 | `telnetlib3` | 4.0.1 | Async Telnet client for telnet-based hosts |
 | `tomli` | 2.4.0 | TOML parser for `.otto/settings.toml` |
 | `typer` | 0.26 | CLI framework (builds `otto run`, `otto test`, etc.) |
+| `typing-extensions` | 4.12.0 | Backport of `typing.override` (PEP 698) for Python < 3.12 |
 | `uvicorn` | 0.42.0 | ASGI server for the monitor dashboard |
 
 These pull in additional transitive dependencies (approximately 25 packages

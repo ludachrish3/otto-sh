@@ -3,6 +3,8 @@ from re import (
     compile,
 )
 
+from typing_extensions import override
+
 version_re = compile(
     r'(?P<major>\d+)\.'
     r'(?P<minor>\d+)\.'
@@ -39,5 +41,6 @@ class Version():
         self.minor = int(version_dict['minor'])
         self.patch = int(version_dict['patch'])
 
+    @override
     def __repr__(self):
         return f'{self.major}.{self.minor}.{self.patch}'

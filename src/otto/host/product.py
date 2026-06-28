@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from typing_extensions import override
+
 from ..logger import get_otto_logger
 from ..utils import Status
 
@@ -90,6 +92,7 @@ class FileProduct(Product):
         if not self.name:
             self.name = self.artifact.name
 
+    @override
     async def stage(self, host: "Host") -> tuple[Status, str]:
         return await host.put(self.artifact, self.dest_dir)
 

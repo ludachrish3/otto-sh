@@ -19,6 +19,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
+from typing_extensions import override
+
 
 class BinaryLoader(ABC):
     """How to load/unload a binary into an embedded target's runtime."""
@@ -65,16 +67,20 @@ class LlextHexLoader(BinaryLoader):
 
     type_name = "llext-hex"
 
+    @override
     def load_command(self, name: str, payload: bytes) -> str:
         return f"llext load_hex {name} {payload.hex()}"
 
+    @override
     def check_loaded(self, output: str) -> tuple[bool, str]:
         ok = "Successfully loaded extension" in output
         return (True, "") if ok else (False, output.strip())
 
+    @override
     def unload_command(self, name: str) -> str:
         return f"llext unload {name}"
 
+    @override
     def is_fully_unloaded(self, output: str) -> bool:
         return "No such extension" in output
 

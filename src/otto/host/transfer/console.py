@@ -10,6 +10,8 @@ from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 
+from typing_extensions import override
+
 from ...logger import get_otto_logger
 from ...utils import CommandStatus, Status
 from ..embedded_filesystem import EmbeddedFileSystem, NoFileSystem
@@ -96,6 +98,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
             transfer=transfer,
         )
 
+    @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "ConsoleFileTransfer":
         assert ctx.exec_cmd is not None
@@ -110,6 +113,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
     # BaseFileTransfer hooks
     # ------------------------------------------------------------------
 
+    @override
     async def _run_get(
         self,
         src_files: list[Path],
@@ -132,6 +136,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
                 return status, err
         return Status.Success, ''
 
+    @override
     async def _run_put(
         self,
         src_files: list[Path],

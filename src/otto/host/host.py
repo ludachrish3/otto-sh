@@ -23,6 +23,8 @@ from typing import (
     cast,
 )
 
+from typing_extensions import override
+
 from ..utils import (
     Arg,
     CommandStatus,
@@ -754,6 +756,7 @@ class HostFilter(Filter):
 
     host: Host | None
 
+    @override
     def filter(self, record: LogRecord) -> bool:
 
         host: Host | None = getattr(record, 'host', None)

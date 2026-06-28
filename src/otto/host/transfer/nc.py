@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from ..connections import ConnectionManager
     from ..options import NcOptions
 
+from typing_extensions import override
+
 from ...logger import get_otto_logger
 from ...utils import CommandStatus, Status
 from .base import (
@@ -196,6 +198,7 @@ class NcFileTransfer(UnixFileTransfer):
         # probe runs exactly once per host lifetime.
         self._prepare_lock = asyncio.Lock()
 
+    @override
     @classmethod
     def create(cls, ctx: "TransferContext") -> "NcFileTransfer":
         assert ctx.connections is not None
@@ -245,6 +248,7 @@ class NcFileTransfer(UnixFileTransfer):
     # Protocol dispatch (implements BaseFileTransfer's abstract methods)
     # ------------------------------------------------------------------
 
+    @override
     async def _run_get(
         self,
         src_files: list[Path],
@@ -253,6 +257,7 @@ class NcFileTransfer(UnixFileTransfer):
     ) -> tuple[Status, str]:
         return await self._get_files_nc(src_files, dest_dir, progress_factory)
 
+    @override
     async def _run_put(
         self,
         src_files: list[Path],
@@ -265,6 +270,7 @@ class NcFileTransfer(UnixFileTransfer):
     # Netcat
     # ------------------------------------------------------------------
 
+    @override
     async def prepare(self) -> None:
         """Resolve port + listener strategies in a single round-trip.
 

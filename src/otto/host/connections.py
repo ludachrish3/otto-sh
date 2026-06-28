@@ -27,6 +27,8 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from typing_extensions import override
+
 from ..logger import get_otto_logger
 from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
@@ -101,6 +103,7 @@ def _build_tunneled_ftp_client_cls() -> type:
             self._dest_host = dest_host
             self._tunnel_data = False
 
+        @override
         async def connect(self, host: str, port: int = aioftp.DEFAULT_PORT) -> list[str]:  # type: ignore[override]
             # Control connection is already forwarded — connect normally.
             info = await super().connect(host, port)
@@ -108,6 +111,7 @@ def _build_tunneled_ftp_client_cls() -> type:
             self._tunnel_data = True
             return info
 
+        @override
         async def _open_connection(self, host, port):  # type: ignore[no-untyped-def, override]
             if not self._tunnel_data:
                 return await super()._open_connection(host, port)

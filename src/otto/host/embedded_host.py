@@ -50,22 +50,22 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 
+from typing_extensions import override
+
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
-
-from .product import Product
 
 from ..logger import get_otto_logger
 from ..utils import Arg, CommandStatus, Exclude, Status, cli_exposed
 from .binary_loader import BinaryLoader
-from .command_frame import CommandFrame, ZephyrFrame
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
-from .power import PowerController, power_control_from_spec
+from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
-from .transfer import EmbeddedFileTransfer
 from .host import Host, SuppressCommandOutput, is_dry_run
 from .options import SnmpOptions, TelnetOptions
+from .power import PowerController, power_control_from_spec
+from .product import Product
 from .remote_host import OsType, RemoteHost
 from .repeat import RepeatRunner
 from .session import (
@@ -75,6 +75,7 @@ from .session import (
 )
 from .toolchain import Toolchain
 from .transfer import (
+    EmbeddedFileTransfer,
     TransferContext,
     _acquire_shared_progress,
     build_transfer_backend,
@@ -359,6 +360,7 @@ class EmbeddedHost(RemoteHost):
     #  Connection
     ####################
 
+    @override
     async def verify_connection(self) -> CommandStatus:
         """Attempt to open the telnet shell without running commands (dry-run)."""
         try:
@@ -369,6 +371,7 @@ class EmbeddedHost(RemoteHost):
             self._log_command(f"[DRY RUN] Connection FAILED: {e}")
             return CommandStatus(command="connect", output=str(e), status=Status.Error, retcode=1)
 
+    @override
     async def close(self) -> None:
         await self._repeater.stop_all()
         await self._session_mgr.close_all()
@@ -378,6 +381,7 @@ class EmbeddedHost(RemoteHost):
     #  Command execution
     ####################
 
+    @override
     async def _interact(self) -> None:
         """Open an interactive shell bridged to the local terminal.
 
@@ -388,6 +392,7 @@ class EmbeddedHost(RemoteHost):
             "Interactive sessions for embedded hosts are not yet implemented"
         ) from None
 
+    @override
     async def _run_one(
         self,
         cmd: str,
@@ -405,6 +410,7 @@ class EmbeddedHost(RemoteHost):
             return self._dry_run_result(cmd)
         return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
 
+    @override
     async def oneshot(
         self,
         cmd: str,
@@ -423,6 +429,7 @@ class EmbeddedHost(RemoteHost):
             return self._dry_run_result(cmd)
         return await self._session_mgr.run_cmd(cmd, timeout=timeout, log=log)
 
+    @override
     async def open_session(self, name: str) -> HostSession:
         """Open a named persistent shell session.
 
@@ -435,6 +442,7 @@ class EmbeddedHost(RemoteHost):
             self._log_command(f"[DRY RUN] open_session({name!r})")
         return await self._session_mgr.open_session(name)
 
+    @override
     async def send(self, text: str, log: bool = True) -> None:
         """Send raw text to the host's persistent session."""
         if is_dry_run():
@@ -443,6 +451,7 @@ class EmbeddedHost(RemoteHost):
             return
         await self._session_mgr.send(text, log=log)
 
+    @override
     async def expect(
         self,
         pattern: str | re.Pattern[str],
@@ -468,6 +477,7 @@ class EmbeddedHost(RemoteHost):
     #  File transfer
     ####################
 
+    @override
     @cli_exposed(success="Download complete.")
     async def get(
         self,
@@ -489,6 +499,7 @@ class EmbeddedHost(RemoteHost):
         with SuppressCommandOutput(host=cast(Host, self)):
             return await self._file_transfer.get_files(src_files, dest_dir, show_progress)
 
+    @override
     @cli_exposed(success="Transfer complete.")
     async def put(
         self,
@@ -673,6 +684,7 @@ class ZephyrHost(EmbeddedHost):
     #  Power / reboot
     ####################
 
+    @override
     async def _soft_reboot(self) -> tuple[Status, str]:
         await self.run("kernel reboot cold", timeout=10.0)
         return Status.Success, ""
