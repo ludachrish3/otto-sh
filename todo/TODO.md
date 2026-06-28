@@ -2,12 +2,15 @@
 
 ## General
 
+- Login utility
+  - Make sure logging into docker containers works
+  - Scrutinize log file output
+- Clang coverage
+- Beef up monitoring metrics
+  - Make sure they work with zephyr
+- Look into hyperfine <https://github.com/sharkdp/hyperfine> to help with profiling
 - Integration tests for all new functionality except power on/off
   - A soft reboot stability test should be added. Possibly with a different marker and makefile target just because it's such a lengthy test.
-- Focus on speed
-  - Lazy imports
-  - Rework integration tests to run on multiple hosts if they don't already. Some tests only use "host1", which greatly limits the parallelism. It might be worth thinking of a host pool architecture so that each test just plucks an available host from the pool and executes on them.
-- Empty lines in embedded command output have no logger preamble. Running `help` on zehphyr hosts reveals this.
 - Log tracebacks to the complete log file (the otto.log that currently gets saved)
 - Add TFTP to one of the zephyr hosts
 - Consider <https://pypi.org/project/pyftpdlib/> to replace aioftp. It's much faster in all benchmarks.
