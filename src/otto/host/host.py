@@ -22,7 +22,7 @@ from typing import (
     cast,
 )
 
-from typing_extensions import override
+from typing_extensions import Self, override
 
 from ..utils import (
     Arg,
@@ -307,7 +307,7 @@ class Host(Protocol):
 
     async def is_uninstalled(self) -> bool: ...
 
-    async def __aenter__(self) -> "Host": ...
+    async def __aenter__(self) -> Self: ...
 
     async def __aexit__(self, *exc: object) -> None: ...
 
@@ -452,8 +452,8 @@ class BaseHost(ABC):
                 :exc:`NotImplementedError` — see ``_elevate``.
 
         Returns:
-            :class:`~otto.host.host.RunResult` with the aggregate :class:`~otto.utils.Status` and a list of
-            per-command :class:`~otto.utils.CommandStatus` entries.
+            :class:`~otto.host.host.RunResult` with the aggregate :class:`~otto.utils.Status`
+            and a list of per-command :class:`~otto.utils.CommandStatus` entries.
 
         See Also:
             :meth:`oneshot`: stateless, concurrent-safe alternative for one-off commands.
@@ -546,7 +546,7 @@ class BaseHost(ABC):
     async def close(self) -> None:
         raise NotImplementedError from None
 
-    async def __aenter__(self) -> "BaseHost":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -766,7 +766,7 @@ class BaseHost(ABC):
     #  Logging
     ####################
 
-    # TODO: Dynamically size the preamble to be max(configModule.lab.hosts.names) + 2 (1 space on each side)
+    # TODO: Dynamically size the preamble to be max(configModule.lab.hosts.names) + 2 (1 space on each side)  # noqa: E501 — TODO comment
     def _log_command(
         self,
         command: str,
@@ -804,7 +804,7 @@ class HostFilter(Filter):
         return get_logging_command_output_enabled() and host.log
 
 
-# TODO: Consider a way to make commands and their output log no matter what if the log level were debug.
+# TODO: Consider a way to make commands and their output log no matter what if the log level were debug.  # noqa: E501 — TODO comment
 @dataclass
 class SuppressCommandOutput:
     """Suppress command/output logging for one host or globally.

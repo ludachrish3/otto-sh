@@ -24,7 +24,8 @@ def test_init_cli_logging_wires_console_handler_on_plain_logger(tmp_path):
 def test_create_output_dir_returns_and_creates_dir(tmp_path):
     management.init_cli_logging(xdir=tmp_path, log_level="INFO", keep_days=7)
     out = management.create_output_dir("test", "mysuite")
-    assert out.exists() and out.is_dir()
+    assert out.exists()
+    assert out.is_dir()
     assert out.parent == tmp_path / "test"
     assert (out / "otto.log").exists()  # file handler created the log file
     # The library NullHandler must not be funneled into the QueueListener.
@@ -44,7 +45,7 @@ def test_remove_old_logs_respects_time_budget(tmp_path, monkeypatch):
         d = cmd_dir / f"20200101_0000{i:02d}_000"
         d.mkdir()
         past = 10_000.0
-        os.utime(d, (os.stat(d).st_atime - past, os.stat(d).st_mtime - past))
+        os.utime(d, (d.stat().st_atime - past, d.stat().st_mtime - past))
         olds.append(d)
     ticks = iter([float(n) for n in range(1000)])
     monkeypatch.setattr(management.time, "monotonic", lambda: next(ticks))

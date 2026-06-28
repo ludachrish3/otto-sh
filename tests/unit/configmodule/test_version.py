@@ -11,7 +11,7 @@ def test_version_no_arguments():
 
 def test_version_null_string():
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="does not match the expected format"):
         Version("")
 
 

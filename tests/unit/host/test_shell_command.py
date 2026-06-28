@@ -53,14 +53,14 @@ class TestRunResultOnly:
 
     def test_only_raises_when_empty(self):
         result = RunResult(status=Status.Success, statuses=[])
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="exactly 1 command status"):
             _ = result.only
 
     def test_only_raises_when_multiple(self):
         cs1 = CommandStatus("a", "", Status.Success, 0)
         cs2 = CommandStatus("b", "", Status.Success, 0)
         result = RunResult(status=Status.Success, statuses=[cs1, cs2])
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="exactly 1 command status"):
             _ = result.only
 
 

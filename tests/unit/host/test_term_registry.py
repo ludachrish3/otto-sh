@@ -42,10 +42,10 @@ class TestRegistry:
         with pytest.raises(ValueError, match="Unknown term backend"):
             build_term_backend("nope")
         # known names are listed so a typo is diagnosable
-        try:
+        with pytest.raises(ValueError, match="ssh") as exc_info:
             build_term_backend("nope")
-        except ValueError as e:
-            assert "ssh" in str(e) and "telnet" in str(e)
+        assert "ssh" in str(exc_info.value)
+        assert "telnet" in str(exc_info.value)
 
     def test_register_and_build_custom(self):
         class CustomTerm(ConnectionManager):

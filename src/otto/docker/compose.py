@@ -393,8 +393,8 @@ async def compose_ps(parent: Host) -> list[dict[str, Any]]:
     if not result.status.is_ok:
         return []
     out: list[dict[str, Any]] = []
-    for line in result.output.splitlines():
-        line = line.strip()
+    for raw_line in result.output.splitlines():
+        line = raw_line.strip()
         if not line:
             continue
         try:

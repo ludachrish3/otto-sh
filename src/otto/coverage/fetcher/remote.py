@@ -109,8 +109,8 @@ class GcdaFetcher:
             host2_ne/
                 foo.gcda
 
-    Hosts are selected via :func:`~otto.configmodule.configmodule.all_hosts`, optionally filtered by a
-    compiled regex *pattern* matched against each host's ``id``.
+    Hosts are selected via :func:`~otto.configmodule.configmodule.all_hosts`,
+    optionally filtered by a compiled regex *pattern* matched against each host's ``id``.
     """
 
     def __init__(

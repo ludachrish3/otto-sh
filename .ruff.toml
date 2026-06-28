@@ -44,9 +44,6 @@ ignore = [
     "ANN202",
     "ANN204",
     "ANN206",
-    "ARG001",
-    "ARG002",
-    "C901",
     "D100",
     "D101",
     "D102",
@@ -59,46 +56,13 @@ ignore = [
     "D301",
     "D400",
     "D401",
-    "E402",
-    "E501",
-    "E731",
-    "E741",
-    "ERA001",
-    "EXE001",
-    "INP001",
     "PGH003",
-    "PLC0414",
-    "PLR0133",
-    "PLR0913",
-    "PLW0108",
-    "PLW0603",
-    "PLW1510",
-    "PLW2901",
-    "PT003",
-    "PT006",
-    "PT011",
-    "PT013",
-    "PT017",
-    "PT018",
-    "PTH105",
-    "PTH108",
-    "PTH116",
-    "PTH119",
-    "PTH123",
-    "PTH208",
-    "PYI034",
-    "RET504",
-    "RSE102",
-    "T201",
-    "TD004",
-    "TRY004",
-    "TRY203",
-    "TRY300",
-    "TRY400",
 ]
 
 [lint.per-file-ignores]
-"tests/**" = ["S101", "D", "PLR2004", "SLF001", "ANN", "ARG", "S104", "S105", "S106", "S108", "S110", "S310", "S603", "S607"]  # S*: tests use fake creds / subprocess harnesses / remote-host paths — not a security surface
+"tests/**" = ["S101", "D", "PLR2004", "SLF001", "ANN", "ARG", "S104", "S105", "S106", "S108", "S110", "S310", "S603", "S607", "INP001", "E402"]  # S*: tests use fake creds / subprocess harnesses / remote-host paths — not a security surface
+"scripts/**" = ["INP001", "T201"]  # scripts are CLI tools: namespace packages + print() are by design
+"docs/conf.py" = ["INP001"]  # Sphinx conf is a standalone config file, not a package module
 "**/__init__.py" = ["F401"]
 
 [lint.pylint]
@@ -125,4 +89,4 @@ max-statements = 1000
 convention = "pep257"
 
 [lint.mccabe]
-max-complexity = 10
+max-complexity = 20

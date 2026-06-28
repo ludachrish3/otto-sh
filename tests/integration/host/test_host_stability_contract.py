@@ -69,7 +69,7 @@ def _backend_param(backend_id: str) -> pytest.param:
 
 
 _ALL_BACKENDS = pytest.mark.parametrize(
-    "host1, host1_kit",
+    ("host1", "host1_kit"),
     [_backend_param(b) for b in ("ssh", "telnet", "local", *EMBEDDED_BACKENDS)],
     indirect=True,
 )

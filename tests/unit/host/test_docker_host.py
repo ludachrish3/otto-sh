@@ -226,7 +226,7 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_repos", _mock_repos)
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
     result = await h.oneshot("echo hi")
@@ -259,7 +259,7 @@ async def test_placeholder_auto_up_failure_raises(monkeypatch):
     h = _make_container(container_id="")
     compose_up = AsyncMock(side_effect=RuntimeError("compose boom"))
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_repos", _mock_repos)
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
         await h.oneshot("echo hi")
@@ -276,7 +276,7 @@ async def test_concurrent_access_triggers_single_auto_up(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_repos", _mock_repos)
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
     await asyncio.gather(h.oneshot("echo a"), h.oneshot("echo b"))
@@ -296,7 +296,7 @@ async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos())
+    monkeypatch.setattr("otto.configmodule.get_repos", _mock_repos)
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
     status, _ = await h.put([f], Path("/tmp"))

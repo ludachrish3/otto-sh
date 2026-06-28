@@ -1,5 +1,7 @@
 """Shared Typer option callbacks used across multiple CLI subapps."""
 
+import typer
+
 from ..configmodule import get_lab
 
 
@@ -8,7 +10,7 @@ def list_hosts_callback(value: bool) -> None:
     if not value:
         return
     lab = get_lab()
-    print()
+    typer.echo("")
     for host in lab.hosts:
-        print(f"\u2022 {host}")
-    print()
+        typer.echo(f"\u2022 {host}")
+    typer.echo("")

@@ -120,7 +120,7 @@ class TestCreds:
 
 
 # ---------------------------------------------------------------------------
-# close()
+# close()  # noqa: ERA001 — section divider comment
 # ---------------------------------------------------------------------------
 
 
@@ -764,7 +764,7 @@ class TestNcFileTransfer:
         file_data = b"hello world"
 
         async def fake_start_server(cb, host, port):
-            """Simulate asyncio.start_server: invoke the callback with a reader that yields file_data."""
+            """Simulate asyncio.start_server: invoke the callback with a reader that yields file_data."""  # noqa: E501 — descriptive docstring
             mock_server = AsyncMock()
             mock_server.close = MagicMock()
             mock_server.wait_closed = AsyncMock()
@@ -819,7 +819,7 @@ class TestNcFileTransfer:
 
         sent_data = bytearray()
         mock_writer = MagicMock()
-        mock_writer.write = MagicMock(side_effect=lambda d: sent_data.extend(d))
+        mock_writer.write = MagicMock(side_effect=sent_data.extend)
         mock_writer.drain = AsyncMock()
         mock_writer.close = MagicMock()
         mock_writer.wait_closed = AsyncMock()
@@ -886,7 +886,8 @@ class TestNcFileTransfer:
             status, _ = await h.put([src], Path("/tmp"), show_progress=False)
 
         assert status == Status.Success
-        assert log_states and all(state is False for state in log_states)
+        assert log_states
+        assert all(state is False for state in log_states)
         assert h.log is True
         await h.close()
 
@@ -931,7 +932,8 @@ class TestNcFileTransfer:
             status, _ = await h.get([Path("/remote/file.txt")], dest, show_progress=False)
 
         assert status == Status.Success
-        assert log_states and all(state is False for state in log_states)
+        assert log_states
+        assert all(state is False for state in log_states)
         assert h.log is True
         await h.close()
 
@@ -1468,7 +1470,8 @@ async def test_load_stages_then_insmod_sudo_for_nonroot(tmp_path):
     host.run = AsyncMock(return_value=_run_result("insmod /tmp/my-mod.ko", "", Status.Success, 0))
     host.rm = AsyncMock(return_value=(Status.Success, ""))
     status, msg = await host.load(ko)
-    assert status is Status.Success and msg == ""
+    assert status is Status.Success
+    assert msg == ""
     host.put.assert_awaited_once()
     assert host.run.await_args.args[0] == "insmod /tmp/my-mod.ko"
     assert host.run.await_args.kwargs["sudo"] is True
@@ -1507,7 +1510,8 @@ async def test_load_put_failure_short_circuits(tmp_path):
     host.put = AsyncMock(return_value=(Status.Error, "scp failed"))
     host.run = AsyncMock()
     status, msg = await host.load(ko)
-    assert status is Status.Error and "staging" in msg
+    assert status is Status.Error
+    assert "staging" in msg
     host.run.assert_not_awaited()
 
 
@@ -1529,7 +1533,8 @@ async def test_load_error_message_uses_normalized_name(tmp_path):
     host.rm = AsyncMock(return_value=(Status.Success, ""))
     status, msg = await host.load(ko)
     assert status is Status.Error
-    assert "foo_bar" in msg and "Invalid module format" in msg
+    assert "foo_bar" in msg
+    assert "Invalid module format" in msg
 
 
 @pytest.mark.asyncio
@@ -1542,7 +1547,8 @@ async def test_unload_idempotent_when_not_resident():
     host._loaded_modules = AsyncMock(return_value=["ext4"])
     host.run = AsyncMock()
     status, msg = await host.unload("my_mod")
-    assert status is Status.Success and msg == ""
+    assert status is Status.Success
+    assert msg == ""
     host.run.assert_not_awaited()  # not resident → no rmmod
 
 
@@ -1577,7 +1583,8 @@ async def test_unload_error_maps_rmmod_failure():
         return_value=_run_result("rmmod my_mod", "Module my_mod is in use", Status.Error, 1)
     )
     status, msg = await host.unload("my_mod")
-    assert status is Status.Error and "in use" in msg
+    assert status is Status.Error
+    assert "in use" in msg
 
 
 @pytest.mark.asyncio

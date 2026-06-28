@@ -122,7 +122,8 @@ def test_context_get_host_and_all_hosts_resolve_from_lab():
     assert ctx.get_host(first_id) is lab.hosts[first_id]
     # Filter to only carrot and tomato — not pepper
     ids = {h.id for h in ctx.all_hosts(re.compile("carrot|tomato"))}
-    assert ids and all("carrot" in i or "tomato" in i for i in ids)
+    assert ids
+    assert all("carrot" in i or "tomato" in i for i in ids)
     # "pepper" should not appear in the filtered result
     assert not any("pepper" in i for i in ids)
 
@@ -131,7 +132,8 @@ def test_context_all_hosts_registers_into_scope():
     lab = _lab_with("carrot")
     ctx = OttoContext(lab=lab)
     hosts = list(ctx.all_hosts())
-    assert hosts and all(h in ctx.scope._hosts for h in hosts)
+    assert hosts
+    assert all(h in ctx.scope._hosts for h in hosts)
 
 
 def test_set_and_reset_context_round_trips():

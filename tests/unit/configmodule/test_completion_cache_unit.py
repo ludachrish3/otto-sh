@@ -92,7 +92,7 @@ def test_serialize_options_handles_supported_kinds() -> None:
         f: Annotated[float, typer.Option("--f")] = 0.0,
         b: Annotated[bool, typer.Option("--b/--no-b")] = False,
         p: Annotated[Path, typer.Option("--p")] = Path(),
-        l: Annotated[list[str] | None, typer.Option("--l")] = None,
+        l: Annotated[list[str] | None, typer.Option("--l")] = None,  # noqa: E741 — deliberate single-char CLI option name in type-map test
     ) -> None: ...
 
     schema = cc._serialize_options(source, command_name="source")
@@ -134,7 +134,8 @@ def test_collect_backend_names_includes_builtins():
     from otto.configmodule import completion_cache as cc
 
     snap = cc.collect_backend_names()
-    assert "ssh" in snap["term_backends"] and "telnet" in snap["term_backends"]
+    assert "ssh" in snap["term_backends"]
+    assert "telnet" in snap["term_backends"]
     by_name = {e["name"]: e["host_families"] for e in snap["transfer_backends"]}
     assert by_name["scp"] == ["unix"]
     assert by_name["console"] == ["embedded"]

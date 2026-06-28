@@ -138,14 +138,15 @@ class FtpFileTransfer(UnixFileTransfer):
                         total = await _ftp_size(ftp_conn, str(src))
                         bytes_done = 0
                         async with ftp_conn.download_stream(str(src)) as stream:
-                            with open(dst, "wb") as f:
+                            with dst.open("wb") as f:
                                 async for block in stream.iter_by_block():
                                     f.write(block)
                                     bytes_done += len(block)
                                     handler(str(src), str(dst), bytes_done, total)
-                return Status.Success, ""
             except Exception as e:  # noqa: BLE001 — FTP get can fail via network/protocol/IO; all map to Error
                 return Status.Error, str(e)
+            else:
+                return Status.Success, ""
 
     async def _put_files_ftp(
         self,
@@ -169,7 +170,7 @@ class FtpFileTransfer(UnixFileTransfer):
                         total = src.stat().st_size
                         bytes_done = 0
                         async with ftp_conn.upload_stream(str(dst)) as stream:
-                            with open(src, "rb") as f:
+                            with src.open("rb") as f:
                                 while True:
                                     block = f.read(aioftp.DEFAULT_BLOCK_SIZE)
                                     if not block:
@@ -177,9 +178,10 @@ class FtpFileTransfer(UnixFileTransfer):
                                     await stream.write(block)
                                     bytes_done += len(block)
                                     handler(str(src), str(dst), bytes_done, total)
-                return Status.Success, ""
             except Exception as e:  # noqa: BLE001 — FTP put can fail via network/protocol/IO; all map to Error
                 return Status.Error, str(e)
+            else:
+                return Status.Success, ""
 
 
 register_transfer_backend("ftp", FtpFileTransfer)

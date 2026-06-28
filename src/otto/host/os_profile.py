@@ -162,7 +162,7 @@ def register_host_class(
     from .remote_host import RemoteHost
 
     if not (isinstance(cls, type) and issubclass(cls, RemoteHost)):
-        raise ValueError(
+        raise ValueError(  # noqa: TRY004 — existing API contract; test suite expects ValueError
             f"register_host_class({name!r}): cls must be a RemoteHost subclass, got {cls!r}"
         )
     if spec is None:
@@ -211,11 +211,12 @@ def build_host_spec(name: str) -> type[HostSpec]:
 
 
 def registered_host_specs(*, builtins_only: bool = False) -> dict[str, type[HostSpec]]:
-    """Return a shallow copy of the ``os_type`` → :class:`~otto.models.host.HostSpec` subclass registry.
+    """Return a shallow copy of the ``os_type`` → :class:`~otto.models.host.HostSpec`
+    subclass registry.
 
     Names are many-to-one (``embedded`` and ``zephyr`` both resolve to
-    :class:`~otto.models.host.EmbeddedHostSpec`). Used by the JSON Schema exporter; also reflects
-    custom classes loaded via init modules. With *builtins_only*, restrict the
+    :class:`~otto.models.host.EmbeddedHostSpec`). Used by the JSON Schema exporter;
+    also reflects custom classes loaded via init modules. With *builtins_only*, restrict the
     result to the in-tree built-in types (``unix`` / ``embedded`` / ``zephyr``),
     excluding anything registered via init modules.
     """

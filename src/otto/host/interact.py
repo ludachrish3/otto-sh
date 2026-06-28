@@ -275,9 +275,10 @@ def _initial_term_size() -> tuple[int, int]:
 
     try:
         size = shutil.get_terminal_size((80, 24))
-        return size.columns, size.lines
     except OSError:
         return 80, 24
+    else:
+        return size.columns, size.lines
 
 
 def _setup_raw_mode(fd: int) -> Any:
@@ -352,7 +353,10 @@ async def _run_bridge(
     if banner is not None:
         _print_stderr(banner)
 
-    uninstall_sigwinch: Callable[[], None] = lambda: None
+    def _noop_uninstall() -> None:
+        return None
+
+    uninstall_sigwinch: Callable[[], None] = _noop_uninstall
     if stdin_is_tty:
         try:
             uninstall_sigwinch = install_sigwinch()
@@ -470,7 +474,7 @@ async def run_ssh_login(
             read_remote=read_remote,
             install_sigwinch=install_sigwinch,
             on_output_line=log_file_effective.write_line,
-            banner=f"[otto] interactive session with {host_name} (ssh). Press Ctrl+] to disconnect.",
+            banner=f"[otto] interactive session with {host_name} (ssh). Press Ctrl+] to disconnect.",  # noqa: E501 — long banner string
         )
     finally:
         with contextlib.suppress(Exception):
@@ -542,7 +546,7 @@ async def run_telnet_login(
             read_remote=read_remote,
             install_sigwinch=install_sigwinch,
             on_output_line=log_file.write_line,
-            banner=f"[otto] interactive session with {host_name} (telnet). Press Ctrl+] to disconnect.",
+            banner=f"[otto] interactive session with {host_name} (telnet). Press Ctrl+] to disconnect.",  # noqa: E501 — long banner string
         )
     finally:
         log_file.write_marker("Interactive session ended")

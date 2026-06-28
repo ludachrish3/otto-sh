@@ -325,7 +325,7 @@ def test_host_preferences_bad_selector_regex_raises():
 
 
 def test_host_preferences_option_table_typo_raises():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
         SettingsModel.model_validate(
             {
                 "name": "p",

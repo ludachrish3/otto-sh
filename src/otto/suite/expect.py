@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import inspect
 import logging
-import os
+from pathlib import Path
 
 
 class ExpectCollector:
@@ -84,7 +84,7 @@ class ExpectCollector:
 
         # Capture caller context for the failure message
         frame_info = inspect.stack(context=1)[_stack_offset]
-        filename = os.path.basename(frame_info.filename)
+        filename = Path(frame_info.filename).name
         lineno = frame_info.lineno
         source_line = (frame_info.code_context or [""])[0].strip()
 

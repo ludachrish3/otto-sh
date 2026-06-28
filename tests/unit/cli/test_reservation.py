@@ -54,7 +54,7 @@ def test_whoami_exits_1_when_no_identity(capsys):
 
 
 def test_whoami_exits_1_when_no_reservation_key(capsys):
-    """Without the top-level callback, ctx.meta has no key — whoami exits 1 via identity=None path."""
+    """Without the top-level callback, ctx.meta has no key — whoami exits 1 via identity=None path."""  # noqa: E501 — descriptive docstring
     ctx = _make_ctx({})
     # res = ctx.meta.get("otto_reservation") returns None → identity is None → Exit(1)
     with pytest.raises(_Exit) as exc:
@@ -147,7 +147,7 @@ def test_whoami_builds_backend_on_demand(capsys):
         backend=None,
         identity=identity,
         skip_check=True,
-        backend_factory=lambda: _FakeBackend(),
+        backend_factory=_FakeBackend,
     )
     ctx = _make_ctx({"otto_reservation": res})
 
@@ -169,7 +169,7 @@ def test_check_builds_backend_on_demand(capsys):
         backend=None,
         identity=identity,
         skip_check=True,
-        backend_factory=lambda: _FakeBackend(),
+        backend_factory=_FakeBackend,
     )
     ctx = _make_ctx({"otto_reservation": res})
 

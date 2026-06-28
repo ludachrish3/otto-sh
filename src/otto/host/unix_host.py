@@ -17,27 +17,29 @@ remote shell. Manages two responsibilities:
   - FTP (via aioftp)
   - netcat (via commands on the client and host)
 
-All kinds of host connections, for command execution and for file transfers, should be able to establish a
-connection first, keep it open, and then use it for multiple commands and transfers. Host connections can
-be explictly closed by calling the `.close()` method or in the destructor of the host object.
+All kinds of host connections, for command execution and for file transfers, should be able to
+establish a connection first, keep it open, and then use it for multiple commands and transfers.
+Host connections can be explictly closed by calling the `.close()` method or in the destructor
+of the host object.
 
-The `.run()` method runs a single command (str) or a list of commands. Depending on the `.term` value
-the correct connection type (ssh or telnet) is used without being specified as an argument.
+The `.run()` method runs a single command (str) or a list of commands. Depending on the `.term`
+value the correct connection type (ssh or telnet) is used without being specified as an argument.
 
-The `.put()` and `.get()` methods both take a single file or a list of files. Depending on the `.transfer`
-value the correct connection type (scp, sftp, ftp, or netcat) is used without being specified as an argument.
+The `.put()` and `.get()` methods both take a single file or a list of files. Depending on the
+`.transfer` value the correct connection type (scp, sftp, ftp, or netcat) is used without being
+specified as an argument.
 
-History: this class was originally named ``RemoteHost``. With the introduction
-of :class:`~otto.host.embedded_host.EmbeddedHost` for bare-metal/RTOS targets, ``RemoteHost`` is now an
-abstract base for any network-reached host and the bash-on-SSH/Telnet concrete
-class lives here as ``UnixHost``.
+History: this class was originally named ``RemoteHost``. With the introduction of
+:class:`~otto.host.embedded_host.EmbeddedHost` for bare-metal/RTOS targets, ``RemoteHost`` is
+now an abstract base for any network-reached host and the bash-on-SSH/Telnet concrete class lives
+here as ``UnixHost``.
 """
 
-# TODO: Consider having a single function that takes a connection, and does the lower level asyncio stuff
-# For example, run could dynamically dispatch to _runSshCmds(), which would pass along the _ssh_conn member
+# TODO: Consider having a single function that takes a connection, and does the lower level asyncio stuff  # noqa: E501 — TODO comment
+# For example, run could dynamically dispatch to _runSshCmds(), which would pass along the _ssh_conn member  # noqa: E501 — TODO comment
 # Then the _ssh_conn would be the connection used in an "async with" block to issue the command.
 # Main problem here is that eash library uses its own method names to run commands and put/get files
-# Possibly make the homegrown TelnetClient class mirror asyncssh? that could really help with design symmetry.
+# Possibly make the homegrown TelnetClient class mirror asyncssh? that could really help with design symmetry.  # noqa: E501 — TODO comment
 import re
 import socket
 from dataclasses import (
@@ -136,7 +138,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Human readable name to represent the host. Automatically generated if not provided."""
 
     user: str | None = None
-    """User with which to log in. If not provided, the first user in the `creds` dict will be used."""
+    """User with which to log in. If not provided, the first user in the `creds` dict will be used."""  # noqa: E501 — long field docstring
 
     element_id: int | None = field(default=None, repr=False)
     """Network element identifier to which this host belongs.
@@ -233,7 +235,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Names of resources required to use this host."""
 
     interfaces: dict[str, str] = field(default_factory=dict, repr=False)
-    """Named secondary interface addresses (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
+    """Named secondary interface addresses
+    (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
     Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 
     products: list["Product"] = field(default_factory=list)
@@ -396,8 +399,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     connections=self._connections,
                     nc_options=self.nc_options,
                     scp_options=self.scp_options,
-                    get_local_ip=lambda: self._get_local_ip(),
-                    exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),
+                    get_local_ip=lambda: self._get_local_ip(),  # noqa: PLW0108 — late-bind self for monkeypatching
+                    exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
                     max_filename_len=self.max_filename_len,
                 )
             ),
@@ -589,7 +592,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             exit code.
 
         See Also:
-            :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative with expect support.
+            :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative
+            with expect support.
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
@@ -599,7 +603,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     async def open_session(self, name: str) -> HostSession:
         """Open a named persistent shell session.
 
-        Unlike :meth:`~otto.host.host.BaseHost.run`, which uses a single default session, this method
+        Unlike :meth:`~otto.host.host.BaseHost.run`, which uses a single default session,
+        this method
         creates an additional named session that can run commands concurrently
         with the default session (or other named sessions).
 

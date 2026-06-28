@@ -164,7 +164,7 @@ def report(
     try:
         tier_specs: list[TierSpec] = _parse_tier_specs(tier) if tier else [(TIER_SYSTEM, None)]
     except typer.BadParameter as e:
-        logger.error("%s", e)
+        logger.exception("Bad tier parameter")
         raise typer.Exit(1) from e
 
     cov_dirs = [d / "cov" for d in output_dirs]

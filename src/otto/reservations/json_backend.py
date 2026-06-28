@@ -50,7 +50,7 @@ class JsonReservationBackend:
 
     def __init__(
         self,
-        url: str | None = None,
+        url: str | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_backend passes url= to all reservation backends)
         *,
         path: Path,
     ) -> None:

@@ -14,6 +14,7 @@ import inspect
 from pathlib import Path
 from typing import Annotated, Any, get_args, get_origin
 
+import pytest
 import typer
 
 from otto.configmodule.completion_cache import _serialize_options
@@ -98,9 +99,7 @@ def test_stub_callback_raises_if_invoked() -> None:
     """The rebuilt callback is never meant to run — it must fail loudly if it does."""
     stub_app = build_stub_command("noop", options=[])
     callback = stub_app.registered_commands[0].callback
-    import pytest as _pytest
-
-    with _pytest.raises(RuntimeError, match="completion-stub callback was invoked"):
+    with pytest.raises(RuntimeError, match="completion-stub callback was invoked"):
         callback()
 
 

@@ -4,8 +4,8 @@ The :func:`check_reservations` function is the heart of the subsystem:
 given a lab, a username, and a backend, it raises
 :class:`MissingReservationError` if the user does not hold every resource
 the lab needs.  The error message lists missing resources and their current
-holders (via :meth:`~otto.reservations.protocol.ReservationBackend.who_reserved`) but deliberately does
-NOT advertise ``--skip-reservation-check`` — that flag is surfaced only when
+holders (via :meth:`~otto.reservations.protocol.ReservationBackend.who_reserved`) but
+deliberately does NOT advertise ``--skip-reservation-check`` — that flag is surfaced only when
 the backend itself is unreachable, where proceeding requires it.
 
 :func:`gate` is the subcommand-facing entry point that wires the check into

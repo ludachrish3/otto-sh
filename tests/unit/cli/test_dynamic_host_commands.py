@@ -61,7 +61,8 @@ def test_make_method_command_signature_has_real_params():
 
     cmd = make_method_command("reboot", reboot)
     params = inspect.signature(cmd).parameters
-    assert "ctx" in params and "hard" in params
+    assert "ctx" in params
+    assert "hard" in params
     assert params["hard"].annotation.__args__[0] is bool  # Annotated[bool, Option()]
 
 
@@ -283,7 +284,7 @@ def _make_app(monkeypatch, hosts: dict[str, type]):
     monkeypatch.setattr(op, "_HOST_CLASSES", {c.__name__: c for c in set(hosts.values())})
     monkeypatch.setattr(
         "otto.cli.expose.host_class_for_id",
-        lambda hid: hosts.get(hid),
+        hosts.get,
     )
     app = typer.Typer(name="host", cls=HostGroup)
 
@@ -305,8 +306,10 @@ def test_menu_scoped_to_resolved_class(monkeypatch):
     r = CliRunner()
     out_u = r.invoke(app, ["u1", "--help"]).stdout
     out_e = r.invoke(app, ["e1", "--help"]).stdout
-    assert "mkdir" in out_u and "reboot" in out_u
-    assert "reboot" in out_e and "mkdir" not in out_e
+    assert "mkdir" in out_u
+    assert "reboot" in out_u
+    assert "reboot" in out_e
+    assert "mkdir" not in out_e
 
 
 def test_out_of_class_verb_is_no_such_command(monkeypatch):
@@ -330,7 +333,9 @@ def test_lifecycle_and_fileops_verbs_are_exposed():
     emb = collect_exposed_methods(EmbeddedHost)
     assert {"exists", "ls", "rm"} <= set(emb)
     # _no_fileop overrides stay hidden for embedded:
-    assert "mkdir" not in emb and "cp" not in emb and "write-file" not in emb
+    assert "mkdir" not in emb
+    assert "cp" not in emb
+    assert "write-file" not in emb
 
     # Production scoping resolves the CONCRETE class (type(get_host(id))), so the
     # concrete UnixHost must expose the full lifecycle + file-op set — including
@@ -392,13 +397,14 @@ def test_run_cli_binding_markers():
     cmds_p = by_name["cmds"]
     # Annotated[list[str], typer.Argument(...)] — origin is list or annotation is Annotated
     ann_args = getattr(cmds_p.annotation, "__args__", ())
-    assert ann_args and ann_args[0] == list[str], f"Expected list[str] base, got {ann_args}"
+    assert ann_args, f"Expected list[str] base, got {ann_args}"
+    assert ann_args[0] == list[str], f"Expected list[str] base, got {ann_args}"
     meta = getattr(cmds_p.annotation, "__metadata__", ())
     assert any(isinstance(m, typer.models.ArgumentInfo) for m in meta), (
         "cmds must be a positional Argument"
     )
 
-    # timeout: option
+    # timeout: option  # noqa: ERA001 — structural assertion label, not code
     assert "timeout" in param_names
     timeout_p = by_name["timeout"]
     timeout_meta = getattr(timeout_p.annotation, "__metadata__", ())
@@ -483,7 +489,7 @@ def test_put_get_in_collect_exposed_all_four():
 
 
 def test_build_cli_binding_unix_put():
-    """build_cli_binding(UnixHost.put) produces correct positional variadic + excluded show_progress."""
+    """build_cli_binding(UnixHost.put) produces correct positional variadic + excluded show_progress."""  # noqa: E501 — descriptive docstring
     from otto.cli.param_synth import build_cli_binding
     from otto.host.unix_host import UnixHost
 
@@ -494,18 +500,19 @@ def test_build_cli_binding_unix_put():
     assert "src_files" in param_names
     src_p = next(p for p in binding.params if p.name == "src_files")
     ann_args = getattr(src_p.annotation, "__args__", ())
-    assert ann_args and ann_args[0] == list[Path], f"Expected list[Path] base, got {ann_args}"
+    assert ann_args, f"Expected list[Path] base, got {ann_args}"
+    assert ann_args[0] == list[Path], f"Expected list[Path] base, got {ann_args}"
 
     # dest_dir: plain positional (no default → Argument)
     assert "dest_dir" in param_names
 
-    # show_progress: excluded
+    # show_progress: excluded  # noqa: ERA001 — structural assertion label, not code
     assert "show_progress" in binding.excluded
     assert binding.excluded["show_progress"] is True
 
 
 def test_build_cli_binding_unix_get():
-    """build_cli_binding(UnixHost.get) produces correct positional variadic + excluded show_progress."""
+    """build_cli_binding(UnixHost.get) produces correct positional variadic + excluded show_progress."""  # noqa: E501 — descriptive docstring
     from otto.cli.param_synth import build_cli_binding
     from otto.host.unix_host import UnixHost
 
@@ -515,14 +522,15 @@ def test_build_cli_binding_unix_get():
     assert "src_files" in param_names
     src_p = next(p for p in binding.params if p.name == "src_files")
     ann_args = getattr(src_p.annotation, "__args__", ())
-    assert ann_args and ann_args[0] == list[Path], f"Expected list[Path] base, got {ann_args}"
+    assert ann_args, f"Expected list[Path] base, got {ann_args}"
+    assert ann_args[0] == list[Path], f"Expected list[Path] base, got {ann_args}"
 
     assert "dest_dir" in param_names
     assert "show_progress" in binding.excluded
 
 
 def test_build_cli_binding_embedded_put():
-    """build_cli_binding(EmbeddedHost.put) resolves type hints correctly via __future__ annotations."""
+    """build_cli_binding(EmbeddedHost.put) resolves type hints correctly via __future__ annotations."""  # noqa: E501 — descriptive docstring
     from otto.cli.param_synth import build_cli_binding
     from otto.host.embedded_host import EmbeddedHost
 
@@ -532,7 +540,8 @@ def test_build_cli_binding_embedded_put():
     assert "src_files" in param_names
     src_p = next(p for p in binding.params if p.name == "src_files")
     ann_args = getattr(src_p.annotation, "__args__", ())
-    assert ann_args and ann_args[0] == list[Path], f"Expected list[Path] base, got {ann_args}"
+    assert ann_args, f"Expected list[Path] base, got {ann_args}"
+    assert ann_args[0] == list[Path], f"Expected list[Path] base, got {ann_args}"
 
     assert "dest_dir" in param_names
     assert "show_progress" in binding.excluded
@@ -744,4 +753,5 @@ def test_embedded_load_unload_are_cli_exposed():
     from otto.host.embedded_host import ZephyrHost
 
     verbs = collect_exposed_methods(ZephyrHost)
-    assert "load" in verbs and "unload" in verbs
+    assert "load" in verbs
+    assert "unload" in verbs

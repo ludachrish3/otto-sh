@@ -149,7 +149,7 @@ def is_literal(value: Any, literal_type: type[T]) -> T:
     return value
 
 
-# TODO: Restructure this file into a directory names utils and then a file per group of functionality:
+# TODO: Restructure this file into a directory names utils and then a file per group of functionality:  # noqa: E501 — TODO comment
 # status for the below status enums
 # types for the above str split on commas
 class Status(Enum):

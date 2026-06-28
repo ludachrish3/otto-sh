@@ -246,7 +246,7 @@ class HtmlRenderer:
     def _file_totals(self, fr: FileRecord, tier_order: list[str]) -> dict[str, Any]:
         """Compute aggregate + per-tier counts and percentages for a file."""
         lines_total = len(fr.lines)
-        lines_hit = sum(1 for l in fr.lines.values() if l.hits.is_hit())
+        lines_hit = sum(1 for line_rec in fr.lines.values() if line_rec.hits.is_hit())
         all_branches = [b for lr in fr.lines.values() for b in lr.branches]
         branches_total = sum(1 for b in all_branches if b.is_reachable() is True)
         branches_hit = sum(
@@ -255,7 +255,7 @@ class HtmlRenderer:
 
         per_tier = {}
         for tier in tier_order:
-            lh = sum(1 for l in fr.lines.values() if l.hits.for_tier(tier) > 0)
+            lh = sum(1 for line_rec in fr.lines.values() if line_rec.hits.for_tier(tier) > 0)
             bt = sum(1 for b in all_branches if b.is_reachable(tier) is True)
             bh = sum(
                 1
@@ -291,7 +291,7 @@ class HtmlRenderer:
 
         for fr in store.files():
             lines_total += len(fr.lines)
-            lines_hit += sum(1 for l in fr.lines.values() if l.hits.is_hit())
+            lines_hit += sum(1 for line_rec in fr.lines.values() if line_rec.hits.is_hit())
             all_branches = [b for lr in fr.lines.values() for b in lr.branches]
             branches_total += sum(1 for b in all_branches if b.is_reachable() is True)
             branches_hit += sum(
@@ -300,7 +300,9 @@ class HtmlRenderer:
             for tier in tier_order:
                 bucket = per_tier_counts[tier]
                 bucket["lt"] += len(fr.lines)
-                bucket["lh"] += sum(1 for l in fr.lines.values() if l.hits.for_tier(tier) > 0)
+                bucket["lh"] += sum(
+                    1 for line_rec in fr.lines.values() if line_rec.hits.for_tier(tier) > 0
+                )
                 bucket["bt"] += sum(1 for b in all_branches if b.is_reachable(tier) is True)
                 bucket["bh"] += sum(
                     1

@@ -83,6 +83,7 @@ def _run_otto(
         text=True,
         cwd=str(PROJECT_ROOT),
         timeout=timeout,
+        check=False,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -564,15 +565,15 @@ def suite_run_exit_code(tmp_path_factory):
     xdir = tmp_dir / "xdir"
     xdir.mkdir()
 
-    result = subprocess.run(
+    return subprocess.run(
         [str(OTTO_BIN), "-l", "veggies", "test", "TestCoverageProduct"],
         env=_otto_env(xdir),
         capture_output=True,
         text=True,
         cwd=str(PROJECT_ROOT),
         timeout=600,
+        check=False,
     )
-    return result
 
 
 @pytest.mark.integration

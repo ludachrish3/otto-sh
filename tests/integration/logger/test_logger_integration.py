@@ -1,6 +1,5 @@
 import os
 import time
-from os import listdir
 from pathlib import Path
 
 import pytest
@@ -8,7 +7,7 @@ import pytest
 from otto.logger import management
 
 
-@pytest.fixture(autouse=True, scope="function")
+@pytest.fixture(autouse=True)
 def create_logger(tmpdir):
     """Initialize management state and create output dir before every test."""
     management.init_cli_logging(xdir=tmpdir, log_level="INFO", keep_days=7)
@@ -35,7 +34,7 @@ def test_remove_old_logs_old_logs_exist_same_command(caplog):
     pytest_dir = management._state.xdir / "pytest"
 
     # Make sure there are 3 output dirs to start (1 from the standard fixture, then the above 2)
-    assert len(listdir(pytest_dir)) == 3
+    assert len(list(pytest_dir.iterdir())) == 3
 
     # Backdate the fixture's logger_test dir an hour into the past; thing1 and
     # thing2 keep their real (current) mtime, so the result no longer depends
@@ -45,7 +44,7 @@ def test_remove_old_logs_old_logs_exist_same_command(caplog):
 
     with caplog.at_level("INFO", logger="otto"):
         management.remove_old_logs(seconds=60)
-    assert len(listdir(pytest_dir)) == 2
+    assert len(list(pytest_dir.iterdir())) == 2
 
     assert len(caplog.records) == 1
     assert (
@@ -64,8 +63,8 @@ def test_remove_old_logs_old_logs_exist_different_command(caplog):
     management.create_output_dir(command="pytest", subcommand="thing1")
     management.create_output_dir(command="not_pytest", subcommand="thing2")
 
-    assert len(listdir(pytest_dir)) == 2
-    assert len(listdir(not_pytest_dir)) == 2
+    assert len(list(pytest_dir.iterdir())) == 2
+    assert len(list(not_pytest_dir.iterdir())) == 2
 
     # Backdate the older dirs an hour into the past; the rest keep their real
     # (current) mtime, so remove_old_logs deletes exactly the backdated ones
@@ -77,8 +76,8 @@ def test_remove_old_logs_old_logs_exist_different_command(caplog):
 
     with caplog.at_level("INFO", logger="otto"):
         management.remove_old_logs(seconds=60)
-    assert len(listdir(pytest_dir)) == 1
-    assert len(listdir(not_pytest_dir)) == 1
+    assert len(list(pytest_dir.iterdir())) == 1
+    assert len(list(not_pytest_dir.iterdir())) == 1
 
     assert len(caplog.records) == 1
     assert (

@@ -349,7 +349,7 @@ class TestTimeout:
 
 
 # ---------------------------------------------------------------------------
-# Send / Expect (raw)
+# Send / Expect (raw)  # noqa: ERA001 — section divider comment
 # ---------------------------------------------------------------------------
 
 
@@ -878,7 +878,8 @@ async def test_host_session_switch_user_elevates_and_stamps():
     await hs.switch_user("root")
     assert shell.current_user == "root"
     sent = [c.args[0] for c in shell.send.await_args_list]
-    assert "su root\n" in sent and "rootpw\n" in sent
+    assert "su root\n" in sent
+    assert "rootpw\n" in sent
 
 
 @pytest.mark.asyncio

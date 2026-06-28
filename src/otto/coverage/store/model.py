@@ -118,7 +118,8 @@ class BranchHits:
         return self.hits.for_tier(tier) > 0
 
     def merge(self, other: BranchHits) -> None:
-        assert self.block == other.block and self.branch == other.branch  # noqa: S101 — internal invariant: callers must only merge matching branch keys
+        assert self.block == other.block  # noqa: S101 — internal invariant: callers must only merge matching branch keys
+        assert self.branch == other.branch  # noqa: S101 — internal invariant: callers must only merge matching branch keys
         self.hits.merge(other.hits)
         for tier, reachable in other.reachable.items():
             self.set_reachable(tier, reachable)
@@ -196,7 +197,7 @@ class FileRecord:
         """Line coverage percentage, optionally filtered by tier."""
         if not self.lines:
             return 0.0
-        hit = sum(1 for l in self.lines.values() if l.hits.is_hit(tier))
+        hit = sum(1 for line_rec in self.lines.values() if line_rec.hits.is_hit(tier))
         return (hit / len(self.lines)) * 100
 
     def branch_coverage_pct(self, tier: str | None = None, conservative: bool = True) -> float:
@@ -289,7 +290,8 @@ class CoverageStore:
         if all_lines == 0:
             return 0.0
         hit = sum(
-            sum(1 for l in f.lines.values() if l.hits.is_hit(tier)) for f in self._files.values()
+            sum(1 for line_rec in f.lines.values() if line_rec.hits.is_hit(tier))
+            for f in self._files.values()
         )
         return (hit / all_lines) * 100
 

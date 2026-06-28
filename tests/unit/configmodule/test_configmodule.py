@@ -341,7 +341,7 @@ class TestPerCallOptionOverrides:
 
     def test_term_override_out_of_menu_raises(self, three_hosts):
         # 'bogus' is not in valid_terms -> __post_init__ validate_choice fails loud
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="term menu"):
             get_host("carrot_seed", term="bogus")
 
     def test_term_override_rebuilds_connection_for_new_protocol(self, three_hosts):

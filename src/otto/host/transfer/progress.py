@@ -34,7 +34,7 @@ def make_rich_progress_handler(progress: Progress, host_name: str) -> "TransferP
     current_src: str | None = None
     task_id: TaskID | None = None
 
-    def handler(src: str, dst: str, bytes_done: int, bytes_total: int) -> None:
+    def handler(src: str, dst: str, bytes_done: int, bytes_total: int) -> None:  # noqa: ARG001 — required by TransferProgressFactory callback signature; dst not needed for progress display
         nonlocal current_src, task_id
         if src != current_src:
             current_src = src
@@ -92,7 +92,7 @@ _shared_progress_refs: int = 0
 @asynccontextmanager
 async def _acquire_shared_progress() -> AsyncIterator[Progress]:
     """Yield a process-wide Progress, creating/destroying the Live on demand."""
-    global _shared_progress, _shared_progress_refs
+    global _shared_progress, _shared_progress_refs  # noqa: PLW0603 — module-level singleton/cache
     if _shared_progress is None:
         _shared_progress = make_transfer_progress()
         _shared_progress.start()

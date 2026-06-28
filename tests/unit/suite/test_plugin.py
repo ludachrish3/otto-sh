@@ -314,12 +314,9 @@ async def test_class_monitor_task_runs_on_class_loop_collecting_metrics():
 
     async def fake_run(*args, **kwargs):
         # Simulate a collection loop ticking every 10ms.
-        try:
-            while True:
-                await asyncio.sleep(0.01)
-                series_appends.append(1)
-        except asyncio.CancelledError:
-            raise
+        while True:
+            await asyncio.sleep(0.01)
+            series_appends.append(1)
 
     fake_collector.run = fake_run
     OttoSuite._session_monitor_collector = fake_collector
@@ -363,8 +360,6 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
     from collections import deque
     from datetime import datetime
 
-    import pytest as _pytest
-
     from otto.monitor.collector import MetricCollector
     from otto.suite.plugin import OttoPlugin
 
@@ -396,14 +391,11 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
 
     async def fake_run(*_a, **_kw):
         # Mimic _process_host_results: append to _series on each tick.
-        try:
-            while True:
-                await asyncio.sleep(0.01)
-                real_collector._series.setdefault("host1/cpu", deque()).append(
-                    MetricPoint(ts=datetime.now(tz=timezone.utc), value=42.0, meta=None)
-                )
-        except asyncio.CancelledError:
-            raise
+        while True:
+            await asyncio.sleep(0.01)
+            real_collector._series.setdefault("host1/cpu", deque()).append(
+                MetricPoint(ts=datetime.now(tz=timezone.utc), value=42.0, meta=None)
+            )
 
     real_collector.run = fake_run  # type: ignore[method-assign]
 
@@ -413,7 +405,7 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
         patch("otto.monitor.factory.build_monitor_collector", return_value=real_collector),
     ):
         try:
-            exit_code = _pytest.main(
+            exit_code = pytest.main(
                 [
                     "-s",
                     "-p",

@@ -193,7 +193,7 @@ def test_tftp_spec_defaults_match_runtime():
     assert rt_obj.server_ip == "10.0.0.2"
 
 
-@pytest.mark.parametrize("spec_cls,runtime_cls", OPTION_SPEC_RUNTIME_PAIRS)
+@pytest.mark.parametrize(("spec_cls", "runtime_cls"), OPTION_SPEC_RUNTIME_PAIRS)
 def test_spec_fields_subset_of_runtime(spec_cls, runtime_cls):
     spec_fields = set(spec_cls.model_fields)
     runtime_fields = {f.name for f in dataclasses.fields(runtime_cls)}
@@ -209,6 +209,6 @@ def test_spec_fields_subset_of_runtime(spec_cls, runtime_cls):
 _DEFAULT_CONSTRUCTIBLE_PAIRS = OPTION_SPEC_RUNTIME_PAIRS
 
 
-@pytest.mark.parametrize("spec_cls,runtime_cls", _DEFAULT_CONSTRUCTIBLE_PAIRS)
+@pytest.mark.parametrize(("spec_cls", "runtime_cls"), _DEFAULT_CONSTRUCTIBLE_PAIRS)
 def test_default_spec_builds_runtime(spec_cls, runtime_cls):
     assert isinstance(spec_cls().to_runtime(), runtime_cls)

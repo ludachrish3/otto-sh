@@ -121,7 +121,7 @@ class TestRegistry:
         """An unknown type_name surfaces the registered set in the error
         message — a typo like ``'fatram'`` should be obvious from the diff.
         """
-        with pytest.raises(ValueError) as excinfo:
+        with pytest.raises(ValueError, match="fatram") as excinfo:
             build_filesystem("fatram")
         msg = str(excinfo.value)
         assert "fatram" in msg
@@ -155,7 +155,7 @@ class TestRegistry:
             type_name = "declared-name"
             mount = "/m"
 
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="register_filesystem"):
             register_filesystem("wrong-name", MismatchedFs)
 
 

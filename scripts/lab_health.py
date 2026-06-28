@@ -115,7 +115,7 @@ def _run_ssh(
     """Run ``remote_cmd`` on ``ip`` over password SSH. Returns (rc, out, err)."""
     cmd = ["sshpass", "-p", password, "ssh", *_SSH_OPTS, f"{user}@{ip}", remote_cmd]
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)  # noqa: S603 — trusted args
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603 — trusted args
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except subprocess.TimeoutExpired:
         return 124, "", f"ssh timed out after {timeout:.0f}s"

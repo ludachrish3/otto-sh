@@ -59,7 +59,7 @@ class ExampleReservationBackend:
     def __init__(
         self,
         *,
-        url: str | None = None,
+        url: str | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_backend passes url= to all reservation backends)
         reservations: dict[str, list[str]] | None = None,
     ) -> None:
         source = _DEMO_RESERVATIONS if reservations is None else reservations

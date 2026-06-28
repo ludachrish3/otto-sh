@@ -10,7 +10,7 @@ from otto.suite.expect import ExpectCollector, expect
 class TestExpectCollector:
     def test_passing_expect_records_nothing(self):
         c = ExpectCollector()
-        c.expect(1 == 1)
+        c.expect(True)
         c.expect(True, "should not record")
         assert c.failures == []
 

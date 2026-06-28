@@ -96,7 +96,7 @@ class TestCheckReservations:
         assert "unreserved" in msg
 
     def test_error_does_not_mention_skip_flag(self):
-        """Regression guard — MissingReservationError must not advertise --skip-reservation-check."""
+        """Regression guard — MissingReservationError must not advertise --skip-reservation-check."""  # noqa: E501 — descriptive docstring
         lab = _lab_with_resources()
         backend = _FakeBackend(owners={})
         with pytest.raises(MissingReservationError) as exc_info:

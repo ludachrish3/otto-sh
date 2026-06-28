@@ -1,10 +1,10 @@
 import asyncio
 import contextlib
 import inspect
-import os
 import re
 from datetime import datetime, timedelta
 from logging import getLogger
+from pathlib import Path
 from typing import TYPE_CHECKING, Generic, TypeVar, cast
 
 import pytest
@@ -171,7 +171,7 @@ class OttoSuite(Generic[TOptions]):
     #: ``start_monitor()`` calls keep working unchanged.
     _session_monitor_collector: "MetricCollector | None" = None
 
-    def setup_method(self, method: object = None) -> None:
+    def setup_method(self, method: object = None) -> None:  # noqa: ARG002 — required by pytest setup_method hook signature
         output_dir = get_context().output_dir
         if output_dir is None:
             raise RuntimeError("output_dir is not set; create_output_dir must run before suite")
@@ -194,7 +194,7 @@ class OttoSuite(Generic[TOptions]):
             return self._monitor_collector
         return type(self)._session_monitor_collector  # noqa: SLF001 — intra-package read of OttoSuite class-level monitor collector via runtime type
 
-    def teardown_method(self, method: object = None) -> None:
+    def teardown_method(self, method: object = None) -> None:  # noqa: ARG002 — required by pytest teardown_method hook signature
         logger.debug("Welcome to the base teardown_method() method")
 
     @classmethod
@@ -268,7 +268,7 @@ class OttoSuite(Generic[TOptions]):
 
         # Capture caller context for the failure message
         frame_info = inspect.stack(context=1)[1]
-        filename = os.path.basename(frame_info.filename)
+        filename = Path(frame_info.filename).name
         lineno = frame_info.lineno
         source_line = (frame_info.code_context or [""])[0].strip()
 

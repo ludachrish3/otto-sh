@@ -65,7 +65,7 @@ class PosixPrivilege:
         """Password for ``sudo -S``, or None when sudo is passwordless here."""
         return None
 
-    def _user_password(self, user: str) -> str | None:
+    def _user_password(self, user: str) -> str | None:  # noqa: ARG002 — required by PosixPrivilege override seam; subclasses use user to look up credential
         """Password for ``su <user>``, or None when none is known."""
         return None
 

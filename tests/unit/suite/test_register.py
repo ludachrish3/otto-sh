@@ -118,7 +118,8 @@ class TestOptionsParamTypes:
         assert p.default == "default"
         # Annotation should be Annotated[str, ...]
         origin = getattr(p.annotation, "__args__", None)
-        assert origin is not None and origin[0] is str
+        assert origin is not None
+        assert origin[0] is str
 
     def test_int_field(self):
         @dataclass
@@ -128,7 +129,8 @@ class TestOptionsParamTypes:
         params = _options_params(Opts)
         p = params[0]
         origin = getattr(p.annotation, "__args__", None)
-        assert origin is not None and origin[0] is int
+        assert origin is not None
+        assert origin[0] is int
 
     def test_float_field(self):
         @dataclass
@@ -138,7 +140,8 @@ class TestOptionsParamTypes:
         params = _options_params(Opts)
         p = params[0]
         origin = getattr(p.annotation, "__args__", None)
-        assert origin is not None and origin[0] is float
+        assert origin is not None
+        assert origin[0] is float
 
     def test_bool_field(self):
         @dataclass
@@ -148,7 +151,8 @@ class TestOptionsParamTypes:
         params = _options_params(Opts)
         p = params[0]
         origin = getattr(p.annotation, "__args__", None)
-        assert origin is not None and origin[0] is bool
+        assert origin is not None
+        assert origin[0] is bool
 
     def test_optional_field(self):
         @dataclass
@@ -267,11 +271,13 @@ class TestRunnerInvocation:
 
         assert result.exit_code == 0
         args = captured["args"]
-        assert isinstance(args, tuple) and len(args) == 4
+        assert isinstance(args, tuple)
+        assert len(args) == 4
         assert args[0] is _SuiteArity
         assert args[2] is None  # no Options dataclass
         # 4th arg is the Typer-injected context (carries ctx.meta run options).
-        assert args[3] is not None and hasattr(args[3], "meta")
+        assert args[3] is not None
+        assert hasattr(args[3], "meta")
 
 
 # ── OttoOptionsPlugin ─────────────────────────────────────────────────────────

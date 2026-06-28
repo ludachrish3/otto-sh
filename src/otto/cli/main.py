@@ -37,7 +37,7 @@ __version__ = get_version()
 
 # TODO: Should rich help menus be optional?
 # Uncomment the line below to remove rich help menu formatting globally
-# typer.core.HAS_RICH = False
+# typer.core.HAS_RICH = False  # noqa: ERA001 — intentional documented escape-hatch example
 
 _field_default = get_env().field_default is not None
 """Determines the default for debug or field. If OTTO_FIELD_DEFAULT is set to
@@ -48,7 +48,8 @@ DESCRIPTION = f"""
 O.T.T.O. (Our Trusty Testing Orchestrator)
 
 If a development repo is under test, then {SUT_DIRS_ENV_VAR} must be set in your environment.
-It is a list of paths to repo root directories, separated by ``,`` or the OS path separator (``:`` on Linux/macOS, ``;`` on Windows).
+It is a list of paths to repo root directories, separated by ``,`` or the OS path separator
+(``:`` on Linux/macOS, ``;`` on Windows).
 
 """
 
@@ -103,7 +104,7 @@ def log_level_callback(value: str):
     return value.upper()
 
 
-def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:
+def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for ``--as-user``: usernames the reservation backend knows.
 
     Prefers the completion-cache snapshot (slow-path populated, so no backend is
@@ -136,7 +137,7 @@ app = typer.Typer(
     no_args_is_help=True,
     help=DESCRIPTION,
 )
-def main(
+def main(  # noqa: PLR0913 — CLI command params
     ctx: typer.Context,
     labs: Annotated[
         list[str] | None,
@@ -158,7 +159,7 @@ def main(
             help="Directory in which to store logs and artifacts.",
         ),
     ] = Path(),
-    debug: Annotated[
+    debug: Annotated[  # noqa: ARG001 — required by Typer CLI option signature; consumed by framework before function body
         bool,
         typer.Option(
             "--field/--debug",
@@ -197,7 +198,7 @@ def main(
             "-v",
         ),
     ] = False,
-    list_labs: Annotated[
+    list_labs: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool,
         typer.Option(
             "--list-labs",
@@ -222,7 +223,7 @@ def main(
             help="Preview what would be executed without running commands on hosts.",
         ),
     ] = False,
-    version: Annotated[
+    version: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool | None,
         typer.Option(
             "--version",
@@ -231,7 +232,7 @@ def main(
             help="Show program version and exit.",
         ),
     ] = None,
-    clear_autocomplete_cache: Annotated[
+    clear_autocomplete_cache: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool,
         typer.Option(
             "--clear-autocomplete-cache",
@@ -377,7 +378,7 @@ def main(
     except ReservationBackendError as e:
         rprint(
             f"[bold red]Reservation backend unavailable:[/bold red] {e}\n"
-            f"Pass [bold]--skip-reservation-check[/bold] / [bold]-R[/bold] to proceed without the check."
+            f"Pass [bold]--skip-reservation-check[/bold] / [bold]-R[/bold] to proceed without the check."  # noqa: E501 — long rich markup string
         )
         raise typer.Exit(1) from e
 
@@ -409,7 +410,7 @@ def main(
     # It's simpler and cleaner to just call the callback here after context creation.
     if list_hosts:
         list_hosts_callback(True)
-        raise typer.Exit()
+        raise typer.Exit
 
     if dry_run:
         logger.info(

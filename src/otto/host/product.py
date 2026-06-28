@@ -9,7 +9,9 @@ product knows how to stage/install/uninstall/check itself.
 
 It is intentionally **not** a pydantic model — that would force every project
 product into pydantic and diverge from the sibling host strategies
-(:class:`~otto.host.command_frame.CommandFrame`, :class:`~otto.host.binary_loader.BinaryLoader`, :class:`~otto.host.embedded_filesystem.EmbeddedFileSystem`).
+(:class:`~otto.host.command_frame.CommandFrame`,
+:class:`~otto.host.binary_loader.BinaryLoader`,
+:class:`~otto.host.embedded_filesystem.EmbeddedFileSystem`).
 Concrete subclasses pick their own data representation (``@dataclass`` or an
 ``OttoModel``).
 

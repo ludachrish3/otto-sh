@@ -43,7 +43,7 @@ def test_anything_else_is_real():
 
 
 def _write_junit(path: Path, cases: list[tuple[str, str, str]]) -> None:
-    """Write a minimal JUnit XML file. cases = [(classname, name, failure_message_or_empty), ...]."""
+    """Write a minimal JUnit XML file. cases = [(classname, name, failure_message_or_empty), ...]."""  # noqa: E501 — descriptive docstring
     body = []
     for classname, name, msg in cases:
         if msg:
@@ -108,7 +108,8 @@ def test_deep_tier_pins_python_3_10():
 def test_unit_tier_uses_tests_unit_session():
     unit = next(t for t in build_tiers(count=1, breadth=False) if t.name == "unit")
     assert "tests_unit" in unit.argv
-    assert unit.junit and all("tests_unit-" in j for j in unit.junit)
+    assert unit.junit
+    assert all("tests_unit-" in j for j in unit.junit)
 
 
 def test_dry_run_prints_each_tier_command(capsys):

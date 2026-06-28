@@ -58,7 +58,7 @@ class TestSharedProgress:
     @pytest.mark.asyncio
     async def test_concurrent_gather_shares_one_live(self):
         """Mixed concurrent acquirers (e.g. several put calls in one gather) share one Progress."""
-        factory = MagicMock(side_effect=lambda: MagicMock())
+        factory = MagicMock(side_effect=MagicMock)
         with patch.object(transfer_mod, "make_transfer_progress", new=factory):
 
             async def one():
@@ -92,7 +92,7 @@ class TestSharedProgress:
     @pytest.mark.asyncio
     async def test_sequential_calls_make_fresh_progress(self):
         """Back-to-back (non-overlapping) calls each get their own Progress."""
-        factory = MagicMock(side_effect=lambda: MagicMock())
+        factory = MagicMock(side_effect=MagicMock)
         with patch.object(transfer_mod, "make_transfer_progress", new=factory):
             async with _acquire_shared_progress():
                 pass

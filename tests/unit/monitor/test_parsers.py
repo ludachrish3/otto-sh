@@ -37,7 +37,7 @@ def _top_output(
         "\n"
         "    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND\n"
     )
-    proc_fmt = "{pid:>7} {user:<9}  20   0  123456 {res:>6}   4096 {stat}  {cpu:>5.1f}  {mem:>5.1f}  {time} {cmd}\n"
+    proc_fmt = "{pid:>7} {user:<9}  20   0  123456 {res:>6}   4096 {stat}  {cpu:>5.1f}  {mem:>5.1f}  {time} {cmd}\n"  # noqa: E501 — format string with alignment codes
 
     def block(idle: float, procs: list[tuple]) -> str:
         rows = "".join(

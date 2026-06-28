@@ -151,9 +151,10 @@ def clear_cache() -> bool:
         return False
     try:
         cache_path.unlink()
-        return True
     except OSError:
         return False
+    else:
+        return True
 
 
 def _hash_file(h: "hashlib._Hash", path: Path) -> None:
@@ -259,9 +260,10 @@ def _json_safe_default(default: Any) -> Any:
     if isinstance(default, list):
         try:
             json.dumps(default)
-            return default
         except TypeError:
             return None
+        else:
+            return default
     return None
 
 
@@ -471,10 +473,10 @@ def write_cache(
         tmp_name = tmp.name
         json.dump(existing, tmp)
     try:
-        os.replace(tmp_name, cache_path)
+        Path(tmp_name).replace(cache_path)
     except Exception:
         with contextlib.suppress(OSError):
-            os.unlink(tmp_name)
+            Path(tmp_name).unlink()
         raise
 
 

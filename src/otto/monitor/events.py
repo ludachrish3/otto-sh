@@ -31,13 +31,13 @@ class MonitorEvent:
     """Human-readable description shown on hover in the dashboard."""
 
     source: str = "manual"
-    """Who created this event — ``'manual'`` (dashboard UI), ``'user_code'`` (test code), or ``'auto'`` (lifecycle)."""
+    """Who created this event — ``'manual'`` (dashboard UI), ``'user_code'`` (test code), or ``'auto'`` (lifecycle)."""  # noqa: E501 — long field docstring
 
     color: str = "#888888"
     """CSS color for the vertical marker line (hex, named color, or rgb())."""
 
     dash: str = "dash"
-    """Plotly line dash style — one of ``solid``, ``dot``, ``dash``, ``longdash``, ``dashdot``, ``longdashdot``."""
+    """Plotly line dash style — one of ``solid``, ``dot``, ``dash``, ``longdash``, ``dashdot``, ``longdashdot``."""  # noqa: E501 — long field docstring
 
     id: int = 0
     """Unique integer id assigned by MetricCollector on creation (or loaded from SQLite)."""

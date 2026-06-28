@@ -20,7 +20,8 @@ def build_monitor_collector(
     hosts: Sequence[RemoteHost],
     db_path: Path | None = None,
 ) -> MetricCollector:
-    """Build a :class:`~otto.monitor.collector.MetricCollector` over *hosts*, one :class:`~otto.monitor.collector.MonitorTarget` each.
+    """Build a :class:`~otto.monitor.collector.MetricCollector` over *hosts*, one
+    :class:`~otto.monitor.collector.MonitorTarget` each.
 
     Silences host logging (collection is chatty) and chooses each host's
     collection mode:

@@ -19,7 +19,7 @@ Usage::
 
 
     def test_my_backend_conforms():
-        assert_reservation_backend_conforms(MyBackend(), known_user="alice", known_resources=["lab-a"])
+        assert_reservation_backend_conforms(MyBackend(), known_user="alice", known_resources=["r1"])
 """
 
 from ..configmodule.lab import Lab

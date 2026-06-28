@@ -16,6 +16,8 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
+from typing_extensions import Self
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -43,7 +45,7 @@ class HostScope:
             return
         self._hosts.append(host)
 
-    async def __aenter__(self) -> "HostScope":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *exc: object) -> None:
@@ -126,7 +128,7 @@ class OttoContext:
             self.scope.register(resolved)
             yield resolved
 
-    async def do_for_all_hosts(
+    async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         self,
         method: "Callable[..., Awaitable[T]]",
         *args: Any,
@@ -171,7 +173,7 @@ class OttoContext:
                 out[h.id] = exc
         return out
 
-    async def run_on_all_hosts(
+    async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         self,
         cmds: "list[str] | str",
         pattern: "re.Pattern[str] | None" = None,

@@ -43,13 +43,13 @@ def list_instructions_callback(value: bool) -> None:
         table.add_column(ratio=1)
     table.add_row(*panels)
     rprint(table)
-    raise typer.Exit()
+    raise typer.Exit
 
 
 @run_app.callback()
 def main(
     ctx: typer.Context,
-    list_instructions: Annotated[
+    list_instructions: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool,
         typer.Option(
             "--list-instructions",
@@ -185,7 +185,7 @@ def _wrap_with_options(
 
     if opts_param_name is None:
         raise TypeError(
-            f"instruction {getattr(func, '__name__', repr(func))!r} declares options={opts_cls.__name__} "
+            f"instruction {getattr(func, '__name__', repr(func))!r} declares options={opts_cls.__name__} "  # noqa: E501 — long error message f-string
             f"but has no parameter annotated as {opts_cls.__name__}"
         )
 
@@ -199,9 +199,12 @@ def _wrap_with_options(
             new_params.extend(expanded)
         else:
             # Ensure all params are KEYWORD_ONLY for a consistent Typer signature
-            if p.kind != inspect.Parameter.KEYWORD_ONLY:
-                p = p.replace(kind=inspect.Parameter.KEYWORD_ONLY)
-            new_params.append(p)
+            kw_only_p = (
+                p
+                if p.kind == inspect.Parameter.KEYWORD_ONLY
+                else p.replace(kind=inspect.Parameter.KEYWORD_ONLY)
+            )
+            new_params.append(kw_only_p)
 
     @functools.wraps(func)
     async def wrapper(**kw: Any) -> Any:

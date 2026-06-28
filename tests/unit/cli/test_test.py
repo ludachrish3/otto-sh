@@ -660,7 +660,8 @@ class TestCovDirOption:
 
         exit_code, _, output = _capture_cov_ctx(["--cov-dir", str(target)])
         assert exit_code != 0
-        assert "--cov-dir" in output and ("is a file" in output or "not a directory" in output)
+        assert "--cov-dir" in output
+        assert "is a file" in output or "not a directory" in output
 
 
 # ── _run_coverage destination resolution ─────────────────────────────────────
@@ -934,10 +935,12 @@ class TestRunCoverageEmbedded:
 
         unix_pat = all_hosts_mock.call_args.kwargs.get("pattern")
         assert unix_pat is not None
-        assert unix_pat.search("sprout_cov") and not unix_pat.search("basil_seed")
+        assert unix_pat.search("sprout_cov")
+        assert not unix_pat.search("basil_seed")
 
         emb_pat = embedded_collect.await_args.kwargs.get("pattern")
-        assert emb_pat is not None and emb_pat.pattern == "sprout_cov"
+        assert emb_pat is not None
+        assert emb_pat.pattern == "sprout_cov"
 
     def test_unset_coverage_hosts_passes_no_pattern(self, tmp_path):
         """Unset ``[coverage].hosts`` → ``pattern=None`` (collect from all hosts)."""
@@ -1119,9 +1122,8 @@ class TestCovReportOption:
             ["--cov-report-dir", str(target)],
         )
         assert exit_code != 0
-        assert "--cov-report-dir" in output and (
-            "is a file" in output or "not a directory" in output
-        )
+        assert "--cov-report-dir" in output
+        assert "is a file" in output or "not a directory" in output
 
 
 # ── run_suite post-test report generation ────────────────────────────────────

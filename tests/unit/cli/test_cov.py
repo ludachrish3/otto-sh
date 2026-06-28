@@ -28,12 +28,12 @@ def _suppress_loggers():
         cov_module.logger,
         logging.getLogger("otto.coverage.reporter"),
     ]
-    saved = [(l, l.level) for l in loggers]
-    for l in loggers:
-        l.setLevel(logging.CRITICAL + 1)
+    saved = [(lgr, lgr.level) for lgr in loggers]
+    for lgr in loggers:
+        lgr.setLevel(logging.CRITICAL + 1)
     yield
-    for l, level in saved:
-        l.setLevel(level)
+    for lgr, level in saved:
+        lgr.setLevel(level)
 
 
 # ── Help / no-args behaviour ─────────────────────────────────────────────────

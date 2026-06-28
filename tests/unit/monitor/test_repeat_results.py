@@ -18,8 +18,7 @@ from otto.utils import CommandStatus, Status
 
 @pytest.fixture
 def host():
-    h = UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=False)
-    return h
+    return UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=False)
 
 
 class TestRepeatResultsInit:

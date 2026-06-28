@@ -79,8 +79,10 @@ def test_common_host_kwargs_builds_nested_when_set():
     )
     kw = spec._common_host_kwargs()
     assert kw["resources"] == {"r1"}
-    assert isinstance(kw["telnet_options"], TelnetOptions) and kw["telnet_options"].port == 99
-    assert isinstance(kw["toolchain"], Toolchain) and kw["toolchain"].sysroot == Path("/opt")
+    assert isinstance(kw["telnet_options"], TelnetOptions)
+    assert kw["telnet_options"].port == 99
+    assert isinstance(kw["toolchain"], Toolchain)
+    assert kw["toolchain"].sysroot == Path("/opt")
 
 
 def test_unix_spec_requires_creds():
@@ -113,7 +115,8 @@ def test_unix_spec_builds_nested_options_and_snmp():
     host = spec.to_host()
     assert host.ssh_options.port == 2222
     assert host.ssh_options.extra == {"x": 1}
-    assert host.snmp is not None and host.snmp.oids == ("1.3.6.1.2.1.1.3.0",)
+    assert host.snmp is not None
+    assert host.snmp.oids == ("1.3.6.1.2.1.1.3.0",)
     assert host.resources == {"r1"}
 
 
@@ -179,7 +182,7 @@ def test_embedded_spec_rejects_unix_only_field():
 _NON_SPEC_RUNTIME_FIELDS = frozenset({"products"})
 
 
-@pytest.mark.parametrize("spec_cls,runtime_cls", HOST_SPEC_RUNTIME_PAIRS)
+@pytest.mark.parametrize(("spec_cls", "runtime_cls"), HOST_SPEC_RUNTIME_PAIRS)
 def test_host_spec_fields_match_runtime_init(spec_cls, runtime_cls):
     """Bidirectional: every spec field maps to a constructor param AND every
     lab-data init field of the runtime class is exposed by the spec. ``labs`` is
@@ -359,7 +362,8 @@ class TestMenuValidation:
         spec = UnixHostSpec(ip="10.0.0.1", element="x", creds={"u": "p"})
         assert spec.valid_terms == ["ssh", "telnet"]
         assert spec.valid_transfers == ["scp", "sftp", "ftp", "nc"]
-        assert spec.term is None and spec.transfer is None
+        assert spec.term is None
+        assert spec.transfer is None
 
     def test_embedded_default_menus(self):
         spec = EmbeddedHostSpec(ip="10.0.0.1", element="x")

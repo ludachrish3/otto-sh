@@ -177,7 +177,7 @@ def all_hosts(
     )
 
 
-async def do_for_all_hosts(
+async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
     method: Callable[..., Awaitable[T]],
     *args: Any,
     pattern: re.Pattern[str] | None = None,
@@ -248,7 +248,7 @@ async def do_for_all_hosts(
     )
 
 
-async def run_on_all_hosts(
+async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
     cmds: list[str] | str,
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,

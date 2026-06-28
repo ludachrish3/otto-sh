@@ -191,7 +191,9 @@ class TestWriteProgress:
             await orig_write(data)
 
         s._write = _record_write
-        cb = lambda done, total: None
+
+        def cb(done: int, total: int) -> None:
+            return None
 
         async def simulate():
             await asyncio.sleep(0.01)

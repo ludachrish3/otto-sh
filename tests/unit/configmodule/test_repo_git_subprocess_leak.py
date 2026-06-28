@@ -57,7 +57,9 @@ def _no_pre_existing_transport_leaks():
     pre_existing = _live_subprocess_transports()
     # Only bark on transports tied to closed loops — active ones may belong
     # to the running test's asyncio loop.
-    stale = [t for t in pre_existing if (l := _transport_loop(t)) is not None and l.is_closed()]
+    stale = [
+        t for t in pre_existing if (loop := _transport_loop(t)) is not None and loop.is_closed()
+    ]
     if stale:
         pytest.fail(
             "Pre-existing leaked subprocess transports detected before test "

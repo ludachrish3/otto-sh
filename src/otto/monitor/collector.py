@@ -20,6 +20,7 @@ from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 import aiosqlite
@@ -67,7 +68,7 @@ class MonitorTarget:
             host=gpu_host,
             parsers={
                 **DEFAULT_PARSERS,
-                "nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits": NvidiaGpuParser(),
+                "nvidia-smi --query-gpu=utilization.gpu ...": NvidiaGpuParser(),
             },
         )
 
@@ -553,7 +554,7 @@ class MetricCollector:
         dash: str,
         end_timestamp: datetime | None = None,
     ) -> "MonitorEvent | None":
-        """Update an existing event's label, color, dash, and end_timestamp. Returns the updated event or None."""
+        """Update an existing event's label, color, dash, and end_timestamp. Returns the updated event or None."""  # noqa: E501 — long one-liner docstring
         for ev in self._events:
             if ev.id == event_id:
                 ev.label = label
@@ -660,9 +661,9 @@ class MetricCollector:
         Expected format::
 
             {
-                "metrics": [{"timestamp": "...", "host": "...", "label": "...", "value": 42.0}, ...],
+                "metrics": [{"timestamp": "...", "label": "...", "value": 42.0}, ...],
                 "events": [
-                    {"timestamp": "...", "label": "...", "source": "...", "color": "...", "dash": "..."},
+                    {"timestamp": "...", "label": "...", "source": "...", "color": "..."},
                     ...,
                 ],
             }
@@ -670,7 +671,7 @@ class MetricCollector:
         The ``host`` field is optional for backward compatibility.
         """
         collector = cls(hosts=[], parsers=parsers)
-        with open(path) as f:
+        with Path(path).open() as f:
             data = json.load(f)
         for point in data.get("metrics", []):
             try:
@@ -769,7 +770,7 @@ class MetricCollector:
 
     def export_json(self, path: str) -> None:
         """Export all collected data to a JSON file."""
-        with open(path, "w") as f:
+        with Path(path).open("w") as f:
             f.write(self.to_json())
 
     def to_json(self) -> str:

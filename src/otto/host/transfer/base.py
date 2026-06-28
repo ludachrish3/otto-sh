@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ..embedded_filesystem import EmbeddedFileSystem
     from ..options import NcOptions, ScpOptions
 
-# (src_path, dst_path, bytes_done, bytes_total)
+# (src_path, dst_path, bytes_done, bytes_total)  # noqa: ERA001 — signature doc
 # Mirrors asyncssh's progress_handler signature exactly.
 TransferProgressHandler = Callable[[str, str, int, int], None]
 

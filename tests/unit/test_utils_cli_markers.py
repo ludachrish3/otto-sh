@@ -5,9 +5,12 @@ from otto.utils import Arg, Exclude, Opt, cli_exposed
 
 def test_markers_are_plain_data():
     a = Arg(variadic=True, elem_type=str, help="cmds")
-    assert a.variadic is True and a.elem_type is str and a.help == "cmds"
+    assert a.variadic is True
+    assert a.elem_type is str
+    assert a.help == "cmds"
     o = Opt(help="timeout")
-    assert o.elem_type is None and o.help == "timeout"
+    assert o.elem_type is None
+    assert o.help == "timeout"
     # Exclude is a reusable singleton — re-import proves identity, not just self-equality
     from otto.utils import Exclude as _Excl
 

@@ -58,7 +58,7 @@ class _EventUpdateBody(OttoModel):
     dash: str | None = None
 
 
-def _build_app(collector: MetricCollector) -> FastAPI:
+def _build_app(collector: MetricCollector) -> FastAPI:  # noqa: C901 — FastAPI route-factory; complexity is route count, not branching
     app = FastAPI(title="Otto Monitor")
 
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
@@ -194,7 +194,7 @@ def _get_all_ips() -> list[str]:
         return []
     ips: list[str] = []
     for line in out.splitlines():
-        # Format: "2: eth0    inet 10.0.2.15/24 ..."
+        # Format: "2: eth0    inet 10.0.2.15/24 ..."  # noqa: ERA001 — illustrative example
         parts = line.split()
         for i, part in enumerate(parts):
             if part == "inet" and i + 1 < len(parts):
@@ -247,7 +247,7 @@ class MonitorServer:
         """True once the server is ready to accept connections."""
         return self._server is not None
 
-    # TODO; Catch keyboard interrupt or *something* to make monitoring end gracefully
+    # TODO: Catch keyboard interrupt or *something* to make monitoring end gracefully
     async def serve(self) -> None:
         """Run the web server until stop() is called or the process exits."""
         config = uvicorn.Config(

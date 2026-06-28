@@ -215,8 +215,10 @@ class TestSingleConsole:
 
         # Best-effort second open — we expect failure (see above test for
         # the exhaustive list of acceptable failure modes); the assertion
-        # is on what comes after, not on the exception type.
-        with pytest.raises(BaseException):  # noqa: B017 — any failure mode is acceptable (see comment above)
+        # is on what comes after, not on the exception type. A bare timeout
+        # (asyncio.TimeoutError, whose str() is empty) is one valid mode, so
+        # a `match=` would wrongly reject it — any exception is acceptable here.
+        with pytest.raises(BaseException):  # noqa: PT011, B017 — any failure mode acceptable (incl. empty-message timeout); assertion is on recovery below
             await asyncio.wait_for(host1.open_session("aux"), timeout=5.0)
 
         # Default session must still work.

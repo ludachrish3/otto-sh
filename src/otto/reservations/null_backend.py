@@ -12,13 +12,13 @@ class NullReservationBackend:
 
     def get_reserved_resources(
         self,
-        username: str,
+        username: str,  # noqa: ARG002 — required by ReservationBackend protocol signature
     ) -> set[str]:
         return set()
 
     def who_reserved(
         self,
-        resource: str,
+        resource: str,  # noqa: ARG002 — required by ReservationBackend protocol signature
     ) -> list[str]:
         return []
 

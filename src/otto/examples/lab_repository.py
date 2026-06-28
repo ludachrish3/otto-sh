@@ -81,7 +81,7 @@ class ExampleLabRepository:
     def __init__(
         self,
         *,
-        repo_dir: Path | None = None,
+        repo_dir: Path | None = None,  # noqa: ARG002 — required by registry-seam constructor signature (build_lab_repository passes repo_dir= to all backends)
         labs: dict[str, list[dict[str, Any]]] | None = None,
     ) -> None:
         self._labs: dict[str, list[dict[str, Any]]] = (

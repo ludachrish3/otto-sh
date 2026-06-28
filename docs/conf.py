@@ -228,7 +228,7 @@ _EXTERNAL_DOC_LINKS = {
 }
 
 
-def _resolve_external_doc_links(app, env, node, contnode):
+def _resolve_external_doc_links(app, env, node, contnode):  # noqa: ARG001 — required by Sphinx missing-reference event handler signature
     """Link inventory-less external types to their published docs pages."""
     from docutils import nodes
 
@@ -239,7 +239,13 @@ def _resolve_external_doc_links(app, env, node, contnode):
 
 
 def _strip_inherited_pydantic_signature(
-    app, what, name, obj, options, signature, return_annotation
+    app,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    what,
+    name,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    obj,
+    options,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    signature,  # noqa: ARG001 — required by Sphinx autodoc-process-signature event handler signature
+    return_annotation,
 ):
     """Blank the class signature when it is pydantic-settings' inherited
     auto-``__init__``.

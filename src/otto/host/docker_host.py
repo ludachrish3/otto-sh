@@ -1,7 +1,8 @@
 """
 Docker container host.
 
-A :class:`~otto.host.docker_host.DockerContainerHost` satisfies the otto :class:`~otto.host.host.Host` protocol by
+A :class:`~otto.host.docker_host.DockerContainerHost` satisfies the otto
+:class:`~otto.host.host.Host` protocol by
 delegating most operations through a *parent* host that runs the docker
 daemon. ``oneshot`` becomes ``parent.oneshot("docker exec ...")``;
 ``get`` / ``put`` are two-step ``docker cp`` via the parent's filesystem;
@@ -11,8 +12,8 @@ existing SSH connection.
 ``run`` (and ``open_session`` / ``send`` / ``expect``) use a persistent
 ``docker exec -it <ctr> sh`` session multiplexed on the parent's SSH
 connection — shell state (``cd``, env vars, shell vars) persists across
-calls, matching :class:`~otto.host.local_host.LocalHost` and :class:`~otto.host.unix_host.UnixHost`. ``oneshot``
-stays stateless and concurrent-safe.
+calls, matching :class:`~otto.host.local_host.LocalHost` and
+:class:`~otto.host.unix_host.UnixHost`. ``oneshot`` stays stateless and concurrent-safe.
 
 Persistent-shell support requires an SSH-based :class:`~otto.host.unix_host.UnixHost` parent.
 Local-host parents and telnet parents are rejected at session-open time —
@@ -313,8 +314,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Execute one command on the persistent in-container shell.
 
         Shell state (``cd``, env vars, shell vars) persists across calls,
-        matching :class:`~otto.host.local_host.LocalHost` and :class:`~otto.host.unix_host.UnixHost`. Requires an
-        SSH-based :class:`~otto.host.unix_host.UnixHost` parent.
+        matching :class:`~otto.host.local_host.LocalHost` and
+        :class:`~otto.host.unix_host.UnixHost`. Requires an SSH-based
+        :class:`~otto.host.unix_host.UnixHost` parent.
         """
         if is_dry_run():
             return self._dry_run_result(cmd)

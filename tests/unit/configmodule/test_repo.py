@@ -38,10 +38,10 @@ def _repo_with_settings(tmp_path: Path, settings_body: str) -> "Repo":
     return Repo(sut_dir=tmp_path)
 
 
-@pytest.fixture(autouse=False, scope="function")
+@pytest.fixture(autouse=False)
 def default_mock_repo():
 
-    global mock_repo
+    global mock_repo  # noqa: PLW0603 — module-level singleton/cache
 
     mock_repo = MockRepo(tests_root / "repo1")
 

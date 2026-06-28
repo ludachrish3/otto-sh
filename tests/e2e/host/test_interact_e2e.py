@@ -88,7 +88,7 @@ def login_session(request, tmp_path_factory):
         sut_dirs=REPO1_DIR,
     ) as sess:
         banner_seen = sess.expect(
-            f"[otto] interactive session with {HOST_NAME} ({term}). Press Ctrl+] to disconnect.".encode(),
+            f"[otto] interactive session with {HOST_NAME} ({term}). Press Ctrl+] to disconnect.".encode(),  # noqa: E501 — long banner string with hostname interpolation
             timeout=30,
         )
         # otto prints the banner the moment it starts bridging, but the

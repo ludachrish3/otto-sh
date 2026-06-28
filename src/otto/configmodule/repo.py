@@ -217,14 +217,13 @@ class Repo:
         else:
             lab_name_text = Text("\n".join(f"• {lab_name}" for lab_name in lab_names))
 
-        panel = Panel(
+        return Panel(
             lab_name_text,
             title=Text(f"{self.name} {self.version}", style="bold not dim"),
             border_style="dim",
             padding=(1, 5, 1, 1),
             expand=True,
         )
-        return panel
 
     def get_instructions_panel(self) -> "Panel":
         """Build a Rich panel listing all instructions contributed by this repo.
@@ -430,7 +429,7 @@ class Repo:
         otto_settings_path = self.sut_dir / TOML_SETTINGS_PATH
         if not otto_settings_path.exists():
             raise FileNotFoundError(
-                f"The SUT repo {self.sut_dir} does not have the required TOML file, {TOML_SETTINGS_PATH}"
+                f"The SUT repo {self.sut_dir} does not have the required TOML file, {TOML_SETTINGS_PATH}"  # noqa: E501 — long error message f-string
             ) from None
 
         return otto_settings_path
@@ -441,10 +440,8 @@ class Repo:
 
         otto_settings_path = self.get_otto_settings_path()
 
-        with open(otto_settings_path) as otto_settings_file:
-            settings_text = otto_settings_file.read()
-
-        return settings_text
+        with otto_settings_path.open() as otto_settings_file:
+            return otto_settings_file.read()
 
     def parse_settings(self) -> None:
         """Parse + validate the repo's ``.otto/settings.toml`` via SettingsModel."""
@@ -583,9 +580,7 @@ class Repo:
         -------
         `str` object after all supported substitutions.
         """
-        field = field.replace("${sut_dir}", f"{self.sut_dir}")
-
-        return field
+        return field.replace("${sut_dir}", f"{self.sut_dir}")
 
     def apply_settings(self):
 

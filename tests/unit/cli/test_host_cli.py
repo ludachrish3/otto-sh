@@ -11,7 +11,8 @@ def _ctx():
 
 def test_term_completer_includes_builtins():
     names = _term_completer(_ctx(), "")
-    assert "ssh" in names and "telnet" in names
+    assert "ssh" in names
+    assert "telnet" in names
 
 
 def test_term_completer_filters_by_prefix():

@@ -56,7 +56,7 @@ def docker_callback(ctx: typer.Context) -> None:
         get_context().output_dir = management.create_output_dir("docker", ctx.invoked_subcommand)
 
 
-def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Shell-completion source for ``--on``. Limits suggestions to
     docker-capable hosts so users don't tab into a parent that can't run
     containers.

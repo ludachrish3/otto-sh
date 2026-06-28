@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from logging import FileHandler, LogRecord, NullHandler, getLogger
 from logging.handlers import QueueHandler, QueueListener
-from os import listdir
 from pathlib import Path
 from queue import Queue
 from shutil import rmtree
@@ -223,18 +222,16 @@ def remove_old_logs(
     start = time.monotonic()
     budget_hit = False
 
-    for cmd_dir_name in listdir(xdir):
+    for cmd_dir in xdir.iterdir():
         if budget_hit:
             break
-        cmd_dir = xdir / cmd_dir_name
         if not cmd_dir.is_dir():
             continue
-        for log_dir_name in listdir(cmd_dir):
+        for output_dir in cmd_dir.iterdir():
             if time.monotonic() - start > time_budget:
                 budget_hit = True
                 break
-            output_dir = cmd_dir / log_dir_name
-            if not _LOG_DIR_NAME_RE.match(log_dir_name):
+            if not _LOG_DIR_NAME_RE.match(output_dir.name):
                 continue
             if not output_dir.is_dir():
                 continue

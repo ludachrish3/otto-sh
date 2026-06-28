@@ -18,7 +18,7 @@ from .callbacks import list_hosts_callback
 from .expose import HostGroup
 
 
-def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Shell-completion source for the ``host_id`` positional argument.
 
     Prefers the completion-cache entry populated by the slow path (same file
@@ -38,7 +38,7 @@ def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(h for h in ids if h.startswith(incomplete))
 
 
-def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for ``--term``: registered term backends.
 
     Prefers the completion-cache snapshot (populated by the slow path so custom
@@ -57,7 +57,7 @@ def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     return sorted(n for n in names if n.startswith(incomplete))
 
 
-def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
     """Completion source for ``--transfer``: unix-applicable transfer backends.
 
     Same cache-then-live strategy as :func:`_term_completer`. The unified
@@ -131,7 +131,7 @@ def main(
             help="Override the file transfer protocol for this session.",
         ),
     ] = None,
-    list_hosts: Annotated[
+    list_hosts: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool,
         typer.Option(
             "--list-hosts",
@@ -146,7 +146,7 @@ def main(
 
     if not host_id or ctx.invoked_subcommand is None:
         rprint(ctx.get_help())
-        raise typer.Exit()
+        raise typer.Exit
 
     get_context().output_dir = management.create_output_dir("host", f"{ctx.invoked_subcommand}")
     from ..reservations import gate

@@ -58,9 +58,10 @@ class LocalFileTransfer(BaseFileTransfer):
                 if progress_factory is not None:
                     size = dest.stat().st_size
                     progress_factory()(str(src), str(dest), size, size)
-            return Status.Success, ""
         except OSError as e:
             return Status.Error, str(e)
+        else:
+            return Status.Success, ""
 
     @override
     async def _run_put(self, src_files, dest_dir, progress_factory):

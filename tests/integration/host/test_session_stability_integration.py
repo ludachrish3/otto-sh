@@ -155,7 +155,8 @@ async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None
     await host1.run("echo init")
     mgr = host1._session_mgr
     sess = mgr._session
-    assert sess is not None and sess.alive
+    assert sess is not None
+    assert sess.alive
     initial_id = id(sess)
     await sess.close()
 
@@ -362,6 +363,7 @@ async def test_real_nc_concurrent_gets(
             ["pgrep", "-af", "nc -l"],
             capture_output=True,
             text=True,
+            check=False,
         ).stdout.strip()
         assert not local_listeners, (
             f"leftover local nc listeners after concurrent get: {local_listeners}"
@@ -441,7 +443,7 @@ async def test_real_nc_cancel_cleans_up_listener(
     # 20MB file: large enough that the transfer is reliably mid-flight when
     # the cancel timeout fires, small enough not to slow the test down.
     src = tmp_path / "cancel_target.bin"
-    with open(src, "wb") as f:
+    with src.open("wb") as f:
         f.seek(20 * 1024 * 1024 - 1)
         f.write(b"\0")
 

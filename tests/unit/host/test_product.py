@@ -103,13 +103,15 @@ async def test_stage_runs_every_product_stage():
     a, b = _FakeProduct("a"), _FakeProduct("b")
     status, _ = await _host_with([a, b]).stage()
     assert status is Status.Success
-    assert a.calls == ["stage"] and b.calls == ["stage"]
+    assert a.calls == ["stage"]
+    assert b.calls == ["stage"]
 
 
 @pytest.mark.asyncio
 async def test_stage_empty_is_success_noop():
     status, msg = await _host_with([]).stage()
-    assert status is Status.Success and msg == ""
+    assert status is Status.Success
+    assert msg == ""
 
 
 @pytest.mark.asyncio
@@ -133,7 +135,8 @@ async def test_install_short_circuits_on_stage_failure():
     a = _FakeProduct("a", fail_on="stage")
     b = _FakeProduct("b")
     status, msg = await _host_with([a, b]).install()
-    assert status is Status.Error and msg == "boom"
+    assert status is Status.Error
+    assert msg == "boom"
     assert b.calls == []  # never reached
 
 
@@ -142,8 +145,10 @@ async def test_uninstall_is_best_effort_across_products():
     a = _FakeProduct("a", fail_on="uninstall")
     b = _FakeProduct("b")
     status, msg = await _host_with([a, b]).uninstall()
-    assert status is Status.Error and msg == "boom"
-    assert a.calls == ["uninstall"] and b.calls == ["uninstall"]  # both attempted
+    assert status is Status.Error
+    assert msg == "boom"
+    assert a.calls == ["uninstall"]
+    assert b.calls == ["uninstall"]  # both attempted
 
 
 @pytest.mark.asyncio

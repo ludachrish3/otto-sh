@@ -56,7 +56,7 @@ class PowerController(ABC):
             return status, msg
         return await self.on(host)
 
-    async def status(self, host: "Host") -> PowerState | None:
+    async def status(self, host: "Host") -> PowerState | None:  # noqa: ARG002 — required by PowerController protocol signature; subclasses use host, this default does not
         """Return the current power state, or ``None`` when this controller can't report it."""
         return None
 

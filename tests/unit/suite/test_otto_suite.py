@@ -145,7 +145,7 @@ class TestParamDirs(OttoSuite):
 """)
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.OK
-        lines = [l for l in capture_file.read_text().strip().split("\n") if l]
+        lines = [line for line in capture_file.read_text().strip().split("\n") if line]
         assert len(lines) == 2
         # Brackets should be sanitized
         for line in lines:
@@ -223,9 +223,9 @@ class TestTeardown(OttoSuite):
 """)
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.OK
-        lines = [l for l in capture_file.read_text().strip().split("\n") if l]
+        lines = [line for line in capture_file.read_text().strip().split("\n") if line]
         assert len(lines) == 2
-        assert all(l == "torn_down" for l in lines)
+        assert all(line == "torn_down" for line in lines)
 
 
 # ── Parametrize ──────────────────────────────────────────────────────────────
@@ -251,7 +251,7 @@ class TestParams(OttoSuite):
 """)
         exit_code = _run_inner_pytest(test_file, tmp_path)
         assert exit_code == pytest.ExitCode.OK
-        lines = sorted(l for l in capture_file.read_text().strip().split("\n") if l)
+        lines = sorted(line for line in capture_file.read_text().strip().split("\n") if line)
         assert lines == ["alpha", "beta", "gamma"]
 
     def test_parametrize_with_options(self, tmp_path: Path) -> None:
@@ -279,7 +279,7 @@ class TestParamOpts(OttoSuite):
 """)
         exit_code = _run_inner_pytest(test_file, tmp_path, options=opts)
         assert exit_code == pytest.ExitCode.OK
-        lines = sorted(l for l in capture_file.read_text().strip().split("\n") if l)
+        lines = sorted(line for line in capture_file.read_text().strip().split("\n") if line)
         assert lines == ["world-1", "world-2"]
 
 

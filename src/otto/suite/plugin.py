@@ -153,7 +153,7 @@ class OttoPlugin:
     def pytest_ignore_collect(
         self,
         collection_path: Path,
-        config: pytest.Config,
+        config: pytest.Config,  # noqa: ARG002 — required by pytest hook signature
     ) -> bool | None:
         """Ignore any path not under a configured SUT test directory.
 
@@ -252,17 +252,18 @@ class OttoPlugin:
         for attempt in range(n):
             try:
                 item.runtest()
-                return  # success — stop retrying
             except Exception as exc:  # noqa: PERF203,BLE001 — per-item resilience, retry must catch test exceptions
                 last_exc = exc
                 logger.warning(f"retry: {item.nodeid} attempt {attempt + 1}/{n} failed: {exc}")
+            else:
+                return  # success — stop retrying
         if last_exc is not None:
             raise last_exc
 
     def pytest_report_teststatus(
         self,
         report: pytest.TestReport,
-        config: pytest.Config,
+        config: pytest.Config,  # noqa: ARG002 — required by pytest hook signature
     ) -> tuple[str, str, str] | None:
         """Suppress pytest's per-test progress characters.
 
@@ -293,7 +294,7 @@ class OttoPlugin:
     def pytest_runtest_makereport(
         self,
         item: pytest.Item,
-        call: pytest.CallInfo[None],
+        call: pytest.CallInfo[None],  # noqa: ARG002 — required by pytest hookwrapper signature
     ) -> Generator[None, None, None]:
         outcome = yield
         # hookwrapper=True: yield returns a pluggy Result whose

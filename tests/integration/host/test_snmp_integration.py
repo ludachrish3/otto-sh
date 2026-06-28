@@ -125,6 +125,7 @@ class TestSnmpCollection:
             pass
 
         oid = client_src.oids[0]  # sysUpTime
-        assert first[oid] is not None and second[oid] is not None
+        assert first[oid] is not None
+        assert second[oid] is not None
         assert second[oid] >= first[oid]
         assert second[oid] > first[oid], "uptime should advance between reads"

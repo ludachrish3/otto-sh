@@ -1,4 +1,5 @@
-"""Parse lcov ``.info`` files and load them into a :class:`~otto.coverage.store.model.CoverageStore`.
+"""Parse lcov ``.info`` files and load them into a
+:class:`~otto.coverage.store.model.CoverageStore`.
 
 The lcov ``.info`` format is stable and well-documented:
 https://manpages.ubuntu.com/manpages/focal/man1/geninfo.1.html
@@ -64,7 +65,7 @@ class LCOVLoader:
         current_file: FileRecord | None = None
         files_loaded = 0
 
-        with open(info_path) as f:
+        with info_path.open() as f:
             for raw_line in f:
                 line = raw_line.strip()
 

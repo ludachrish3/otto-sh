@@ -40,7 +40,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
         # here so existing test call-sites that pass it by keyword still work;
         # concrete subclasses (ConsoleFileTransfer, TftpFileTransfer) are
         # selected by the registry, not by this field.
-        transfer: str | None = None,
+        transfer: str | None = None,  # noqa: ARG002 — legacy positional-compat seam; accepted and ignored so existing call-sites pass by keyword
     ) -> None:
         super().__init__(name=name, max_filename_len=max_filename_len)
         # Stored even when None so subclasses that don't need exec_cmd

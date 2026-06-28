@@ -9,7 +9,7 @@ from otto.configmodule.env import (
 )
 
 
-@pytest.fixture(autouse=True, scope="function")
+@pytest.fixture(autouse=True)
 def clear_env(monkeypatch):
     """Clear the environment variables Otto cares about before every test"""
 
@@ -24,19 +24,19 @@ def test_env_not_set() -> None:
 
 
 def test_env_lab_value() -> None:
-    """Notify users if this test fails or if its logic changes because this is an external interface."""
+    """Notify users if this test fails or if its logic changes because this is an external interface."""  # noqa: E501 — intentional descriptive docstring
 
     assert LAB_ENV_VAR == "OTTO_LAB"
 
 
 def test_env_sutdirs_value() -> None:
-    """Notify users if this test fails or if its logic changes because this is an external interface."""
+    """Notify users if this test fails or if its logic changes because this is an external interface."""  # noqa: E501 — intentional descriptive docstring
 
     assert SUT_DIRS_ENV_VAR == "OTTO_SUT_DIRS"
 
 
 def test_env_log_days_value() -> None:
-    """Notify users if this test fails or if its logic changes because this is an external interface."""
+    """Notify users if this test fails or if its logic changes because this is an external interface."""  # noqa: E501 — intentional descriptive docstring
 
     assert LOG_DAYS_ENV_VAR == "OTTO_LOG_DAYS"
 
@@ -77,6 +77,6 @@ def test_env_sutdirs_set_to_multiple_paths_one_does_not_exist(monkeypatch, tmpdi
 
 
 def test_env_xdir_value() -> None:
-    """Notify users if this test fails or if its logic changes because this is an external interface."""
+    """Notify users if this test fails or if its logic changes because this is an external interface."""  # noqa: E501 — intentional descriptive docstring
 
     assert XDIR_ENV_VAR == "OTTO_XDIR"

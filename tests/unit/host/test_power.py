@@ -85,7 +85,8 @@ def test_power_control_from_spec_dict_builds_command_controller():
         {"type": "command", "on_cmd": "o", "off_cmd": "f", "controller": "hyp"}
     )
     assert isinstance(pc, CommandPowerController)
-    assert pc.on_cmd == "o" and pc.controller == "hyp"
+    assert pc.on_cmd == "o"
+    assert pc.controller == "hyp"
 
 
 def test_power_control_from_spec_passthrough_and_none():

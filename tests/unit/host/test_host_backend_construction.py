@@ -105,7 +105,7 @@ def test_transfer_override_rebuilds_to_custom_backend():
     # Rebuilt to the custom CLASS on the copy — not a string swap.
     assert isinstance(switched._file_transfer, XmodemTransfer)
     assert switched.transfer == "xmodem"
-    # original is untouched (insulation)
+    # original is untouched (insulation)  # noqa: ERA001 — prose assertion label, not code
     assert h.transfer == "scp"
     assert type(h._file_transfer) is ScpFileTransfer
 
@@ -136,6 +136,6 @@ def test_term_override_switches_builtin():
 def test_transfer_override_rejects_out_of_menu_backend():
     h = UnixHost(ip="10.0.0.1", creds={"root": "x"}, element="e", transfer="scp")
     # console is not in the unix default menu -> validate_choice fails loud
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="transfer menu"):
         dataclasses.replace(h, transfer="console")
     assert h.transfer == "scp"  # original unchanged

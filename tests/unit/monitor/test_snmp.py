@@ -73,7 +73,9 @@ class TestRegistry:
     def test_register_overrides(self, clean_registry):
         register_snmp_metric(SnmpMetric(oid="9.9.9", label="Custom", chart="Widgets", unit="w"))
         m = resolve_snmp_metric("9.9.9")
-        assert m.label == "Custom" and m.chart == "Widgets" and m.unit == "w"
+        assert m.label == "Custom"
+        assert m.chart == "Widgets"
+        assert m.unit == "w"
 
     def test_register_restored_after_fixture(self):
         # The override from the previous test must not leak.

@@ -112,7 +112,8 @@ async def build_images(
     """Build all (or selected) images for *repo* on *parent*.
 
     Args:
-        repo: The :class:`~otto.configmodule.repo.Repo` whose ``[docker]`` settings declare the images.
+        repo: The :class:`~otto.configmodule.repo.Repo` whose ``[docker]`` settings
+            declare the images.
         parent: A docker-capable lab host. Builds happen here.
         image_names: Optional filter — only build images whose ``name`` is
             in this iterable. ``None`` builds everything declared.

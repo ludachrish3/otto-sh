@@ -261,7 +261,8 @@ async def test_ensure_default_session_recreation_race() -> None:
     await mgr.run_cmd("echo init", timeout=5.0)
     assert factory.created_count == 1
     initial = mgr._session
-    assert initial is not None and initial.alive
+    assert initial is not None
+    assert initial.alive
     initial._alive = False
 
     M = 50  # noqa: N806 — single-letter math dimension

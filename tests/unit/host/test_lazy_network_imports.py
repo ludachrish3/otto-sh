@@ -70,6 +70,7 @@ def _loaded_network_libs() -> dict[str, bool]:
         text=True,
         cwd=str(PROJECT_ROOT),
         timeout=60,
+        check=False,
     )
     assert result.returncode == 0, (
         f"probe failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"

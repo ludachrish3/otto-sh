@@ -68,7 +68,8 @@ def test_bool_default_wrapped_in_typer_option():
 
     b = build_cli_binding(f)
     p = _by_name(b, "hard")
-    assert _has_typer(p, typer.models.OptionInfo) and p.default is False
+    assert _has_typer(p, typer.models.OptionInfo)
+    assert p.default is False
 
 
 def test_scalar_union_normalizes_to_str():

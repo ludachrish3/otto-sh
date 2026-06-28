@@ -3,8 +3,9 @@ Abstract base for network-reached hosts.
 
 ``RemoteHost`` is the common ancestor of every host class that talks to a
 target across a network — :class:`~otto.host.unix_host.UnixHost` (SSH/Telnet to a bash shell),
-:class:`~otto.host.embedded_host.EmbeddedHost` (telnet to an RTOS shell), and any future siblings such
-as a Windows-host class. It is deliberately distinct from :class:`~otto.host.local_host.LocalHost`,
+:class:`~otto.host.embedded_host.EmbeddedHost` (telnet to an RTOS shell), and any future siblings
+such as a Windows-host class. It is deliberately distinct from
+:class:`~otto.host.local_host.LocalHost`,
 which runs commands on the local machine and shares no network plumbing.
 
 History: this name used to belong to the *concrete* SSH/Telnet bash host.
@@ -71,7 +72,8 @@ OsType = str
 """Profile selector recorded on a host (the ``os_type`` field).
 
 Built-ins: ``unix`` (:class:`~otto.host.unix_host.UnixHost`), ``embedded`` (generic
-:class:`~otto.host.embedded_host.EmbeddedHost`), ``zephyr`` (:class:`~otto.host.embedded_host.ZephyrHost`). Custom profiles add
+:class:`~otto.host.embedded_host.EmbeddedHost`), ``zephyr``
+(:class:`~otto.host.embedded_host.ZephyrHost`). Custom profiles add
 more names. The base *family* (unix vs embedded) is derived from the host
 class, not from this string.
 """
@@ -80,7 +82,8 @@ class, not from this string.
 class RemoteHost(BaseHost):
     """Abstract base class for any host reached over a network.
 
-    Concrete subclasses (:class:`~otto.host.unix_host.UnixHost`, :class:`~otto.host.embedded_host.EmbeddedHost`) supply the
+    Concrete subclasses (:class:`~otto.host.unix_host.UnixHost`,
+    :class:`~otto.host.embedded_host.EmbeddedHost`) supply the
     transport-specific session/transfer machinery as ``@dataclass`` fields.
     Do not instantiate this class directly.
 
@@ -325,7 +328,7 @@ class RemoteHost(BaseHost):
         # connection's asyncio transport gets explicitly closed.
         # placeholder factory is replaced below; needed to satisfy the
         # constructor without doing anything that requires the configmodule.
-        async def _placeholder(*args, **kwargs):
+        async def _placeholder(*args, **kwargs):  # noqa: ARG001 — required by SshHopTransport factory callback signature (Callable[..., Awaitable[SSHClientConnection]])
             raise RuntimeError("SshHopTransport factory not initialized")
 
         outer = SshHopTransport(_placeholder)
@@ -380,14 +383,13 @@ class RemoteHost(BaseHost):
                 else (hop_host.user, hop_host.creds[hop_host.user])
             )
             logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
-            conn = await _ssh_connect(
+            return await _ssh_connect(
                 hop_host.ip,
                 username=user,
                 password=password,
                 known_hosts=None,
                 tunnel=parent_tunnel,
             )
-            return conn
 
         outer._factory = _create_tunnel  # noqa: SLF001 — intra-package assignment to SshHopTransport._factory closure
         return outer

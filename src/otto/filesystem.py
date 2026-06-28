@@ -103,7 +103,7 @@ def _fstype_for_path(path_str: str, pairs: list[tuple[str, str]]) -> str | None:
 
 def _read_mountinfo() -> str | None:
     try:
-        with open(_MOUNTINFO_PATH, encoding="utf-8") as f:
+        with Path(_MOUNTINFO_PATH).open(encoding="utf-8") as f:
             return f.read()
     except OSError:
         return None

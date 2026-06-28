@@ -96,7 +96,7 @@ def _sigwinch_fanout() -> None:
 
 
 def _install_sigwinch_handler() -> None:
-    global _naws_handler_installed
+    global _naws_handler_installed  # noqa: PLW0603 — module-level singleton/cache
     if _naws_handler_installed or sys.platform == "win32":
         return
     try:
@@ -108,7 +108,7 @@ def _install_sigwinch_handler() -> None:
 
 
 def _uninstall_sigwinch_handler_if_unused() -> None:
-    global _naws_handler_installed
+    global _naws_handler_installed  # noqa: PLW0603 — module-level singleton/cache
     if not _naws_handler_installed or _naws_subscribers:
         return
     try:
@@ -238,7 +238,7 @@ class TelnetClient:
         a timeout that surfaces a bad-credential login as a clear error.
         """
         prompt_delim = self.options.login_prompt
-        # Wait for the login prompt ("login:", "Username:", etc.) — any line ending in the delimiter.
+        # Wait for the login prompt ("login:", "Username:", etc.) — any line ending in the delimiter.  # noqa: E501 — long inline comment
         await self.reader.readuntil(prompt_delim)
         self.writer.write(self.user.encode() + b"\r\n")
 

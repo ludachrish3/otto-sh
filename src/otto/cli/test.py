@@ -393,7 +393,7 @@ def list_suites_callback(value: bool) -> None:
     if not value:
         return
     _list_tests_display("get_test_suites_panel")
-    raise typer.Exit()
+    raise typer.Exit
 
 
 # ---------------------------------------------------------------------------
@@ -410,9 +410,9 @@ suite_app = typer.Typer(
 
 
 @suite_app.callback()
-def main(
+def main(  # noqa: PLR0913 — CLI command params
     ctx: typer.Context,
-    list_suites: Annotated[
+    list_suites: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool,
         typer.Option(
             "--list-suites",
@@ -674,78 +674,20 @@ async def _cov_clean_remotes(repos: list["Repo"]) -> None:
     await fetcher.clean_remote(gcda_remote_dir)
 
 
-async def _run_coverage(
+async def _write_cov_metadata(
     repos: list["Repo"],
-    log_dir: Path,
-    cov_dir_override: Path | None = None,
+    cov_config: dict[str, Any],
+    unix_hosts: list[Any],
+    unix_dirs: dict[str, Path],
+    cov_hosts: list[Any],
+    embedded_dirs: dict[str, Path],
+    cov_dir: Path,
 ) -> None:
-    """Collect ``.gcda`` coverage from Unix and/or embedded hosts into the cov dir.
+    """Write ``.otto_cov_meta.json`` so ``otto cov report`` can find source roots and toolchains.
 
-    Unix hosts emit ``.gcda`` to a filesystem fetched by :class:`GcdaFetcher`;
-    embedded (Zephyr LLEXT) hosts have no filesystem and instead dump theirs
-    over the console, decoded by :func:`collect_embedded_coverage`.  Both land
-    under the same ``cov_dir`` so the merge/report step treats them identically.
-
-    When ``cov_dir_override`` is provided, coverage is written there; otherwise
-    the default ``<log_dir>/cov`` is used.
+    Extracted from ``_run_coverage`` to keep that function's cyclomatic complexity
+    below the project limit.  Behavior is identical to the original tail.
     """
-    from ..configmodule import all_hosts
-    from ..coverage.fetcher.embedded import collect_embedded_coverage
-    from ..coverage.fetcher.remote import GcdaFetcher
-    from ..host import UnixHost
-
-    cov_config = _get_cov_config(repos)
-    if not cov_config:
-        logger.warning("--cov was specified but no [coverage] section found in .otto/settings.toml")
-        return
-
-    cov_dir = cov_dir_override or log_dir / "cov"
-    host_dirs: dict[str, Path] = {}
-
-    # The set of hosts to collect coverage from is repo-declared: an optional
-    # ``[coverage].hosts`` regex (matched against each host id) selects targets,
-    # defaulting to every host in the lab. This is how a lab's SSH **hop** (e.g.
-    # `basil` fronting `sprout_cov`) is kept out of the coverage set — it is
-    # excluded by the pattern, not inferred from the fact that it emits no .gcda.
-    hosts_pattern = cov_config.get("hosts")
-    cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
-
-    # Unix hosts compile the SUT and emit .gcda to a filesystem we fetch over
-    # the network. EmbeddedHost/DockerContainerHost are skipped by the fetcher.
-    cov_hosts = list(all_hosts(pattern=cov_pattern))
-    unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
-    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
-    # Unix hosts that actually produced .gcda (host id -> dir). Keying the meta
-    # below off *collected coverage* (rather than lab membership) is a safety net
-    # behind the ``[coverage].hosts`` selector above: should an infrastructure
-    # host slip through the pattern, producing no .gcda keeps it from being
-    # mistaken for a Unix coverage target — which would otherwise flip the
-    # source-root choice (breaking embedded .gcno discovery) and write a bogus
-    # toolchain entry.
-    unix_dirs: dict[str, Path] = {}
-    if gcda_remote_dir and unix_hosts:
-        # Hosts may carry stale connections from pytest's event loop; rebuild
-        # their connection state so they reconnect on the current loop.
-        for host in unix_hosts:
-            host.rebuild_connections()
-        fetcher = GcdaFetcher(cov_dir)
-        unix_dirs = await fetcher.fetch_all(gcda_remote_dir)
-        host_dirs.update(unix_dirs)
-        if unix_dirs:
-            await fetcher.clean_remote(gcda_remote_dir)
-
-    # Embedded (RTOS) hosts dump .gcda over the console (no filesystem).
-    embedded_dirs = await collect_embedded_coverage(cov_config, cov_dir, pattern=cov_pattern)
-    host_dirs.update(embedded_dirs)
-
-    if not host_dirs:
-        logger.warning("No coverage data collected from any host")
-        return
-
-    logger.info("Coverage data collected to %s (%d hosts)", cov_dir, len(host_dirs))
-
-    # Write metadata so ``otto cov report`` can find the source root and
-    # per-host toolchains without relying on the working directory.
     import json
 
     cov_repo = _get_cov_repo(repos)
@@ -839,6 +781,87 @@ async def _run_coverage(
         "source_roots": source_roots,
     }
     (cov_dir / ".otto_cov_meta.json").write_text(json.dumps(meta, indent=2))
+
+
+async def _run_coverage(
+    repos: list["Repo"],
+    log_dir: Path,
+    cov_dir_override: Path | None = None,
+) -> None:
+    """Collect ``.gcda`` coverage from Unix and/or embedded hosts into the cov dir.
+
+    Unix hosts emit ``.gcda`` to a filesystem fetched by :class:`GcdaFetcher`;
+    embedded (Zephyr LLEXT) hosts have no filesystem and instead dump theirs
+    over the console, decoded by :func:`collect_embedded_coverage`.  Both land
+    under the same ``cov_dir`` so the merge/report step treats them identically.
+
+    When ``cov_dir_override`` is provided, coverage is written there; otherwise
+    the default ``<log_dir>/cov`` is used.
+    """
+    from ..configmodule import all_hosts
+    from ..coverage.fetcher.embedded import collect_embedded_coverage
+    from ..coverage.fetcher.remote import GcdaFetcher
+    from ..host import UnixHost
+
+    cov_config = _get_cov_config(repos)
+    if not cov_config:
+        logger.warning("--cov was specified but no [coverage] section found in .otto/settings.toml")
+        return
+
+    cov_dir = cov_dir_override or log_dir / "cov"
+    host_dirs: dict[str, Path] = {}
+
+    # The set of hosts to collect coverage from is repo-declared: an optional
+    # ``[coverage].hosts`` regex (matched against each host id) selects targets,
+    # defaulting to every host in the lab. This is how a lab's SSH **hop** (e.g.
+    # `basil` fronting `sprout_cov`) is kept out of the coverage set — it is
+    # excluded by the pattern, not inferred from the fact that it emits no .gcda.
+    hosts_pattern = cov_config.get("hosts")
+    cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
+
+    # Unix hosts compile the SUT and emit .gcda to a filesystem we fetch over
+    # the network. EmbeddedHost/DockerContainerHost are skipped by the fetcher.
+    cov_hosts = list(all_hosts(pattern=cov_pattern))
+    unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
+    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
+    # Unix hosts that actually produced .gcda (host id -> dir). Keying the meta
+    # below off *collected coverage* (rather than lab membership) is a safety net
+    # behind the ``[coverage].hosts`` selector above: should an infrastructure
+    # host slip through the pattern, producing no .gcda keeps it from being
+    # mistaken for a Unix coverage target — which would otherwise flip the
+    # source-root choice (breaking embedded .gcno discovery) and write a bogus
+    # toolchain entry.
+    unix_dirs: dict[str, Path] = {}
+    if gcda_remote_dir and unix_hosts:
+        # Hosts may carry stale connections from pytest's event loop; rebuild
+        # their connection state so they reconnect on the current loop.
+        for host in unix_hosts:
+            host.rebuild_connections()
+        fetcher = GcdaFetcher(cov_dir)
+        unix_dirs = await fetcher.fetch_all(gcda_remote_dir)
+        host_dirs.update(unix_dirs)
+        if unix_dirs:
+            await fetcher.clean_remote(gcda_remote_dir)
+
+    # Embedded (RTOS) hosts dump .gcda over the console (no filesystem).
+    embedded_dirs = await collect_embedded_coverage(cov_config, cov_dir, pattern=cov_pattern)
+    host_dirs.update(embedded_dirs)
+
+    if not host_dirs:
+        logger.warning("No coverage data collected from any host")
+        return
+
+    logger.info("Coverage data collected to %s (%d hosts)", cov_dir, len(host_dirs))
+
+    await _write_cov_metadata(
+        repos=repos,
+        cov_config=cov_config,
+        unix_hosts=unix_hosts,
+        unix_dirs=unix_dirs,
+        cov_hosts=cov_hosts,
+        embedded_dirs=embedded_dirs,
+        cov_dir=cov_dir,
+    )
 
 
 def _get_cov_repo(repos: list["Repo"]) -> "Repo | None":

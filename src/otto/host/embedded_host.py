@@ -1,8 +1,8 @@
 """
 Embedded (bare-metal / RTOS) host class.
 
-An :class:`~otto.host.embedded_host.EmbeddedHost` is a network-reached target whose "OS" is a real-time
-kernel or bare-metal firmware rather than a POSIX system — Zephyr is the first
+An :class:`~otto.host.embedded_host.EmbeddedHost` is a network-reached target whose "OS" is a
+real-time kernel or bare-metal firmware rather than a POSIX system — Zephyr is the first
 concrete example. It is exposed through the *same* :class:`~otto.host.host.Host`
 API as :class:`~otto.host.unix_host.UnixHost` (``run``/``oneshot``/``send``/
 ``expect``/``put``/``get``) so test code does not care whether a target is a
@@ -19,7 +19,8 @@ What makes an embedded target different from a Unix host:
 - **Telnet only.** The shell is reached over telnet (optionally through an SSH
   hop), never SSH directly.
 
-Command execution requires a *command frame*: a :class:`~otto.host.command_frame.CommandFrame` instance
+Command execution requires a *command frame*: a
+:class:`~otto.host.command_frame.CommandFrame` instance
 that frames each command for the target's RTOS shell over the plain telnet
 transport and parses the output/return-code back. There is **no default frame**
 — a bare :class:`EmbeddedHost` raises ``ValueError`` at construction if none
@@ -157,7 +158,8 @@ class EmbeddedHost(RemoteHost):
 
     filesystem: EmbeddedFileSystem = field(default_factory=NoFileSystem)
     """On-device filesystem variant — e.g. :class:`~otto.host.embedded_filesystem.FatRamFileSystem`,
-    :class:`~otto.host.embedded_filesystem.LittleFsFileSystem`, or :class:`~otto.host.embedded_filesystem.NoFileSystem` (the default).
+    :class:`~otto.host.embedded_filesystem.LittleFsFileSystem`, or
+    :class:`~otto.host.embedded_filesystem.NoFileSystem` (the default).
     Carries the mount path, the optional ``fs mount`` command, and the
     command-formation hooks the transfer code and the embedded monitor's
     disk parser drive. See :mod:`otto.host.embedded_filesystem`.
@@ -232,7 +234,8 @@ class EmbeddedHost(RemoteHost):
     """Names of resources required to use this host."""
 
     interfaces: dict[str, str] = field(default_factory=dict, repr=False)
-    """Named secondary interface addresses (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
+    """Named secondary interface addresses
+    (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
     Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 
     products: list["Product"] = field(default_factory=list)
@@ -355,7 +358,7 @@ class EmbeddedHost(RemoteHost):
                 TransferContext(
                     transfer=self.transfer,
                     host_name=self.name,
-                    exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),
+                    exec_cmd=lambda *a, **kw: self._run_one(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
                     filesystem=self.filesystem,
                     max_filename_len=self.max_filename_len,
                 )
@@ -553,7 +556,7 @@ class EmbeddedHost(RemoteHost):
         return result.status.is_ok
 
     @cli_exposed
-    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002 — CLI-exposed param name, maps to --all flag
+    async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002, ARG002 — A002: CLI-exposed param name; ARG002: required by UnixHost.ls override signature
         """List entry names in *path* via the device ``fs ls`` former."""
         result = await self._run_one(self.filesystem.ls_command(str(path)))
         if not result.status.is_ok:
@@ -562,7 +565,10 @@ class EmbeddedHost(RemoteHost):
 
     @cli_exposed
     async def rm(
-        self, path: "str | Path", recursive: bool = False, force: bool = False
+        self,
+        path: "str | Path",
+        recursive: bool = False,  # noqa: ARG002 — required by UnixHost.rm override signature (flags not supported on embedded)
+        force: bool = False,  # noqa: ARG002 — required by UnixHost.rm override signature (flags not supported on embedded)
     ) -> tuple[Status, str]:
         """Remove *path* via the device ``fs rm`` former (flags ignored)."""
         result = await self._run_one(self.filesystem.rm_command(str(path)))
@@ -574,22 +580,28 @@ class EmbeddedHost(RemoteHost):
             f"device shell has no equivalent. Use get()/put() for reads/writes."
         ) from None
 
-    async def mkdir(self, path: "str | Path", parents: bool = True) -> tuple[Status, str]:
+    async def mkdir(self, path: "str | Path", parents: bool = True) -> tuple[Status, str]:  # noqa: ARG002 — required by UnixHost.mkdir override signature (always raises)
         self._no_fileop("mkdir")
 
     async def cp(
-        self, src: "str | Path", dst: "str | Path", recursive: bool = False
+        self,
+        src: "str | Path",  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
+        dst: "str | Path",  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
+        recursive: bool = False,  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
     ) -> tuple[Status, str]:
         self._no_fileop("cp")
 
-    async def mv(self, src: "str | Path", dst: "str | Path") -> tuple[Status, str]:
+    async def mv(self, src: "str | Path", dst: "str | Path") -> tuple[Status, str]:  # noqa: ARG002 — required by UnixHost.mv override signature (always raises)
         self._no_fileop("mv")
 
-    async def read_file(self, path: "str | Path") -> str:
+    async def read_file(self, path: "str | Path") -> str:  # noqa: ARG002 — required by UnixHost.read_file override signature (always raises)
         self._no_fileop("read_file")
 
     async def write_file(
-        self, path: "str | Path", data: str, append: bool = False
+        self,
+        path: "str | Path",  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
+        data: str,  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
+        append: bool = False,  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
     ) -> tuple[Status, str]:
         self._no_fileop("write_file")
 

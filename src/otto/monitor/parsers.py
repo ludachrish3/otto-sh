@@ -26,7 +26,7 @@ from an init module listed in .otto/settings.toml::
         "gpu-01",
         {
             **DEFAULT_PARSERS,
-            "nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits": NvidiaGpuParser(),
+            "nvidia-smi --query-gpu=utilization.gpu ...": NvidiaGpuParser(),
         },
     )
 
@@ -98,7 +98,7 @@ class MetricParser(ABC):
 
     # TODO: Make the unit optionally derived from parsing
     unit: str
-    """Unit suffix for chart annotations, e.g. '%', 'MB', 'GB'. Empty string for dimensionless values."""
+    """Unit suffix for chart annotations, e.g. '%', 'MB', 'GB'. Empty string for dimensionless values."""  # noqa: E501 — long field docstring
 
     command: str
     """The exact shell command whose output this parser handles."""
@@ -287,7 +287,7 @@ class DiskParser(MetricParser):
 
     @override
     def parse(self, output: str) -> dict[str, MetricDataPoint]:
-        lines = [l for l in output.splitlines() if l.strip()]
+        lines = [text_line for text_line in output.splitlines() if text_line.strip()]
         # Typical output (df -h):
         #   Filesystem      Size  Used Avail Use% Mounted on
         #   /dev/sda1        20G  5.1G   14G  27% /

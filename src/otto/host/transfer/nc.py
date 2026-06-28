@@ -400,9 +400,10 @@ class NcFileTransfer(UnixFileTransfer):
                 port = await self._find_free_port_with(strategy)
                 self._resolved_port_strategy = strategy
                 _logger.debug(f"{self._name}: cached port strategy '{strategy}'")
-                return port
             except (RuntimeError, ValueError) as e:  # noqa: PERF203 — per-item resilience
                 errors.append(f"{strategy}: {e}")
+            else:
+                return port
         raise RuntimeError(
             f"All port-finding strategies failed on {self._name}: " + "; ".join(errors)
         )
@@ -615,7 +616,7 @@ class NcFileTransfer(UnixFileTransfer):
             ) -> None:
                 try:
                     bytes_done = 0
-                    with open(dst, "wb") as f:
+                    with dst.open("wb") as f:
                         while True:
                             block = await reader.read(_NC_BLOCK_SIZE)
                             if not block:
@@ -725,7 +726,7 @@ class NcFileTransfer(UnixFileTransfer):
 
                 try:
                     bytes_done = 0
-                    with open(dst, "wb") as f:
+                    with dst.open("wb") as f:
                         while True:
                             block = await reader.read(_NC_BLOCK_SIZE)
                             if not block:
@@ -865,7 +866,7 @@ class NcFileTransfer(UnixFileTransfer):
                 handler = progress_factory() if progress_factory is not None else None
 
                 try:
-                    with open(src, "rb") as f:
+                    with src.open("rb") as f:
                         blocks_since_drain = 0
                         while True:
                             block = f.read(_NC_BLOCK_SIZE)
@@ -917,7 +918,6 @@ class NcFileTransfer(UnixFileTransfer):
                 verify_error = await self._verify_nc_dest_size(dst, total)
                 if verify_error is not None:
                     return verify_error
-                return Status.Success, ""
             except asyncio.CancelledError:
                 # External cancellation mid-transfer skips listen_task's
                 # normal join points (the success / ConnectionError / timeout
@@ -934,6 +934,8 @@ class NcFileTransfer(UnixFileTransfer):
                     with suppress(BaseException):
                         await self._reap_nc_listener(port)
                 raise
+            else:
+                return Status.Success, ""
             finally:
                 self._release_port(port)
 

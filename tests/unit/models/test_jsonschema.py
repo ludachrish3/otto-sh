@@ -15,7 +15,8 @@ def test_default_set_of_documents():
 def test_each_doc_is_a_self_describing_json_schema():
     for stem, doc in build_schemas().items():
         assert doc["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-        assert "$id" in doc and stem in doc["$id"]
+        assert "$id" in doc
+        assert stem in doc["$id"]
         assert "title" in doc
 
 
@@ -40,7 +41,8 @@ def test_hosts_wrapper_is_an_anyof_array_with_discriminator():
     assert hosts["type"] == "array"
     items = hosts["items"]
     # anyOf, not oneOf — minimal hosts validate against >1 spec.
-    assert "anyOf" in items and "oneOf" not in items
+    assert "anyOf" in items
+    assert "oneOf" not in items
     assert {ref["$ref"] for ref in items["anyOf"]} == {
         "#/$defs/UnixHostSpec",
         "#/$defs/EmbeddedHostSpec",
@@ -53,7 +55,8 @@ def test_hosts_wrapper_is_an_anyof_array_with_discriminator():
         "embedded": "#/$defs/EmbeddedHostSpec",
         "zephyr": "#/$defs/EmbeddedHostSpec",
     }
-    assert "UnixHostSpec" in hosts["$defs"] and "EmbeddedHostSpec" in hosts["$defs"]
+    assert "UnixHostSpec" in hosts["$defs"]
+    assert "EmbeddedHostSpec" in hosts["$defs"]
 
 
 def test_custom_registered_spec_appears(monkeypatch):
@@ -88,7 +91,8 @@ def test_builtins_only_excludes_custom_specs(monkeypatch):
     monkeypatch.setitem(op._HOST_SPECS, "acme", AcmeSpec)
 
     full = build_schemas()
-    assert "acme" in full and "acme" in full["hosts"]["items"]["discriminator"]["mapping"]
+    assert "acme" in full
+    assert "acme" in full["hosts"]["items"]["discriminator"]["mapping"]
 
     builtins = build_schemas(builtins_only=True)
     assert "acme" not in builtins

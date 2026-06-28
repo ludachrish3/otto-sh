@@ -13,7 +13,8 @@ def _unix_spec(**kw):
 
 def test_unix_defaults_active_is_menu_first():
     h = _unix_spec().to_host()
-    assert h.term == "ssh" and h.transfer == "scp"
+    assert h.term == "ssh"
+    assert h.transfer == "scp"
     assert h.valid_terms == ["ssh", "telnet"]
     assert h.valid_transfers == ["scp", "sftp", "ftp", "nc"]
 
@@ -48,8 +49,10 @@ def test_directly_built_unix_host_validates_active_against_menu():
 
 def test_embedded_defaults_active():
     h = EmbeddedHostSpec(ip="192.0.2.1", element="d", command_frame="zephyr").to_host()
-    assert h.term == "telnet" and h.valid_terms == ["telnet"]
-    assert h.transfer == "console" and h.valid_transfers == ["console"]
+    assert h.term == "telnet"
+    assert h.valid_terms == ["telnet"]
+    assert h.transfer == "console"
+    assert h.valid_transfers == ["console"]
 
 
 def test_embedded_connection_uses_self_term_not_hardcoded():

@@ -22,7 +22,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import override
+from typing_extensions import Self, override
 
 from .command_frame import BashFrame, CommandFrame, SessionMarkers
 from .telnet import TelnetClient
@@ -504,7 +504,7 @@ class ShellSession(ABC):
         buffer_preview = (
             buffer
             if len(buffer) <= _LOG_PREVIEW_BUFFER
-            else f"{buffer[:_LOG_PREVIEW_HANDSHAKE]}...({len(buffer)}b)...{buffer[-_LOG_PREVIEW_HANDSHAKE:]}"
+            else f"{buffer[:_LOG_PREVIEW_HANDSHAKE]}...({len(buffer)}b)...{buffer[-_LOG_PREVIEW_HANDSHAKE:]}"  # noqa: E501 — long f-string with buffer slices
         )
         logger.debug(
             f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
@@ -556,7 +556,6 @@ class ShellSession(ABC):
             # Session is recovered and usable for the next command
             partial = data.split(self._recover_marker)[0].strip()
             logger.debug(f"{self._log_tag}: recover_session ok partial_len={len(partial)}")
-            return partial
 
         except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
             # Shell itself is unresponsive — mark session as dead
@@ -566,6 +565,8 @@ class ShellSession(ABC):
             )
             self._alive = False
             return ""
+        else:
+            return partial
 
 
 class SshSession(ShellSession):
@@ -715,10 +716,13 @@ class LocalSession(ShellSession):
         # to the transport. close() uses it to release the pipe fds without
         # reaching into the private Process._transport attribute.
         loop = asyncio.get_running_loop()
-        protocol_factory = lambda: asyncio.subprocess.SubprocessStreamProtocol(
-            limit=2**16,
-            loop=loop,
-        )
+
+        def protocol_factory() -> asyncio.subprocess.SubprocessStreamProtocol:
+            return asyncio.subprocess.SubprocessStreamProtocol(
+                limit=2**16,
+                loop=loop,
+            )
+
         transport, protocol = await loop.subprocess_exec(
             protocol_factory,
             "bash",
@@ -734,13 +738,15 @@ class LocalSession(ShellSession):
 
     @override
     async def _write(self, data: str) -> None:
-        assert self._process is not None and self._process.stdin is not None  # noqa: S101 — internal invariant: process created in _open() before _write()
+        assert self._process is not None  # noqa: S101 — internal invariant: process created in _open() before _write()
+        assert self._process.stdin is not None  # noqa: S101 — internal invariant: process created in _open() before _write()
         self._process.stdin.write(data.encode())
         await self._process.stdin.drain()
 
     @override
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
-        assert self._process is not None and self._process.stdout is not None  # noqa: S101 — internal invariant: process created in _open() before _read_until_pattern()
+        assert self._process is not None  # noqa: S101 — internal invariant: process created in _open() before _read_until_pattern()
+        assert self._process.stdout is not None  # noqa: S101 — internal invariant: process created in _open() before _read_until_pattern()
         buf = ""
         while True:
             chunk = await self._process.stdout.read(1)
@@ -956,9 +962,10 @@ class HostSession:
     ) -> RunResult:
         """Execute one or more commands on this named session.
 
-        Mirrors :meth:`~otto.host.host.Host.run`: accepts a ``str``, a :class:`~otto.host.host.ShellCommand`, or a
-        sequence mixing the two, and always returns a :class:`~otto.host.host.RunResult`. Per-command
-        ``expects`` / ``timeout`` on a :class:`~otto.host.host.ShellCommand` override the run-level
+        Mirrors :meth:`~otto.host.host.Host.run`: accepts a ``str``, a
+        :class:`~otto.host.host.ShellCommand`, or a sequence mixing the two, and always returns a
+        :class:`~otto.host.host.RunResult`. Per-command ``expects`` / ``timeout`` on a
+        :class:`~otto.host.host.ShellCommand` override the run-level
         defaults; a scalar ``Expect`` tuple at the run level is normalized to a
         one-element list.
         """
@@ -996,7 +1003,7 @@ class HostSession:
         pattern: str | re.Pattern[str],
         timeout: float = 10.0,
     ) -> str:
-        """Wait for a pattern in this session's output. See :meth:`~otto.host.unix_host.UnixHost.expect`."""
+        """Wait for a pattern in this session's output. See :meth:`~otto.host.unix_host.UnixHost.expect`."""  # noqa: E501 — Sphinx xref
         result = await self._session.expect(pattern, timeout)
         self._log_output(result)
         return result
@@ -1006,7 +1013,7 @@ class HostSession:
         await self._session.close()
         self._deregister(self._name)
 
-    async def __aenter__(self) -> "HostSession":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -1266,14 +1273,13 @@ class SessionManager:
         if log:
             self._log_command(cmd)
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
-        result = await self._session.run_cmd(
+        return await self._session.run_cmd(
             cmd,
             expects=expects,
             timeout=timeout,
             on_output=None if log else _drop_output,
             write_progress=write_progress,
         )
-        return result
 
     async def oneshot(
         self,

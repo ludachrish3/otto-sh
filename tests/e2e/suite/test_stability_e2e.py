@@ -62,6 +62,7 @@ def _run_otto(
         text=True,
         cwd=str(PROJECT_ROOT),
         timeout=timeout,
+        check=False,
     )
 
 

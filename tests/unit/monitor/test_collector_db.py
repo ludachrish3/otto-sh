@@ -326,7 +326,7 @@ class TestFromSqlite:
                 )
             for ev in events or []:
                 conn.execute(
-                    "INSERT INTO events (ts, end_ts, label, source, color, dash) VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO events (ts, end_ts, label, source, color, dash) VALUES (?, ?, ?, ?, ?, ?)",  # noqa: E501 — SQL string
                     ev,
                 )
         return db_path

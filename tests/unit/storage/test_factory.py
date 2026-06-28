@@ -150,7 +150,7 @@ class TestValidateHostDict:
             "ip": "10.10.200.11",
             "element": "orange",
         }
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="creds") as exc_info:
             validate_host_dict(host_data)
 
         assert "creds" in str(exc_info.value)
@@ -162,7 +162,7 @@ class TestValidateHostDict:
             "element": "orange",
             "creds": {"vagrant": "vagrant"},
         }
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="ip") as exc_info:
             validate_host_dict(host_data)
 
         assert "ip" in str(exc_info.value)
@@ -175,7 +175,7 @@ class TestValidateHostDict:
             "element": "orange",
             "creds": "not_a_dict",
         }
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="creds") as exc_info:
             validate_host_dict(host_data)
 
         assert "creds" in str(exc_info.value)
@@ -188,7 +188,7 @@ class TestValidateHostDict:
             "element": 123,
             "creds": {"vagrant": "vagrant"},
         }
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="element") as exc_info:
             validate_host_dict(host_data)
 
         assert "element" in str(exc_info.value)
@@ -455,7 +455,7 @@ class TestOsTypeDispatch:
         assert isinstance(host.command_frame, ZephyrFrame)
 
     def test_unknown_ostype_raises(self):
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="os_type") as exc_info:
             create_host_from_dict(
                 {
                     "ip": "192.0.2.1",
@@ -468,7 +468,7 @@ class TestOsTypeDispatch:
 
     def test_embedded_docker_capable_rejected(self):
         """A bare-metal target cannot run Docker — reject the flag outright."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="docker_capable") as exc_info:
             create_host_from_dict(
                 {
                     "ip": "192.0.2.1",
@@ -611,7 +611,7 @@ class TestOsProfileDispatch:
 
     def test_embedded_profile_with_docker_capable_host_rejected(self, restore_profiles):
         register_os_profile("zephyr-fat", base="embedded", defaults={"os_name": "Zephyr"})
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="docker_capable") as exc_info:
             create_host_from_dict(
                 {
                     "ip": "192.0.2.1",
@@ -637,12 +637,12 @@ class TestValidateOsType:
         )
 
     def test_validate_embedded_missing_ne(self):
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="element") as exc_info:
             validate_host_dict({"ip": "192.0.2.1", "os_type": "embedded"})
         assert "element" in str(exc_info.value)
 
     def test_validate_unix_still_requires_creds(self):
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="creds") as exc_info:
             validate_host_dict(
                 {
                     "ip": "10.10.200.11",
@@ -653,7 +653,7 @@ class TestValidateOsType:
         assert "creds" in str(exc_info.value)
 
     def test_validate_invalid_ostype_raises(self):
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="os_type") as exc_info:
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",
@@ -664,7 +664,7 @@ class TestValidateOsType:
         assert "os_type" in str(exc_info.value)
 
     def test_validate_embedded_docker_capable_raises(self):
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="docker_capable") as exc_info:
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",
@@ -690,7 +690,7 @@ class TestValidateOsType:
         """An embedded host with a unix-only backend in its ``valid_transfers``
         menu is rejected at validation time (menu is validated on model_validate,
         not at to_host time)."""
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="transfer") as exc_info:
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",
@@ -757,7 +757,7 @@ class TestEmbeddedFilesystem:
         assert str(host.default_dest_dir) == "/lfs"
 
     def test_validate_unknown_filesystem_raises(self):
-        with pytest.raises(ValueError) as exc_info:
+        with pytest.raises(ValueError, match="filesystem") as exc_info:
             validate_host_dict(
                 {
                     "ip": "192.0.2.1",

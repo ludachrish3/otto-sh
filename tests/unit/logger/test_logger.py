@@ -1,12 +1,9 @@
 import os
 import time
 from logging import getLogger
-from os import (
-    listdir,
-)
 from pathlib import Path
 
-import pytest as pytest
+import pytest
 
 import otto.logger.management as management_mod
 from otto.logger import management
@@ -14,7 +11,7 @@ from otto.logger import management
 logger = getLogger("otto")
 
 
-@pytest.fixture(autouse=True, scope="function")
+@pytest.fixture(autouse=True)
 def create_logger(tmpdir):
     """Initialize management state and create output dir before every test."""
     management.init_cli_logging(xdir=tmpdir, log_level="INFO", keep_days=7)
@@ -58,9 +55,9 @@ def test_remove_old_logs_old_logs_do_not_exist(tmpdir, caplog):
 
     xdir = management._state.xdir
 
-    assert len(listdir(xdir)) == 1
+    assert len(list(xdir.iterdir())) == 1
     management.remove_old_logs(seconds=60)
-    assert len(listdir(xdir)) == 1
+    assert len(list(xdir.iterdir())) == 1
 
     assert len(caplog.records) == 0
 

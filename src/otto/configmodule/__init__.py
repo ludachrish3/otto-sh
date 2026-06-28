@@ -64,7 +64,7 @@ _repos = _get_repos(_env.sut_dirs)
 # Non-completion invocations always take the slow path and rewrite the cache
 # afterward, keeping it fresh for the next completion.
 # ---------------------------------------------------------------------------
-from .completion_cache import (
+from .completion_cache import (  # noqa: E402 — import after completion-mode branch (fast-path optimization)
     collect_backend_names,
     collect_current_commands,
     collect_docker_capable_host_ids,

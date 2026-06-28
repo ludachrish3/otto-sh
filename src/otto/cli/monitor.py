@@ -20,7 +20,7 @@ from typing import Annotated
 
 import typer
 
-# TODO: Create a SqlPath class that automatically adds the correct slashes and stuff in the front (something like sqlite:////path/to/file)
+# TODO: Create a SqlPath class that automatically adds the correct slashes and stuff in the front (something like sqlite:////path/to/file)  # noqa: E501 — TODO comment
 from ..configmodule import all_hosts
 from ..context import get_context
 from ..logger import get_otto_logger, management

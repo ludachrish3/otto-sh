@@ -218,7 +218,7 @@ def _install_loop_origin_tracker() -> None:
     Test-only; runs in the controller and every xdist worker (this conftest is
     imported in each).
     """
-    global _tracker_installed
+    global _tracker_installed  # noqa: PLW0603 — module-level singleton/cache
     if _tracker_installed:
         return
     from asyncio import base_events
@@ -238,7 +238,7 @@ def _install_loop_origin_tracker() -> None:
 
 
 def pytest_runtest_setup(item):  # type: ignore[no-untyped-def]
-    global _current_test
+    global _current_test  # noqa: PLW0603 — module-level singleton/cache
     _current_test = item.nodeid
 
 
@@ -288,7 +288,7 @@ def pytest_runtest_teardown(item):
     next test in that scope (see :func:`_live_scoped_runner_loops`).
     """
     result = yield
-    global _loops_reaped
+    global _loops_reaped  # noqa: PLW0603 — module-level singleton/cache
 
     def origin_of(loop):
         info = _LOOP_INFO.get(loop)
@@ -371,11 +371,12 @@ def _detect_asyncio_leaks(request):
     if leaks:
         # Print rather than raise: we want to *attribute* the leak, not
         # fail the test that detected it.
-        print(
-            f"\nLEAK after {request.node.nodeid}: {len(leaks)} live transport(s) bound to closed loop:"
+        print(  # noqa: T201 — test diagnostic output
+            f"\nLEAK after {request.node.nodeid}: "
+            f"{len(leaks)} live transport(s) bound to closed loop:"
         )
-        for l in leaks:
-            print(f"  {l}")
+        for leak in leaks:
+            print(f"  {leak}")  # noqa: T201 — test diagnostic output
 
 
 # ---------------------------------------------------------------------------

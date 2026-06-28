@@ -69,7 +69,7 @@ class Lab:
 # Imported here (after Lab is fully defined) rather than at the top of the
 # module to avoid a circular-import bootstrap: json_repository imports Lab
 # from this module, so this import must wait until Lab is defined.
-from ..storage.json_repository import JsonFileLabRepository
+from ..storage.json_repository import JsonFileLabRepository  # noqa: E402, I001 — import after Lab class definition to avoid circular-import bootstrap
 
 
 def load_lab(

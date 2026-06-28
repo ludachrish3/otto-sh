@@ -133,6 +133,7 @@ def _run_otto(*args: str, xdir: Path, timeout: int = 300) -> subprocess.Complete
         text=True,
         cwd=str(PROJECT_ROOT),
         timeout=timeout,
+        check=False,
     )
 
 
@@ -213,4 +214,5 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
     info = report_dir / "_work" / "host_0.info"
     assert info.exists(), f"no lcov .info produced\n{result.stdout[-2000:]}"
     lh, lf = _product_line_coverage(info)
-    assert lf > 0 and lh > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"
+    assert lf > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"
+    assert lh > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"

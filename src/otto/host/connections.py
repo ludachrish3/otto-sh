@@ -79,7 +79,7 @@ def _build_tunneled_ftp_client_cls() -> type:
     so ``from otto.host.connections import TunneledFtpClient`` and
     ``isinstance(...)`` checks remain stable.
     """
-    global _tunneled_ftp_client_cls
+    global _tunneled_ftp_client_cls  # noqa: PLW0603 — module-level singleton/cache
     if _tunneled_ftp_client_cls is not None:
         return _tunneled_ftp_client_cls
 

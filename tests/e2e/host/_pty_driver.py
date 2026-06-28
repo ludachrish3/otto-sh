@@ -28,6 +28,8 @@ import termios
 import time
 from pathlib import Path
 
+from typing_extensions import Self
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 COVERAGERC = PROJECT_ROOT / ".coveragerc"
@@ -93,7 +95,7 @@ class InteractiveOttoSession:
         self._proc: subprocess.Popen[bytes] | None = None
         self._buf = bytearray()
 
-    def __enter__(self) -> "InteractiveOttoSession":
+    def __enter__(self) -> Self:
         self._xdir.mkdir(parents=True, exist_ok=True)
 
         master_fd, slave_fd = pty.openpty()

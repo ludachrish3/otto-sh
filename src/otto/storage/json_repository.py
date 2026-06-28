@@ -79,7 +79,7 @@ class JsonFileLabRepository:
                 lab.add_host(host)
                 lab.resources.update(host.resources)
             except Exception as e:  # noqa: PERF203 — per-item resilience
-                logger.error(f"Failed to create host at index {idx} in lab '{name}': {e}")
+                logger.exception(f"Failed to create host at index {idx} in lab '{name}'")
                 raise LabRepositoryError(
                     f"Failed to create host at index {idx} in lab '{name}': {e}"
                 ) from e
