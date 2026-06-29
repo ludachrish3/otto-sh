@@ -1,3 +1,5 @@
+"""Public API for the configmodule package — lab loading, host access, and repo settings."""
+
 import contextlib
 from typing import TYPE_CHECKING, Any
 
@@ -81,10 +83,12 @@ from .completion_cache import (  # noqa: E402 — import after completion-mode b
 # these accessors were defined later (after apply_repo_settings) the import would
 # hit a partially-initialized module → circular ImportError.
 def get_repos() -> list[Repo]:
+    """Return the list of ``Repo`` objects built from the configured SUT directories."""
     return _repos
 
 
 def get_env() -> "OttoEnvSettings":
+    """Return the ``OttoEnvSettings`` instance loaded at module import time."""
     return _env
 
 

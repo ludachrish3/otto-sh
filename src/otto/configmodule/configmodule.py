@@ -1,3 +1,5 @@
+"""Fleet host access and host-dispatch helpers for the active lab."""
+
 import dataclasses
 import re
 from collections.abc import Awaitable, Callable, Generator

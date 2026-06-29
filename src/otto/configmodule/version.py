@@ -1,3 +1,5 @@
+"""Semantic version parsing for product version strings declared in settings.toml."""
+
 from dataclasses import dataclass
 from re import (
     compile as compile_re,
@@ -16,6 +18,13 @@ version_re = compile_re(
     init=False,
 )
 class Version:
+    """Parsed semantic version (major.minor.patch) from a product version string.
+
+    Constructed by passing a ``"major.minor.patch"`` string to the constructor,
+    which validates the format and populates the three integer fields.
+    ``repr`` returns the original dotted string.
+    """
+
     major: int
     """Product major version."""
 

@@ -1,3 +1,5 @@
+"""Lab dataclass and lab-loading utilities for assembling a host registry from lab data."""
+
 from __future__ import annotations
 
 from dataclasses import (
@@ -17,6 +19,13 @@ if TYPE_CHECKING:
 
 @dataclass
 class Lab:
+    """Container for a named lab environment and its registered hosts.
+
+    A ``Lab`` aggregates the ``Host`` objects parsed from lab data files under
+    a single name.  Multiple labs can be merged via ``+`` to build a composite
+    environment that spans several lab data sources.
+    """
+
     name: str
     """Name of this lab."""
 

@@ -45,6 +45,10 @@ class PathCorrelator:
         self.mappings = mappings
 
     def resolve(self, raw_path: str) -> Path | None:
+        """Apply mappings in order and return the first match that resolves to an existing file.
+
+        Returns ``None`` and logs a warning if no mapping produces an existing path.
+        """
         for mapping in self.mappings:
             result = mapping.apply(raw_path)
             if result is not None:
@@ -56,6 +60,7 @@ class PathCorrelator:
         return None
 
     def resolve_strict(self, raw_path: str) -> Path:
+        """Resolve *raw_path* or raise ``FileNotFoundError`` if no mapping succeeds."""
         result = self.resolve(raw_path)
         if result is None:
             raise FileNotFoundError(

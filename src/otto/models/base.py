@@ -1,3 +1,5 @@
+"""Shared base model for all otto pydantic boundary specs."""
+
 from pydantic import BaseModel, ConfigDict
 
 

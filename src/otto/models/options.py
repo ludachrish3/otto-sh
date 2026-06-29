@@ -19,6 +19,14 @@ from .base import OttoModel
 
 
 class SshOptionsSpec(OttoModel):
+    """Boundary spec for the SSH connection options table (``[ssh_options]`` in lab data).
+
+    Validates the asyncssh-facing tunables: port, authentication settings,
+    cipher/host-key/compression algorithm lists, keepalive, local/remote/SOCKS port forwards,
+    and an open ``extra`` dict for pass-through kwargs. Builds a ``SshOptions`` runtime
+    dataclass via ``to_runtime()``.
+    """
+
     port: int = 22
     known_hosts: Any = None
     connect_timeout: float | None = None
@@ -37,6 +45,7 @@ class SshOptionsSpec(OttoModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> rt.SshOptions:
+        """Build the ``SshOptions`` runtime dataclass from the validated spec fields."""
         return rt.SshOptions(
             port=self.port,
             known_hosts=self.known_hosts,
@@ -58,6 +67,12 @@ class SshOptionsSpec(OttoModel):
 
 
 class FtpOptionsSpec(OttoModel):
+    """Boundary spec for the FTP transfer options table (``[ftp_options]`` in lab data).
+
+    Validates port, encoding, timeout tunables, optional SSL config, speed limits, and
+    passive-mode command order. Builds a ``FtpOptions`` runtime dataclass via ``to_runtime()``.
+    """
+
     port: int = 21
     encoding: str = "utf-8"
     socket_timeout: float | None = None
@@ -70,6 +85,7 @@ class FtpOptionsSpec(OttoModel):
     extra: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> rt.FtpOptions:
+        """Build the ``FtpOptions`` runtime dataclass from the validated spec fields."""
         return rt.FtpOptions(
             port=self.port,
             encoding=self.encoding,
@@ -85,21 +101,36 @@ class FtpOptionsSpec(OttoModel):
 
 
 class SftpOptionsSpec(OttoModel):
+    """Boundary spec for the SFTP transfer options table (``[sftp_options]`` in lab data).
+
+    Validates environment variables to set on the remote SFTP session and an open ``extra``
+    dict for pass-through kwargs. Builds a ``SftpOptions`` runtime dataclass via ``to_runtime()``.
+    """
+
     env: dict[str, str] | None = None
     send_env: list[str] | None = None
     extra: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> rt.SftpOptions:
+        """Build the ``SftpOptions`` runtime dataclass from the validated spec fields."""
         return rt.SftpOptions(env=self.env, send_env=self.send_env, extra=dict(self.extra))
 
 
 class ScpOptionsSpec(OttoModel):
+    """Boundary spec for the SCP transfer options table (``[scp_options]`` in lab data).
+
+    Validates file-preservation, recursion, and transfer block-size tunables, plus an
+    open ``extra`` dict for pass-through kwargs. Builds a ``ScpOptions`` runtime dataclass
+    via ``to_runtime()``.
+    """
+
     preserve: bool = False
     recurse: bool = True
     block_size: int = 16384
     extra: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> rt.ScpOptions:
+        """Build the ``ScpOptions`` runtime dataclass from the validated spec fields."""
         return rt.ScpOptions(
             preserve=self.preserve,
             recurse=self.recurse,
@@ -109,6 +140,15 @@ class ScpOptionsSpec(OttoModel):
 
 
 class TelnetOptionsSpec(OttoModel):
+    """Boundary spec for the Telnet terminal options table (``[telnet_options]`` in lab data).
+
+    Validates port, character-encoding, terminal dimensions, write-chunking delays,
+    login prompt delimiter, single-client-console mode, and connect/echo-negotiation
+    timeouts. The ``login_prompt`` field accepts a string from JSON and encodes it to
+    bytes via ``_encode_login_prompt``. Builds a ``TelnetOptions`` runtime dataclass
+    via ``to_runtime()``.
+    """
+
     port: int = 23
     write_chunk_size: int = 0
     write_chunk_delay: float = 0.0
@@ -130,6 +170,7 @@ class TelnetOptionsSpec(OttoModel):
         return v.encode() if isinstance(v, str) else v
 
     def to_runtime(self) -> rt.TelnetOptions:
+        """Build the ``TelnetOptions`` runtime dataclass from the validated spec fields."""
         return rt.TelnetOptions(
             port=self.port,
             write_chunk_size=self.write_chunk_size,
@@ -148,6 +189,13 @@ class TelnetOptionsSpec(OttoModel):
 
 
 class NcOptionsSpec(OttoModel):
+    """Boundary spec for the netcat (nc) transfer options table (``[nc_options]`` in lab data).
+
+    Validates the nc executable name, port number, port-discovery and listener-detection
+    strategies, optional shell commands for each, and the listener-ready timeout. Builds
+    a ``NcOptions`` runtime dataclass via ``to_runtime()``.
+    """
+
     exec_name: str = "nc"
     port: int = 9000
     port_strategy: NcPortStrategy = "auto"
@@ -157,6 +205,7 @@ class NcOptionsSpec(OttoModel):
     listener_timeout: float = 30.0
 
     def to_runtime(self) -> rt.NcOptions:
+        """Build the ``NcOptions`` runtime dataclass from the validated spec fields."""
         return rt.NcOptions(
             exec_name=self.exec_name,
             port=self.port,
@@ -169,6 +218,13 @@ class NcOptionsSpec(OttoModel):
 
 
 class SnmpOptionsSpec(OttoModel):
+    """Boundary spec for the SNMP monitor options table (``[snmp]`` in lab data).
+
+    Validates the OID list, community string, port, SNMP version (``"1"`` or ``"2c"``),
+    and an optional override address. Builds a ``SnmpOptions`` runtime dataclass via
+    ``to_runtime()``.
+    """
+
     oids: tuple[str, ...] = ()
     community: str = "public"
     port: int = 161
@@ -176,6 +232,7 @@ class SnmpOptionsSpec(OttoModel):
     address: str | None = None
 
     def to_runtime(self) -> rt.SnmpOptions:
+        """Build the ``SnmpOptions`` runtime dataclass from the validated spec fields."""
         return rt.SnmpOptions(
             oids=self.oids,
             community=self.community,
@@ -186,12 +243,19 @@ class SnmpOptionsSpec(OttoModel):
 
 
 class TftpOptionsSpec(OttoModel):
+    """Boundary spec for the TFTP transfer options table (``[tftp_options]`` in lab data).
+
+    Validates port, optional server IP override, transfer block size, and per-block timeout.
+    Builds a ``TftpOptions`` runtime dataclass via ``to_runtime()``.
+    """
+
     port: int = 69
     server_ip: str | None = None
     block_size: int = 512
     timeout: float = 5.0
 
     def to_runtime(self) -> rt.TftpOptions:
+        """Build the ``TftpOptions`` runtime dataclass from the validated spec fields."""
         return rt.TftpOptions(
             port=self.port,
             server_ip=self.server_ip,

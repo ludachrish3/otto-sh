@@ -1,3 +1,5 @@
+"""Repo settings loading, parsing, and test-collection helpers for SUT repositories."""
+
 import asyncio
 import contextlib
 import importlib
@@ -126,6 +128,16 @@ class CollectedTest:
 
 @dataclass
 class Repo:
+    """Runtime representation of a single SUT (system-under-test) repository.
+
+    Parsed from ``.otto/settings.toml`` at construction time (via
+    ``__post_init__``).  Holds the resolved paths for lab data, test
+    directories, and init modules, plus Docker and OS-profile settings
+    contributed by that repo.  Multiple ``Repo`` instances are managed by
+    the configmodule package when ``OTTO_SUT_DIRS`` lists more than one
+    directory.
+    """
+
     sut_dir: Path
     """SUT directory from which the settings came."""
 
@@ -200,6 +212,7 @@ class Repo:
         self.parse_settings()
 
     def get_lab_panel(self) -> "Panel":
+        """Build a Rich panel listing all lab names available from this repo's host source."""
         from rich.panel import Panel
         from rich.text import Text
 
@@ -437,7 +450,7 @@ class Repo:
     def read_settings(
         self,
     ) -> str:
-
+        """Read and return the raw text of this repo's ``.otto/settings.toml`` file."""
         otto_settings_path = self.get_otto_settings_path()
 
         with otto_settings_path.open() as otto_settings_file:
@@ -536,7 +549,12 @@ class Repo:
             sys.path.append(f"{lib}")
 
     def import_init_modules(self) -> None:
+        """Import each module path listed in ``self.init``.
 
+        Importing these modules triggers any registration side effects they
+        perform at module level — e.g. registering custom hosts, products, or
+        term/transfer backends, or defining ``@instruction`` commands.
+        """
         for mod in self.init:
             importlib.import_module(mod)
 
@@ -584,13 +602,22 @@ class Repo:
         return field.replace("${sut_dir}", f"{self.sut_dir}")
 
     def apply_settings(self) -> None:
+        """Apply all repo settings.
 
+        Extends ``sys.path`` with configured lib directories, imports init modules,
+        and imports test files to trigger suite registration.
+        """
         self.add_libs_to_pythonpath()
         self.import_init_modules()
         self.import_test_files()
 
     async def set_git_description(self) -> None:
+        """Populate ``_git_description`` from ``git describe`` output.
 
+        Sets ``_git_description`` to the parenthesised tag description on
+        success, or to an empty string when ``git describe`` fails (e.g. no
+        tags exist in the repo).
+        """
         command_status = await self.run_git_command("describe")
         if command_status.status == Status.Success:
             self._git_description = f"({command_status.output.strip()})"
@@ -602,12 +629,13 @@ class Repo:
             self._git_description = ""
 
     async def set_commit_hash(self) -> None:
-
+        """Populate ``_git_hash`` with the full SHA of the current HEAD commit."""
         command_status = await self.run_git_command("log -1 --format=%H")
         self._git_hash = command_status.output
 
     @property
     def commit(self) -> str | None:
+        """Return the full HEAD commit SHA, fetching it on first access if needed."""
         if self._git_hash is not None:
             return self._git_hash
 
@@ -616,6 +644,11 @@ class Repo:
 
     @property
     def description(self) -> str | None:
+        """Return the cached ``git describe`` string, fetching it on first access.
+
+        The value is the parenthesised tag ``"(<tag>)"`` on success, or ``""``
+        when no tags exist (``None`` before the first access).
+        """
         if self._git_description is not None:
             return self._git_description
 
@@ -624,6 +657,7 @@ class Repo:
 
     @property
     def commit_name(self) -> str:
+        """Return a display string combining the commit SHA and the git description."""
         from ..host.host import SuppressCommandOutput
 
         with SuppressCommandOutput():
@@ -633,6 +667,14 @@ class Repo:
         self,
         cmd: str,
     ) -> CommandStatus:
+        """Run a git sub-command in this repo's ``sut_dir`` and return the result.
+
+        Args:
+            cmd: The git sub-command and its arguments (e.g. ``"log -1 --format=%H"``).
+
+        Returns:
+            A ``CommandStatus`` containing the command's exit status and output.
+        """
         from ..host.local_host import LocalHost
 
         host = LocalHost(log=False)
@@ -645,7 +687,7 @@ class Repo:
 def apply_repo_settings(
     repos: list[Repo],
 ) -> None:
-
+    """Call ``apply_settings()`` on each ``Repo`` in *repos* in order."""
     for repo in repos:
         repo.apply_settings()
 

@@ -40,11 +40,14 @@ from .options import (
 
 
 class ToolchainSpec(OttoModel):
+    """Toolchain paths: the ``sysroot`` directory plus the ``lcov`` and ``gcov`` binaries."""
+
     sysroot: Path = Path("/")
     lcov: Path = Path("usr/bin/lcov")
     gcov: Path = Path("usr/bin/gcov")
 
     def to_runtime(self) -> Toolchain:
+        """Build the runtime ``Toolchain`` dataclass from the validated path fields."""
         return Toolchain(sysroot=self.sysroot, lcov=self.lcov, gcov=self.gcov)
 
 
@@ -112,6 +115,15 @@ def _validate_transfer_menu(v: list[str], family: str, label: str) -> list[str]:
 
 
 class HostSpec(OttoModel):
+    """Abstract boundary spec for a ``hosts.json`` host entry.
+
+    Holds the fields common to both host families (identity, credentials, telnet/SNMP
+    options, toolchain, power control) and builds the constructor kwargs via
+    ``_common_host_kwargs()``. Concrete subclasses (``UnixHostSpec``,
+    ``EmbeddedHostSpec``) override ``to_host()`` to produce the appropriate runtime
+    class.
+    """
+
     # --- required identity (both families) ---
     ip: str
     element: str
@@ -217,6 +229,14 @@ class HostSpec(OttoModel):
 
 
 class UnixHostSpec(HostSpec):
+    """Boundary spec for a Unix host entry in ``hosts.json``.
+
+    Extends ``HostSpec`` with the Unix-specific fields: term/transfer menus and active
+    selections, SSH/SFTP/SCP/FTP/nc option tables, Docker capability, and hardware/software
+    version strings. ``to_host()`` resolves the active term and transfer from preferences
+    and builds a ``UnixHost`` (or a custom subclass passed as ``cls``).
+    """
+
     creds: dict[str, str]  # override: required for a Unix host (SSH/telnet login)
     hw_version: str | None = None
     sw_version: str | None = None
@@ -277,6 +297,14 @@ class UnixHostSpec(HostSpec):
 
 
 class EmbeddedHostSpec(HostSpec):
+    """Boundary spec for an embedded host entry in ``hosts.json``.
+
+    Extends ``HostSpec`` with the embedded-family fields: term/transfer menus and active
+    selections, filesystem and binary loader registry names. ``to_host()`` resolves the
+    active term and transfer, looks up the filesystem and loader from their registries,
+    and builds an ``EmbeddedHost`` (or a custom subclass passed as ``cls``).
+    """
+
     os_type: str = "embedded"
     valid_terms: list[str] = Field(default_factory=lambda: ["telnet"])
     valid_transfers: list[str] = Field(default_factory=lambda: ["console"])

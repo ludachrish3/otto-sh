@@ -37,6 +37,14 @@ if TYPE_CHECKING:
 
 
 class DockerImageSpec(OttoModel):
+    """Boundary spec for a ``[[docker.images]]`` entry in ``settings.toml``.
+
+    Validates the image name, Dockerfile path, build context, optional build stage target,
+    and ``build_args`` dict (scalar TOML values are accepted and stringified). Builds a
+    ``DockerImage`` runtime dataclass via ``to_runtime()``, with ``build_args`` normalised
+    to a sorted, frozen tuple-of-pairs for hashability.
+    """
+
     name: str
     dockerfile: Path
     context: Path
@@ -47,6 +55,7 @@ class DockerImageSpec(OttoModel):
     build_args: dict[str, Any] = Field(default_factory=dict)
 
     def to_runtime(self) -> DockerImage:
+        """Build the ``DockerImage`` runtime dataclass from the validated spec fields."""
         from ..configmodule.repo import DockerImage
 
         return DockerImage(
@@ -62,11 +71,19 @@ class DockerImageSpec(OttoModel):
 
 
 class DockerComposeSpec(OttoModel):
+    """Boundary spec for a ``[[docker.composes]]`` entry in ``settings.toml``.
+
+    Validates the Compose file path, an optional default service host name, and the list
+    of services within the Compose project. Builds a ``DockerCompose`` runtime dataclass
+    via ``to_runtime()``.
+    """
+
     path: Path
     default_host: str | None = None
     services: tuple[str, ...] = ()
 
     def to_runtime(self) -> DockerCompose:
+        """Build the ``DockerCompose`` runtime dataclass from the validated spec fields."""
         from ..configmodule.repo import DockerCompose
 
         return DockerCompose(
@@ -77,11 +94,19 @@ class DockerComposeSpec(OttoModel):
 
 
 class DockerSettingsSpec(OttoModel):
+    """Boundary spec for the ``[docker]`` section of ``settings.toml``.
+
+    Validates the Docker registry URL and the lists of image and Compose specs.
+    Builds a ``DockerSettings`` runtime dataclass (with images and composes as
+    frozen tuples) via ``to_runtime()``.
+    """
+
     registry_url: str = "docker.io"
     images: list[DockerImageSpec] = Field(default_factory=list)
     composes: list[DockerComposeSpec] = Field(default_factory=list)
 
     def to_runtime(self) -> DockerSettings:
+        """Build the ``DockerSettings`` runtime dataclass from the validated spec fields."""
         from ..configmodule.repo import DockerSettings
 
         return DockerSettings(
@@ -105,6 +130,7 @@ class OsProfileSpec(OttoModel):
 
     @property
     def defaults(self) -> dict[str, Any]:
+        """Return the non-``base`` extra fields as a plain dict of host field defaults."""
         return dict(self.model_extra or {})
 
 
@@ -152,6 +178,12 @@ def _iso8601_utc(value: object) -> object:
 
 
 class ReservationEntry(OttoModel):
+    """A single reservation record: the holder, the reserved resource names, and an optional expiry.
+
+    The ``expires`` field accepts an ISO-8601 string from JSON (including trailing ``Z``)
+    and normalises it to a timezone-aware ``datetime`` via ``_normalize_expires``.
+    """
+
     user: str
     resources: list[str]
     expires: datetime | None = None

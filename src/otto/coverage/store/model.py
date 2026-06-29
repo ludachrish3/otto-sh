@@ -63,6 +63,7 @@ class LineHits:
             self.add(tier, count)
 
     def to_dict(self) -> dict[str, int]:
+        """Return a plain dict copy of per-tier hit counts."""
         return dict(self.counts)
 
 
@@ -88,6 +89,7 @@ class BranchHits:
 
     @property
     def branch_id(self) -> tuple[int, int]:
+        """``(block, branch)`` tuple that uniquely identifies this branch within a line."""
         return (self.block, self.branch)
 
     def set_reachable(self, tier: str, reachable: bool) -> None:
@@ -118,6 +120,7 @@ class BranchHits:
         return self.hits.for_tier(tier) > 0
 
     def merge(self, other: BranchHits) -> None:
+        """Merge *other* into this branch, accumulating hits and updating reachability."""
         assert self.block == other.block  # noqa: S101 — internal invariant: callers must only merge matching branch keys
         assert self.branch == other.branch  # noqa: S101 — internal invariant: callers must only merge matching branch keys
         self.hits.merge(other.hits)
@@ -125,6 +128,7 @@ class BranchHits:
             self.set_reachable(tier, reachable)
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable dict representation of this branch record."""
         return {
             "block": self.block,
             "branch": self.branch,
@@ -147,6 +151,7 @@ class LineRecord:
     commit_summary: str | None = None
 
     def merge(self, other: LineRecord) -> None:
+        """Merge *other* into this line record, accumulating hits and branch data."""
         assert self.line_number == other.line_number  # noqa: S101 — internal invariant: callers must only merge matching line numbers
         self.hits.merge(other.hits)
 
@@ -173,11 +178,13 @@ class FileRecord:
     lines: dict[int, LineRecord] = field(default_factory=dict)
 
     def get_or_create_line(self, line_number: int) -> LineRecord:
+        """Return the :class:`LineRecord` for *line_number*, creating it if absent."""
         if line_number not in self.lines:
             self.lines[line_number] = LineRecord(line_number=line_number)
         return self.lines[line_number]
 
     def merge(self, other: FileRecord) -> None:
+        """Merge *other* into this file record, combining per-line hits and branches."""
         assert self.path == other.path  # noqa: S101 — internal invariant: callers must only merge records for the same file path
         for lineno, other_line in other.lines.items():
             if lineno in self.lines:
@@ -222,9 +229,11 @@ class FileRecord:
         return (hit / len(candidates)) * 100
 
     def sorted_lines(self) -> Iterator[LineRecord]:
+        """Yield :class:`LineRecord` objects in ascending line-number order."""
         yield from (self.lines[k] for k in sorted(self.lines))
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable dict representation of this file record."""
         return {
             "path": str(self.path),
             "lines": {
@@ -264,21 +273,30 @@ class CoverageStore:
             self.tier_order.append(tier)
 
     def get_or_create_file(self, path: Path) -> FileRecord:
+        """Return the :class:`FileRecord` for *path*, creating it if absent.
+
+        Resolves *path* to its canonical form when the file exists on disk,
+        so duplicate entries from different relative or symlinked references
+        to the same file are collapsed to one record.
+        """
         canonical = path.resolve() if path.exists() else path
         if canonical not in self._files:
             self._files[canonical] = FileRecord(path=canonical)
         return self._files[canonical]
 
     def merge_file(self, record: FileRecord) -> None:
+        """Merge *record* into the store, accumulating data for an existing path or inserting it."""
         if record.path in self._files:
             self._files[record.path].merge(record)
         else:
             self._files[record.path] = record
 
     def files(self) -> Iterator[FileRecord]:
+        """Yield all :class:`FileRecord` objects in sorted path order."""
         yield from sorted(self._files.values(), key=lambda f: f.path)
 
     def file_count(self) -> int:
+        """Return the number of source files tracked in the store."""
         return len(self._files)
 
     def _all_branches(self) -> list[BranchHits]:
