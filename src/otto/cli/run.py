@@ -58,7 +58,7 @@ def main(
             help="List available instructions and exit.",
         ),
     ] = False,
-):
+) -> None:
     if ctx.resilient_parsing:
         return
 
@@ -101,7 +101,7 @@ def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
     return wrapper
 
 
-def instruction(*args: Any, options: type | None = None, **kwargs: Any):
+def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Callable[..., Any]:
     """Register an async function as an ``otto run`` subcommand.
 
     When *options* is a dataclass, the decorator expands its fields (including

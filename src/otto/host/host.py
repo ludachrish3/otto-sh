@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Annotated,
+    NoReturn,
     Protocol,
     cast,
 )
@@ -362,7 +363,7 @@ class BaseHost(ABC):
             f"su/switch_user is not supported on '{self.__class__.__name__}'"
         ) from None
 
-    def as_user(self, user: str = "root", password: str | None = None):
+    def as_user(self, user: str = "root", password: str | None = None) -> NoReturn:
         """Async context manager to run a block as *user*.
 
         Default raises — only posix-shell hosts (via ``PosixPrivilege``) support
@@ -823,7 +824,7 @@ class SuppressCommandOutput:
     host: "Host | None" = None
     """Host object to suppress. If not provided, all host output is affected."""
 
-    def __enter__(self):
+    def __enter__(self) -> None:
         if self.host is not None:
             self._prev_host_log = self.host.log
             self.host.log = False
@@ -835,7 +836,7 @@ class SuppressCommandOutput:
             if self._ctx is not None:
                 self._ctx.log_command_output = False
 
-    def __exit__(self, *_):
+    def __exit__(self, *_: object) -> None:
         if self.host is not None:
             self.host.log = self._prev_host_log
         elif self._ctx is not None:

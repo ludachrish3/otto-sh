@@ -14,6 +14,7 @@ reach ``run_suite`` only when the CLI command is invoked, by which time
 
 import dataclasses
 import inspect
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -78,7 +79,7 @@ def _options_params(opts_cls: type) -> list[inspect.Parameter]:
 # ---------------------------------------------------------------------------
 
 
-def register_suite(*args: Any, **kwargs: Any):
+def register_suite(*args: Any, **kwargs: Any) -> Callable[[type], type]:
     """Class decorator that registers an OttoSuite subclass as a ``suite_app`` subcommand.
 
     Usage::

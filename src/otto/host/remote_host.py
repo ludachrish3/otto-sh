@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, NoReturn, cast
 
 from typing_extensions import override
 
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from .power import PowerController
     from .product import Product
     from .session import SessionManager
+    from .transport import SshHopTransport
 
 logger = get_otto_logger()
 
@@ -288,7 +289,7 @@ class RemoteHost(BaseHost):
     #  Hop transport
     ####################
 
-    def _build_hop_transport(self):
+    def _build_hop_transport(self) -> "SshHopTransport":
         """Build an ``SshHopTransport`` for reaching this host through its hop.
 
         The transport wraps a factory coroutine that lazily resolves the hop
@@ -328,7 +329,7 @@ class RemoteHost(BaseHost):
         # connection's asyncio transport gets explicitly closed.
         # placeholder factory is replaced below; needed to satisfy the
         # constructor without doing anything that requires the configmodule.
-        async def _placeholder(*args, **kwargs):  # noqa: ARG001 — required by SshHopTransport factory callback signature (Callable[..., Awaitable[SSHClientConnection]])
+        async def _placeholder(*args: object, **kwargs: object) -> NoReturn:  # noqa: ARG001 — required by SshHopTransport factory callback signature (Callable[..., Awaitable[SSHClientConnection]])
             raise RuntimeError("SshHopTransport factory not initialized")
 
         outer = SshHopTransport(_placeholder)

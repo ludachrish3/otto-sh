@@ -81,7 +81,7 @@ class RichFormatter(MultilineFormatter):
         fmt: str = _default_log_format,
         style: FormatType = _default_log_style,
         **kwargs: Any,
-    ):
+    ) -> None:
         super().__init__(fmt=fmt, style=style, **kwargs)
 
     @override
@@ -109,9 +109,9 @@ class RichFormatter(MultilineFormatter):
         return record
 
     @property
-    def rich(self):
+    def rich(self) -> bool:
         return self._rich
 
     @rich.setter
-    def rich(self, flag: bool):
+    def rich(self, flag: bool) -> None:
         self._rich = flag

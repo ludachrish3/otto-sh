@@ -22,6 +22,8 @@ from typing import (
 )
 from weakref import WeakSet
 
+from typing_extensions import Self
+
 from ..logger import get_otto_logger
 from .options import TelnetOptions
 
@@ -288,9 +290,9 @@ class TelnetClient:
         self.writer = None
         self.reader = None
 
-    async def __aenter__(self):
+    async def __aenter__(self) -> Self:
         await self.connect()
         return self
 
-    async def __aexit__(self, *args: object):
+    async def __aexit__(self, *args: object) -> None:
         await self.close()

@@ -98,7 +98,7 @@ def _build_tunneled_ftp_client_cls() -> type:
         override is only activated after the control connection is established.
         """
 
-        def __init__(self, hop: HopTransport, dest_host: str, **kwargs):  # type: ignore[no-untyped-def]
+        def __init__(self, hop: HopTransport, dest_host: str, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
             super().__init__(**kwargs)
             self._hop = hop
             self._dest_host = dest_host
@@ -113,7 +113,9 @@ def _build_tunneled_ftp_client_cls() -> type:
             return info
 
         @override
-        async def _open_connection(self, host, port):  # type: ignore[no-untyped-def, override]
+        async def _open_connection(  # type: ignore[no-untyped-def, override]
+            self, host: str, port: int
+        ) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
             if not self._tunnel_data:
                 return await super()._open_connection(host, port)
             # Open a direct SSH channel to the FTP server's data port instead of
@@ -128,7 +130,7 @@ def _build_tunneled_ftp_client_cls() -> type:
             # compatible with asyncio's stream pair) tied directly to the SSH
             # channel — closes cleanly when aioftp closes the writer.
             conn = await self._hop.get_tunnel()
-            return await conn.open_connection(self._dest_host, port)
+            return await conn.open_connection(self._dest_host, port)  # ty: ignore[invalid-return-type]
 
     _tunneled_ftp_client_cls = TunneledFtpClient
     return _tunneled_ftp_client_cls

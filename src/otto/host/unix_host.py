@@ -300,7 +300,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """Password for ``su <user>`` from this host's creds, if present."""
         return self.creds.get(user)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
 
         self.id = self._generate_id()
         if self.name is None:

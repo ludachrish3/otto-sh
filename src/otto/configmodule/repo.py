@@ -196,7 +196,7 @@ class Repo:
     registry URL. Defaults to an empty :class:`DockerSettings` when the
     section is absent."""
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         self.parse_settings()
 
     def get_lab_panel(self) -> "Panel":
@@ -582,13 +582,13 @@ class Repo:
         """
         return field.replace("${sut_dir}", f"{self.sut_dir}")
 
-    def apply_settings(self):
+    def apply_settings(self) -> None:
 
         self.add_libs_to_pythonpath()
         self.import_init_modules()
         self.import_test_files()
 
-    async def set_git_description(self):
+    async def set_git_description(self) -> None:
 
         command_status = await self.run_git_command("describe")
         if command_status.status == Status.Success:
@@ -600,13 +600,13 @@ class Repo:
         else:
             self._git_description = ""
 
-    async def set_commit_hash(self):
+    async def set_commit_hash(self) -> None:
 
         command_status = await self.run_git_command("log -1 --format=%H")
         self._git_hash = command_status.output
 
     @property
-    def commit(self):
+    def commit(self) -> str | None:
         if self._git_hash is not None:
             return self._git_hash
 
@@ -614,7 +614,7 @@ class Repo:
         return self._git_hash
 
     @property
-    def description(self):
+    def description(self) -> str | None:
         if self._git_description is not None:
             return self._git_description
 

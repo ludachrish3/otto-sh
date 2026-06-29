@@ -20,6 +20,7 @@ from rich import print as rprint
 from rich.table import Table
 
 from ..configmodule import Repo, get_lab, get_repos
+from ..configmodule.lab import Lab
 from ..context import get_context
 from ..docker import (
     build_images,
@@ -77,7 +78,7 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:  #
     return sorted(h for h in ids if h.startswith(incomplete))
 
 
-def _select_repos(repo_name: str | None, on: str | None = None):
+def _select_repos(repo_name: str | None, on: str | None = None) -> list[Repo]:
     """Filter loaded repos by name AND by lab applicability.
 
     A repo is "applicable" if either:
@@ -135,7 +136,7 @@ def _select_repos(repo_name: str | None, on: str | None = None):
     return applicable
 
 
-def _resolve_parent_for_repo(repo, lab, on: str | None) -> UnixHost:
+def _resolve_parent_for_repo(repo: Repo, lab: Lab, on: str | None) -> UnixHost:
     """Reuse compose._resolve_parent — public via private import to avoid duplicate logic."""
     from ..docker.compose import _resolve_parent
 

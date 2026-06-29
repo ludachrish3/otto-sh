@@ -64,6 +64,7 @@ Rationale: otto's working model is **real runtime annotations + module-top impor
 
 - `tests/**`: `S101` (assert), `D` (docstrings), `PLR2004` (magic values), `SLF001` (private access), `ANN` (annotations), `ARG` (unused fixture/args), plus the S-family `S104/S105/S106/S108/S110/S310/S603/S607` (tests use fake creds / subprocess harnesses / remote-host paths — not a security surface), `INP001` (tests are not installable packages), `E402` (conftest and fixture modules may import after path manipulation). Rationale: standard test idioms; keep the strict bar where it matters (`src`).
 - `scripts/**`: `INP001` (scripts are standalone CLI tools, not namespace packages), `T201` (`print()` is by design in CLI scripts).
+- `docs/conf.py`: `ANN` (build glue, not rendered; annotations add nothing to the generated docs).
 - `**/__init__.py`: `F401` (re-export without `__all__` churn).
 
 ## Delivery strategy — ratchet by shrinking the ignore-list

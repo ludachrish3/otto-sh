@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import inspect
 import re
+from collections.abc import AsyncGenerator, Generator
 from datetime import datetime, timedelta
 from logging import getLogger
 from pathlib import Path
@@ -198,7 +199,7 @@ class OttoSuite(Generic[TOptions]):
         logger.debug("Welcome to the base teardown_method() method")
 
     @classmethod
-    def setup_class(cls):
+    def setup_class(cls) -> None:
         logger.debug("Welcome to the base setup_class() method")
         output_dir = get_context().output_dir
         if output_dir is None:
@@ -206,7 +207,7 @@ class OttoSuite(Generic[TOptions]):
         cls.testDir = output_dir / "setupClass"
 
     @classmethod
-    def teardown_class(cls):
+    def teardown_class(cls) -> None:
         logger.debug("Welcome to the base teardown_class() method")
         output_dir = get_context().output_dir
         if output_dir is None:
@@ -298,13 +299,13 @@ class OttoSuite(Generic[TOptions]):
     # ── Autouse fixtures ───────────────────────────────────────────────────
 
     @pytest.fixture(autouse=True)
-    def _otto_log_test_start(self, request: pytest.FixtureRequest):
+    def _otto_log_test_start(self, request: pytest.FixtureRequest) -> None:
         """Log a banner announcing the start of each test."""
         node = cast("pytest.Item", request.node)
         logger.info(f"[bold cyan]=== {node.name} ===[/bold cyan]")
 
     @pytest.fixture(autouse=True)
-    def _otto_test_dir(self, request: pytest.FixtureRequest):
+    def _otto_test_dir(self, request: pytest.FixtureRequest) -> Generator[None, None, None]:
         """Create a per-test artifact directory with a sanitized node name."""
         node_name = _sanitize_node_name(request.node.name)
         logger.debug("_otto_test_dir: setting up testDir for %s", node_name)
@@ -318,7 +319,9 @@ class OttoSuite(Generic[TOptions]):
             )
 
     @pytest.fixture(autouse=True)
-    async def _otto_monitor_events(self, request: pytest.FixtureRequest):
+    async def _otto_monitor_events(
+        self, request: pytest.FixtureRequest
+    ) -> AsyncGenerator[None, None]:
         """Record monitor start/end events for each test."""
         node = cast("pytest.Item", request.node)
         node_name: str = node.name
@@ -347,7 +350,9 @@ class OttoSuite(Generic[TOptions]):
             )
 
     @pytest_asyncio.fixture(autouse=True, scope="class", loop_scope="class")
-    async def _otto_release_connections(self, request: pytest.FixtureRequest):
+    async def _otto_release_connections(
+        self, request: pytest.FixtureRequest
+    ) -> AsyncGenerator[None, None]:
         """Release host connections at class teardown during coverage runs.
 
         OttoSuites run each test class on its own event loop

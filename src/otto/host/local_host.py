@@ -64,11 +64,21 @@ class LocalFileTransfer(BaseFileTransfer):
             return Status.Success, ""
 
     @override
-    async def _run_put(self, src_files, dest_dir, progress_factory):
+    async def _run_put(
+        self,
+        src_files: list[Path],
+        dest_dir: Path,
+        progress_factory: TransferProgressFactory | None,
+    ) -> tuple[Status, str]:
         return await self._do_copy(src_files, dest_dir, progress_factory)
 
     @override
-    async def _run_get(self, src_files, dest_dir, progress_factory):
+    async def _run_get(
+        self,
+        src_files: list[Path],
+        dest_dir: Path,
+        progress_factory: TransferProgressFactory | None,
+    ) -> tuple[Status, str]:
         return await self._do_copy(src_files, dest_dir, progress_factory)
 
 

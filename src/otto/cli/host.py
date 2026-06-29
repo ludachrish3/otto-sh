@@ -13,6 +13,7 @@ from rich import print as rprint
 from ..configmodule import all_hosts, get_host
 from ..configmodule.configmodule import _apply_option_overrides
 from ..context import get_context
+from ..host.unix_host import UnixHost
 from ..logger import management
 from .callbacks import list_hosts_callback
 from .expose import HostGroup
@@ -91,7 +92,7 @@ host_app = typer.Typer(
 )
 
 
-def _resolve_host(host_id: str):
+def _resolve_host(host_id: str) -> UnixHost:
     try:
         return get_host(host_id)
     except KeyError:

@@ -724,7 +724,7 @@ async def _write_cov_metadata(
     embedded_build_dir = embedded_cfg.get("build_dir")  # single legacy/fallback
     embedded_builds = embedded_cfg.get("builds") or {}  # {"3.7": {"build_dir": ...}}
 
-    def _resolve_build_dir(host) -> str | None:
+    def _resolve_build_dir(host: object) -> str | None:
         ver = getattr(host, "os_version", None)
         if ver and ver in embedded_builds:
             bd = embedded_builds[ver].get("build_dir")

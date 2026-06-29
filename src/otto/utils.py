@@ -118,8 +118,12 @@ Exclude = _Exclude()
 
 
 def cli_exposed(
-    fn=None, *, name: str | None = None, help_: str | None = None, success: str | None = None
-):
+    fn: Callable[..., Any] | None = None,
+    *,
+    name: str | None = None,
+    help_: str | None = None,
+    success: str | None = None,
+) -> Callable[..., Any]:
     """Mark a host coroutine method for auto-exposure as an ``otto host``
     subcommand. ``name`` defaults to the method name with underscores dashed.
     ``success`` is an optional message printed on a successful ``(Status, "")``
@@ -128,11 +132,11 @@ def cli_exposed(
     Usable bare (``@cli_exposed``) or called (``@cli_exposed(name=..., ...)``).
     """
 
-    def deco(f):
-        f.__cli_exposed__ = True
-        f.__cli_name__ = name or f.__name__.replace("_", "-")
-        f.__cli_help__ = help_
-        f.__cli_success__ = success
+    def deco(f: Callable[..., Any]) -> Callable[..., Any]:
+        f.__cli_exposed__ = True  # ty: ignore[unresolved-attribute]
+        f.__cli_name__ = name or f.__name__.replace("_", "-")  # ty: ignore[unresolved-attribute]
+        f.__cli_help__ = help_  # ty: ignore[unresolved-attribute]
+        f.__cli_success__ = success  # ty: ignore[unresolved-attribute]
         return f
 
     return deco(fn) if fn is not None else deco

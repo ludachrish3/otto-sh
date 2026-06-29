@@ -13,6 +13,7 @@ POST /api/event     Record a manual event from the dashboard UI
 
 import asyncio
 import json
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
@@ -39,7 +40,7 @@ logger = get_otto_logger()
 # Suppress the ASGI log from uvicorn because it clutters up the output on exit.
 class SuppressASGIWarning(Filter):
     @override
-    def filter(self, record: LogRecord):
+    def filter(self, record: LogRecord) -> bool:
         return "ASGI callable returned without completing" not in record.getMessage()
 
 
@@ -88,7 +89,7 @@ def _build_app(collector: MetricCollector) -> FastAPI:  # noqa: C901 — FastAPI
     async def stream(request: Request) -> EventSourceResponse:  # type: ignore[reportUnusedFunction]
         q = collector.subscribe()
 
-        async def generator():
+        async def generator() -> AsyncGenerator[dict[str, str], None]:
             try:
                 while True:
                     if await request.is_disconnected():

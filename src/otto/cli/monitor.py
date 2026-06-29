@@ -74,7 +74,7 @@ def monitor(
             help="SQLite file to persist live metric data for later historical viewing.",
         ),
     ] = None,
-):
+) -> None:
     """Launch an interactive performance monitoring dashboard."""
     if ctx.resilient_parsing:
         return

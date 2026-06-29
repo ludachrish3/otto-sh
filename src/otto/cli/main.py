@@ -54,7 +54,7 @@ It is a list of paths to repo root directories, separated by ``,`` or the OS pat
 """
 
 
-def version_callback(version: bool):
+def version_callback(version: bool) -> None:
     if version:
         from rich import print as rprint
 
@@ -80,7 +80,7 @@ def clear_autocomplete_cache_callback(value: bool) -> None:
     raise typer.Exit
 
 
-def list_labs_callback(value: bool):
+def list_labs_callback(value: bool) -> None:
     if value:
         from rich import print as rprint
         from rich.panel import Panel
@@ -100,7 +100,7 @@ def list_labs_callback(value: bool):
         raise typer.Exit
 
 
-def log_level_callback(value: str):
+def log_level_callback(value: str) -> str:
     return value.upper()
 
 
@@ -264,7 +264,7 @@ def main(  # noqa: PLR0913 — CLI command params
             ),
         ),
     ] = False,
-):
+) -> None:
     if ctx.resilient_parsing:
         return
 

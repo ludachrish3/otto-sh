@@ -17,10 +17,11 @@ from __future__ import annotations
 import argparse
 import sys
 import xml.etree.ElementTree as ET
+from collections.abc import Generator
 from pathlib import Path
 
 
-def iter_problems(xml_path: Path):
+def iter_problems(xml_path: Path) -> Generator[tuple[str, str, str, str], None, None]:
     """Yield ``(kind, classname::name, message, text)`` for each failure/error."""
     tree = ET.parse(xml_path)  # noqa: S314 — parses our own trusted JUnit output, not untrusted input
     for tc in tree.iter("testcase"):

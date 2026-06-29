@@ -28,7 +28,7 @@ class Version:
     def __init__(
         self,
         version: str,
-    ):
+    ) -> None:
 
         match = version_re.match(version)
         if match is None:
@@ -43,5 +43,5 @@ class Version:
         self.patch = int(version_dict["patch"])
 
     @override
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"{self.major}.{self.minor}.{self.patch}"
