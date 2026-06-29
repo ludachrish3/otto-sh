@@ -1,3 +1,5 @@
+"""otto logging package: formatters, level aliases, and logger access."""
+
 import logging
 
 from . import management as management

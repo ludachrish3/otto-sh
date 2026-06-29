@@ -142,6 +142,7 @@ def main(
         ),
     ] = False,
 ) -> None:
+    """Resolve a host by ID, apply option overrides, and store it in ``ctx.obj`` for subcommands."""
     if ctx.resilient_parsing:
         return
 

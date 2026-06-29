@@ -39,6 +39,8 @@ logger = get_otto_logger()
 
 # Suppress the ASGI log from uvicorn because it clutters up the output on exit.
 class SuppressASGIWarning(Filter):
+    """``logging.Filter`` that drops the uvicorn ASGI callable warning on shutdown."""
+
     @override
     def filter(self, record: LogRecord) -> bool:
         return "ASGI callable returned without completing" not in record.getMessage()

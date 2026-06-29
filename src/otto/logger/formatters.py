@@ -1,3 +1,5 @@
+"""Log formatters: multiline splitter and Rich-markup renderer."""
+
 import re
 from datetime import datetime
 from logging import (
@@ -39,10 +41,17 @@ _ANSI = re.compile(
 
 
 def format_log_time(dt: datetime) -> Text:
+    """Format a datetime as a bracketed ``[ YYYY-MM-DD HH:MM:SS.mmm ]`` Rich Text."""
     return Text(f"[ {dt.strftime('%Y-%m-%d %H:%M:%S')}.{dt.microsecond // 1000:03d} ]")
 
 
 class MultilineFormatter(Formatter):
+    """``logging.Formatter`` that formats each line of a multiline message separately.
+
+    Prevents leading continuation lines from being emitted without the log
+    prefix (timestamp/level), keeping log files and console output parseable.
+    """
+
     @override
     def format(self, record: LogRecord) -> str:
 
@@ -76,6 +85,14 @@ FormatType = Literal["%", "{"]
 
 
 class RichFormatter(MultilineFormatter):
+    """``MultilineFormatter`` for the log file handler that controls Rich markup.
+
+    The console handler uses :class:`rich.logging.RichHandler` directly; this
+    formatter is attached to the file handler. When ``rich`` is ``True``, markup
+    is rendered to ANSI escape sequences via an internal capture console; when
+    ``rich`` is ``False`` (the default), ANSI is stripped so log files stay plain.
+    """
+
     def __init__(
         self,
         fmt: str = _default_log_format,
@@ -86,6 +103,7 @@ class RichFormatter(MultilineFormatter):
 
     @override
     def format(self, record: LogRecord) -> str:
+        """Render Rich markup in the record, then delegate to ``MultilineFormatter``."""
         msg = super().format(record=self._stylize(record))
 
         # Remove all ANSI characters if rich logging is disabled
@@ -110,6 +128,7 @@ class RichFormatter(MultilineFormatter):
 
     @property
     def rich(self) -> bool:
+        """``True`` when Rich ANSI output is enabled; ``False`` strips ANSI sequences."""
         return self._rich
 
     @rich.setter

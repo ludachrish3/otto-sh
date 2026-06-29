@@ -32,6 +32,7 @@ _STANDARD_FENCE_TICKS = 3  # CommonMark: a standard fenced code block uses exact
 
 
 def lint_file(path: Path) -> list[tuple[int, str]]:
+    """Return a list of ``(line_number, reason)`` offenses found in a single Markdown file."""
     offenses: list[tuple[int, str]] = []
     open_ticks = 0  # length of the open fence, 0 if none
     info = ""  # info string of the open fence
@@ -68,6 +69,7 @@ def lint_file(path: Path) -> list[tuple[int, str]]:
 
 
 def main(argv: list[str]) -> int:
+    """Lint Markdown files under the given root paths and report any doctest offenses."""
     roots = [Path(a) for a in argv[1:]] or [Path("docs")]
     failures = 0
     for root in roots:

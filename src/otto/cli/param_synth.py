@@ -23,6 +23,7 @@ from ..utils import Arg, Exclude, Opt
 
 
 def coerce_scalar(value: str, target: type) -> Any:
+    """Convert a raw string value to *target* (bool, int, float, Path, or str)."""
     if target is bool:
         return value.lower() in ("1", "true", "yes", "on")
     if target is int:
@@ -35,6 +36,7 @@ def coerce_scalar(value: str, target: type) -> Any:
 
 
 def parse_comma_list(raw: str | None, elem_type: type) -> list[Any] | None:
+    """Parse a comma-separated string into a typed list, returning ``None`` for a ``None`` input."""
     if raw is None:
         return None
     if raw == "":
@@ -43,6 +45,10 @@ def parse_comma_list(raw: str | None, elem_type: type) -> list[Any] | None:
 
 
 def parse_kv_dict(raw: str | None, val_type: type) -> dict[str, Any] | None:
+    """Parse a ``key=value,...`` string into a typed dict.
+
+    Returns ``None`` when *raw* is ``None``, or an empty dict when *raw* is an empty string.
+    """
     if raw is None:
         return None
     if raw == "":
@@ -56,6 +62,15 @@ def parse_kv_dict(raw: str | None, val_type: type) -> dict[str, Any] | None:
 
 @dataclass
 class CliBinding:
+    """Typer-facing parameter list and metadata produced by ``build_cli_binding``.
+
+    Holds the synthesised ``inspect.Parameter`` objects that define the CLI
+    signature (``params``), parameters excluded from the CLI that carry their
+    original defaults (``excluded``), and per-parameter converters that
+    reconstruct list or dict values from the comma-delimited CLI strings
+    (``converters``).
+    """
+
     params: list[inspect.Parameter] = field(default_factory=list)
     excluded: dict[str, Any] = field(default_factory=dict)
     converters: dict[str, Callable[[Any], Any]] = field(default_factory=dict)

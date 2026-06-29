@@ -14,13 +14,16 @@ class NullReservationBackend:
         self,
         username: str,  # noqa: ARG002 — required by ReservationBackend protocol signature
     ) -> set[str]:
+        """Return an empty set — this backend tracks no reservations."""
         return set()
 
     def who_reserved(
         self,
         resource: str,  # noqa: ARG002 — required by ReservationBackend protocol signature
     ) -> list[str]:
+        """Return an empty list — this backend tracks no reservations."""
         return []
 
     def backend_name(self) -> str:
+        """Return the registry key for this backend (``"none"``)."""
         return "none"

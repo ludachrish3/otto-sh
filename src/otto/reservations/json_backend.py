@@ -57,12 +57,22 @@ class JsonReservationBackend:
         self._path = Path(path)
 
     def backend_name(self) -> str:
+        """Return the registry key for this backend (``"json"``)."""
         return "json"
 
     def get_reserved_resources(
         self,
         username: str,
     ) -> set[str]:
+        """Return the set of resources currently held by ``username`` in the JSON file.
+
+        Skips entries whose ``expires`` timestamp is in the past.
+
+        Raises
+        ------
+        ReservationBackendError
+            If the file cannot be read or contains malformed data.
+        """
         resources: set[str] = set()
         for entry in self._active_entries():
             if entry.user == username:
@@ -73,6 +83,15 @@ class JsonReservationBackend:
         self,
         resource: str,
     ) -> list[str]:
+        """Return users who currently hold ``resource``, in file order, deduplicated.
+
+        Skips entries whose ``expires`` timestamp is in the past.
+
+        Raises
+        ------
+        ReservationBackendError
+            If the file cannot be read or contains malformed data.
+        """
         holders: list[str] = []
         for entry in self._active_entries():
             if resource in entry.resources and entry.user not in holders:

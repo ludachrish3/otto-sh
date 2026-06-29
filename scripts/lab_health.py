@@ -252,6 +252,7 @@ def _print_report(hosts: list[dict], hops: dict[str, dict]) -> bool:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse arguments, probe lab hosts, print the health table, and return exit status."""
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,

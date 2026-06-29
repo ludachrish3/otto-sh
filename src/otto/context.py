@@ -41,6 +41,7 @@ class HostScope:
         self._hosts: list[RemoteHost] = []
 
     def register(self, host: RemoteHost) -> None:
+        """Add *host* to the scope for deferred close on exit, deduplicating by identity."""
         if any(host is h for h in self._hosts):  # dedup by object identity
             return
         self._hosts.append(host)
@@ -63,6 +64,7 @@ _active: ContextVar["OttoContext | None"] = ContextVar("otto_context", default=N
 
 
 def get_context() -> "OttoContext":
+    """Return the active ``OttoContext``, raising ``RuntimeError`` if none is installed."""
     ctx = _active.get()
     if ctx is None:
         raise RuntimeError(
@@ -73,14 +75,17 @@ def get_context() -> "OttoContext":
 
 
 def try_get_context() -> "OttoContext | None":
+    """Return the active ``OttoContext``, or ``None`` if none is installed."""
     return _active.get()
 
 
 def set_context(ctx: "OttoContext") -> "Token[OttoContext | None]":
+    """Install *ctx* as the active context and return the reset token."""
     return _active.set(ctx)
 
 
 def reset_context(token: "Token[OttoContext | None]") -> None:
+    """Restore the context ContextVar to the value it held before the matching ``set_context``."""
     _active.reset(token)
 
 
@@ -95,6 +100,7 @@ class OttoContext:
     scope: HostScope = field(default_factory=HostScope)
 
     def get_host(self, host_id: str, **overrides: Any) -> "UnixHost":
+        """Look up *host_id* in the active lab, apply any keyword overrides, and register it."""
         from .configmodule.configmodule import _apply_option_overrides
 
         try:
@@ -114,6 +120,7 @@ class OttoContext:
         include_containers: bool = False,
         **overrides: Any,
     ) -> "Iterator[RemoteHost]":
+        """Yield all hosts in the lab, optionally filtered by *pattern* and keyword overrides."""
         from .configmodule.configmodule import _apply_option_overrides
         from .host.docker_host import DockerContainerHost
 
@@ -143,6 +150,13 @@ class OttoContext:
         nc_options: "Any" = None,
         **kwargs: Any,
     ) -> "dict[str, T | BaseException]":
+        """Call *method* on every matching host and return a ``{host_id: result}`` mapping.
+
+        When *concurrent* is ``True`` (default), all calls are gathered in
+        parallel via ``asyncio.gather``; exceptions from individual hosts are
+        captured as values rather than propagated. When ``False``, hosts are
+        called sequentially and exceptions are likewise captured.
+        """
         hosts = list(
             self.all_hosts(
                 pattern=pattern,
@@ -188,6 +202,13 @@ class OttoContext:
         ftp_options: "Any" = None,
         nc_options: "Any" = None,
     ) -> "dict[str, RunResult | BaseException]":
+        """Run one or more shell commands on every matching host and return a results mapping.
+
+        Accepts a single command string or a list of commands executed in
+        sequence on each host. Delegates concurrency and filtering to
+        ``do_for_all_hosts``; exceptions from individual hosts are captured as
+        values rather than propagated.
+        """
         cmd_list = [cmds] if isinstance(cmds, str) else cmds
 
         async def _run_list(host: "UnixHost") -> "RunResult":

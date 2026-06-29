@@ -44,6 +44,7 @@ def image_full_tag(registry_url: str, project: str, image: DockerImage, hash_hex
 
 
 def image_latest_tag(registry_url: str, project: str, image: DockerImage) -> str:
+    """Construct the ``<project>-<image>:latest`` tag (with registry prefix when non-default)."""
     return f"{_tag_base(registry_url, project, image)}:latest"
 
 

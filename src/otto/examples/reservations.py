@@ -68,14 +68,18 @@ class ExampleReservationBackend:
         }
 
     def get_reserved_resources(self, username: str) -> set[str]:
+        """Return the set of resources currently held by ``username``."""
         return set(self._by_user.get(username, set()))
 
     def who_reserved(self, resource: str) -> list[str]:
+        """Return a sorted list of users who currently hold ``resource``."""
         # Deterministic order, duplicates removed (a user holds a resource once).
         return sorted(user for user, resources in self._by_user.items() if resource in resources)
 
     def backend_name(self) -> str:
+        """Return the registry key for this backend (``"example"``)."""
         return "example"
 
     def list_usernames(self) -> list[str]:
+        """Return a sorted list of all known usernames in this backend."""
         return sorted(self._by_user)

@@ -56,6 +56,7 @@ class StabilityCollector:
         self.results: dict[str, tuple[int, int]] = {}
 
     def record(self, nodeid: str, passed: bool) -> None:
+        """Increment the pass and total counts for *nodeid* by one."""
         prev_passed, prev_total = self.results.get(nodeid, (0, 0))
         self.results[nodeid] = (
             prev_passed + (1 if passed else 0),
@@ -296,6 +297,7 @@ class OttoPlugin:
         item: pytest.Item,
         call: pytest.CallInfo[None],  # noqa: ARG002 — required by pytest hookwrapper signature
     ) -> Generator[None, None, None]:
+        """Attach the phase report to *item* so fixtures can inspect pass/fail during teardown."""
         outcome = yield
         # hookwrapper=True: yield returns a pluggy Result whose
         # get_result() surfaces the TestReport; the pytest stubs type it

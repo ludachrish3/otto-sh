@@ -1,3 +1,5 @@
+"""``OttoSuite`` base class and supporting fixtures for otto-managed pytest sessions."""
+
 import asyncio
 import contextlib
 import inspect
@@ -173,6 +175,7 @@ class OttoSuite(Generic[TOptions]):
     _session_monitor_collector: "MetricCollector | None" = None
 
     def setup_method(self, method: object = None) -> None:  # noqa: ARG002 — required by pytest setup_method hook signature
+        """Initialise per-test instance attributes before each test method runs."""
         output_dir = get_context().output_dir
         if output_dir is None:
             raise RuntimeError("output_dir is not set; create_output_dir must run before suite")
@@ -196,10 +199,12 @@ class OttoSuite(Generic[TOptions]):
         return type(self)._session_monitor_collector  # noqa: SLF001 — intra-package read of OttoSuite class-level monitor collector via runtime type
 
     def teardown_method(self, method: object = None) -> None:  # noqa: ARG002 — required by pytest teardown_method hook signature
+        """Override in subclasses to clean up after each test method (no-op in the base class)."""
         logger.debug("Welcome to the base teardown_method() method")
 
     @classmethod
     def setup_class(cls) -> None:
+        """Set ``cls.testDir`` to the ``setupClass`` output sub-directory before the class runs."""
         logger.debug("Welcome to the base setup_class() method")
         output_dir = get_context().output_dir
         if output_dir is None:
@@ -208,6 +213,7 @@ class OttoSuite(Generic[TOptions]):
 
     @classmethod
     def teardown_class(cls) -> None:
+        """Set ``cls.testDir`` to the ``teardownClass`` sub-directory after the class finishes."""
         logger.debug("Welcome to the base teardown_class() method")
         output_dir = get_context().output_dir
         if output_dir is None:

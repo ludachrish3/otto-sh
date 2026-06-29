@@ -51,6 +51,8 @@ def classify_problem(name: str, message: str, text: str) -> str:
 
 @dataclass
 class StageReport:
+    """Aggregated problem counts and missing-report list for one campaign stage."""
+
     counts: dict[str, int] = field(
         default_factory=lambda: {"leak": 0, "wedge": 0, "flake": 0, "real": 0}
     )
@@ -58,16 +60,19 @@ class StageReport:
 
     @property
     def total(self) -> int:
+        """Return the total number of problems across all categories."""
         return sum(self.counts.values())
 
     @property
     def green(self) -> bool:
+        """Return True only when there are zero problems and no missing JUnit reports."""
         # Genuinely clean: zero problems AND every expected JUnit report present
         # (a tier that crashed before writing its report must not look GREEN).
         return self.total == 0 and not self.missing
 
 
 def summarize_stage(xml_paths: list[Path]) -> StageReport:
+    """Read the given JUnit XML files, classify every problem, and return a ``StageReport``."""
     report = StageReport()
     for xml_path in xml_paths:
         path = Path(xml_path)
@@ -85,6 +90,8 @@ DEEP_PYTHON = "3.10"  # pinned deep-escalation version (oldest supported floor)
 
 @dataclass
 class Tier:
+    """One test tier: a command to run, the JUnit paths it produces, and optional env overrides."""
+
     name: str
     argv: list[str]
     junit: list[str]  # JUnit path(s) this tier produces
@@ -187,6 +194,7 @@ def _run_tier(tier: Tier) -> None:
 
 
 def run_stage(count: int, *, breadth: bool, dry_run: bool) -> StageReport:
+    """Run every tier for one stage at ``count`` repetitions and return a ``StageReport``."""
     tiers = build_tiers(count, breadth=breadth)
     all_junit: list[Path] = []
     for tier in tiers:
@@ -210,6 +218,7 @@ def run_stage(count: int, *, breadth: bool, dry_run: bool) -> StageReport:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse arguments and dispatch to ``run`` (single stage) or ``escalate`` (1→3→10)."""
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="cmd", required=True)
     run = sub.add_parser("run", help="run one stage (all tiers at --count)")

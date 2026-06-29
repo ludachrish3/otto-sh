@@ -391,6 +391,7 @@ def _list_tests_display(panel_method: str) -> None:
 
 
 def list_suites_callback(value: bool) -> None:
+    """Print all available test suites (one panel per repo) and exit when the flag is set."""
     if not value:
         return
     _list_tests_display("get_test_suites_panel")
@@ -575,6 +576,12 @@ def main(  # noqa: PLR0913 — CLI command params
         ),
     ] = None,
 ) -> None:
+    """Collect ``otto test`` run options and store them in ``ctx.meta`` for suite runners.
+
+    Validates coverage and report directories, resolves implied flags (e.g.
+    ``--cov-dir`` implies ``--cov``), and sets up the output directory and
+    reservation gate when a suite subcommand is about to run.
+    """
     if ctx.resilient_parsing:
         return
 

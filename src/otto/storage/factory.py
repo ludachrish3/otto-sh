@@ -1,3 +1,5 @@
+"""Host-dict factory: build and validate ``RemoteHost`` instances from raw config dicts."""
+
 from typing import Any
 
 from ..host.capability import select_option_defaults, select_preferences

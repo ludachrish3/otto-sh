@@ -19,8 +19,8 @@ remote shell. Manages two responsibilities:
 
 All kinds of host connections, for command execution and for file transfers, should be able to
 establish a connection first, keep it open, and then use it for multiple commands and transfers.
-Host connections can be explictly closed by calling the `.close()` method or in the destructor
-of the host object.
+Host connections can be explicitly closed by calling the `.close()` method (or via ``async with``),
+and any still-open connections are closed automatically when the host's context scope exits.
 
 The `.run()` method runs a single command (str) or a list of commands. Depending on the `.term`
 value the correct connection type (ssh or telnet) is used without being specified as an argument.

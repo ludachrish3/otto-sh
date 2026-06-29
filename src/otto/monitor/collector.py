@@ -638,6 +638,7 @@ class MetricCollector:
         return q
 
     def unsubscribe(self, q: "asyncio.Queue[dict[str, Any]]") -> None:
+        """Remove ``q`` from the SSE subscriber list so it receives no further pushes."""
         self._subscribers = [sq for sq in self._subscribers if sq is not q]
 
     def _publish(self, payload: dict[str, Any]) -> None:

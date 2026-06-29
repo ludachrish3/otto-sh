@@ -1,3 +1,5 @@
+"""otto — asyncio test orchestrator for embedded and networked lab systems."""
+
 # Blessed, concise form for declaring suite/instruction Options with validation:
 # ``from otto import options`` then ``@options`` on the Options class. A re-export
 # of ``pydantic.dataclasses.dataclass`` — otto introspects it as a plain dataclass,

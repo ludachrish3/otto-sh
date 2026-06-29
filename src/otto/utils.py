@@ -1,3 +1,5 @@
+"""Shared utilities: status enums, CLI overlay sentinels, and async helpers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -68,6 +70,13 @@ R = TypeVar("R")
 
 
 def async_typer_command(f: Callable[P, Coroutine[Any, Any, R]]) -> Callable[P, R]:
+    """Wrap an async Typer command so it runs under the active ``OttoContext`` scope.
+
+    Calls ``asyncio.run`` on the coroutine. If an ``OttoContext`` is already open
+    (i.e. ``try_get_context()`` returns one), the coroutine runs inside its async
+    context manager scope; otherwise it runs bare.
+    """
+
     @functools.wraps(f)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         from .context import try_get_context

@@ -40,11 +40,6 @@ ignore = [
 
     # ===== TEMP (ratchet) — NOT permanent. Generated in Step 3; removed =====
     # ===== batch-by-batch in Phases 2..A. Do NOT hand-edit individual codes. =====
-    "D100",
-    "D101",
-    "D102",
-    "D103",
-    "D104",
     "PGH003",
 ]
 

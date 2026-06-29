@@ -1,3 +1,5 @@
+"""ASCII art banner printed at startup by the top-level ``otto`` callback."""
+
 from rich.text import (
     Text,
 )

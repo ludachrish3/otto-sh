@@ -1,3 +1,5 @@
+"""``LabRepository`` protocol — the DB-agnostic interface all storage backends must satisfy."""
+
 from typing import (
     Any,
     Protocol,

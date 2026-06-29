@@ -33,6 +33,7 @@ def iter_problems(xml_path: Path) -> Generator[tuple[str, str, str, str], None, 
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Parse arguments, print failures/errors from JUnit XML files, and return exit status."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("reports", nargs="+", type=Path, help="JUnit XML file(s)")
     parser.add_argument(

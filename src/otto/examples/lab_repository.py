@@ -93,6 +93,13 @@ class ExampleLabRepository:
         name: str,
         preferences: dict[str, dict[str, Any]] | None = None,
     ) -> Lab:
+        """Build and return a ``Lab`` from the in-memory dataset.
+
+        Raises
+        ------
+        LabNotFoundError
+            If ``name`` is not in this backend's dataset.
+        """
         if name not in self._labs:
             known = ", ".join(sorted(self._labs)) or "(none)"
             raise LabNotFoundError(f"Lab {name!r} not found. Known labs: {known}")
@@ -104,4 +111,5 @@ class ExampleLabRepository:
         return lab
 
     def list_labs(self) -> list[str]:
+        """Return a sorted list of all lab names in this backend's dataset."""
         return sorted(self._labs)

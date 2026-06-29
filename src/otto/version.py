@@ -1,3 +1,5 @@
+"""Package version accessor for otto-sh."""
+
 from importlib.metadata import version
 
 

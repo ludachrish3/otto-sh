@@ -1,3 +1,5 @@
+"""Register short level-name aliases (WARN, CRIT) with the logging system."""
+
 from logging import (
     CRITICAL,
     WARNING,

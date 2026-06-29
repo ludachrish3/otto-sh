@@ -1,3 +1,5 @@
+"""Top-level ``otto`` CLI: callback, subcommand dispatch, and eager option handlers."""
+
 import importlib
 import os
 import sys
@@ -55,6 +57,7 @@ It is a list of paths to repo root directories, separated by ``,`` or the OS pat
 
 
 def version_callback(version: bool) -> None:
+    """Print the otto version string and exit when ``--version`` is passed."""
     if version:
         from rich import print as rprint
 
@@ -63,6 +66,7 @@ def version_callback(version: bool) -> None:
 
 
 def clear_autocomplete_cache_callback(value: bool) -> None:
+    """Delete the shell-completion cache file and exit when the flag is set."""
     if not value:
         return
     from rich import print as rprint
@@ -81,6 +85,7 @@ def clear_autocomplete_cache_callback(value: bool) -> None:
 
 
 def list_labs_callback(value: bool) -> None:
+    """Print all available lab names (one panel per repo) and exit when the flag is set."""
     if value:
         from rich import print as rprint
         from rich.panel import Panel
@@ -101,6 +106,7 @@ def list_labs_callback(value: bool) -> None:
 
 
 def log_level_callback(value: str) -> str:
+    """Normalise the ``--log-level`` value to upper-case before Typer stores it."""
     return value.upper()
 
 
@@ -265,6 +271,12 @@ def main(  # noqa: PLR0913 — CLI command params
         ),
     ] = False,
 ) -> None:
+    """Load the lab, initialise logging, check reservations, and install the runtime context.
+
+    This is the Typer root callback executed before every ``otto`` subcommand.
+    Lab-free subcommands (e.g. ``otto schema``) skip the lab/reservation
+    bootstrap; all others require ``--lab`` and build an ``OttoContext``.
+    """
     if ctx.resilient_parsing:
         return
 

@@ -35,6 +35,8 @@ logger = get_otto_logger()
 
 @dataclass(frozen=True)
 class ReservationState:
+    """Per-invocation reservation state stored in Typer's ``ctx.meta["otto_reservation"]``."""
+
     backend: "ReservationBackend | None" = None
     identity: "ResolvedIdentity | None" = None
     skip_check: bool = False

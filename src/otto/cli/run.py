@@ -1,3 +1,5 @@
+"""``otto run`` subcommand: decorator and Typer app for user-defined run instructions."""
+
 import dataclasses
 import functools
 import inspect
@@ -33,6 +35,7 @@ run_app = typer.Typer(
 
 
 def list_instructions_callback(value: bool) -> None:
+    """Print all available run instructions (one panel per repo) and exit when the flag is set."""
     if not value:
         return
     from ..configmodule import get_repos  # lazy import — avoids circular dependency
@@ -59,6 +62,7 @@ def main(
         ),
     ] = False,
 ) -> None:
+    """Set up the output directory and gate reservations before an ``otto run`` instruction runs."""
     if ctx.resilient_parsing:
         return
 

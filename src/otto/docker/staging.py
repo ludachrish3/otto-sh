@@ -42,6 +42,7 @@ def image_build_dir(project: str, image_name: str) -> Path:
 
 
 def compose_dir(project: str) -> Path:
+    """Per-project compose staging directory on the parent host."""
     return project_root(project) / "compose"
 
 

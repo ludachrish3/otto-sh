@@ -1,3 +1,5 @@
+"""Built-in ``"json"`` ``LabRepository`` backend: loads labs from ``hosts.json`` files."""
+
 import json
 from pathlib import Path
 from typing import Any
