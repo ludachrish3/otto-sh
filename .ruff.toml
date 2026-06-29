@@ -13,33 +13,33 @@ docstring-code-line-length = 100
 [lint]
 select = ["ALL"]
 ignore = [
-    # ===== PERMANENT deny-list (spec groups 1-4) — these stay disabled forever =====
-    # --- Group 1: formatter-owned (ruff's documented formatter-conflict set) ---
+    # --- formatter-owned (ruff's documented formatter-conflict set) ---
     "W191", "E111", "E114", "E117", "D206", "D300",
     "Q000", "Q001", "Q002", "Q003",
     "COM812", "COM819",
     "ISC001", "ISC002",
-    # --- Group 2: otto deliberate patterns (user-confirmed) ---
+
+    # --- otto deliberate patterns  ---
     "TID252",   # relative imports (from ..x import)
     "PLC0415",  # lazy/local imports (deliberate, startup speed)
     "G004",     # f-string in logging calls
     "TRY003", "EM101", "EM102", "EM103",  # terse inline exception messages
     "ASYNC230", "ASYNC240",  # blocking file I/O in async: rule premises trio/anyio; otto is asyncio, flagged sites are brief/off-hot-path FS ops
-    # --- Group 3: annotation-safety (protect Sphinx-nitpicky + py3.10) ---
+
+    # --- annotation-safety (protect Sphinx-nitpicky + py3.10) ---
     "FA100", "FA102",          # would force `from __future__ import annotations`
     "TC001", "TC002", "TC003", # would hide annotation imports under TYPE_CHECKING
     "UP037",                   # would unquote forward refs -> NameError on 3.10
-    # --- Group 4: low-value / noisy ---
-    "FBT001", "FBT002", "FBT003",  # boolean-trap (considered & declined, see spec)
+
+    # --- low-value / noisy ---
+    "FBT001", "FBT002", "FBT003",  # boolean-trap
     "FIX002", "TD002", "TD003",    # TODO comment formatting
     "CPY001",                      # mandatory copyright header (otto uses none)
     "ANN401",                      # typing.Any
-    # --- Group 4 (cont.): docstring conventions otto documents elsewhere ---
+
+    # --- docstring conventions otto documents elsewhere ---
     "D105",  # magic-method docstrings: dunder semantics are conventional; class docstring covers them
     "D107",  # __init__ docstrings: construction is documented in the class docstring (D101), per numpy/google style
-
-    # ===== TEMP ratchet now EMPTY — the strict-linting roadmap is complete. =====
-    # Every rule in select=["ALL"] is enforced except the principled deny-list above.
 ]
 
 [lint.per-file-ignores]
