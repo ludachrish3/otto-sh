@@ -363,7 +363,7 @@ class TestMetricParserExtensibility:
             chart = "x"
 
         with pytest.raises(TypeError):
-            Incomplete()  # type: ignore
+            Incomplete()  # type: ignore[abstract]
 
     def test_custom_parser_works(self):
         class UptimeParser(MetricParser):

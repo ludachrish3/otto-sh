@@ -132,7 +132,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     os_version: str | None = None
     """OS/kernel version string, or None if unspecified."""
 
-    name: str = None  # type: ignore
+    name: str = ""
     """Human readable name to represent the host. Automatically generated if not provided."""
 
     user: str | None = None
@@ -301,7 +301,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     def __post_init__(self) -> None:
 
         self.id = self._generate_id()
-        if self.name is None:
+        if not self.name:
             self.name = self._generate_name()
 
         # Lab JSON serializes ``default_dest_dir`` as a string; coerce so

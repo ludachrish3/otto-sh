@@ -38,9 +38,8 @@ ignore = [
     "D105",  # magic-method docstrings: dunder semantics are conventional; class docstring covers them
     "D107",  # __init__ docstrings: construction is documented in the class docstring (D101), per numpy/google style
 
-    # ===== TEMP (ratchet) — NOT permanent. Generated in Step 3; removed =====
-    # ===== batch-by-batch in Phases 2..A. Do NOT hand-edit individual codes. =====
-    "PGH003",
+    # ===== TEMP ratchet now EMPTY — the strict-linting roadmap is complete. =====
+    # Every rule in select=["ALL"] is enforced except the principled deny-list above.
 ]
 
 [lint.per-file-ignores]

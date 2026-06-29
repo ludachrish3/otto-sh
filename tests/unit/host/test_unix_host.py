@@ -1181,8 +1181,8 @@ class TestOpenSession:
     @pytest.mark.asyncio
     async def test_unknown_term_raises_value_error(self):
         h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False)
-        h.term = "foobar"  # type: ignore
-        h._connections.term = "foobar"  # type: ignore
+        h.term = "foobar"
+        h._connections.term = "foobar"
         with pytest.raises(ValueError, match="foobar"):
             await h.open_session("monitor")
 

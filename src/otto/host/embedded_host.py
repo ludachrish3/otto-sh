@@ -120,7 +120,7 @@ class EmbeddedHost(RemoteHost):
     os_version: str | None = None
     """OS/kernel version string, or None if unspecified."""
 
-    name: str = None  # type: ignore
+    name: str = ""
     """Human readable name to represent the host. Automatically generated if not provided."""
 
     creds: dict[str, str] = field(default_factory=dict)
@@ -279,7 +279,7 @@ class EmbeddedHost(RemoteHost):
     def __post_init__(self) -> None:
 
         self.id = self._generate_id()
-        if self.name is None:
+        if not self.name:
             self.name = self._generate_name()
 
         # Lab JSON serializes ``filesystem`` as a string; the storage factory
