@@ -79,9 +79,15 @@ from .completion_cache import (  # noqa: E402 — import after completion-mode b
 
 
 # Defined BEFORE apply_repo_settings() below: that call exec's user/test files at
-# import time, and those files may `from otto.configmodule import get_repos`. If
-# these accessors were defined later (after apply_repo_settings) the import would
-# hit a partially-initialized module → circular ImportError.
+# import time, and those files may `from otto.configmodule import get_repos` — or,
+# transitively, `from otto.cli.run import instruction` → cli.main →
+# `from ..configmodule import get_completion_names`. If these accessors were
+# defined later (after apply_repo_settings) the nested import would hit a
+# partially-initialized module → circular ImportError. (get_completion_names is
+# also defined early, below, for this reason — it reads the module-global
+# _completion_names at call time, so defining it before the value is computed is
+# safe. This matters once `import otto` is import-light: a fresh process can make
+# configmodule its first otto import, before otto.cli has loaded.)
 def get_repos() -> list[Repo]:
     """Return the list of ``Repo`` objects built from the configured SUT directories."""
     return _repos
@@ -93,6 +99,30 @@ def get_env() -> "OttoEnvSettings":
 
 
 _completion_names: dict[str, Any] | None = None
+
+
+def get_completion_names() -> dict[str, Any] | None:
+    """Return cached instruction/suite/host data when the completion fast path is active.
+
+    Return ``None`` when not active.
+
+    Returned keys:
+
+    - ``instructions`` / ``suites``: each a list of
+      ``{"name": str, "options": [...]}`` dicts. :mod:`otto.cli.main` rebuilds
+      Typer stubs from them.
+    - ``hosts``: a plain list of host-ID strings. :mod:`otto.cli.host`'s
+      ``host_id`` completer prefers this over live ``hosts.json`` parsing.
+    - ``term_backends``: a ``list[str]`` of registered term backend names.
+      :mod:`otto.cli.host`'s ``--term`` completer prefers this over the live
+      registry.
+    - ``transfer_backends``: a list of
+      ``{"name": str, "host_families": [str, ...]}`` dicts for registered
+      transfer backends. :mod:`otto.cli.host`'s ``--transfer`` completer
+      prefers this over the live registry.
+    """
+    return _completion_names
+
 
 if is_completion_mode():
     _completion_names = read_cache(_repos)
@@ -122,26 +152,3 @@ if _completion_names is None:
             transfer_backends=_backends["transfer_backends"],
             usernames=_usernames,
         )
-
-
-def get_completion_names() -> dict[str, Any] | None:
-    """Return cached instruction/suite/host data when the completion fast path is active.
-
-    Return ``None`` when not active.
-
-    Returned keys:
-
-    - ``instructions`` / ``suites``: each a list of
-      ``{"name": str, "options": [...]}`` dicts. :mod:`otto.cli.main` rebuilds
-      Typer stubs from them.
-    - ``hosts``: a plain list of host-ID strings. :mod:`otto.cli.host`'s
-      ``host_id`` completer prefers this over live ``hosts.json`` parsing.
-    - ``term_backends``: a ``list[str]`` of registered term backend names.
-      :mod:`otto.cli.host`'s ``--term`` completer prefers this over the live
-      registry.
-    - ``transfer_backends``: a list of
-      ``{"name": str, "host_families": [str, ...]}`` dicts for registered
-      transfer backends. :mod:`otto.cli.host`'s ``--transfer`` completer
-      prefers this over the live registry.
-    """
-    return _completion_names
