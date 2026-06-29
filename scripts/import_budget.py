@@ -104,14 +104,16 @@ def main() -> int:
     ap.add_argument("--hyperfine", action="store_true", help="also show wall-clock stats (manual)")
     args = ap.parse_args()
 
-    print(f"{'surface':14} {'total':>6} {'otto':>5}  heavy_present")
+    # flush=True so these lines interleave correctly with hyperfine's (unbuffered)
+    # subprocess output when stdout is piped/redirected (e.g. `make profile > log`).
+    print(f"{'surface':14} {'total':>6} {'otto':>5}  heavy_present", flush=True)
     for s in SURFACES:
         r = measure(s.argv)
         present = [d for d in s.deny if d in r["modules"]]
-        print(f"{s.key:14} {r['count']:6d} {len(r['otto_modules']):5d}  {present}")
+        print(f"{s.key:14} {r['count']:6d} {len(r['otto_modules']):5d}  {present}", flush=True)
         if args.update:
             write_snapshot(s.key, r["otto_modules"])
-            print(f"  -> wrote {snapshot_path(s.key).relative_to(REPO_ROOT)} ({len(r['otto_modules'])} modules)")
+            print(f"  -> wrote {snapshot_path(s.key).relative_to(REPO_ROOT)} ({len(r['otto_modules'])} modules)", flush=True)
         if args.hyperfine:
             _run_hyperfine(s)
     return 0

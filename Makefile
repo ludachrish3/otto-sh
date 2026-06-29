@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck lint format clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine
+.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck lint format clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -154,6 +154,9 @@ hyperfine: ## Install the pinned hyperfine benchmark binary into .venv/bin (dev 
 	else \
 		bash scripts/install_hyperfine.sh "$(HYPERFINE_VERSION)" "$(VENV_BIN)"; \
 	fi
+
+profile: hyperfine ## Profile otto startup: per-surface import-module counts + hyperfine wall-clock for each CLI surface (read-only; auto-installs hyperfine, does not modify snapshots)
+	uv run python scripts/import_budget.py --hyperfine
 
 build: ## Build the project with uv
 	uv build
