@@ -34,7 +34,7 @@ class Surface:
 _ALL_HEAVY = ("fastapi", "uvicorn", "starlette", "pytest", "jinja2")
 
 SURFACES: list[Surface] = [
-    Surface("import_otto", ["python"], _ALL_HEAVY, cap=523),
+    Surface("import_otto", ["python"], _ALL_HEAVY, cap=85),        # lazy __init__ (Part D): was 523
     Surface("help", ["otto", "--help"], _ALL_HEAVY, cap=523),
     Surface("run", ["otto", "run", "--help"], _ALL_HEAVY, cap=479),
     Surface("host", ["otto", "host", "--help"], _ALL_HEAVY, cap=481),
@@ -46,10 +46,23 @@ SURFACES: list[Surface] = [
     Surface("cov", ["otto", "cov", "--help"], ("fastapi", "uvicorn", "starlette", "pytest"), cap=491),    # jinja2 allowed
 ]
 
-_CHILD = """
+# Child script for `import otto` surface: bare import, no CLI invocation.
+_CHILD_IMPORT = """
+import sys, json
+import otto
+mods = sorted(sys.modules)
+otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
+print(json.dumps({"count": len(mods), "modules": mods, "otto_modules": otto_mods}))
+"""
+
+# Child script for CLI surfaces: access otto.app to trigger the lazy __init__
+# __getattr__ → imports otto.cli → cli.main runs _register_subcommands(argv).
+# Measures import footprint, not CLI invocation.
+_CHILD_CLI = """
 import sys, json
 sys.argv = {argv!r}
 import otto
+_ = otto.app  # access triggers lazy cli.main import -> _register_subcommands(argv); measures import footprint, not invocation
 mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
 print(json.dumps({{"count": len(mods), "modules": mods, "otto_modules": otto_mods}}))
@@ -62,7 +75,10 @@ def _sanitized_env() -> dict[str, str]:
 
 
 def measure(argv: list[str]) -> dict:
-    code = _CHILD.format(argv=argv)
+    if argv[:1] == ["python"]:
+        code = _CHILD_IMPORT
+    else:
+        code = _CHILD_CLI.format(argv=argv)
     out = subprocess.run(
         [sys.executable, "-c", code],
         capture_output=True,

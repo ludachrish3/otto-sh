@@ -83,3 +83,41 @@ def test_suite_public_api_still_resolves():
         capture_output=True, text=True, check=True, env=harness._sanitized_env(),
     )
     assert out.stdout.strip() == "ok"
+
+
+def test_bare_import_otto_is_lazy():
+    """Bare `import otto` must not eagerly pull the CLI/config graph (Part D)."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys; import otto; "
+        "print('otto.cli' in sys.modules, "
+        "'otto.configmodule' in sys.modules, "
+        "'otto.context' in sys.modules)"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, check=True, env=harness._sanitized_env(),
+    )
+    assert out.stdout.strip() == "False False False", out.stdout
+
+
+def test_library_use_populates_registries():
+    """Lazy __init__ must not leave host/transfer registries empty for library
+    users: accessing the lab API pulls otto.host, whose backends self-register."""
+    import subprocess
+    import sys
+
+    code = (
+        "import otto; "
+        "from otto import all_hosts; "  # triggers configmodule -> host graph
+        "from otto.host.transfer.registry import build_transfer_backend; "
+        "build_transfer_backend('scp'); build_transfer_backend('tftp'); "
+        "print('registries OK')"
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True, text=True, check=True, env=harness._sanitized_env(),
+    )
+    assert out.stdout.strip() == "registries OK", out.stdout

@@ -246,6 +246,27 @@ surface's otto-module count, so its golden snapshot + count cap are regenerated
 demonstration that the guard works. The per-subcommand and `otto --help` surfaces
 are essentially unchanged by Part D.
 
+### Implemented — measured result
+
+Wall-clock timing measured via `hyperfine` on the dev VM; module counts via the
+import-budget harness (`scripts/import_budget.py`).
+
+| Library usage | modules now → after | wall-clock |
+| --- | --- | --- |
+| bare `import otto` | 508 → 65 | ~152 → ~11 ms |
+| `from otto import OttoContext` | 508 → 139 | ~152 → ~29 ms |
+| `from otto import options` | 508 → 206 | (pydantic-bound) |
+| `from otto import all_hosts` | 508 → 458 | modest (lab graph) |
+| `import otto` + `.app` (CLI) | 508 → 508 | unchanged |
+
+The import-budget guard's `import_otto` surface was re-baselined (snapshot
+110 → 1 otto modules, cap 523 → 85); all CLI surfaces unchanged (the guard
+measures import footprint via `otto.app` access).
+
+**Part E (static-help `--help`) was dropped by decision** — it only saved
+~45 modules / ~10 ms post-Phase-A; the SSOT-manifest complexity was not
+worth the gain.
+
 ## Part E — static-help top-level `--help` (follow-up phase)
 
 This is the optimization that actually cuts the **`otto --help`** surface (the
