@@ -3,9 +3,9 @@ Unit tests for the main CLI entry-point argument parsing.
 
 Tests cover:
   - Eager options that exit before the main callback (--version, --list-labs)
-  - Global options forwarded to init_cli_logging (--verbose, --log-level, --log-days, --xdir)
+  - Global options forwarded to init_cli_logging (--show-time, --log-level, --log-days, --xdir)
   - Lab-loading arguments (--lab, --show-lab, --list-hosts)
-  - Validation of numeric constraints (--log-days min=0)
+  - Validation of numeric constraints (--log-days min=0, --lab-depth min=0)
   - --field / --debug toggle
 """
 
@@ -161,7 +161,7 @@ class TestLoggerArguments:
     (RichHandler constructor args, remove_old_logs call args).
     """
 
-    def test_verbose_default_is_false(self, real_main_mocks):
+    def test_show_time_default_is_false(self, real_main_mocks):
         _invoke([])
         real_main_mocks["RichHandler"].assert_called_once_with(
             level=ANY,
@@ -177,8 +177,8 @@ class TestLoggerArguments:
             omit_repeated_times=ANY,
         )
 
-    def test_verbose_long_flag(self, real_main_mocks):
-        _invoke(["--verbose"])
+    def test_show_time_flag(self, real_main_mocks):
+        _invoke(["--show-time"])
         real_main_mocks["RichHandler"].assert_called_once_with(
             level=ANY,
             console=ANY,
@@ -193,21 +193,14 @@ class TestLoggerArguments:
             omit_repeated_times=ANY,
         )
 
-    def test_verbose_short_flag(self, real_main_mocks):
-        _invoke(["-v"])
-        real_main_mocks["RichHandler"].assert_called_once_with(
-            level=ANY,
-            console=ANY,
-            show_time=True,
-            tracebacks_max_frames=ANY,
-            tracebacks_show_locals=ANY,
-            markup=ANY,
-            highlighter=ANY,
-            show_path=ANY,
-            enable_link_path=ANY,
-            log_time_format=ANY,
-            omit_repeated_times=ANY,
-        )
+    def test_show_time_flag_replaces_verbose(self):
+        result = runner.invoke(app, ["--help"])
+        assert "--show-time" in result.output
+        assert "--verbose" not in result.output
+
+    def test_lab_depth_flag_present(self):
+        result = runner.invoke(app, ["--help"])
+        assert "--lab-depth" in result.output
 
     def test_rich_log_file_default_is_false(self, real_main_mocks):
         _invoke([])
@@ -314,6 +307,24 @@ class TestLabLoading:
     def test_show_lab_exits_zero(self, real_main_mocks):
         result = _invoke(["--show-lab"])
         assert result.exit_code == 0
+
+    def test_show_lab_lab_depth_zero_maps_to_unlimited(self, real_main_mocks):
+        """--lab-depth 0 must reach pprint as max_depth=None (unlimited)."""
+        # The --show-lab block does `from rich.pretty import pprint` locally,
+        # so patch where it is looked up.
+        with patch("rich.pretty.pprint") as spy:
+            result = _invoke(["--show-lab", "--lab-depth", "0"])
+        assert result.exit_code == 0
+        spy.assert_called_once()
+        assert spy.call_args.kwargs["max_depth"] is None
+
+    def test_show_lab_lab_depth_value_passed_to_pprint(self, real_main_mocks):
+        """--lab-depth N (N > 0) must reach pprint as max_depth=N."""
+        with patch("rich.pretty.pprint") as spy:
+            result = _invoke(["--show-lab", "--lab-depth", "2"])
+        assert result.exit_code == 0
+        spy.assert_called_once()
+        assert spy.call_args.kwargs["max_depth"] == 2
 
     def test_list_hosts_exits_zero(self, real_main_mocks):
         result = _invoke(["--list-hosts"])

@@ -20,7 +20,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from typing_extensions import Self, override
 
@@ -33,8 +33,9 @@ if TYPE_CHECKING:
     from .connections import ConnectionManager
 
 from ..logger import get_otto_logger
+from ..logger.mode import LogMode
 from ..utils import CommandStatus, Status
-from .host import RunResult, ShellCommand
+from .host import RunResult, ShellCommand, _normalize_log_mode
 
 logger = get_otto_logger()
 
@@ -69,8 +70,18 @@ _HANDSHAKE_RETRY_BACKOFF = 2.0
 def _drop_output(_line: str) -> None:
     """Output sink that discards a command's streamed output.
 
-    Used to honor a per-command ``log=False`` without mutating any shared logging state.
+    Used to honor an effective ``LogMode.NEVER`` without mutating any shared logging state.
     """
+
+
+def _sink_for(
+    log_output: Callable[[str, LogMode], None],
+    mode: LogMode,
+) -> Callable[[str], None]:
+    """Per-command output sink: NEVER discards; else forward each line tagged with the mode."""
+    if mode is LogMode.NEVER:
+        return _drop_output
+    return lambda line: log_output(line, mode)
 
 
 class ShellSession(ABC):
@@ -344,6 +355,7 @@ class ShellSession(ABC):
         expects: list[Expect] | None = None,
         timeout: float | None = None,
         on_output: Callable[[str], None] | None = None,
+        redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandStatus:
         """Execute a shell command with sentinel-based output demarcation.
@@ -368,10 +380,10 @@ class ShellSession(ABC):
         try:
             if timeout is not None:
                 return await asyncio.wait_for(
-                    self._run_cmd_inner(cmd, expects, sink, write_progress),
+                    self._run_cmd_inner(cmd, expects, sink, redact, write_progress),
                     timeout=timeout,
                 )
-            return await self._run_cmd_inner(cmd, expects, sink, write_progress)
+            return await self._run_cmd_inner(cmd, expects, sink, redact, write_progress)
 
         except asyncio.TimeoutError:
             partial = await self._recover_session()
@@ -405,6 +417,7 @@ class ShellSession(ABC):
         cmd: str,
         expects: list[Expect] | None,
         on_output: Callable[[str], None],
+        redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandStatus:
         """Send sentinel-wrapped command, handle expects, surface output.
@@ -416,7 +429,7 @@ class ShellSession(ABC):
         Zephyr) emits nothing mid-stream and surfaces ``parse_output(buffer)``
         once on completion, so shell prompts and retcode scaffolding never reach
         the log. ``on_output`` is the per-command sink (the host's logger, or a
-        no-op when the caller passed ``log=False``).
+        no-op when the effective mode is ``LogMode.NEVER``).
         """
         live = self._frame.streams_output_live
 
@@ -432,7 +445,13 @@ class ShellSession(ABC):
             if len(framed) <= _LOG_PREVIEW_FRAMED
             else f"{framed[:_LOG_PREVIEW_FRAMED]}...({len(framed)} bytes total)"
         )
-        logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
+        if redact:
+            logger.debug(
+                f"{self._log_tag}: framed write cmd=<redacted> "
+                f"payload=<redacted {len(framed)} bytes>"
+            )
+        else:
+            logger.debug(f"{self._log_tag}: framed write cmd={cmd!r} payload={shown!r}")
         self._write_progress = write_progress
         try:
             await self._write(framed)
@@ -484,7 +503,8 @@ class ShellSession(ABC):
             if not expect_matched:
                 if not seen_begin:
                     if self._frame.marks_begin(data, self._markers):
-                        logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
+                        if not redact:
+                            logger.debug(f"{self._log_tag}: begin marker matched on chunk={data!r}")
                         seen_begin = True
                 elif live:
                     line = data.rstrip("\r\n").replace("\r", "")
@@ -507,10 +527,16 @@ class ShellSession(ABC):
             if len(buffer) <= _LOG_PREVIEW_BUFFER
             else f"{buffer[:_LOG_PREVIEW_HANDSHAKE]}...({len(buffer)}b)...{buffer[-_LOG_PREVIEW_HANDSHAKE:]}"  # noqa: E501 — long f-string with buffer slices
         )
-        logger.debug(
-            f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
-            f"output_len={len(output)} buffer={buffer_preview!r}"
-        )
+        if redact:
+            logger.debug(
+                f"{self._log_tag}: run_cmd done cmd=<redacted> retcode={retcode} "
+                f"output_len={len(output)} buffer=<redacted {len(buffer)} bytes>"
+            )
+        else:
+            logger.debug(
+                f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
+                f"output_len={len(output)} buffer={buffer_preview!r}"
+            )
         return CommandStatus(command=cmd, output=output, status=status, retcode=retcode)
 
     def _build_combined_pattern(
@@ -899,8 +925,8 @@ class HostSession:
         self,
         name: str,
         session: ShellSession,
-        log_command: Callable[[str], None],
-        log_output: Callable[[str], None],
+        log_command: Callable[[str, LogMode], None],
+        log_output: Callable[[str, LogMode], None],
         deregister: Callable[[str], None],
         user_password: "Callable[[str], str | None] | None" = None,
     ) -> None:
@@ -958,7 +984,7 @@ class HostSession:
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = 10.0,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> RunResult:
         """Execute one or more commands on this named session.
 
@@ -974,13 +1000,15 @@ class HostSession:
         default_expects = _normalize_expects(expects)
 
         async def _run_sc(sc: ShellCommand, t: float | None) -> CommandStatus:
-            if sc.log:
-                self._log_command(sc.cmd)
+            mode = _normalize_log_mode(cast("LogMode | bool", sc.log))
+            if mode is not LogMode.NEVER:
+                self._log_command(sc.cmd, mode)
             return await self._session.run_cmd(
                 sc.cmd,
                 expects=_normalize_expects(sc.expects),
                 timeout=t,
-                on_output=None if sc.log else _drop_output,
+                on_output=_sink_for(self._log_output, mode),
+                redact=mode is LogMode.NEVER,
             )
 
         if isinstance(cmds, (str, ShellCommand)):
@@ -992,10 +1020,11 @@ class HostSession:
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
-    async def send(self, text: str, log: bool = True) -> None:
+    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
         """Send raw text to this session's stdin. See :meth:`~otto.host.unix_host.UnixHost.send`."""
-        if log:
-            self._log_command(text.rstrip())
+        mode = _normalize_log_mode(log)
+        if mode is not LogMode.NEVER:
+            self._log_command(text.rstrip(), mode)
         await self._session.send(text)
 
     async def expect(
@@ -1005,7 +1034,7 @@ class HostSession:
     ) -> str:
         """Wait for a pattern in this session's output. See :meth:`~otto.host.unix_host.UnixHost.expect`."""  # noqa: E501 — Sphinx xref
         result = await self._session.expect(pattern, timeout)
-        self._log_output(result)
+        self._log_output(result, LogMode.NORMAL)
         return result
 
     async def close(self) -> None:
@@ -1040,8 +1069,8 @@ class SessionManager:
         self,
         connections: "ConnectionManager | None" = None,
         name: str = "",
-        log_command: Callable[[str], None] = lambda _: None,
-        log_output: Callable[[str], None] = lambda _: None,
+        log_command: Callable[[str, LogMode], None] = lambda *_: None,
+        log_output: Callable[[str, LogMode], None] = lambda *_: None,
         session_factory: "Callable[[], ShellSession] | None" = None,
         oneshot_factory: "Callable[[str, float | None], Awaitable[CommandStatus]] | None" = None,
         command_frame: CommandFrame | None = None,
@@ -1187,7 +1216,7 @@ class SessionManager:
             last_exc: ConnectionError | None = None
             for attempt in range(2):
                 new_session = await self._build_session()
-                new_session._on_output = self._log_output  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
+                new_session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
                 self._seed_user(new_session)
                 # The marker handshake can take ~1 s on a cold telnet open. A
                 # caller-side ``wait_for`` cancellation (or a failed login)
@@ -1267,7 +1296,7 @@ class SessionManager:
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
         write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandStatus:
         """Run *cmd* on the default session, creating it if needed.
@@ -1277,14 +1306,16 @@ class SessionManager:
         reused until it dies).
         """
         await self._ensure_session()
-        if log:
-            self._log_command(cmd)
+        mode = _normalize_log_mode(log)
+        if mode is not LogMode.NEVER:
+            self._log_command(cmd, mode)
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         return await self._session.run_cmd(
             cmd,
             expects=expects,
             timeout=timeout,
-            on_output=None if log else _drop_output,
+            on_output=_sink_for(self._log_output, mode),
+            redact=mode is LogMode.NEVER,
             write_progress=write_progress,
         )
 
@@ -1292,7 +1323,7 @@ class SessionManager:
         self,
         cmd: str,
         timeout: float | None = None,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run *cmd* without sharing state with the default session.
 
@@ -1306,8 +1337,9 @@ class SessionManager:
             return await self._oneshot_factory(cmd, timeout)
 
         assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no oneshot_factory
-        if log:
-            self._log_command(cmd)
+        mode = _normalize_log_mode(log)
+        if mode is not LogMode.NEVER:
+            self._log_command(cmd, mode)
         match self._connections.term:
             case "ssh":
                 import asyncssh
@@ -1323,8 +1355,8 @@ class SessionManager:
                     async for raw_line in process.stdout:
                         line = raw_line.rstrip("\n")
                         lines.append(line)
-                        if log:
-                            self._log_output(line)
+                        if mode is not LogMode.NEVER:
+                            self._log_output(line, mode)
                 except asyncio.TimeoutError:
                     process.terminate()
                 result = await process.wait()
@@ -1449,7 +1481,7 @@ class SessionManager:
                             f'{self._name}: unsupported terminal type "{self._connections.term}"'
                         )
 
-            shell_session._on_output = self._log_output  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
+            shell_session._on_output = _sink_for(self._log_output, LogMode.NORMAL)  # noqa: SLF001 — intra-package wiring of output callback on freshly-built ShellSession
             self._seed_user(shell_session)
             # The marker handshake can take ~1 s on a cold telnet open (the
             # slow window that used to live inside ``connect()``'s login
@@ -1474,11 +1506,12 @@ class SessionManager:
             self._named_sessions[name] = host_session
             return host_session
 
-    async def send(self, text: str, log: bool = True) -> None:
+    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
         """Send raw text to the default session, creating it if needed."""
         await self._ensure_session()
-        if log:
-            self._log_command(text.rstrip())
+        mode = _normalize_log_mode(log)
+        if mode is not LogMode.NEVER:
+            self._log_command(text.rstrip(), mode)
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         await self._session.send(text)
 
@@ -1491,7 +1524,7 @@ class SessionManager:
         await self._ensure_session()
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         result = await self._session.expect(pattern, timeout)
-        self._log_output(result)
+        self._log_output(result, LogMode.NORMAL)
         return result
 
     async def close_all(self) -> None:

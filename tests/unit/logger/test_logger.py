@@ -117,3 +117,10 @@ def test_remove_old_logs_no_budget_message_on_normal_run(caplog):
 
     assert not d.exists()
     assert not any("time budget" in r.message for r in caplog.records)
+
+
+def test_otto_get_logger_reexport():
+    import otto
+    from otto.logger import get_otto_logger
+
+    assert otto.get_logger is get_otto_logger

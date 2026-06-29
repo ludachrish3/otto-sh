@@ -16,7 +16,7 @@ To confirm the nc-monitor retirement specifically — that control-plane work
 no longer opens a dedicated session — re-run with ``--log-level DEBUG`` and
 count the telnet connects::
 
-    grep -c 'via telnet on port' <run-dir>/otto.log
+    grep -c 'via telnet on port' <run-dir>/console.log
 
 It should track the transfer's pooled-session count (~file count); the
 retired design added one extra connect for the standalone ``_nc_monitor``

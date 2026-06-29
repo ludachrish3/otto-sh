@@ -14,13 +14,14 @@ These options are available on every `otto` command:
 | `--log-days` | `OTTO_LOG_DAYS` | `30` | Number of days to retain logs |
 | `--log-level` | `OTTO_LOG_LEVEL` | `INFO` | Logging level |
 | `--rich-log-file / --no-rich-log-file` | `OTTO_LOG_RICH` | `--no-rich-log-file` | Rich formatting in log files |
-| `--verbose, -v` | | `False` | Verbose console output |
+| `--show-time` | | `False` | Show per-line timestamps on the live console (log files are always timestamped) |
 | `--dry-run, -n` | | `False` | Preview without running commands |
 | `--as-user USERNAME` | | current user | Check reservations as USERNAME instead of the current user |
 | `--skip-reservation-check, -R` | | `False` | Bypass the reservation check entirely (emergency use only) |
 | `--list-labs` | | | List available lab names and exit |
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |
 | `--show-lab` | | | Print full lab details and exit |
+| `--lab-depth` | | `3` | Depth for `--show-lab` output (0 = unlimited) |
 | `--clear-autocomplete-cache` | | | Delete the shell-completion cache file and exit |
 | `--version` | | | Show version and exit |
 | `--install-completion` | | | Install shell completion and exit |

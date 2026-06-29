@@ -28,10 +28,12 @@ async def test_perform_su_builds_command_and_returns_target():
     async def expect(pat, timeout=10.0):
         return "Password:"
 
+    from otto.logger.mode import LogMode
+
     target = await _perform_su(send, expect, "root", None, lambda u: "rootpw")
     assert target == "root"
     assert ("su root\n", True) in sent
-    assert ("rootpw\n", False) in sent
+    assert ("rootpw\n", LogMode.NEVER) in sent
 
 
 @pytest.mark.asyncio
@@ -173,25 +175,27 @@ async def test_switch_user_sends_su_and_password():
         element="box",
         creds={"admin": "secret", "root": "rootpw"},
         user="admin",
-        log=False,
+        log=True,  # NORMAL host so the su exchange's per-command modes pass through
     )
+    from otto.logger.mode import LogMode
+
     host._session_mgr = _mock_session_mgr()
     await host.switch_user("root")
-    host._session_mgr.send.assert_any_await("su root\n", log=True)
-    host._session_mgr.send.assert_any_await("rootpw\n", log=False)
+    host._session_mgr.send.assert_any_await("su root\n", log=LogMode.NORMAL)
+    host._session_mgr.send.assert_any_await("rootpw\n", log=LogMode.NEVER)
 
 
 @pytest.mark.asyncio
 async def test_switch_user_default_is_root_no_user_arg():
     from otto.host.unix_host import UnixHost
 
-    host = UnixHost(
-        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=False
-    )
+    host = UnixHost(ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=True)
+    from otto.logger.mode import LogMode
+
     host._session_mgr = _mock_session_mgr()
     host._session_mgr.expect.return_value = "Password:"
     await host.switch_user()  # default root, no creds entry for root → no password sent
-    host._session_mgr.send.assert_any_await("su\n", log=True)
+    host._session_mgr.send.assert_any_await("su\n", log=LogMode.NORMAL)
 
 
 @pytest.mark.asyncio

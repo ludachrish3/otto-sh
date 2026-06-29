@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
 from ..logger import get_otto_logger
+from ..logger.mode import LogMode
 from ..utils import Arg, CommandStatus, Exclude, Status, cli_exposed
 from .binary_loader import BinaryLoader
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
@@ -248,8 +249,11 @@ class EmbeddedHost(RemoteHost):
     ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
     fail loud. See :attr:`~otto.host.host.BaseHost.power_control`."""
 
-    log: bool = field(default=True, repr=False)
-    """Whether this host should log its output to stdout and log files."""
+    log: "LogMode | bool" = field(default=LogMode.NORMAL, repr=False)
+    """Standing per-host logging disposition. ``QUIET`` keeps this host's command
+    I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
+    (warnings/errors are unaffected). Accepts a bool for convenience
+    (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
 
     log_stdout: bool = field(default=True, repr=False)
     """Whether this host should log its output to stdout."""
@@ -409,7 +413,7 @@ class EmbeddedHost(RemoteHost):
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Execute a single command on the embedded host via the persistent shell session.
 
@@ -419,14 +423,16 @@ class EmbeddedHost(RemoteHost):
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
-        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
+        return await self._session_mgr.run_cmd(
+            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+        )
 
     @override
     async def oneshot(
         self,
         cmd: str,
         timeout: float | None = None,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a single command on the embedded host.
 
@@ -438,7 +444,7 @@ class EmbeddedHost(RemoteHost):
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
-        return await self._session_mgr.run_cmd(cmd, timeout=timeout, log=log)
+        return await self._session_mgr.run_cmd(cmd, timeout=timeout, log=self._effective_log(log))
 
     @override
     async def open_session(self, name: str) -> HostSession:
@@ -454,13 +460,14 @@ class EmbeddedHost(RemoteHost):
         return await self._session_mgr.open_session(name)
 
     @override
-    async def send(self, text: str, log: bool = True) -> None:
+    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
         """Send raw text to the host's persistent session."""
+        effective = self._effective_log(log)
         if is_dry_run():
-            if log:
+            if effective is not LogMode.NEVER:
                 self._log_command(f"[DRY RUN] send({text!r})")
             return
-        await self._session_mgr.send(text, log=log)
+        await self._session_mgr.send(text, log=effective)
 
     @override
     async def expect(
@@ -628,8 +635,8 @@ class EmbeddedHost(RemoteHost):
         ``load`` pushes a binary into the target's loader (e.g. Zephyr LLEXT's
         ``llext load_hex``), with no destination file. The payload is read from
         *file*, formatted into the device command by the loader, and sent with
-        ``log=False`` so the (large) encoded payload never reaches the console
-        or log. Returns ``(Status, str)`` like :meth:`put`/:meth:`get`; the
+        ``log=LogMode.NEVER`` so the (large) encoded payload never reaches the
+        console or log. Returns ``(Status, str)`` like :meth:`put`/:meth:`get`; the
         ``str`` carries the device's failure text on error.
 
         ``show_progress`` is **off by default** (the bar only renders in
@@ -654,11 +661,11 @@ class EmbeddedHost(RemoteHost):
                 result = await self._session_mgr.run_cmd(
                     cmd,
                     timeout=timeout,
-                    log=False,
+                    log=LogMode.NEVER,
                     write_progress=_wp,
                 )
         else:
-            result = await self._session_mgr.run_cmd(cmd, timeout=timeout, log=False)
+            result = await self._session_mgr.run_cmd(cmd, timeout=timeout, log=LogMode.NEVER)
         ok, reason = loader.check_loaded(result.output)
         if ok:
             return Status.Success, ""

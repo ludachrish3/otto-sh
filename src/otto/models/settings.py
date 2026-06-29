@@ -147,6 +147,17 @@ class ReservationConfigSpec(OttoModel):
     url: str | None = None
 
 
+class LoggingConfigSpec(OttoModel):
+    """Boundary spec for the ``[logging]`` section of ``settings.toml``.
+
+    ``capture`` lists top-level logger prefixes whose ``logging.getLogger(__name__)``
+    records otto should route into its sinks (in addition to the package prefixes
+    auto-derived from a repo's ``init``/``libs``). Defaults to an empty list.
+    """
+
+    capture: list[str] = Field(default_factory=list)
+
+
 class LabConfigSpec(OttoModel):
     """The otto-owned ``[lab]`` envelope: which host-source ``backend`` to use.
 
@@ -255,6 +266,7 @@ class SettingsModel(OttoModel):
     os_profiles: dict[str, OsProfileSpec] = Field(default_factory=dict)
     docker: DockerSettingsSpec = DockerSettingsSpec()
     lab: LabConfigSpec = LabConfigSpec()
+    logging: LoggingConfigSpec = LoggingConfigSpec()
     reservations: ReservationConfigSpec = ReservationConfigSpec()
 
     @model_validator(mode="before")

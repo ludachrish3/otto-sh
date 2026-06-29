@@ -27,6 +27,7 @@ from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain
 from ..host.transfer import _TRANSFER_BACKENDS
 from ..host.unix_host import UnixHost
+from ..logger.mode import LogMode
 from .base import OttoModel
 from .options import (
     FtpOptionsSpec,
@@ -144,7 +145,7 @@ class HostSpec(OttoModel):
     max_filename_len: int = 255
     resources: set[str] = Field(default_factory=set)
     interfaces: dict[str, str] = Field(default_factory=dict)
-    log: bool = True
+    log: LogMode = LogMode.NORMAL
     log_stdout: bool = True  # common: both UnixHost and EmbeddedHost declare it
     telnet_options: TelnetOptionsSpec = TelnetOptionsSpec()
     snmp: SnmpOptionsSpec | None = None
@@ -183,6 +184,14 @@ class HostSpec(OttoModel):
         if v is not None and v not in _FRAME_CLASSES:
             known = ", ".join(sorted(_FRAME_CLASSES))
             raise ValueError(f"command_frame {v!r} is not a registered frame. Known: {known}")
+        return v
+
+    @field_validator("log", mode="before")
+    @classmethod
+    def _coerce_log_bool(cls, v: object) -> object:
+        # Backward-compat: lab data may still declare log = true/false.
+        if isinstance(v, bool):
+            return LogMode.QUIET if v is False else LogMode.NORMAL
         return v
 
     def _common_host_kwargs(self) -> dict[str, Any]:

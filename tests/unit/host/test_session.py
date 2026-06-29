@@ -851,7 +851,7 @@ async def test_host_session_current_user_delegates_to_shell():
 
     shell = MockSession()
     shell.current_user = "alice"
-    hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None)
+    hs = HostSession("n", shell, lambda *_: None, lambda *_: None, lambda _: None)
     assert hs.current_user == "alice"
 
 
@@ -860,7 +860,7 @@ async def test_host_session_switch_user_without_resolver_raises():
     from otto.host.session import HostSession
 
     shell = MockSession()
-    hs = HostSession("n", shell, lambda _: None, lambda _: None, lambda _: None)
+    hs = HostSession("n", shell, lambda *_: None, lambda *_: None, lambda _: None)
     with pytest.raises(NotImplementedError):
         await hs.switch_user("root")
 
@@ -873,7 +873,12 @@ async def test_host_session_switch_user_elevates_and_stamps():
     shell.current_user = "alice"
     shell.expect.return_value = "Password:"
     hs = HostSession(
-        "n", shell, lambda _: None, lambda _: None, lambda _: None, user_password=lambda u: "rootpw"
+        "n",
+        shell,
+        lambda *_: None,
+        lambda *_: None,
+        lambda _: None,
+        user_password=lambda u: "rootpw",
     )
     await hs.switch_user("root")
     assert shell.current_user == "root"
@@ -890,7 +895,12 @@ async def test_host_session_as_user_restores_previous():
     shell.current_user = "alice"
     shell.expect.return_value = "Password:"
     hs = HostSession(
-        "n", shell, lambda _: None, lambda _: None, lambda _: None, user_password=lambda u: "rootpw"
+        "n",
+        shell,
+        lambda *_: None,
+        lambda *_: None,
+        lambda _: None,
+        user_password=lambda u: "rootpw",
     )
     async with hs.as_user("root"):
         assert shell.current_user == "root"
@@ -958,8 +968,8 @@ async def test_named_session_elevation_does_not_touch_default():
     hs = HostSession(
         "mon",
         named_shell,
-        lambda _: None,
-        lambda _: None,
+        lambda *_: None,
+        lambda *_: None,
         lambda _: None,
         user_password=lambda u: "rootpw",
     )
@@ -977,7 +987,7 @@ async def test_host_session_as_user_nested_restores_each_level():
     shell.current_user = "alice"
     shell.expect.return_value = "Password:"
     hs = HostSession(
-        "mon", shell, lambda _: None, lambda _: None, lambda _: None, user_password=lambda u: "pw"
+        "mon", shell, lambda *_: None, lambda *_: None, lambda _: None, user_password=lambda u: "pw"
     )
     async with hs.as_user("bob"):
         assert shell.current_user == "bob"

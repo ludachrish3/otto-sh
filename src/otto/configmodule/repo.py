@@ -197,6 +197,12 @@ class Repo:
     registry at parse time so lab-data entries can select it by name in the
     ``os_type`` field. See :func:`otto.host.os_profile.register_os_profile`."""
 
+    logging_capture: list[str] = field(default_factory=list[str], init=False)
+    """Explicit top-level logger prefixes from ``[logging] capture`` whose
+    ``logging.getLogger(__name__)`` records otto should route into its sinks,
+    in addition to the package prefixes auto-derived from ``init``/``libs``.
+    See :meth:`product_log_prefixes`."""
+
     settings: dict[str, Any] = field(default_factory=dict[str, Any])
     """Repo settings dict as parsed from the `settings.toml` file"""
 
@@ -483,8 +489,25 @@ class Repo:
             sel: {k: (list(v) if isinstance(v, list) else dict(v)) for k, v in entries.items()}
             for sel, entries in model.host_preferences.items()
         }
+        self.logging_capture = list(model.logging.capture)
         self.os_profiles = self._register_os_profiles(model.os_profiles)
         self.docker_settings = model.docker.to_runtime()
+
+    def product_log_prefixes(self) -> set[str]:
+        """Top-level package names whose ``getLogger(__name__)`` records otto captures.
+
+        The set is declared init module roots, immediate sub-packages of each
+        ``libs`` dir, and explicit ``[logging] capture`` entries.
+        """
+        prefixes: set[str] = set(self.logging_capture)
+        for mod in self.init:
+            prefixes.add(mod.split(".", 1)[0])
+        for lib in self.libs:
+            if lib.is_dir():
+                for child in lib.iterdir():
+                    if (child / "__init__.py").exists():
+                        prefixes.add(child.name)
+        return prefixes
 
     def _register_os_profiles(
         self,
@@ -676,8 +699,9 @@ class Repo:
             A ``CommandStatus`` containing the command's exit status and output.
         """
         from ..host.local_host import LocalHost
+        from ..logger.mode import LogMode
 
-        host = LocalHost(log=False)
+        host = LocalHost(log=LogMode.QUIET)
         try:
             return (await host.run(f"git -C {self.sut_dir} {cmd}")).only
         finally:

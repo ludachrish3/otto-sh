@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, NoReturn, cast
 from typing_extensions import override
 
 from ..logger import get_otto_logger
+from ..logger.mode import LogMode
 from .host import BaseHost
 
 if TYPE_CHECKING:
@@ -120,8 +121,10 @@ class RemoteHost(BaseHost):
     resources: set[str]
     """Names of resources required to use this host."""
 
-    log: bool
-    """Whether this host logs its output to stdout and log files."""
+    log: "LogMode | bool"
+    """Standing per-host logging disposition. ``QUIET`` keeps command I/O in
+    ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere.
+    Accepts a bool for convenience (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
 
     user: str | None
     """User with which to log in, or None to use the first entry in ``creds``."""

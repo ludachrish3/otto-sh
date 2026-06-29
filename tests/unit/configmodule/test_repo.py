@@ -86,6 +86,46 @@ def test_repo_apply_settings(default_mock_repo):
     sys.path.remove(pylib)
 
 
+def test_product_log_prefixes_init_libs_and_explicit_capture(tmp_path):
+    # A libs dir containing a real package (has __init__.py); its immediate
+    # child package name becomes a capture prefix.
+    libs_dir = tmp_path / "pylib"
+    pkg = libs_dir / "mypkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    # A non-package child (no __init__.py) must NOT be picked up.
+    (libs_dir / "loose.py").write_text("")
+
+    sut = _write_repo(
+        tmp_path,
+        textwrap.dedent("""
+        libs = ["${sut_dir}/pylib"]
+        init = ["my_instructions.commands", "custom_hosts"]
+
+        [logging]
+        capture = ["thirdparty_lib"]
+    """),
+    )
+    repo = Repo(sut_dir=sut)
+    prefixes = repo.product_log_prefixes()
+
+    # init roots: first dotted segment of each init entry
+    assert "my_instructions" in prefixes
+    assert "custom_hosts" in prefixes
+    # immediate sub-package of a libs dir
+    assert "mypkg" in prefixes
+    # explicit [logging] capture entry
+    assert "thirdparty_lib" in prefixes
+    # a loose (non-package) module is not a prefix
+    assert "loose" not in prefixes
+
+
+def test_logging_capture_defaults_empty(tmp_path):
+    sut = _write_repo(tmp_path, "")
+    repo = Repo(sut_dir=sut)
+    assert repo.logging_capture == []
+
+
 # TODO: Test various settings fields and the recording of arbitrary additional data
 
 

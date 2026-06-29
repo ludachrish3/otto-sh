@@ -10,6 +10,7 @@ from otto.host.host import (
     get_logging_command_output_enabled,
 )
 from otto.host.local_host import LocalHost
+from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests.conftest import active_context
 
@@ -255,32 +256,56 @@ async def test_run_command_with_global_suppression(caplog):
                 assert get_logging_command_output_enabled() is False
                 for log in caplog.records:
                     assert HostFilter().filter(log) is False
-                assert host.log is True
+                assert host.log is LogMode.NORMAL
             assert get_logging_command_output_enabled() is True
     finally:
         await host.close()
 
 
 @pytest.mark.asyncio
-async def test_run_command_with_local_suppression(caplog):
+async def test_run_command_with_local_suppression():
     host = LocalHost()
-    host.log = False
+    host.log = LogMode.QUIET
+
+    # Capture via a handler on the otto logger directly — robust to the otto
+    # logger's ``propagate`` toggling between tests (caplog uses the root).
+    captured: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            captured.append(record)
+
+    handler = _Capture()
+    handler.setLevel(logging.DEBUG)
+    otto_logger = logging.getLogger("otto")
+    prev_level = otto_logger.level
+    otto_logger.setLevel(logging.DEBUG)
+    otto_logger.addHandler(handler)
     try:
-        with SuppressCommandOutput(host=host):
-            assert get_logging_command_output_enabled() is True
-            await host.run(["echo hello world"])
-            for log in caplog.records:
-                assert HostFilter().filter(log) is False
+        # A QUIET host folds its standing mode into each record's ``log_mode``
+        # at the emit seam (``_effective_log``), so the records it emits carry
+        # ``log_mode=LogMode.QUIET`` and HostFilter drops them — the filter no
+        # longer reads ``host.log`` directly.
+        assert get_logging_command_output_enabled() is True
+        host._log_command("echo hello world", host._effective_log(LogMode.NORMAL))
+        host._log_output("hello world", host._effective_log(LogMode.NORMAL))
+        cmd_records = [r for r in captured if getattr(r, "host", None) is host]
+        assert cmd_records
+        for record in cmd_records:
+            assert getattr(record, "log_mode", None) is LogMode.QUIET
+            assert HostFilter().filter(record) is False
     finally:
+        otto_logger.removeHandler(handler)
+        otto_logger.setLevel(prev_level)
         await host.close()
 
 
 def test_per_host_suppression_restores_prior_state():
     host = LocalHost()
-    host.log = True
+    host.log = LogMode.NORMAL
     with SuppressCommandOutput(host=host):
-        assert host.log is False
-    assert host.log is True
+        assert host.log is LogMode.QUIET
+    assert host.log is LogMode.NORMAL
 
 
 def test_global_suppression_restores_prior_state():
@@ -301,7 +326,7 @@ def test_global_suppression_restores_prior_state():
 
 def test_per_host_suppression_does_not_touch_global():
     host = LocalHost()
-    host.log = True
+    host.log = LogMode.NORMAL
     with active_context(log_command_output=True):
         assert get_logging_command_output_enabled() is True
         with SuppressCommandOutput(host=host):
@@ -311,7 +336,7 @@ def test_per_host_suppression_does_not_touch_global():
     # And in the reverse: pre-fix bug flipped the global flag to True on
     # exit of a per-host context; verify it doesn't any more.
     with active_context(log_command_output=False):
-        host.log = True
+        host.log = LogMode.NORMAL
         assert get_logging_command_output_enabled() is False
         with SuppressCommandOutput(host=host):
             assert get_logging_command_output_enabled() is False
@@ -320,32 +345,32 @@ def test_per_host_suppression_does_not_touch_global():
 
 def test_nested_global_then_host():
     host = LocalHost()
-    host.log = True
+    host.log = LogMode.NORMAL
     with active_context(log_command_output=True):
         with SuppressCommandOutput():
             assert get_logging_command_output_enabled() is False
             with SuppressCommandOutput(host=host):
-                assert host.log is False
+                assert host.log is LogMode.QUIET
                 assert get_logging_command_output_enabled() is False
             # Inner exit must leave the outer's global suppression intact.
             assert get_logging_command_output_enabled() is False
-            assert host.log is True
+            assert host.log is LogMode.NORMAL
         assert get_logging_command_output_enabled() is True
 
 
 def test_nested_host_then_global():
     host = LocalHost()
-    host.log = True
+    host.log = LogMode.NORMAL
     with active_context(log_command_output=True):
         with SuppressCommandOutput(host=host):
-            assert host.log is False
+            assert host.log is LogMode.QUIET
             with SuppressCommandOutput():
                 assert get_logging_command_output_enabled() is False
-                assert host.log is False
+                assert host.log is LogMode.QUIET
             # Inner exit must leave the outer's per-host suppression intact.
-            assert host.log is False
+            assert host.log is LogMode.QUIET
             assert get_logging_command_output_enabled() is True
-        assert host.log is True
+        assert host.log is LogMode.NORMAL
 
 
 def test_nested_global_then_global():
@@ -364,11 +389,12 @@ def test_nested_global_then_global():
 async def test_concurrent_per_host_suppression_does_not_conflict_globally():
     host_a = LocalHost()
     host_b = LocalHost()
-    host_a.log = True
-    host_b.log = True
+    host_a.log = LogMode.NORMAL
+    host_b.log = LogMode.NORMAL
 
-    # Built once and reused — the filter reads host.log at call time, so
-    # it reflects the live state regardless of when the record was made.
+    # The per-host standing mode is folded into the record's ``log_mode`` at the
+    # emit seam (``_effective_log``), so a record's disposition is whatever the
+    # host's mode was when it was emitted — captured here at make-time.
     def make_record(host: LocalHost) -> logging.LogRecord:
         record = logging.LogRecord(
             name="otto",
@@ -380,6 +406,7 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
             exc_info=None,
         )
         record.host = host  # type: ignore[attr-defined]
+        record.log_mode = host._effective_log(LogMode.NORMAL)  # type: ignore[attr-defined]
         return record
 
     both_inside = asyncio.Event()
@@ -395,10 +422,10 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
             # Wait until both tasks are inside their per-host contexts, so
             # we can assert the two contexts really do overlap.
             await asyncio.wait_for(both_inside.wait(), timeout=2.0)
-            assert host.log is False
+            assert host.log is LogMode.QUIET
             assert get_logging_command_output_enabled() is True
-            # Under overlap: each host's own records are filtered out,
-            # and the global flag is unaffected for other hosts.
+            # Under overlap: each host's own records (emitted now, while QUIET)
+            # are filtered out, and the global flag is unaffected for other hosts.
             assert HostFilter().filter(make_record(host)) is False
 
     try:
@@ -409,9 +436,9 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
         # Global flag untouched throughout.
         assert get_logging_command_output_enabled() is True
         # Both hosts restored to their prior values.
-        assert host_a.log is True
-        assert host_b.log is True
-        # Post-restoration, both hosts' records would be allowed again.
+        assert host_a.log is LogMode.NORMAL
+        assert host_b.log is LogMode.NORMAL
+        # Post-restoration, records emitted now are NORMAL and would be allowed.
         assert HostFilter().filter(make_record(host_a)) is True
         assert HostFilter().filter(make_record(host_b)) is True
     finally:

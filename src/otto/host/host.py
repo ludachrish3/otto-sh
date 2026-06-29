@@ -27,6 +27,7 @@ from typing import (
 
 from typing_extensions import Self, override
 
+from ..logger.mode import LogMode, effective_mode
 from ..utils import (
     Arg,
     CommandStatus,
@@ -91,11 +92,9 @@ class ShellCommand:
     cumulative budget.
     """
 
-    log: bool | None = None
-    """Per-command logging switch. ``None`` inherits the run-level ``log`` value.
-    Set ``False`` to suppress this command's echo and output from the console and
-    log file (e.g. a multi-KB inline payload); the returned ``CommandStatus`` is
-    unaffected."""
+    log: "LogMode | bool | None" = None
+    """Per-command logging disposition. ``None`` inherits the run-level ``log`` value.
+    Accepts a bool for convenience (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
 
 
 @dataclass(slots=True)
@@ -142,11 +141,22 @@ def _normalize_expects(
     return expects
 
 
+def _normalize_log_mode(log: "LogMode | bool") -> LogMode:
+    """Coerce a bool ``log`` to a :class:`~otto.logger.mode.LogMode`.
+
+    ``True`` → ``NORMAL``; ``False`` → ``QUIET``. Pure ``LogMode`` values pass through unchanged.
+    The ``LogMode | bool`` union is permanent: bools are accepted for convenience.
+    """
+    if isinstance(log, LogMode):
+        return log
+    return LogMode.NORMAL if log else LogMode.QUIET
+
+
 def _resolve_command(
     item: "str | ShellCommand",
     default_expects: "Expect | list[Expect] | None",
     default_timeout: float | None,
-    default_log: bool = True,
+    default_log: "LogMode | bool" = LogMode.NORMAL,
 ) -> ShellCommand:
     """Coerce ``item`` to a ``ShellCommand`` whose ``None`` fields inherit from defaults."""
     if isinstance(item, str):
@@ -222,8 +232,10 @@ class Host(Protocol):
     implement the family-specific hooks.
     """
 
-    log: bool
-    """Determines whether this host should log its output to stdout and log files."""
+    log: "LogMode | bool"
+    """Standing per-host logging disposition. Accepts a bool for convenience
+    (``True`` → ``NORMAL``, ``False`` → ``QUIET``). Composed with the per-command
+    mode via ``effective_mode`` at the emit seam."""
 
     id: str
     """Unique identifier for this host."""
@@ -251,7 +263,7 @@ class Host(Protocol):
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = None,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
         sudo: bool = False,
     ) -> RunResult:
         """Run one or more commands on the host and collect their results.
@@ -278,7 +290,7 @@ class Host(Protocol):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a single command outside the typical stateful ``run`` workflow.
 
@@ -311,7 +323,7 @@ class Host(Protocol):
     async def send(
         self,
         text: str,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> None:
         """Send raw text to the host's persistent session without waiting for a response.
 
@@ -464,7 +476,7 @@ class BaseHost(ABC):
 
     id: str
     name: str
-    log: bool
+    log: "LogMode | bool"
     resources: set[str]
     products: list["Product"]
     power_control: "PowerController | None"
@@ -575,7 +587,7 @@ class BaseHost(ABC):
         timeout: Annotated[
             float | None, Opt(help="Per-command/cumulative timeout (seconds).")
         ] = None,
-        log: Annotated[bool, Exclude] = True,
+        log: Annotated["LogMode | bool", Exclude] = LogMode.NORMAL,
         sudo: bool = False,
     ) -> RunResult:
         """Execute one or more commands on the host via the persistent shell session.
@@ -618,7 +630,9 @@ class BaseHost(ABC):
                 single.cmd,
                 expects=_normalize_expects(single.expects),
                 timeout=single.timeout,
-                log=cast("bool", single.log),  # _resolve_command collapsed the None sentinel
+                log=cast(
+                    "LogMode | bool", single.log
+                ),  # _resolve_command collapsed the None sentinel
             )
             status = result.status if not result.status.is_ok else Status.Success
             return RunResult(status=status, statuses=[result])
@@ -632,17 +646,21 @@ class BaseHost(ABC):
                 sc.cmd,
                 expects=_normalize_expects(sc.expects),
                 timeout=t,
-                log=cast("bool", sc.log),  # _resolve_command collapsed the None sentinel
+                log=cast("LogMode | bool", sc.log),  # _resolve_command collapsed the None sentinel
             )
 
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
+
+    def _effective_log(self, log: "LogMode | bool") -> LogMode:
+        """Most-restrictive of this host's standing mode and the per-command mode."""
+        return effective_mode(_normalize_log_mode(self.log), _normalize_log_mode(log))
 
     async def _run_one(
         self,
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = None,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Per-command runner for the persistent shell session. Subclasses override."""
         raise NotImplementedError from None
@@ -651,7 +669,7 @@ class BaseHost(ABC):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a single command outside the persistent shell session. Subclasses must override."""
         raise NotImplementedError from None
@@ -666,7 +684,7 @@ class BaseHost(ABC):
     async def send(
         self,
         text: str,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> None:
         """Send raw text to the host's persistent session. Subclasses must override."""
         raise NotImplementedError from None
@@ -951,38 +969,55 @@ class BaseHost(ABC):
     def _log_command(
         self,
         command: str,
+        mode: LogMode = LogMode.NORMAL,
     ) -> None:
-        logger.info(f"[bold]@{self.name}   | {command}", extra={"host": self})
+        if mode is LogMode.NEVER:
+            return
+        logger.info(
+            f"[bold]@{self.name}   | {command}",
+            extra={"host": self, "log_mode": mode},
+        )
 
     def _log_output(
         self,
         output: str,
+        mode: LogMode = LogMode.NORMAL,
     ) -> None:
+        if mode is LogMode.NEVER:
+            return
         preamble = f"[yellow]@{self.name} > | "
         output_lines = [f"{preamble}{line}" for line in output.splitlines()]
 
         # A python 3.10 limitation does not allow escape characters within f-string closures.
         # Assign a variable to be a newline so it can be used within an f-string closure.
         newline = "\n"
-        logger.info(f"{newline.join(output_lines)}", extra={"host": self})
+        logger.info(
+            f"{newline.join(output_lines)}",
+            extra={"host": self, "log_mode": mode},
+        )
 
 
 class HostFilter(Filter):
-    """Filter log records based on whether command output logging is globally enabled."""
+    """Console-side suppress filter: drops QUIET/NEVER records and honors the global flag.
 
-    host: Host | None
+    Attached to the console + ``console.log`` handlers only —
+    ``verbose.log`` keeps the records (see ``management``).
+
+    The per-host standing mode is now folded into each record's ``log_mode`` via
+    ``BaseHost._effective_log`` at the emit seam, so the filter decides purely on
+    ``record.log_mode`` plus the global command-output flag.
+    """
 
     @override
     def filter(self, record: LogRecord) -> bool:
-
         host: Host | None = getattr(record, "host", None)
-
-        # From this filter's perspective, all logs not related to logging can log
+        # Non-command records (no host tag) — e.g. warnings/errors — always pass.
         if host is None:
             return True
-
-        # Also respect the context and host logging flags
-        return get_logging_command_output_enabled() and host.log
+        mode: LogMode = getattr(record, "log_mode", LogMode.NORMAL)
+        if mode is not LogMode.NORMAL:  # QUIET or NEVER → not on the console side
+            return False
+        return get_logging_command_output_enabled()
 
 
 # TODO: Consider a way to make commands and their output log no matter what if the log level were debug.  # noqa: E501 — TODO comment
@@ -1007,7 +1042,7 @@ class SuppressCommandOutput:
     def __enter__(self) -> None:
         if self.host is not None:
             self._prev_host_log = self.host.log
-            self.host.log = False
+            self.host.log = LogMode.QUIET
         else:
             from ..context import try_get_context
 

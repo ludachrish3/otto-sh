@@ -2,7 +2,8 @@
 
 **Date:** 2026-06-28
 **Status:** Design — awaiting implementation plan
-**Area:** `otto.logger`, `otto.host` (command logging), `otto.cli.main`
+**Area:** `otto.logger`, `otto.host` (command logging), `otto.cli.main`,
+`otto.configmodule` (product-prefix capture)
 
 ## Problem
 
@@ -27,13 +28,17 @@ route each line to the right ones.
 - Keep genuine secrets (su password) and bulky-useless content (embedded console
   hex) out of *every* file, at *every* level — including framework DEBUG
   diagnostics.
+- **Generic library logging:** product/lab code uses a plain
+  `logging.getLogger(__name__)` (no otto import) and is captured into otto's log
+  files, without dragging in third-party noise.
 - Minimal call-site churn: the common path (a plain `run()`) is unchanged.
 
 ## Non-goals
 
 - Capturing decorative/ephemeral console chrome (banner, `--show-lab` dump,
   `--list-*`, `--version`, the `Output directory:` footer) into the log files.
-  These deliberately stay direct `CONSOLE.print`/`rprint` writes (see §5).
+  These deliberately stay direct `CONSOLE.print`/`rprint` writes (see
+  *`console.log` — faithful console transcript* below).
 - Changing the per-run output-dir layout, retention/rotation, or the
   `QueueListener` non-blocking design.
 - Reworking how `CommandFrame` strips its BEGIN/END sentinels / echoed command /
@@ -65,23 +70,43 @@ Two places carry a mode:
 
 **Effective mode** for a given command is the *most restrictive* of the
 per-host mode and the per-command mode (plus the global suppression flag, which
-acts as `QUIET`, see §6). The session executes against this single effective
+acts as `QUIET`, see *Filters and suppression machinery*). The session executes against this single effective
 mode.
 
 The **level axis** (INFO vs DEBUG) is *not* a parameter — it is chosen natively
 at the log call (`logger.info(...)` vs `logger.debug(...)`). Normal command I/O
 logs at INFO; framework/session diagnostics log at DEBUG.
 
+### Scope: `LogMode` governs command I/O only
+
+`LogMode` (per-command **and** per-host) gates **only the host's command I/O** —
+the echo/output records emitted by `_log_command`/`_log_output`, which are the
+only records that carry the `extra={"host": self}` tag
+([host.py:955,967](../../../src/otto/host/host.py)). It is **not** a global mute
+for a host.
+
+Everything else — `logger.warning`/`logger.error` (whether framework-emitted such
+as connection failures and timeouts, or the monitor's own failure warnings at
+[collector.py:390+](../../../src/otto/monitor/collector.py)), and any non-command
+INFO/DEBUG record — carries no host tag and is therefore **never** suppressed by a
+host's or command's `LogMode`. Such records always reach every sink, subject only
+to `--log-level`.
+
+Consequence for the monitor: `host.log = NEVER` strips the host's routine polling
+*chatter* everywhere, but a monitored host that hits a problem mid-run still
+produces captured WARNING/ERROR records. (No special `Status.Error` handling is
+added; the monitor already emits a warning when it detects a failure.)
+
 ### Reclassifying today's `log=False` / suppression sites
 
 | Site | Today | New disposition |
 |---|---|---|
-| `send(pw, log=False)` — su password ([privilege.py:53](../../../src/otto/host/privilege.py)) | hard drop | **`NEVER`** (secret) |
-| embedded console hex load ([embedded_host.py:621,624](../../../src/otto/host/embedded_host.py)) | hard drop | **`NEVER`** (bulky, useless even when debugging) |
-| `file_ops` read body ([file_ops.py:114](../../../src/otto/host/file_ops.py)) | hard drop | **`QUIET`** (recorded in verbose, off console) |
-| `cat /proc/modules` lsmod ([unix_host.py:717](../../../src/otto/host/unix_host.py)) | hard drop | **`QUIET`** |
-| `host.log = False` — monitor daemon ([monitor/factory.py:42](../../../src/otto/monitor/factory.py)) | filter-drop everywhere | **`NEVER`** (per-host; keeps long-running daemon out of verbose.log) |
-| `SuppressCommandOutput` blocks, `LocalHost(log=False)` config probe ([repo.py:620,628](../../../src/otto/configmodule/repo.py)) | filter-drop everywhere | **`QUIET`** |
+| `send(pw, log=False)` — su password ([privilege.py:56](../../../src/otto/host/privilege.py)) | hard drop | **`NEVER`** (secret) |
+| embedded console hex load ([embedded_host.py:657,661](../../../src/otto/host/embedded_host.py)) | hard drop | **`NEVER`** (bulky, useless even when debugging) |
+| `file_ops` read body ([file_ops.py](../../../src/otto/host/file_ops.py)) | hard drop | **`QUIET`** (recorded in verbose, off console) |
+| `cat /proc/modules` lsmod ([unix_host.py:721](../../../src/otto/host/unix_host.py)) | hard drop | **`QUIET`** |
+| `host.log = False` — monitor daemon ([monitor/factory.py:42](../../../src/otto/monitor/factory.py)) | filter-drop everywhere | **`NEVER`** (per-host; strips routine chatter from verbose.log — warnings/errors still captured) |
+| `SuppressCommandOutput` blocks, `LocalHost(log=False)` config probe ([repo.py:663,680](../../../src/otto/configmodule/repo.py)) | filter-drop everywhere | **`QUIET`** |
 
 ## Sink topology
 
@@ -127,7 +152,7 @@ distinction is:
   `Output directory:` exit footer.
 
 **Required change:** promote the `[reservations] acting as <user> (--as-user)`
-notice from `rprint` to `logger.info` ([main.py:371](../../../src/otto/cli/main.py))
+notice from `rprint` to `logger.info` ([main.py:400](../../../src/otto/cli/main.py))
 so it lands in `console.log` and `verbose.log`. (`--show-lab` stays a direct
 print and is explicitly *not* logged.)
 
@@ -151,7 +176,7 @@ scaffolding), nor (by default) the framework DEBUG diagnostics — those require
 
 Implementation: `verbose.log`'s `FileHandler` is the one handler that does **not**
 receive the console-suppress filter (today that filter is attached to *every*
-handler at [main.py:288](../../../src/otto/cli/main.py); we exclude `verbose.log`).
+handler at [main.py:318](../../../src/otto/cli/main.py); we exclude `verbose.log`).
 
 ## `NEVER` — redaction at the source
 
@@ -163,14 +188,19 @@ future handler added without it):
 - The session output sink is `_drop_output`.
 - The session's **content-bearing DEBUG diagnostics** emit a redacted
   placeholder instead of the raw bytes:
-  - framed-write line ([session.py:422](../../../src/otto/host/session.py)) →
+  - framed-write line ([session.py:435](../../../src/otto/host/session.py)) →
     `framed write cmd=<redacted> payload=<redacted 1048576 bytes>`
-  - begin-marker chunk dump ([session.py:474](../../../src/otto/host/session.py))
-  - buffer preview ([session.py:497](../../../src/otto/host/session.py))
+  - begin-marker chunk dump ([session.py:487](../../../src/otto/host/session.py))
+  - buffer preview ([session.py:505](../../../src/otto/host/session.py))
 
 For this, the **effective `LogMode` must thread `run` → `run_cmd` → session** so
 the session knows to redact. The byte count in the placeholder is safe to show
 (length is not the secret).
+
+`NEVER` is scoped to command I/O like the other modes (see *Scope: `LogMode`
+governs command I/O only*): a `NEVER` host or command suppresses its own
+echo/output and the matching session diagnostics, but never a `logger.warning`/
+`logger.error` record.
 
 ## CLI flag changes
 
@@ -181,7 +211,7 @@ the session knows to redact. The byte count in the placeholder is safe to show
   timestamped regardless.)
 - **New `--lab-depth INT`** (default `3`, `0` = unlimited) takes over the
   `--show-lab` display-depth control that `--verbose` incidentally owned
-  ([main.py:384](../../../src/otto/cli/main.py)).
+  ([main.py:415](../../../src/otto/cli/main.py)).
 
 ## Filters and suppression machinery
 
@@ -195,6 +225,66 @@ the session knows to redact. The byte count in the placeholder is safe to show
   consistent with `QUIET`.
 - **Global `log_command_output`** stays a `bool` on `OttoContext` (it is a
   console-side switch; verbose.log ignores it).
+
+## Library / external logger capture
+
+### Problem
+
+Product/lab code must currently import an otto accessor
+(`from otto.logger import get_otto_logger`) to land in otto's files. If a product
+author instead writes the idiomatic `logging.getLogger(__name__)`, the record
+lives under a non-`otto.*` name (e.g. `repo1_instructions.*`), propagates to the
+**root** logger — which the CLI does not configure — and is silently lost. The
+ergonomic, generic pattern is exactly the one that doesn't work.
+
+### Design — scoped capture (not root)
+
+When running as the CLI **application**, otto attaches its single shared
+`QueueHandler` (the one feeding the `QueueListener` → three sinks) to a *scoped
+set* of logger roots, never globally to root:
+
+1. `otto.*` — otto's own modules (as today).
+2. **Auto-derived product prefixes** — the top-level package of each repo's
+   `init` modules ([repo.py:551-559](../../../src/otto/configmodule/repo.py)) and
+   the immediate sub-packages of each repo's `libs` directory
+   ([repo.py:546-549](../../../src/otto/configmodule/repo.py)).
+3. **Explicit `[logging] capture = [...]`** — a new repo-settings list for
+   package roots that live outside `libs`.
+
+For each captured prefix, otto:
+
+- adds the shared `QueueHandler` to `getLogger(prefix)`, and
+- sets `getLogger(prefix).setLevel(<most-verbose floor>)` so product `INFO`
+  records are not dropped by root's default `WARNING` level.
+
+A product record reaches exactly one `QueueHandler` (at its nearest captured
+ancestor), so there is no double-emission. Third-party libraries (not in the
+captured set) are **not** captured — keeping `verbose.log` free of
+asyncssh/paramiko/docker wire noise even at `--log-level DEBUG`. Generic records
+carry no `host` attribute, so the console-suppress filter passes them
+(`host is None → True`) to all sinks at their level.
+
+The **library-import path is unchanged**: only the CLI attaches. `import otto`
+keeps the `NullHandler` on `'otto'` and touches no other logger, preserving the
+good-citizen behavior established by the logger-standardization work.
+
+### Ergonomics
+
+- The blessed generic pattern for **all** code (otto, product, lab) is
+  `log = logging.getLogger(__name__)`.
+- `get_otto_logger()` is retained as optional sugar and re-exported as
+  `otto.get_logger` for code wanting an explicit `otto.<name>` child; it is no
+  longer required for capture.
+- Optional, deferrable cleanup: otto's own 30 `get_otto_logger()` call sites may
+  migrate to `getLogger(__name__)` (idiomatic, already captured under `otto.*`).
+  Not required by this work.
+
+### Timing note
+
+Product modules create their logger at import time (`logger = getLogger(__name__)`
+at module top). Because handlers are resolved at *emit* time, attaching the
+`QueueHandler` to the prefix during the CLI callback — before product code runs —
+is sufficient; the child logger finds the handler when it first emits.
 
 ## File rename and test churn
 
@@ -215,6 +305,9 @@ the session knows to redact. The byte count in the placeholder is safe to show
   assert neither the payload bytes nor the buffer appear in any sink — only the
   `<redacted N bytes>` placeholder. Cover the su-password `send` path and the
   embedded-hex `run_cmd` path.
+- **Scope guarantee test:** a host set to `NEVER` (monitor case) suppresses its
+  command echo/output, but a `logger.warning`/`logger.error` emitted during that
+  host's run still appears in console, console.log, and verbose.log.
 - **`console.log` faithfulness test:** assert it equals the captured console
   content (modulo always-on timestamps and ANSI stripping) and that the
   `acting as` notice is present while the `--show-lab` dump is absent.
@@ -222,6 +315,12 @@ the session knows to redact. The byte count in the placeholder is safe to show
   set.
 - **CLI flag tests:** `--show-time` toggles console timestamps only; `--lab-depth`
   controls `--show-lab` depth; `--verbose` is gone.
+- **Library-capture tests:** a synthetic product package under a temp `libs` dir
+  logs via `getLogger(__name__)`; assert its `INFO` record reaches `console.log`
+  and `verbose.log`. A third-party-style logger (`getLogger("asyncssh")`) at
+  `INFO` is **not** captured. `[logging] capture = ["extra_pkg"]` adds an
+  otherwise-undiscovered package. Importing otto as a library attaches nothing
+  beyond the `'otto'` `NullHandler`.
 
 ## Migration / churn summary
 
@@ -232,11 +331,17 @@ the session knows to redact. The byte count in the placeholder is safe to show
    branch keyed on effective mode; session diagnostics redaction for `NEVER`.
 4. `management.py`: add the `verbose.log` handler with its INFO-floor level rule;
    set the logger level to the most-verbose floor; rename `otto.log` →
-   `console.log`; restrict the console-suppress filter to console + console.log.
+   `console.log`; restrict the console-suppress filter to console + console.log;
+   add the scoped-capture attach (shared `QueueHandler` onto `otto.*` + product
+   prefixes, with per-prefix level).
 5. `cli/main.py`: `--verbose` → `--show-time`; new `--lab-depth`; promote the
-   `acting as` notice to `logger.info`.
-6. Reclassify the ~6 `log=False` / `host.log=False` call sites per the table.
-7. Update tests/fixtures for the file rename and `LogMode`.
+   `acting as` notice to `logger.info`; derive + pass product prefixes (from the
+   repos' `libs`/`init` + `[logging] capture`) into the capture attach.
+6. `configmodule`: parse the new `[logging] capture` setting onto `Repo`; expose
+   the derived product-prefix set.
+7. `otto.logger`: re-export `get_otto_logger` as `otto.get_logger`.
+8. Reclassify the ~6 `log=False` / `host.log=False` call sites per the table.
+9. Update tests/fixtures for the file rename, `LogMode`, and library capture.
 
 ## Open / deferred
 

@@ -69,7 +69,7 @@ class TestRunInputForms:
     async def test_run_string_single(self, host: UnixHost, ok: CommandStatus):
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run("ls")
-        mock.assert_called_once_with("ls", expects=None, timeout=None, log=True)
+        mock.assert_called_once_with("ls", expects=None, timeout=None, log=LogMode.NORMAL)
         assert isinstance(result, RunResult)
         assert len(result.statuses) == 1
         assert result.only is ok
@@ -78,7 +78,7 @@ class TestRunInputForms:
     async def test_run_shell_command_single(self, host: UnixHost, ok: CommandStatus):
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run(ShellCommand(cmd="ls"))
-        mock.assert_called_once_with("ls", expects=None, timeout=None, log=True)
+        mock.assert_called_once_with("ls", expects=None, timeout=None, log=LogMode.NORMAL)
         assert len(result.statuses) == 1
         assert result.only is ok
 
@@ -106,14 +106,14 @@ class TestTimeoutInheritance:
         """ShellCommand.timeout=None → run-kwarg timeout is used."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd="x"), timeout=5.0)
-        mock.assert_called_once_with("x", expects=None, timeout=5.0, log=True)
+        mock.assert_called_once_with("x", expects=None, timeout=5.0, log=LogMode.NORMAL)
 
     @pytest.mark.asyncio
     async def test_shell_command_overrides_run_kwarg(self, host: UnixHost, ok: CommandStatus):
         """ShellCommand.timeout=2 beats run-kwarg timeout=5 in single-cmd form."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd="x", timeout=2.0), timeout=5.0)
-        mock.assert_called_once_with("x", expects=None, timeout=2.0, log=True)
+        mock.assert_called_once_with("x", expects=None, timeout=2.0, log=LogMode.NORMAL)
 
     @pytest.mark.asyncio
     async def test_budget_caps_per_command_timeout(self, host: UnixHost, ok: CommandStatus):
@@ -128,7 +128,7 @@ class TestTimeoutInheritance:
     async def test_none_timeout_everywhere(self, host: UnixHost, ok: CommandStatus):
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run([ShellCommand(cmd="x")])
-        mock.assert_called_once_with("x", expects=None, timeout=None, log=True)
+        mock.assert_called_once_with("x", expects=None, timeout=None, log=LogMode.NORMAL)
 
 
 class TestExpectsInheritance:
@@ -154,7 +154,7 @@ class TestExpectsInheritance:
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run("sudo ls", expects=("Password:", "pw\n"))
         mock.assert_called_once_with(
-            "sudo ls", expects=[("Password:", "pw\n")], timeout=None, log=True
+            "sudo ls", expects=[("Password:", "pw\n")], timeout=None, log=LogMode.NORMAL
         )
 
     @pytest.mark.asyncio
@@ -162,7 +162,7 @@ class TestExpectsInheritance:
         """A scalar Expect tuple on a ShellCommand is normalized too."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd="x", expects=("P:", "y\n")))
-        mock.assert_called_once_with("x", expects=[("P:", "y\n")], timeout=None, log=True)
+        mock.assert_called_once_with("x", expects=[("P:", "y\n")], timeout=None, log=LogMode.NORMAL)
 
 
 from otto.host.host import _resolve_command
@@ -184,11 +184,11 @@ class TestRunForwardsLog:
         assert logs == [False, True]
 
     @pytest.mark.asyncio
-    async def test_run_default_log_is_true(self, host, ok):
+    async def test_run_default_log_is_normal(self, host, ok):
         with patch.object(host, "_run_one", new=AsyncMock(return_value=ok)) as m:
             await host.run("ls")
         _, kwargs = m.await_args
-        assert kwargs["log"] is True
+        assert kwargs["log"] is LogMode.NORMAL
 
 
 class TestShellCommandLog:
@@ -209,3 +209,21 @@ class TestShellCommandLog:
     def test_resolve_none_log_falls_back_to_default(self):
         sc = _resolve_command(ShellCommand("ls"), None, None, default_log=False)
         assert sc.log is False
+
+
+from otto.logger.mode import LogMode
+
+
+def test_shellcommand_log_defaults_to_none_and_inherits_normal():
+    sc = _resolve_command("echo hi", None, None)
+    assert sc.log is LogMode.NORMAL
+
+
+def test_resolve_command_inherits_explicit_mode():
+    sc = _resolve_command(ShellCommand("x", log=LogMode.QUIET), None, None)
+    assert sc.log is LogMode.QUIET
+
+
+def test_resolve_command_uses_default_mode():
+    sc = _resolve_command("x", None, None, default_log=LogMode.NEVER)
+    assert sc.log is LogMode.NEVER

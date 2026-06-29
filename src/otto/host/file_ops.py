@@ -13,13 +13,12 @@ These are a *family capability*, not part of the universal ``Host`` Protocol —
 an embedded host implements only the subset its filesystem supports.
 """
 
-from __future__ import annotations
-
 import base64
 import shlex
 from pathlib import Path
 from typing import Annotated
 
+from ..logger.mode import LogMode
 from ..utils import Arg, Status, cli_exposed
 
 
@@ -106,10 +105,11 @@ class PosixFileOps:
 
         The payload is base64-encoded on the wire, so arbitrary content
         (newlines, quotes, shell metacharacters) is transferred safely. Sent
-        with ``log=False`` so large bodies don't flood the log.
+        with ``log=LogMode.QUIET`` so large bodies stay out of the console
+        (still recorded in verbose.log).
         """
         encoded = base64.b64encode(data.encode()).decode()
         redirect = ">>" if append else ">"
         cmd = f"echo {encoded} | base64 -d {redirect} {self._q(path)}"
-        result = await self.oneshot(cmd, log=False)  # ty: ignore[unresolved-attribute]
+        result = await self.oneshot(cmd, log=LogMode.QUIET)  # ty: ignore[unresolved-attribute]
         return result.status, result.output

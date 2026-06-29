@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Annotated
 from typing_extensions import override
 
 from ..logger import get_otto_logger
+from ..logger.mode import LogMode
 from ..utils import Arg, CommandStatus, Status, cli_exposed
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run
@@ -95,8 +96,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     is_virtual: bool = field(default=True, init=False)
     """Containers are always virtual by definition."""
 
-    log: bool = field(default=True, repr=False)
-    """Whether this host's command/output should appear in logs."""
+    log: "LogMode | bool" = field(default=LogMode.NORMAL, repr=False)
+    """Standing per-host logging disposition. ``QUIET`` keeps this host's command
+    I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
+    (warnings/errors are unaffected). Accepts a bool for convenience
+    (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
 
     log_stdout: bool = field(default=True, repr=False)
     """Whether output is mirrored to stdout in addition to log files."""
@@ -274,7 +278,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a single command in the container via the parent.
 
@@ -290,11 +294,11 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent."""
         wrapped = await self._docker_exec(cmd)
-        result = await self.parent.oneshot(wrapped, timeout=timeout, log=log)
+        result = await self.parent.oneshot(wrapped, timeout=timeout, log=self._effective_log(log))
         # Replace the wrapped command in the result so callers see what
         # they asked for, not the docker-exec wrapper.
         return CommandStatus(
@@ -310,7 +314,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         expects: "list[Expect] | None" = None,
         timeout: float | None = 10.0,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Execute one command on the persistent in-container shell.
 
@@ -322,7 +326,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         if is_dry_run():
             return self._dry_run_result(cmd)
         await self._ensure_running()
-        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
+        return await self._session_mgr.run_cmd(
+            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+        )
 
     @override
     async def open_session(self, name: str) -> "HostSession":
@@ -333,14 +339,15 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return await self._session_mgr.open_session(name)
 
     @override
-    async def send(self, text: str, log: bool = True) -> None:
+    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
         """Send raw text to the container's persistent session."""
+        effective = self._effective_log(log)
         if is_dry_run():
-            if log:
+            if effective is not LogMode.NEVER:
                 self._log_command(f"[DRY RUN] send({text!r})")
             return
         await self._ensure_running()
-        await self._session_mgr.send(text, log=log)
+        await self._session_mgr.send(text, log=effective)
 
     @override
     async def expect(

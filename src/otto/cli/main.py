@@ -197,13 +197,21 @@ def main(  # noqa: PLR0913 — CLI command params
             help="Determines whether log files have rich formatting.",
         ),
     ] = False,
-    verbose: Annotated[
+    show_time: Annotated[
         bool,
         typer.Option(
-            "--verbose",
-            "-v",
+            "--show-time",
+            help="Show per-line timestamps on the live console (log files are always timestamped).",
         ),
     ] = False,
+    lab_depth: Annotated[
+        int,
+        typer.Option(
+            "--lab-depth",
+            min=0,
+            help="Depth for --show-lab output (0 = unlimited).",
+        ),
+    ] = 3,
     list_labs: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
         bool,
         typer.Option(
@@ -310,15 +318,23 @@ def main(  # noqa: PLR0913 — CLI command params
         xdir=xdir,
         log_level=log_level,
         keep_days=log_days,
-        verbose=verbose,
+        show_time=show_time,
         rich_log_file=rich_log_file,
     )
     logger = getLogger("otto")
-    for handler in logger.handlers:
-        handler.addFilter(HostFilter())
+    management.attach_console_suppress_filter(HostFilter())
 
     # Set up config module
     repos = get_repos()
+
+    # Stash the product / external logger prefixes (init roots, libs sub-packages,
+    # explicit [logging] capture) so the per-subcommand create_output_dir attaches
+    # the shared QueueHandler to them once it exists. Done here (after
+    # init_cli_logging set the log level) so capture honours the verbose floor.
+    prefixes: set[str] = set()
+    for repo in repos:
+        prefixes |= repo.product_log_prefixes()
+    management.set_capture_prefixes(prefixes)
 
     # Extract + aggregate lab search paths across all repos (for the default
     # json backend).
@@ -396,9 +412,9 @@ def main(  # noqa: PLR0913 — CLI command params
 
     identity = reservation_state.identity
     if identity is not None and identity.source == "--as-user":
-        rprint(
-            f"[bold magenta][reservations] acting as {identity.username!r} "
-            f"(--as-user)[/bold magenta]"
+        logger.info(
+            f"[bold magenta][reservations] acting as {identity.username!r}"
+            f" (--as-user)[/bold magenta]"
         )
 
     ctx.meta["otto_reservation"] = reservation_state
@@ -411,11 +427,7 @@ def main(  # noqa: PLR0913 — CLI command params
     if show_lab:
         from rich.pretty import pprint
 
-        pprint_depth = None
-        if not verbose:
-            pprint_depth = 3
-
-        pprint(lab, max_depth=pprint_depth, expand_all=True)
+        pprint(lab, max_depth=(None if lab_depth == 0 else lab_depth), expand_all=True)
         raise typer.Exit
 
     # Listing hosts can't be done as a callback because context creation must be done first.

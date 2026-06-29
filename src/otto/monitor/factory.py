@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import cast
 
 from ..host.remote_host import RemoteHost
+from ..logger.mode import LogMode
 from .collector import MetricCollector, MonitorTarget
 from .parsers import get_host_parsers
 from .snmp import SnmpClient, SnmpSource, SnmpVersion
@@ -39,7 +40,7 @@ def build_monitor_collector(
     """
     targets: list[MonitorTarget] = []
     for host in hosts:
-        host.log = False
+        host.log = LogMode.NEVER
         snmp = host.snmp
         if snmp is not None:
             client = SnmpClient(

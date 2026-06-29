@@ -172,6 +172,37 @@ class TestRunCmdLogging:
         assert s._begin_marker in log
         assert s._end_marker_prefix in log
 
+    @pytest.mark.asyncio
+    async def test_never_redacts_session_diagnostics(
+        self,
+        initialized_session: MockSession,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        """When redact=True, the framed-write, begin-marker, and buffer-preview
+        diagnostics must NOT emit the raw command text — they must emit
+        ``<redacted`` placeholders instead.  The secret must never appear in the
+        captured log even at DEBUG level."""
+        s = initialized_session
+        caplog.clear()
+        caplog.set_level(logging.DEBUG, logger="otto")
+
+        async def simulate():
+            await asyncio.sleep(0.01)
+            s.feed(f"{s._begin_marker}\nok\n{s._end_marker_prefix}0__\n")
+
+        feed_task = asyncio.create_task(simulate())
+        result = await s.run_cmd("SECRETPW", redact=True)
+        await feed_task
+
+        assert result.retcode == 0
+        blob = "\n".join(r.getMessage() for r in caplog.records)
+        assert "SECRETPW" not in blob, "secret command leaked into DEBUG log"
+        assert "framed write cmd=<redacted>" in blob, "framed-write placeholder missing"
+        assert "run_cmd done cmd=<redacted>" in blob, "run_cmd-done placeholder missing"
+        assert "begin marker matched" not in blob, (
+            "begin-marker diagnostic must be suppressed when redacting"
+        )
+
 
 # ---------------------------------------------------------------------------
 # recover_session logging
@@ -250,7 +281,9 @@ class _AliveStubSession(ShellSession):
         self._initialized = True
         self._alive = True
 
-    async def run_cmd(self, cmd, expects=None, timeout=None, on_output=None, write_progress=None):
+    async def run_cmd(
+        self, cmd, expects=None, timeout=None, on_output=None, redact=False, write_progress=None
+    ):
         sink = on_output if on_output is not None else self._on_output
         sink("OUT")
         return CommandStatus(command=cmd, output="OUT", status=Status.Success, retcode=0)
@@ -262,8 +295,8 @@ def _logging_mgr():
     mgr = SessionManager(
         connections=cast("ConnectionManager", SimpleNamespace(term="telnet")),
         session_factory=_AliveStubSession,
-        log_command=cmds.append,
-        log_output=outs.append,
+        log_command=lambda cmd, _mode: cmds.append(cmd),
+        log_output=lambda out, _mode: outs.append(out),
     )
     return mgr, cmds, outs
 
@@ -278,22 +311,81 @@ class TestPerCommandLogSuppression:
         assert outs == ["OUT"]
 
     @pytest.mark.asyncio
-    async def test_log_false_suppresses_command_and_output(self):
+    async def test_never_suppresses_command_and_output(self):
         mgr, cmds, outs = _logging_mgr()
-        result = await mgr.run_cmd("llext load_hex foo DEADBEEF", log=False)
+        result = await mgr.run_cmd("llext load_hex foo DEADBEEF", log=LogMode.NEVER)
         # Output still returned to the caller — only logging is suppressed.
         assert result.output == "OUT"
         assert cmds == []
         assert outs == []
 
     @pytest.mark.asyncio
-    async def test_log_flag_does_not_leak_between_calls(self):
-        # The argument-passed sink means a log=False command leaves no lingering
-        # suppression — the next log=True command logs normally. (A host.log
+    async def test_never_flag_does_not_leak_between_calls(self):
+        # The argument-passed sink means a NEVER command leaves no lingering
+        # suppression — the next NORMAL command logs normally. (A host.log
         # mutation that forgot to restore would suppress "b" too.) This is the
         # property the concurrent-netcat-shells requirement depends on.
         mgr, cmds, outs = _logging_mgr()
-        await mgr.run_cmd("a", log=False)
-        await mgr.run_cmd("b", log=True)
+        await mgr.run_cmd("a", log=LogMode.NEVER)
+        await mgr.run_cmd("b", log=LogMode.NORMAL)
         assert cmds == ["b"]
         assert outs == ["OUT"]
+
+
+# ---------------------------------------------------------------------------
+# Console-suppress filter (Task 2)
+# ---------------------------------------------------------------------------
+
+from otto.host.host import HostFilter
+from otto.logger.mode import LogMode
+
+
+def _record(mode):
+    rec = logging.LogRecord("otto", logging.INFO, __file__, 0, "msg", None, None)
+    rec.host = object()
+    rec.log_mode = mode
+    return rec
+
+
+def test_console_suppress_filter_drops_quiet_and_never():
+    f = HostFilter()
+    assert f.filter(_record(LogMode.NORMAL)) is True
+    assert f.filter(_record(LogMode.QUIET)) is False
+    assert f.filter(_record(LogMode.NEVER)) is False
+
+
+def test_console_suppress_filter_passes_non_command_records():
+    f = HostFilter()
+    rec = logging.LogRecord("otto", logging.WARNING, __file__, 0, "boom", None, None)
+    assert f.filter(rec) is True  # no host tag → always passes (warnings/errors)
+
+
+# ---------------------------------------------------------------------------
+# Host + command mode composition (Task 4)
+# ---------------------------------------------------------------------------
+
+from otto.host.unix_host import UnixHost
+from otto.logger.mode import effective_mode
+
+
+def _make_unix_host(log=LogMode.NORMAL) -> UnixHost:
+    return UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=log)
+
+
+def test_effective_log_composes_host_and_command():
+    host = _make_unix_host()
+    host.log = LogMode.QUIET
+    # A NORMAL command on a QUIET host runs QUIET; a NEVER command stays NEVER.
+    assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
+    assert host._effective_log(LogMode.NEVER) is LogMode.NEVER
+    # The composition is the most-restrictive of the two modes.
+    assert effective_mode(LogMode.QUIET, LogMode.NORMAL) is LogMode.QUIET
+
+
+def test_effective_log_normalizes_transitional_bools():
+    host = _make_unix_host(log=False)  # transitional bool → QUIET standing mode
+    assert host._effective_log(True) is LogMode.QUIET  # bool True → NORMAL command
+    assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
+    host.log = True  # transitional bool → NORMAL standing mode
+    assert host._effective_log(LogMode.NORMAL) is LogMode.NORMAL
+    assert host._effective_log(False) is LogMode.QUIET  # bool False → QUIET command

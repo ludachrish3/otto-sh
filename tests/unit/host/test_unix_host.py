@@ -17,6 +17,7 @@ import pytest
 
 from otto.host import HostSession, UnixHost
 from otto.host.session import ShellSession
+from otto.logger.mode import LogMode
 from otto.utils import CommandStatus, Status
 
 
@@ -276,26 +277,28 @@ class TestCommandExecution:
         host._session_mgr._session = self._mock_session(ok)
         expects = [(r"Password:", "secret\n")]
         await host.run("sudo ls", expects=expects)
-        host._session_mgr._session.run_cmd.assert_called_once_with(
-            "sudo ls",
-            expects=expects,
-            timeout=None,
-            on_output=None,
-            write_progress=None,
-        )
+        host._session_mgr._session.run_cmd.assert_called_once()
+        args, kwargs = host._session_mgr._session.run_cmd.call_args
+        assert args == ("sudo ls",)
+        assert kwargs["expects"] == expects
+        assert kwargs["timeout"] is None
+        assert kwargs["write_progress"] is None
+        assert kwargs["redact"] is False
+        assert callable(kwargs["on_output"])  # NORMAL-mode tagging sink, not None
 
     @pytest.mark.asyncio
     async def test_timeout_forwarded_to_session(self, host: UnixHost):
         ok = CommandStatus("sleep 1", "", Status.Success, 0)
         host._session_mgr._session = self._mock_session(ok)
         await host.run("sleep 1", timeout=30.0)
-        host._session_mgr._session.run_cmd.assert_called_once_with(
-            "sleep 1",
-            expects=None,
-            timeout=30.0,
-            on_output=None,
-            write_progress=None,
-        )
+        host._session_mgr._session.run_cmd.assert_called_once()
+        args, kwargs = host._session_mgr._session.run_cmd.call_args
+        assert args == ("sleep 1",)
+        assert kwargs["expects"] is None
+        assert kwargs["timeout"] == 30.0
+        assert kwargs["write_progress"] is None
+        assert kwargs["redact"] is False
+        assert callable(kwargs["on_output"])  # NORMAL-mode tagging sink, not None
 
     @pytest.mark.asyncio
     async def test_telnet_connection_failure_propagates(self):
@@ -396,12 +399,13 @@ class TestOneshot:
         assert result.status == Status.Success
         assert result.output == "hello"
         mock_client.connect.assert_called_once()
-        mock_session.run_cmd.assert_called_once_with(
-            "echo hello",
-            expects=None,
-            timeout=None,
-            on_output=None,
-        )
+        mock_session.run_cmd.assert_called_once()
+        args, kwargs = mock_session.run_cmd.call_args
+        assert args == ("echo hello",)
+        assert kwargs["expects"] is None
+        assert kwargs["timeout"] is None
+        assert kwargs["redact"] is False
+        assert callable(kwargs["on_output"])  # NORMAL-mode tagging sink, not None
         await h.close()
 
     @pytest.mark.concurrency
@@ -427,7 +431,9 @@ class TestOneshot:
         listener_running = asyncio.Event()
         release_listener = asyncio.Event()
 
-        async def _fake_run_cmd(cmd, expects=None, timeout=None, on_output=None):
+        async def _fake_run_cmd(
+            cmd, expects=None, timeout=None, on_output=None, redact=False, write_progress=None
+        ):
             if "nc -l" in cmd:
                 listener_running.set()
                 await release_listener.wait()
@@ -505,11 +511,12 @@ class TestOneshot:
             status=Status.Success,
             retcode=0,
         )
+        # log=False composes with the host's standing mode (also False) → QUIET.
         await h.oneshot("base64 /bin/ls", log=False)
         h._session_mgr.oneshot.assert_awaited_once_with(
             "base64 /bin/ls",
             timeout=None,
-            log=False,
+            log=LogMode.QUIET,
         )
 
 
@@ -843,7 +850,7 @@ class TestNcFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_put_suppresses_host_logging_during_transfer(self, tmp_path: Path):
-        """During put, host.log must be False so per-host records are
+        """During put, host.log must be QUIET so per-host records are
         dropped by HostFilter; it must be restored to its prior value after
         the transfer completes."""
         h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=True)
@@ -851,7 +858,7 @@ class TestNcFileTransfer:
         src = tmp_path / "upload.txt"
         src.write_bytes(b"test content")
 
-        log_states: list[bool] = []
+        log_states: list[object] = []
 
         async def oneshot_capturing_log(cmd: str, **_kw) -> CommandStatus:
             log_states.append(h.log)
@@ -887,19 +894,19 @@ class TestNcFileTransfer:
 
         assert status == Status.Success
         assert log_states
-        assert all(state is False for state in log_states)
+        assert all(state is LogMode.QUIET for state in log_states)
         assert h.log is True
         await h.close()
 
     @pytest.mark.asyncio
     async def test_nc_get_suppresses_host_logging_during_transfer(self, tmp_path: Path):
         """Symmetric check for get — the file-size stat and the send oneshot
-        must both run with host.log == False."""
+        must both run with host.log == LogMode.QUIET."""
         h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=True)
 
         send_cs = CommandStatus("nc ...", "", Status.Success, 0)
 
-        log_states: list[bool] = []
+        log_states: list[object] = []
 
         dest = tmp_path / "out"
         dest.mkdir()
@@ -933,7 +940,7 @@ class TestNcFileTransfer:
 
         assert status == Status.Success
         assert log_states
-        assert all(state is False for state in log_states)
+        assert all(state is LogMode.QUIET for state in log_states)
         assert h.log is True
         await h.close()
 
@@ -1230,22 +1237,35 @@ class TestHostSessionProxy:
     async def test_run_delegates_cmd_to_shell_session(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.run("ls /tmp")
-        shell.run_cmd.assert_called_once_with("ls /tmp", expects=None, timeout=10.0, on_output=None)
+        shell.run_cmd.assert_called_once()
+        _, kwargs = shell.run_cmd.call_args
+        assert kwargs["expects"] is None
+        assert kwargs["timeout"] == 10.0
+        assert callable(kwargs["on_output"])
+        assert kwargs["redact"] is False
 
     @pytest.mark.asyncio
     async def test_run_forwards_expects(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         expects = [(r"Password:", "secret\n")]
         await session.run("sudo ls", expects=expects)  # type: ignore[arg-type]
-        shell.run_cmd.assert_called_once_with(
-            "sudo ls", expects=expects, timeout=10.0, on_output=None
-        )
+        shell.run_cmd.assert_called_once()
+        _, kwargs = shell.run_cmd.call_args
+        assert kwargs["expects"] == expects
+        assert kwargs["timeout"] == 10.0
+        assert callable(kwargs["on_output"])
+        assert kwargs["redact"] is False
 
     @pytest.mark.asyncio
     async def test_run_forwards_timeout(self, host: UnixHost):
         session, shell = self._make_remote_session(host)
         await session.run("sleep 5", timeout=60.0)
-        shell.run_cmd.assert_called_once_with("sleep 5", expects=None, timeout=60.0, on_output=None)
+        shell.run_cmd.assert_called_once()
+        _, kwargs = shell.run_cmd.call_args
+        assert kwargs["expects"] is None
+        assert kwargs["timeout"] == 60.0
+        assert callable(kwargs["on_output"])
+        assert kwargs["redact"] is False
 
     @pytest.mark.asyncio
     async def test_send_delegates(self, host: UnixHost):

@@ -326,7 +326,10 @@ class TestDelegation:
     async def test_send_delegates(self, host: EmbeddedHost):
         host._session_mgr = AsyncMock()
         await host.send("help\r")
-        host._session_mgr.send.assert_awaited_once_with("help\r", log=True)
+        from otto.logger.mode import LogMode
+
+        # The fixture host is QUIET (log=False), folded into the forwarded mode.
+        host._session_mgr.send.assert_awaited_once_with("help\r", log=LogMode.QUIET)
 
     @pytest.mark.asyncio
     async def test_expect_delegates(self, host: EmbeddedHost):
@@ -357,6 +360,8 @@ class TestDelegation:
 
     @pytest.mark.asyncio
     async def test_oneshot_forwards_log_false(self, host):
+        from otto.logger.mode import LogMode
+
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandStatus(
             command="c",
@@ -364,15 +369,18 @@ class TestDelegation:
             status=Status.Success,
             retcode=0,
         )
+        # log=False is composed with the host's standing mode into LogMode.QUIET.
         await host.oneshot("llext load_hex foo DEADBEEF", log=False)
         host._session_mgr.run_cmd.assert_awaited_once_with(
             "llext load_hex foo DEADBEEF",
             timeout=None,
-            log=False,
+            log=LogMode.QUIET,
         )
 
     @pytest.mark.asyncio
     async def test_run_forwards_log_false(self, host):
+        from otto.logger.mode import LogMode
+
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandStatus(
             command="c",
@@ -382,7 +390,7 @@ class TestDelegation:
         )
         await host.run("llext load_hex foo DEADBEEF", log=False)
         _, kwargs = host._session_mgr.run_cmd.await_args
-        assert kwargs["log"] is False
+        assert kwargs["log"] is LogMode.QUIET
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +446,9 @@ def _ok(output: str) -> CommandStatus:
 
 class TestLoad:
     @pytest.mark.asyncio
-    async def test_load_runs_loader_command_with_log_false(self, host, tmp_path):
+    async def test_load_runs_loader_command_with_log_never(self, host, tmp_path):
+        from otto.logger.mode import LogMode
+
         host.loader = LlextHexLoader()
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = _ok("Successfully loaded extension cov_ext")
@@ -451,7 +461,7 @@ class TestLoad:
         assert err == ""
         _, kwargs = host._session_mgr.run_cmd.await_args
         assert host._session_mgr.run_cmd.await_args.args[0] == "llext load_hex cov_ext 010203"
-        assert kwargs["log"] is False
+        assert kwargs["log"] is LogMode.NEVER
         assert "write_progress" not in kwargs
 
     @pytest.mark.asyncio

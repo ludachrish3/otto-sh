@@ -10,6 +10,7 @@ from otto.host.embedded_host import EmbeddedHost
 from otto.host.options import TelnetOptions
 from otto.host.toolchain import Toolchain
 from otto.host.unix_host import UnixHost
+from otto.logger.mode import LogMode
 from otto.models.host import (
     HOST_SPEC_RUNTIME_PAIRS,
     EmbeddedHostSpec,
@@ -18,6 +19,11 @@ from otto.models.host import (
     UnixHostSpec,
 )
 from otto.storage.factory import create_host_from_dict
+
+
+def _minimal_unix_kwargs() -> dict:
+    """Smallest kwargs that build a valid ``UnixHostSpec``."""
+    return {"ip": "10.0.0.1", "element": "lab", "creds": {"u": "p"}}
 
 
 def test_toolchain_spec_defaults_match_runtime():
@@ -100,6 +106,27 @@ def test_unix_spec_builds_unix_host_with_defaults():
     assert host.transfer == "scp"
     assert host.os_type == "unix"
     assert host.ssh_options.port == 22
+
+
+def test_hostspec_log_default_is_normal_on_spec_and_runtime():
+    spec = UnixHostSpec.model_validate(_minimal_unix_kwargs())
+    assert spec.log is LogMode.NORMAL
+    assert spec.to_host().log is LogMode.NORMAL
+
+
+def test_hostspec_log_accepts_bool_and_coerces():
+    # Backward-compat: lab data may still declare log = true/false.
+    spec_false = UnixHostSpec.model_validate(_minimal_unix_kwargs() | {"log": False})
+    assert spec_false.log is LogMode.QUIET
+    spec_true = UnixHostSpec.model_validate(_minimal_unix_kwargs() | {"log": True})
+    assert spec_true.log is LogMode.NORMAL
+    # The coerced LogMode flows through to the built runtime host.
+    assert spec_false.to_host().log is LogMode.QUIET
+
+
+def test_hostspec_log_accepts_logmode_string():
+    spec = UnixHostSpec.model_validate(_minimal_unix_kwargs() | {"log": "quiet"})
+    assert spec.log is LogMode.QUIET
 
 
 def test_unix_spec_builds_nested_options_and_snmp():

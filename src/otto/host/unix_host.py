@@ -59,6 +59,7 @@ from typing_extensions import override
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
+from ..logger.mode import LogMode
 from ..utils import (
     Arg,
     CommandStatus,
@@ -247,9 +248,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
     fail loud. See :attr:`~otto.host.host.BaseHost.power_control`."""
 
-    log: bool = field(default=True, repr=False)
-    """Determines whether this host should log its output to stdout and log files.
-    Setting this field to `False` effectively sets `log_stdout` to False as well."""
+    log: "LogMode | bool" = field(default=LogMode.NORMAL, repr=False)
+    """Standing per-host logging disposition. ``QUIET`` keeps this host's command
+    I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
+    (warnings/errors are unaffected). Accepts a bool for convenience
+    (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
 
     log_stdout: bool = field(default=True, repr=False)
     """Determines whether this host should log its output to stdout.
@@ -504,7 +507,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Execute a single command on the remote host via the **persistent shell session**.
 
@@ -536,14 +539,16 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
-        return await self._session_mgr.run_cmd(cmd, expects=expects, timeout=timeout, log=log)
+        return await self._session_mgr.run_cmd(
+            cmd, expects=expects, timeout=timeout, log=self._effective_log(log)
+        )
 
     @override
     async def oneshot(
         self,
         cmd: str,
         timeout: float | None = None,
-        log: bool = True,
+        log: "LogMode | bool" = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a single command concurrent-safely, independent of the persistent shell.
 
@@ -595,7 +600,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
-        return await self._session_mgr.oneshot(cmd, timeout=timeout, log=log)
+        return await self._session_mgr.oneshot(cmd, timeout=timeout, log=self._effective_log(log))
 
     @override
     async def open_session(self, name: str) -> HostSession:
@@ -630,13 +635,14 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return await self._session_mgr.open_session(name)
 
     @override
-    async def send(self, text: str, log: bool = True) -> None:
+    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
         """Send raw text to the host's persistent session."""
+        effective = self._effective_log(log)
         if is_dry_run():
-            if log:
+            if effective is not LogMode.NEVER:
                 self._log_command(f"[DRY RUN] send({text!r})")
             return
-        await self._session_mgr.send(text, log=log)
+        await self._session_mgr.send(text, log=effective)
 
     @override
     async def expect(
@@ -713,12 +719,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         World-readable (no sudo), no ``lsmod`` binary dependency; column
         one is the module name, already ``-``→``_`` normalized by the kernel.
         Returns ``[]`` under dry-run (the live module set is unknowable, and the
-        skipped read would otherwise echo the dry-run banner). ``log=False``
-        keeps the (potentially long) module dump out of the console/log.
+        skipped read would otherwise echo the dry-run banner).
+        ``log=LogMode.QUIET`` keeps the (potentially long) module dump out of
+        the console (still recorded in verbose.log).
         """
         if is_dry_run():
             return []
-        result = await self.oneshot("cat /proc/modules", log=False)
+        result = await self.oneshot("cat /proc/modules", log=LogMode.QUIET)
         if not result.status.is_ok:
             return []
         return [line.split()[0] for line in result.output.splitlines() if line.strip()]

@@ -420,9 +420,11 @@ def test_run_cli_binding_markers():
     assert any(isinstance(m, typer.models.OptionInfo) for m in sudo_meta), "sudo must be an Option"
 
     # expects and log are excluded
+    from otto.logger.mode import LogMode
+
     assert "expects" in binding.excluded, "expects must be excluded"
     assert "log" in binding.excluded, "log must be excluded"
-    assert binding.excluded["log"] is True  # default value preserved
+    assert binding.excluded["log"] is LogMode.NORMAL  # default value preserved
     assert binding.excluded["expects"] is None  # default value preserved
 
 

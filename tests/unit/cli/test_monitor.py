@@ -297,10 +297,12 @@ class TestBuildCollector:
     """Direct unit tests for the build_monitor_collector() factory."""
 
     def test_disables_host_logging(self):
+        from otto.logger.mode import LogMode
+
         host = _make_host()
         assert host.log is True
         build_monitor_collector(hosts=[host])
-        assert host.log is False
+        assert host.log is LogMode.NEVER
 
     @pytest.mark.asyncio
     async def test_db_path_forwarded(self, tmp_path):

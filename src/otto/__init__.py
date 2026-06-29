@@ -7,6 +7,7 @@ load only when the relevant API (or the console entry point ``otto:app``) is
 actually used. ``from otto import options`` then ``@options`` on an Options
 class still works (re-export of ``pydantic.dataclasses.dataclass``).
 """
+
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -14,6 +15,7 @@ if TYPE_CHECKING:
 
     from otto.cli import app
     from otto.logger import get_otto_logger
+    from otto.logger import get_otto_logger as get_logger
 
     from .configmodule import all_hosts, get_host, get_lab, run_on_all_hosts
     from .context import OttoContext, get_context, open_context, try_get_context
@@ -25,6 +27,7 @@ __all__ = [
     "get_context",
     "get_host",
     "get_lab",
+    "get_logger",
     "get_otto_logger",
     "open_context",
     "options",
@@ -37,6 +40,7 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "options": ("pydantic.dataclasses", "dataclass"),
     "app": ("otto.cli", "app"),
     "get_otto_logger": ("otto.logger", "get_otto_logger"),
+    "get_logger": ("otto.logger", "get_otto_logger"),
     "all_hosts": ("otto.configmodule", "all_hosts"),
     "get_host": ("otto.configmodule", "get_host"),
     "get_lab": ("otto.configmodule", "get_lab"),
