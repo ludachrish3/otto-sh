@@ -123,6 +123,17 @@ def _uninstall_sigwinch_handler_if_unused() -> None:
 
 @dataclass(eq=False)
 class TelnetClient:
+    """Telnet transport for a single remote host.
+
+    Manages the asyncio reader/writer streams for one telnet connection,
+    handling option negotiation (echo suppression, NAWS) and authentication.
+    After :meth:`connect` the streams are consumed by a
+    :class:`~otto.host.session.TelnetSession`, which owns command framing and
+    output capture. Concurrent callers should not share a single
+    ``TelnetClient`` instance — use :class:`~otto.host.session.SessionManager`'s
+    oneshot pool, which opens additional clients as needed.
+    """
+
     host: str
     user: str
     password: str

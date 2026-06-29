@@ -1,3 +1,13 @@
+"""Local host implementation — runs commands on the machine otto itself is running on.
+
+:class:`LocalHost` is a concrete :class:`~otto.host.host.BaseHost` that spawns
+subprocesses and manages a persistent local shell session, mirroring the API of
+:class:`~otto.host.unix_host.UnixHost` without any network transport. File
+transfers are handled by :class:`LocalFileTransfer` (a :mod:`shutil`-backed
+:class:`~otto.host.transfer.BaseFileTransfer` subclass) so progress reporting
+works uniformly across all host backends.
+"""
+
 import asyncio
 import re
 import shutil
@@ -88,6 +98,16 @@ logger = get_otto_logger()
     slots=True,
 )
 class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
+    """A host that runs commands on the local machine via a persistent shell session.
+
+    Implements the full :class:`~otto.host.host.BaseHost` API (run, oneshot, put,
+    get, open_session, send, expect, is_reachable) without any network transport.
+    Shell state (working directory, environment variables) persists across ``run``
+    calls through a :class:`~otto.host.session.SessionManager`-backed local
+    session; ``oneshot`` bypasses it and spawns an independent subprocess, making
+    concurrent calls safe. File transfers delegate to :class:`LocalFileTransfer`.
+    """
+
     name: str = field(default="localhost", init=False)
 
     id: str = field(default="local", init=False)

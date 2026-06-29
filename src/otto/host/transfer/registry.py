@@ -1,3 +1,13 @@
+"""Registry of file-transfer backends, keyed by protocol name.
+
+Provides :func:`register_transfer_backend` (for custom backends added from
+init modules) and :func:`build_transfer_backend` (used by
+:class:`~otto.host.transfer.BaseFileTransfer` construction). The registry is
+unified across host families — unix backends (``scp``, ``sftp``, ``ftp``,
+``nc``) and embedded backends (``console``, ``tftp``) share one namespace so
+a cross-family protocol is a single entry.
+"""
+
 from .base import BaseFileTransfer
 
 # Unified registry of transfer-protocol name -> backend class, spanning BOTH

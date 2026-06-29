@@ -1,3 +1,5 @@
+"""Async host abstraction: the Host protocol, BaseHost ABC, and run helpers."""
+
 from __future__ import annotations
 
 import asyncio
@@ -211,6 +213,15 @@ async def _run_cmds_with_budget(
 
 
 class Host(Protocol):
+    """Structural protocol defining the public interface every otto host must satisfy.
+
+    Implementations of :class:`Host` connect otto to a specific target type
+    (SSH, serial console, QEMU, etc.). :class:`BaseHost` provides concrete
+    default implementations for the shared mechanics; individual host classes
+    such as ``UnixHost`` or ``EmbeddedHost`` inherit from :class:`BaseHost` and
+    implement the family-specific hooks.
+    """
+
     log: bool
     """Determines whether this host should log its output to stdout and log files."""
 
@@ -231,7 +242,9 @@ class Host(Protocol):
 
     async def _interact(self) -> None: ...
 
-    async def interact(self) -> None: ...
+    async def interact(self) -> None:
+        """Open an interactive shell bridged to the local terminal."""
+        ...
 
     async def run(
         self,
@@ -240,31 +253,88 @@ class Host(Protocol):
         timeout: float | None = None,
         log: bool = True,
         sudo: bool = False,
-    ) -> RunResult: ...
+    ) -> RunResult:
+        """Run one or more commands on the host and collect their results.
+
+        Args:
+            cmds: A single command or a sequence of commands to run in order.
+                Strings and :class:`ShellCommand` objects may be mixed.
+            expects: Optional ``(pattern, response)`` pair(s) for interactive
+                prompts. Inherited by each command unless overridden per-command.
+            timeout: Per-command timeout for a single command, or a cumulative
+                budget shared across all commands in a sequence. ``None`` means
+                no limit.
+            log: Whether to log command output for this call.
+            sudo: If ``True``, each command is run with elevated privileges.
+                Implementations that do not support elevation raise
+                :exc:`NotImplementedError`.
+
+        Returns:
+            A :class:`RunResult` aggregating each command's status and output.
+        """
+        ...
 
     async def oneshot(
         self,
         cmd: str,
         timeout: float | None = None,
         log: bool = True,
-    ) -> CommandStatus: ...
+    ) -> CommandStatus:
+        """Run a single command outside the typical stateful ``run`` workflow.
+
+        Concurrency safety is implementation-dependent. Host families with an
+        independent exec primitive (e.g.
+        :class:`~otto.host.unix_host.UnixHost`,
+        :class:`~otto.host.local_host.LocalHost`) open a fresh connection or
+        subprocess per call, so ``oneshot`` is safe to use concurrently from
+        multiple coroutines. Families exposing only a single console (e.g.
+        :class:`~otto.host.embedded_host.EmbeddedHost`) share the persistent
+        session and are **not** concurrency-safe — see the concrete class.
+
+        Returns the :class:`~otto.utils.CommandStatus` for the command.
+        """
+        ...
 
     async def open_session(
         self,
         name: str,
-    ) -> HostSession: ...
+    ) -> HostSession:
+        """Open a named auxiliary session on this host.
+
+        Named sessions are independent of the host's default persistent
+        session and of each other, allowing concurrent shell interactions.
+        The caller is responsible for closing the returned
+        :class:`~otto.host.session.HostSession` when done.
+        """
+        ...
 
     async def send(
         self,
         text: str,
         log: bool = True,
-    ) -> None: ...
+    ) -> None:
+        """Send raw text to the host's persistent session without waiting for a response.
+
+        Useful for driving interactive prompts or menu-driven interfaces where
+        a full :meth:`run` round-trip is not appropriate.
+        """
+        ...
 
     async def expect(
         self,
         pattern: str | re.Pattern[str],
         timeout: float = 30.0,
-    ) -> str: ...
+    ) -> str:
+        """Wait for *pattern* to appear in the host's session output.
+
+        Args:
+            pattern: A literal string or compiled regex to match against output.
+            timeout: Maximum seconds to wait before raising a timeout error.
+
+        Returns:
+            The matched text.
+        """
+        ...
 
     ####################
     #  File transfer
@@ -274,39 +344,106 @@ class Host(Protocol):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
-    ) -> tuple[Status, str]: ...
+    ) -> tuple[Status, str]:
+        """Download one or more files from the host to a local directory.
+
+        Returns a ``(Status, message)`` tuple: :attr:`~otto.utils.Status.Success`
+        with an empty message on success; a non-ok status with a diagnostic
+        on failure.
+        """
+        ...
 
     async def put(
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
-    ) -> tuple[Status, str]: ...
+    ) -> tuple[Status, str]:
+        """Upload one or more local files to a directory on the host.
 
-    async def power(self, state: str | None = None) -> tuple[Status, str]: ...
+        Returns a ``(Status, message)`` tuple: :attr:`~otto.utils.Status.Success`
+        with an empty message on success; a non-ok status with a diagnostic
+        on failure.
+        """
+        ...
+
+    async def power(self, state: str | None = None) -> tuple[Status, str]:
+        """Power this host on, off, or toggle (when *state* is ``None``).
+
+        Returns a ``(Status, message)`` tuple.
+        """
+        ...
 
     async def reboot(
         self, hard: bool = False, wait: bool = False, timeout: float = 600.0
-    ) -> tuple[Status, str]: ...
+    ) -> tuple[Status, str]:
+        """Reboot this host.
 
-    async def shutdown(self) -> tuple[Status, str]: ...
+        ``hard=False`` issues an in-shell reboot; ``hard=True`` power-cycles
+        via the :class:`~otto.host.power.PowerController`. When *wait* is
+        ``True``, blocks until the host is reachable again or *timeout* seconds
+        have elapsed. Returns a ``(Status, message)`` tuple.
+        """
+        ...
 
-    async def is_reachable(self, timeout: float = 10.0) -> bool: ...
+    async def shutdown(self) -> tuple[Status, str]:
+        """Power this host off from its own shell.
 
-    async def wait_until_up(self, timeout: float, interval: float = 2.0) -> bool: ...
+        Distinct from :meth:`power` ``('off')``, which uses an external power
+        controller. Returns a ``(Status, message)`` tuple.
+        """
+        ...
 
-    async def wait_until_down(self, timeout: float, interval: float = 2.0) -> bool: ...
+    async def is_reachable(self, timeout: float = 10.0) -> bool:
+        """Return ``True`` if the host responds to a connection probe within *timeout* seconds."""
+        ...
 
-    async def close(self) -> None: ...
+    async def wait_until_up(self, timeout: float, interval: float = 2.0) -> bool:
+        """Poll until the host is reachable or *timeout* seconds elapse.
 
-    async def stage(self) -> tuple[Status, str]: ...
+        Returns ``True`` if reachable before the deadline, ``False`` otherwise.
+        """
+        ...
 
-    async def install(self, stage_only: bool = False) -> tuple[Status, str]: ...
+    async def wait_until_down(self, timeout: float, interval: float = 2.0) -> bool:
+        """Poll until the host is unreachable or *timeout* seconds elapse.
 
-    async def uninstall(self) -> tuple[Status, str]: ...
+        Returns ``True`` if unreachable before the deadline, ``False`` otherwise.
+        """
+        ...
 
-    async def is_installed(self) -> bool: ...
+    async def close(self) -> None:
+        """Close the host's persistent session and release any held resources."""
+        ...
 
-    async def is_uninstalled(self) -> bool: ...
+    async def stage(self) -> tuple[Status, str]:
+        """Stage every product onto this host (transfer/place, no install).
+
+        Returns a ``(Status, message)`` tuple.
+        """
+        ...
+
+    async def install(self, stage_only: bool = False) -> tuple[Status, str]:
+        """Stage and then install every product on this host.
+
+        When *stage_only* is ``True``, stops after staging without installing.
+        Returns a ``(Status, message)`` tuple, short-circuiting on the first failure.
+        """
+        ...
+
+    async def uninstall(self) -> tuple[Status, str]:
+        """Uninstall every product from this host (best-effort).
+
+        Returns a ``(Status, message)`` tuple.
+        """
+        ...
+
+    async def is_installed(self) -> bool:
+        """Return ``True`` iff at least one product is declared and all are installed."""
+        ...
+
+    async def is_uninstalled(self) -> bool:
+        """Return ``True`` iff :meth:`is_installed` returns ``False``."""
+        ...
 
     async def __aenter__(self) -> Self: ...
 
@@ -314,6 +451,17 @@ class Host(Protocol):
 
 
 class BaseHost(ABC):
+    """Abstract base class providing shared mechanics for all host implementations.
+
+    :class:`BaseHost` implements the cross-cutting concerns that every host
+    family needs — command budgeting, dry-run stubs, product lifecycle,
+    power/reboot orchestration, and the repeat-command scheduler. Concrete
+    host classes (``UnixHost``,
+    ``EmbeddedHost``, etc.) inherit from :class:`BaseHost`, implement the
+    family-specific hooks (``_run_one``, ``oneshot``, ``_soft_reboot``, …),
+    and satisfy the :class:`Host` protocol.
+    """
+
     id: str
     name: str
     log: bool
@@ -505,12 +653,14 @@ class BaseHost(ABC):
         timeout: float | None = None,
         log: bool = True,
     ) -> CommandStatus:
+        """Run a single command outside the persistent shell session. Subclasses must override."""
         raise NotImplementedError from None
 
     async def open_session(
         self,
         name: str,
     ) -> HostSession:
+        """Open a named auxiliary session on this host. Subclasses must override."""
         raise NotImplementedError from None
 
     async def send(
@@ -518,6 +668,7 @@ class BaseHost(ABC):
         text: str,
         log: bool = True,
     ) -> None:
+        """Send raw text to the host's persistent session. Subclasses must override."""
         raise NotImplementedError from None
 
     async def expect(
@@ -525,6 +676,7 @@ class BaseHost(ABC):
         pattern: str | re.Pattern[str],
         timeout: float = 30.0,
     ) -> str:
+        """Wait for *pattern* in the session output. Subclasses must override."""
         raise NotImplementedError from None
 
     ####################
@@ -536,6 +688,7 @@ class BaseHost(ABC):
         src_files: list[Path] | Path,
         dest_dir: Path,
     ) -> tuple[Status, str]:
+        """Download files from the host to a local directory. Subclasses must override."""
         raise NotImplementedError from None
 
     async def put(
@@ -543,9 +696,11 @@ class BaseHost(ABC):
         src_files: list[Path] | Path,
         dest_dir: Path,
     ) -> tuple[Status, str]:
+        """Upload local files to a directory on the host. Subclasses must override."""
         raise NotImplementedError from None
 
     async def close(self) -> None:
+        """Close the persistent session and release held resources. Subclasses must override."""
         raise NotImplementedError from None
 
     async def __aenter__(self) -> Self:
@@ -742,6 +897,21 @@ class BaseHost(ABC):
         on_result: Callable[[str, datetime, list[CommandStatus]], None] | None = None,
         max_history: int = 1000,
     ) -> None:
+        """Start a named background task that runs *cmds* repeatedly at *interval*.
+
+        Args:
+            name: Unique label for this repeat task. Raises :exc:`RuntimeError`
+                if a task with the same name is already running.
+            cmds: Command string or list of command strings to run each cycle.
+            interval: Time between the start of successive runs.
+            times: Maximum number of cycles, or ``-1`` for unlimited.
+            duration: Stop after this wall-clock duration, or ``timedelta.max``
+                for unlimited.
+            until: Stop at this UTC datetime, or the module sentinel for unlimited.
+            on_result: Optional callback invoked after each cycle with the task
+                name, timestamp, and per-command statuses from that run.
+            max_history: Maximum number of past run results to retain (ring buffer).
+        """
         if is_dry_run():
             self._log_command(f"[DRY RUN] start_repeat({name!r}, {cmds}, interval={interval})")
             return
@@ -757,12 +927,20 @@ class BaseHost(ABC):
         )
 
     async def stop_repeat(self, name: str) -> None:
+        """Cancel and await the named background repeat task."""
         await self._repeater.stop(name)
 
     async def stop_all_repeats(self) -> None:
+        """Cancel and await all running background repeat tasks."""
         await self._repeater.stop_all()
 
     def repeat_results(self, name: str) -> list[tuple[datetime, list[CommandStatus]]]:
+        """Return the stored run history for the named repeat task.
+
+        Each entry is a ``(timestamp, statuses)`` pair recorded at the end of
+        one cycle. At most ``max_history`` entries are kept (oldest discarded
+        first, as set in :meth:`start_repeat`).
+        """
         return self._repeater.get_results(name)
 
     ####################

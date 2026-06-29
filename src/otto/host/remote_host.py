@@ -197,6 +197,12 @@ class RemoteHost(BaseHost):
     _lab: Lab | None
 
     async def verify_connection(self) -> "CommandStatus":  # pragma: no cover
+        """Verify the host connection by running a diagnostic command.
+
+        Subclasses override this to run an OS-appropriate probe (e.g. ``uname``
+        on Unix, a Zephyr kernel-info command on embedded). Called by
+        :meth:`is_reachable` to decide whether the host is up.
+        """
         raise NotImplementedError from None
 
     ####################

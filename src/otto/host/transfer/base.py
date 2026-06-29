@@ -1,3 +1,13 @@
+"""Base classes and shared utilities for file-transfer backends.
+
+Defines the abstract :class:`BaseFileTransfer` that every transfer backend
+must subclass, the :class:`TransferContext` frozen data class (the uniform
+construction seam for registered backends), :func:`validate_filename_lengths`
+(guards against filesystem ``NAME_MAX`` violations before any bytes move), and
+the :data:`TransferProgressHandler` / :data:`TransferProgressFactory` type
+aliases consumed by the progress-bar wiring layer.
+"""
+
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -139,6 +149,12 @@ class BaseFileTransfer(ABC):
         dest_dir: Path,
         show_progress: bool = True,
     ) -> tuple[Status, str]:
+        """Upload *src_files* to *dest_dir*, validating filenames and driving progress display.
+
+        Rejects over-limit basenames up front (see :func:`validate_filename_lengths`),
+        then acquires the process-wide shared Rich progress bar (if *show_progress*)
+        and delegates to the concrete backend's ``_run_put`` implementation.
+        """
         from .progress import _acquire_shared_progress, make_rich_progress_factory
 
         status, err = validate_filename_lengths(
@@ -163,6 +179,11 @@ class BaseFileTransfer(ABC):
         dest_dir: Path,
         show_progress: bool = True,
     ) -> tuple[Status, str]:
+        """Download *src_files* into *dest_dir*, validating filenames and driving progress display.
+
+        Same validation and shared-progress contract as :meth:`put_files`,
+        but delegates to the concrete backend's ``_run_get`` implementation.
+        """
         from .progress import _acquire_shared_progress, make_rich_progress_factory
 
         status, err = validate_filename_lengths(

@@ -268,10 +268,12 @@ class ConnectionManager:
 
     @property
     def ip(self) -> str:
+        """IP address this connection manager dials."""
         return self._ip
 
     @property
     def term(self) -> str:
+        """Active terminal type (``'ssh'`` or ``'telnet'``)."""
         return self._term
 
     @term.setter

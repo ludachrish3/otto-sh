@@ -1270,6 +1270,12 @@ class SessionManager:
         log: bool = True,
         write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandStatus:
+        """Run *cmd* on the default session, creating it if needed.
+
+        Wraps :meth:`~otto.host.session.ShellSession.run_cmd` with automatic
+        session creation. Shell state persists across calls (same session is
+        reused until it dies).
+        """
         await self._ensure_session()
         if log:
             self._log_command(cmd)
@@ -1288,6 +1294,14 @@ class SessionManager:
         timeout: float | None = None,
         log: bool = True,
     ) -> CommandStatus:
+        """Run *cmd* without sharing state with the default session.
+
+        Concurrent calls are safe: for SSH each call opens an independent
+        channel on the existing connection; for Telnet (which has no stateless
+        exec primitive) an idle session is pulled from an internal free-list or
+        a new one is opened, preserving the independence contract without the
+        overhead of a fresh TCP + auth round-trip per call.
+        """
         if self._oneshot_factory is not None:
             return await self._oneshot_factory(cmd, timeout)
 
@@ -1461,6 +1475,7 @@ class SessionManager:
             return host_session
 
     async def send(self, text: str, log: bool = True) -> None:
+        """Send raw text to the default session, creating it if needed."""
         await self._ensure_session()
         if log:
             self._log_command(text.rstrip())
@@ -1472,6 +1487,7 @@ class SessionManager:
         pattern: str | re.Pattern[str],
         timeout: float = 10.0,
     ) -> str:
+        """Wait for *pattern* in the default session's output, creating the session if needed."""
         await self._ensure_session()
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
         result = await self._session.expect(pattern, timeout)

@@ -1,3 +1,14 @@
+"""Rich progress-bar helpers for file transfers.
+
+Provides a process-wide shared :class:`~rich.progress.Progress` instance
+(``_acquire_shared_progress``) so concurrent transfers from multiple hosts
+attach tasks to a single Live instead of launching competing Rich Lives that
+corrupt the terminal. The public helpers (:func:`make_rich_progress_handler`,
+:func:`make_rich_progress_factory`, :func:`make_transfer_progress`) build and
+wire the handlers consumed by :class:`~otto.host.transfer.BaseFileTransfer`
+subclasses.
+"""
+
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path

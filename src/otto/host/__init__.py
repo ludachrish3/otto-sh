@@ -1,3 +1,13 @@
+"""Host abstraction, concrete host families, and transfer/terminal backends.
+
+Exports the :class:`Host` base protocol, the concrete host classes
+(:class:`RemoteHost`, :class:`UnixHost`, :class:`EmbeddedHost`,
+:class:`ZephyrHost`, :class:`LocalHost`, :class:`DockerContainerHost`),
+session and connection primitives (:class:`SessionManager`,
+:class:`ConnectionManager`), and the transfer and terminal backend
+registries (:func:`register_transfer_backend`, :func:`register_term_backend`).
+"""
+
 from .command_frame import BashFrame as BashFrame
 from .command_frame import CommandFrame as CommandFrame
 from .command_frame import SessionMarkers as SessionMarkers

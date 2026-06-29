@@ -30,9 +30,20 @@ logger = get_otto_logger()
 class HopTransport(Protocol):
     """Minimal interface that ``ConnectionManager`` needs from a hop."""
 
-    async def get_tunnel(self) -> SSHClientConnection: ...
-    async def forward_port(self, dest_host: str, dest_port: int) -> int: ...
-    async def close(self) -> None: ...
+    async def get_tunnel(self) -> SSHClientConnection:
+        """Return the underlying SSH connection to the hop host."""
+        ...
+
+    async def forward_port(self, dest_host: str, dest_port: int) -> int:
+        """Forward a local ephemeral port to *dest_host:dest_port* through the tunnel.
+
+        Returns the local port number to connect to.
+        """
+        ...
+
+    async def close(self) -> None:
+        """Close the transport and release all forwarded ports."""
+        ...
 
 
 class SshHopTransport:

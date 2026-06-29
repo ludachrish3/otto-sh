@@ -581,6 +581,7 @@ class EmbeddedHost(RemoteHost):
         ) from None
 
     async def mkdir(self, path: "str | Path", parents: bool = True) -> tuple[Status, str]:  # noqa: ARG002 — required by UnixHost.mkdir override signature (always raises)
+        """Not supported — embedded targets have no shell ``mkdir`` equivalent."""
         self._no_fileop("mkdir")
 
     async def cp(
@@ -589,12 +590,15 @@ class EmbeddedHost(RemoteHost):
         dst: "str | Path",  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
         recursive: bool = False,  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
     ) -> tuple[Status, str]:
+        """Not supported — embedded targets have no shell ``cp`` equivalent."""
         self._no_fileop("cp")
 
     async def mv(self, src: "str | Path", dst: "str | Path") -> tuple[Status, str]:  # noqa: ARG002 — required by UnixHost.mv override signature (always raises)
+        """Not supported — embedded targets have no shell ``mv`` equivalent."""
         self._no_fileop("mv")
 
     async def read_file(self, path: "str | Path") -> str:  # noqa: ARG002 — required by UnixHost.read_file override signature (always raises)
+        """Not supported — use :meth:`get` to retrieve files from an embedded target."""
         self._no_fileop("read_file")
 
     async def write_file(
@@ -603,6 +607,7 @@ class EmbeddedHost(RemoteHost):
         data: str,  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
         append: bool = False,  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
     ) -> tuple[Status, str]:
+        """Not supported — use :meth:`put` to send files to an embedded target."""
         self._no_fileop("write_file")
 
     ####################
