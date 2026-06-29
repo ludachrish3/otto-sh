@@ -121,10 +121,9 @@ class RemoteHost(BaseHost):
     resources: set[str]
     """Names of resources required to use this host."""
 
-    log: "LogMode | bool"
+    log: LogMode
     """Standing per-host logging disposition. ``QUIET`` keeps command I/O in
-    ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere.
-    Accepts a bool for convenience (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
+    ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere."""
 
     user: str | None
     """User with which to log in, or None to use the first entry in ``creds``."""

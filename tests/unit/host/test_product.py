@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from otto.host.product import FileProduct, Product
+from otto.logger.mode import LogMode
 from otto.utils import Status
 
 
@@ -54,8 +55,10 @@ def test_every_host_has_empty_products_by_default():
     from otto.host.unix_host import UnixHost
 
     assert LocalHost().products == []
-    assert UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False).products == []
-    assert ZephyrHost(ip="192.0.2.1", element="sprout", log=False).products == []
+    assert (
+        UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET).products == []
+    )
+    assert ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET).products == []
 
 
 def test_products_can_be_injected_at_construction():

@@ -24,7 +24,7 @@ from otto.utils import CommandStatus, Status
 @pytest.fixture
 def host() -> UnixHost:
     """Bare UnixHost, no connections established."""
-    return UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=False)
+    return UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=LogMode.QUIET)
 
 
 # ---------------------------------------------------------------------------
@@ -58,39 +58,50 @@ class TestInit:
 class TestIdAndNameGeneration:
     @pytest.mark.asyncio
     async def test_id_no_board(self):
-        h = UnixHost(ip="10.0.0.1", element="Orange", creds={"u": "p"}, log=False)
+        h = UnixHost(ip="10.0.0.1", element="Orange", creds={"u": "p"}, log=LogMode.QUIET)
         assert h.id == "orange"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_id_with_board(self):
-        h = UnixHost(ip="10.0.0.1", element="Orange", board="Seed", creds={"u": "p"}, log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="Orange", board="Seed", creds={"u": "p"}, log=LogMode.QUIET
+        )
         assert h.id == "orange_seed"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_id_with_board_and_slot(self):
         h = UnixHost(
-            ip="10.0.0.1", element="Orange", board="Seed", slot=0, creds={"u": "p"}, log=False
+            ip="10.0.0.1",
+            element="Orange",
+            board="Seed",
+            slot=0,
+            creds={"u": "p"},
+            log=LogMode.QUIET,
         )
         assert h.id == "orange_seed0"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_name_no_board(self):
-        h = UnixHost(ip="10.0.0.1", element="orange", creds={"u": "p"}, log=False)
+        h = UnixHost(ip="10.0.0.1", element="orange", creds={"u": "p"}, log=LogMode.QUIET)
         assert h.name == "orange"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_name_with_board(self):
-        h = UnixHost(ip="10.0.0.1", element="orange", board="seed", creds={"u": "p"}, log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="orange", board="seed", creds={"u": "p"}, log=LogMode.QUIET
+        )
         assert h.name == "orange seed"
         await h.close()
 
     @pytest.mark.asyncio
     async def test_name_override(self):
-        h = UnixHost(ip="10.0.0.1", element="orange", creds={"u": "p"}, name="custom", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="orange", creds={"u": "p"}, name="custom", log=LogMode.QUIET
+        )
         assert h.name == "custom"
         await h.close()
 
@@ -112,7 +123,7 @@ class TestCreds:
             ip="10.0.0.1",
             element="box",
             creds={"vagrant": "vagrant", "test": "Password1"},
-            log=False,
+            log=LogMode.QUIET,
         )
         user, password = h._creds
         assert user == "vagrant"
@@ -128,12 +139,12 @@ class TestCreds:
 class TestClose:
     @pytest.mark.asyncio
     async def test_close_when_not_connected_is_safe(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False)
+        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
         await h.close()
 
     @pytest.mark.asyncio
     async def test_close_disconnects_ssh(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False)
+        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
         mock_conn = MagicMock()
         mock_conn.wait_closed = AsyncMock()
         h._connections._ssh_conn = mock_conn
@@ -159,7 +170,7 @@ class TestClose:
             def __del__(self):
                 collected.append(True)
 
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False)
+        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
 
         # Disable automatic generational gc *before* building the cycle, so
         # only an explicit gc.collect() — not incidental allocation pressure —
@@ -302,7 +313,9 @@ class TestCommandExecution:
 
     @pytest.mark.asyncio
     async def test_telnet_connection_failure_propagates(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
+        )
         with (
             patch.object(
                 h._connections,
@@ -376,7 +389,9 @@ class TestOneshot:
 
     @pytest.mark.asyncio
     async def test_oneshot_telnet_success(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
+        )
         expected = CommandStatus("echo hello", "hello", Status.Success, 0)
 
         mock_client = MagicMock()
@@ -425,7 +440,7 @@ class TestOneshot:
         not ready".
         """
         h = UnixHost(
-            ip="10.0.0.1", element="tomato_seed", creds={"u": "p"}, term="telnet", log=False
+            ip="10.0.0.1", element="tomato_seed", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
         )
 
         listener_running = asyncio.Event()
@@ -503,7 +518,7 @@ class TestOneshot:
         from otto.host.unix_host import UnixHost
         from otto.utils import CommandStatus, Status
 
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=False)
+        h = UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=LogMode.QUIET)
         h._session_mgr = AsyncMock()
         h._session_mgr.oneshot.return_value = CommandStatus(
             command="c",
@@ -511,8 +526,8 @@ class TestOneshot:
             status=Status.Success,
             retcode=0,
         )
-        # log=False composes with the host's standing mode (also False) → QUIET.
-        await h.oneshot("base64 /bin/ls", log=False)
+        # QUIET command composes with the host's standing mode (also QUIET) → QUIET.
+        await h.oneshot("base64 /bin/ls", log=LogMode.QUIET)
         h._session_mgr.oneshot.assert_awaited_once_with(
             "base64 /bin/ls",
             timeout=None,
@@ -554,7 +569,9 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_sftp_get_raises(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="sftp", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="sftp", log=LogMode.QUIET
+        )
         with (
             patch.object(
                 h._connections,
@@ -569,7 +586,9 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_sftp_put_raises(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="sftp", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="sftp", log=LogMode.QUIET
+        )
         with (
             patch.object(
                 h._connections,
@@ -584,7 +603,9 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_ftp_get_raises(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="ftp", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="ftp", log=LogMode.QUIET
+        )
         with (
             patch.object(
                 h._connections,
@@ -599,7 +620,9 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_ftp_put_raises(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="ftp", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="ftp", log=LogMode.QUIET
+        )
         with (
             patch.object(
                 h._connections,
@@ -614,7 +637,9 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_get_raises(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=LogMode.QUIET
+        )
 
         # The file-size stat succeeds; the nc send oneshot fails (not
         # connected) — get must surface that as an error, not raise.
@@ -642,7 +667,9 @@ class TestNotConnectedFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_put_raises(self, tmp_path: Path):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=LogMode.QUIET
+        )
         src = tmp_path / "file.txt"
         src.write_bytes(b"data")
         with (
@@ -691,7 +718,9 @@ class TestSshFileTransfer:
 
     @pytest.mark.asyncio
     async def test_sftp_get_success(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="sftp", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="sftp", log=LogMode.QUIET
+        )
         mock_sftp = MagicMock()
         mock_sftp.get = AsyncMock()
         h._connections._sftp_conn = mock_sftp
@@ -703,7 +732,9 @@ class TestSshFileTransfer:
 
     @pytest.mark.asyncio
     async def test_sftp_put_success(self, tmp_path: Path):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="sftp", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="sftp", log=LogMode.QUIET
+        )
         src = tmp_path / "upload.txt"
         src.write_text("hello")
         mock_sftp = MagicMock()
@@ -717,7 +748,9 @@ class TestSshFileTransfer:
 
     @pytest.mark.asyncio
     async def test_ftp_get_success(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="ftp", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="ftp", log=LogMode.QUIET
+        )
         mock_ftp = MagicMock()
         mock_ftp.download = AsyncMock()
         mock_ftp.quit = AsyncMock()  # called by close()
@@ -732,7 +765,9 @@ class TestSshFileTransfer:
 
     @pytest.mark.asyncio
     async def test_ftp_put_success(self, tmp_path: Path):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="ftp", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="ftp", log=LogMode.QUIET
+        )
         src = tmp_path / "upload.txt"
         src.write_text("hello")
         mock_ftp = MagicMock()
@@ -754,7 +789,9 @@ class TestSshFileTransfer:
 class TestNcFileTransfer:
     @pytest.mark.asyncio
     async def test_nc_get_success(self, tmp_path: Path):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=LogMode.QUIET
+        )
 
         send_cs = CommandStatus("nc ...", "", Status.Success, 0)
 
@@ -803,7 +840,9 @@ class TestNcFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_put_success(self, tmp_path: Path):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=LogMode.QUIET
+        )
 
         src = tmp_path / "upload.txt"
         src.write_bytes(b"test content")
@@ -853,7 +892,9 @@ class TestNcFileTransfer:
         """During put, host.log must be QUIET so per-host records are
         dropped by HostFilter; it must be restored to its prior value after
         the transfer completes."""
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=True)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=LogMode.NORMAL
+        )
 
         src = tmp_path / "upload.txt"
         src.write_bytes(b"test content")
@@ -882,7 +923,7 @@ class TestNcFileTransfer:
         mock_writer.wait_closed = AsyncMock()
         mock_reader = AsyncMock(spec=asyncio.StreamReader)
 
-        assert h.log is True
+        assert h.log is LogMode.NORMAL
         with (
             patch.object(h, "oneshot", AsyncMock(side_effect=oneshot_capturing_log)),
             patch(
@@ -895,14 +936,16 @@ class TestNcFileTransfer:
         assert status == Status.Success
         assert log_states
         assert all(state is LogMode.QUIET for state in log_states)
-        assert h.log is True
+        assert h.log is LogMode.NORMAL
         await h.close()
 
     @pytest.mark.asyncio
     async def test_nc_get_suppresses_host_logging_during_transfer(self, tmp_path: Path):
         """Symmetric check for get — the file-size stat and the send oneshot
         must both run with host.log == LogMode.QUIET."""
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=True)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=LogMode.NORMAL
+        )
 
         send_cs = CommandStatus("nc ...", "", Status.Success, 0)
 
@@ -930,7 +973,7 @@ class TestNcFileTransfer:
                 return CommandStatus(cmd, "11", Status.Success, 0)
             return send_cs
 
-        assert h.log is True
+        assert h.log is LogMode.NORMAL
         with (
             patch.object(h, "oneshot", AsyncMock(side_effect=oneshot_capturing_log)),
             patch.object(h, "_get_local_ip", return_value="127.0.0.1"),
@@ -941,7 +984,7 @@ class TestNcFileTransfer:
         assert status == Status.Success
         assert log_states
         assert all(state is LogMode.QUIET for state in log_states)
-        assert h.log is True
+        assert h.log is LogMode.NORMAL
         await h.close()
 
 
@@ -1008,7 +1051,9 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_telnet_returns_remote_session(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
+        )
         mock_shell = self._mock_shell_session()
         with (
             patch("otto.host.session.TelnetClient", return_value=self._mock_telnet_client()),
@@ -1021,7 +1066,9 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_telnet_connects_new_client(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
+        )
         mock_client = self._mock_telnet_client()
         with (
             patch("otto.host.session.TelnetClient", return_value=mock_client),
@@ -1033,7 +1080,9 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_telnet_session_owns_its_client(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
+        )
         mock_client = self._mock_telnet_client()
         with (
             patch("otto.host.session.TelnetClient", return_value=mock_client),
@@ -1086,7 +1135,9 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_multiple_telnet_sessions_each_create_own_client(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
+        )
         client_a = self._mock_telnet_client()
         client_b = self._mock_telnet_client()
         with (
@@ -1107,7 +1158,9 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_multiple_telnet_sessions_each_own_separate_client(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=False)
+        h = UnixHost(
+            ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
+        )
         client_a = self._mock_telnet_client()
         client_b = self._mock_telnet_client()
         with (
@@ -1133,10 +1186,10 @@ class TestOpenSession:
     async def test_ssh_host_and_telnet_host_each_hold_own_sessions(self):
         """An SSH host and a Telnet host can hold independent named sessions simultaneously."""
         ssh_host = UnixHost(
-            ip="10.0.0.1", element="ssh-box", creds={"u": "p"}, term="ssh", log=False
+            ip="10.0.0.1", element="ssh-box", creds={"u": "p"}, term="ssh", log=LogMode.QUIET
         )
         telnet_host = UnixHost(
-            ip="10.0.0.2", element="tel-box", creds={"u": "p"}, term="telnet", log=False
+            ip="10.0.0.2", element="tel-box", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
         )
 
         ssh_shell = self._mock_shell_session()
@@ -1187,7 +1240,7 @@ class TestOpenSession:
 
     @pytest.mark.asyncio
     async def test_unknown_term_raises_value_error(self):
-        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False)
+        h = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
         h.term = "foobar"
         h._connections.term = "foobar"
         with pytest.raises(ValueError, match="foobar"):
@@ -1389,7 +1442,7 @@ async def test_host_current_user_reads_default_session():
     from otto.host.unix_host import UnixHost
 
     host = UnixHost(
-        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=False
+        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=LogMode.QUIET
     )
     transport = MagicMock(spec=ShellSession)
     transport.current_user = "admin"
@@ -1409,7 +1462,7 @@ async def test_unix_switch_user_updates_host_current_user():
         element="box",
         creds={"admin": "secret", "root": "rootpw"},
         user="admin",
-        log=False,
+        log=LogMode.QUIET,
     )
     transport = MagicMock(spec=ShellSession)
     transport.alive = True
@@ -1430,7 +1483,7 @@ def _unix_host():
     from otto.host.unix_host import UnixHost
 
     return UnixHost(
-        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=False
+        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=LogMode.QUIET
     )
 
 

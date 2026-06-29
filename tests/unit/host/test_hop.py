@@ -15,6 +15,7 @@ from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions
 from otto.host.transport import SshHopTransport
 from otto.host.unix_host import UnixHost
+from otto.logger.mode import LogMode
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -24,7 +25,7 @@ from otto.host.unix_host import UnixHost
 @pytest.fixture
 def host() -> UnixHost:
     """A simple host with no hop."""
-    return UnixHost(ip="10.0.0.1", element="target", creds={"user": "pass"}, log=False)
+    return UnixHost(ip="10.0.0.1", element="target", creds={"user": "pass"}, log=LogMode.QUIET)
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def hop_host() -> UnixHost:
         element="target",
         creds={"user": "pass"},
         hop="jumpbox",
-        log=False,
+        log=LogMode.QUIET,
     )
 
 
@@ -363,7 +364,7 @@ class TestTunnelCleanup:
 
 class TestRebuildConnections:
     def test_rebuild_adds_tunnel(self):
-        host = UnixHost(ip="10.0.0.1", element="target", creds={"user": "pass"}, log=False)
+        host = UnixHost(ip="10.0.0.1", element="target", creds={"user": "pass"}, log=LogMode.QUIET)
         assert not host._connections.has_tunnel
 
         host.hop = "some_hop"
@@ -376,7 +377,7 @@ class TestRebuildConnections:
             element="target",
             creds={"user": "pass"},
             hop="some_hop",
-            log=False,
+            log=LogMode.QUIET,
         )
         assert host._connections.has_tunnel
 
@@ -697,10 +698,10 @@ class TestCycleDetection:
         from otto.configmodule.lab import Lab
 
         host_a = UnixHost(
-            ip="10.0.0.1", element="hostA", creds={"user": "pass"}, hop="hostb", log=False
+            ip="10.0.0.1", element="hostA", creds={"user": "pass"}, hop="hostb", log=LogMode.QUIET
         )
         host_b = UnixHost(
-            ip="10.0.0.2", element="hostB", creds={"user": "pass"}, hop="hosta", log=False
+            ip="10.0.0.2", element="hostB", creds={"user": "pass"}, hop="hosta", log=LogMode.QUIET
         )
 
         # Capture the transport built at construction time (with _lab=None).
@@ -735,10 +736,14 @@ class TestCycleDetection:
         # at call time — patching asyncssh.connect makes the import pick up the mock.
         with patch("asyncssh.connect", AsyncMock(return_value=mock_ssh_conn)):
             jumpbox = UnixHost(
-                ip="10.10.0.1", element="jumpbox", creds={"admin": "secret"}, log=False
+                ip="10.10.0.1", element="jumpbox", creds={"admin": "secret"}, log=LogMode.QUIET
             )
             target = UnixHost(
-                ip="10.10.0.2", element="target", creds={"user": "pass"}, hop="jumpbox", log=False
+                ip="10.10.0.2",
+                element="target",
+                creds={"user": "pass"},
+                hop="jumpbox",
+                log=LogMode.QUIET,
             )
 
             # Capture the transport built at __post_init__ time — _lab was None then.
@@ -779,7 +784,7 @@ class TestStandaloneHostHopResolution:
         with patch("asyncssh.connect", AsyncMock(return_value=mock_ssh_conn)):
             # Build the hop TARGET and add it to a Lab.
             jumpbox = UnixHost(
-                ip="10.20.0.1", element="jumpbox", creds={"admin": "secret"}, log=False
+                ip="10.20.0.1", element="jumpbox", creds={"admin": "secret"}, log=LogMode.QUIET
             )
             lab = Lab(name="fd_model_test")
             lab.add_host(jumpbox)
@@ -795,7 +800,7 @@ class TestStandaloneHostHopResolution:
                     element="target",
                     creds={"user": "pass"},
                     hop="jumpbox",
-                    log=False,
+                    log=LogMode.QUIET,
                 )
                 assert standalone._lab is None, "standalone host must have no lab back-reference"
 

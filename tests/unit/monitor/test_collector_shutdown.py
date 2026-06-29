@@ -17,6 +17,7 @@ from datetime import timedelta
 import pytest
 
 from otto.host.local_host import LocalHost
+from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector, MonitorTarget
 from otto.monitor.parsers import MetricDataPoint, MetricParser
 
@@ -49,7 +50,7 @@ class TestCollectorShutdown:
         event loop closes, raising "Event loop is closed" from __del__.
         """
         host = LocalHost()
-        host.log = False
+        host.log = LogMode.QUIET
         target = MonitorTarget(host=host, parsers={EchoParser.command: EchoParser()})
         collector = MetricCollector(targets=[target])
 
@@ -77,7 +78,7 @@ class TestCollectorShutdown:
     async def test_close_is_idempotent(self):
         """Calling close() twice must not raise (mirrors cancel/finally paths)."""
         host = LocalHost()
-        host.log = False
+        host.log = LogMode.QUIET
         target = MonitorTarget(host=host, parsers={EchoParser.command: EchoParser()})
         collector = MetricCollector(targets=[target])
 
@@ -99,7 +100,7 @@ class TestCollectorShutdown:
         "RuntimeError: Event loop is closed" from __del__.
         """
         host = LocalHost()
-        host.log = False
+        host.log = LogMode.QUIET
         target = MonitorTarget(host=host, parsers={EchoParser.command: EchoParser()})
         collector = MetricCollector(targets=[target])
 

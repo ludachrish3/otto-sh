@@ -29,6 +29,7 @@ import pytest_asyncio
 from otto.configmodule.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host import UnixHost
+from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests.conftest import host_data
 from tests.integration.host._transfer_retry import transfer_with_retry
@@ -52,7 +53,7 @@ def _build_host(ne: str, **overrides) -> UnixHost:
         is_virtual=data.get("is_virtual", False),
         term=overrides.get("term", data.get("term", "ssh")),
         transfer=overrides.get("transfer", data.get("transfer", "scp")),
-        log=False,
+        log=LogMode.QUIET,
     )
 
 
@@ -93,7 +94,7 @@ async def single_hop_ssh():
         term="ssh",
         transfer="scp",
         hop="carrot_seed",
-        log=False,
+        log=LogMode.QUIET,
     )
     yield h
     await h.close()
@@ -112,7 +113,7 @@ async def single_hop_telnet():
         term="telnet",
         transfer="ftp",
         hop="carrot_seed",
-        log=False,
+        log=LogMode.QUIET,
     )
     yield h
     await h.close()
@@ -138,7 +139,7 @@ async def two_hop_ssh():
         term="ssh",
         transfer="scp",
         hop="carrot_seed",
-        log=False,
+        log=LogMode.QUIET,
     )
     lab.add_host(tomato_with_hop)
     lab.add_host(_build_host("pepper"))
@@ -154,7 +155,7 @@ async def two_hop_ssh():
         term="ssh",
         transfer="scp",
         hop="tomato_seed",
-        log=False,
+        log=LogMode.QUIET,
     )
     yield h
     await h.close()
@@ -281,7 +282,7 @@ class TestFileTransferThroughHop:
             term="ssh",
             transfer="sftp",
             hop="carrot_seed",
-            log=False,
+            log=LogMode.QUIET,
         )
         try:
             result = (await h.run("hostname")).only
@@ -309,7 +310,7 @@ class TestFileTransferThroughHop:
             term="ssh",
             transfer="ftp",
             hop="carrot_seed",
-            log=False,
+            log=LogMode.QUIET,
         )
         try:
             content = "ftp_hop_test"
@@ -340,7 +341,7 @@ class TestFileTransferThroughHop:
             term="ssh",
             transfer="ftp",
             hop="carrot_seed",
-            log=False,
+            log=LogMode.QUIET,
         )
         try:
             result = (await h.run("hostname")).only
@@ -369,7 +370,7 @@ class TestFileTransferThroughHop:
             term="ssh",
             transfer="nc",
             hop="carrot_seed",
-            log=False,
+            log=LogMode.QUIET,
         )
         try:
             content = "nc_hop_put_test"
@@ -402,7 +403,7 @@ class TestFileTransferThroughHop:
             term="ssh",
             transfer="nc",
             hop="carrot_seed",
-            log=False,
+            log=LogMode.QUIET,
         )
         try:
             result = (await h.run("hostname")).only

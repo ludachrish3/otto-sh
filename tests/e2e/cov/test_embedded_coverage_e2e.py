@@ -32,6 +32,8 @@ from pathlib import Path
 import pytest
 import tomli
 
+from otto.logger.mode import LogMode
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO3 = PROJECT_ROOT / "tests" / "repo3"
 OTTO_BIN = Path(sys.executable).parent / "otto"
@@ -85,7 +87,7 @@ def clean_sprout_cov():
             is_virtual=True,
             term="ssh",
             transfer="scp",
-            log=False,
+            log=LogMode.QUIET,
         )
     )
     set_context(OttoContext(lab=lab))

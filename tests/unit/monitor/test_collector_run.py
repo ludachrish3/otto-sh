@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from otto.host import RunResult
+from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector, MonitorTarget
 from otto.monitor.parsers import MetricDataPoint, MetricParser
 from otto.monitor.snmp import OID_SYS_UPTIME, SnmpSource
@@ -47,7 +48,7 @@ def _make_mock_host(name: str, delay: float = 0.0, fail: bool = False) -> MagicM
     """
     host = MagicMock()
     host.name = name
-    host.log = False
+    host.log = LogMode.QUIET
 
     async def _run_cmds(cmds, timeout=None):
         if fail:
@@ -226,7 +227,7 @@ class TestSnmpCollection:
     ) -> tuple[MagicMock, MonitorTarget]:
         host = MagicMock()
         host.name = name
-        host.log = False
+        host.log = LogMode.QUIET
         host.run = AsyncMock()  # must NOT be called for an SNMP target
         target = MonitorTarget(
             host=host,

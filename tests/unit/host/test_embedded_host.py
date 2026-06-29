@@ -16,6 +16,7 @@ from otto.host import EmbeddedHost, RemoteHost, ZephyrHost
 from otto.host.binary_loader import LlextHexLoader
 from otto.host.command_frame import ZephyrFrame
 from otto.host.options import TelnetOptions
+from otto.logger.mode import LogMode
 from otto.utils import CommandStatus, Status
 from tests.conftest import active_context
 
@@ -23,7 +24,7 @@ from tests.conftest import active_context
 @pytest.fixture
 def host():
     """Bare ZephyrHost, no connections established."""
-    h = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    h = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
     yield h
     # Several tests swap internals for AsyncMocks. A mocked ``_connections``
     # makes ``__del__``'s ``connected`` check truthy, so at GC it would churn
@@ -39,13 +40,13 @@ def host():
 class TestGenericEmbeddedFailsLoud:
     def test_no_command_frame_raises(self):
         with pytest.raises(ValueError, match="command_frame"):
-            EmbeddedHost(ip="192.0.2.1", element="sprout", log=False)
+            EmbeddedHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
 
     def test_explicit_frame_builds_generic_embedded(self):
         h = EmbeddedHost(
             ip="192.0.2.1",
             element="sprout",
-            log=False,
+            log=LogMode.QUIET,
             command_frame=ZephyrFrame(),
         )
         h._connections = None  # type: ignore[assignment]
@@ -80,7 +81,7 @@ class TestInit:
         host = ZephyrHost(
             ip="192.0.2.1",
             element="sprout",
-            log=False,
+            log=LogMode.QUIET,
             os_name="Zephyr",
             os_version="3.7.0",
         )
@@ -96,7 +97,7 @@ class TestInit:
         host = ZephyrHost(
             ip="192.0.2.1",
             element="sprout",
-            log=False,
+            log=LogMode.QUIET,
             telnet_options=TelnetOptions(port=2323),
         )
         assert host.telnet_options.port == 2323
@@ -109,17 +110,17 @@ class TestInit:
 
 class TestIdAndNameGeneration:
     def test_id_no_board(self):
-        host = ZephyrHost(ip="192.0.2.1", element="Sprout", log=False)
+        host = ZephyrHost(ip="192.0.2.1", element="Sprout", log=LogMode.QUIET)
         assert host.id == "sprout"
         assert host.name == "Sprout"
 
     def test_id_with_board(self):
-        host = ZephyrHost(ip="192.0.2.1", element="Sprout", board="Mote", log=False)
+        host = ZephyrHost(ip="192.0.2.1", element="Sprout", board="Mote", log=LogMode.QUIET)
         assert host.id == "sprout_mote"
         assert host.name == "Sprout Mote"
 
     def test_custom_name_preserved(self):
-        host = ZephyrHost(ip="192.0.2.1", element="sprout", name="custom", log=False)
+        host = ZephyrHost(ip="192.0.2.1", element="sprout", name="custom", log=LogMode.QUIET)
         assert host.name == "custom"
 
 
@@ -134,7 +135,7 @@ class TestHop:
 
     def test_hop_builds_transport(self):
         """A configured hop produces an SshHopTransport on the ConnectionManager."""
-        host = ZephyrHost(ip="192.0.2.1", element="sprout", hop="basil_seed", log=False)
+        host = ZephyrHost(ip="192.0.2.1", element="sprout", hop="basil_seed", log=LogMode.QUIET)
         assert host.hop == "basil_seed"
         assert host._connections._hop is not None
 
@@ -186,7 +187,11 @@ class TestFileTransfer:
         from otto.host.transfer import TftpFileTransfer
 
         host = ZephyrHost(
-            ip="192.0.2.1", element="sprout", log=False, transfer="tftp", valid_transfers=["tftp"]
+            ip="192.0.2.1",
+            element="sprout",
+            log=LogMode.QUIET,
+            transfer="tftp",
+            valid_transfers=["tftp"],
         )
         host._connections = None  # type: ignore[assignment]  # avoid __del__ churn
         assert host.transfer == "tftp"
@@ -229,7 +234,7 @@ class TestDefaultDestDir:
         h = ZephyrHost(
             ip="192.0.2.1",
             element="sprout",
-            log=False,
+            log=LogMode.QUIET,
             default_dest_dir="/RAM:",  # type: ignore[arg-type]
         )
         h._connections = None  # type: ignore[assignment]  # avoid __del__ churn
@@ -239,7 +244,7 @@ class TestDefaultDestDir:
         h = ZephyrHost(
             ip="192.0.2.1",
             element="sprout",
-            log=False,
+            log=LogMode.QUIET,
             default_dest_dir=Path("/RAM:"),
         )
         h._connections = None  # type: ignore[assignment]
@@ -249,7 +254,7 @@ class TestDefaultDestDir:
         h = ZephyrHost(
             ip="192.0.2.1",
             element="sprout",
-            log=False,
+            log=LogMode.QUIET,
             default_dest_dir=Path("/RAM:"),
         )
         h._connections = None  # type: ignore[assignment]
@@ -261,7 +266,7 @@ class TestDefaultDestDir:
         h = ZephyrHost(
             ip="192.0.2.1",
             element="sprout",
-            log=False,
+            log=LogMode.QUIET,
             default_dest_dir=Path("/RAM:"),
         )
         h._connections = None  # type: ignore[assignment]
@@ -326,9 +331,8 @@ class TestDelegation:
     async def test_send_delegates(self, host: EmbeddedHost):
         host._session_mgr = AsyncMock()
         await host.send("help\r")
-        from otto.logger.mode import LogMode
 
-        # The fixture host is QUIET (log=False), folded into the forwarded mode.
+        # The fixture host is QUIET (log=LogMode.QUIET), folded into the forwarded mode.
         host._session_mgr.send.assert_awaited_once_with("help\r", log=LogMode.QUIET)
 
     @pytest.mark.asyncio
@@ -360,7 +364,6 @@ class TestDelegation:
 
     @pytest.mark.asyncio
     async def test_oneshot_forwards_log_false(self, host):
-        from otto.logger.mode import LogMode
 
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandStatus(
@@ -369,8 +372,8 @@ class TestDelegation:
             status=Status.Success,
             retcode=0,
         )
-        # log=False is composed with the host's standing mode into LogMode.QUIET.
-        await host.oneshot("llext load_hex foo DEADBEEF", log=False)
+        # The QUIET command is composed with the host's standing mode into LogMode.QUIET.
+        await host.oneshot("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
         host._session_mgr.run_cmd.assert_awaited_once_with(
             "llext load_hex foo DEADBEEF",
             timeout=None,
@@ -379,7 +382,6 @@ class TestDelegation:
 
     @pytest.mark.asyncio
     async def test_run_forwards_log_false(self, host):
-        from otto.logger.mode import LogMode
 
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandStatus(
@@ -388,7 +390,7 @@ class TestDelegation:
             status=Status.Success,
             retcode=0,
         )
-        await host.run("llext load_hex foo DEADBEEF", log=False)
+        await host.run("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
         _, kwargs = host._session_mgr.run_cmd.await_args
         assert kwargs["log"] is LogMode.QUIET
 
@@ -422,15 +424,15 @@ class TestVerifyConnection:
 
 class TestLoaderField:
     def test_loader_string_coerced_to_instance(self):
-        h = ZephyrHost(ip="192.0.2.1", element="sprout", log=False, loader="llext-hex")
+        h = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET, loader="llext-hex")
         assert isinstance(h.loader, LlextHexLoader)
 
     def test_loader_defaults_to_none(self):
-        h = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+        h = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
         assert h.loader is None
 
     def test_require_loader_raises_when_none(self):
-        h = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+        h = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
         with pytest.raises(ValueError, match="no binary loader"):
             h._require_loader()
 
@@ -447,7 +449,6 @@ def _ok(output: str) -> CommandStatus:
 class TestLoad:
     @pytest.mark.asyncio
     async def test_load_runs_loader_command_with_log_never(self, host, tmp_path):
-        from otto.logger.mode import LogMode
 
         host.loader = LlextHexLoader()
         host._session_mgr = AsyncMock()

@@ -65,7 +65,7 @@ otto --lab my_lab host router1 login
 Stdin and stdout are bridged to the remote terminal in raw mode, so full-screen
 TUIs (`vi`, `top`, `less`) work the same as under a native `ssh` or `telnet`
 client.  While the session runs, every remote byte is also appended to the
-invocation's `otto.log` so the transcript is preserved alongside the normal
+invocation's `session.log` so the transcript is preserved alongside the normal
 `otto host run` output.
 
 **Ending the session.**  Exit the remote shell normally (`exit`, `logout`, or

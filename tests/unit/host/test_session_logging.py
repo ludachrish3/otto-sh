@@ -253,7 +253,7 @@ class TestLogTag:
 
 
 # ---------------------------------------------------------------------------
-# Per-command log suppression (log=False)
+# Per-command log suppression (log=LogMode.QUIET)
 # ---------------------------------------------------------------------------
 
 from types import SimpleNamespace
@@ -305,7 +305,7 @@ class TestPerCommandLogSuppression:
     @pytest.mark.asyncio
     async def test_log_true_records_command_and_output(self):
         mgr, cmds, outs = _logging_mgr()
-        result = await mgr.run_cmd("echo hi", log=True)
+        result = await mgr.run_cmd("echo hi", log=LogMode.NORMAL)
         assert result.output == "OUT"
         assert cmds == ["echo hi"]
         assert outs == ["OUT"]
@@ -380,12 +380,3 @@ def test_effective_log_composes_host_and_command():
     assert host._effective_log(LogMode.NEVER) is LogMode.NEVER
     # The composition is the most-restrictive of the two modes.
     assert effective_mode(LogMode.QUIET, LogMode.NORMAL) is LogMode.QUIET
-
-
-def test_effective_log_normalizes_transitional_bools():
-    host = _make_unix_host(log=False)  # transitional bool → QUIET standing mode
-    assert host._effective_log(True) is LogMode.QUIET  # bool True → NORMAL command
-    assert host._effective_log(LogMode.NORMAL) is LogMode.QUIET
-    host.log = True  # transitional bool → NORMAL standing mode
-    assert host._effective_log(LogMode.NORMAL) is LogMode.NORMAL
-    assert host._effective_log(False) is LogMode.QUIET  # bool False → QUIET command

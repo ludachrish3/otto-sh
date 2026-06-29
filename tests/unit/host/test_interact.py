@@ -25,6 +25,7 @@ from otto.host.interact import (
     _SessionLogFile,
     _strip_ansi,
 )
+from otto.logger.mode import LogMode
 
 # ---------------------------------------------------------------------------
 # _strip_ansi
@@ -103,23 +104,23 @@ class TestLineBuffer:
 
 class TestSessionLogFile:
     def test_write_line_emits_preamble_to_file(self, tmp_path: Path):
-        log = _SessionLogFile(tmp_path / "otto.log", host_name="router1")
+        log = _SessionLogFile(tmp_path / "session.log", host_name="router1")
         log.write_line("hello world")
         log.close()
-        content = (tmp_path / "otto.log").read_text()
+        content = (tmp_path / "session.log").read_text()
         assert "hello world" in content
         assert "@router1 > |" in content
 
     def test_write_marker_uses_bookend_preamble(self, tmp_path: Path):
-        log = _SessionLogFile(tmp_path / "otto.log", host_name="router1")
+        log = _SessionLogFile(tmp_path / "session.log", host_name="router1")
         log.write_marker("Entering interactive session")
         log.close()
-        content = (tmp_path / "otto.log").read_text()
+        content = (tmp_path / "session.log").read_text()
         assert "Entering interactive session" in content
         assert "@router1   |" in content
 
     def test_unopenable_path_degrades_silently(self, tmp_path: Path):
-        log = _SessionLogFile(tmp_path / "nonexistent-dir" / "otto.log", host_name="h")
+        log = _SessionLogFile(tmp_path / "nonexistent-dir" / "session.log", host_name="h")
         log.write_line("should not raise")
         log.write_marker("should not raise")
         log.close()
@@ -301,7 +302,7 @@ class TestUnixHostInteractDispatch:
             element="router",
             creds={"u": "p"},
             term="ssh",
-            log=False,
+            log=LogMode.QUIET,
         )
 
         fake_conn = object()
@@ -325,7 +326,7 @@ class TestUnixHostInteractDispatch:
             element="router",
             creds={"u": "p"},
             term="telnet",
-            log=False,
+            log=LogMode.QUIET,
         )
 
         # Avoid the real TelnetClient; patch it at the import site.

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto.logger.mode import LogMode
 from otto.utils import CommandStatus, Status
 
 
@@ -22,17 +23,15 @@ async def test_perform_su_builds_command_and_returns_target():
 
     sent = []
 
-    async def send(text, log=True):
+    async def send(text, log=LogMode.NORMAL):
         sent.append((text, log))
 
     async def expect(pat, timeout=10.0):
         return "Password:"
 
-    from otto.logger.mode import LogMode
-
     target = await _perform_su(send, expect, "root", None, lambda u: "rootpw")
     assert target == "root"
-    assert ("su root\n", True) in sent
+    assert ("su root\n", LogMode.NORMAL) in sent
     assert ("rootpw\n", LogMode.NEVER) in sent
 
 
@@ -42,7 +41,7 @@ async def test_perform_su_no_user_means_root_no_quote():
 
     sent = []
 
-    async def send(text, log=True):
+    async def send(text, log=LogMode.NORMAL):
         sent.append(text)
 
     async def expect(pat, timeout=10.0):
@@ -62,7 +61,7 @@ async def test_switch_user_records_current_user():
         element="box",
         creds={"admin": "secret", "root": "rootpw"},
         user="admin",
-        log=False,
+        log=LogMode.QUIET,
     )
     host._session_mgr = _mock_session_mgr()
     await host.switch_user("root")
@@ -78,7 +77,7 @@ async def test_as_user_restores_previous_user():
         element="box",
         creds={"admin": "secret", "root": "rootpw"},
         user="admin",
-        log=False,
+        log=LogMode.QUIET,
     )
     mgr = _mock_session_mgr()
     mgr.current_user = "admin"
@@ -93,7 +92,7 @@ async def test_as_user_restores_previous_user():
 async def test_embedded_run_sudo_raises():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
     with pytest.raises(NotImplementedError, match="sudo"):
         await host.run("ls", sudo=True)
 
@@ -105,7 +104,7 @@ async def test_run_without_sudo_is_unchanged():
     host = LocalHost()
     captured = {}
 
-    async def fake_run_one(cmd, expects=None, timeout=None, log=True):
+    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL):
         captured["cmd"] = cmd
         return CommandStatus(cmd, "", Status.Success, 0)
 
@@ -117,7 +116,7 @@ async def test_run_without_sudo_is_unchanged():
 def _capture_run_one(host):
     captured = {}
 
-    async def fake_run_one(cmd, expects=None, timeout=None, log=True):
+    async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL):
         captured["cmd"] = cmd
         captured["expects"] = expects
         return CommandStatus(cmd, "", Status.Success, 0)
@@ -130,7 +129,7 @@ async def test_unix_run_sudo_wraps_and_injects_password_expect():
     from otto.host.unix_host import UnixHost
 
     host = UnixHost(
-        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=False
+        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=LogMode.QUIET
     )
     captured, fake = _capture_run_one(host)
     with patch.object(host, "_run_one", new=fake):
@@ -156,7 +155,7 @@ async def test_sudo_preserves_caller_expects():
     from otto.host.unix_host import UnixHost
 
     host = UnixHost(
-        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=False
+        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=LogMode.QUIET
     )
     captured, fake = _capture_run_one(host)
     with patch.object(host, "_run_one", new=fake):
@@ -175,10 +174,8 @@ async def test_switch_user_sends_su_and_password():
         element="box",
         creds={"admin": "secret", "root": "rootpw"},
         user="admin",
-        log=True,  # NORMAL host so the su exchange's per-command modes pass through
+        log=LogMode.NORMAL,  # NORMAL host so the su exchange's per-command modes pass through
     )
-    from otto.logger.mode import LogMode
-
     host._session_mgr = _mock_session_mgr()
     await host.switch_user("root")
     host._session_mgr.send.assert_any_await("su root\n", log=LogMode.NORMAL)
@@ -189,9 +186,9 @@ async def test_switch_user_sends_su_and_password():
 async def test_switch_user_default_is_root_no_user_arg():
     from otto.host.unix_host import UnixHost
 
-    host = UnixHost(ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=True)
-    from otto.logger.mode import LogMode
-
+    host = UnixHost(
+        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=LogMode.NORMAL
+    )
     host._session_mgr = _mock_session_mgr()
     host._session_mgr.expect.return_value = "Password:"
     await host.switch_user()  # default root, no creds entry for root → no password sent
@@ -202,7 +199,7 @@ async def test_switch_user_default_is_root_no_user_arg():
 async def test_embedded_switch_user_raises():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
     with pytest.raises(NotImplementedError, match="su"):
         await host.switch_user("root")
 
@@ -216,7 +213,7 @@ async def test_as_user_switches_then_exits():
         element="box",
         creds={"admin": "secret", "root": "rootpw"},
         user="admin",
-        log=False,
+        log=LogMode.QUIET,
     )
     host._session_mgr = _mock_session_mgr()
     async with host.as_user("root"):
@@ -231,7 +228,7 @@ async def test_as_user_switches_then_exits():
 async def test_embedded_as_user_raises():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
     with pytest.raises(NotImplementedError, match=r"as_user|su"):
         async with host.as_user("root"):
             pass
@@ -242,7 +239,7 @@ async def test_switch_user_password_not_logged(caplog):
     """Regression: su password must NOT appear in logs (transport-level seam).
 
     Mocks at the ShellSession (transport) level so SessionManager._log_command
-    executes normally — proves the log=False guard in the actual code path, not
+    executes normally — proves the QUIET guard in the actual code path, not
     a mock that skips the logging seam entirely.
     """
     import logging
@@ -255,7 +252,7 @@ async def test_switch_user_password_not_logged(caplog):
         element="box",
         creds={"admin": "secret", "root": "rootpw"},
         user="admin",
-        log=True,
+        log=LogMode.NORMAL,
     )
 
     # Mock at the transport layer: give the SessionManager a live-looking
@@ -286,7 +283,7 @@ async def test_switch_user_quotes_special_char_username():
         element="box",
         creds={"admin": "secret"},
         user="admin",
-        log=False,
+        log=LogMode.QUIET,
     )
     # Replace the session manager with a mock to capture what was sent.
     host._session_mgr = _mock_session_mgr()
@@ -302,5 +299,5 @@ async def test_switch_user_quotes_special_char_username():
 async def test_embedded_current_user_is_empty_loginless():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
     assert host.current_user == ""  # loginless embedded shell

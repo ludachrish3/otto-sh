@@ -92,9 +92,8 @@ class ShellCommand:
     cumulative budget.
     """
 
-    log: "LogMode | bool | None" = None
-    """Per-command logging disposition. ``None`` inherits the run-level ``log`` value.
-    Accepts a bool for convenience (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
+    log: "LogMode | None" = None
+    """Per-command logging disposition. ``None`` inherits the run-level ``log`` value."""
 
 
 @dataclass(slots=True)
@@ -141,22 +140,11 @@ def _normalize_expects(
     return expects
 
 
-def _normalize_log_mode(log: "LogMode | bool") -> LogMode:
-    """Coerce a bool ``log`` to a :class:`~otto.logger.mode.LogMode`.
-
-    ``True`` → ``NORMAL``; ``False`` → ``QUIET``. Pure ``LogMode`` values pass through unchanged.
-    The ``LogMode | bool`` union is permanent: bools are accepted for convenience.
-    """
-    if isinstance(log, LogMode):
-        return log
-    return LogMode.NORMAL if log else LogMode.QUIET
-
-
 def _resolve_command(
     item: "str | ShellCommand",
     default_expects: "Expect | list[Expect] | None",
     default_timeout: float | None,
-    default_log: "LogMode | bool" = LogMode.NORMAL,
+    default_log: LogMode = LogMode.NORMAL,
 ) -> ShellCommand:
     """Coerce ``item`` to a ``ShellCommand`` whose ``None`` fields inherit from defaults."""
     if isinstance(item, str):
@@ -232,9 +220,8 @@ class Host(Protocol):
     implement the family-specific hooks.
     """
 
-    log: "LogMode | bool"
-    """Standing per-host logging disposition. Accepts a bool for convenience
-    (``True`` → ``NORMAL``, ``False`` → ``QUIET``). Composed with the per-command
+    log: LogMode
+    """Standing per-host logging disposition. Composed with the per-command
     mode via ``effective_mode`` at the emit seam."""
 
     id: str
@@ -263,7 +250,7 @@ class Host(Protocol):
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
         sudo: bool = False,
     ) -> RunResult:
         """Run one or more commands on the host and collect their results.
@@ -290,7 +277,7 @@ class Host(Protocol):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a single command outside the typical stateful ``run`` workflow.
 
@@ -323,7 +310,7 @@ class Host(Protocol):
     async def send(
         self,
         text: str,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> None:
         """Send raw text to the host's persistent session without waiting for a response.
 
@@ -476,7 +463,7 @@ class BaseHost(ABC):
 
     id: str
     name: str
-    log: "LogMode | bool"
+    log: LogMode
     resources: set[str]
     products: list["Product"]
     power_control: "PowerController | None"
@@ -587,7 +574,7 @@ class BaseHost(ABC):
         timeout: Annotated[
             float | None, Opt(help="Per-command/cumulative timeout (seconds).")
         ] = None,
-        log: Annotated["LogMode | bool", Exclude] = LogMode.NORMAL,
+        log: Annotated[LogMode, Exclude] = LogMode.NORMAL,
         sudo: bool = False,
     ) -> RunResult:
         """Execute one or more commands on the host via the persistent shell session.
@@ -630,9 +617,8 @@ class BaseHost(ABC):
                 single.cmd,
                 expects=_normalize_expects(single.expects),
                 timeout=single.timeout,
-                log=cast(
-                    "LogMode | bool", single.log
-                ),  # _resolve_command collapsed the None sentinel
+                # _resolve_command collapsed the None sentinel into a concrete LogMode.
+                log=single.log if single.log is not None else LogMode.NORMAL,
             )
             status = result.status if not result.status.is_ok else Status.Success
             return RunResult(status=status, statuses=[result])
@@ -646,21 +632,22 @@ class BaseHost(ABC):
                 sc.cmd,
                 expects=_normalize_expects(sc.expects),
                 timeout=t,
-                log=cast("LogMode | bool", sc.log),  # _resolve_command collapsed the None sentinel
+                # _resolve_command collapsed the None sentinel into a concrete LogMode.
+                log=sc.log if sc.log is not None else LogMode.NORMAL,
             )
 
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
-    def _effective_log(self, log: "LogMode | bool") -> LogMode:
+    def _effective_log(self, log: LogMode) -> LogMode:
         """Most-restrictive of this host's standing mode and the per-command mode."""
-        return effective_mode(_normalize_log_mode(self.log), _normalize_log_mode(log))
+        return effective_mode(self.log, log)
 
     async def _run_one(
         self,
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Per-command runner for the persistent shell session. Subclasses override."""
         raise NotImplementedError from None
@@ -669,7 +656,7 @@ class BaseHost(ABC):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a single command outside the persistent shell session. Subclasses must override."""
         raise NotImplementedError from None
@@ -684,7 +671,7 @@ class BaseHost(ABC):
     async def send(
         self,
         text: str,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> None:
         """Send raw text to the host's persistent session. Subclasses must override."""
         raise NotImplementedError from None

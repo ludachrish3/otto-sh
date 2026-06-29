@@ -102,7 +102,7 @@ def login_session(request, tmp_path_factory):
         # First match: the remote PTY echoing the command line we typed.
         # Second match: the shell's response. Waiting for both guarantees
         # the round-trip actually completed before we disconnect, so
-        # _LineBuffer has a chance to flush the response into otto.log.
+        # _LineBuffer has a chance to flush the response into session.log.
         sess.expect(ROUND_TRIP_TOKEN.encode(), timeout=10)
         try:
             sess.expect(ROUND_TRIP_TOKEN.encode(), timeout=5)
@@ -115,7 +115,7 @@ def login_session(request, tmp_path_factory):
         disconnect_seen = sess.expect(f"[otto] disconnected from {HOST_NAME}.".encode(), timeout=10)
         exit_code = sess.wait(timeout=10)
 
-    log_path = _find_login_log_dir(xdir) / "otto.log"
+    log_path = _find_login_log_dir(xdir) / "session.log"
     return {
         "term": term,
         "xdir": xdir,
@@ -157,11 +157,13 @@ class TestHostLoginSession:
     def test_log_contains_session_markers_and_round_trip_token(self, login_session):
         content = login_session["log_content"]
         assert "Entering interactive session" in content, (
-            f"otto.log missing entering marker:\n{content}"
+            f"session.log missing entering marker:\n{content}"
         )
-        assert "Interactive session ended" in content, f"otto.log missing exit marker:\n{content}"
+        assert "Interactive session ended" in content, (
+            f"session.log missing exit marker:\n{content}"
+        )
         assert ROUND_TRIP_TOKEN in content, (
-            f"otto.log missing round-trip token {ROUND_TRIP_TOKEN!r}:\n{content}"
+            f"session.log missing round-trip token {ROUND_TRIP_TOKEN!r}:\n{content}"
         )
         # Marker lines use the '@host   |' preamble; output lines use '@host > |'.
         assert f"@{HOST_NAME}   |" in content, "Missing marker preamble '@host   |'"
@@ -171,7 +173,7 @@ class TestHostLoginSession:
         # _LineBuffer._emit runs every line through _strip_ansi before
         # writing, so the transcript should contain no raw CSI sequences.
         assert "\x1b[" not in login_session["log_content"], (
-            "otto.log contains un-stripped ANSI CSI escapes"
+            "session.log contains un-stripped ANSI CSI escapes"
         )
 
     def test_log_lines_match_rich_formatter_layout(self, login_session):
@@ -182,7 +184,7 @@ class TestHostLoginSession:
             if not line:
                 continue
             assert _LOG_LINE_RE.match(line), (
-                f"otto.log line does not match expected format: {line!r}"
+                f"session.log line does not match expected format: {line!r}"
             )
 
 

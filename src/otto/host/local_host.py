@@ -28,7 +28,7 @@ from ..logger import get_otto_logger
 from ..logger.mode import LogMode
 from ..utils import Arg, CommandStatus, Exclude, Status, cli_exposed
 from .file_ops import PosixFileOps
-from .host import BaseHost, _normalize_log_mode, is_dry_run
+from .host import BaseHost, is_dry_run
 from .power import PowerController
 from .privilege import PosixPrivilege
 from .product import Product
@@ -114,11 +114,10 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     id: str = field(default="local", init=False)
     """Stable identifier for the local host — always ``"local"``."""
 
-    log: "LogMode | bool" = field(default=LogMode.NORMAL, repr=False)
+    log: LogMode = field(default=LogMode.NORMAL, repr=False)
     """Standing per-host logging disposition. ``QUIET`` keeps this host's command
     I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
-    (warnings/errors are unaffected). Accepts a bool for convenience
-    (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
+    (warnings/errors are unaffected)."""
 
     resources: set[str] = field(default_factory=set, repr=False)
     """Resources required to reserve this host — always empty for LocalHost."""
@@ -161,7 +160,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Execute a command via the persistent local shell session.
 
@@ -179,7 +178,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a command in a fresh subprocess (stateless, concurrent-safe).
 
@@ -195,12 +194,12 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Fire-and-forget subprocess execution."""
         status = Status.Error
         lines: list[str] = []
-        mode = _normalize_log_mode(log)
+        mode = log
 
         if mode is not LogMode.NEVER:
             self._log_command(cmd, mode)
@@ -257,7 +256,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         return await self._session_mgr.open_session(name)
 
     @override
-    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
+    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to the host's persistent session."""
         effective = self._effective_log(log)
         if is_dry_run():

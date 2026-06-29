@@ -96,11 +96,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     is_virtual: bool = field(default=True, init=False)
     """Containers are always virtual by definition."""
 
-    log: "LogMode | bool" = field(default=LogMode.NORMAL, repr=False)
+    log: LogMode = field(default=LogMode.NORMAL, repr=False)
     """Standing per-host logging disposition. ``QUIET`` keeps this host's command
     I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
-    (warnings/errors are unaffected). Accepts a bool for convenience
-    (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
+    (warnings/errors are unaffected)."""
 
     log_stdout: bool = field(default=True, repr=False)
     """Whether output is mirrored to stdout in addition to log files."""
@@ -278,7 +277,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a single command in the container via the parent.
 
@@ -294,7 +293,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent."""
         wrapped = await self._docker_exec(cmd)
@@ -314,7 +313,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         expects: "list[Expect] | None" = None,
         timeout: float | None = 10.0,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Execute one command on the persistent in-container shell.
 
@@ -339,7 +338,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return await self._session_mgr.open_session(name)
 
     @override
-    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
+    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to the container's persistent session."""
         effective = self._effective_log(log)
         if is_dry_run():

@@ -248,11 +248,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ``__post_init__`` coerces it to an instance. None → power()/reboot(hard=True)
     fail loud. See :attr:`~otto.host.host.BaseHost.power_control`."""
 
-    log: "LogMode | bool" = field(default=LogMode.NORMAL, repr=False)
+    log: LogMode = field(default=LogMode.NORMAL, repr=False)
     """Standing per-host logging disposition. ``QUIET`` keeps this host's command
     I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
-    (warnings/errors are unaffected). Accepts a bool for convenience
-    (``True`` → ``NORMAL``, ``False`` → ``QUIET``)."""
+    (warnings/errors are unaffected)."""
 
     log_stdout: bool = field(default=True, repr=False)
     """Determines whether this host should log its output to stdout.
@@ -507,7 +506,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Execute a single command on the remote host via the **persistent shell session**.
 
@@ -548,7 +547,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self,
         cmd: str,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run a single command concurrent-safely, independent of the persistent shell.
 
@@ -635,7 +634,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return await self._session_mgr.open_session(name)
 
     @override
-    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
+    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to the host's persistent session."""
         effective = self._effective_log(log)
         if is_dry_run():

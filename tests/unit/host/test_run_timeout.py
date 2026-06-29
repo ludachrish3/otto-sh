@@ -23,7 +23,7 @@ from otto.utils import CommandStatus, Status
 @pytest.fixture
 def host() -> UnixHost:
     """Bare UnixHost, no connections established."""
-    return UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=False)
+    return UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=LogMode.QUIET)
 
 
 class TestRunTimeout:

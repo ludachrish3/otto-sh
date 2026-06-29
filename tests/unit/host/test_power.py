@@ -19,7 +19,7 @@ def _target_with_controller(runner):
     """Build a UnixHost whose lab resolves controller id 'hyp' to *runner*."""
     from otto.host.unix_host import UnixHost
 
-    target = UnixHost(ip="10.0.0.9", element="vm", creds={"u": "p"}, name="vm1", log=False)
+    target = UnixHost(ip="10.0.0.9", element="vm", creds={"u": "p"}, name="vm1", log=LogMode.QUIET)
 
     class _FakeLab:
         hosts: ClassVar = {"hyp": runner}
@@ -102,7 +102,7 @@ def test_unix_power_control_coerced_from_dict():
         ip="10.0.0.1",
         element="box",
         creds={"u": "p"},
-        log=False,
+        log=LogMode.QUIET,
         power_control={"type": "command", "on_cmd": "o", "off_cmd": "f"},
     )
     assert isinstance(host.power_control, CommandPowerController)
@@ -113,7 +113,7 @@ def test_hosts_default_power_control_none():
     from otto.host.local_host import LocalHost
 
     assert LocalHost().power_control is None
-    assert ZephyrHost(ip="192.0.2.1", element="sprout", log=False).power_control is None
+    assert ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET).power_control is None
 
 
 class _FakeController(PowerController):
@@ -185,13 +185,14 @@ async def test_power_without_controller_raises():
 from unittest.mock import patch
 
 from otto.host.host import RunResult
+from otto.logger.mode import LogMode
 
 
 @pytest.mark.asyncio
 async def test_unix_soft_reboot_issues_reboot_sudo():
     from otto.host.unix_host import UnixHost
 
-    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False)
+    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
     with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = RunResult(Status.Success, [])
         status, _ = await host.reboot()
@@ -203,7 +204,7 @@ async def test_unix_soft_reboot_issues_reboot_sudo():
 async def test_zephyr_soft_reboot_issues_kernel_reboot():
     from otto.host.embedded_host import ZephyrHost
 
-    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=False)
+    host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
     with patch.object(ZephyrHost, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = RunResult(Status.Success, [])
         status, _ = await host.reboot()
@@ -240,7 +241,7 @@ async def test_localhost_shutdown_raises():
 async def test_unix_shutdown_issues_shutdown_sudo():
     from otto.host.unix_host import UnixHost
 
-    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False)
+    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
     with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = RunResult(Status.Success, [])
         status, _ = await host.shutdown()
@@ -259,7 +260,7 @@ async def test_localhost_is_reachable_true():
 async def test_remote_is_reachable_reflects_verify_connection(monkeypatch):
     from otto.host.unix_host import UnixHost
 
-    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=False)
+    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
     monkeypatch.setattr(
         host,
         "verify_connection",

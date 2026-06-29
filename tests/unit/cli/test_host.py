@@ -21,6 +21,7 @@ from otto.cli import host as host_module
 from otto.cli.host import _host_id_completer, _resolve_host, host_app
 from otto.host.session import SessionManager, ShellSession
 from otto.host.unix_host import UnixHost
+from otto.logger.mode import LogMode
 from otto.utils import Status
 
 runner = CliRunner()
@@ -31,7 +32,7 @@ runner = CliRunner()
 
 def _make_host(name: str = "router1") -> UnixHost:
     """Return a real UnixHost (no connection is made on construction)."""
-    return UnixHost(ip="10.0.0.1", element=name, creds={"admin": "secret"}, log=True)
+    return UnixHost(ip="10.0.0.1", element=name, creds={"admin": "secret"}, log=LogMode.NORMAL)
 
 
 class FakeSession(ShellSession):
@@ -89,7 +90,7 @@ def _make_host_with_session(
     Logging callbacks are suppressed to avoid interfering with CliRunner's
     stdout capture.
     """
-    host = UnixHost(ip="10.0.0.1", element=name, creds={"admin": "secret"}, log=True)
+    host = UnixHost(ip="10.0.0.1", element=name, creds={"admin": "secret"}, log=LogMode.NORMAL)
     fake = FakeSession(responses)
     host._session_mgr = SessionManager(
         session_factory=lambda: fake,

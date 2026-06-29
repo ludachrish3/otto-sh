@@ -4,6 +4,7 @@ import pytest
 
 from otto.host.embedded_host import ZephyrHost
 from otto.host.unix_host import UnixHost
+from otto.logger.mode import LogMode
 from otto.models.host import EmbeddedHostSpec, UnixHostSpec
 
 
@@ -43,7 +44,7 @@ def test_directly_built_unix_host_validates_active_against_menu():
             creds={"u": "p"},
             transfer="sftp",
             valid_transfers=["scp"],
-            log=False,
+            log=LogMode.QUIET,
         )
 
 
@@ -60,7 +61,7 @@ def test_embedded_connection_uses_self_term_not_hardcoded():
     # ZephyrHost (not a bare EmbeddedHost): EmbeddedHost requires a command_frame,
     # and ZephyrHost supplies the built-in "zephyr" frame, so it constructs without
     # an explicit frame argument.
-    h = ZephyrHost(ip="192.0.2.1", element="d", log=False)
+    h = ZephyrHost(ip="192.0.2.1", element="d", log=LogMode.QUIET)
     assert h.term == "telnet"
     assert h._connections.term == "telnet"
 

@@ -12,12 +12,13 @@ import pytest
 
 from otto.host import RunResult, ShellCommand
 from otto.host.unix_host import UnixHost
+from otto.logger.mode import LogMode
 from otto.utils import CommandStatus, Status
 
 
 @pytest.fixture
 def host() -> UnixHost:
-    return UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=False)
+    return UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=LogMode.QUIET)
 
 
 @pytest.fixture
@@ -172,16 +173,16 @@ class TestRunForwardsLog:
     @pytest.mark.asyncio
     async def test_run_forwards_run_level_log(self, host, ok):
         with patch.object(host, "_run_one", new=AsyncMock(return_value=ok)) as m:
-            await host.run("ls", log=False)
+            await host.run("ls", log=LogMode.QUIET)
         _, kwargs = m.await_args
-        assert kwargs["log"] is False
+        assert kwargs["log"] is LogMode.QUIET
 
     @pytest.mark.asyncio
     async def test_run_per_command_log_in_batch(self, host, ok):
         with patch.object(host, "_run_one", new=AsyncMock(return_value=ok)) as m:
-            await host.run([ShellCommand("a", log=False), "b"], log=True)
+            await host.run([ShellCommand("a", log=LogMode.QUIET), "b"], log=LogMode.NORMAL)
         logs = [c.kwargs["log"] for c in m.await_args_list]
-        assert logs == [False, True]
+        assert logs == [LogMode.QUIET, LogMode.NORMAL]
 
     @pytest.mark.asyncio
     async def test_run_default_log_is_normal(self, host, ok):
@@ -195,23 +196,22 @@ class TestShellCommandLog:
     def test_log_defaults_to_none(self):
         assert ShellCommand(cmd="ls").log is None
 
-    def test_log_explicit_false(self):
-        assert ShellCommand(cmd="dump", log=False).log is False
+    def test_log_explicit_quiet(self):
+        assert ShellCommand(cmd="dump", log=LogMode.QUIET).log is LogMode.QUIET
 
     def test_resolve_inherits_run_level_log(self):
-        sc = _resolve_command("ls", None, None, default_log=False)
-        assert sc.log is False
+        sc = _resolve_command("ls", None, None, default_log=LogMode.QUIET)
+        assert sc.log is LogMode.QUIET
 
     def test_resolve_per_command_log_overrides_default(self):
-        sc = _resolve_command(ShellCommand("ls", log=True), None, None, default_log=False)
-        assert sc.log is True
+        sc = _resolve_command(
+            ShellCommand("ls", log=LogMode.NORMAL), None, None, default_log=LogMode.QUIET
+        )
+        assert sc.log is LogMode.NORMAL
 
     def test_resolve_none_log_falls_back_to_default(self):
-        sc = _resolve_command(ShellCommand("ls"), None, None, default_log=False)
-        assert sc.log is False
-
-
-from otto.logger.mode import LogMode
+        sc = _resolve_command(ShellCommand("ls"), None, None, default_log=LogMode.QUIET)
+        assert sc.log is LogMode.QUIET
 
 
 def test_shellcommand_log_defaults_to_none_and_inherits_normal():

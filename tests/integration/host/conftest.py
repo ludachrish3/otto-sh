@@ -18,6 +18,7 @@ from otto.context import OttoContext, set_context
 from otto.host.command_frame import register_command_frame
 from otto.host.telnet import abort_console_transports
 from otto.host.unix_host import UnixHost
+from otto.logger.mode import LogMode
 from tests._fixtures._console_lock import console_access
 
 # Make repo1's custom Zephyr 2.7 dialect resolvable by the storage factory.
@@ -72,7 +73,7 @@ def _install_integration_lab() -> None:
                 is_virtual=data.get("is_virtual", False),
                 term=data.get("term", "ssh"),
                 transfer=data.get("transfer", "scp"),
-                log=False,
+                log=LogMode.QUIET,
             )
         )
     set_context(OttoContext(lab=lab))

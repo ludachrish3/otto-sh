@@ -3,7 +3,7 @@ Interactive shell bridging for remote hosts.
 
 ``UnixHost._interact()`` uses this module to run ``otto host <id> login``:
 an interactive SSH or telnet shell whose stdin/stdout are bridged to the
-user's terminal and whose output is also recorded to ``otto.log`` in the
+user's terminal and whose output is also recorded to ``session.log`` in the
 active output directory.
 
 The bridge is structured around three coroutines:
@@ -17,7 +17,7 @@ The bridge is structured around three coroutines:
 - ``_pump_remote_to_stdout``, which writes remote bytes directly to
   ``fd 1`` for full terminal fidelity and also feeds them to a line buffer
   that strips ANSI escape sequences and appends clean lines to
-  ``otto.log``.
+  ``session.log``.
 
 Only the remote-read stream is logged. The user's keystrokes reach the log
 transcript naturally via the remote PTY's echo — the same trick
@@ -124,16 +124,16 @@ class _LineBuffer:
 
 
 class _SessionLogFile:
-    """Append interactive session lines to ``otto.log`` in the active output dir.
+    """Append interactive session lines to ``session.log`` in the active output dir.
 
     Bypasses the Python logging machinery deliberately: interactive I/O
     is not an otto-issued command, so ``HostFilter`` and the console
     ``RichHandler`` aren't the right path for it. Writing directly to
     the file keeps the terminal clean (only raw bytes reach the user's
-    stdout) while still preserving the transcript in ``otto.log``.
+    stdout) while still preserving the transcript in ``session.log``.
 
     Each line is formatted to match the style produced by the normal
-    logger's ``RichFormatter`` so a reader scanning ``otto.log`` doesn't
+    logger's ``RichFormatter`` so a reader scanning ``session.log`` doesn't
     see two different layouts.
     """
 
@@ -182,12 +182,12 @@ class _SessionLogFile:
 
 
 def _session_log_path() -> Path | None:
-    """Return the path to the current invocation's ``otto.log``, if any."""
+    """Return the path to the current invocation's ``session.log``, if any."""
     ctx = try_get_context()
     output_dir = ctx.output_dir if ctx is not None else None
     if output_dir is None:
         return None
-    return Path(output_dir) / "otto.log"
+    return Path(output_dir) / "session.log"
 
 
 async def _pump_stdin_to_remote(

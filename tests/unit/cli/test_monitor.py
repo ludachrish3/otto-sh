@@ -23,6 +23,7 @@ from typer.testing import CliRunner
 from otto.cli.monitor import _load_historical, monitor_app
 from otto.host import RunResult
 from otto.host.unix_host import UnixHost
+from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector
 from otto.monitor.factory import build_monitor_collector
 from otto.monitor.parsers import LoadParser, MemParser
@@ -36,7 +37,7 @@ runner = CliRunner()
 
 def _make_host(name: str = "box") -> UnixHost:
     """Return a real UnixHost (no connection is made on construction)."""
-    return UnixHost(ip="10.0.0.1", element=name, creds={"admin": "secret"}, log=True)
+    return UnixHost(ip="10.0.0.1", element=name, creds={"admin": "secret"}, log=LogMode.NORMAL)
 
 
 def _close_coro(coro):
@@ -297,10 +298,8 @@ class TestBuildCollector:
     """Direct unit tests for the build_monitor_collector() factory."""
 
     def test_disables_host_logging(self):
-        from otto.logger.mode import LogMode
-
         host = _make_host()
-        assert host.log is True
+        assert host.log is LogMode.NORMAL
         build_monitor_collector(hosts=[host])
         assert host.log is LogMode.NEVER
 
@@ -342,7 +341,7 @@ def _make_monitor_host(name: str = "router1") -> MagicMock:
     host = MagicMock(spec=UnixHost)
     host.name = name
     host.id = name
-    host.log = True
+    host.log = LogMode.NORMAL
 
     responses: dict[str, CommandStatus] = {
         "grep -c ^processor /proc/cpuinfo": CommandStatus(

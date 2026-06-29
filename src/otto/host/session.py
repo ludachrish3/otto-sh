@@ -20,7 +20,7 @@ import uuid
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from typing_extensions import Self, override
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 from ..logger import get_otto_logger
 from ..logger.mode import LogMode
 from ..utils import CommandStatus, Status
-from .host import RunResult, ShellCommand, _normalize_log_mode
+from .host import RunResult, ShellCommand
 
 logger = get_otto_logger()
 
@@ -984,7 +984,7 @@ class HostSession:
         cmds: str | ShellCommand | Sequence[str | ShellCommand],
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = 10.0,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> RunResult:
         """Execute one or more commands on this named session.
 
@@ -1000,7 +1000,8 @@ class HostSession:
         default_expects = _normalize_expects(expects)
 
         async def _run_sc(sc: ShellCommand, t: float | None) -> CommandStatus:
-            mode = _normalize_log_mode(cast("LogMode | bool", sc.log))
+            # _resolve_command collapsed the None sentinel into a concrete LogMode.
+            mode = sc.log if sc.log is not None else LogMode.NORMAL
             if mode is not LogMode.NEVER:
                 self._log_command(sc.cmd, mode)
             return await self._session.run_cmd(
@@ -1020,9 +1021,9 @@ class HostSession:
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
 
-    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
+    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to this session's stdin. See :meth:`~otto.host.unix_host.UnixHost.send`."""
-        mode = _normalize_log_mode(log)
+        mode = log
         if mode is not LogMode.NEVER:
             self._log_command(text.rstrip(), mode)
         await self._session.send(text)
@@ -1296,7 +1297,7 @@ class SessionManager:
         cmd: str,
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
         write_progress: Callable[[int, int], None] | None = None,
     ) -> CommandStatus:
         """Run *cmd* on the default session, creating it if needed.
@@ -1306,7 +1307,7 @@ class SessionManager:
         reused until it dies).
         """
         await self._ensure_session()
-        mode = _normalize_log_mode(log)
+        mode = log
         if mode is not LogMode.NEVER:
             self._log_command(cmd, mode)
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
@@ -1323,7 +1324,7 @@ class SessionManager:
         self,
         cmd: str,
         timeout: float | None = None,
-        log: "LogMode | bool" = LogMode.NORMAL,
+        log: LogMode = LogMode.NORMAL,
     ) -> CommandStatus:
         """Run *cmd* without sharing state with the default session.
 
@@ -1337,7 +1338,7 @@ class SessionManager:
             return await self._oneshot_factory(cmd, timeout)
 
         assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no oneshot_factory
-        mode = _normalize_log_mode(log)
+        mode = log
         if mode is not LogMode.NEVER:
             self._log_command(cmd, mode)
         match self._connections.term:
@@ -1506,10 +1507,10 @@ class SessionManager:
             self._named_sessions[name] = host_session
             return host_session
 
-    async def send(self, text: str, log: "LogMode | bool" = LogMode.NORMAL) -> None:
+    async def send(self, text: str, log: LogMode = LogMode.NORMAL) -> None:
         """Send raw text to the default session, creating it if needed."""
         await self._ensure_session()
-        mode = _normalize_log_mode(log)
+        mode = log
         if mode is not LogMode.NEVER:
             self._log_command(text.rstrip(), mode)
         assert self._session is not None  # noqa: S101 — internal invariant: _ensure_session() always sets _session or raises
