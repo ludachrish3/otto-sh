@@ -33,18 +33,30 @@ class Surface:
 # Heavy third-party stacks that must stay off the surfaces that don't own them.
 _ALL_HEAVY = ("fastapi", "uvicorn", "starlette", "pytest", "jinja2")
 
+# Caps are on the NON-STDLIB module count (otto + third-party), never the full
+# sys.modules total. The stdlib import graph drifts across Python versions
+# (e.g. 3.14 pulls in compression.zstd, annotationlib, asyncio.graph, ...):
+# noise unrelated to otto's own footprint. The non-stdlib count is identical
+# across 3.10-3.14, so one cap (baseline + ~15 headroom) holds on every gated
+# interpreter. This is the same "stable across dependency/version upgrades"
+# rule the design already applies to the otto-only golden snapshot.
 SURFACES: list[Surface] = [
-    Surface("import_otto", ["python"], _ALL_HEAVY, cap=85),        # lazy __init__ (Part D): was 523
-    Surface("help", ["otto", "--help"], _ALL_HEAVY, cap=523),
-    Surface("run", ["otto", "run", "--help"], _ALL_HEAVY, cap=479),
-    Surface("host", ["otto", "host", "--help"], _ALL_HEAVY, cap=481),
-    Surface("reservation", ["otto", "reservation", "--help"], _ALL_HEAVY, cap=479),
-    Surface("docker", ["otto", "docker", "--help"], _ALL_HEAVY, cap=487),
-    Surface("schema", ["otto", "schema", "--help"], _ALL_HEAVY, cap=479),
-    Surface("monitor", ["otto", "monitor", "--help"], ("pytest", "jinja2"), cap=494),       # fastapi allowed
-    Surface("test", ["otto", "test", "--help"], ("fastapi", "uvicorn", "starlette", "jinja2"), cap=479),  # pytest allowed
-    Surface("cov", ["otto", "cov", "--help"], ("fastapi", "uvicorn", "starlette", "pytest"), cap=491),    # jinja2 allowed
+    Surface("import_otto", ["python"], _ALL_HEAVY, cap=19),        # lazy __init__ (Part D)
+    Surface("help", ["otto", "--help"], _ALL_HEAVY, cap=298),
+    Surface("run", ["otto", "run", "--help"], _ALL_HEAVY, cap=260),
+    Surface("host", ["otto", "host", "--help"], _ALL_HEAVY, cap=262),
+    Surface("reservation", ["otto", "reservation", "--help"], _ALL_HEAVY, cap=260),
+    Surface("docker", ["otto", "docker", "--help"], _ALL_HEAVY, cap=265),
+    Surface("schema", ["otto", "schema", "--help"], _ALL_HEAVY, cap=260),
+    Surface("monitor", ["otto", "monitor", "--help"], ("pytest", "jinja2"), cap=272),       # fastapi allowed
+    Surface("test", ["otto", "test", "--help"], ("fastapi", "uvicorn", "starlette", "jinja2"), cap=260),  # pytest allowed
+    Surface("cov", ["otto", "cov", "--help"], ("fastapi", "uvicorn", "starlette", "pytest"), cap=272),    # jinja2 allowed
 ]
+
+# non_stdlib_modules is the gated metric: total sys.modules minus the stdlib
+# (classified via the *child's own* sys.stdlib_module_names, so each Python
+# version self-classifies). Excluding the stdlib makes the count version-robust:
+# the stdlib graph grows release to release, otto's footprint does not.
 
 # Child script for `import otto` surface: bare import, no CLI invocation.
 _CHILD_IMPORT = """
@@ -52,7 +64,9 @@ import sys, json
 import otto
 mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
-print(json.dumps({"count": len(mods), "modules": mods, "otto_modules": otto_mods}))
+non_std = [m for m in mods if m.split(".")[0] not in sys.stdlib_module_names]
+print(json.dumps({"count": len(mods), "modules": mods, "otto_modules": otto_mods,
+                  "non_stdlib_modules": non_std}))
 """
 
 # Child script for CLI surfaces: access otto.app to trigger the lazy __init__
@@ -65,7 +79,9 @@ import otto
 _ = otto.app  # access triggers lazy cli.main import -> _register_subcommands(argv); measures import footprint, not invocation
 mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
-print(json.dumps({{"count": len(mods), "modules": mods, "otto_modules": otto_mods}}))
+non_std = [m for m in mods if m.split(".")[0] not in sys.stdlib_module_names]
+print(json.dumps({{"count": len(mods), "modules": mods, "otto_modules": otto_mods,
+                   "non_stdlib_modules": non_std}}))
 """
 
 
@@ -122,11 +138,12 @@ def main() -> int:
 
     # flush=True so these lines interleave correctly with hyperfine's (unbuffered)
     # subprocess output when stdout is piped/redirected (e.g. `make profile > log`).
-    print(f"{'surface':14} {'total':>6} {'otto':>5}  heavy_present", flush=True)
+    print(f"{'surface':14} {'total':>6} {'non_std':>7} {'otto':>5}  heavy_present", flush=True)
     for s in SURFACES:
         r = measure(s.argv)
         present = [d for d in s.deny if d in r["modules"]]
-        print(f"{s.key:14} {r['count']:6d} {len(r['otto_modules']):5d}  {present}", flush=True)
+        non_std, otto = len(r["non_stdlib_modules"]), len(r["otto_modules"])
+        print(f"{s.key:14} {r['count']:6d} {non_std:7d} {otto:5d}  {present}", flush=True)
         if args.update:
             write_snapshot(s.key, r["otto_modules"])
             print(f"  -> wrote {snapshot_path(s.key).relative_to(REPO_ROOT)} ({len(r['otto_modules'])} modules)", flush=True)

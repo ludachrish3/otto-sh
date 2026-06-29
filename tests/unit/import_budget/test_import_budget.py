@@ -26,6 +26,10 @@ def test_measure_returns_module_inventory():
     # otto_modules is a strict subset of modules, sorted.
     assert set(result["otto_modules"]) <= set(result["modules"])
     assert result["modules"] == sorted(result["modules"])
+    # non_stdlib_modules is the gated metric: a subset of modules that always
+    # includes otto itself and never the standard library.
+    assert set(result["non_stdlib_modules"]) <= set(result["modules"])
+    assert "otto" in result["non_stdlib_modules"]
 
 
 def test_surfaces_table_well_formed():
@@ -46,11 +50,20 @@ def test_import_budget(surface):
     leaked = [d for d in surface.deny if d in result["modules"]]
     assert not leaked, f"`{surface.key}`: heavy modules leaked onto the path: {leaked}"
 
-    # 2. Count cap: total modules must not exceed the post-reduction baseline + headroom.
+    # 2. Count cap: the non-stdlib module count (otto + third-party) must not
+    #    exceed the post-reduction baseline + headroom. Stdlib modules are
+    #    excluded on purpose: the stdlib import graph grows across Python
+    #    versions (3.14 pulls in compression.zstd, annotationlib, asyncio.graph,
+    #    ...), which is version noise unrelated to otto's footprint. The
+    #    non-stdlib count is stable across 3.10-3.14, so one cap holds on every
+    #    interpreter: the same "stable across upgrades" rule the golden
+    #    snapshot already follows.
     assert surface.cap is not None, f"`{surface.key}` has no cap set"
-    assert result["count"] <= surface.cap, (
-        f"`{surface.key}`: {result['count']} modules > cap {surface.cap}. "
-        f"If intentional, re-run `make import-snapshot` and raise the cap."
+    non_stdlib = result["non_stdlib_modules"]
+    assert len(non_stdlib) <= surface.cap, (
+        f"`{surface.key}`: {len(non_stdlib)} non-stdlib modules > cap {surface.cap}. "
+        f"If intentional, re-run `make import-snapshot` and raise the cap.\n"
+        f"  non-stdlib modules: {non_stdlib}"
     )
 
     # 3. Golden snapshot: the set of otto-owned modules must match exactly.

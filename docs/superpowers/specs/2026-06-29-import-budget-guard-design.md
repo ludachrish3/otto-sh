@@ -137,9 +137,22 @@ never pollute the measurement) by setting `sys.argv`, importing otto (which runs
    golden snapshot, the denylist still fails.
 
 2. **Per-surface module-count cap** *(catches slow accumulation of many small
-   imports)* — `total_modules <= baseline + HEADROOM`, with `HEADROOM ≈ 15`.
+   imports)* — `non_stdlib_modules <= baseline + HEADROOM`, with `HEADROOM ≈ 15`.
    This is the headline "number of imports" number. Caps are derived from the
    post-reduction measured baselines and stored in the config table.
+
+   **Amendment (2026-06-29, issue #88):** the cap counts only **non-stdlib**
+   modules (otto + third-party), not the full `sys.modules` total. The stdlib
+   import graph grows across Python versions — 3.14 alone pulls in
+   `compression.zstd` / `annotationlib` / `asyncio.graph` / `pathlib._os` /
+   `_interpreters`, ~5–18 extra modules per surface — which is version noise
+   unrelated to otto's footprint and blew the ≈15 headroom on CI's 3.14 job
+   while otto's own module set was unchanged (the golden snapshot passed). Each
+   surface is classified against the **child interpreter's own**
+   `sys.stdlib_module_names`, so every Python version self-classifies; the
+   resulting non-stdlib count is identical across 3.10–3.14. This applies the
+   same "stable across version upgrades" reasoning that already governs the
+   otto-only golden snapshot (below) to layer 2.
 
 3. **Golden snapshot of `otto.*` modules only** *(precise + self-documenting)* —
    commit the sorted list of **otto-owned** modules (`otto` and `otto.*`) per
@@ -154,7 +167,7 @@ the golden snapshot to otto-owned modules makes it **stable across dependency
 upgrades** while still catching otto-side bloat exactly. The third-party side is
 governed by the denylist (layer 1) and the count cap (layer 2), so a newly
 pulled-in heavy dep is still caught — by name (if denylisted) or by the cap
-(total count rises). *(Confirmed with the user: otto-only snapshot, not full.)*
+(non-stdlib count rises). *(Confirmed with the user: otto-only snapshot, not full.)*
 
 ### Surfaces gated
 
