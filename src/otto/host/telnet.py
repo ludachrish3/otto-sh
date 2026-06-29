@@ -68,7 +68,7 @@ def _unregister_console_transport(transport: Any) -> None:
 
 
 def abort_console_transports() -> int:
-    """Synchronously abort every tracked single-client console transport.
+    """Abort every tracked single-client console transport synchronously.
 
     Releases each FD (and the server-side single-client slot) via the
     transport's own synchronous ``abort()`` — no event loop required, so this

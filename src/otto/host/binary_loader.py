@@ -40,8 +40,9 @@ class BinaryLoader(ABC):
 
     @abstractmethod
     def check_loaded(self, output: str) -> tuple[bool, str]:
-        """Return ``(ok, reason)`` from a load command's output — ``reason`` is
-        the failure text when ``ok`` is False, ``""`` otherwise.
+        """Return ``(ok, reason)`` from a load command's output.
+
+        ``reason`` is the failure text when ``ok`` is False, ``""`` otherwise.
         """
         ...
 

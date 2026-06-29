@@ -52,7 +52,7 @@ class LineHits:
         return sum(self.counts.values())
 
     def is_hit(self, tier: str | None = None) -> bool:
-        """True if hit in *tier* (or in any tier when ``tier`` is None)."""
+        """Return True if hit in *tier* (or in any tier when ``tier`` is None)."""
         if tier is None:
             return self.total() > 0
         return self.for_tier(tier) > 0
@@ -112,7 +112,7 @@ class BranchHits:
         return self.reachable.get(tier)
 
     def is_hit_for(self, tier: str | None = None) -> bool:
-        """True if this branch was taken at least once in *tier*."""
+        """Return True if this branch was taken at least once in *tier*."""
         if tier is None:
             return self.hits.is_hit()
         return self.hits.for_tier(tier) > 0

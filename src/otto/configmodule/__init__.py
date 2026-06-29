@@ -121,8 +121,9 @@ if _completion_names is None:
 
 
 def get_completion_names() -> dict[str, Any] | None:
-    """Return cached instruction/suite/host data when the completion fast
-    path is active, else ``None``.
+    """Return cached instruction/suite/host data when the completion fast path is active.
+
+    Return ``None`` when not active.
 
     Returned keys:
 

@@ -81,8 +81,9 @@ def _ctx_param_name(func: Callable[..., Any]) -> str | None:
 
 
 def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
-    """Wrap *func* so the OttoContext param is supplied from the active context
-    at call time and hidden from the Typer-facing signature.
+    """Wrap *func* so the OttoContext param is supplied from the active context.
+
+    Supplied at call time and hidden from the Typer-facing signature.
     """
     from ..context import get_context
 

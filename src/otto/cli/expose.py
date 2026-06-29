@@ -1,6 +1,4 @@
-"""
-Dynamic, class-scoped exposure of ``@cli_exposed`` host methods as ``otto host``
-subcommands.
+"""Dynamic, class-scoped exposure of ``@cli_exposed`` host methods as ``otto host`` subcommands.
 
 The :class:`HostGroup` (a ``typer.core.TyperGroup``) synthesizes one command per
 exposed coroutine method across every registered host class — built-in and
@@ -24,9 +22,10 @@ if TYPE_CHECKING:
 
 
 def collect_exposed_methods(cls: type) -> dict[str, str]:
-    """Return ``{cli_name: python_attr_name}`` for *cls*'s ``@cli_exposed``
-    coroutine methods (as resolved on *cls* — overrides that drop the marker are
-    excluded, which is how per-class scoping by definedness falls out).
+    """Return ``{cli_name: python_attr_name}`` for *cls*'s ``@cli_exposed`` coroutine methods.
+
+    As resolved on *cls* — overrides that drop the marker are
+    excluded, which is how per-class scoping by definedness falls out.
     """
     out: dict[str, str] = {}
     for attr_name, fn in inspect.getmembers(cls, predicate=inspect.iscoroutinefunction):
@@ -185,8 +184,9 @@ def iter_exposed_verbs() -> Iterable[tuple[str, str, str, Callable[..., Any]]]:
 def _synthesize_command(
     cli_name: str, attr_name: str, help_text: str, sample_func: Callable[..., Any]
 ) -> Any:
-    """Build a vendored-click ``Command`` for *cli_name* via a throwaway Typer
-    (the Typer-native way to convert a function — no hand-written click types).
+    """Build a vendored-click ``Command`` for *cli_name* via a throwaway Typer.
+
+    The Typer-native way to convert a function — no hand-written click types.
     """
     from ..utils import async_typer_command
 
@@ -202,8 +202,9 @@ def _make_host_group() -> type[TyperGroup]:
     from typer.core import TyperGroup
 
     class HostGroup(TyperGroup):
-        """``otto host`` group: lazily synthesizes dynamic verb commands and scopes
-        the visible/dispatchable set to the resolved host's class.
+        """``otto host`` group: lazily synthesizes dynamic verb commands.
+
+        Scopes the visible/dispatchable set to the resolved host's class.
         """
 
         _dynamic_names: set[str]
@@ -242,8 +243,9 @@ def _make_host_group() -> type[TyperGroup]:
             ]
 
         def _class_command(self, cls: type, cmd_name: str, attr_name: str) -> Any:
-            """Build (and cache) the verb's command from *cls*'s own method, so a
-            verb name shared across classes can carry a different signature per
+            """Build (and cache) the verb's command from *cls*'s own method.
+
+            A verb name shared across classes can carry a different signature per
             class. Cached per ``(cls, cmd_name)``.
             """
             cache = getattr(self, "_class_cmd_cache", None)

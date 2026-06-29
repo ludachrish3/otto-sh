@@ -1,5 +1,4 @@
-"""Path correlator: normalise source paths across build host, remote hosts,
-and gcda metadata.
+"""Path correlator: normalise source paths across build host, remote hosts, and gcda metadata.
 
 gcda files embed the absolute paths used at compile time.  When run on a
 remote host those paths rarely match the local source tree — especially in

@@ -55,8 +55,9 @@ def make_host_id(
     board: str | None,
     slot: int | None,
 ) -> str:
-    """Compose a host's ``id`` from its identity fields — the single source of
-    the id format, called by ``RemoteHost._generate_id`` and by host_preferences
+    """Compose a host's ``id`` from its identity fields — the single source of the id format.
+
+    Called by ``RemoteHost._generate_id`` and by host_preferences
     selector matching (so a selector regex matches the same string a built host
     reports). ``element_id`` renders as its number; ``board``/``slot`` lower-case
     with a ``_`` join.

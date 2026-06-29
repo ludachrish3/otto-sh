@@ -1,5 +1,4 @@
-"""Pydantic boundary models — the validation layer for external data
-(lab JSON, settings.toml, OTTO_* env, monitor import/export).
+"""Pydantic boundary models — the validation layer for external data (lab JSON, settings, env).
 
 These spec models depend on the runtime data modules they validate and build
 (``otto.host.options``, ``otto.host.transfer``); those runtime modules do not

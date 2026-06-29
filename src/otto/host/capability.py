@@ -59,9 +59,9 @@ TRANSFER_RESOLVER = CapabilityResolver("transfer")
 def select_preferences(
     table: dict[str, dict[str, list[str] | dict[str, Any]]], host_id: str
 ) -> dict[str, list[str]]:
-    """Reduce a unified ``{selector: {key: list|dict}}`` table to the flat
-    capability **selections** ``{capability: [...]}`` for one host. Only
-    list-valued entries (selections) are considered; dict-valued entries
+    """Reduce a preferences table to the flat capability **selections** for one host.
+
+    Only list-valued entries (selections) are considered; dict-valued entries
     (option tables) are ignored here. Definition-order cascade: later matching
     selectors replace a capability's list. Lists are copied.
     """
@@ -77,9 +77,9 @@ def select_preferences(
 def select_option_defaults(
     table: dict[str, dict[str, Any]], host_id: str
 ) -> dict[str, dict[str, Any]]:
-    """Reduce a unified ``{selector: {key: list|dict}}`` table to the per-host
-    option-value **defaults** ``{option_table: {key: value}}``. Only dict-valued
-    entries (option tables) are considered; list-valued entries (selections) are
+    """Reduce a preferences table to the per-host option-value **defaults**.
+
+    Only dict-valued entries (option tables) are considered; list-valued entries (selections) are
     ignored here. Definition-order cascade: later matching selectors merge
     **per key** into each option table. Tables are copied.
     """

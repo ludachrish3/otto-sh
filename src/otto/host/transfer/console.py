@@ -270,8 +270,9 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         return Status.Success, ""
 
     async def _cleanup_partial(self, dest_path: str) -> None:
-        """Best-effort removal of a half-written destination file after a
-        mid-transfer failure. Errors are swallowed: the caller is already
+        """Best-effort removal of a half-written destination file after a mid-transfer failure.
+
+        Errors are swallowed: the caller is already
         returning the real put failure, and the cleanup is purely an
         attempt to leave the device's filesystem recoverable for retry.
         """
@@ -322,7 +323,7 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
 
     @staticmethod
     def _decode_hexdump(output: str) -> bytes:
-        """Decode a Zephyr ``fs read`` hexdump back into bytes.
+        r"""Decode a Zephyr ``fs read`` hexdump back into bytes.
 
         Each line is ``<8-hex offset>  <space-separated hex bytes>\\t<ascii>``,
         16 bytes per line. The **offset is authoritative**: bytes are placed at

@@ -387,8 +387,9 @@ class FtpOptions:
     arbitrary ``siosocks_asyncio_kwargs`` which can be routed through here."""
 
     def _client_kwargs(self) -> dict[str, Any]:
-        """Build the kwargs dict passed to ``aioftp.Client()``. Only
-        includes fields the caller explicitly set so aioftp's defaults apply.
+        """Build the kwargs dict passed to ``aioftp.Client()``.
+
+        Only includes fields the caller explicitly set so aioftp's defaults apply.
         """
         kw: dict[str, Any] = {}
         if self.socket_timeout is not None:

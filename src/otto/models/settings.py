@@ -92,8 +92,7 @@ class DockerSettingsSpec(OttoModel):
 
 
 class OsProfileSpec(OttoModel):
-    """A named ``[os_profiles.<name>]`` bundle: a required ``base`` host-class
-    name plus an open bag of raw default field values merged beneath each host.
+    """A named ``[os_profiles.<name>]`` bundle: a ``base`` host-class plus raw default field values.
 
     ``extra='allow'`` collects the non-``base`` keys; the per-field typo guard
     runs later, in ``register_os_profile`` (against the base class's slots), so
@@ -137,8 +136,9 @@ class LabConfigSpec(OttoModel):
 
 
 def _iso8601_utc(value: object) -> object:
-    """Normalize an ISO-8601 ``expires`` string: trailing ``Z`` → ``+00:00`` and
-    a naive timestamp is treated as UTC. Non-strings pass through unchanged so
+    """Normalize an ISO-8601 ``expires`` string: trailing ``Z`` → ``+00:00``; naive → UTC.
+
+    Non-strings pass through unchanged so
     pydantic handles them (a ``datetime``/``None`` is valid; anything else fails
     the ``datetime | None`` type check) — this validator never swallows.
     """
@@ -197,8 +197,9 @@ _HOST_PREFERENCE_CAPABILITIES: frozenset[str] = frozenset({"term", "transfer"})
 
 
 class SettingsModel(OttoModel):
-    """Boundary model for a repo's ``.otto/settings.toml`` (post ``${sut_dir}``
-    expansion). ``extra='forbid'`` turns a typo'd top-level key into an error.
+    """Boundary model for a repo's ``.otto/settings.toml`` (post ``${sut_dir}`` expansion).
+
+    ``extra='forbid'`` turns a typo'd top-level key into an error.
     """
 
     # required identity
@@ -249,8 +250,9 @@ class SettingsModel(OttoModel):
     @field_validator("host_preferences")
     @classmethod
     def _validate_host_preferences(cls, v: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """Validate each ``[host_preferences."<selector>"]`` block. The selector
-        must be a compilable regex (``re.fullmatch`` against the host ``id``).
+        """Validate each ``[host_preferences."<selector>"]`` block.
+
+        The selector must be a compilable regex (``re.fullmatch`` against the host ``id``).
         Inner keys partition by name: a capability (``term``/``transfer``) takes
         an ordered ``list[str]``; an option table (``ssh_options`` …) takes a dict
         validated against its spec (only user-set keys kept, so the factory's
@@ -301,11 +303,11 @@ _PATH_LIST_SEP = re.compile(rf"[,{re.escape(os.pathsep)}]")
 
 
 class OttoEnvSettings(BaseSettings):
-    """Typed view of the ``OTTO_*`` environment surface. Single source of truth
-    for the variables otto reads programmatically. (The six CLI-option vars are
-    read by Typer's ``envvar=`` at parse time; this model documents the whole
-    surface and is the reader for the non-CLI reads: sut_dirs, field_default,
-    compose_suffix, and the completion-cache xdir.)
+    """Typed view of the ``OTTO_*`` environment surface; single source of truth for otto's env vars.
+
+    The six CLI-option vars are read by Typer's ``envvar=`` at parse time; this model
+    documents the whole surface and is the reader for the non-CLI reads: sut_dirs,
+    field_default, compose_suffix, and the completion-cache xdir.
 
     sut_dirs existence-checking is done by ``configmodule.env.load_otto_env`` so a
     missing dir raises ``FileNotFoundError`` (not a wrapped ValidationError).

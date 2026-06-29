@@ -118,7 +118,7 @@ _KIND_TO_TYPE: dict[str, Any] = {v: k for k, v in _TYPE_TO_KIND.items()}
 
 
 def is_completion_mode() -> bool:
-    """True when otto is being invoked by shell completion."""
+    """Return True when otto is being invoked by shell completion."""
     return bool(os.environ.get(COMPLETION_ENV_VAR))
 
 

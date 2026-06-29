@@ -127,9 +127,10 @@ def _hop_index(hosts: list[dict]) -> dict[str, dict]:
 
 
 def _is_ssh_host(host: dict) -> bool:
-    """True if we log in directly over SSH (the ``UnixHost`` family); False if
-    the host is an embedded console reached via a hop (``EmbeddedHost`` /
-    ``ZephyrHost`` family).
+    """Return True if we log in directly over SSH (the ``UnixHost`` family).
+
+    Returns False if the host is an embedded console reached via a hop
+    (``EmbeddedHost`` / ``ZephyrHost`` family).
 
     Route on the credential shape, not a hardcoded ``os_type`` literal. The SSH
     probe dereferences the host's own ``creds``; embedded consoles carry none

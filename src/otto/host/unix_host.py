@@ -111,9 +111,7 @@ from .transfer import (
 
 @dataclass(slots=True)
 class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
-    """
-    Unix host accessed via SSH or Telnet, with bash as the remote shell.
-    """
+    """Unix host accessed via SSH or Telnet, with bash as the remote shell."""
 
     ip: str
     """IP address of the host."""
@@ -291,7 +289,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     @override
     def _sudo_password(self) -> str | None:
-        """The login user's password, used for ``sudo -S``."""
+        """Return the login user's password, used for ``sudo -S``."""
         _user, password = self._connections.credentials
         return password or None
 
@@ -361,11 +359,11 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self._file_transfer = self._build_file_transfer()
 
     def _build_connections(self) -> ConnectionManager:
-        """Construct the connection backend for the current ``term`` via the
-        registry + ``create`` seam, honoring the ``_connection_factory`` test
-        override. Shared by ``__post_init__`` / ``rebuild_connections``
-        (and the override-copy seam, via ``dataclasses.replace``) so a custom
-        term backend builds the right class.
+        """Construct the connection backend for the current ``term`` via the registry seam.
+
+        Honors the ``_connection_factory`` test override. Shared by ``__post_init__`` /
+        ``rebuild_connections`` (and the override-copy seam, via ``dataclasses.replace``) so a
+        custom term backend builds the right class.
         """
         hop_transport = self._build_hop_transport() if self.hop else None
         term_ctx = TermContext(
@@ -384,9 +382,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return conn_cls.create(term_ctx)
 
     def _build_file_transfer(self) -> UnixFileTransfer:
-        """Construct the transfer backend for the current ``transfer`` via the
-        registry + ``create`` seam, against the current ``self._connections``.
-        Shared by ``__post_init__`` / ``rebuild_connections``
+        """Construct the transfer backend for the current ``transfer`` via the registry seam.
+
+        Uses ``self._connections``. Shared by ``__post_init__`` / ``rebuild_connections``
         (and the override-copy seam, via ``dataclasses.replace``) so a custom
         transfer backend builds the right class.
         """
@@ -710,8 +708,9 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         return await self._loaded_modules()
 
     async def _loaded_modules(self) -> list[str]:
-        """Loaded module names, read from ``/proc/modules`` — the source ``lsmod``
-        formats. World-readable (no sudo), no ``lsmod`` binary dependency; column
+        """Return loaded module names, read from ``/proc/modules`` — the source ``lsmod`` formats.
+
+        World-readable (no sudo), no ``lsmod`` binary dependency; column
         one is the module name, already ``-``→``_`` normalized by the kernel.
         Returns ``[]`` under dry-run (the live module set is unknowable, and the
         skipped read would otherwise echo the dry-run banner). ``log=False``
@@ -757,9 +756,10 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self,
         name: Annotated[str, Arg(help="Module name to remove.")],
     ) -> tuple[Status, str]:
-        """Remove a kernel module (``rmmod``). Idempotent: removing a module that
-        is not resident succeeds without running ``rmmod`` (mirrors
-        :meth:`~otto.host.embedded_host.EmbeddedHost.unload`).
+        """Remove a kernel module (``rmmod``).
+
+        Idempotent: removing a module that is not resident succeeds without running ``rmmod``
+        (mirrors :meth:`~otto.host.embedded_host.EmbeddedHost.unload`).
         """
         resolved = name.replace("-", "_")
         if not is_dry_run() and resolved not in await self._loaded_modules():

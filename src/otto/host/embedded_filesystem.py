@@ -125,9 +125,9 @@ class EmbeddedFileSystem(ABC):
         return f"fs ls {path}"
 
     def statvfs_command(self) -> str | None:
-        """Render the command that reports filesystem usage stats, or
-        ``None`` when the filesystem cannot serve one (no FS, no statvfs
-        builtin). The default returns ``None`` when there is no mount and
+        """Render the filesystem usage stats command, or ``None`` when unavailable.
+
+        No FS or no statvfs builtin → ``None``. Default: ``None`` when no mount,
         ``fs statvfs <mount>`` otherwise.
         """
         if not self.supports_disk_metric or self.mount is None:
@@ -180,8 +180,7 @@ _FILESYSTEM_CLASSES: dict[str, type[EmbeddedFileSystem]] = {}
 
 
 def register_filesystem(type_name: str, cls: type[EmbeddedFileSystem]) -> None:
-    """Make a custom :class:`EmbeddedFileSystem` subclass available to lab
-    data.
+    """Make a custom :class:`EmbeddedFileSystem` subclass available to lab data.
 
     Call from an init module listed in ``.otto/settings.toml`` — the same
     pattern :func:`otto.monitor.parsers.register_host_parsers` follows.

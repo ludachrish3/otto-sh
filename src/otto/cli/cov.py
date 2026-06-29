@@ -1,4 +1,4 @@
-"""Generate coverage reports from ``otto test --cov`` output.
+r"""Generate coverage reports from ``otto test --cov`` output.
 
 Merges ``.gcda`` files collected from one or more ``otto test`` runs,
 processes them with ``lcov``, and renders a multi-tier HTML report.

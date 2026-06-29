@@ -32,8 +32,7 @@ from .transfer import BaseFileTransfer, TransferProgressFactory
 
 
 class LocalFileTransfer(BaseFileTransfer):
-    """File transfer for :class:`LocalHost` — a local copy via
-    :func:`shutil.copy2`.
+    """File transfer for :class:`LocalHost` — a local copy via :func:`shutil.copy2`.
 
     Concrete :class:`~otto.host.transfer.BaseFileTransfer` so the ABC's
     progress contract holds uniformly across every backend in the host

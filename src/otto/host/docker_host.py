@@ -135,8 +135,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         self._ensure_lock = asyncio.Lock()
 
     def _build_session_mgr(self) -> SessionManager:
-        """Build a fresh SessionManager wired to this host. Called from
-        :meth:`__post_init__` and :meth:`rebuild_connections`.
+        """Build a fresh SessionManager wired to this host.
+
+        Called from :meth:`__post_init__` and :meth:`rebuild_connections`.
         """
 
         def _make_session() -> ShellSession:

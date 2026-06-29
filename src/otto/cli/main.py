@@ -479,8 +479,10 @@ def _requested_subcommands() -> set[str]:
 
 
 def _placeholder_subapp(name: str) -> typer.Typer:
-    """Empty Typer with just a name/help — used for subcommands that aren't
-    being completed in this invocation so the top-level help still lists them.
+    """Empty Typer with just a name/help.
+
+    Used for subcommands that aren't being completed in this invocation so the top-level
+    help still lists them.
     """
     return typer.Typer(
         name=name,

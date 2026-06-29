@@ -48,8 +48,7 @@ class UnixFileTransfer(BaseFileTransfer):
         return
 
     async def _warmup_for_transfer(self, file_count: int) -> None:
-        """Probe strategies and pre-open exec sessions for the upcoming
-        transfer — all concurrently.
+        """Probe strategies and pre-open exec sessions for the upcoming transfer — all concurrently.
 
         Without this, the first transfer on a cold telnet host pays its
         handshakes serially: strategy-probe → (per-file) exec-session-open.

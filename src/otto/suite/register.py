@@ -1,5 +1,4 @@
-"""register_suite() — class decorator that registers an OttoSuite subclass as a
-Typer subcommand on suite_app.
+"""register_suite() — class decorator that registers an ``OttoSuite`` as a Typer subcommand.
 
 Registration happens at class-definition time (import time).  ``cli/test.py``
 reads ``_SUITE_REGISTRY`` after ``configmodule`` has finished loading (which is
@@ -49,7 +48,7 @@ class OttoOptionsPlugin:
 
     @pytest.fixture(scope="session")
     def suite_options(self) -> Any:
-        """The Options dataclass instance populated from CLI arguments."""
+        """Return the Options dataclass instance populated from CLI arguments."""
         return self.options
 
     @pytest.fixture

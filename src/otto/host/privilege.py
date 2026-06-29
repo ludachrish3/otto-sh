@@ -40,8 +40,9 @@ async def _perform_su(
     password: str | None,
     user_password: "Callable[[str], str | None]",
 ) -> str:
-    """Run the ``su`` exchange against a session's ``send``/``expect`` and
-    return the resolved target user. Does **no** ``current_user`` bookkeeping —
+    """Run the ``su`` exchange against a session's ``send``/``expect`` and return the resolved user.
+
+    Does **no** ``current_user`` bookkeeping —
     the caller stamps the session it elevated. Shared by
     :meth:`PosixPrivilege.switch_user` (default session) and
     :meth:`~otto.host.session.HostSession.switch_user` (named session).

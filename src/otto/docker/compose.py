@@ -1,7 +1,4 @@
-"""
-Docker Compose orchestration: bring stacks up/down, register containers
-as live hosts in the active Lab, and idempotently re-enter when the same
-stack is already running.
+"""Docker Compose orchestration: bring stacks up/down and register containers as live hosts.
 
 The public surface (re-exported from :mod:`otto.docker`) is:
 
@@ -48,8 +45,9 @@ _CONTAINER_ID_RESOLVE_BACKOFF_S = 0.5
 
 
 def _is_transient_network_race(output: str) -> bool:
-    """True when ``up -d`` failed with the libnetwork "network created then
-    not found on attach" race, which a convergent re-run gets past.
+    """Return True when ``up -d`` failed with the libnetwork "network created then not found" race.
+
+    A convergent re-run gets past this.
 
     The daemon Creates the ``_default`` network and Creates the container, then
     fails at "Starting" with ``failed to set up container networking: network
@@ -405,8 +403,7 @@ async def compose_ps(parent: Host) -> list[dict[str, Any]]:
 
 
 def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
-    """Pre-register *placeholder* container hosts in *lab* for every declared
-    ``<parent>.<project>.<service>``.
+    """Pre-register *placeholder* container hosts in *lab* for every declared service triple.
 
     The placeholders carry an empty ``container_id`` so that any operation
     against a not-yet-up container fails with a clear "run `otto docker up`"

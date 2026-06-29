@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail if a doctest prompt (``>>>``) appears where Sphinx will not execute it.
+r"""Fail if a doctest prompt (``>>>``) appears where Sphinx will not execute it.
 
 Sphinx's doctest builder only runs ```{doctest}``` fenced blocks. A ``>>>`` line
 in any other fence (```python```, ```pycon```, …) renders as code but is never

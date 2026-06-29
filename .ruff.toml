@@ -34,6 +34,9 @@ ignore = [
     "FIX002", "TD002", "TD003",    # TODO comment formatting
     "CPY001",                      # mandatory copyright header (otto uses none)
     "ANN401",                      # typing.Any
+    # --- Group 4 (cont.): docstring conventions otto documents elsewhere ---
+    "D105",  # magic-method docstrings: dunder semantics are conventional; class docstring covers them
+    "D107",  # __init__ docstrings: construction is documented in the class docstring (D101), per numpy/google style
 
     # ===== TEMP (ratchet) — NOT permanent. Generated in Step 3; removed =====
     # ===== batch-by-batch in Phases 2..A. Do NOT hand-edit individual codes. =====
@@ -42,20 +45,13 @@ ignore = [
     "D102",
     "D103",
     "D104",
-    "D105",
-    "D107",
-    "D200",
-    "D205",
-    "D301",
-    "D400",
-    "D401",
     "PGH003",
 ]
 
 [lint.per-file-ignores]
 "tests/**" = ["S101", "D", "PLR2004", "SLF001", "ANN", "ARG", "S104", "S105", "S106", "S108", "S110", "S310", "S603", "S607", "INP001", "E402"]  # S*: tests use fake creds / subprocess harnesses / remote-host paths — not a security surface
 "scripts/**" = ["INP001", "T201"]  # scripts are CLI tools: namespace packages + print() are by design
-"docs/conf.py" = ["INP001", "ANN"]  # Sphinx build config — not autodoc'd; annotations add nothing to rendered docs
+"docs/conf.py" = ["INP001", "ANN", "D"]  # Sphinx build config — not autodoc'd; annotations and pydocstyle add nothing here
 "**/__init__.py" = ["F401"]
 
 [lint.pylint]

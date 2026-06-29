@@ -477,8 +477,9 @@ class Repo:
         self,
         profiles: dict[str, "OsProfileSpec"],
     ) -> dict[str, "OsProfile"]:
-        """Register each validated os-profile into the global registry and
-        return the built profiles, keyed by name. Runs at settings-parse time,
+        """Register each validated os-profile into the global registry; return built profiles.
+
+        Runs at settings-parse time,
         before init modules import, so a code registration can override a data
         table of the same name (last writer wins).
         """
@@ -530,7 +531,7 @@ class Repo:
         return value
 
     def add_libs_to_pythonpath(self) -> None:
-        """Add configured library directories to the PYTHONPATH"""
+        """Add configured library directories to the PYTHONPATH."""
         for lib in self.libs:
             sys.path.append(f"{lib}")
 

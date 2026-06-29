@@ -42,7 +42,7 @@ _NETWORK_FSTYPES = frozenset(
 
 
 def _unescape_mountinfo(field: str) -> str:
-    """Decode the octal escapes (``\\040`` space, ``\\011`` tab, …) mountinfo uses."""
+    r"""Decode the octal escapes (``\\040`` space, ``\\011`` tab, …) mountinfo uses."""
     if "\\" not in field:
         return field
     out: list[str] = []
@@ -136,5 +136,5 @@ def network_fs_type(path: str | Path) -> str | None:
 
 
 def is_network_fs(path: str | Path) -> bool:
-    """``True`` when ``path`` lives on a network/shared filesystem."""
+    """Return ``True`` when ``path`` lives on a network/shared filesystem."""
     return network_fs_type(path) is not None

@@ -47,8 +47,7 @@ from typing_extensions import override
 
 @dataclass(frozen=True)
 class SessionMarkers:
-    """The unique per-session sentinel tokens a :class:`CommandFrame` renders
-    into commands and keys on when parsing.
+    """Per-session sentinel tokens a ``CommandFrame`` renders into commands and scans on parsing.
 
     Built once per session from the session id (see
     :meth:`for_session`), so two concurrent sessions never match each other's
@@ -80,8 +79,7 @@ class SessionMarkers:
 
 
 class CommandFrame(ABC):
-    """A shell's command-framing dialect: how to wrap a command for execution
-    and how to parse the echoed stream back into ``(output, retcode)``.
+    """A shell's command-framing dialect: wrap commands for execution and parse the echoed stream.
 
     Concrete frames are stateless value objects. The render half
     (:meth:`handshake` / :meth:`frame` / :meth:`recover`) and the parse half
@@ -147,8 +145,9 @@ class CommandFrame(ABC):
 
 
 class BashFrame(CommandFrame):
-    """POSIX bash dialect: ``echo`` brackets and ``$?`` baked into the END
-    marker. The default frame for SSH/telnet/local unix sessions.
+    """POSIX bash dialect: ``echo`` brackets and ``$?`` baked into the END marker.
+
+    The default frame for SSH/telnet/local unix sessions.
     """
 
     type_name = "bash"
@@ -328,8 +327,7 @@ class ZephyrFrame(CommandFrame):
 
 
 class ZephyrSerialFrame(ZephyrFrame):
-    """Zephyr 3.7+ dialect for a serial/UART shell reached over a raw byte
-    bridge (e.g. QEMU ``-serial telnet:<ip>:<port>,server``).
+    """Zephyr 3.7+ dialect for a serial/UART shell reached over a raw byte bridge.
 
     Identical framing and parsing to :class:`ZephyrFrame` — only the handshake
     differs. The in-guest ``SHELL_BACKEND_TELNET`` honours otto's ``IAC DONT
@@ -401,8 +399,9 @@ def build_command_frame(type_name: str) -> CommandFrame:
 
 
 def _register_builtin_frames() -> None:
-    """Register otto's built-in frames through the public path, so first-party
-    and third-party registrations travel the same code (mirrors
+    """Register otto's built-in frames through the public path.
+
+    Ensures first-party and third-party registrations travel the same code (mirrors
     ``os_profile._register_builtin_host_classes``).
     """
     register_command_frame(BashFrame.type_name, BashFrame)

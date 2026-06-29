@@ -216,8 +216,9 @@ class CoverageReporter:
                 )
 
     def _per_host_gcno_dirs(self) -> list[Path]:
-        """Per-gcda-dir source root: the host's own root (by dir name) or the
-        single ``source_root`` fallback. Parallel to ``self.gcda_dirs``.
+        """Per-gcda-dir source root: the host's own root (by dir name) or ``source_root`` fallback.
+
+        Parallel to ``self.gcda_dirs``.
         """
         return [self.source_roots.get(d.name, self.source_root) for d in self.gcda_dirs]
 

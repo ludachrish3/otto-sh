@@ -124,8 +124,9 @@ def cli_exposed(
     help_: str | None = None,
     success: str | None = None,
 ) -> Callable[..., Any]:
-    """Mark a host coroutine method for auto-exposure as an ``otto host``
-    subcommand. ``name`` defaults to the method name with underscores dashed.
+    """Mark a host coroutine method for auto-exposure as an ``otto host`` subcommand.
+
+    ``name`` defaults to the method name with underscores dashed.
     ``success`` is an optional message printed on a successful ``(Status, "")``
     result (e.g. "Transfer complete.").
 

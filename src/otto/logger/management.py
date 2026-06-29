@@ -70,8 +70,7 @@ def _print_output_dir() -> None:
 
 
 def reset() -> None:
-    """Reset module state, detach otto's handlers, and restore library-citizen
-    state (propagate=True + NullHandler) — test helper.
+    """Reset module state, detach otto's handlers, and restore library-citizen state — test helper.
 
     Unregisters atexit callbacks before stopping the listener so that real-exit
     teardown never double-stops a listener or prints a ``None`` output dir.
@@ -141,8 +140,9 @@ def _command_to_dir_name(command: str) -> str:
 
 
 def create_output_dir(command: str, subcommand: str | None = None) -> Path:
-    """Create this invocation's output dir, wire the file handler, prune old
-    logs, and return the dir. The caller records it on ``OttoContext.output_dir``.
+    """Create this invocation's output dir, wire the file handler, prune old logs, and return it.
+
+    The caller records it on ``OttoContext.output_dir``.
     """
     if _state.xdir is None:
         raise RuntimeError("init_cli_logging() must run before create_output_dir() (xdir unset)")

@@ -115,7 +115,7 @@ class OttoPlugin:
         config.stash[otto_cov_key] = self._cov
 
     def pytest_sessionstart(self, session: pytest.Session) -> None:
-        """Quiet down pytest's terminal reporter output.
+        r"""Quiet down pytest's terminal reporter output.
 
         Two adjustments, both because otto streams its own Rich log output
         and pytest's terse terminal chatter just collides with it. Done here

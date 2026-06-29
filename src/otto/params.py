@@ -1,5 +1,4 @@
-"""Shared parameter-building utilities for converting Options dataclasses
-into ``inspect.Parameter`` lists consumable by Typer.
+"""Shared utilities for converting Options dataclasses into ``inspect.Parameter`` lists for Typer.
 
 Used by both ``otto.suite.register`` (suite options) and ``otto.cli.run``
 (instruction options).
@@ -15,9 +14,7 @@ from pydantic.fields import FieldInfo
 
 
 def build_options(opts_cls: type, kwargs: dict[str, Any]) -> Any:
-    """Construct an Options instance, translating a pydantic ``ValidationError``
-    into a clean ``typer.BadParameter`` (exit 2 with the field+reason message)
-    instead of letting a traceback escape.
+    """Construct an Options instance; convert pydantic ``ValidationError`` to a clean exit-2 error.
 
     Uses ``typer.BadParameter``, not ``click.BadParameter``: Typer >= 0.26
     vendors its own click fork and only its handler catches the vendored

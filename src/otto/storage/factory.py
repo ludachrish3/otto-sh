@@ -33,8 +33,7 @@ def _merge_host_dict(
     profile: Any,
     spec_cls: type[HostSpec],
 ) -> dict[str, Any]:
-    """Precedence-merge profile defaults, host fields, and product option
-    defaults into one dict for ``spec_cls.model_validate``.
+    """Precedence-merge profile defaults, host fields, and product option defaults into one dict.
 
     Scalars: host > profile. ``*_options`` tables, per key, lowest→highest:
     profile default < host field < product ``[host_preferences]`` value. Only

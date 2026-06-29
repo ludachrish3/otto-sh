@@ -138,8 +138,9 @@ RUN_OPTIONS_KEY = "otto_test_run_options"
 
 @_dataclass(frozen=True)
 class TestRunOptions:
-    """Shared ``otto test`` run options, set by the suite_app callback and read
-    by ``run_suite``. Stored in Typer ``ctx.meta`` (shared across the whole
+    """Shared ``otto test`` run options, set by the suite_app callback and read by ``run_suite``.
+
+    Stored in Typer ``ctx.meta`` (shared across the whole
     context chain by click's design) rather than ``ctx.obj`` (whose
     parent->subcommand propagation broke under click 8.3).
     """

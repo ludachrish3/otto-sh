@@ -67,8 +67,9 @@ _HANDSHAKE_RETRY_BACKOFF = 2.0
 
 
 def _drop_output(_line: str) -> None:
-    """Output sink that discards a command's streamed output — used to honor a
-    per-command ``log=False`` without mutating any shared logging state.
+    """Output sink that discards a command's streamed output.
+
+    Used to honor a per-command ``log=False`` without mutating any shared logging state.
     """
 
 
@@ -516,7 +517,7 @@ class ShellSession(ABC):
         self,
         expects: list[Expect] | None,
     ) -> re.Pattern[str]:
-        """Build a combined regex: expect patterns | end sentinel | newline.
+        r"""Build a combined regex: expect patterns | end sentinel | newline.
 
         The ``\\n`` alternative (lowest priority) causes
         ``_read_until_pattern`` to return after every line, enabling
@@ -836,7 +837,7 @@ class LocalSession(ShellSession):
 
 
 class _DockerSshSession(SshSession):
-    """Persistent shell inside a docker container, reached via the parent's SSH conn.
+    r"""Persistent shell inside a docker container, reached via the parent's SSH conn.
 
     Wraps ``docker exec -it <container_id> sh`` on top of a multiplexed channel of
     the parent's existing :class:`SSHClientConnection`. ``-it`` allocates a TTY
@@ -927,8 +928,9 @@ class HostSession:
         return self._session.current_user
 
     async def switch_user(self, user: str = "", password: str | None = None) -> None:
-        """``su`` *this* session to *user* (default root), tracking
-        :attr:`current_user`. Posix-only — raises ``NotImplementedError`` on
+        """``su`` *this* session to *user* (default root), tracking :attr:`current_user`.
+
+        Posix-only — raises ``NotImplementedError`` on
         hosts whose sessions do not support elevation (no password resolver).
         """
         if self._user_password is None:
@@ -942,9 +944,7 @@ class HostSession:
     async def as_user(
         self, user: str = "root", password: str | None = None
     ) -> "AsyncIterator[HostSession]":
-        """Run a block as *user* on this session, restoring the prior user on
-        exit.
-        """
+        """Run a block as *user* on this session, restoring the prior user on exit."""
         prev = self.current_user
         await self.switch_user(user, password)
         try:
@@ -1103,7 +1103,7 @@ class SessionManager:
         return any(s.alive for s in self._named_sessions.values())
 
     def _login_user(self) -> str:
-        """The host's login username, or '' when loginless / no creds.
+        """Return the host's login username, or '' when loginless / no creds.
 
         Best-effort: session seeding runs this on every build, so it tolerates
         a connection manager that exposes no ``credentials`` (e.g. minimal test
@@ -1130,8 +1130,9 @@ class SessionManager:
         return self._login_user()
 
     def _set_current_user(self, user: str) -> None:
-        """Private bookkeeping for the default session. Called only by the
-        elevation flow (PosixPrivilege.switch_user/as_user) after a real
+        """Private bookkeeping for the default session.
+
+        Called only by the elevation flow (PosixPrivilege.switch_user/as_user) after a real
         ``su`` has run — never a public API (that would let callers desync
         the tracked user from the shell's actual user).
         """
@@ -1227,9 +1228,9 @@ class SessionManager:
                 raise last_exc
 
     async def _build_session(self) -> "ShellSession":
-        """Construct a fresh ShellSession from the configured factory or
-        connection manager. Split out from ``_ensure_session`` so the retry
-        path can rebuild the transport cleanly.
+        """Construct a fresh ShellSession from the configured factory or connection manager.
+
+        Split out from ``_ensure_session`` so the retry path can rebuild the transport cleanly.
         """
         if self._session_factory is not None:
             return self._session_factory()

@@ -1,4 +1,4 @@
-"""Environment variables that are needed before parsing CLI arguments"""
+"""Environment variables that are needed before parsing CLI arguments."""
 
 from __future__ import annotations
 
@@ -50,8 +50,9 @@ def validate_path(
 
 
 def load_otto_env() -> "OttoEnvSettings":
-    """Construct the OTTO_* env settings and validate that every sut_dir exists,
-    raising FileNotFoundError (the historical OttoEnv() startup contract).
+    """Construct the OTTO_* env settings and validate that every sut_dir exists.
+
+    Raises FileNotFoundError (the historical OttoEnv() startup contract).
     """
     from ..models.settings import OttoEnvSettings  # lazy: avoid an import cycle
 

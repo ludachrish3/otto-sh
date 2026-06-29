@@ -22,11 +22,11 @@ TransferProgressFactory = Callable[[], TransferProgressHandler]
 
 @dataclass(frozen=True)
 class TransferContext:
-    """Construction inputs a host provides to build its transfer backend via
-    :meth:`BaseFileTransfer.create`. The frozen public seam for custom transfer
-    backends. Carries the union of what any family's built-ins receive at their
-    call sites; a unix backend reads the unix fields, an embedded backend the
-    embedded ones. Selector validation (host-family applicability) runs before
+    """Construction inputs a host provides to build its file transfer backend.
+
+    The frozen public seam for custom transfer backends. Carries the union of what any family's
+    built-ins receive at their call sites; a unix backend reads the unix fields, an embedded
+    backend the embedded ones. Selector validation (host-family applicability) runs before
     construction, so a backend never sees a ctx missing the fields it needs.
     """
 
@@ -204,8 +204,9 @@ class BaseFileTransfer(ABC):
         dest_dir: Path,
         progress_factory: "TransferProgressFactory | None",
     ) -> tuple[Status, str]:
-        """Backend-specific get implementation. Same progress contract as
-        :meth:`_run_put`.
+        """Backend-specific get implementation.
+
+        Same progress contract as :meth:`_run_put`.
         """
 
 

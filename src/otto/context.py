@@ -86,9 +86,7 @@ def reset_context(token: "Token[OttoContext | None]") -> None:
 
 @dataclass
 class OttoContext:
-    """The active per-invocation runtime: the chosen lab, runtime flags, and the
-    host lifecycle scope.
-    """
+    """The active per-invocation runtime: chosen lab, runtime flags, and host lifecycle scope."""
 
     lab: "Lab"
     dry_run: bool = False

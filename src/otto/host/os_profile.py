@@ -1,5 +1,4 @@
-"""Named OS profiles: a higher-level selector layered over the host base
-classes.
+"""Named OS profiles: a higher-level selector layered over the host base classes.
 
 The ``os_type`` field in lab data selects an :class:`OsProfile`; the value is
 stamped onto the constructed host's ``os_type`` attribute as the profile selector.
@@ -129,8 +128,7 @@ def register_host_class(
     cls: type,
     spec: type[HostSpec] | None = None,
 ) -> None:
-    """Register a host class (and its boundary spec) so lab data can select it
-    by ``os_type``.
+    """Register a host class (and its boundary spec) so lab data can select it by ``os_type``.
 
     Mirrors :func:`otto.host.command_frame.register_command_frame`. Call from an
     init module listed in ``.otto/settings.toml`` to ship a custom host
@@ -197,9 +195,7 @@ def _nearest_registered_spec(cls: type) -> type[HostSpec] | None:
 
 
 def build_host_spec(name: str) -> type[HostSpec]:
-    """Return the :class:`~otto.models.host.HostSpec` subclass registered under
-    host-class *name* (raising on miss).
-    """
+    """Return the ``HostSpec`` subclass registered under host-class *name* (raises on miss)."""
     try:
         return _HOST_SPECS[name]
     except KeyError:
@@ -211,8 +207,7 @@ def build_host_spec(name: str) -> type[HostSpec]:
 
 
 def registered_host_specs(*, builtins_only: bool = False) -> dict[str, type[HostSpec]]:
-    """Return a shallow copy of the ``os_type`` → :class:`~otto.models.host.HostSpec`
-    subclass registry.
+    """Return a shallow copy of the ``os_type`` → ``HostSpec`` subclass registry.
 
     Names are many-to-one (``embedded`` and ``zephyr`` both resolve to
     :class:`~otto.models.host.EmbeddedHostSpec`). Used by the JSON Schema exporter;

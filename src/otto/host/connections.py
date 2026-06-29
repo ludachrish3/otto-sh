@@ -43,10 +43,10 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class TermContext:
-    """Construction inputs a UnixHost provides to build its connection backend
-    via :meth:`ConnectionManager.create`. The frozen public seam for custom
-    term backends; carries only what the built-in already receives at its call
-    site (no new coupling).
+    """Construction inputs a UnixHost provides to build its connection backend.
+
+    The frozen public seam for custom term backends; carries only what the built-in already
+    receives at its call site (no new coupling).
     """
 
     ip: str
@@ -68,8 +68,7 @@ _tunneled_ftp_client_cls: type | None = None
 
 
 def _build_tunneled_ftp_client_cls() -> type:
-    """Build (once) the ``aioftp.Client`` subclass that routes FTP data
-    connections through an SSH hop.
+    """Build (once) the ``aioftp.Client`` subclass that routes FTP data connections through a hop.
 
     Defined lazily — and cached — so merely importing this module does not pull
     in the heavy ``aioftp`` package. ``aioftp`` is only needed when an FTP
@@ -250,10 +249,7 @@ class ConnectionManager:
 
     @property
     def telnet_options(self) -> TelnetOptions:
-        """Expose the stored ``TelnetOptions`` so callers that build their
-        own ``TelnetClient`` (e.g. ``SessionManager.open_session``) can
-        honor the same configuration.
-        """
+        """Expose the stored ``TelnetOptions`` so custom callers honor the same configuration."""
         return self._telnet_options
 
     @property
@@ -558,8 +554,9 @@ def build_term_backend(name: str) -> type[ConnectionManager]:
 
 
 def _register_builtin_term_backends() -> None:
-    """Register otto's built-in term backends through the public path, so
-    first-party and third-party registrations travel the same code (mirrors
+    """Register otto's built-in term backends through the public path.
+
+    Ensures first-party and third-party registrations travel the same code (mirrors
     ``os_profile._register_builtin_host_classes``).
     """
     register_term_backend("ssh", ConnectionManager, host_families=frozenset({"unix"}))

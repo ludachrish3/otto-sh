@@ -60,8 +60,7 @@ def _decorate(doc: dict[str, Any], stem: str, title: str) -> dict[str, Any]:
 
 
 def _scalar_or_list_with_enum(prop: dict[str, Any], names: list[str]) -> dict[str, Any]:
-    """Rebuild a menu property's schema to accept a scalar **or** an array of the
-    registry-derived enum names, preserving the field's other metadata.
+    """Rebuild a menu property's schema to accept a scalar **or** an array of registry enum names.
 
     The model coerces a scalar to a one-element list (``_coerce_menu``), so a lab
     author may write ``valid_transfers = "scp"`` or ``["scp", "sftp"]``; the
@@ -78,9 +77,7 @@ def _scalar_or_list_with_enum(prop: dict[str, Any], names: list[str]) -> dict[st
 
 
 def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> None:
-    """Rewrite the ``valid_terms`` / ``valid_transfers`` menu fields to a
-    scalar-or-list ``anyOf`` carrying the registry-derived ``enum`` on both
-    branches, in place.
+    """Rewrite ``valid_terms`` / ``valid_transfers`` to a scalar-or-list ``anyOf`` schema, in place.
 
     The schema is generated after init modules load, so the enum includes
     custom per-repo backends as well as the built-ins — strictly better than the

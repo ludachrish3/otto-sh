@@ -70,9 +70,9 @@ _ANSI_ESCAPE_RE = re.compile(
 
 
 def _strip_ansi(data: bytes) -> bytes:
-    """Remove ANSI escape sequences from ``data``.
+    r"""Remove ANSI escape sequences from ``data``.
 
-    >>> _strip_ansi(b"\\x1b[31mred\\x1b[0m")
+    >>> _strip_ansi(b"\x1b[31mred\x1b[0m")
     b'red'
     >>> _strip_ansi(b"plain text")
     b'plain text'
@@ -81,14 +81,14 @@ def _strip_ansi(data: bytes) -> bytes:
 
 
 class _LineBuffer:
-    """Accumulate bytes and emit completed lines through a callback.
+    r"""Accumulate bytes and emit completed lines through a callback.
 
     Carriage returns and ANSI escape sequences are stripped before
     emission so log output stays readable for sessions that touch TUIs.
 
     >>> emitted: list[str] = []
     >>> buf = _LineBuffer(emitted.append)
-    >>> buf.feed(b"hello\\nworld")
+    >>> buf.feed(b"hello\nworld")
     >>> emitted
     ['hello']
     >>> buf.flush()

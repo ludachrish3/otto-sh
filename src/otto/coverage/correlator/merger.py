@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def _find_gcno_dirs(gcda_dir: Path, search_root: Path) -> list[Path]:
-    """Find directories under *search_root* that contain ``.gcno`` files
-    matching the ``.gcda`` basenames in *gcda_dir*.
+    """Find ``.gcno``-containing directories under *search_root* that match ``.gcda`` basenames.
 
     ``lcov --build-directory`` does not search recursively, so we need
     to locate the exact directories and pass each one.

@@ -384,8 +384,9 @@ class BaseHost(ABC):
         return self._session_mgr.current_user  # ty: ignore[unresolved-attribute]
 
     def _apply_sudo(self, sc: "ShellCommand") -> "ShellCommand":
-        """Rewrite a ``ShellCommand`` to run under sudo, merging in the
-        password ``Expect`` ahead of any caller-supplied expects.
+        """Rewrite a ``ShellCommand`` to run under sudo.
+
+        Merges in the password ``Expect`` ahead of any caller-supplied expects.
         """
         wrapped, extra = self._elevate(sc.cmd)
         base = _normalize_expects(sc.expects) or []
@@ -604,7 +605,7 @@ class BaseHost(ABC):
 
     @cli_exposed
     async def is_installed(self) -> bool:
-        """True iff there is at least one product and all report installed.
+        """Return True iff there is at least one product and all are installed.
 
         An empty :attr:`products` list is **not installed** (avoids the
         vacuous-truth surprise of ``all([])``).
@@ -691,8 +692,9 @@ class BaseHost(ABC):
 
     @cli_exposed
     async def shutdown(self) -> tuple[Status, str]:
-        """Power this host off from its own shell (distinct from external
-        ``power('off')``). Per-family override; default raises.
+        """Power this host off from its own shell (distinct from external ``power('off')``).
+
+        Per-family override; default raises.
         """
         raise NotImplementedError(
             f"shutdown is not supported on '{self.__class__.__name__}'"
