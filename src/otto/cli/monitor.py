@@ -16,7 +16,7 @@ import asyncio
 import re
 from datetime import timedelta
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -26,7 +26,9 @@ from ..context import get_context
 from ..logger import get_otto_logger, management
 from ..monitor.collector import MetricCollector
 from ..monitor.factory import build_monitor_collector
-from ..monitor.server import MonitorServer
+
+if TYPE_CHECKING:
+    from ..monitor.server import MonitorServer
 
 logger = get_otto_logger()
 
@@ -111,6 +113,8 @@ def monitor(
         typer.echo(msg, err=True)
         raise typer.Exit(1)
 
+    from ..monitor.server import MonitorServer
+
     collector = build_monitor_collector(hosts=selected, db_path=db)
     asyncio.run(
         _run_monitor(
@@ -133,6 +137,8 @@ async def _load_historical(path: Path) -> MetricCollector:
 
 async def _serve_historical(path: Path) -> None:
     """Load historical data and serve the dashboard (no live collection)."""
+    from ..monitor.server import MonitorServer
+
     collector = await _load_historical(path)
     server = MonitorServer(collector)
     await server.serve()
@@ -140,7 +146,7 @@ async def _serve_historical(path: Path) -> None:
 
 async def _run_monitor(
     collector: MetricCollector,
-    server: MonitorServer,
+    server: "MonitorServer",
     interval: timedelta,
     duration: timedelta | None = None,
 ) -> None:

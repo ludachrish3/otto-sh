@@ -18,9 +18,9 @@ from unittest.mock import patch
 import typer
 from typer.testing import CliRunner
 
+from otto.suite.pytest_plugin import OttoOptionsPlugin
 from otto.suite.register import (
     _SUITE_REGISTRY,
-    OttoOptionsPlugin,
     _options_params,
     register_suite,
 )

@@ -58,7 +58,7 @@ def live_mode_mocks():
     with (
         patch("otto.cli.monitor.all_hosts", return_value=iter([mock_host])),
         patch("otto.cli.monitor.build_monitor_collector", return_value=mock_collector),
-        patch("otto.cli.monitor.MonitorServer", return_value=mock_server),
+        patch("otto.monitor.server.MonitorServer", return_value=mock_server),
         patch("asyncio.run", side_effect=_close_coro),
     ):
         yield {

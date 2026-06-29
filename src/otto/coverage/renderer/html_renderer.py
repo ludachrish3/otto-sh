@@ -17,15 +17,11 @@ winner-take-all row coloring on the annotated source view are driven by
 that list, so adding a new tier requires no changes here.
 """
 
-from __future__ import annotations
-
 import logging
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, cast
-
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ...version import get_version
 from ..store.model import BranchHits, CoverageStore, FileRecord, LineRecord
@@ -70,6 +66,10 @@ class HtmlRenderer:
     ) -> None:
         self.output_dir = output_dir
         self.project_name = project_name
+        # Deferred so importing the renderer module (and thus `otto.coverage`,
+        # pulled onto the CLI startup path via cli.cov) does not load jinja2.
+        from jinja2 import Environment, FileSystemLoader, select_autoescape
+
         self.env = Environment(
             loader=FileSystemLoader(str(templates_dir)),
             autoescape=select_autoescape(["html"]),

@@ -18,7 +18,7 @@ class TestSuiteOptionsPassthrough:
         """
         from otto.context import reset_context, set_context
         from otto.suite.plugin import OttoPlugin
-        from otto.suite.register import OttoOptionsPlugin
+        from otto.suite.pytest_plugin import OttoOptionsPlugin
 
         @dataclass
         class Opts:

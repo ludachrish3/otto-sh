@@ -1,10 +1,12 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck lint format clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart
+.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck lint format clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
 BUMP ?= patch
+
+HYPERFINE_VERSION := 1.20.0
 
 # Release-flow tools (git-cliff, bump-my-version) live in the project venv and
 # are invoked DIRECTLY, never via `uv run` — `uv run` would sync and dirty
@@ -140,10 +142,18 @@ validate: ## Run validation (clean-dist, lint, typecheck, coverage, docs) withou
 clean-dist:
 	@rm -rf dist
 
-dev:
+dev: ## Set up the dev environment (uv sync, git hooks, hyperfine)
 	uv sync
 	git config core.hooksPath .githooks
+	$(MAKE) hyperfine
 	@echo "Dev environment ready"
+
+hyperfine: ## Install the pinned hyperfine benchmark binary into .venv/bin (dev tool for manual wall-clock validation; not a project dependency)
+	@if [ -x "$(VENV_BIN)/hyperfine" ] && "$(VENV_BIN)/hyperfine" --version | grep -qF "$(HYPERFINE_VERSION)"; then \
+		echo "hyperfine $(HYPERFINE_VERSION) already installed"; \
+	else \
+		bash scripts/install_hyperfine.sh "$(HYPERFINE_VERSION)" "$(VENV_BIN)"; \
+	fi
 
 build: ## Build the project with uv
 	uv build
@@ -240,6 +250,9 @@ typecheck: ## Run ty type checker (advisory during trial; not wired into `all`)
 
 schema: ## Generate JSON Schema for hosts.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
 	uv run otto schema export --out schemas
+
+import-snapshot: ## Regenerate import-budget golden snapshots + print per-surface counts (run after an intentional import change, then review the diff and update caps in scripts/import_budget.py)
+	uv run python scripts/import_budget.py --update
 
 SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.rst')    \

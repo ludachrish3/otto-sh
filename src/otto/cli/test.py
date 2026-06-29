@@ -119,7 +119,6 @@ from typing import TYPE_CHECKING, Annotated, Any
 if TYPE_CHECKING:
     from ..suite.plugin import StabilityCollector
 
-import pytest
 import typer
 from rich import print as rprint
 from rich.table import Table
@@ -128,8 +127,7 @@ from ..configmodule import get_repos
 from ..configmodule.repo import Repo
 from ..context import get_context
 from ..logger import get_otto_logger, management
-from ..suite.plugin import OttoPlugin
-from ..suite.register import _SUITE_REGISTRY, OttoOptionsPlugin
+from ..suite.register import _SUITE_REGISTRY
 
 logger = get_otto_logger()
 
@@ -197,6 +195,10 @@ def run_suite(
     a global context stack.
     """
     import asyncio
+    import pytest
+
+    from ..suite.plugin import OttoPlugin
+    from ..suite.pytest_plugin import OttoOptionsPlugin
 
     stored = ctx.meta.get(RUN_OPTIONS_KEY)
     opts = stored if isinstance(stored, TestRunOptions) else TestRunOptions()

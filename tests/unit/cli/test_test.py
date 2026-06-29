@@ -145,12 +145,12 @@ class TestRunSuiteInternals:
         get_context().output_dir = tmp_path
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("otto.cli.test.pytest") as mock_pytest,
+            patch("pytest.main") as mock_main,
         ):
             run_suite(_FakeSuite, fake_file, None, self._fake_parent_ctx({}))
 
-        mock_pytest.main.assert_called_once()
-        args_list = mock_pytest.main.call_args[0][0]
+        mock_main.assert_called_once()
+        args_list = mock_main.call_args[0][0]
         assert fake_file in args_list
         assert "-k" in args_list
         assert "_FakeSuite" in args_list
@@ -162,11 +162,11 @@ class TestRunSuiteInternals:
         get_context().output_dir = tmp_path
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("otto.cli.test.pytest") as mock_pytest,
+            patch("pytest.main") as mock_main,
         ):
             run_suite(_FakeSuite3, "fake.py", None, self._fake_parent_ctx({}))
 
-        args_list = mock_pytest.main.call_args[0][0]
+        args_list = mock_main.call_args[0][0]
         junit_arg = next((a for a in args_list if "--junitxml" in a), None)  # pytest's own flag
         assert junit_arg is not None
         assert str(tmp_path) in junit_arg
@@ -178,13 +178,13 @@ class TestRunSuiteInternals:
         get_context().output_dir = tmp_path
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("otto.cli.test.pytest") as mock_pytest,
+            patch("pytest.main") as mock_main,
         ):
             run_suite(
                 _FakeSuite4, "fake.py", None, self._fake_parent_ctx({"markers": "not integration"})
             )
 
-        args_list = mock_pytest.main.call_args[0][0]
+        args_list = mock_main.call_args[0][0]
         assert "-m" in args_list
         m_index = args_list.index("-m")
         assert args_list[m_index + 1] == "not integration"
@@ -206,8 +206,8 @@ class TestRunSuiteInternals:
         get_context().output_dir = tmp_path
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("otto.cli.test.pytest"),
-            patch("otto.cli.test.OttoPlugin", _CapturingPlugin),
+            patch("pytest.main"),
+            patch("otto.suite.plugin.OttoPlugin", _CapturingPlugin),
         ):
             run_suite(
                 _FakeMonSuite,
@@ -242,8 +242,8 @@ class TestRunSuiteInternals:
         out = tmp_path / "somewhere.db"
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("otto.cli.test.pytest"),
-            patch("otto.cli.test.OttoPlugin", _CapturingPlugin),
+            patch("pytest.main"),
+            patch("otto.suite.plugin.OttoPlugin", _CapturingPlugin),
         ):
             run_suite(
                 _FakeMonSuite2,
@@ -1157,7 +1157,7 @@ class TestRunSuiteReport:
 
         with (
             patch("otto.cli.test.get_repos", return_value=[repo]),
-            patch("otto.cli.test.pytest.main"),
+            patch("pytest.main"),
             patch("otto.cli.test._run_coverage", new=AsyncMock()),
             patch("otto.cli.test._cov_clean_remotes", new=AsyncMock()),
             patch("otto.coverage.reporter.run_coverage_report", new=mock_run_report),

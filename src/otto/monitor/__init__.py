@@ -18,11 +18,15 @@ Historical mode:
     server.start()
 """
 
+from typing import TYPE_CHECKING
+
 from .collector import MetricCollector
 from .events import MonitorEvent
 from .factory import build_monitor_collector
 from .parsers import DEFAULT_PARSERS, MetricParser
-from .server import MonitorServer
+
+if TYPE_CHECKING:
+    from .server import MonitorServer
 
 __all__ = [
     "DEFAULT_PARSERS",
@@ -32,3 +36,13 @@ __all__ = [
     "MonitorServer",
     "build_monitor_collector",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Lazily resolve MonitorServer so importing otto.monitor (e.g. via
+    otto.models -> monitor.collector) does not pull in fastapi/uvicorn."""
+    if name == "MonitorServer":
+        from .server import MonitorServer
+
+        return MonitorServer
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
