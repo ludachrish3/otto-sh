@@ -18,7 +18,6 @@ local and remote machines.
    session
    connections
    transport
-   repeat
    telnet
    os_profile
    command_frame

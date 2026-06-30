@@ -66,9 +66,8 @@ regex pattern appears in the output stream (or the timeout expires).
 
 ## Periodic tasks
 
-Otto provides {class}`~otto.host.repeat.RepeatRunner` for running commands
-at a fixed interval.  Internally, it uses `asyncio.gather` with
-`asyncio.sleep` to overlap execution and waiting:
+To run a command at a fixed interval, pair `host.run(...)` with
+`asyncio.sleep(...)` under `asyncio.gather` so execution and waiting overlap:
 
 ```python
 import asyncio

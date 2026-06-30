@@ -353,12 +353,10 @@ class TestDelegation:
         host._session_mgr.open_session.assert_awaited_once_with("monitor")
 
     @pytest.mark.asyncio
-    async def test_close_tears_down_repeater_sessions_connections(self, host: EmbeddedHost):
-        host._repeater = AsyncMock()
+    async def test_close_tears_down_sessions_and_connections(self, host: EmbeddedHost):
         host._session_mgr = AsyncMock()
         host._connections = AsyncMock()
         await host.close()
-        host._repeater.stop_all.assert_awaited_once()
         host._session_mgr.close_all.assert_awaited_once()
         host._connections.close.assert_awaited_once()
 

@@ -10,7 +10,6 @@ from dataclasses import (
     dataclass,
     replace,
 )
-from datetime import datetime, timedelta, timezone
 from logging import (
     Filter,
     LogRecord,
@@ -40,7 +39,6 @@ from ..utils import (
 if TYPE_CHECKING:
     from .power import PowerController
     from .product import Product
-    from .repeat import RepeatRunner
     from .session import HostSession
 
 # Runtime type alias — mirrored from session.Expect so get_type_hints can resolve
@@ -48,10 +46,6 @@ if TYPE_CHECKING:
 Expect = tuple[str | re.Pattern[str], str]
 
 logger = getLogger("otto")
-
-# Sentinel used as the default "no deadline" for the `until` parameter.
-# Must be aware so it can be compared against datetime.now(tz=timezone.utc).
-_DATETIME_MAX_UTC: datetime = datetime.max.replace(tzinfo=timezone.utc)
 
 
 def get_logging_command_output_enabled() -> bool:
@@ -454,7 +448,7 @@ class BaseHost(ABC):
 
     :class:`BaseHost` implements the cross-cutting concerns that every host
     family needs — command budgeting, dry-run stubs, product lifecycle,
-    power/reboot orchestration, and the repeat-command scheduler. Concrete
+    and power/reboot orchestration. Concrete
     host classes (``UnixHost``,
     ``EmbeddedHost``, etc.) inherit from :class:`BaseHost`, implement the
     family-specific hooks (``_run_one``, ``oneshot``, ``_soft_reboot``, …),
@@ -467,8 +461,6 @@ class BaseHost(ABC):
     resources: set[str]
     products: list["Product"]
     power_control: "PowerController | None"
-    _repeater: "RepeatRunner"
-
     ####################
     #  Dry-run helpers
     ####################
@@ -886,67 +878,6 @@ class BaseHost(ABC):
                 return True
             await asyncio.sleep(interval)
         return False
-
-    ####################
-    #  Repeat commands
-    ####################
-
-    def start_repeat(
-        self,
-        name: str,
-        cmds: list[str] | str,
-        interval: timedelta,
-        times: int = -1,
-        duration: timedelta = timedelta.max,
-        until: datetime = _DATETIME_MAX_UTC,
-        on_result: Callable[[str, datetime, list[CommandStatus]], None] | None = None,
-        max_history: int = 1000,
-    ) -> None:
-        """Start a named background task that runs *cmds* repeatedly at *interval*.
-
-        Args:
-            name: Unique label for this repeat task. Raises :exc:`RuntimeError`
-                if a task with the same name is already running.
-            cmds: Command string or list of command strings to run each cycle.
-            interval: Time between the start of successive runs.
-            times: Maximum number of cycles, or ``-1`` for unlimited.
-            duration: Stop after this wall-clock duration, or ``timedelta.max``
-                for unlimited.
-            until: Stop at this UTC datetime, or the module sentinel for unlimited.
-            on_result: Optional callback invoked after each cycle with the task
-                name, timestamp, and per-command statuses from that run.
-            max_history: Maximum number of past run results to retain (ring buffer).
-        """
-        if is_dry_run():
-            self._log_command(f"[DRY RUN] start_repeat({name!r}, {cmds}, interval={interval})")
-            return
-        self._repeater.start(
-            name=name,
-            cmds=cmds,
-            interval=interval,
-            times=times,
-            duration=duration,
-            until=until,
-            on_result=on_result,
-            max_history=max_history,
-        )
-
-    async def stop_repeat(self, name: str) -> None:
-        """Cancel and await the named background repeat task."""
-        await self._repeater.stop(name)
-
-    async def stop_all_repeats(self) -> None:
-        """Cancel and await all running background repeat tasks."""
-        await self._repeater.stop_all()
-
-    def repeat_results(self, name: str) -> list[tuple[datetime, list[CommandStatus]]]:
-        """Return the stored run history for the named repeat task.
-
-        Each entry is a ``(timestamp, statuses)`` pair recorded at the end of
-        one cycle. At most ``max_history`` entries are kept (oldest discarded
-        first, as set in :meth:`start_repeat`).
-        """
-        return self._repeater.get_results(name)
 
     ####################
     #  Logging

@@ -32,7 +32,6 @@ from .host import BaseHost, is_dry_run
 from .power import PowerController
 from .privilege import PosixPrivilege
 from .product import Product
-from .repeat import RepeatRunner
 from .session import (
     Expect,
     HostSession,
@@ -131,9 +130,6 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages persistent shell sessions for this host."""
 
-    _repeater: RepeatRunner = field(init=False, repr=False)
-    """Manages periodic background command tasks for this host."""
-
     _file_transfer: LocalFileTransfer = field(init=False, repr=False)
     """Local copy via shutil, routed through BaseFileTransfer so progress
     reporting works uniformly across every host backend."""
@@ -147,7 +143,6 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             oneshot_factory=self._exec_subprocess,
             user_password=self._user_password,
         )
-        self._repeater = RepeatRunner(run_cmds=self.run)
         self._file_transfer = LocalFileTransfer(name=self.name)
 
     ####################
@@ -349,5 +344,4 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     @override
     async def close(self) -> None:
-        await self._repeater.stop_all()
         await self._session_mgr.close_all()

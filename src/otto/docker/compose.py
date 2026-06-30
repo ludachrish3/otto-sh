@@ -334,7 +334,7 @@ async def compose_down(
         logger.error(f"[docker] compose down failed: {output}")
 
     # Unregister any hosts that came from this stack. Close each container
-    # host first so its persistent session and repeater drain cleanly while
+    # host first so its persistent session drains cleanly while
     # the parent's connection is still alive.
     parent_id = parent.id
     prefix = f"{parent_id}.{repo.name.lower()}."

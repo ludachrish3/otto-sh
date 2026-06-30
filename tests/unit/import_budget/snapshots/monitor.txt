@@ -30,7 +30,6 @@ otto.host.power
 otto.host.privilege
 otto.host.product
 otto.host.remote_host
-otto.host.repeat
 otto.host.session
 otto.host.telnet
 otto.host.toolchain

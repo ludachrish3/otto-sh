@@ -69,7 +69,6 @@ from .options import SnmpOptions, TelnetOptions
 from .power import PowerController, power_control_from_spec
 from .product import Product
 from .remote_host import OsType, RemoteHost
-from .repeat import RepeatRunner
 from .session import (
     Expect,
     HostSession,
@@ -270,9 +269,6 @@ class EmbeddedHost(RemoteHost):
     _connections: ConnectionManager = field(init=False, repr=False)
     """Manages the raw telnet transport for this host."""
 
-    _repeater: RepeatRunner = field(init=False, repr=False)
-    """Manages periodic background command tasks for this host."""
-
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages the persistent shell session for this host."""
 
@@ -346,7 +342,6 @@ class EmbeddedHost(RemoteHost):
             hop=hop_transport,
             telnet_options=replace(self.telnet_options, login=False, single_client_console=True),
         )
-        self._repeater = RepeatRunner(run_cmds=self.run)
         self._session_mgr = SessionManager(
             connections=self._connections,
             name=self.name,
@@ -387,7 +382,6 @@ class EmbeddedHost(RemoteHost):
 
     @override
     async def close(self) -> None:
-        await self._repeater.stop_all()
         await self._session_mgr.close_all()
         await self._connections.close()
 

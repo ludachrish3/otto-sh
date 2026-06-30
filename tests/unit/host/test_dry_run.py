@@ -1,6 +1,5 @@
 """Tests for dry-run mode on hosts (via OttoContext)."""
 
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -98,15 +97,6 @@ class TestGlobalDryRun:
             assert "[DRY RUN]" in msg
             assert "GET" in msg
 
-    def test_localhost_start_repeat_is_noop(self):
-        with active_context(dry_run=True):
-            host = LocalHost()
-            host.start_repeat(
-                name="test",
-                cmds=["uptime"],
-                interval=timedelta(seconds=10),
-            )
-
     # ── UnixHost ──────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
@@ -184,12 +174,3 @@ class TestGlobalDryRun:
             assert status == Status.Skipped
             assert "[DRY RUN]" in msg
             assert "GET" in msg
-
-    def test_remotehost_start_repeat_is_noop(self):
-        with active_context(dry_run=True):
-            host = UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=LogMode.QUIET)
-            host.start_repeat(
-                name="test",
-                cmds=["uptime"],
-                interval=timedelta(seconds=10),
-            )

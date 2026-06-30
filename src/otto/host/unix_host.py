@@ -95,7 +95,6 @@ from .power import PowerController, power_control_from_spec
 from .privilege import PosixPrivilege
 from .product import Product
 from .remote_host import OsType, RemoteHost
-from .repeat import RepeatRunner
 from .session import (
     Expect,
     HostSession,
@@ -276,9 +275,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     _connections: ConnectionManager = field(init=False, repr=False)
     """Manages all raw transport connections for this host."""
 
-    _repeater: RepeatRunner = field(init=False, repr=False)
-    """Manages periodic background command tasks for this host."""
-
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages persistent shell sessions for this host."""
 
@@ -322,7 +318,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
 
         self._connections = self._build_connections()
-        self._repeater = RepeatRunner(run_cmds=self.run)
         self._session_mgr = SessionManager(
             connections=self._connections,
             name=self.name,
@@ -439,7 +434,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     @override
     async def close(self) -> None:
 
-        await self._repeater.stop_all()
         await self._session_mgr.close_all()
         await self._connections.close()
 

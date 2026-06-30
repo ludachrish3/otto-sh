@@ -40,7 +40,6 @@ from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run
 from .privilege import PosixPrivilege
 from .product import Product
-from .repeat import RepeatRunner
 
 if TYPE_CHECKING:
     import re
@@ -116,9 +115,6 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     power_control: "PowerController | None" = field(default=None, repr=False)
     """Always None — LocalHost/DockerContainerHost are not power-controlled."""
 
-    _repeater: RepeatRunner = field(init=False, repr=False)
-    """Periodic-task runner. Required by :class:`BaseHost`."""
-
     _session_mgr: SessionManager = field(init=False, repr=False)
     """Manages the persistent shell session(s) inside the container. The
     underlying transport is a ``docker exec -it`` channel multiplexed on the
@@ -133,7 +129,6 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         parent_id = getattr(self.parent, "id", getattr(self.parent, "name", "localhost"))
         self.id = f"{parent_id}.{self.project}.{self.service}".lower()
         self.name = f"{parent_id}:{self.service}"
-        self._repeater = RepeatRunner(run_cmds=self.run)
         self._session_mgr = self._build_session_mgr()
         self._ensure_lock = asyncio.Lock()
 
@@ -506,14 +501,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     @override
     async def close(self) -> None:
-        """Stop background tasks and tear down the persistent session.
+        """Tear down the persistent session.
 
-        Repeater stops first so a periodic task can't reopen the session
-        mid-shutdown. The parent's underlying connection is owned by the
-        parent and is not closed here — but this host *must* close before
-        its parent so the session's docker exec channel can drain cleanly.
+        The parent's underlying connection is owned by the parent and is not
+        closed here — but this host *must* close before its parent so the
+        session's docker exec channel can drain cleanly.
         """
-        await self._repeater.stop_all()
         await self._session_mgr.close_all()
 
 
