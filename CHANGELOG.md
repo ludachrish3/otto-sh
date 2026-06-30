@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2026-06-30
+
+### Added
+
+- three-sink logging with per-command LogMode + library capture
+
+
+### Changed
+
+- finish LogMode API — pure LogMode + session.log transcript
+- make `import otto` import-light via PEP 562 lazy exports (Part D)
+- trim otto startup imports + add deterministic import-budget guard
+- clear PGH003 + empty the ratchet (strict-linting phase S)
+- docstring formatting + deny D105/D107 (strict-linting phase D-1)
+- annotate src/scripts (strict-linting phase A)
+- clear cleanup-straggler ratchet debt (strict-linting phase 4b)
+- clear naming & bug-class ratchet debt (strict-linting phase 4)
+- clear UP/RUF/PERF ratchet debt (strict-linting phase 3)
+
+
+### Documentation
+
+- docstrings for app layer + clear D ratchet (strict-linting phase D-4)
+- docstrings for the data/config layer (strict-linting phase D-3)
+- docstrings for the public Host API (strict-linting phase D-2)
+- add more linting plans
+- linting design
+- three-sink logging design spec
+- add plans for stricter linting and formatting
+
+
+### Fixed
+
+- gate on non-stdlib module count, not raw sys.modules (#88)
+- define get_completion_names before apply_repo_settings (circular import)
+- adopt bugbear/comprehension/simplify — B,C4,SIM,PIE (Phase 2)
+
+
+### Maintenance
+
+- update todo items
+- clean up ruff ignore list
+- update todo list items
+- adopt ruff format @100 + strict select=ALL ratchet + wire gate (Phase 0+1)
+
+
 ## [0.5.3] - 2026-06-28
 
 ### Added
@@ -498,7 +544,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/ludachrish3/otto-sh/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/ludachrish3/otto-sh/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ludachrish3/otto-sh/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/ludachrish3/otto-sh/compare/v0.5.0...v0.5.1
