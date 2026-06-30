@@ -56,3 +56,22 @@ def test_unit_tier_has_no_vm_markers():
         if _VM_MARKERS & _module_and_decorator_markers(path)
     ]
     assert not offenders, f"VM markers found under tests/unit/: {offenders}"
+
+
+def test_e2e_conftest_autostamps_e2e():
+    """G3: the e2e/ conftest stamps `e2e` by directory (mirrors G1)."""
+    from tests.e2e import conftest as e2e
+
+    e2e_root = Path(e2e.__file__).parent
+
+    class _FakeItem:
+        def __init__(self, path: Path) -> None:
+            self.path = path
+            self.added: list[str] = []
+
+        def add_marker(self, marker) -> None:
+            self.added.append(getattr(marker, "name", str(marker)))
+
+    item = _FakeItem(e2e_root / "configmodule" / "test_example.py")
+    e2e.pytest_collection_modifyitems(config=None, items=[item])
+    assert "e2e" in item.added

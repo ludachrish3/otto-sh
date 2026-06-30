@@ -185,6 +185,7 @@ markers = [
     "retry(n): retry the test up to n times on failure before reporting it as failed",
     "stability: heavy stability/soak tests — excluded from `make coverage`; run via `make stability` / `make stability-embedded`",
     "concurrency: fast, no-VM SessionManager concurrency/soak tests — run via `make stability-unit`; stays in coverage",
+    "e2e: end-to-end-tier test, auto-stamped from tests/e2e/ (level axis; orthogonal to the integration/embedded resource markers)",
 ]
 
 # NB: coverage.py config lives in .coveragerc, not here — that file is shared

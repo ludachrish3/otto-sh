@@ -250,15 +250,20 @@ uv run pytest -k test_host    # run a subset by keyword
 
 ### Regression-test categories
 
-Tests are partitioned by pytest marker and surfaced through Makefile targets.
-Pick the one that matches what you want to exercise:
+Tests live in two orthogonal axes. **Level** is the directory a test lives in
+(`tests/unit/` ⊆ `tests/integration/` ⊆ `tests/e2e/`) and is selected by *path*;
+**resource** is what infrastructure a test needs (`integration` = Vagrant VMs,
+`embedded` = Zephyr) and is selected by *marker*. Pick the target that matches
+what you want to exercise:
 
 | Category | How to run | VMs needed |
 |----------|------------|------------|
-| Unit only | `make coverage-unit` (pinned) / `make nox-unit` (all Pythons) | none |
-| Full coverage gate (excludes `stability`) | `make coverage` | lab VMs |
-| Integration, Unix (incl. multi-hop) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
-| Embedded (Zephyr) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
+| Unit tier only (level) | `make coverage-unit` (pinned) / `make nox-unit` (all Pythons) | none |
+| Unit + integration tiers (level) | `make coverage-integration` / `make nox-integration` | full lab |
+| No-testbed CI gate (tests/unit + no-VM e2e) | `make coverage-hostless` (pinned) / `make nox-hostless` (all Pythons) | none |
+| Full coverage gate (all tiers, excludes `stability`) | `make coverage` | lab VMs |
+| Unix VMs, incl. multi-hop (resource) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
+| Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
 | Multi-hop only | `uv run pytest -m hops` | three VMs |
 | Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-embedded`) | lab VMs (`-unit` needs none) |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
@@ -286,16 +291,17 @@ hosts are excluded by the pattern rather than by inference.
 
 ### Cross-version testing with nox
 
-`make ci` runs the unit suite under one Python (whichever uv resolves by
+`make ci` runs the no-testbed CI gate under one Python (whichever uv resolves by
 default). To exercise the full matrix the way CI does — Python 3.10
 through 3.14 — use `nox`:
 
 ```bash
-make nox-unit                  # quick: unit suite across all Pythons (no VMs)
-make nox                       # full matrix: all environments, all Pythons (needs VMs)
-uv run nox -s tests_unit-3.12  # just one Python's unit tests
+make nox-unit                      # unit level tier across all Pythons (no VMs)
+make nox-integration               # unit + integration tiers across all Pythons (full lab)
+make nox                           # full matrix: all environments, all Pythons (needs VMs)
+uv run nox -s tests_hostless-3.12  # the no-testbed CI gate under one Python
 uv run nox -s tests_unit-3.14 -- -k test_session   # forward args to pytest
-uv run nox --list              # show every available session
+uv run nox --list                  # show every available session
 ```
 
 Nox sessions are defined in `noxfile.py` and use uv as the venv backend

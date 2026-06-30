@@ -10,8 +10,6 @@ List available sessions:
     uv run nox --list
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import nox
@@ -37,24 +35,62 @@ def _junitxml(session: nox.Session, group: str) -> str:
 nox.options.default_venv_backend = "uv"
 # `lint` runs ruff check + format --check; it is part of the default gate now
 # that the strict config (select=ALL minus the deny-list) is green.
-nox.options.sessions = ["lint", "tests_unit", "typecheck", "docs"]
+nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 
-# Coverage floors mirror the Makefile: the *-unit paths gate at 85
-# (CI_COVERAGE_THRESHOLD), every full-suite path at 92 (COVERAGE_THRESHOLD).
-# Keep these in sync with the Makefile if either threshold moves.
-UNIT_TEST_ARGS = (
+# Coverage floors mirror the Makefile: the no-testbed CI gate (tests_hostless)
+# gates at 85 (CI_COVERAGE_THRESHOLD); every full-suite path at 92
+# (COVERAGE_THRESHOLD). Keep these in sync with the Makefile if either moves.
+HOSTLESS_TEST_ARGS = (
     "tests/unit",
     "tests/e2e",
     "-m",
-    "not integration and not embedded",
+    "not integration and not embedded and not stability",
     "--cov-fail-under=85",
 )
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
 def tests_unit(session: nox.Session) -> None:
-    """Run unit tests (no Vagrant VMs) under each supported Python."""
-    session.run("pytest", *UNIT_TEST_ARGS, _junitxml(session, "nox-unit"), *session.posargs)
+    """Run the unit *level* tier (tests/unit only; no testbed) under each Python."""
+    session.run(
+        "pytest",
+        "tests/unit",
+        "-m",
+        "not stability",
+        _junitxml(session, "nox-unit"),
+        *session.posargs,
+    )
+
+
+@nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
+def tests_integration(session: nox.Session) -> None:
+    """Run the unit + integration *level* tiers (tests/unit + tests/integration).
+
+    Cumulative directory-based level: needs the full lab (the integration tier
+    includes the Linux-VM, Zephyr, and Docker tests). No coverage gate — a single
+    environment exercises only a slice of otto.
+    """
+    session.run(
+        "pytest",
+        "tests/unit",
+        "tests/integration",
+        "-m",
+        "not stability",
+        _junitxml(session, "nox-integration"),
+        *session.posargs,
+    )
+
+
+@nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
+def tests_hostless(session: nox.Session) -> None:
+    """Run the no-testbed set (tests/unit + no-VM e2e) — the CI gate.
+
+    Identical selection to the former ``tests_unit``: every test that needs no
+    testbed across ``tests/unit`` and ``tests/e2e``. This is what
+    ``.github/workflows/ci.yml`` runs and what ``nox.options.sessions`` defaults
+    to. Auto-includes any future no-testbed e2e test.
+    """
+    session.run("pytest", *HOSTLESS_TEST_ARGS, _junitxml(session, "nox-hostless"), *session.posargs)
 
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])

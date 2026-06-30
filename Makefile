@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-lint docs-html docs-inventories doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless docs docs-lint docs-html docs-inventories doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -54,15 +54,21 @@ STABILITY_UNIT_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),50)
 # honor COUNT only when explicitly passed on the command line.
 STABILITY_UNIX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),10)
 
-# Shared pytest marker expressions for the test "environment" axis, reused by
-# the coverage-* targets (the nox-* sessions encode the same expressions in
-# noxfile.py). Keep the two in sync.
-#   unit     — no VM (mocked transports)
-#   unix     — real telnet/SSH against the Linux Vagrant VMs (incl. multi-hop)
-#   embedded — Zephyr/QEMU under the zephyr VM
-M_UNIT := not integration and not embedded
+# Two axes of test selection (see docs/contributing.md → Regression-test
+# categories). Keep these in sync with noxfile.py.
+#   Level (directory, cumulative) — selected by PATH, in the coverage-*/nox-*
+#   targets below:
+#     unit        — tests/unit
+#     integration — tests/unit + tests/integration
+#     (bare)      — all three tiers (tests/unit + tests/integration + tests/e2e)
+#   Resource (marker, orthogonal) — selected by MARKER:
+#     unix     — real telnet/SSH against the Linux Vagrant VMs (incl. multi-hop)
+#     embedded — Zephyr/QEMU under the zephyr VM
+#     hostless — needs no testbed at all (what CI gates on): tests/unit + the
+#                no-VM e2e tests. Mirrors noxfile.py tests_hostless.
 M_UNIX := integration and not embedded
 M_EMBEDDED := embedded
+M_HOSTLESS := not integration and not embedded and not stability
 
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
@@ -91,7 +97,7 @@ all: ## (Build & Release) Run full pipeline against the dev VM (includes integra
 		&& $(MAKE) build
 
 ci: ## (Build & Release) Run pipeline without VM-dependent tests (used by GitHub Actions)
-	@$(MAKE) validate COVERAGE_TARGET=coverage-unit \
+	@$(MAKE) validate COVERAGE_TARGET=coverage-hostless \
 		&& $(MAKE) build
 
 changelog: export PATH := $(VENV_BIN):$(PATH)
@@ -125,11 +131,17 @@ release: ## (Build & Release) lint, typecheck, docs, nox, profile, then changelo
 nox-unit: ## Run the unit suite across all supported Pythons (no VMs). Fastest safe test. Override iterations with COUNT=N (default 1); JUnit XML lands in reports/junit/nox-unit/.
 	uv run nox -s tests_unit -- --count=$(NOX_COUNT) --repeat-scope=session
 
+nox-integration: ## Run the unit + integration level tiers across all supported Pythons. Requires the full lab. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-integration/.
+	uv run nox -s tests_integration -- --count=$(NOX_COUNT) --repeat-scope=session
+
 nox-unix: ## Run the Unix-VM integration suite (incl. multi-hop) across all supported Pythons. Requires dev VM with Vagrant hosts up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox-unix/.
 	uv run nox -s tests_unix -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. Requires Vagrant lab up. Override COUNT=N (default 1); JUnit XML in reports/junit/nox-embedded/.
 	uv run nox -s tests_embedded -- --count=$(NOX_COUNT) --repeat-scope=session
+
+nox-hostless: ## Run the no-testbed CI gate (tests/unit + no-VM e2e) across all supported Pythons. No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
+	uv run nox -s tests_hostless -- --count=$(NOX_COUNT) --repeat-scope=session
 
 nox: ## Run the FULL test suite (all environments) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
@@ -163,16 +175,22 @@ profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snaps
 build: ## (Build & Release) Build the project with uv
 	uv build
 
-coverage: ## Run the pinned-Python suite and enforce the coverage gate (excludes heavy `stability` tests — those run via `make stability`). JUnit XML lands in reports/junit/coverage/.
+coverage: ## Run the full suite (all tiers, pinned Python) and enforce the coverage gate (excludes heavy `stability`). Requires lab VMs. JUnit XML lands in reports/junit/coverage/.
 	$(TIMEOUT_CMD) uv run pytest -m "not stability" --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
 
-coverage-unit: ## Run the pinned-Python unit suite (no Vagrant VMs) and enforce the CI coverage gate. JUnit XML lands in reports/junit/coverage-unit/.
-	$(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_UNIT)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-unit)
+coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
+	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability" $(call junitxml,coverage-unit)
 
-coverage-unix: ## Run the pinned-Python Unix-VM integration suite (incl. multi-hop) with a coverage report (no gate — one env can't meet the whole-repo threshold). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
+coverage-integration: ## Run the unit + integration level tiers (tests/unit + tests/integration) with a coverage report (no gate). Requires the full lab. JUnit XML in reports/junit/coverage-integration/.
+	$(TIMEOUT_CMD) uv run pytest tests/unit tests/integration -m "not stability" $(call junitxml,coverage-integration)
+
+coverage-hostless: ## Run the no-testbed CI gate suite (tests/unit + no-VM e2e) and enforce the CI coverage gate. No VMs. JUnit XML lands in reports/junit/coverage-hostless/.
+	$(TIMEOUT_CMD) uv run pytest tests/unit tests/e2e -m "$(M_HOSTLESS)" --cov-fail-under=$(CI_COVERAGE_THRESHOLD) $(call junitxml,coverage-hostless)
+
+coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a coverage report (no gate). Requires lab VMs. JUnit XML in reports/junit/coverage-unix/.
 	$(TIMEOUT_CMD) uv run pytest -m "$(M_UNIX)" $(call junitxml,coverage-unix)
 
-coverage-embedded: ## Run the pinned-Python embedded (Zephyr) suite with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
+coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
 	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
@@ -306,11 +324,11 @@ clean: ## (Dev) Remove all generated artifacts
 	@git submodule foreach --recursive 'git reset --hard && git clean -fdx'
 
 help: ## Show this help message
-	@printf '\n\033[1mTesting\033[0m  (COUNT=N overrides iterations; omit the scope to run all environments)\n'
-	@printf '  unit = no VMs (fast)  ·  unix = Linux VMs (incl. hops)  ·  embedded = Zephyr\n'
-	@printf '  \033[36m%-31s\033[0m %s\n' 'nox-{unit,unix,embedded}'       'multi-Python matrix        (nox = all envs)'
-	@printf '  \033[36m%-31s\033[0m %s\n' 'coverage-{unit,unix,embedded}'  'pinned Python + coverage   (coverage = all, gated)'
-	@printf '  \033[36m%-31s\033[0m %s\n' 'stability-{unit,unix,embedded}' 'pinned pytest-repeat soak  (stability = all tiers)'
-	@printf '  \033[36m%-31s\033[0m %s\n' 'repeat'          'soak the full unit suite (pytest-repeat)'
+	@printf '\n\033[1mTesting\033[0m  (COUNT=N overrides iterations; omit the suffix to run all tiers)\n'
+	@printf '  scope:  unit < integration < (all)   ·   unix · embedded   ·   hostless = no-VM CI gate\n'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = all tiers, gated 94; hostless gated 90)'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'nox-*'        'every suffix, all Pythons   (bare nox = full matrix)'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'stability-*'  'pytest-repeat soak          (unit · unix · embedded; bare stability = all tiers)'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'repeat'       'soak the full unit suite (pytest-repeat)'
 	@awk 'BEGIN { FS=":.*?## "; n=split("Build & Release|Quality|Docs|Lab|Dev",order,"|") } /^[a-zA-Z_-]+:.*## \(/ { d=$$2; s=d; sub(/\).*/,"",s); sub(/^\(/,"",s); sub(/^\([^)]*\) */,"",d); items[s]=items[s] sprintf("  \033[36m%-16s\033[0m %s\n",$$1,d) } END { for(i=1;i<=n;i++) if(order[i] in items) printf "\n\033[1m%s\033[0m\n%s",order[i],items[order[i]] }' \
 		$(MAKEFILE_LIST)
