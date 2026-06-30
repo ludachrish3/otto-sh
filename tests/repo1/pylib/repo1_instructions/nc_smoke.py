@@ -24,13 +24,13 @@ session on top of that.
 """
 
 import hashlib
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from repo1_common.options import RepoOptions
 
+from otto import options
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import get_host
 from otto.context import get_context
@@ -41,7 +41,7 @@ from otto.utils import CommandStatus, Status
 logger = get_otto_logger()
 
 
-@dataclass
+@options
 class _Options(RepoOptions):
     host_id: Annotated[
         str,

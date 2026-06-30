@@ -123,6 +123,20 @@ occurs:
    available to the zero-argument accessors (`get_host`, `all_hosts`) in
    all commands.
 
+## Defining shared options
+
+Most repos want a common set of CLI flags — device type, lab environment, and so
+on — on every `otto run` instruction and `otto test` suite. Define them once as a
+shared **options class** in any module named in your `init` setting (a `libs`
+directory like `pylib/` is a common home, but any importable module works), then
+inherit it from each suite and instruction. Options are a first-class part of
+project definition: declared here at setup, they thread through instruction
+execution and test runs.
+
+Use the `@options` decorator — otto's name for a pydantic dataclass — so the
+flags are validated. See {doc}`options` for the full treatment, and
+`otto.examples.options` for a copyable example.
+
 ## Multiple repos
 
 Otto supports multiple repos simultaneously.  Set `OTTO_SUT_DIRS` to a

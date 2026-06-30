@@ -114,17 +114,17 @@ otto -l my_lab run deploy --debug
 A **suite** is a class that extends {class}`~otto.suite.suite.OttoSuite`
 and is registered with the
 {func}`@register_suite() <otto.suite.register.register_suite>` decorator.
-Each suite becomes a subcommand of `otto test`.  Suites can define their own
-`Options` dataclass whose fields appear as CLI flags:
+Each suite becomes a subcommand of `otto test`.  Suites can define an `Options` class whose fields appear as CLI flags:
 
 ```python
-from dataclasses import dataclass
 from typing import Annotated
 
 import typer
+
+from otto import options
 from otto.suite import OttoSuite, register_suite
 
-@dataclass
+@options
 class _Options:
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
@@ -146,9 +146,10 @@ Suites support pytest markers (`timeout`, `retry`, `parametrize`,
 `integration`), non-fatal assertions via `self.expect()`, per-test artifact
 directories, and built-in monitoring.
 
-Both suites and instructions accept an options dataclass. For flags that
+Both suites and instructions accept an options class. For flags that
 are repo-wide (device type, lab environment, etc.), define a single
-`RepoOptions` dataclass in your pylib and inherit it from both sides —
+`RepoOptions` class in a module listed in your `init` setting — a `libs` path
+like `pylib/` is one common choice — and inherit it from both sides —
 see [Sharing repo-wide options](guide/run.md#sharing-repo-wide-options-across-instructions-and-suites).
 
 ### Monitor (`otto monitor`)
@@ -199,5 +200,6 @@ Monitoring can also be started from within a test suite using
 - {doc}`getting-started` — Installation and first steps
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`guide/index` — Detailed guides for each CLI command
+- {doc}`guide/options` — Shared options classes for instructions and suites
 - {doc}`cookbook/index` — Recipes for common asyncio patterns
 - {doc}`api/index` — Full API reference for all otto packages

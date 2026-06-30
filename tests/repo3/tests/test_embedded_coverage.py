@@ -27,12 +27,12 @@ hosts share the same Zephyr version.
 """
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
+from otto import options
 from otto.configmodule import get_repos
 from otto.configmodule.configmodule import all_hosts
 from otto.host import LocalHost
@@ -154,7 +154,7 @@ async def _call(host: EmbeddedHost, fn: str, timeout: float = 60) -> None:
         raise RuntimeError(f"call_fn {fn} failed on {host.id}: {result.output}")
 
 
-@dataclass
+@options
 class _Options:
     pass
 

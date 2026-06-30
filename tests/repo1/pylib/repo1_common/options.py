@@ -6,13 +6,14 @@ field below becomes a CLI flag on both ``otto test`` and ``otto run``
 subcommands.
 """
 
-from dataclasses import dataclass
 from typing import Annotated
 
 import typer
 
+from otto import options
 
-@dataclass
+
+@options
 class RepoOptions:
     device_type: Annotated[
         str,

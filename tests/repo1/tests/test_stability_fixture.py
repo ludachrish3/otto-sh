@@ -16,7 +16,6 @@ Usage::
     otto test --iterations 3 TestStabilityFixture
 """
 
-from dataclasses import dataclass
 from typing import ClassVar
 
 import pytest
@@ -24,6 +23,7 @@ import pytest_asyncio
 from _pytest.fixtures import SubRequest
 from repo1_common.options import RepoOptions
 
+from otto import options
 from otto.configmodule import all_hosts
 from otto.host.unix_host import UnixHost
 from otto.logger import get_otto_logger
@@ -33,7 +33,7 @@ from otto.utils import Status
 logger = get_otto_logger()
 
 
-@dataclass
+@options
 class _Options(RepoOptions):
     pass
 

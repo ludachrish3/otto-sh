@@ -1,10 +1,10 @@
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
 import typer
 from repo1_common.options import RepoOptions
 
+from otto import options
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import do_for_all_hosts, run_on_all_hosts
 from otto.context import get_context
@@ -15,7 +15,7 @@ from otto.logger import get_otto_logger
 logger = get_otto_logger()
 
 
-@dataclass
+@options
 class _Options(RepoOptions):
     debug: Annotated[
         bool,

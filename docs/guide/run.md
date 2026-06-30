@@ -104,14 +104,16 @@ for the lab-wide dispatch pattern.
 ## Sharing repo-wide options across instructions and suites
 
 When several instructions — and often several test suites too — need the
-same CLI flags (device type, lab environment, etc.), define a shared
-base dataclass in your pylib. The *same* dataclass can be inherited by
+same CLI flags (device type, lab environment, etc.), define a shared base
+**options class** (with `@options`) in any module listed in your `init`
+setting — a `libs` path like `pylib/` is one common choice. See
+{doc}`options` for the full treatment. The *same* class can be inherited by
 
 - a suite's inner `Options` class (expanded by `@register_suite()`), and
-- an instruction's `options=` dataclass (expanded by
+- an instruction's `options=` class (expanded by
   `@instruction(options=...)`).
 
-Suite and instruction option dataclasses are **independent but
+Suite and instruction option classes are **independent but
 compatible** — they can be completely different, inherit from a common
 base (the recommended posture for repo-wide flags), or be literally the
 same class. Nothing in the machinery forces any of these.
@@ -124,13 +126,14 @@ in the suite cookbook.
 
 ```python
 # pylib/my_instructions/options.py
-from dataclasses import dataclass
 from typing import Annotated
 
 import typer
 
+from otto import options
 
-@dataclass
+
+@options
 class RepoOptions:
     device_type: Annotated[str, typer.Option(
         help="Type of device under test (e.g. 'router', 'switch').",
@@ -145,11 +148,11 @@ class RepoOptions:
 
 ```python
 # pylib/my_instructions/deploy.py
-from dataclasses import dataclass
 from typing import Annotated
 
 import typer
 
+from otto import options
 from otto.cli.run import instruction
 from otto.logger import get_otto_logger
 
@@ -158,7 +161,7 @@ from .options import RepoOptions
 logger = get_otto_logger()
 
 
-@dataclass
+@options
 class _DeployOpts(RepoOptions):                     # inherits --device-type, --lab-env
     debug: Annotated[bool, typer.Option(
         "--field/--debug",
@@ -188,21 +191,21 @@ otto run deploy --help
 ### 2b. Inherit the same base in a suite
 
 A suite's inner ``Options`` class can inherit from the very same
-``RepoOptions`` dataclass, so ``otto test`` subcommands expose the same
+``RepoOptions`` class, so ``otto test`` subcommands expose the same
 repo-wide flags as ``otto run``:
 
 ```python
 # tests/test_device.py
-from dataclasses import dataclass
 from typing import Annotated
 
 import typer
 
+from otto import options
 from my_instructions.options import RepoOptions
 from otto.suite import OttoSuite, register_suite
 
 
-@dataclass
+@options
 class _Options(RepoOptions):                       # inherits --device-type, --lab-env
     firmware: Annotated[str, typer.Option()] = "latest"
 

@@ -10,16 +10,16 @@ becomes its own subcommand with typed CLI options.
 Create a `test_*.py` file in one of your repo's `tests` directories:
 
 ```python
-from dataclasses import dataclass
 from typing import Annotated
 
 import pytest
 import typer
 
+from otto import options
 from otto.suite import OttoSuite, register_suite
 
 
-@dataclass
+@options
 class _Options:
     firmware: Annotated[str, typer.Option(
         help="Firmware version to validate against.",
@@ -75,29 +75,37 @@ The `@register_suite()` decorator:
 
 This all happens at import time when otto scans your `tests` directories.
 
-## Options dataclass
+## Options classes
 
-Suite-specific options are defined as a `@dataclass` with
+A suite's options class is expanded into `otto test <Suite>` flags and handed to
+each test method as `suite_options` — the test-suite stage of otto's options
+lifecycle ({doc}`options`).
+
+Suite-specific options are defined with `@options` using
 `Annotated[T, typer.Option(...)]` fields.  They automatically appear in
 `otto test <Suite> --help`:
 
 ```python
-@dataclass
+from otto import options
+
+@options
 class _Options:
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 ```
 
 ### Inheriting options
 
-You can share options across suites by inheriting from a base dataclass:
+You can share options across suites by inheriting from a base options class:
 
 ```python
-@dataclass
+from otto import options
+
+@options
 class RepoOptions:
     device_type: Annotated[str, typer.Option(help="Device type.")] = "router"
     lab_env: Annotated[str, typer.Option(help="Lab environment.")] = "staging"
 
-@dataclass
+@options
 class _Options(RepoOptions):
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 ```

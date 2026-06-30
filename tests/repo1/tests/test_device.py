@@ -9,17 +9,17 @@ Run with::
     otto test --iterations 10 --threshold 90 TestDevice
 """
 
-from dataclasses import dataclass
 from typing import Annotated
 
 import pytest
 import typer
 from repo1_common.options import RepoOptions
 
+from otto import options
 from otto.suite import OttoSuite, register_suite
 
 
-@dataclass
+@options
 class _Options(RepoOptions):
     firmware: Annotated[
         str,

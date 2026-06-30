@@ -87,11 +87,12 @@ Define a base `Options` dataclass in a shared module (listed in your
 
 ```python
 # pylib/my_shared/options.py
-from dataclasses import dataclass
 from typing import Annotated
 import typer
 
-@dataclass
+from otto import options
+
+@options
 class RepoOptions:
     device_type: Annotated[str, typer.Option(help="Device type.")] = "router"
     lab_env: Annotated[str, typer.Option(help="Lab environment.")] = "staging"
@@ -99,13 +100,14 @@ class RepoOptions:
 
 ```python
 # tests/test_device.py
-from dataclasses import dataclass
 from typing import Annotated
 import typer
+
+from otto import options
 from my_shared.options import RepoOptions
 from otto.suite import OttoSuite, register_suite
 
-@dataclass
+@options
 class _Options(RepoOptions):
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
@@ -124,13 +126,15 @@ All fields from `RepoOptions` and `_Options` appear as CLI flags:
 otto test TestDevice --device-type switch --firmware 2.1
 ```
 
-The very same `RepoOptions` dataclass can be inherited by **instructions**
+The very same `RepoOptions` class can be inherited by **instructions**
 — see
 [Sharing repo-wide options](../guide/run.md#sharing-repo-wide-options-across-instructions-and-suites).
-Defining it once in a shared pylib module (e.g.
+Defining it once in a shared module (e.g.
 `pylib/<repo>_common/options.py`) is the recommended way to expose
 repo-wide flags uniformly across every `otto test` and `otto run`
 subcommand.
+For the complete options reference — validation, the lifecycle, and the
+`@options` decorator — see [Options classes](../guide/options.md).
 
 ## Monitoring from a test
 

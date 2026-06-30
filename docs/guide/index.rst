@@ -6,6 +6,7 @@ These guides cover otto's CLI commands and project configuration in detail.
 .. toctree::
 
    repo-setup
+   options
    lab-config
    host-database
    run

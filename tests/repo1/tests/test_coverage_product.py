@@ -16,12 +16,12 @@ coverage alone.
 """
 
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 
+from otto import options
 from otto.configmodule.configmodule import (
     all_hosts,
     do_for_all_hosts,
@@ -47,7 +47,7 @@ GCDA_REMOTE_DIR = "/var/coverage/product"
 _REAL_HOSTS = re.compile(r"^[^.]+$")
 
 
-@dataclass
+@options
 class _Options:
     pass
 

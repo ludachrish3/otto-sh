@@ -421,12 +421,12 @@ otto --lab my_lab test TestExample --firmware 2.1
 otto test --list-suites               # see all registered suites
 ```
 
-`@options` (`from otto import options`) is a re-export of
-`pydantic.dataclasses.dataclass`: a drop-in for `@dataclass` that validates your
-fields. `otto test TestExample --retries -1` fails with a clean CLI error instead
-of being silently accepted. A plain `@dataclass` still works — validation is
-opt-in per Options class. The same `@options` classes work with
-`@instruction(options=...)` for `otto run` subcommands.
+`@options` (`from otto import options`) is otto's name for **pydantic's**
+dataclass decorator: decorating an Options class with it makes the class a
+pydantic dataclass, so its fields are validated. `otto test TestExample
+--retries -1` fails with a clean CLI error (exit code 2) instead of being
+silently accepted. The same `@options` classes power `@instruction(options=...)`
+for `otto run` subcommands. See {doc}`guide/options` for the full picture.
 
 The validation runs at construction time, so an out-of-range value is rejected
 before the suite ever runs:
