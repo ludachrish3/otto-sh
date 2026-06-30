@@ -1,4 +1,5 @@
 """Public API for otto test suites: ``OttoSuite``, ``register_suite``, ``OttoOptionsPlugin``."""
+
 from typing import TYPE_CHECKING
 
 from .register import register_suite as register_suite

@@ -39,12 +39,15 @@ nox.options.default_venv_backend = "uv"
 # that the strict config (select=ALL minus the deny-list) is green.
 nox.options.sessions = ["lint", "tests_unit", "typecheck", "docs"]
 
+# Coverage floors mirror the Makefile: the *-unit paths gate at 85
+# (CI_COVERAGE_THRESHOLD), every full-suite path at 92 (COVERAGE_THRESHOLD).
+# Keep these in sync with the Makefile if either threshold moves.
 UNIT_TEST_ARGS = (
     "tests/unit",
     "tests/e2e",
     "-m",
     "not integration and not embedded",
-    "--cov-fail-under=80",
+    "--cov-fail-under=85",
 )
 
 
@@ -94,9 +97,9 @@ def tests_all(session: nox.Session) -> None:
     Requires the dev VM with Vagrant hosts up; not run in CI. Pytest's
     default ``testpaths`` and addopts (from pyproject.toml) cover the full
     tree, so no marker filter is passed here. Coverage threshold matches
-    ``make coverage`` (85%).
+    ``make coverage`` (92%).
     """
-    session.run("pytest", "--cov-fail-under=85", _junitxml(session, "nox"), *session.posargs)
+    session.run("pytest", "--cov-fail-under=92", _junitxml(session, "nox"), *session.posargs)
 
 
 @nox_uv.session(uv_groups=["dev"])

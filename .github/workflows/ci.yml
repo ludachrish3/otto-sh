@@ -44,6 +44,16 @@ jobs:
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_unit-${{ matrix.python }}
 
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: astral-sh/setup-uv@v8.2.0
+        with:
+          enable-cache: true
+      - run: uv python install 3.10
+      - run: uv run nox -s lint
+
   typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -70,7 +80,7 @@ jobs:
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [tests, typecheck, docs]
+    needs: [lint, tests, typecheck, docs]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -84,7 +94,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of tests / typecheck / docs failed."
+            echo "Check the job logs to see which of lint / tests / typecheck / docs failed."
           } > issue-body.md
 
       - name: Create issue from file

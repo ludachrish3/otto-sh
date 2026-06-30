@@ -39,8 +39,11 @@ __all__ = [
 
 
 def __getattr__(name: str) -> object:
-    """Lazily resolve MonitorServer so importing otto.monitor (e.g. via
-    otto.models -> monitor.collector) does not pull in fastapi/uvicorn."""
+    """Lazily resolve MonitorServer to keep importing otto.monitor import-light.
+
+    Importing otto.monitor (e.g. via otto.models -> monitor.collector) must not
+    pull in fastapi/uvicorn; the server is resolved only on attribute access.
+    """
     if name == "MonitorServer":
         from .server import MonitorServer
 

@@ -1,5 +1,9 @@
-"""Pytest plugin objects for otto suites. Imported only when running a suite —
-kept out of register.py so importing the registry never pulls in pytest."""
+"""Pytest plugin objects for otto suites.
+
+Imported only when running a suite — kept out of register.py so importing the
+registry never pulls in pytest.
+"""
+
 from typing import Any
 
 import pytest

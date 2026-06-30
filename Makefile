@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-html docs-inventories doctest doctest-src typecheck lint format clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile
+.PHONY: help all ci nox nox-unit nox-unix nox-embedded validate clean-dist dev build coverage coverage-unit coverage-unix coverage-embedded docs docs-lint docs-html docs-inventories doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -86,24 +86,26 @@ TIMEOUT_CMD := timeout --foreground --kill-after=10s $(PYTEST_TIMEOUT)
 JUNIT_DIR := reports/junit
 junitxml = --junitxml=$(JUNIT_DIR)/$(1)/$(1).xml
 
-all: ## Run full pipeline against the dev VM (includes integration tests)
+all: ## (Build & Release) Run full pipeline against the dev VM (includes integration tests)
 	@$(MAKE) validate \
 		&& $(MAKE) build
 
-ci: ## Run pipeline without VM-dependent tests (used by GitHub Actions)
+ci: ## (Build & Release) Run pipeline without VM-dependent tests (used by GitHub Actions)
 	@$(MAKE) validate COVERAGE_TARGET=coverage-unit \
 		&& $(MAKE) build
 
 changelog: export PATH := $(VENV_BIN):$(PATH)
-changelog: ## Regenerate CHANGELOG.md from conventional commit history (Unreleased only — does not touch released sections)
+changelog: ## (Build & Release) Regenerate CHANGELOG.md from conventional commit history (Unreleased only — does not touch released sections)
 	git-cliff -o CHANGELOG.md
 
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## Validate (typecheck + docs + FULL nox matrix across all Pythons, requires dev VM), regenerate changelog at the new version, bump version, then build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
+release: ## (Build & Release) lint, typecheck, docs, nox, profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
 	@$(MAKE) clean-dist \
+		&& $(MAKE) lint \
 		&& $(MAKE) typecheck \
 		&& $(MAKE) docs \
 		&& OTTO_DETECT_ASYNCIO_LEAKS=1 $(MAKE) nox \
+		&& $(MAKE) profile \
 		&& NEW_VERSION="$${NEW_VERSION:-$$(bump-my-version show new_version --increment $(BUMP))}" \
 		&& echo "Targeting v$$NEW_VERSION" \
 		&& git-cliff --tag "v$$NEW_VERSION" -o CHANGELOG.md \
@@ -132,7 +134,7 @@ nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. R
 nox: ## Run the FULL test suite (all environments) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 
-validate: ## Run validation (clean-dist, lint, typecheck, coverage, docs) without building dist
+validate: ## (Build & Release) Run validation (clean-dist, lint, typecheck, coverage, docs) without building dist
 	@$(MAKE) clean-dist \
 		&& $(MAKE) lint \
 		&& $(MAKE) typecheck \
@@ -142,23 +144,23 @@ validate: ## Run validation (clean-dist, lint, typecheck, coverage, docs) withou
 clean-dist:
 	@rm -rf dist
 
-dev: ## Set up the dev environment (uv sync, git hooks, hyperfine)
+dev: ## (Dev) Set up the dev environment (uv sync, git hooks, hyperfine)
 	uv sync
 	git config core.hooksPath .githooks
 	$(MAKE) hyperfine
 	@echo "Dev environment ready"
 
-hyperfine: ## Install the pinned hyperfine benchmark binary into .venv/bin (dev tool for manual wall-clock validation; not a project dependency)
+hyperfine:
 	@if [ -x "$(VENV_BIN)/hyperfine" ] && "$(VENV_BIN)/hyperfine" --version | grep -qF "$(HYPERFINE_VERSION)"; then \
 		echo "hyperfine $(HYPERFINE_VERSION) already installed"; \
 	else \
 		bash scripts/install_hyperfine.sh "$(HYPERFINE_VERSION)" "$(VENV_BIN)"; \
 	fi
 
-profile: hyperfine ## Profile otto startup: per-surface import-module counts + hyperfine wall-clock for each CLI surface (read-only; auto-installs hyperfine, does not modify snapshots)
-	uv run python scripts/import_budget.py --hyperfine
+profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snapshots + denylist) + hyperfine wall-clock
+	uv run python scripts/import_budget.py --check --hyperfine
 
-build: ## Build the project with uv
+build: ## (Build & Release) Build the project with uv
 	uv build
 
 coverage: ## Run the pinned-Python suite and enforce the coverage gate (excludes heavy `stability` tests — those run via `make stability`). JUnit XML lands in reports/junit/coverage/.
@@ -235,26 +237,26 @@ repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repe
 	    --no-cov \
 	    $(call junitxml,repeat)
 
-vm-health: ## Probe every lab VM + Zephyr QEMU instance; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
+vm-health: ## (Lab) Probe every lab VM + Zephyr QEMU instance; prints per-host timestamps + clock drift. Requires the Vagrant lab up.
 	uv run python scripts/lab_health.py
 
-qemu-restart: ## Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded bed.
+qemu-restart: ## (Lab) Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded bed.
 	uv run python scripts/lab_health.py --restart-qemu
 
-lint: ## Run ruff lint + format checks (part of validate/ci/all)
+lint: ## (Quality) Run ruff lint + format checks (part of validate/ci/all)
 	uv run ruff check .
 	uv run ruff format --check .
 
-format: ## Apply ruff autoformat to the tree
+format: ## (Quality) Apply ruff autoformat to the tree
 	uv run ruff format .
 
-typecheck: ## Run ty type checker (advisory during trial; not wired into `all`)
+typecheck: ## (Quality) Run ty type checker (advisory during trial; not wired into all)
 	uv run ty check
 
-schema: ## Generate JSON Schema for hosts.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
+schema: ## (Dev) Generate JSON Schema for hosts.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
 	uv run otto schema export --out schemas
 
-import-snapshot: ## Regenerate import-budget golden snapshots + print per-surface counts (run after an intentional import change, then review the diff and update caps in scripts/import_budget.py)
+import-snapshot: ## (Dev) Regenerate import-budget golden snapshots + print per-surface counts (run after an intentional import change, then review the diff and update caps)
 	uv run python scripts/import_budget.py --update
 
 SPHINX_SRCS :=  docs/conf.py                        \
@@ -262,15 +264,15 @@ SPHINX_SRCS :=  docs/conf.py                        \
                 $(shell find docs -name '*.md')    \
                 $(shell find src/otto -name '*.py') \
 
-docs: docs-lint docs-html doctest doctest-src ## Build HTML docs and run Sphinx + src doctests
+docs: docs-lint docs-html doctest doctest-src ## (Docs) Build HTML docs + Sphinx & src doctests (sub-targets: docs-lint, docs-html, doctest, doctest-src, docs-inventories)
 
-docs-lint: ## Fast doc lints — doc8 (RST structure) + markdown doctest-fence guard
+docs-lint:
 	uv run doc8 docs/
 	uv run python scripts/lint_markdown_doctests.py docs/
 
-docs-html: docs/_build/html/index.html ## Build HTML docs only (warnings are errors)
+docs-html: docs/_build/html/index.html
 
-docs-inventories: ## Refresh vendored intersphinx inventories in docs/_inventories/
+docs-inventories:
 	mkdir -p docs/_inventories
 	curl -sSL --retry 3 -o docs/_inventories/python.inv     https://docs.python.org/3/objects.inv
 	curl -sSL --retry 3 -o docs/_inventories/typer.inv      https://typer.tiangolo.com/objects.inv
@@ -285,13 +287,13 @@ docs-inventories: ## Refresh vendored intersphinx inventories in docs/_inventori
 docs/_build/html/index.html: $(SPHINX_SRCS)
 	uv run sphinx-build -E -a -W -b html docs/ docs/_build/html
 
-doctest: ## Run Sphinx doctests
+doctest:
 	uv run sphinx-build -E -b doctest docs/ docs/_build/doctest
 
-doctest-src: ## Run docstring doctests in src/ (catches private + ::-literal examples Sphinx skips)
+doctest-src:
 	uv run pytest -p no:cacheprovider -o addopts="--doctest-modules" src/otto
 
-clean: ## Remove all generated artifacts
+clean: ## (Dev) Remove all generated artifacts
 	@rm -rf dist
 	@rm -rf reports
 	@rm -rf docs/_build
@@ -310,7 +312,5 @@ help: ## Show this help message
 	@printf '  \033[36m%-31s\033[0m %s\n' 'coverage-{unit,unix,embedded}'  'pinned Python + coverage   (coverage = all, gated)'
 	@printf '  \033[36m%-31s\033[0m %s\n' 'stability-{unit,unix,embedded}' 'pinned pytest-repeat soak  (stability = all tiers)'
 	@printf '  \033[36m%-31s\033[0m %s\n' 'repeat'          'soak the full unit suite (pytest-repeat)'
-	@printf '\n\033[1mOther targets\033[0m\n'
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-		| grep -vE '^(nox|coverage|stability)(-(unit|unix|embedded))?:|^(test|repeat):' \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+	@awk 'BEGIN { FS=":.*?## "; n=split("Build & Release|Quality|Docs|Lab|Dev",order,"|") } /^[a-zA-Z_-]+:.*## \(/ { d=$$2; s=d; sub(/\).*/,"",s); sub(/^\(/,"",s); sub(/^\([^)]*\) */,"",d); items[s]=items[s] sprintf("  \033[36m%-16s\033[0m %s\n",$$1,d) } END { for(i=1;i<=n;i++) if(order[i] in items) printf "\n\033[1m%s\033[0m\n%s",order[i],items[order[i]] }' \
+		$(MAKEFILE_LIST)

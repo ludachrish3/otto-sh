@@ -51,6 +51,7 @@ otto.logger
 otto.logger.formatters
 otto.logger.logger
 otto.logger.management
+otto.logger.mode
 otto.models
 otto.models.base
 otto.models.host

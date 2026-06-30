@@ -10,6 +10,7 @@ therefore MUST be defined before the ``apply_repo_settings()`` call, or the
 nested import hits a partially-initialized module and raises a circular
 ImportError. (Regression guard for the bug Part D's lazy __init__ exposed.)
 """
+
 import os
 import subprocess
 import sys
@@ -25,6 +26,7 @@ def test_configmodule_first_import_with_repo_no_circular():
         [sys.executable, "-c", "import otto.configmodule.lab; print('IMPORT OK')"],
         capture_output=True,
         text=True,
+        check=False,
         env=env,
     )
     assert out.returncode == 0, (

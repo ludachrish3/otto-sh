@@ -195,6 +195,7 @@ def run_suite(
     a global context stack.
     """
     import asyncio
+
     import pytest
 
     from ..suite.plugin import OttoPlugin
