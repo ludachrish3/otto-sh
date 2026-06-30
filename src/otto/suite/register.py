@@ -26,6 +26,12 @@ from ..params import build_options, options_params
 # ---------------------------------------------------------------------------
 _SUITE_REGISTRY: list[tuple[str, typer.Typer]] = []
 
+# Companion map: suite class name -> absolute source file. Populated alongside
+# _SUITE_REGISTRY so suites can be attributed to a repo (by sut_dir) for
+# `otto test --list-suites` without changing the (name, sub_app) tuple shape
+# that many consumers unpack.
+_SUITE_FILES: dict[str, str] = {}
+
 
 # ---------------------------------------------------------------------------
 # Parameter builders
@@ -115,6 +121,7 @@ def register_suite(*args: Any, **kwargs: Any) -> Callable[[type], type]:
         sub_app = typer.Typer()
         sub_app.command(suite_class.__name__, *args, **kwargs)(runner)
         _SUITE_REGISTRY.append((suite_class.__name__, sub_app))
+        _SUITE_FILES[suite_class.__name__] = suite_file
 
         return suite_class
 

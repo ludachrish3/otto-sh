@@ -419,6 +419,10 @@ Run it:
 otto --lab my_lab test TestExample
 otto --lab my_lab test TestExample --firmware 2.1
 otto test --list-suites               # see all registered suites
+otto test --list-markers              # see markers available to --markers
+otto test --list-tests                # list every test in every registered suite
+otto test --list-tests --markers slow # list tests matching the marker expression
+otto test --list-tests TestExample    # list tests in TestExample only
 ```
 
 `@options` (`from otto import options`) is otto's name for **pydantic's**

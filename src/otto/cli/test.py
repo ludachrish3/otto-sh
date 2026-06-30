@@ -18,7 +18,12 @@ enforcement and ``--help`` documentation.
 
 **Listing tests**
 
-``--list-suites``  List test suites with run syntax and exit.
+``--list-suites``   List test suites with run syntax and exit.
+
+``--list-tests``    List the selected tests (optionally narrowed by a suite name
+                    and/or ``--markers``) and exit.
+
+``--list-markers``  List the markers available to ``--markers`` and exit.
 
 **Options on ``otto test`` (before the suite name)**
 
@@ -97,6 +102,10 @@ either limit is reached first.
 **Examples**::
 
     otto test --list-suites
+    otto test --list-markers
+    otto test --list-tests
+    otto test --list-tests --markers slow
+    otto test --list-tests TestMyDevice
     otto test TestMyDevice --help
     otto test TestMyDevice --device-type switch --firmware 2.1
     otto test --iterations 50 --threshold 95 TestMyDevice
@@ -117,6 +126,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 
 if TYPE_CHECKING:
+    from rich.panel import Panel
+
     from ..suite.plugin import StabilityCollector
 
 import typer
@@ -384,8 +395,7 @@ def _print_stability_report(
 # ---------------------------------------------------------------------------
 
 
-def _list_tests_display(panel_method: str) -> None:
-    panels = [getattr(repo, panel_method)(repo.collect_tests()) for repo in get_repos()]
+def _render_panels(panels: "list[Panel]") -> None:
     table = Table(show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1))
     for _ in panels:
         table.add_column(ratio=1)
@@ -397,7 +407,17 @@ def list_suites_callback(value: bool) -> None:
     """Print all available test suites (one panel per repo) and exit when the flag is set."""
     if not value:
         return
-    _list_tests_display("get_test_suites_panel")
+    panels = [repo.get_test_suites_panel() for repo in get_repos()]
+    _render_panels(panels)
+    raise typer.Exit
+
+
+def list_markers_callback(value: bool) -> None:
+    """Print the markers available to --markers (one panel per repo) and exit."""
+    if not value:
+        return
+    panels = [repo.get_markers_panel() for repo in get_repos()]
+    _render_panels(panels)
     raise typer.Exit
 
 
@@ -407,7 +427,7 @@ def list_suites_callback(value: bool) -> None:
 
 suite_app = typer.Typer(
     name="test",
-    no_args_is_help=True,
+    invoke_without_command=True,
     context_settings={
         "help_option_names": ["-h", "--help"],
     },
@@ -424,6 +444,22 @@ def main(  # noqa: PLR0913 — CLI command params
             callback=list_suites_callback,
             is_eager=True,
             help="List test suites with run syntax and exit.",
+        ),
+    ] = False,
+    list_markers: Annotated[  # noqa: ARG001 — required by Typer eager callback option signature
+        bool,
+        typer.Option(
+            "--list-markers",
+            callback=list_markers_callback,
+            is_eager=True,
+            help="List the markers available to --markers and exit.",
+        ),
+    ] = False,
+    list_tests: Annotated[
+        bool,
+        typer.Option(
+            "--list-tests",
+            help="List the selected tests (optionally narrowed by a suite name / --markers) and exit.",  # noqa: E501
         ),
     ] = False,
     markers: Annotated[
@@ -588,6 +624,15 @@ def main(  # noqa: PLR0913 — CLI command params
     if ctx.resilient_parsing:
         return
 
+    if list_tests:
+        suite = ctx.invoked_subcommand
+        panels = [
+            repo.get_tests_panel(repo.collect_tests(markers=markers or None, suite=suite))
+            for repo in get_repos()
+        ]
+        _render_panels(panels)
+        raise typer.Exit
+
     if cov_dir is not None:
         _prepare_empty_dir(cov_dir, overwrite=overwrite_cov_dir, flag_name="--cov-dir")
 
@@ -622,6 +667,11 @@ def main(  # noqa: PLR0913 — CLI command params
         from ..reservations import gate
 
         gate(ctx)
+
+    if ctx.invoked_subcommand is None:
+        # Phase 1: no run-by-selector yet; mirror the previous no-args behavior.
+        rprint(ctx.get_help())
+        raise typer.Exit
 
 
 # ---------------------------------------------------------------------------

@@ -46,6 +46,15 @@ def _make_app_with_suite(suite_class: type) -> typer.Typer:
 
 
 class TestRegisterSuiteDecorator:
+    def test_register_suite_records_source_file(self):
+        from otto.suite.register import _SUITE_FILES, register_suite
+
+        @register_suite()
+        class _SuiteFileProbe:
+            pass
+
+        assert _SUITE_FILES["_SuiteFileProbe"] == __file__
+
     def test_adds_entry_to_registry(self):
         initial = len(_SUITE_REGISTRY)
 

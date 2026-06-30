@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 import importlib
-import io
+import os
 import sys
 from dataclasses import (
     dataclass,
@@ -270,12 +270,31 @@ class Repo:
         content = Text("\n".join(lines)) if lines else Text("no instructions found", style="dim")
         return self._make_test_panel(f"{self.name} {self.version}", content)
 
-    def collect_tests(self) -> list[CollectedTest]:
+    def collect_tests(
+        self,
+        markers: str | None = None,
+        suite: str | None = None,
+        tests: str | None = None,
+    ) -> list[CollectedTest]:
         """Collect all tests from this repo's configured test directories.
 
         Performs a single pytest collection pass (no tests are executed).
         The returned list can be passed to any of the ``get*Panel`` methods
         so that multiple listing options share one collection run.
+
+        Parameters
+        ----------
+        markers :
+            Passed as ``-m <markers>`` to the inner pytest run, narrowing
+            collection to tests matching the marker expression.
+        suite :
+            Restrict collection to the registered suite of this name (its
+            source file is looked up in ``_SUITE_FILES``).  Also passes
+            ``-k <suite>`` so only the matching class is selected within
+            that file.
+        tests :
+            Passed as ``-k <tests>`` to the inner pytest run, narrowing
+            collection to tests whose name matches the keyword expression.
 
         Returns
         -------
@@ -310,11 +329,33 @@ class Repo:
                 if isinstance(o, asyncio.AbstractEventLoop) and not o.is_closed()
             }
             try:
+                selector_args: list[str] = []
+                if markers:
+                    selector_args += ["-m", markers]
+                if tests:
+                    selector_args += ["-k", tests]
+                if suite:
+                    from ..suite.register import _SUITE_FILES
+
+                    suite_file = _SUITE_FILES.get(suite)
+                    if suite_file is not None:
+                        paths = [suite_file]
+                    else:
+                        logger.warning(
+                            "suite %r not found in the registry; listing all tests in %s",
+                            suite,
+                            self.name,
+                        )
+                    # -k narrows to the class within that file
+                    selector_args += ["-k", suite]
+
                 with (
-                    contextlib.redirect_stdout(io.StringIO()),
-                    contextlib.redirect_stderr(io.StringIO()),
+                    Path(os.devnull).open("w") as sink_out,
+                    Path(os.devnull).open("w") as sink_err,
+                    contextlib.redirect_stdout(sink_out),
+                    contextlib.redirect_stderr(sink_err),
                 ):
-                    pytest.main(
+                    rc = pytest.main(
                         [
                             *paths,
                             "--collect-only",
@@ -324,10 +365,21 @@ class Repo:
                             "no:cov",
                             "--override-ini",
                             "addopts=",
+                            "--override-ini",
+                            "filterwarnings=",
                             "-o",
                             "asyncio_default_fixture_loop_scope=function",
+                            *selector_args,
                         ],
                         plugins=[collector],
+                    )
+                # Surface a real collection failure instead of returning [] silently.
+                if rc not in (0, 5):  # 0 = OK, 5 = no tests collected
+                    logger.error(
+                        "Test collection failed for repo %r (pytest exit %s); "
+                        "see above. Listing may be incomplete.",
+                        self.name,
+                        rc,
                     )
             finally:
                 sys.modules.clear()
@@ -341,11 +393,11 @@ class Repo:
                 ]:
                     leaked.close()
 
-        tests: list[CollectedTest] = []
+        collected: list[CollectedTest] = []
         for item in collector.items:
             item_cls = getattr(item, "cls", None)
             cls_name = item_cls.__name__ if item_cls is not None else None
-            tests.append(
+            collected.append(
                 CollectedTest(
                     nodeid=item.nodeid,
                     name=item.name,
@@ -353,7 +405,7 @@ class Repo:
                     cls_name=cls_name,
                 )
             )
-        return tests
+        return collected
 
     def _make_test_panel(self, title: str, content: "Text") -> "Panel":
         from rich.panel import Panel
@@ -385,49 +437,75 @@ class Repo:
         content = Text("\n".join(lines)) if lines else Text("(no tests found)", style="dim")
         return self._make_test_panel(f"{self.name} {self.version}", content)
 
-    def get_test_files_panel(self, items: list[CollectedTest]) -> "Panel":
-        """Rich panel listing unique test files with their run syntax.
+    def registered_suites(self) -> list[str]:
+        """Names of ``@register_suite`` suites whose source file is under this repo.
 
-        Each line shows ``otto test <absolute-path>`` which runs all tests
-        in that file.
+        Reads ``otto.suite.register._SUITE_FILES`` (populated at suite import
+        time) and returns the registered suite names — the exact subcommand
+        names ``otto test <name>`` accepts — for suites defined under this
+        repo's ``sut_dir``, preserving registration order.
+        """
+        from ..suite.register import _SUITE_FILES, _SUITE_REGISTRY
 
-        Parameters
-        ----------
-        items :
-            Pre-collected tests from :meth:`collect_tests`.
+        sut_root = self.sut_dir.resolve()
+        names: list[str] = []
+        for name, _sub_app in _SUITE_REGISTRY:
+            src = _SUITE_FILES.get(name)
+            if src is None:
+                continue
+            try:
+                Path(src).resolve().relative_to(sut_root)
+            except ValueError:
+                continue
+            names.append(name)
+        return names
+
+    def get_test_suites_panel(self) -> "Panel":
+        """Rich panel listing this repo's runnable suite names.
+
+        Sourced from the suite registry (``registered_suites``) — the exact
+        ``otto test <name>`` subcommands — not from a pytest collection.
         """
         from rich.text import Text
 
-        seen: dict[Path, None] = {}
-        sut_dir = self.sut_dir.resolve()
-        for t in items:
-            seen.setdefault(t.path.relative_to(sut_dir), None)
-        lines = [f"• {p}" for p in seen]
+        names = self.registered_suites()
+        lines = [f"• {n}" for n in names]
         content = Text("\n".join(lines)) if lines else Text("(no tests found)", style="dim")
         return self._make_test_panel(f"{self.name} {self.version}", content)
 
-    def get_test_suites_panel(self, items: list[CollectedTest]) -> "Panel":
-        """Rich panel listing unique test suites with their run syntax.
+    def configured_markers(self) -> list[str]:
+        """Marker names declared in this repo's pytest config (for ``--list-markers``).
 
-        Only class-based tests are listed, using just ``ClassName`` — the
-        subcommand name passed directly to ``otto test ClassName``.
-        Bare functions (not part of a class) are omitted since they have no
-        corresponding ``otto test`` subcommand.
-        Entries are de-duplicated and preserve collection order.
+        Reads ``pyproject.toml [tool.pytest.ini_options].markers``. Each entry
+        is reduced to the token before ``:`` or ``(``. Static read — no
+        collection.
+        """
+        pyproject = self.sut_dir / "pyproject.toml"
+        if not pyproject.is_file():
+            return []
+        try:
+            data = tomli.loads(pyproject.read_text())
+        except (OSError, tomli.TOMLDecodeError):
+            return []
+        raw = data.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
+        out: list[str] = []
+        for entry in raw:
+            token = str(entry).split(":", 1)[0].split("(", 1)[0].strip()
+            if token:
+                out.append(token)
+        return out
 
-        Parameters
-        ----------
-        items :
-            Pre-collected tests from :meth:`collect_tests`.
+    def get_markers_panel(self) -> "Panel":
+        """Rich panel listing this repo's configured pytest markers.
+
+        Sourced statically from ``pyproject.toml [tool.pytest.ini_options].markers``
+        via :meth:`configured_markers` — no inner pytest collection is performed.
         """
         from rich.text import Text
 
-        seen: dict[str, None] = {}
-        for t in items:
-            if t.cls_name:
-                seen.setdefault(t.cls_name, None)
-        lines = [f"• {k}" for k in seen]
-        content = Text("\n".join(lines)) if lines else Text("(no tests found)", style="dim")
+        markers = self.configured_markers()
+        lines = [f"• {m}" for m in markers]
+        content = Text("\n".join(lines)) if lines else Text("(no markers configured)", style="dim")
         return self._make_test_panel(f"{self.name} {self.version}", content)
 
     def get_otto_settings_path(

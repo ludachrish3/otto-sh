@@ -333,6 +333,72 @@ class TestOsProfilesParsing:
         assert prof.defaults["ssh_options"]["known_hosts"] == f"{sut}/known_hosts"
 
 
+class TestCollectTestsHardening:
+    def _make_repo(self, tmp_path, test_body="def test_ok():\n    assert True\n"):
+        from otto.configmodule.repo import Repo
+
+        sut = tmp_path / "sut"
+        (sut / ".otto").mkdir(parents=True)
+        (sut / ".otto" / "settings.toml").write_text(
+            'name = "sut"\nversion = "1.0.0"\ntests = ["${sut_dir}/tests"]\n'
+        )
+        (sut / "tests").mkdir()
+        (sut / "tests" / "test_a.py").write_text(test_body)
+        return Repo(sut_dir=sut)
+
+    def test_collects_with_fileno_dependent_conftest_and_pytest_asyncio(self, tmp_path):
+        import pytest_asyncio  # noqa: F401 — reproduce the parent-import precondition (bug A)
+
+        repo = self._make_repo(tmp_path)
+        # A conftest that needs a real stdout fd (reproduces bug B under StringIO).
+        (repo.sut_dir / "tests" / "conftest.py").write_text(
+            "import faulthandler, signal, sys\n"
+            "def pytest_configure(config):\n"
+            "    faulthandler.register(signal.SIGUSR1, file=sys.stderr)\n"
+        )
+        items = repo.collect_tests()
+        assert len(items) == 1
+        assert items[0].name == "test_ok"
+
+    def test_collection_failure_is_logged_not_silent(self, tmp_path, caplog):
+        import logging
+
+        repo = self._make_repo(tmp_path)
+        # A conftest that raises at collection time -> pytest INTERNAL/usage error.
+        (repo.sut_dir / "tests" / "conftest.py").write_text("raise RuntimeError('boom')\n")
+        with caplog.at_level(logging.ERROR):
+            repo.collect_tests()
+        assert any("collection failed" in r.message.lower() for r in caplog.records)
+
+    def test_markers_and_tests_selectors_narrow_results(self, tmp_path):
+        body = (
+            "import pytest\n"
+            "def test_keep():\n    assert True\n"
+            "@pytest.mark.slow\ndef test_slow():\n    assert True\n"
+        )
+        repo = self._make_repo(tmp_path, test_body=body)
+        (repo.sut_dir / "tests" / "conftest.py").write_text(
+            "def pytest_configure(config):\n    config.addinivalue_line('markers','slow: x')\n"
+        )
+        all_names = {t.name for t in repo.collect_tests()}
+        slow_names = {t.name for t in repo.collect_tests(markers="slow")}
+        kw_names = {t.name for t in repo.collect_tests(tests="test_keep")}
+        assert {"test_keep", "test_slow"} <= all_names
+        assert slow_names == {"test_slow"}
+        assert kw_names == {"test_keep"}
+
+    def test_unknown_suite_logs_warning(self, tmp_path, caplog):
+        import logging
+
+        repo = self._make_repo(tmp_path)
+        with caplog.at_level(logging.WARNING):
+            repo.collect_tests(suite="no_such_suite")
+        assert any(
+            "no_such_suite" in r.message and "not found in the registry" in r.message
+            for r in caplog.records
+        )
+
+
 class TestOsProfilesIntegration:
     """End-to-end: the repo1 fixture's ``[os_profiles]`` tables flow through
     settings parse → registry → factory, including a data-defined profile that
