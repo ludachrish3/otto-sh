@@ -2,6 +2,11 @@
 
 ## General
 
+- Repo and command options need to be promoted to a more visible location
+  - The `@options` decorator is quite hard to discover. I think that the new decorator is not reflected (at least not well) in the latest documentation. Options classes are still defined as pure dataclasses.
+  - Possibly in onboarding or setting up? Either way, more links to it would be helpful so that people are easily find it when defining a repo, instruction, and suite.
+- Clean up and rename labs. The names are currently so obscure that they are difficult to intuitively tell what kinds of hosts they have. The embedded lab name is okay, but the hosts themselves should be more technically focused. The unix labs are all over the place and should be reconsidered as well, even at the lab name level.
+- Add RemoteHost `stat()` method if one does not already exist. Tricky part: format of stat has changed over the years. It might be tricky to flexibly parse all versions of stat output including all the different forks of unix (Linux 2.6 - present, other Unix OSes)
 - Login utility
   - Make sure logging into docker containers works
   - Scrutinize log file output
