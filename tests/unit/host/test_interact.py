@@ -10,8 +10,9 @@ design, so there is no need to fake either library here.
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -349,3 +350,93 @@ class TestUnixHostInteractDispatch:
         mock_login.assert_awaited_once()
         fake_client.close.assert_awaited_once()
         await host.close()
+
+
+# ---------------------------------------------------------------------------
+# run_ssh_login — command= branch (container docker exec login)
+# ---------------------------------------------------------------------------
+
+
+def _fake_process() -> MagicMock:
+    """Return a minimal fake SSHClientProcess sufficient to drive run_ssh_login."""
+    proc = MagicMock()
+    proc.stdin.write = MagicMock()
+    proc.stdout.read = AsyncMock(return_value=b"")
+    proc.change_terminal_size = MagicMock()
+    proc.close = MagicMock()
+    return proc
+
+
+def _make_fake_asyncssh() -> MagicMock:
+    """Return a MagicMock that satisfies asyncssh attribute lookups in run_ssh_login."""
+    fake = MagicMock()
+    # asyncssh.STDOUT is used in process_kwargs; any value is fine for the mock.
+    fake.STDOUT = MagicMock()
+    # asyncssh.misc.ConnectionLost is referenced in the read_remote closure;
+    # must be an exception class so it can appear in an except clause.
+    fake.misc.ConnectionLost = type("ConnectionLost", (Exception,), {})
+    return fake
+
+
+class TestRunSshLoginCommandBranch:
+    """Cover the ``command=`` branch of ``run_ssh_login`` (lines ~433-435)."""
+
+    @pytest.mark.asyncio
+    async def test_run_ssh_login_passes_command_to_create_process(self):
+        """When command= is given, create_process receives it as a kwarg."""
+        proc = _fake_process()
+        conn = MagicMock()
+        conn.create_process = AsyncMock(return_value=proc)
+
+        fake_asyncssh = _make_fake_asyncssh()
+
+        with (
+            patch.dict(sys.modules, {"asyncssh": fake_asyncssh}),
+            patch.object(interact, "_run_bridge", new=AsyncMock()) as bridge,
+            patch.object(interact, "_setup_raw_mode", return_value=None),
+            patch.object(interact, "_restore_terminal"),
+            patch.object(interact.sys, "stdin"),
+            patch.object(interact.os, "write"),
+        ):
+            interact.sys.stdin.isatty = lambda: False
+            interact.sys.stdin.fileno = lambda: 0
+            await interact.run_ssh_login(
+                conn=conn,
+                host_name="h",
+                command="docker exec -it abc /bin/sh",
+            )
+
+        conn.create_process.assert_awaited_once()
+        kwargs = conn.create_process.await_args.kwargs
+        assert kwargs.get("command") == "docker exec -it abc /bin/sh"
+        bridge.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_ssh_login_no_command_omits_command_kwarg(self):
+        """When command= is absent, create_process does NOT receive a command kwarg.
+
+        This companion test proves the assertion above is branch-specific —
+        the ``command`` key only enters ``process_kwargs`` on the taken branch.
+        """
+        proc = _fake_process()
+        conn = MagicMock()
+        conn.create_process = AsyncMock(return_value=proc)
+
+        fake_asyncssh = _make_fake_asyncssh()
+
+        with (
+            patch.dict(sys.modules, {"asyncssh": fake_asyncssh}),
+            patch.object(interact, "_run_bridge", new=AsyncMock()) as bridge,
+            patch.object(interact, "_setup_raw_mode", return_value=None),
+            patch.object(interact, "_restore_terminal"),
+            patch.object(interact.sys, "stdin"),
+            patch.object(interact.os, "write"),
+        ):
+            interact.sys.stdin.isatty = lambda: False
+            interact.sys.stdin.fileno = lambda: 0
+            await interact.run_ssh_login(conn=conn, host_name="h")
+
+        conn.create_process.assert_awaited_once()
+        kwargs = conn.create_process.await_args.kwargs
+        assert "command" not in kwargs
+        bridge.assert_awaited_once()

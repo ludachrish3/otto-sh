@@ -7,13 +7,15 @@ the placeholder ``container_id == ""`` guard.
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from otto.host.docker_host import DockerContainerHost
 from otto.utils import CommandStatus, Status
+from tests.conftest import active_context
 
 
 def _ok(cmd: str = "", out: str = "") -> CommandStatus:
@@ -402,3 +404,237 @@ async def test_interact_requires_remote_ssh_parent():
     h = _make_container()
     with pytest.raises(NotImplementedError, match="SSH-based parent"):
         await h._interact()
+
+
+# ---------------------------------------------------------------------------
+# Dry-run behavior
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_oneshot_dry_run_skips_parent():
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    with active_context(dry_run=True):
+        result = await h.oneshot("echo hi")
+    parent.oneshot.assert_not_awaited()
+    assert result.status == Status.Skipped
+    assert result.command == "echo hi"
+    assert "[DRY RUN]" in result.output
+
+
+@pytest.mark.asyncio
+async def test_run_dry_run_skips_session():
+    """_run_one returns dry-run sentinel without opening a session."""
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    with active_context(dry_run=True):
+        result = await h.run("ls /")
+    parent.oneshot.assert_not_awaited()
+    assert result.only.status == Status.Skipped
+    assert result.only.command == "ls /"
+
+
+@pytest.mark.asyncio
+async def test_send_dry_run_returns_without_session():
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    with active_context(dry_run=True):
+        await h.send("some text")
+    # No session should be touched — parent is a MagicMock so open_session
+    # would raise NotImplementedError if called.
+    parent.oneshot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_expect_dry_run_returns_empty_string():
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    with active_context(dry_run=True):
+        result = await h.expect("prompt> ")
+    assert result == ""
+    parent.oneshot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_put_dry_run_skips_transfer(tmp_path):
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    f = tmp_path / "x.txt"
+    f.write_text("hello")
+    with active_context(dry_run=True):
+        status, msg = await h.put([f], Path("/dest"))
+    parent.oneshot.assert_not_awaited()
+    parent.put.assert_not_awaited()
+    assert status == Status.Skipped
+    assert "[DRY RUN]" in msg
+    assert "PUT" in msg
+
+
+@pytest.mark.asyncio
+async def test_get_dry_run_skips_transfer():
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    with active_context(dry_run=True):
+        status, msg = await h.get(Path("/etc/hosts"), Path("./out"))
+    parent.oneshot.assert_not_awaited()
+    parent.get.assert_not_awaited()
+    assert status == Status.Skipped
+    assert "[DRY RUN]" in msg
+    assert "GET" in msg
+
+
+# ---------------------------------------------------------------------------
+# rebuild_connections
+# ---------------------------------------------------------------------------
+
+
+def test_rebuild_connections_swaps_session_mgr():
+    parent = _build_fake_ssh_remote_host()
+    h = _make_container(parent=parent)
+    old = h._session_mgr
+    sentinel_mgr = MagicMock()
+    with patch.object(h, "_build_session_mgr", return_value=sentinel_mgr):
+        h.rebuild_connections()
+    assert h._session_mgr is sentinel_mgr
+    assert h._session_mgr is not old
+
+
+# ---------------------------------------------------------------------------
+# put / get error returns
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_put_mkdir_failure_returns_error(tmp_path):
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    f = tmp_path / "payload.bin"
+    f.write_bytes(b"data")
+
+    def oneshot_side_effect(cmd, *args, **kwargs):
+        if "mkdir" in cmd:
+            return _fail(cmd, out="Permission denied")
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot_side_effect
+
+    status, msg = await h.put([f], Path("/dest"))
+    assert status == Status.Error
+    assert "failed to create staging dir" in msg
+
+
+@pytest.mark.asyncio
+async def test_put_parent_put_failure_passthrough(tmp_path):
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    f = tmp_path / "payload.bin"
+    f.write_bytes(b"data")
+
+    parent.put.return_value = (Status.Error, "sftp connection lost")
+
+    status, msg = await h.put([f], Path("/dest"))
+    assert status == Status.Error
+    assert msg == "sftp connection lost"
+
+
+@pytest.mark.asyncio
+async def test_put_docker_cp_failure_returns_error(tmp_path):
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    f = tmp_path / "payload.bin"
+    f.write_bytes(b"data")
+
+    def oneshot_side_effect(cmd, *args, **kwargs):
+        if "docker cp" in cmd:
+            return _fail(cmd, out="no such container")
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot_side_effect
+
+    status, msg = await h.put([f], Path("/dest"))
+    assert status == Status.Error
+    assert "docker cp failed" in msg
+
+
+@pytest.mark.asyncio
+async def test_get_mkdir_failure_returns_error():
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+
+    def oneshot_side_effect(cmd, *args, **kwargs):
+        if "mkdir" in cmd:
+            return _fail(cmd, out="read-only filesystem")
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot_side_effect
+
+    status, msg = await h.get(Path("/etc/os-release"), Path("./out"))
+    assert status == Status.Error
+    assert "failed to create staging dir" in msg
+
+
+@pytest.mark.asyncio
+async def test_get_docker_cp_failure_returns_error():
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+
+    def oneshot_side_effect(cmd, *args, **kwargs):
+        if "docker cp" in cmd:
+            return _fail(cmd, out="container not found")
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot_side_effect
+
+    status, msg = await h.get(Path("/etc/os-release"), Path("./out"))
+    assert status == Status.Error
+    assert "docker cp failed" in msg
+
+
+# ---------------------------------------------------------------------------
+# _interact — non-ssh parent rejection + ssh happy path
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_interact_rejects_non_ssh_parent():
+    """telnet parent raises NotImplementedError (parent is UnixHost but term != ssh)."""
+    from otto.host.connections import ConnectionManager
+    from otto.host.unix_host import UnixHost
+
+    class FakeTelnetConnections(ConnectionManager):
+        def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+            self._ssh_conn = None
+            self._sftp_conn = None
+            self._ftp_conn = None
+            self._telnet_conn = None
+            self._name = kwargs.get("name", "fake")
+            self._term = "telnet"
+            self._hop = None
+
+    telnet_parent = UnixHost(
+        ip="10.0.0.1",
+        creds={"root": "x"},
+        element="fake_ne",
+        term="telnet",
+        _connection_factory=FakeTelnetConnections,
+    )
+    h = _make_container(parent=telnet_parent)
+    with pytest.raises(NotImplementedError):
+        await h._interact()
+
+
+@pytest.mark.asyncio
+async def test_interact_ssh_runs_docker_exec():
+    """SSH parent: _interact calls run_ssh_login with docker exec -it command."""
+    parent = _build_fake_ssh_remote_host()
+    h = _make_container(parent=parent, container_id="mycontainer123")
+
+    with patch("otto.host.interact.run_ssh_login", new_callable=AsyncMock) as mock_login:
+        await h._interact()
+
+    mock_login.assert_awaited_once()
+    call_kwargs = mock_login.call_args.kwargs
+    expected_cmd = f"docker exec -it {shlex.quote(h.container_id)} /bin/sh"
+    assert "command" in call_kwargs
+    assert expected_cmd in call_kwargs["command"]

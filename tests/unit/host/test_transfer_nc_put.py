@@ -478,3 +478,162 @@ class TestNcPutCancellation:
         assert reap_calls == [9000], (
             f"cancellation must reap the remote nc listener, got {reap_calls}"
         )
+
+
+# ============================================================================
+# _connect_with_retry — retry-then-succeed
+# ============================================================================
+
+
+class TestConnectWithRetry:
+    @pytest.mark.asyncio
+    async def test_succeeds_after_retries(self):
+        """_connect_with_retry retries on ConnectionRefusedError and eventually returns."""
+        reader, writer = MagicMock(), MagicMock()
+        open_conn = AsyncMock(
+            side_effect=[ConnectionRefusedError(), ConnectionRefusedError(), (reader, writer)]
+        )
+        with patch.object(transfer_mod.asyncio, "open_connection", open_conn):
+            r, w = await transfer_mod._connect_with_retry(
+                "h", 9000, timeout=5.0, retry_interval=0.0
+            )
+        assert (r, w) == (reader, writer)
+        assert open_conn.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_raises_connection_error_on_timeout(self):
+        """_connect_with_retry raises ConnectionError when timeout is exceeded."""
+        open_conn = AsyncMock(side_effect=ConnectionRefusedError())
+        with (
+            patch.object(transfer_mod.asyncio, "open_connection", open_conn),
+            pytest.raises(ConnectionError, match="not ready within"),
+        ):
+            await transfer_mod._connect_with_retry("h", 9000, timeout=0.0, retry_interval=0.0)
+
+
+# ============================================================================
+# _verify_nc_dest_size — error paths + success
+# ============================================================================
+
+
+class TestVerifyNcDestSize:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("stat_out", "expected", "want"),
+        [
+            ("MISSING", 10, "destination file missing"),
+            ("abc", 10, "unparseable"),
+            ("5", 10, "expected 10 bytes, got 5"),
+        ],
+    )
+    async def test_errors(self, stat_out: str, expected: int, want: str, tmp_path: Path) -> None:
+        exec_cmd = AsyncMock(side_effect=lambda cmd, **kw: _ok(stat_out))
+        ft = _make_ft(exec_cmd)
+        result = await ft._verify_nc_dest_size(tmp_path / "f", expected)
+        assert result is not None
+        assert result[0] is Status.Error
+        assert want in result[1]
+
+    @pytest.mark.asyncio
+    async def test_ok_returns_none(self, tmp_path: Path) -> None:
+        exec_cmd = AsyncMock(side_effect=lambda cmd, **kw: _ok("10"))
+        ft = _make_ft(exec_cmd)
+        assert await ft._verify_nc_dest_size(tmp_path / "f", 10) is None
+
+
+# ============================================================================
+# _reap_nc_listener — non-tunnel, tunnel, connect-failure
+# ============================================================================
+
+
+class TestReapNcListener:
+    @pytest.mark.asyncio
+    async def test_non_tunnel_connects_and_closes(self) -> None:
+        """Non-tunnel path connects to connections.ip and closes the writer."""
+        writer = MagicMock()
+        writer.wait_closed = AsyncMock(return_value=None)
+        ft = _make_ft(AsyncMock(), has_tunnel=False)
+
+        with patch.object(
+            transfer_mod, "_connect_with_retry", AsyncMock(return_value=(MagicMock(), writer))
+        ) as mock_connect:
+            await ft._reap_nc_listener(9000)
+
+        mock_connect.assert_awaited_once()
+        call_args = mock_connect.await_args
+        assert call_args[0][0] == "10.0.0.1"  # connections.ip
+        writer.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_tunnel_uses_forward_port(self) -> None:
+        """Tunnel path calls forward_port and connects to localhost."""
+        writer = MagicMock()
+        writer.wait_closed = AsyncMock(return_value=None)
+        ft = _make_ft(AsyncMock(), has_tunnel=True)
+        ft._connections.forward_port = AsyncMock(return_value=15000)
+
+        with patch.object(
+            transfer_mod, "_connect_with_retry", AsyncMock(return_value=(MagicMock(), writer))
+        ) as mock_connect:
+            await ft._reap_nc_listener(9000)
+
+        ft._connections.forward_port.assert_awaited_once_with(9000)
+        call_args = mock_connect.await_args
+        assert call_args[0][0] == "localhost"
+        assert call_args[0][1] == 15000
+
+    @pytest.mark.asyncio
+    async def test_connect_failure_is_silent(self) -> None:
+        """ConnectionError from _connect_with_retry is swallowed — returns None."""
+        ft = _make_ft(AsyncMock(), has_tunnel=False)
+
+        with patch.object(
+            transfer_mod, "_connect_with_retry", AsyncMock(side_effect=ConnectionError("nope"))
+        ):
+            result = await ft._reap_nc_listener(9000)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_tunnel_forward_port_exception_is_silent(self) -> None:
+        """If forward_port raises, _reap_nc_listener returns silently without connecting."""
+        ft = _make_ft(AsyncMock(), has_tunnel=True)
+        ft._connections.forward_port = AsyncMock(side_effect=OSError("tunnel broken"))
+
+        with patch.object(transfer_mod, "_connect_with_retry", AsyncMock()) as mock_connect:
+            result = await ft._reap_nc_listener(9000)
+
+        assert result is None
+        mock_connect.assert_not_awaited()
+
+
+# ============================================================================
+# _put_files_nc — connect-failure branch
+# ============================================================================
+
+
+class TestPutFilesNcConnectFailure:
+    @pytest.mark.asyncio
+    async def test_connect_failure_returns_error(self, tmp_path: Path) -> None:
+        """If _connect_with_retry raises ConnectionError, _put_files_nc returns Status.Error."""
+        src = tmp_path / "file.bin"
+        src.write_bytes(b"hello")
+
+        exec_cmd = AsyncMock(return_value=_ok("9000\n"))
+        ft = _make_ft(exec_cmd)
+
+        with (
+            patch.object(
+                NcFileTransfer, "_wait_for_remote_listener", new=AsyncMock(return_value=None)
+            ),
+            patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
+            patch.object(
+                transfer_mod,
+                "_connect_with_retry",
+                AsyncMock(side_effect=ConnectionError("nope")),
+            ),
+        ):
+            status, msg = await ft._put_files_nc([src], tmp_path / "dst")
+
+        assert status is Status.Error
+        assert "not ready" in msg

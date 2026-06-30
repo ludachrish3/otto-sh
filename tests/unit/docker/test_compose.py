@@ -6,8 +6,9 @@ These mock the parent host's `oneshot`/`put` so no real docker is invoked.
 from __future__ import annotations
 
 import getpass
+import logging
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -17,9 +18,12 @@ from otto.configmodule.repo import (
 )
 from otto.docker.compose import (
     _resolve_parent,
+    _safe_username,
     compose_down,
+    compose_ps,
     compose_up,
     composed,
+    get_container_host,
     get_user_compose_project,
     register_declared_container_hosts,
 )
@@ -529,3 +533,226 @@ def test_register_declared_noop_without_capable_hosts(tmp_path):
     lab = Lab(name="empty")  # no hosts at all
     n = register_declared_container_hosts(lab, [repo])
     assert n == 0
+
+
+def _make_bare_repo(tmp: Path, *, name: str = "bare1") -> Repo:
+    """Build a Repo with NO [[docker.composes]] entries."""
+    sut = tmp / name
+    (sut / ".otto").mkdir(parents=True)
+    (sut / ".otto" / "settings.toml").write_text(f'name = "{name}"\nversion = "1.0.0"\n')
+    return Repo(sut_dir=sut)
+
+
+# ---------------------------------------------------------------------------
+# compose_ps
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compose_ps_parses_json_lines(tmp_path):
+    """Valid JSON lines are parsed; blank lines and non-JSON lines are skipped."""
+    host = _capable_host()
+    _wire_parent_mock(host)
+    host.oneshot.return_value = _ok('{"ID":"a"}\n\n{"ID":"b"}\nnot-json\n')  # type: ignore[union-attr]
+    result = await compose_ps(host)
+    assert result == [{"ID": "a"}, {"ID": "b"}]
+
+
+@pytest.mark.asyncio
+async def test_compose_ps_non_ok_returns_empty():
+    """A non-ok parent response returns an empty list without raising."""
+    host = _capable_host()
+    _wire_parent_mock(host)
+    host.oneshot.return_value = _fail("boom")  # type: ignore[union-attr]
+    result = await compose_ps(host)
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# get_container_host
+# ---------------------------------------------------------------------------
+
+
+def test_get_container_host_success(tmp_path):
+    """Returns the DockerContainerHost when found by id."""
+    parent = _wire_parent_mock(_capable_host())
+    container = DockerContainerHost(
+        parent=parent,
+        container_id="abc123",
+        project="repo1",
+        service="api",
+        compose_project="otto-repo1-user",
+    )
+    fake_lab = Lab(name="test")
+    fake_lab.hosts[container.id] = container  # type: ignore[assignment]
+
+    with patch("otto.configmodule.get_lab", return_value=fake_lab):
+        result = get_container_host(container.id)
+    assert result is container
+
+
+def test_get_container_host_missing_raises(tmp_path):
+    """Raises KeyError when the host_id is not in the lab."""
+    fake_lab = Lab(name="test")
+    with patch("otto.configmodule.get_lab", return_value=fake_lab), pytest.raises(KeyError):
+        get_container_host("does_not_exist")
+
+
+def test_get_container_host_wrong_type_raises(tmp_path):
+    """Raises KeyError when the host exists but is not a DockerContainerHost."""
+    parent = _wire_parent_mock(_capable_host())
+    fake_lab = Lab(name="test")
+    fake_lab.hosts[parent.id] = parent  # a UnixHost, not a DockerContainerHost
+    with patch("otto.configmodule.get_lab", return_value=fake_lab), pytest.raises(KeyError):
+        get_container_host(parent.id)
+
+
+# ---------------------------------------------------------------------------
+# compose_up — error branches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compose_up_no_composes_raises(tmp_path):
+    """Raises ValueError when the repo has no [[docker.composes]] entries."""
+    repo = _make_bare_repo(tmp_path)
+    lab = _make_lab()
+    with pytest.raises(ValueError, match=r"no .*composes"):
+        await compose_up(repo, lab)
+
+
+@pytest.mark.asyncio
+async def test_compose_up_build_failure_raises(tmp_path):
+    """Raises RuntimeError when build_images returns a failed status for an image."""
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+
+    # build_images returns dict[str, tuple[Status, str]]; a non-ok status trips the branch
+    fake_results = {"api": (Status.Failed, "push access denied")}
+
+    with (
+        patch("otto.docker.build.build_images", new=AsyncMock(return_value=fake_results)),
+        pytest.raises(RuntimeError, match="build for image"),
+    ):
+        await compose_up(repo, lab, build=True)
+
+
+# ---------------------------------------------------------------------------
+# _resolve_parent — error branches
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_parent_no_candidate_raises(tmp_path):
+    """Raises ValueError when no on= and no default_host is set in composes."""
+    # Build a compose list with NO default_host
+    sut = tmp_path / "repo1"
+    (sut / ".otto").mkdir(parents=True)
+    (sut / "docker").mkdir()
+    (sut / "docker" / "compose.yml").write_text("services: {}\n")
+    (sut / ".otto" / "settings.toml").write_text(
+        'name = "repo1"\nversion = "1.0.0"\n\n'
+        "[docker]\n\n"
+        "[[docker.composes]]\n"
+        'path = "docker/compose.yml"\n'
+        'services = ["api"]\n'
+        "# no default_host\n"
+    )
+    repo = Repo(sut_dir=sut)
+    lab = _make_lab()
+    composes = list(repo.docker_settings.composes)
+
+    with pytest.raises(ValueError, match="No docker host"):
+        _resolve_parent(repo, lab, on=None, composes=composes)
+
+
+def test_resolve_parent_non_unixhost_raises(tmp_path):
+    """Raises TypeError when the resolved host is not a UnixHost."""
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+
+    # Install a non-UnixHost under the id "weird"
+    weird = MagicMock()
+    weird.id = "weird"
+    lab.hosts["weird"] = weird
+
+    composes = list(repo.docker_settings.composes)
+    with pytest.raises(TypeError, match="must be a UnixHost"):
+        _resolve_parent(repo, lab, on="weird", composes=composes)
+
+
+# ---------------------------------------------------------------------------
+# compose_down — error branches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compose_down_no_composes_skipped(tmp_path):
+    """Returns Status.Skipped immediately when the repo has no composes."""
+    repo = _make_bare_repo(tmp_path)
+    lab = _make_lab()
+    result = await compose_down(repo, lab)
+    assert result is Status.Skipped
+
+
+@pytest.mark.asyncio
+async def test_compose_down_failure_logs_error(tmp_path, caplog):
+    """Logs an ERROR containing 'compose down failed' when the down command fails."""
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    async def oneshot(cmd, *_, **__):
+        # stage_compose_files uses mkdir/rm calls that should succeed
+        if "compose" in cmd and " down" in cmd:
+            return _fail("down boom")
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+
+    with caplog.at_level(logging.ERROR):
+        result = await compose_down(repo, lab)
+
+    assert any("compose down failed" in r.message for r in caplog.records)
+    # The function returns the failed Status — verify it didn't raise and the
+    # failure path is confirmed by the returned value
+    assert result is Status.Failed
+
+
+@pytest.mark.asyncio
+async def test_compose_down_swallows_host_close_error(tmp_path):
+    """Does NOT propagate when a registered container host's close() raises."""
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    # Wire down command to succeed so we reach the host-close loop
+    parent.oneshot.return_value = _ok()  # type: ignore[union-attr]
+
+    # Register a container host under this parent + repo whose close() raises
+    noisy = DockerContainerHost(
+        parent=parent,
+        container_id="cid99",
+        project=repo.name,
+        service="api",
+        compose_project="otto-repo1-x",
+    )
+    noisy.close = AsyncMock(side_effect=Exception("close exploded"))  # type: ignore[method-assign]
+    lab.hosts[noisy.id] = noisy  # type: ignore[assignment]
+
+    # Must NOT propagate the Exception from close()
+    result = await compose_down(repo, lab)
+    # Prove the close() branch was actually exercised (not just skipped)
+    noisy.close.assert_called_once()
+    # down command succeeded, so the returned status is Success
+    assert result is Status.Success
+
+
+# ---------------------------------------------------------------------------
+# _safe_username
+# ---------------------------------------------------------------------------
+
+
+def test_safe_username_keyerror_returns_anon():
+    """Falls back to 'anon' when getpass.getuser() raises KeyError."""
+    with patch("otto.docker.compose.getpass.getuser", side_effect=KeyError("no user")):
+        assert _safe_username() == "anon"

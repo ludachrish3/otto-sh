@@ -10,11 +10,14 @@ at runtime, and PEP 563 would stringify them, making the serializer skip the
 option entirely.
 """
 
+import inspect
 import json
 import time
 from pathlib import Path
 from typing import Annotated
+from unittest.mock import MagicMock
 
+import pytest
 import typer
 
 from otto.configmodule import completion_cache as cc
@@ -169,3 +172,240 @@ def test_write_read_cache_round_trips_backend_names(tmp_path: Path, monkeypatch)
     assert out is not None
     assert out["term_backends"] == ["ssh", "telnet"]
     assert out["transfer_backends"] == [{"name": "scp", "host_families": ["unix"]}]
+
+
+# ---------------------------------------------------------------------------
+# _json_safe_default — pure function table
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (inspect.Parameter.empty, None),
+        ([1, 2, "x"], [1, 2, "x"]),
+        (object(), None),
+        ([{1, 2}], None),  # non-serializable list → json.dumps TypeError → None
+    ],
+)
+def test_json_safe_default(value: object, expected: object) -> None:
+    """_json_safe_default coerces each supported form correctly."""
+    assert cc._json_safe_default(value) == expected
+
+
+# ---------------------------------------------------------------------------
+# _serialize_options — skip-gate tests
+# ---------------------------------------------------------------------------
+
+
+def test_serialize_options_non_annotated_returns_none() -> None:
+    """A plain (non-Annotated) param annotation causes the whole callback to be skipped."""
+
+    def cb(x: int) -> None: ...
+
+    assert cc._serialize_options(cb, command_name="cb") is None
+
+
+def test_serialize_options_annotated_without_option_returns_none() -> None:
+    """Annotated param without a typer.Option in metadata causes the callback to be skipped."""
+
+    def cb(x: Annotated[int, "meta-but-not-typer-Option"]) -> None: ...
+
+    assert cc._serialize_options(cb, command_name="cb") is None
+
+
+# ---------------------------------------------------------------------------
+# collect_docker_capable_host_ids — hosts.json reading + docker_capable filter
+# ---------------------------------------------------------------------------
+
+_DOCKER_HOST = {
+    "ip": "10.0.0.1",
+    "element": "b",
+    "os_type": "unix",
+    "board": "seed",
+    "docker_capable": True,
+    "creds": {"user": "pass"},
+    "resources": ["b"],
+    "labs": ["lab"],
+}
+_NON_DOCKER_HOST = {
+    "ip": "10.0.0.2",
+    "element": "a",
+    "os_type": "unix",
+    "board": "seed",
+    "docker_capable": False,
+    "creds": {"user": "pass"},
+    "resources": ["a"],
+    "labs": ["lab"],
+}
+
+
+def _make_fake_repo(tmp_path: Path) -> MagicMock:
+    """Build a minimal fake Repo whose lab path is tmp_path."""
+    fake_repo = MagicMock()
+    fake_repo.sut_dir = tmp_path / "sut"
+    fake_repo.sut_dir.mkdir(parents=True, exist_ok=True)
+    (fake_repo.sut_dir / ".otto").mkdir(exist_ok=True)
+    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    fake_repo.init = []
+    fake_repo.libs = []
+    fake_repo.tests = []
+    fake_repo.labs = [tmp_path / "lab"]
+    return fake_repo
+
+
+def test_collect_returns_only_capable_sorted(tmp_path: Path) -> None:
+    """Only docker_capable hosts are returned, sorted, and non-dict entries are skipped."""
+    lab_path = tmp_path / "lab"
+    lab_path.mkdir(parents=True)
+    hosts_file = lab_path / cc.HOSTS_FILENAME
+    # docker_capable host "b_seed", non-docker host "a_seed", junk non-dict entry
+    hosts_file.write_text(json.dumps([_DOCKER_HOST, _NON_DOCKER_HOST, "junk-string-not-a-dict"]))
+    repo = _make_fake_repo(tmp_path)
+
+    result = cc.collect_docker_capable_host_ids([repo])
+
+    assert result == ["b_seed"]
+
+
+def test_collect_skips_missing_file(tmp_path: Path) -> None:
+    """A repo whose lab path has no hosts.json yields an empty list."""
+    lab_path = tmp_path / "lab"
+    lab_path.mkdir(parents=True)
+    # Deliberately do NOT write hosts.json
+    repo = _make_fake_repo(tmp_path)
+
+    assert cc.collect_docker_capable_host_ids([repo]) == []
+
+
+def test_collect_skips_non_list_json(tmp_path: Path) -> None:
+    """A hosts.json containing a non-list value (e.g. a dict) is skipped."""
+    lab_path = tmp_path / "lab"
+    lab_path.mkdir(parents=True)
+    (lab_path / cc.HOSTS_FILENAME).write_text(json.dumps({"not": "a list"}))
+    repo = _make_fake_repo(tmp_path)
+
+    assert cc.collect_docker_capable_host_ids([repo]) == []
+
+
+# ---------------------------------------------------------------------------
+# compute_fingerprint — init-module resolution branches + determinism
+# ---------------------------------------------------------------------------
+
+
+def _make_fingerprint_repo(
+    tmp_path: Path,
+    *,
+    init: list[str],
+    libs: list[Path],
+    labs: list[Path] | None = None,
+) -> MagicMock:
+    """Build a fake Repo suitable for compute_fingerprint tests."""
+    fake_repo = MagicMock()
+    fake_repo.sut_dir = tmp_path / "sut"
+    fake_repo.sut_dir.mkdir(parents=True, exist_ok=True)
+    (fake_repo.sut_dir / ".otto").mkdir(exist_ok=True)
+    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    fake_repo.init = init
+    fake_repo.libs = libs
+    fake_repo.tests = []
+    fake_repo.labs = labs or []
+    return fake_repo
+
+
+def test_fingerprint_resolves_single_py_module(tmp_path: Path) -> None:
+    """A single-file init module (lib/foo.py) is hashed via the resolved path."""
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    (lib_dir / "mymod.py").write_text("# init module")
+
+    repo = _make_fingerprint_repo(
+        tmp_path,
+        init=["mymod"],
+        libs=[lib_dir],
+    )
+    d1 = cc.compute_fingerprint([repo])
+    assert isinstance(d1, str)
+    assert len(d1) == 64  # sha256 hex
+
+
+def test_fingerprint_unresolved_module_token(tmp_path: Path) -> None:
+    """An unresolvable init token produces a DISTINCT fingerprint from the resolved case."""
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    (lib_dir / "mymod.py").write_text("# init module")
+
+    repo_resolved = _make_fingerprint_repo(
+        tmp_path / "resolved",
+        init=["mymod"],
+        libs=[lib_dir],
+    )
+    repo_unresolved = _make_fingerprint_repo(
+        tmp_path / "unresolved",
+        init=["no_such_module.sub.path"],
+        libs=[lib_dir],
+    )
+
+    d_resolved = cc.compute_fingerprint([repo_resolved])
+    d_unresolved = cc.compute_fingerprint([repo_unresolved])
+
+    assert d_resolved != d_unresolved
+
+
+def test_fingerprint_resolves_package_dir_module(tmp_path: Path) -> None:
+    """A package-directory init module (lib/mypkg/__init__.py) is hashed via rglob."""
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    pkg_dir = lib_dir / "mypkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("# package init")
+    (pkg_dir / "helpers.py").write_text("# helper")
+
+    repo = _make_fingerprint_repo(
+        tmp_path,
+        init=["mypkg"],
+        libs=[lib_dir],
+    )
+    digest = cc.compute_fingerprint([repo])
+    assert isinstance(digest, str)
+    assert len(digest) == 64  # sha256 hex
+
+
+def test_fingerprint_is_deterministic(tmp_path: Path) -> None:
+    """Calling compute_fingerprint twice on the same repo set returns equal digests."""
+    lib_dir = tmp_path / "lib"
+    lib_dir.mkdir()
+    (lib_dir / "mymod.py").write_text("# init module")
+
+    repo = _make_fingerprint_repo(
+        tmp_path,
+        init=["mymod"],
+        libs=[lib_dir],
+    )
+
+    d1 = cc.compute_fingerprint([repo])
+    d2 = cc.compute_fingerprint([repo])
+
+    assert d1 == d2
+
+
+def test_collect_skips_corrupt_json(tmp_path: Path) -> None:
+    """A hosts.json with invalid JSON (JSONDecodeError branch) is silently skipped."""
+    lab_path = tmp_path / "lab"
+    lab_path.mkdir(parents=True)
+    (lab_path / cc.HOSTS_FILENAME).write_text("not valid json }{")
+    repo = _make_fake_repo(tmp_path)
+
+    assert cc.collect_docker_capable_host_ids([repo]) == []
+
+
+def test_collect_skips_invalid_host_dict(tmp_path: Path) -> None:
+    """A docker_capable host dict that fails validate_host_dict is silently skipped."""
+    lab_path = tmp_path / "lab"
+    lab_path.mkdir(parents=True)
+    # docker_capable=True but missing required fields (no 'ip', invalid os_type, etc.)
+    bad_host = {"docker_capable": True, "element": "x", "os_type": "nonexistent_profile"}
+    (lab_path / cc.HOSTS_FILENAME).write_text(json.dumps([bad_host]))
+    repo = _make_fake_repo(tmp_path)
+
+    assert cc.collect_docker_capable_host_ids([repo]) == []

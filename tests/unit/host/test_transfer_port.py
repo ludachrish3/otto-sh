@@ -551,3 +551,95 @@ class TestWarmupForTransfer:
         # best-effort.
         await ft._warmup_for_transfer(file_count=2)
         assert ft._resolved_port_strategy == "ss"
+
+
+# ============================================================================
+# _find_free_port_auto — cached-strategy self-heal
+# ============================================================================
+
+
+class TestFindFreePortAutoSelfHeal:
+    @pytest.mark.asyncio
+    async def test_self_heal_resets_and_cascades(self) -> None:
+        """Cached strategy fails → reset → cascade from top of _PORT_STRATEGY_ORDER.
+
+        _PORT_STRATEGY_ORDER = ["ss", "netstat", "python", "proc"].
+        With "ss" pre-cached, the expected call sequence is:
+          1. "ss"      — cached attempt (raises)
+          2. "ss"      — first cascade entry (raises again)
+          3. "netstat" — second cascade entry (succeeds, returns 54321)
+        """
+        returned_port = 54321
+        call_strategies: list[str] = []
+
+        async def find_free_port_with_side_effect(strategy: str) -> int:
+            call_strategies.append(strategy)
+            if strategy == "ss":
+                raise RuntimeError("ss failed")
+            return returned_port
+
+        ft = make_ft(nc_port_strategy="auto")
+        ft._resolved_port_strategy = "ss"
+        ft._find_free_port_with = AsyncMock(side_effect=find_free_port_with_side_effect)
+
+        port = await ft._find_free_port_auto()
+
+        # Correct port returned from the cascade winner.
+        assert port == returned_port
+
+        # Exact call-strategy sequence: cached "ss" fails, then cascade
+        # starts from the top of _PORT_STRATEGY_ORDER ("ss" fails again,
+        # "netstat" succeeds).
+        assert call_strategies == ["ss", "ss", "netstat"], (
+            f"unexpected call sequence: {call_strategies}"
+        )
+
+        # The new cached strategy is the cascade winner, not the old one.
+        assert ft._resolved_port_strategy == "netstat"
+
+
+# ============================================================================
+# _resolve_listener_strategy — type cascade fallback
+# ============================================================================
+
+
+class TestResolveListenerStrategyCascade:
+    @pytest.mark.asyncio
+    async def test_type_cascade_falls_back_to_proc(self) -> None:
+        """When ss and netstat are absent, cascade returns 'proc'."""
+
+        async def mock_exec(cmd: str, **kw: object) -> CommandStatus:
+            if "type ss" in cmd:
+                return _fail("not found")
+            if "type netstat" in cmd:
+                return _fail("not found")
+            # compound probe fails too (command -v)
+            return _fail("not found")
+
+        ft = make_ft(nc_listener_check="auto", exec_cmd=AsyncMock(side_effect=mock_exec))
+        # Force _resolved_listener_check to None so prepare() runs but probe fails
+        ft._resolved_listener_check = None
+        ft._resolved_port_strategy = "ss"  # so prepare() short-circuits the port part
+
+        result = await ft._resolve_listener_strategy()
+
+        assert result == "proc"
+
+    @pytest.mark.asyncio
+    async def test_type_cascade_picks_ss_when_available(self) -> None:
+        """When type ss succeeds in the cascade, returns 'ss' and caches it."""
+
+        async def mock_exec(cmd: str, **kw: object) -> CommandStatus:
+            if "type ss" in cmd:
+                return _ok("/usr/sbin/ss")
+            # compound probe fails (command -v)
+            return _fail("not found")
+
+        ft = make_ft(nc_listener_check="auto", exec_cmd=AsyncMock(side_effect=mock_exec))
+        ft._resolved_listener_check = None
+        ft._resolved_port_strategy = "ss"
+
+        result = await ft._resolve_listener_strategy()
+
+        assert result == "ss"
+        assert ft._resolved_listener_check == "ss"
