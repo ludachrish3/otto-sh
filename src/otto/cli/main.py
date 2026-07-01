@@ -12,6 +12,8 @@ from typing import (
 )
 
 import typer
+from typer.core import TyperGroup
+from typing_extensions import override
 
 from ..configmodule import (
     get_completion_names,
@@ -128,11 +130,55 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
     return sorted(n for n in names if n.startswith(incomplete))
 
 
+def _is_lab_free_flag_invocation(ctx: typer.Context) -> bool:
+    """Return True when the pending subcommand tokens contain a lab-free flag.
+
+    Checks the snapshot saved by _OttoGroup.parse_args first (works under
+    CliRunner and the real binary), then falls back to sys.argv (belt-and-
+    suspenders for any invocation path that bypasses _OttoGroup.parse_args).
+    The sys.argv check is scoped to tokens following a known subcommand name
+    to avoid false-positives when sys.argv is e.g. a pytest command line.
+    """
+    subcmd_args: set[str] = set(ctx.meta.get("_pending_subcmd_args", ()))
+    if not subcmd_args & _LAB_FREE_FLAGS:
+        argv = sys.argv[1:]
+        for i, tok in enumerate(argv):
+            if tok in _SUBCOMMAND_MODULES:
+                subcmd_args = set(argv[i:])
+                break
+    return bool(subcmd_args & _LAB_FREE_FLAGS)
+
+
+class _OttoGroup(TyperGroup):
+    """Root click group that snapshots pending subcommand tokens into ctx.meta.
+
+    Typer's TyperGroup.invoke clears ``ctx._protected_args`` / ``ctx.args``
+    before calling the group callback, so those attributes are always empty by
+    the time ``main()`` runs.  This subclass saves a copy into ``ctx.meta``
+    during ``parse_args`` (before they are cleared) so that the callback can
+    detect help / discovery flags without touching ``sys.argv``.
+    """
+
+    @override
+    def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
+        # ctx: Any mirrors HostGroup.list_commands — Typer's vendored click fork
+        # makes typer.Context (typer.models.Context) incompatible with the
+        # parent's _click.Context under strict typing.
+        result = super().parse_args(ctx, args)
+        # Save the pending subcommand tokens (subcommand name + its args) so
+        # the main() callback can inspect them even after invoke() clears them.
+        ctx.meta["_pending_subcmd_args"] = list(
+            getattr(ctx, "_protected_args", []) + getattr(ctx, "args", [])
+        )
+        return result
+
+
 app = typer.Typer(
     no_args_is_help=True,
     help=DESCRIPTION,
     invoke_without_command=True,
     pretty_exceptions_show_locals=True,
+    cls=_OttoGroup,
     context_settings={
         "help_option_names": ["-h", "--help"],
     },
@@ -293,6 +339,11 @@ def main(  # noqa: PLR0913 — CLI command params
     # would be nonsensical. Skip the whole callback body for them; the
     # subcommand runs on its own.
     if ctx.invoked_subcommand in _LAB_FREE_SUBCOMMANDS:
+        return
+
+    # Help requests and discovery flags (--list-suites, --list-tests, etc.)
+    # touch no host state — skip the --lab requirement for them too.
+    if _is_lab_free_flag_invocation(ctx):
         return
 
     # `--lab` is no longer a hard-required Typer option (so lab-free subcommands
@@ -474,6 +525,14 @@ _SUBCOMMAND_MODULES: dict[str, tuple[str, str]] = {
 # top-level callback skips its lab / reservation bootstrap (and the `--lab`
 # requirement) for these.
 _LAB_FREE_SUBCOMMANDS: frozenset[str] = frozenset({"schema"})
+
+# Flags that request help or discovery information about registered suites /
+# instructions. When any of these appear in the pending subcommand tokens the
+# invocation touches no host state, so the `--lab` requirement is skipped.
+# NOTE: `--list-hosts` is intentionally excluded — it queries live lab state.
+_LAB_FREE_FLAGS: frozenset[str] = frozenset(
+    {"--help", "-h", "--list-suites", "--list-tests", "--list-markers", "--list-instructions"}
+)
 
 
 def _requested_subcommands() -> set[str]:

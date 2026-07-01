@@ -181,6 +181,7 @@ markers = [
     "integration: requires running Vagrant VMs (deselect with -m 'not integration')",
     "hops: multi-hop integration tests requiring 3 Vagrant VMs (deselect with -m 'not hops')",
     "embedded: requires Zephyr QEMU under the zephyr Vagrant VM (deselect with -m 'not embedded')",
+    "hostless: e2e test that needs no test bed (no Vagrant VMs, no docker daemon, no Zephyr) — deselect with -m 'not hostless'",
     "timeout(seconds): fail the test if it exceeds the given number of seconds",
     "retry(n): retry the test up to n times on failure before reporting it as failed",
     "stability: heavy stability/soak tests — excluded from `make coverage`; run via `make stability` / `make stability-embedded`",

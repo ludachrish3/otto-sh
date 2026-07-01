@@ -150,6 +150,86 @@ class TestLabFreeSubcommands:
         assert (out / "hosts.schema.json").is_file()
 
 
+# ── Lab-free flags: --help and --list-* discovery ────────────────────────────
+
+
+class TestLabFreeFlags:
+    """Subcommand --help and --list-* discovery flags must work without --lab.
+
+    These flags inspect otto itself (registered suites / instructions) and
+    touch no host resources, so forcing --lab would be a pointless barrier.
+
+    Boundary: actual command execution (``otto test <Suite>``) and
+    ``otto --list-hosts`` still require --lab because they operate on real
+    lab state.
+    """
+
+    def test_test_help_exits_zero_without_lab(self):
+        """``otto test --help`` must succeed with no --lab."""
+        result = runner.invoke(app, ["test", "--help"], env={"OTTO_LAB": ""})
+        assert result.exit_code == 0, result.output
+
+    def test_test_short_help_exits_zero_without_lab(self):
+        """``otto test -h`` must succeed with no --lab."""
+        result = runner.invoke(app, ["test", "-h"], env={"OTTO_LAB": ""})
+        assert result.exit_code == 0, result.output
+
+    def test_run_help_exits_zero_without_lab(self):
+        """``otto run --help`` must succeed with no --lab."""
+        result = runner.invoke(app, ["run", "--help"], env={"OTTO_LAB": ""})
+        assert result.exit_code == 0, result.output
+
+    def test_test_list_suites_exits_zero_without_lab(self, tmp_path):
+        """``otto test --list-suites`` must succeed with no --lab."""
+        result = runner.invoke(
+            app,
+            ["test", "--list-suites"],
+            env={"OTTO_LAB": "", "OTTO_XDIR": str(tmp_path)},
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_test_list_tests_exits_zero_without_lab(self, tmp_path):
+        """``otto test --list-tests`` must succeed with no --lab."""
+        result = runner.invoke(
+            app,
+            ["test", "--list-tests"],
+            env={"OTTO_LAB": "", "OTTO_XDIR": str(tmp_path)},
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_test_list_markers_exits_zero_without_lab(self, tmp_path):
+        """``otto test --list-markers`` must succeed with no --lab."""
+        result = runner.invoke(
+            app,
+            ["test", "--list-markers"],
+            env={"OTTO_LAB": "", "OTTO_XDIR": str(tmp_path)},
+        )
+        assert result.exit_code == 0, result.output
+
+    def test_run_list_instructions_exits_zero_without_lab(self, tmp_path):
+        """``otto run --list-instructions`` must succeed with no --lab."""
+        result = runner.invoke(
+            app,
+            ["run", "--list-instructions"],
+            env={"OTTO_LAB": "", "OTTO_XDIR": str(tmp_path)},
+        )
+        assert result.exit_code == 0, result.output
+
+    # ── Boundary: these still require --lab ───────────────────────────────────
+
+    def test_actual_suite_run_still_requires_lab(self):
+        """``otto test <Suite>`` (no --help/--list-*) must still exit 2 without --lab."""
+        result = runner.invoke(app, ["test", "TestX"], env={"OTTO_LAB": ""})
+        assert result.exit_code == 2
+        assert "--lab" in result.stderr or "--lab" in result.output
+
+    def test_list_hosts_still_requires_lab(self):
+        """``otto --list-hosts`` queries lab state; must still exit 2 without --lab."""
+        result = runner.invoke(app, ["--list-hosts"], env={"OTTO_LAB": ""})
+        assert result.exit_code == 2
+        assert "--lab" in result.stderr or "--lab" in result.output
+
+
 # ── Logger arguments ──────────────────────────────────────────────────────────
 
 

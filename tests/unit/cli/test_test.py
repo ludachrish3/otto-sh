@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import typer
 from typer.testing import CliRunner
 
@@ -145,7 +146,7 @@ class TestRunSuiteInternals:
         get_context().output_dir = tmp_path
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("pytest.main") as mock_main,
+            patch("pytest.main", return_value=pytest.ExitCode.OK) as mock_main,
         ):
             run_suite(_FakeSuite, fake_file, None, self._fake_parent_ctx({}))
 
@@ -162,7 +163,7 @@ class TestRunSuiteInternals:
         get_context().output_dir = tmp_path
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("pytest.main") as mock_main,
+            patch("pytest.main", return_value=pytest.ExitCode.OK) as mock_main,
         ):
             run_suite(_FakeSuite3, "fake.py", None, self._fake_parent_ctx({}))
 
@@ -178,7 +179,7 @@ class TestRunSuiteInternals:
         get_context().output_dir = tmp_path
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("pytest.main") as mock_main,
+            patch("pytest.main", return_value=pytest.ExitCode.OK) as mock_main,
         ):
             run_suite(
                 _FakeSuite4, "fake.py", None, self._fake_parent_ctx({"markers": "not integration"})
@@ -206,7 +207,7 @@ class TestRunSuiteInternals:
         get_context().output_dir = tmp_path
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("pytest.main"),
+            patch("pytest.main", return_value=pytest.ExitCode.OK),
             patch("otto.suite.plugin.OttoPlugin", _CapturingPlugin),
         ):
             run_suite(
@@ -242,7 +243,7 @@ class TestRunSuiteInternals:
         out = tmp_path / "somewhere.db"
         with (
             patch("otto.cli.test.get_repos", return_value=[]),
-            patch("pytest.main"),
+            patch("pytest.main", return_value=pytest.ExitCode.OK),
             patch("otto.suite.plugin.OttoPlugin", _CapturingPlugin),
         ):
             run_suite(
@@ -258,6 +259,69 @@ class TestRunSuiteInternals:
             )
 
         assert captured.get("monitor_output") == out
+
+    def test_exit_code_propagated_on_tests_failed(self, tmp_path):
+        """run_suite must raise typer.Exit(1) when pytest reports TESTS_FAILED."""
+
+        class _FailSuite:
+            __name__ = "_FailSuite"
+
+        get_context().output_dir = tmp_path
+        with (
+            patch("otto.cli.test.get_repos", return_value=[]),
+            patch("pytest.main", return_value=pytest.ExitCode.TESTS_FAILED),
+            pytest.raises(typer.Exit) as exc_info,
+        ):
+            run_suite(_FailSuite, "fake.py", None, self._fake_parent_ctx({}))
+        assert exc_info.value.exit_code == 1
+
+    def test_no_exit_on_ok(self, tmp_path):
+        """run_suite must NOT raise typer.Exit when pytest reports OK (all passed)."""
+
+        class _OkSuite:
+            __name__ = "_OkSuite"
+
+        get_context().output_dir = tmp_path
+        with (
+            patch("otto.cli.test.get_repos", return_value=[]),
+            patch("pytest.main", return_value=pytest.ExitCode.OK),
+        ):
+            # Should complete without raising.
+            run_suite(_OkSuite, "fake.py", None, self._fake_parent_ctx({}))
+
+    def test_exit_code_propagated_on_no_tests_collected(self, tmp_path):
+        """run_suite must raise typer.Exit(5) when pytest collects nothing.
+
+        A named suite that collects zero tests is treated as an error — the
+        caller explicitly requested a suite but nothing ran.
+        """
+
+        class _NoTestsSuite:
+            __name__ = "_NoTestsSuite"
+
+        get_context().output_dir = tmp_path
+        with (
+            patch("otto.cli.test.get_repos", return_value=[]),
+            patch("pytest.main", return_value=pytest.ExitCode.NO_TESTS_COLLECTED),
+            pytest.raises(typer.Exit) as exc_info,
+        ):
+            run_suite(_NoTestsSuite, "fake.py", None, self._fake_parent_ctx({}))
+        assert exc_info.value.exit_code == 5
+
+    def test_exit_code_propagated_on_internal_error(self, tmp_path):
+        """run_suite must raise typer.Exit(3) when pytest hits INTERNAL_ERROR."""
+
+        class _InternalErrSuite:
+            __name__ = "_InternalErrSuite"
+
+        get_context().output_dir = tmp_path
+        with (
+            patch("otto.cli.test.get_repos", return_value=[]),
+            patch("pytest.main", return_value=pytest.ExitCode.INTERNAL_ERROR),
+            pytest.raises(typer.Exit) as exc_info,
+        ):
+            run_suite(_InternalErrSuite, "fake.py", None, self._fake_parent_ctx({}))
+        assert exc_info.value.exit_code == 3
 
 
 # ── Type enforcement ──────────────────────────────────────────────────────────
@@ -1157,7 +1221,7 @@ class TestRunSuiteReport:
 
         with (
             patch("otto.cli.test.get_repos", return_value=[repo]),
-            patch("pytest.main"),
+            patch("pytest.main", return_value=pytest.ExitCode.OK),
             patch("otto.cli.test._run_coverage", new=AsyncMock()),
             patch("otto.cli.test._cov_clean_remotes", new=AsyncMock()),
             patch("otto.coverage.reporter.run_coverage_report", new=mock_run_report),

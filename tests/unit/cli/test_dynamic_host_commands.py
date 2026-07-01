@@ -757,3 +757,47 @@ def test_embedded_load_unload_are_cli_exposed():
     verbs = collect_exposed_methods(ZephyrHost)
     assert "load" in verbs
     assert "unload" in verbs
+
+
+# ---------------------------------------------------------------------------
+# Task 2.7: NotImplementedError exits cleanly (no traceback)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_make_method_command_not_implemented_exits_cleanly(capsys):
+    """A host method that raises NotImplementedError must exit code 1 cleanly.
+
+    The error message must mention 'does not support' and the verb name, and
+    no NotImplementedError must escape — only typer.Exit(1).
+    host.close() must still be called (finally block preserved).
+    """
+
+    class _Host:
+        id = "local"
+        close = AsyncMock()
+
+        async def interact(self):
+            raise NotImplementedError("The 'LocalHost' class does not support interactive sessions")
+
+    host = _Host()
+
+    class _Ctx:
+        obj = host
+
+    @cli_exposed
+    async def interact(self): ...
+
+    cmd = make_method_command("interact", interact)
+
+    with pytest.raises(typer.Exit) as ei:
+        await cmd(_Ctx())
+
+    assert ei.value.exit_code == 1
+    # close() must still be called (finally preserved)
+    host.close.assert_awaited_once()
+    # output must mention "does not support" and the attr_name
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert "does not support" in combined
+    assert "interact" in combined

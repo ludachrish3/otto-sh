@@ -8,8 +8,6 @@ that registers ``MyHost`` with a ``@cli_exposed`` method gets ``otto host <id> <
 with no extra wiring (the same first/third-party symmetry otto's own verbs use).
 """
 
-from __future__ import annotations
-
 import inspect
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any
@@ -70,26 +68,32 @@ def _render_result(result: Any, success: str | None = None) -> None:
         rprint(result)
 
 
-def make_method_command(attr_name: str, sample_func: Callable) -> Callable:  # ty: ignore[missing-type-argument]
+def make_method_command(
+    attr_name: str, sample_func: Callable[..., Any], cli_name: str | None = None
+) -> Callable[..., Any]:
     """Build the async Typer command body dispatching to ``host.<attr_name>``.
 
     *sample_func* is the unbound method used to derive the CLI signature
     (via :func:`~otto.cli.param_synth.build_cli_binding`); the bound method on the
     resolved host is what actually runs.
+
+    *cli_name* is the verb as the user types it (e.g. ``"login"``).  When
+    omitted it falls back to *attr_name* so callers that only know the Python
+    name still produce a useful message.
     """
     from rich import print as rprint
 
     from .param_synth import build_cli_binding
 
     binding = build_cli_binding(sample_func)
+    verb = cli_name if cli_name is not None else attr_name
 
-    async def _cmd(ctx: "typer.Context", **kw: Any) -> None:
+    async def _cmd(ctx: typer.Context, **kw: Any) -> None:
         host = ctx.obj
         method = getattr(host, attr_name, None)
         if method is None or not callable(method):
             rprint(
-                f"[red]Error:[/red] host {getattr(host, 'id', '?')!r} does not "
-                f"support {attr_name!r}."
+                f"[red]Error:[/red] host {getattr(host, 'id', '?')!r} does not support {verb!r}."
             )
             raise typer.Exit(1)
         call_kw = dict(binding.excluded)
@@ -115,6 +119,12 @@ def make_method_command(attr_name: str, sample_func: Callable) -> Callable:  # t
         success = getattr(method, "__cli_success__", None)
         try:
             result = await method(**call_kw)
+        except NotImplementedError as e:
+            rprint(
+                f"[red]Error:[/red] host {getattr(host, 'id', '?')!r} does not "
+                f"support {verb!r}: {e}"
+            )
+            raise typer.Exit(1) from None
         finally:
             await host.close()
         _render_result(result, success)
@@ -190,14 +200,14 @@ def _synthesize_command(
     """
     from ..utils import async_typer_command
 
-    cmd_fn = make_method_command(attr_name, sample_func)
+    cmd_fn = make_method_command(attr_name, sample_func, cli_name)
     tmp = typer.Typer()
     tmp.command(name=cli_name, help=help_text or None)(async_typer_command(cmd_fn))
     converted: Any = typer.main.get_command(tmp)
     return converted.commands[cli_name] if hasattr(converted, "commands") else converted
 
 
-def _make_host_group() -> type[TyperGroup]:
+def _make_host_group() -> "type[TyperGroup]":
     """Build the ``HostGroup`` class lazily (defers ``TyperGroup`` subclassing)."""
     from typer.core import TyperGroup
 

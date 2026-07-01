@@ -309,7 +309,8 @@ def run_suite(
         collector = _StabilityCollector()
         otto_plugin._stability_collector = collector  # noqa: SLF001 — intra-package write to stability plugin's collector slot
 
-    pytest.main(
+    # Capture the exit code so we can propagate it after post-run steps.
+    rc = pytest.main(
         [*base_args, f"--junitxml={results_path}"],
         plugins=[otto_plugin, options_plugin],
     )
@@ -345,6 +346,15 @@ def run_suite(
                 "Coverage: %.1f%% overall (%d files)", store.overall_pct(), store.file_count()
             )
             logger.info("Report: %s", report_dir / "index.html")
+
+    # Propagate a non-zero pytest exit code so callers and CI scripts see
+    # failure.  rc=5 (NO_TESTS_COLLECTED) is also treated as an error: a
+    # named suite that collects nothing almost certainly indicates a
+    # misconfiguration or stale suite name.  The stability threshold violation
+    # path (SystemExit(1) from _print_stability_report) already exits before
+    # reaching this point, so there is no double-exit risk.
+    if rc != 0:
+        raise typer.Exit(code=int(rc))
 
 
 def _print_stability_report(

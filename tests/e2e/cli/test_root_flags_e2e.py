@@ -1,0 +1,46 @@
+"""End-to-end tests for otto root action flags (lab-free).
+
+Verifies that ``--version``, ``--list-labs``, ``--list-hosts``, and
+``--clear-autocomplete-cache`` work correctly as subprocess invocations.
+All tests carry the ``hostless`` marker so they run without a live lab.
+"""
+
+from pathlib import Path
+
+import pytest
+
+from tests.e2e._otto_subprocess import REPO_E2E, run_otto
+
+pytestmark = pytest.mark.hostless
+
+
+def test_version(tmp_path: Path) -> None:
+    """--version exits 0 and prints 'otto version:' to stdout."""
+    r = run_otto(["--version"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    assert r.returncode == 0
+    assert "otto version:" in r.stdout
+
+
+def test_list_labs(tmp_path: Path) -> None:
+    """--list-labs exits 0 and lists the concrete lab names from tech1 fixture data."""
+    r = run_otto(["--list-labs"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    assert r.returncode == 0, r.stderr
+    # repo_e2e → tech1 fixture → two labs: embedded and veggies
+    assert "veggies" in r.stdout
+    assert "embedded" in r.stdout
+
+
+def test_list_hosts(tmp_path: Path) -> None:
+    """--list-hosts with --lab veggies exits 0 and lists a concrete host id."""
+    r = run_otto(["--lab", "veggies", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    assert r.returncode == 0, r.stderr
+    # tech1 hosts.json: carrot/tomato/pepper all belong to lab "veggies"
+    assert "carrot_seed" in r.stdout
+
+
+def test_clear_autocomplete_cache(tmp_path: Path) -> None:
+    """--clear-autocomplete-cache exits 0 and prints a message containing 'cache'."""
+    r = run_otto(["--clear-autocomplete-cache"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    assert r.returncode == 0
+    # message varies by cache state; all forms contain "cache"
+    assert "cache" in r.stdout.lower()
