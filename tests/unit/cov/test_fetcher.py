@@ -87,6 +87,30 @@ class TestGcdaFetcher:
         assert len(result) == 0
 
     @pytest.mark.asyncio
+    async def test_fetch_all_skips_builtin_local(self, tmp_path, fake_config_module):
+        """The built-in `local` host (injected into every lab) has no remote .gcda —
+        the fetcher must skip it (no find, no empty staging dir), not query it."""
+        from otto.host.local_host import LocalHost
+
+        local = LocalHost()
+        unix = _make_mock_host("host1")
+        unix.oneshot.return_value = CommandStatus(
+            command="find ...",
+            output="/var/cov/foo.gcda\n",
+            status=Status.Success,
+            retcode=0,
+        )
+        unix.get.return_value = (Status.Success, "")
+        fake_config_module(local, unix)
+
+        fetcher = GcdaFetcher(tmp_path / "staging")
+        result = await fetcher.fetch_all("/var/cov")
+
+        assert "host1" in result
+        assert "local" not in result  # LocalHost skipped before any remote query
+        assert not (tmp_path / "staging" / "local").exists()
+
+    @pytest.mark.asyncio
     async def test_fetch_all_transfer_failure(self, tmp_path, fake_config_module):
         host = _make_mock_host("host1")
         host.oneshot.return_value = CommandStatus(

@@ -31,13 +31,13 @@ class PosixFileOps:
     def _q(path: "str | Path") -> str:
         return shlex.quote(str(path))
 
-    @cli_exposed
+    @cli_exposed(output_dir=False)
     async def exists(self, path: "str | Path") -> bool:
         """Return True when *path* exists on the host (``test -e``)."""
         result = await self.oneshot(f"test -e {self._q(path)}")  # ty: ignore[unresolved-attribute]
         return result.status.is_ok
 
-    @cli_exposed
+    @cli_exposed(output_dir=False)
     async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002 — CLI-exposed param name, maps to --all flag
         """List entry names in *path* (``ls -1``; *all* adds ``-A`` for dotfiles)."""
         flags = "-1A" if all else "-1"
@@ -82,7 +82,7 @@ class PosixFileOps:
         )
         return result.status, result.output
 
-    @cli_exposed
+    @cli_exposed(output_dir=False)
     async def read_file(self, path: "str | Path") -> str:
         """Return the text contents of *path*.
 

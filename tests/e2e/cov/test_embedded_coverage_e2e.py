@@ -33,6 +33,7 @@ import pytest
 import tomli
 
 from otto.logger.mode import LogMode
+from tests.e2e._otto_subprocess import assert_output_dir
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO3 = PROJECT_ROOT / "tests" / "repo3"
@@ -218,3 +219,7 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
     lh, lf = _product_line_coverage(info)
     assert lf > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"
     assert lh > 0, f"cov_ext.c shows no covered lines ({lh}/{lf})"
+
+    # a real embedded suite run produces results → test output dir created.
+    # (NB: the `--cov-dir` here is tmp_path/"cov", unrelated to any `otto cov` run.)
+    assert_output_dir(tmp_path, "test")

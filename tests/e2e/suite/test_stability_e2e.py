@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e._otto_subprocess import assert_output_dir
+
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"
 COVERAGERC = PROJECT_ROOT / ".coveragerc"
@@ -98,6 +100,8 @@ class TestStabilityE2E:
 
         # Stability report should show all iterations passed
         assert "STABLE" in result.stdout, f"Expected STABLE in stability report:\n{result.stdout}"
+        # a real suite run produces results → test output dir created
+        assert_output_dir(xdir, "test")
 
     def test_single_run_baseline(self, tmp_path: Path):
         """Sanity check: TestStabilityFixture works without stability mode."""
@@ -114,3 +118,5 @@ class TestStabilityE2E:
             f"--- stdout ---\n{result.stdout}\n"
             f"--- stderr ---\n{result.stderr}"
         )
+        # a real suite run produces results → test output dir created
+        assert_output_dir(xdir, "test")

@@ -549,13 +549,13 @@ class EmbeddedHost(RemoteHost):
     #  File operations
     ####################
 
-    @cli_exposed
+    @cli_exposed(output_dir=False)
     async def exists(self, path: "str | Path") -> bool:
         """Return ``True`` when *path* exists on the device (via ``fs ls``)."""
         result = await self._run_one(self.filesystem.ls_command(str(path)))
         return result.status.is_ok
 
-    @cli_exposed
+    @cli_exposed(output_dir=False)
     async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002, ARG002 — A002: CLI-exposed param name; ARG002: required by UnixHost.ls override signature
         """List entry names in *path* via the device ``fs ls`` former."""
         result = await self._run_one(self.filesystem.ls_command(str(path)))

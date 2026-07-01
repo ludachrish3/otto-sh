@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.e2e._otto_subprocess import assert_no_output_dir
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 REPO1 = PROJECT_ROOT / "tests" / "repo1"
 COVERAGERC = PROJECT_ROOT / ".coveragerc"
@@ -105,6 +107,9 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     # only suggests hosts that can actually run containers. All three veggies
     # VMs are docker-capable (carrot/tomato gained docker for the e2e pool).
     assert entry["docker_hosts"] == ["carrot_seed", "pepper_seed", "tomato_seed"]
+    # `otto --help` is informational (it seeds the completion cache under
+    # xdir/.otto/, not an output dir) — no per-invocation run dir is created.
+    assert_no_output_dir(tmp_path)
 
 
 def test_slow_path_seeds_cache_with_option_schemas(tmp_path: Path) -> None:

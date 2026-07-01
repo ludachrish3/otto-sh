@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures._host_pool import lease_unix_host
+from tests.e2e._otto_subprocess import assert_output_dir
 
 # Docker container hosts require an SSH-based parent (DockerContainerHost
 # uses docker exec via the parent's SSH session).  tomato_seed defaults to
@@ -157,3 +158,5 @@ def test_run_instruction_on_container(teardown_after, docker_host, tmp_path):
     assert "repo1-fixture" in run.stdout, (
         f"expected 'repo1-fixture' marker in stdout from the container:\n{run.stdout}"
     )
+    # the run instruction does real work on a host → run output dir created
+    assert_output_dir(tmp_path, "run")

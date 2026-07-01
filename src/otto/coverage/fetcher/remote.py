@@ -53,13 +53,16 @@ async def _fetch_one_host(
     """
     # DockerContainerHost piggybacks on a parent and doesn't compile the
     # SUT, so it never has its own .gcda files. EmbeddedHost (RTOS targets)
-    # likewise carries no toolchain. Skip without creating an empty dest
-    # dir that would trip up downstream tools (e.g. lcov's ``geninfo``
-    # errors out on empty dirs).
+    # likewise carries no toolchain. LocalHost is the built-in `local` host
+    # injected into every lab (see otto.host.builtin_hosts) — it is the dev
+    # machine, not a remote SUT, so it has no per-host .gcda to fetch. Skip all
+    # three without creating an empty dest dir that would trip up downstream
+    # tools (e.g. lcov's ``geninfo`` errors out on empty dirs).
     from ...host.docker_host import DockerContainerHost
     from ...host.embedded_host import EmbeddedHost
+    from ...host.local_host import LocalHost
 
-    if isinstance(host, (DockerContainerHost, EmbeddedHost)):
+    if isinstance(host, (DockerContainerHost, EmbeddedHost, LocalHost)):
         return None
 
     label = host.id

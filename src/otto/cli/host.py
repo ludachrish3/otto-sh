@@ -150,7 +150,20 @@ def main(
         rprint(ctx.get_help())
         raise typer.Exit
 
-    get_context().output_dir = management.create_output_dir("host", f"{ctx.invoked_subcommand}")
+    # A help/discovery invocation (e.g. `otto host <vm> <verb> --help`) runs no
+    # verb, so it must not create an output dir, gate reservations, or build the
+    # host. The root callback records this on ctx.meta and skips init_cli_logging
+    # for it, so create_output_dir here would otherwise raise.
+    if ctx.meta.get("_help_or_discovery"):
+        return
+
+    # Read-only query verbs (exists/ls/read-file/is-installed/is-uninstalled/lsmod)
+    # declare output_dir=False and create no per-invocation dir. The reservation
+    # gate still runs for every verb — even read-only ones connect to the host.
+    from .expose import verb_creates_output_dir
+
+    if verb_creates_output_dir(ctx.invoked_subcommand):
+        get_context().output_dir = management.create_output_dir("host", f"{ctx.invoked_subcommand}")
     from ..reservations import gate
 
     gate(ctx)

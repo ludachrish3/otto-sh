@@ -132,12 +132,15 @@ def cli_exposed(
     name: str | None = None,
     help_: str | None = None,
     success: str | None = None,
+    output_dir: bool = True,
 ) -> Callable[..., Any]:
     """Mark a host coroutine method for auto-exposure as an ``otto host`` subcommand.
 
     ``name`` defaults to the method name with underscores dashed.
     ``success`` is an optional message printed on a successful ``(Status, "")``
     result (e.g. "Transfer complete.").
+    ``output_dir=False`` marks a read-only verb that creates no per-invocation
+    output directory (e.g. ``exists``/``lsmod``); the default ``True`` keeps one.
 
     Usable bare (``@cli_exposed``) or called (``@cli_exposed(name=..., ...)``).
     """
@@ -147,6 +150,7 @@ def cli_exposed(
         f.__cli_name__ = name or f.__name__.replace("_", "-")  # ty: ignore[unresolved-attribute]
         f.__cli_help__ = help_  # ty: ignore[unresolved-attribute]
         f.__cli_success__ = success  # ty: ignore[unresolved-attribute]
+        f.__cli_output_dir__ = output_dir  # ty: ignore[unresolved-attribute]
         return f
 
     return deco(fn) if fn is not None else deco

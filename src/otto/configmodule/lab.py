@@ -6,6 +6,7 @@ from dataclasses import (
     dataclass,
     field,
 )
+from logging import getLogger
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -125,5 +126,19 @@ def load_lab(
     lab = labs[0]
     for additional_lab in labs[1:]:
         lab += additional_lab
+
+    # Inject the built-in `local` host so `otto host local <verb>` resolves in any
+    # lab, on any backend, without a custom lab-repository. Inject-if-absent: a lab
+    # that defines its own `local` host wins.
+    from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, make_builtin_local_host
+
+    if BUILTIN_LOCAL_HOST_ID not in lab.hosts:
+        lab.add_host(make_builtin_local_host())
+    else:
+        getLogger("otto").debug(
+            "Lab %r defines its own %r host; skipping the built-in local host.",
+            lab.name,
+            BUILTIN_LOCAL_HOST_ID,
+        )
 
     return lab

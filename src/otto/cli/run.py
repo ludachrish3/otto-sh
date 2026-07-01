@@ -66,7 +66,11 @@ def main(
     if ctx.resilient_parsing:
         return
 
-    if ctx.invoked_subcommand is not None:
+    # A help/discovery invocation (e.g. `otto run <instruction> --help`) runs no
+    # instruction, so it must not create an output dir or gate reservations. The
+    # root callback records this on ctx.meta and skips init_cli_logging for it, so
+    # calling create_output_dir here would otherwise raise.
+    if ctx.invoked_subcommand is not None and not ctx.meta.get("_help_or_discovery"):
         get_context().output_dir = management.create_output_dir("run", f"{ctx.invoked_subcommand}")
         from ..reservations import gate
 

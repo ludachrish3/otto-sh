@@ -30,7 +30,8 @@ def test_load_lab_default_repository_uses_search_paths(tmp_path):
     lab = load_lab("testlab", search_paths=[tmp_path])
     assert isinstance(lab, Lab)
     assert lab.name == "testlab"
-    assert len(lab.hosts) == 1
+    # `local` is the built-in host load_lab injects into every lab.
+    assert set(lab.hosts) == {"orange", "local"}
 
 
 def test_load_lab_uses_injected_repository(tmp_path):
@@ -50,7 +51,7 @@ def test_load_lab_uses_injected_repository(tmp_path):
     repo = JsonFileLabRepository([tmp_path])
     lab = load_lab("injected", repository=repo)
     assert lab.name == "injected"
-    assert len(lab.hosts) == 1
+    assert set(lab.hosts) == {"orange", "local"}  # `local` = built-in injection
 
 
 def test_load_lab_merges_multiple_names(tmp_path):
@@ -76,4 +77,4 @@ def test_load_lab_merges_multiple_names(tmp_path):
     )
     repo = JsonFileLabRepository([tmp_path])
     lab = load_lab("lab_a,lab_b", repository=repo)
-    assert len(lab.hosts) == 2
+    assert set(lab.hosts) == {"orange", "tomato", "local"}  # `local` = built-in injection

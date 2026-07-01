@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from tests._fixtures._host_pool import lease_unix_host
+from tests.e2e._otto_subprocess import assert_output_dir
 
 # Docker container hosts require an SSH-based UnixHost parent (see
 # DockerContainerHost._make_session: term must be 'ssh').  tomato_seed defaults
@@ -178,6 +179,8 @@ def test_e2e_up_then_down(teardown_after, docker_host, tmp_path):
     down = _run_otto("docker", "down", "--on", docker_host, xdir=tmp_path, compose_suffix=suffix)
     assert down.returncode == 0, down.stderr
     assert "stack down" in down.stdout
+    # docker orchestration runs on a docker host → docker output dir created
+    assert_output_dir(tmp_path, "docker")
 
 
 def test_e2e_host_run_against_running_container(teardown_after, docker_host, tmp_path):
@@ -199,6 +202,8 @@ def test_e2e_host_run_against_running_container(teardown_after, docker_host, tmp
         f"stdout:\n{run.stdout}\nstderr:\n{run.stderr}"
     )
     assert "repo1-fixture" in run.stdout, run.stdout
+    # docker orchestration runs on a docker host → docker output dir created
+    assert_output_dir(tmp_path, "docker")
 
 
 def test_e2e_host_put_get_roundtrip(teardown_after, docker_host, tmp_path):

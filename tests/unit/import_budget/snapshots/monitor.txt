@@ -14,6 +14,7 @@ otto.context
 otto.filesystem
 otto.host
 otto.host.binary_loader
+otto.host.builtin_hosts
 otto.host.capability
 otto.host.command_frame
 otto.host.connections

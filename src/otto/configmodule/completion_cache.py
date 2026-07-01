@@ -636,9 +636,12 @@ def collect_host_ids(repos: list["Repo"]) -> list[str]:
     Returns a sorted, de-duplicated list. Malformed files / entries are
     silently skipped — completion must never crash on bad user data.
     """
+    from ..host.builtin_hosts import builtin_host_ids
     from ..storage.factory import create_host_from_dict, validate_host_dict
 
-    ids: set[str] = set()
+    # Seed with the built-in hosts otto injects into every lab (e.g. `local`) so
+    # they are tab-completable in every repo, mirroring load_lab's injection.
+    ids: set[str] = set(builtin_host_ids())
     for repo in repos:
         # Map of host_id -> docker_capable flag, scoped to this repo's labs.
         # Populated as we walk hosts.json so we can synthesize container

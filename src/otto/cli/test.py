@@ -672,7 +672,11 @@ def main(  # noqa: PLR0913 — CLI command params
         monitor_output=monitor_output,
         monitor_hosts=monitor_hosts,
     )
-    if ctx.invoked_subcommand is not None:
+    # A help/discovery invocation (e.g. `otto test <Suite> --help`) runs no suite,
+    # so it must not create an output dir or gate reservations. The root callback
+    # records this on ctx.meta and skips init_cli_logging for it, so calling
+    # create_output_dir here would otherwise raise.
+    if ctx.invoked_subcommand is not None and not ctx.meta.get("_help_or_discovery"):
         get_context().output_dir = management.create_output_dir("test", ctx.invoked_subcommand)
         from ..reservations import gate
 

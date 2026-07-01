@@ -15,7 +15,4 @@ init = [
 ]
 
 [lab]
-backend = "local_json"
-
-[lab.local_json]
-hosts_dir = "${sut_dir}/../_fixtures/lab_data/tech1"
+backend = "json"

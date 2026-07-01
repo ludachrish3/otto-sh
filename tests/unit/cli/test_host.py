@@ -443,7 +443,8 @@ class TestHostIdCompleter:
         # _host_id_completer lazy-imports get_repos from otto.configmodule.
         with patch("otto.configmodule.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["carrot_seed", "tomato_seed"]
+        # collect_host_ids also surfaces the built-in `local` host (sorted).
+        assert result == ["carrot_seed", "local", "tomato_seed"]
 
     def test_filters_by_incomplete_prefix(self, tmp_path):
         lab = tmp_path / "labA"
@@ -499,7 +500,7 @@ class TestHostIdCompleter:
         )
         with patch("otto.configmodule.get_repos", return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["beet_seed", "carrot_seed"]
+        assert result == ["beet_seed", "carrot_seed", "local"]  # + built-in local
 
     def test_deduplicates_ids(self, tmp_path):
         """Same host id present in two hosts.json files must collapse to one."""
@@ -516,13 +517,13 @@ class TestHostIdCompleter:
         _write_hosts_json(lab2, [dup])
         with patch("otto.configmodule.get_repos", return_value=[_fake_repo(lab1, lab2)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["carrot_seed"]
+        assert result == ["carrot_seed", "local"]  # + built-in local
 
     def test_skips_missing_path(self, tmp_path):
         """Non-existent search path must not raise; completer is best-effort."""
         with patch("otto.configmodule.get_repos", return_value=[_fake_repo(tmp_path / "nope")]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == []
+        assert result == ["local"]  # only the built-in local (no hosts.json to scan)
 
     def test_skips_malformed_json(self, tmp_path):
         lab = tmp_path / "bad"
@@ -530,7 +531,7 @@ class TestHostIdCompleter:
         (lab / "hosts.json").write_text("{not json")
         with patch("otto.configmodule.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == []
+        assert result == ["local"]  # malformed json skipped; built-in local remains
 
     def test_skips_invalid_host_entries(self, tmp_path):
         """A host dict missing required fields must be skipped, not abort."""
@@ -550,7 +551,7 @@ class TestHostIdCompleter:
         )
         with patch("otto.configmodule.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["carrot_seed"]
+        assert result == ["carrot_seed", "local"]  # invalid entry skipped; built-in local remains
 
     def test_prefers_cached_host_ids(self, tmp_path):
         """When the completion cache is populated (fast path), the completer
@@ -596,7 +597,7 @@ class TestHostIdCompleter:
             patch("otto.configmodule.get_repos", return_value=[_fake_repo(lab)]),
         ):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["carrot_seed"]
+        assert result == ["carrot_seed", "local"]  # live scan + built-in local
 
     def test_argument_advertises_completer(self):
         """Regression guard: the ``host_id`` parameter must carry the

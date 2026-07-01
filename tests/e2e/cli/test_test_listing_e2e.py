@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e._otto_subprocess import REPO_E2E, run_otto
+from tests.e2e._otto_subprocess import REPO_E2E, assert_no_output_dir, run_otto
 
 pytestmark = pytest.mark.hostless
 
@@ -23,6 +23,7 @@ def test_list_suites_lists_fixture_suite(tmp_path: Path) -> None:
     r = run_otto(["test", "--list-suites"], xdir=tmp_path, sut_dirs=REPO_E2E)
     assert r.returncode == 0, r.stderr
     assert "TestE2EFixture" in r.stdout
+    assert_no_output_dir(tmp_path)  # discovery flag — no run dir
 
 
 def test_list_tests_lists_gated_test(tmp_path: Path) -> None:
@@ -30,6 +31,7 @@ def test_list_tests_lists_gated_test(tmp_path: Path) -> None:
     r = run_otto(["test", "--list-tests"], xdir=tmp_path, sut_dirs=REPO_E2E)
     assert r.returncode == 0, r.stderr
     assert "test_gated" in r.stdout
+    assert_no_output_dir(tmp_path)  # discovery flag — no run dir
 
 
 def test_list_markers_exits_zero(tmp_path: Path) -> None:
@@ -40,6 +42,7 @@ def test_list_markers_exits_zero(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stderr
     # Panel header always contains the repo name
     assert "repo_e2e" in r.stdout
+    assert_no_output_dir(tmp_path)  # discovery flag — no run dir
 
 
 def test_list_tests_suite_scoped(tmp_path: Path) -> None:
@@ -49,3 +52,4 @@ def test_list_tests_suite_scoped(tmp_path: Path) -> None:
     assert "test_gated" in r.stdout
     # The suite selector keeps output within the fixture suite
     assert "TestE2EFixture" in r.stdout
+    assert_no_output_dir(tmp_path)  # discovery flag — no run dir

@@ -26,13 +26,16 @@ finalisation from a single worker.
 """
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
+from tests.e2e._otto_subprocess import assert_output_dir, output_dirs
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -46,9 +49,6 @@ COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
 # Lab that contains carrot/tomato/pepper (tech1 lab data).
 _LAB = "veggies"
-
-# Pool of Unix hosts available for the test — same pool as the transfer tests.
-_UNIX_POOL = ("carrot", "tomato", "pepper")
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("host_priv_e2e")]
 
@@ -145,6 +145,10 @@ def test_host_run_sudo_elevates(unix_host: str, tmp_path: Path) -> None:
     assert "password" not in lower, (
         f"Unexpected 'password' text in output of 'run --sudo id' on {unix_host!r}:\n{combined}"
     )
+    assert "passwd" not in lower, (
+        f"Unexpected 'passwd' text in output of 'run --sudo id' on {unix_host!r}:\n{combined}"
+    )
+    assert_output_dir(tmp_path, "host")  # `host run` does real work — output dir created
 
 
 # ---------------------------------------------------------------------------
@@ -172,16 +176,12 @@ def test_host_lsmod_lists_modules(unix_host: str, tmp_path: Path) -> None:
     # lsmod returns a Python list rendered by rich's rprint — the output
     # contains quoted module names separated by commas.  Assert at least one
     # token that looks like a kernel module name (letters/digits/underscores).
-    import re
-
+    # A non-empty list (rather than a specific name) keeps this robust across
+    # kernel versions — any live Linux Vagrant host has modules loaded.
     module_names = re.findall(r"'([A-Za-z0-9_]+)'", combined)
     assert module_names, (
         f"Expected at least one module name in ``lsmod`` output on {unix_host!r}, got:\n{combined}"
     )
-    # Known-present on any Vagrant Linux host: the VirtualBox guest additions
-    # (vboxguest) and a core module (e.g. ip_tables or nf_conntrack).
-    # We assert a non-empty list rather than a specific name to stay robust
-    # across kernel versions.
-    assert len(module_names) >= 1, (
-        f"lsmod returned an empty module list on {unix_host!r}:\n{combined}"
-    )
+    # lsmod is a read-only query (output_dir=False) — it prints module names and
+    # creates no per-invocation output dir (the reservation gate still runs).
+    assert not output_dirs(tmp_path, "host"), "lsmod must not create an output dir"

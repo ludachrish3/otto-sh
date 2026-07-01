@@ -358,7 +358,8 @@ class TestLabLoading:
 
         lab = get_lab()
         assert lab.name == "test_lab"
-        assert set(lab.hosts.keys()) == {"host1", "host2"}
+        # `local` is the built-in host injected into every lab by load_lab.
+        assert set(lab.hosts.keys()) == {"host1", "host2", "local"}
 
     def test_multiple_labs_split_on_comma(self, real_main_mocks):
         result = runner.invoke(app, ["--lab", "test_lab,lab2"])
@@ -366,7 +367,7 @@ class TestLabLoading:
         from otto.configmodule import get_lab
 
         lab = get_lab()
-        assert set(lab.hosts.keys()) == {"host1", "host2", "host3"}
+        assert set(lab.hosts.keys()) == {"host1", "host2", "host3", "local"}
 
     def test_multiple_lab_flags(self, real_main_mocks):
         result = runner.invoke(app, ["--lab", "test_lab", "--lab", "lab2"])
@@ -374,7 +375,7 @@ class TestLabLoading:
         from otto.configmodule import get_lab
 
         lab = get_lab()
-        assert set(lab.hosts.keys()) == {"host1", "host2", "host3"}
+        assert set(lab.hosts.keys()) == {"host1", "host2", "host3", "local"}
 
     def test_host_objects_have_correct_ip(self, real_main_mocks):
         _invoke([])

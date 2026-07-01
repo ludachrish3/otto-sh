@@ -43,6 +43,7 @@ from tests.e2e._otto_subprocess import (
     OTTO_BIN,
     PROJECT_ROOT,
     REPO1,
+    assert_output_dir,
 )
 
 pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("monitor_e2e")]
@@ -243,3 +244,6 @@ def test_monitor_collects_and_persists(monitor_host: str, tmp_path: Path) -> Non
         f"Rows found: {all_rows[:10]!r}\n"
         f"stdout:\n{stdout_out}\nstderr:\n{stderr_out}"
     )
+
+    # monitor collects host metrics → output dir created
+    assert_output_dir(tmp_path, "monitor")

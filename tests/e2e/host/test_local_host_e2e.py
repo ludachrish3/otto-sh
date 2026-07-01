@@ -5,11 +5,11 @@ filesystem, so the full CLI dispatch path runs end-to-end — repo discovery,
 lab loading, host resolution, command execution, file transfer — without any
 network transport or remote VM.
 
-The ``local`` host ID is injected into the ``veggies`` lab by the
-``LocalHostLabRepository`` registered in ``repo_e2e_instructions``.  That
-fixture repo's ``.otto/settings.toml`` declares ``[lab] backend = "local_json"``
-so the e2e-only repository wraps the standard JSON backend and adds a
-``LocalHost()`` to every lab it returns.
+The ``local`` host ID is a built-in host: :func:`otto.configmodule.lab.load_lab`
+injects a ``LocalHost()`` into every lab it returns, on any backend, so
+``otto host local`` resolves without a custom lab-repository. This fixture repo
+uses the standard ``json`` backend (``[lab] backend = "json"`` in
+``.otto/settings.toml``); the ``local`` host comes from the built-in injection.
 
 Login note: ``LocalHost._interact`` is not implemented — ``otto host local
 login`` exits non-zero with a clean "does not support" message (no traceback)
@@ -20,7 +20,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e._otto_subprocess import REPO_E2E, run_otto
+from tests.e2e._otto_subprocess import (
+    REPO_E2E,
+    assert_no_output_dir,
+    assert_output_dir,
+    run_otto,
+)
 
 pytestmark = pytest.mark.hostless
 
@@ -40,6 +45,7 @@ def test_local_run_echo(tmp_path: Path) -> None:
     )
     assert r.returncode == 0, r.stderr
     assert "hello-e2e" in r.stdout
+    assert_output_dir(tmp_path, "host")  # a host verb does real work — output dir created
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +86,7 @@ def test_local_put_get_roundtrip(tmp_path: Path) -> None:
     back_file = back_dir / "payload.txt"
     assert back_file.exists(), f"Expected {back_file} after get"
     assert back_file.read_text() == "roundtrip-token\n"
+    assert_output_dir(tmp_path, "host")  # put/get are host verbs — output dir created
 
 
 # ---------------------------------------------------------------------------
@@ -105,3 +112,23 @@ def test_local_login_exits_cleanly(tmp_path: Path) -> None:
     assert "does not support" in combined
     assert "login" in combined
     assert "Traceback (most recent call last)" not in combined
+    # `login` is a host verb: the callback creates the output dir before the verb
+    # runs, so the dir exists even though the (unimplemented) verb then fails.
+    assert_output_dir(tmp_path, "host")
+
+
+# ---------------------------------------------------------------------------
+# read-only query verb — no output dir
+# ---------------------------------------------------------------------------
+
+
+def test_local_exists_creates_no_output_dir(tmp_path: Path) -> None:
+    """`otto host local exists <path>` is a read-only query (output_dir=False) — no dir."""
+    r = run_otto(
+        ["host", "local", "exists", str(tmp_path)],
+        xdir=tmp_path,
+        sut_dirs=REPO_E2E,
+        lab="veggies",
+    )
+    assert r.returncode == 0, r.stderr
+    assert_no_output_dir(tmp_path)

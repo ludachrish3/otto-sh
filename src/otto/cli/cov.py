@@ -50,10 +50,9 @@ from typing import Annotated
 
 import typer
 
-from ..context import get_context
 from ..coverage.reporter import TierSpec, run_coverage_report
 from ..coverage.store.model import TIER_SYSTEM
-from ..logger import get_otto_logger, management
+from ..logger import get_otto_logger
 
 logger = get_otto_logger()
 
@@ -69,15 +68,13 @@ cov_app = typer.Typer(
 
 @cov_app.callback()
 def cov_callback(ctx: typer.Context) -> None:
-    """Generate coverage reports from otto test --cov output."""
+    """Generate coverage reports from otto test --cov output.
+
+    ``cov`` reads coverage artifacts and writes its report to ``--report-dir``; it
+    never touches a remote host, so it creates no per-invocation output directory.
+    """
     if ctx.resilient_parsing:
         return
-    # Set up this invocation's output directory the same way run/host/test/
-    # monitor do — create_output_dir also prunes old logs per the retention
-    # policy. Gated on a real subcommand so group ``--help``/no-args never
-    # touches the filesystem.
-    if ctx.invoked_subcommand is not None:
-        get_context().output_dir = management.create_output_dir("cov", ctx.invoked_subcommand)
 
 
 def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:

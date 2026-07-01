@@ -12,8 +12,6 @@ Both reuse the top-level ``--lab`` option — no redundant flags here.
 import typer
 from rich import print as rprint
 
-from ..context import get_context
-from ..logger import management
 from ..reservations import (
     MissingReservationError,
     check_reservations,
@@ -32,16 +30,13 @@ reservation_app = typer.Typer(
 
 @reservation_app.callback()
 def reservation_callback(ctx: typer.Context) -> None:
-    """Inspect and verify lab reservations."""
+    """Inspect and verify lab reservations.
+
+    Reservation queries are informational and touch no remote host, so this
+    command creates no per-invocation output directory.
+    """
     if ctx.resilient_parsing:
         return
-    # Mirror run/host/test/cov: set up this invocation's output directory
-    # (which also prunes old logs per the retention policy), only for a real
-    # subcommand — never on group ``--help``/no-args.
-    if ctx.invoked_subcommand is not None:
-        get_context().output_dir = management.create_output_dir(
-            "reservation", ctx.invoked_subcommand
-        )
 
 
 @reservation_app.command()

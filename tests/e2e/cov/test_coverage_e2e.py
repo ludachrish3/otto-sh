@@ -41,6 +41,7 @@ from typing import ClassVar
 import pytest
 
 from otto.coverage.store.model import CoverageStore, FileRecord
+from tests.e2e._otto_subprocess import output_dirs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 REPO1_DIR = PROJECT_ROOT / "tests" / "repo1"
@@ -164,6 +165,10 @@ def coverage_run(tmp_path_factory):
     store_path = report_dir / "store.json"
     assert store_path.is_file(), f"CoverageReporter did not write {store_path}"
     store = CoverageStore.load(store_path)
+
+    # `otto cov report` touches no remote host: its report goes to --report, so it
+    # must create NO per-invocation output dir. Only stage-1's `test` dir exists.
+    assert not output_dirs(xdir, "cov"), "cov report must not create an output dir"
 
     return store, report_dir, cov_dir
 

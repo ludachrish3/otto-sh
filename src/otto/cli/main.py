@@ -334,6 +334,15 @@ def main(  # noqa: PLR0913 — CLI command params
     if ctx.resilient_parsing:
         return
 
+    # A help request or discovery flag (--help, --list-suites, etc.) touches no
+    # host state and produces no run artifacts. Record that verdict on the shared
+    # ctx.meta so the per-group callbacks (run/test/...) skip create_output_dir and
+    # the reservation gate: a subcommand-level help (e.g. `otto test <Suite> --help`)
+    # otherwise creates a spurious output dir — or crashes, because this callback
+    # returns below without running init_cli_logging.
+    help_or_discovery = _is_lab_free_flag_invocation(ctx)
+    ctx.meta["_help_or_discovery"] = help_or_discovery
+
     # Lab-free utility subcommands (e.g. `otto schema`) need none of the
     # lab / reservation / context bootstrap below — and forcing `--lab` on them
     # would be nonsensical. Skip the whole callback body for them; the
@@ -343,7 +352,7 @@ def main(  # noqa: PLR0913 — CLI command params
 
     # Help requests and discovery flags (--list-suites, --list-tests, etc.)
     # touch no host state — skip the --lab requirement for them too.
-    if _is_lab_free_flag_invocation(ctx):
+    if help_or_discovery:
         return
 
     # `--lab` is no longer a hard-required Typer option (so lab-free subcommands

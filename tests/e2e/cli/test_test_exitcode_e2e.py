@@ -16,7 +16,12 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e._otto_subprocess import REPO_E2E, run_otto
+from tests.e2e._otto_subprocess import (
+    REPO_E2E,
+    assert_no_output_dir,
+    assert_output_dir,
+    run_otto,
+)
 
 pytestmark = pytest.mark.hostless
 
@@ -29,6 +34,7 @@ def test_suite_pass_exits_zero(tmp_path: Path) -> None:
         sut_dirs=REPO_E2E,
     )
     assert r.returncode == 0, r.stdout + r.stderr
+    assert_output_dir(tmp_path, "test")  # a real suite run produces results — output dir created
 
 
 def test_suite_fail_exits_nonzero(tmp_path: Path) -> None:
@@ -40,6 +46,7 @@ def test_suite_fail_exits_nonzero(tmp_path: Path) -> None:
         extra_env={"OTTO_E2E_FAIL": "1"},
     )
     assert r.returncode != 0, r.stdout + r.stderr
+    assert_output_dir(tmp_path, "test")  # the suite still ran — output dir created
 
 
 def test_unknown_suite_clean_error_nonzero(tmp_path: Path) -> None:
@@ -51,3 +58,4 @@ def test_unknown_suite_clean_error_nonzero(tmp_path: Path) -> None:
     )
     assert r.returncode != 0
     assert "Traceback (most recent call last)" not in (r.stdout + r.stderr)
+    assert_no_output_dir(tmp_path)  # unknown suite errors before any run — no output dir

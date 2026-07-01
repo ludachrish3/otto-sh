@@ -45,15 +45,25 @@ docker_app = typer.Typer(
 )
 
 
+# Read-only docker subcommands that produce no artifacts → no output dir.
+_NO_OUTPUT_DIR_SUBCOMMANDS = frozenset({"ps"})
+
+
 @docker_app.callback()
 def docker_callback(ctx: typer.Context) -> None:
     """Build images and orchestrate compose stacks on docker-capable lab hosts."""
     if ctx.resilient_parsing:
         return
-    # Mirror run/host/test/cov: set up this invocation's output directory
-    # (which also prunes old logs per the retention policy), only for a real
-    # subcommand — never on group ``--help``/no-args.
-    if ctx.invoked_subcommand is not None:
+    # Mirror run/host/test: set up this invocation's output directory (which also
+    # prunes old logs per the retention policy) for a real subcommand that does
+    # work. Skip it on a help/discovery invocation (the root callback flags that
+    # and skips init_cli_logging, so create_output_dir would otherwise raise) and
+    # for read-only subcommands (e.g. `docker ps`).
+    if (
+        ctx.invoked_subcommand is not None
+        and not ctx.meta.get("_help_or_discovery")
+        and ctx.invoked_subcommand not in _NO_OUTPUT_DIR_SUBCOMMANDS
+    ):
         get_context().output_dir = management.create_output_dir("docker", ctx.invoked_subcommand)
 
 

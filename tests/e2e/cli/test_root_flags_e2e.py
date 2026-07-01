@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.e2e._otto_subprocess import REPO_E2E, run_otto
+from tests.e2e._otto_subprocess import REPO_E2E, assert_no_output_dir, run_otto
 
 pytestmark = pytest.mark.hostless
 
@@ -19,6 +19,7 @@ def test_version(tmp_path: Path) -> None:
     r = run_otto(["--version"], xdir=tmp_path, sut_dirs=REPO_E2E)
     assert r.returncode == 0
     assert "otto version:" in r.stdout
+    assert_no_output_dir(tmp_path)  # root action flag — no subcommand, no run dir
 
 
 def test_list_labs(tmp_path: Path) -> None:
@@ -28,6 +29,7 @@ def test_list_labs(tmp_path: Path) -> None:
     # repo_e2e → tech1 fixture → two labs: embedded and veggies
     assert "veggies" in r.stdout
     assert "embedded" in r.stdout
+    assert_no_output_dir(tmp_path)  # informational listing — no run dir
 
 
 def test_list_hosts(tmp_path: Path) -> None:
@@ -36,6 +38,7 @@ def test_list_hosts(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stderr
     # tech1 hosts.json: carrot/tomato/pepper all belong to lab "veggies"
     assert "carrot_seed" in r.stdout
+    assert_no_output_dir(tmp_path)  # queries lab state but runs no subcommand — no run dir
 
 
 def test_clear_autocomplete_cache(tmp_path: Path) -> None:
@@ -44,3 +47,12 @@ def test_clear_autocomplete_cache(tmp_path: Path) -> None:
     assert r.returncode == 0
     # message varies by cache state; all forms contain "cache"
     assert "cache" in r.stdout.lower()
+    assert_no_output_dir(tmp_path)  # root action flag — no subcommand, no run dir
+
+
+def test_list_hosts_includes_builtin_local(tmp_path: Path) -> None:
+    """The built-in `local` host appears in --list-hosts for any lab (no custom repo)."""
+    r = run_otto(["--lab", "veggies", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
+    assert r.returncode == 0, r.stderr
+    assert "local" in r.stdout
+    assert_no_output_dir(tmp_path)

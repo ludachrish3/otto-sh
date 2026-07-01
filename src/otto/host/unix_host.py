@@ -701,7 +701,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     #  Kernel modules
     ####################
 
-    @cli_exposed
+    @cli_exposed(output_dir=False)
     async def lsmod(self) -> list[str]:
         """List the kernel modules currently loaded on the host."""
         return await self._loaded_modules()

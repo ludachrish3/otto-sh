@@ -755,7 +755,7 @@ class BaseHost(ABC):
                 first_error = (status, msg)
         return first_error if first_error is not None else (Status.Success, "")
 
-    @cli_exposed
+    @cli_exposed(output_dir=False)
     async def is_installed(self) -> bool:
         """Return True iff there is at least one product and all are installed.
 
@@ -769,7 +769,7 @@ class BaseHost(ABC):
                 return False
         return True
 
-    @cli_exposed
+    @cli_exposed(output_dir=False)
     async def is_uninstalled(self) -> bool:
         """Inverse of :meth:`is_installed`."""
         return not await self.is_installed()

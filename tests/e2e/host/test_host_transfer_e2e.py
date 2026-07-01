@@ -28,7 +28,9 @@ from pathlib import Path
 
 import pytest
 
+from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
+from tests.e2e._otto_subprocess import assert_output_dir
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -42,10 +44,6 @@ COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 
 # Lab that contains carrot/tomato/pepper (tech1 lab data).
 _LAB = "veggies"
-
-# Pool of Unix hosts available for the transfer roundtrip test.
-# We only need one; the pool lease picks whichever is free.
-_UNIX_POOL = ("carrot", "tomato", "pepper")
 
 # Fixed hop topology (mirrors tests/integration/host/test_hop_integration.py):
 #   otto → carrot_seed (hop) → tomato_seed (target)
@@ -137,42 +135,45 @@ def test_host_put_get_roundtrip(unix_host: str, tmp_path: Path) -> None:
     src = tmp_path / filename
     src.write_bytes(payload)
 
-    # --- Create remote staging directory ---
-    mkdir = _run_otto("host", unix_host, "run", f"mkdir -p {remote_dir}", xdir=tmp_path)
-    assert mkdir.returncode == 0, (
-        f"Failed to create remote staging dir {remote_dir!r} on {unix_host!r}:\n"
-        f"stdout: {mkdir.stdout}\nstderr: {mkdir.stderr}"
-    )
+    try:
+        # --- Create remote staging directory ---
+        mkdir = _run_otto("host", unix_host, "run", f"mkdir -p {remote_dir}", xdir=tmp_path)
+        assert mkdir.returncode == 0, (
+            f"Failed to create remote staging dir {remote_dir!r} on {unix_host!r}:\n"
+            f"stdout: {mkdir.stdout}\nstderr: {mkdir.stderr}"
+        )
 
-    # --- put: local → remote ---
-    put = _run_otto("host", unix_host, "put", str(src), remote_dir, xdir=tmp_path)
-    assert put.returncode == 0, (
-        f"``otto host {unix_host} put`` failed:\nstdout: {put.stdout}\nstderr: {put.stderr}"
-    )
-    assert "Transfer complete" in put.stdout, (
-        f"Expected 'Transfer complete' in put output, got:\n{put.stdout}"
-    )
+        # --- put: local → remote ---
+        put = _run_otto("host", unix_host, "put", str(src), remote_dir, xdir=tmp_path)
+        assert put.returncode == 0, (
+            f"``otto host {unix_host} put`` failed:\nstdout: {put.stdout}\nstderr: {put.stderr}"
+        )
+        assert "Transfer complete" in put.stdout, (
+            f"Expected 'Transfer complete' in put output, got:\n{put.stdout}"
+        )
 
-    # --- get: remote → local ---
-    back_dir = tmp_path / "back"
-    back_dir.mkdir()
-    get = _run_otto(
-        "host", unix_host, "get", f"{remote_dir}/{filename}", str(back_dir), xdir=tmp_path
-    )
-    assert get.returncode == 0, (
-        f"``otto host {unix_host} get`` failed:\nstdout: {get.stdout}\nstderr: {get.stderr}"
-    )
-    assert "Download complete" in get.stdout, (
-        f"Expected 'Download complete' in get output, got:\n{get.stdout}"
-    )
+        # --- get: remote → local ---
+        back_dir = tmp_path / "back"
+        back_dir.mkdir()
+        get = _run_otto(
+            "host", unix_host, "get", f"{remote_dir}/{filename}", str(back_dir), xdir=tmp_path
+        )
+        assert get.returncode == 0, (
+            f"``otto host {unix_host} get`` failed:\nstdout: {get.stdout}\nstderr: {get.stderr}"
+        )
+        assert "Download complete" in get.stdout, (
+            f"Expected 'Download complete' in get output, got:\n{get.stdout}"
+        )
 
-    # --- byte-identical roundtrip assertion ---
-    back_file = back_dir / filename
-    assert back_file.exists(), f"Expected {back_file} after get"
-    assert back_file.read_bytes() == payload, "Round-tripped file content differs from original"
-
-    # --- best-effort cleanup of remote staging dir ---
-    _run_otto("host", unix_host, "run", f"rm -rf {remote_dir}", xdir=tmp_path)
+        # --- byte-identical roundtrip assertion ---
+        back_file = back_dir / filename
+        assert back_file.exists(), f"Expected {back_file} after get"
+        assert back_file.read_bytes() == payload, "Round-tripped file content differs from original"
+        # put/get are host verbs doing real transfers — output dirs created.
+        assert_output_dir(tmp_path, "host")
+    finally:
+        # --- best-effort cleanup of remote staging dir (always runs) ---
+        _run_otto("host", unix_host, "run", f"rm -rf {remote_dir}", xdir=tmp_path)
 
 
 # ---------------------------------------------------------------------------
@@ -206,3 +207,4 @@ def test_host_hop_run(tmp_path: Path) -> None:
         f"stdout: {result.stdout}\nstderr: {result.stderr}"
     )
     assert token in result.stdout, f"Expected echo token {token!r} in output, got:\n{result.stdout}"
+    assert_output_dir(tmp_path, "host")  # a multi-hop run does real work — output dir created

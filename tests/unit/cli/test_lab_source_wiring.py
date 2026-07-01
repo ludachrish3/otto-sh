@@ -57,7 +57,8 @@ def test_no_lab_block_defaults_to_json_over_merged_paths(tmp_path):
     assert isinstance(repository, JsonFileLabRepository)
 
     lab = load_lab("merged", repository=repository)
-    assert len(lab.hosts) == 2
+    # orange + tomato from the two search paths, plus the built-in `local` host.
+    assert set(lab.hosts) == {"orange", "tomato", "local"}
 
 
 def test_custom_backend_selected_by_name(tmp_path):
