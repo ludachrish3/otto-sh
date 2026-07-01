@@ -2,9 +2,9 @@
 
 ## General
 
-- Repo and command options need to be promoted to a more visible location
-  - The `@options` decorator is quite hard to discover. I think that the new decorator is not reflected (at least not well) in the latest documentation. Options classes are still defined as pure dataclasses.
-  - Possibly in onboarding or setting up? Either way, more links to it would be helpful so that people are easily find it when defining a repo, instruction, and suite.
+- Log tracebacks to the complete log file (the otto.log that currently gets saved)
+- Rethink command return type structure. Possibly just Status and value. Value could be anything, even somewhat "recursive" like in the case of `host.run()`, which has an overall status, and then the value would be a list of more turn values. This is a MASSIVE change and touches basically everywhere.
+- Make all commands register with otto the same way as a third party parser would. The exposing of subcommands already has a syntax, so maybe extend that to the top-level commands too? The goal is to make otto fully flexible and pluggagble and no special magic that allows otto's built-in commands. There is a chance that they could overlap, so error out and explicitly log that a collision occured and exit.
 - Clean up and rename labs. The names are currently so obscure that they are difficult to intuitively tell what kinds of hosts they have. The embedded lab name is okay, but the hosts themselves should be more technically focused. The unix labs are all over the place and should be reconsidered as well, even at the lab name level.
 - Add RemoteHost `stat()` method if one does not already exist. Tricky part: format of stat has changed over the years. It might be tricky to flexibly parse all versions of stat output including all the different forks of unix (Linux 2.6 - present, other Unix OSes)
 - Login utility
@@ -16,7 +16,6 @@
 - Look into hyperfine <https://github.com/sharkdp/hyperfine> to help with profiling
 - Integration tests for all new functionality except power on/off
   - A soft reboot stability test should be added. Possibly with a different marker and makefile target just because it's such a lengthy test.
-- Log tracebacks to the complete log file (the otto.log that currently gets saved)
 - Add TFTP to one of the zephyr hosts
 - Consider <https://pypi.org/project/pyftpdlib/> to replace aioftp. It's much faster in all benchmarks.
 - Add other Zephyr configs and versions so that the embedded OS support is hardened.
