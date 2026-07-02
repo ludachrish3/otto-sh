@@ -82,7 +82,12 @@ def _build_callback(options: list[dict[str, Any]]) -> Any:
     return _stub
 
 
-def build_stub_command(name: str, options: list[dict[str, Any]]) -> typer.Typer:
+def build_stub_command(
+    name: str,
+    options: list[dict[str, Any]],
+    *,
+    help: str | None = None,  # noqa: A002 — mirrors typer's own `help=` keyword
+) -> typer.Typer:
     """Return a single-command ``typer.Typer`` named ``name``, ready to attach.
 
     Mirrors the shape ``@register_suite`` / ``@instruction`` produce on the
@@ -94,5 +99,34 @@ def build_stub_command(name: str, options: list[dict[str, Any]]) -> typer.Typer:
     # Python identifiers can't contain '-'; instruction/suite names like
     # "test-instruction" must be sanitized before use as __name__.
     callback.__name__ = name.replace("-", "_")
-    sub.command(name=name)(callback)
+    sub.command(name=name, help=help)(callback)
     return sub
+
+
+def build_stub_group(
+    name: str,
+    help: str | None,  # noqa: A002 — mirrors typer's own `help=` keyword
+    children: list[dict[str, Any]],
+) -> typer.Typer:
+    """Rebuild a cached third-party GROUP as a nested stub Typer.
+
+    Leaf children come back through :func:`build_stub_command` (the same
+    shape as suite/instruction stubs); a child that itself carries
+    ``"commands"`` recurses. Only names/helps/option signatures exist —
+    stubs are never dispatched (the callback raises if invoked).
+    """
+    grp = typer.Typer(name=name, help=help)
+    for child in children:
+        cname = child.get("name")
+        if not cname:
+            continue
+        if child.get("commands") is not None:
+            grp.add_typer(
+                build_stub_group(cname, child.get("help"), child["commands"]),
+                name=cname,
+            )
+        else:
+            grp.add_typer(
+                build_stub_command(cname, child.get("options") or [], help=child.get("help"))
+            )
+    return grp

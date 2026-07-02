@@ -229,6 +229,30 @@ def test_fast_path_without_matching_cache_falls_through(tmp_path: Path) -> None:
     assert _cache_file(tmp_path).exists()
 
 
+def test_fast_path_completes_plugin_group_children(tmp_path: Path) -> None:
+    """`otto e2etool <TAB>` on the FAST path lists the plugin group's children.
+
+    Bootstrap is skipped during completion, so the plugin's Typer app never
+    materializes — the children must come back from the cache's serialized
+    child metadata (closing the boundary previously documented in
+    extending-cli.md).
+    """
+    plugin_repo = {"OTTO_SUT_DIRS": str(PROJECT_ROOT / "tests" / "repo_e2e")}
+    seed = _run_otto(["--help"], xdir=tmp_path, extra_env=plugin_repo)
+    assert seed.returncode == 0, seed.stderr
+
+    result = _run_otto(
+        [],
+        xdir=tmp_path,
+        comp_words="otto e2etool ",
+        comp_cword="2",
+        extra_env=plugin_repo,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ping" in result.stdout
+    assert "pong" in result.stdout
+
+
 def test_slow_path_descends_into_subcommand(tmp_path: Path) -> None:
     """`otto run <TAB>` on a cache miss must list live instruction names.
 

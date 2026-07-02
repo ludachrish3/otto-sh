@@ -249,11 +249,14 @@ class _OttoGroup(TyperGroup):
         return self._cached_stub(cmd_name)
 
     def _cached_stub(self, cmd_name: str) -> Any:
-        """Return a help-only stub for *cmd_name* sourced from the completion cache.
+        """Return a stub for *cmd_name* sourced from the completion cache.
 
         Fast-path-only fallback for third-party commands: the registry never
         holds them here (bootstrap didn't run), but the cache snapshot from a
-        prior slow-path run does. Dispatch never reaches this branch — a
+        prior slow-path run does. An entry with serialized child metadata
+        (``commands``) rebuilds a nested group of stubs so the group's
+        subcommands tab-complete; a leaf entry with cached ``options``
+        rebuilds them for ``--<TAB>``. Dispatch never reaches this branch — a
         dispatch target either resolves via ``CLI_COMMANDS`` (bootstrap ran
         first, per :func:`entry`) or is an unknown command Typer rejects. The
         synthesized spec's ``lab_free`` is forward-looking metadata only; stubs
@@ -270,6 +273,25 @@ class _OttoGroup(TyperGroup):
         entry = cached.get(cmd_name)
         if entry is None:
             return None
+        children = entry.get("commands") or []
+        options = entry.get("options") or []
+        if children or options:
+            cache = getattr(self, "_stub_cache", None) or {}
+            self._stub_cache = cache
+            if cmd_name not in cache:
+                from ..configmodule.completion_stubs import build_stub_command, build_stub_group
+
+                if children:
+                    tmp = build_stub_group(cmd_name, entry.get("help"), children)
+                    rich_stub: Any = typer.main.get_group(tmp)
+                else:
+                    # get_command flattens the single-command stub app to the
+                    # bare leaf, matching how the real command would resolve.
+                    tmp = build_stub_command(cmd_name, options, help=entry.get("help"))
+                    rich_stub = typer.main.get_command(tmp)
+                rich_stub.name = cmd_name
+                cache[cmd_name] = rich_stub
+            return cache[cmd_name]
         spec = CommandSpec(
             name=cmd_name,
             loader=None,

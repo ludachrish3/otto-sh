@@ -335,6 +335,121 @@ def test_collect_cli_commands_skips_otto_builtins() -> None:
     assert "run" not in names
 
 
+class TestCollectCliCommandChildren:
+    """Third-party GROUP children serialize into the cache (fast-path tab
+    completion of `otto <plugin-group> <TAB>` rebuilds stubs from them)."""
+
+    def _collect_entry(self, name: str) -> dict:
+        from otto.configmodule.completion_cache import collect_cli_commands
+
+        return next(c for c in collect_cli_commands() if c["name"] == name)
+
+    def test_group_children_serialize_names_help_options(self) -> None:
+        from otto.cli.registry import CLI_COMMANDS, register_cli_command
+
+        grp = typer.Typer(name="grptool")
+
+        @grp.command()
+        def ping() -> None:
+            """Pong."""
+
+        @grp.command(name="re-set")
+        def reset_cmd(
+            force: Annotated[bool, typer.Option("--force", help="Force it.")] = False,
+        ) -> None:
+            """Reset."""
+
+        register_cli_command("grptool", grp, help="Group tool.")
+        try:
+            children = {c["name"]: c for c in self._collect_entry("grptool")["commands"]}
+            assert set(children) == {"ping", "re-set"}
+            assert children["ping"]["help"] == "Pong."
+            assert ["--force"] in [o["flags"] for o in children["re-set"]["options"]]
+        finally:
+            CLI_COMMANDS.unregister("grptool")
+
+    def test_nested_group_recurses(self) -> None:
+        from otto.cli.registry import CLI_COMMANDS, register_cli_command
+
+        inner = typer.Typer(name="inner", help="Inner group.")
+
+        @inner.command()
+        def alpha() -> None: ...
+
+        @inner.command()
+        def beta() -> None: ...
+
+        outer = typer.Typer(name="outer")
+        outer.add_typer(inner)
+
+        @outer.command()
+        def top() -> None: ...
+
+        register_cli_command("outer", outer, help="Outer.")
+        try:
+            children = {c["name"]: c for c in self._collect_entry("outer")["commands"]}
+            assert set(children) == {"top", "inner"}
+            inner_children = {c["name"] for c in children["inner"]["commands"]}
+            assert inner_children == {"alpha", "beta"}
+        finally:
+            CLI_COMMANDS.unregister("outer")
+
+    def test_string_loader_group_imports_at_cache_write(self, monkeypatch) -> None:
+        import sys
+        import types
+
+        from otto.cli.registry import CLI_COMMANDS, register_cli_command
+
+        app = typer.Typer(name="fptool")
+
+        @app.command()
+        def x() -> None: ...
+
+        @app.command()
+        def y() -> None: ...
+
+        mod = types.ModuleType("fake_plugin_mod")
+        mod.app = app  # ty: ignore[unresolved-attribute]
+        monkeypatch.setitem(sys.modules, "fake_plugin_mod", mod)
+        register_cli_command("fptool", "fake_plugin_mod:app", help="FP.")
+        try:
+            names = {c["name"] for c in self._collect_entry("fptool")["commands"]}
+            assert names == {"x", "y"}
+        finally:
+            CLI_COMMANDS.unregister("fptool")
+
+    def test_broken_loader_degrades_to_name_only(self) -> None:
+        from otto.cli.registry import CLI_COMMANDS, register_cli_command
+
+        register_cli_command("brokentool", "nonexistent_module_xyz:app", help="Broken.")
+        try:
+            entry = self._collect_entry("brokentool")
+            assert entry["help"] == "Broken."
+            assert "commands" not in entry
+            assert "options" not in entry
+        finally:
+            CLI_COMMANDS.unregister("brokentool")
+
+    def test_flattened_leaf_app_serializes_options(self) -> None:
+        from otto.cli.registry import CLI_COMMANDS, register_cli_command
+
+        solo = typer.Typer(name="solo")
+
+        @solo.command()
+        def solo_cmd(
+            count: Annotated[int, typer.Option("--count", help="How many.")] = 1,
+        ) -> None:
+            """Solo."""
+
+        register_cli_command("solotool", solo)
+        try:
+            entry = self._collect_entry("solotool")
+            assert "commands" not in entry  # flattens to a leaf, not a group
+            assert ["--count"] in [o["flags"] for o in entry["options"]]
+        finally:
+            CLI_COMMANDS.unregister("solotool")
+
+
 def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> None:
     """write_cache/read_cache carry the 'commands' key through a round trip."""
     monkeypatch.setenv("OTTO_XDIR", str(tmp_path))

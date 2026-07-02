@@ -20,7 +20,7 @@ Cache location
 ``$OTTO_XDIR/.otto/completion_cache.json``. If ``OTTO_XDIR`` is not set,
 caching is disabled and completion always falls through to the slow path.
 
-Cache schema (version 7)
+Cache schema (version 8)
 ------------------------
 
 Single flat map, keyed by fingerprint hex digest. Each entry records both the
@@ -29,7 +29,7 @@ stale entries without trusting the mtimes on-disk::
 
     {
         "<fingerprint>": {
-            "schema_version": 7,
+            "schema_version": 8,
             "generated_at": 1745000000,
             "instructions": [
                 {
@@ -52,7 +52,22 @@ stale entries without trusting the mtimes on-disk::
             "docker_hosts": ["carrot_seed", ...],
             "term_backends": ["ssh", "telnet", ...],
             "transfer_backends": [{"name": "scp", "host_families": ["unix"]}, ...],
-            "commands": [{"name": "flash", "help": "...", "lab_free": false}, ...],
+            "commands": [
+                {"name": "flash", "help": "...", "lab_free": false},
+                # a third-party GROUP also carries recursive child metadata;
+                # a flattening single-command app carries "options" instead
+                # (both keys omitted when empty):
+                {
+                    "name": "e2etool",
+                    "help": "...",
+                    "lab_free": true,
+                    "commands": [
+                        {"name": "ping", "help": "...", "options": [...]},
+                        {"name": "nested", "help": "...", "commands": [...]},
+                    ],
+                },
+                ...,
+            ],
         }
     }
 
@@ -93,7 +108,7 @@ COMPLETION_ENV_VAR = "_OTTO_COMPLETE"
 CACHE_FILENAME = "completion_cache.json"
 
 # Bump when the on-disk schema changes in a way older readers can't parse.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 HOSTS_FILENAME = "hosts.json"
 
@@ -554,6 +569,48 @@ def collect_backend_names() -> dict[str, Any]:
     }
 
 
+def _serialize_cli_children(app: Any) -> list[dict[str, Any]]:
+    """Serialize a third-party Typer group's children for the cache.
+
+    Children reuse the instruction/suite option schema (rebuilt by
+    :func:`otto.configmodule.completion_stubs.build_stub_command` on the fast
+    path). A child whose options don't round-trip degrades to name+help —
+    the name still tab-completes, only ``--<TAB>`` falls back. Nested groups
+    recurse; a nested single-command app serializes as the flattened leaf it
+    would natively become (see ``_typer_app_flattens``).
+    """
+    from typer.main import get_command_name
+
+    from ..cli.registry import _typer_app_flattens
+
+    children: list[dict[str, Any]] = []
+    for cmd_info in app.registered_commands:
+        cname = cmd_info.name or get_command_name(cmd_info.callback.__name__)
+        children.append(
+            {
+                "name": cname,
+                "help": cmd_info.help or inspect.getdoc(cmd_info.callback) or "",
+                "options": _serialize_options(cmd_info.callback, command_name=cname) or [],
+            }
+        )
+    for grp_info in app.registered_groups:
+        sub = grp_info.typer_instance
+        if sub is None:
+            continue
+        if _typer_app_flattens(sub):
+            children.extend(_serialize_cli_children(sub))
+            continue
+        gname = next(
+            (n for n in (grp_info.name, sub.info.name) if isinstance(n, str) and n),
+            None,
+        )
+        if gname is None:
+            continue
+        ghelp = next((h for h in (grp_info.help, sub.info.help) if isinstance(h, str)), "")
+        children.append({"name": gname, "help": ghelp, "commands": _serialize_cli_children(sub)})
+    return children
+
+
 def collect_cli_commands() -> list[dict[str, Any]]:
     """Snapshot third-party top-level CLI commands for the completion cache.
 
@@ -565,14 +622,45 @@ def collect_cli_commands() -> list[dict[str, Any]]:
     by contrast, only exist in the registry after a plugin's init module has
     executed, which the completion fast path deliberately skips; caching
     their name/help/``lab_free`` here is what lets them still tab-complete.
-    """
-    from ..cli.registry import CLI_COMMANDS
 
-    return [
-        {"name": spec.name, "help": spec.help, "lab_free": spec.lab_free}
-        for _name, spec in CLI_COMMANDS.items()
-        if not spec.origin.startswith("otto.")
-    ]
+    A GROUP entry additionally carries ``"commands"`` (recursive child
+    metadata) and a flattening single-command app carries ``"options"`` —
+    both omitted when empty. Serializing children may import a lazy
+    ``"pkg.mod:attr"`` loader's module: a slow-path-only, once-per-cache-
+    refresh cost, contained per command (a broken loader degrades that entry
+    to name+help and real dispatch still reports the import error loudly).
+    """
+    import importlib
+
+    import typer
+
+    from ..cli.registry import CLI_COMMANDS, _typer_app_flattens
+
+    log = get_logger()
+    out: list[dict[str, Any]] = []
+    for name, spec in CLI_COMMANDS.items():
+        if spec.origin.startswith("otto."):
+            continue
+        entry: dict[str, Any] = {"name": name, "help": spec.help, "lab_free": spec.lab_free}
+        try:
+            loader = spec.loader
+            if isinstance(loader, str):
+                mod_name, _, attr = loader.partition(":")
+                loader = getattr(importlib.import_module(mod_name), attr)
+            if isinstance(loader, typer.Typer):
+                if _typer_app_flattens(loader):
+                    cmd_info = loader.registered_commands[0]
+                    options = _serialize_options(cmd_info.callback, command_name=spec.name)
+                    if options:
+                        entry["options"] = options
+                else:
+                    commands = _serialize_cli_children(loader)
+                    if commands:
+                        entry["commands"] = commands
+        except Exception as e:  # noqa: BLE001 — containment seam: cache stays name-only, dispatch reports loudly
+            log.debug(f"completion-cache: no child metadata for {spec.name!r}: {e!r}")
+        out.append(entry)
+    return out
 
 
 def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:

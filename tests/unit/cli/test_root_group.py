@@ -179,6 +179,72 @@ def test_list_commands_dedupes_registry_over_cache(monkeypatch):
         CLI_COMMANDS.unregister("both-tool")
 
 
+def test_cached_stub_group_serves_children(monkeypatch):
+    """A cache-only GROUP rebuilds its children as stubs on the fast path,
+    so `otto <plugin-group> <TAB>` completes subcommand names without
+    bootstrap having run."""
+    from otto.cli.main import _OttoGroup
+
+    monkeypatch.setattr(
+        "otto.cli.main.get_completion_names",
+        lambda: {
+            "commands": [
+                {
+                    "name": "cached-grp",
+                    "help": "G.",
+                    "lab_free": False,
+                    "commands": [
+                        {"name": "ping", "help": "Pong.", "options": []},
+                        {
+                            "name": "sub",
+                            "help": "Nested.",
+                            "commands": [{"name": "deep", "help": "", "options": []}],
+                        },
+                    ],
+                }
+            ]
+        },
+    )
+    group = _OttoGroup(name="otto")
+    cmd = group.get_command(None, "cached-grp")
+    assert cmd is not None
+    assert {"ping", "sub"} <= set(cmd.commands)
+    assert "deep" in cmd.commands["sub"].commands
+
+
+def test_cached_stub_leaf_serves_option_flags(monkeypatch):
+    """A cache-only LEAF with cached options rebuilds them for --<TAB>."""
+    from otto.cli.main import _OttoGroup
+
+    monkeypatch.setattr(
+        "otto.cli.main.get_completion_names",
+        lambda: {
+            "commands": [
+                {
+                    "name": "cached-leaf",
+                    "help": "L.",
+                    "lab_free": False,
+                    "options": [
+                        {
+                            "name": "count",
+                            "flags": ["--count"],
+                            "kind": "int",
+                            "default": 1,
+                            "help": "How many.",
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    group = _OttoGroup(name="otto")
+    cmd = group.get_command(None, "cached-leaf")
+    assert cmd is not None
+    assert not hasattr(cmd, "commands")  # a leaf, not a group
+    flag_decls = [opt for p in cmd.params for opt in getattr(p, "opts", [])]
+    assert "--count" in flag_decls
+
+
 def test_completion_descent_target_resolves_real(monkeypatch):
     """During completion, the pending dispatch target must resolve to the real
     command (importing its module) — completion of `otto run <TAB>` needs the

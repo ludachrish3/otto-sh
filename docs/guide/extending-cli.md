@@ -217,12 +217,19 @@ shell tab completion — there is nothing extra to wire up. Two paths feed this:
   entirely for latency — completion never executes arbitrary user code. A
   cache file records each third-party command's name, help text, and
   `lab_free` flag from the most recent slow-path run (built by
-  `collect_cli_commands()` in `otto/configmodule/completion_cache.py`).
+  `collect_cli_commands()` in `otto/configmodule/completion_cache.py`) —
+  plus, for a group, its subcommand tree (names, helps, option schemas), so
+  `otto <your-group> <TAB>` completes children without importing your code.
   Built-in commands aren't cached — they re-register on every real
   invocation, so caching them would be redundant. On the fast path, otto
-  serves help-only stubs assembled purely from that cached data; a name only
+  serves stubs assembled purely from that cached data; a name only
   the live registry knows about (never seen by a completing shell before) is
   simply invisible until the next slow-path run refreshes the cache.
+
+  One cost note for lazy `"pkg.mod:attr"` group loaders: serializing the
+  subcommand tree imports that module during the *slow-path* cache refresh
+  (never during completion itself). If the import fails, the cache degrades
+  to the group's name and help — and the real dispatch error stays loud.
 
 ## Return values
 
