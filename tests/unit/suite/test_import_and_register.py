@@ -89,6 +89,13 @@ def repo1(clean_registry) -> Repo:
     state and ``sys.modules`` is restored afterwards. The tests-dir sys.path
     precondition is enforced here (mirroring the pylib treatment in
     test_repo.py) so it can't depend on what ran earlier in the worker.
+
+    The polluter is identified and empirically verified: any in-process suite
+    execution (``run_suite`` → ``pytest.main([suite_file, ...])``) makes
+    pytest PERMANENTLY insert the suite file's parent dirs — including
+    ``tests/repo1/tests`` — into the worker's ``sys.path`` (importmode=
+    prepend, no ``__init__.py``). The same mechanism also re-registers the
+    file's suites under pytest's own module name; see ``clean_registry``.
     """
     while str(_REPO1_TESTS_DIR) in sys.path:
         sys.path.remove(str(_REPO1_TESTS_DIR))

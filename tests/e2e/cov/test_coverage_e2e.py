@@ -599,6 +599,25 @@ class TestSuiteRunnerIntegration:
             f"--- stderr ---\n{suite_run_exit_code.stderr}"
         )
 
+    def test_fleet_run_leaves_no_side_effects_on_the_runner(self, suite_run_exit_code):
+        """A real fleet deploy must never touch the machine otto runs ON.
+
+        Regression guard for the fleet-contamination bug: injecting the
+        built-in ``local`` host into ``lab.hosts`` silently enrolled the
+        runner in ``all_hosts()``/``do_for_all_hosts()`` — the suite then
+        installed the product onto the runner (sudo mkdir/rm -rf on the dev
+        machine) and host-pinned coverage vanished into never-fetched local
+        .gcda. A recurrence through ANY future path recreates these exact
+        directories locally; their absence after a real ``otto test`` run is
+        the contract.
+        """
+        assert suite_run_exit_code.returncode == 0
+        for runner_path in ("/opt/coverage_product", "/var/coverage/product"):
+            assert not Path(runner_path).exists(), (
+                f"{runner_path} exists on the RUNNER after a fleet deploy — "
+                f"a local/loopback host is participating in fleet operations again"
+            )
+
 
 @pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
