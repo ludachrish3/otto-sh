@@ -13,18 +13,18 @@ from otto.host.connections import (
 
 @pytest.fixture(autouse=True)
 def _isolate_term_registry():
-    """Snapshot/restore the global term registry (names + families) around each
-    test so a custom registration never leaks into the next test.
+    """Unregister any test-added term backend after each test.
+
+    Built-ins (``ssh``/``telnet``) are never touched by these tests, so there
+    is nothing to snapshot/restore — only the names a test itself registers
+    need cleanup.
     """
-    saved = dict(conn_mod._TERM_BACKENDS)
-    saved_fams = dict(conn_mod._TERM_FAMILIES)
+    before = set(conn_mod.TERM_BACKENDS.names())
     try:
         yield
     finally:
-        conn_mod._TERM_BACKENDS.clear()
-        conn_mod._TERM_BACKENDS.update(saved)
-        conn_mod._TERM_FAMILIES.clear()
-        conn_mod._TERM_FAMILIES.update(saved_fams)
+        for name in set(conn_mod.TERM_BACKENDS.names()) - before:
+            conn_mod.TERM_BACKENDS.unregister(name)
 
 
 class TestBuiltins:
@@ -33,8 +33,8 @@ class TestBuiltins:
         assert build_term_backend("telnet") is ConnectionManager
 
     def test_builtin_term_families(self):
-        assert conn_mod._TERM_FAMILIES["ssh"] == frozenset({"unix"})
-        assert conn_mod._TERM_FAMILIES["telnet"] == frozenset({"unix", "embedded"})
+        assert conn_mod.TERM_BACKENDS.get("ssh").host_families == frozenset({"unix"})
+        assert conn_mod.TERM_BACKENDS.get("telnet").host_families == frozenset({"unix", "embedded"})
 
 
 class TestRegistry:
@@ -53,7 +53,7 @@ class TestRegistry:
 
         register_term_backend("myterm", CustomTerm, host_families=frozenset({"unix"}))
         assert build_term_backend("myterm") is CustomTerm
-        assert conn_mod._TERM_FAMILIES["myterm"] == frozenset({"unix"})
+        assert conn_mod.TERM_BACKENDS.get("myterm").host_families == frozenset({"unix"})
 
     def test_register_rejects_empty_families(self):
         class CustomTerm(ConnectionManager):

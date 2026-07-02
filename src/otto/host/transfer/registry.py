@@ -8,22 +8,30 @@ unified across host families — unix backends (``scp``, ``sftp``, ``ftp``,
 a cross-family protocol is a single entry.
 """
 
+from ...registry import Registry, caller_module
 from .base import BaseFileTransfer
 
 # Unified registry of transfer-protocol name -> backend class, spanning BOTH
 # host families. ``EmbeddedFileTransfer`` registers ``console``/``tftp`` into
-# this same dict (see transfer/embedded.py), so one namespace holds every
+# this same registry (see transfer/embedded.py), so one namespace holds every
 # transfer protocol and a future cross-family protocol (tftp) is a single
 # entry. ``build_*`` returns the class so the host can call ``.create(ctx)``.
-_TRANSFER_BACKENDS: dict[str, type[BaseFileTransfer]] = {}
+TRANSFER_BACKENDS: Registry[type[BaseFileTransfer]] = Registry(
+    "transfer backend", register_hint="otto.host.transfer.register_transfer_backend()"
+)
 
 
-def register_transfer_backend(name: str, cls: type[BaseFileTransfer]) -> None:
+def register_transfer_backend(
+    name: str, cls: type[BaseFileTransfer], *, overwrite: bool = False
+) -> None:
     """Make a custom transfer backend available to lab data under *name*.
 
     Call from an init module listed in ``.otto/settings.toml``. The backend
     must declare a non-empty :attr:`BaseFileTransfer.host_families`; otherwise
     it could never validate against any host and is rejected here.
+
+    *overwrite* replaces an existing registration under *name* deliberately
+    (e.g. a built-in); by default a duplicate name raises.
     """
     if not cls.host_families:
         raise ValueError(
@@ -31,22 +39,14 @@ def register_transfer_backend(name: str, cls: type[BaseFileTransfer]) -> None:
             f"a transfer backend must declare at least one host family "
             f"(e.g. frozenset({{'unix'}}))."
         )
-    _TRANSFER_BACKENDS[name] = cls
+    TRANSFER_BACKENDS.register(name, cls, overwrite=overwrite, origin=caller_module())
 
 
 def build_transfer_backend(name: str) -> type[BaseFileTransfer]:
     """Return the transfer-backend class registered under *name*.
 
-    Raises
-    ------
-    ValueError
-        If *name* is not registered; the message lists the registered names.
+    Raises:
+        ValueError: If *name* is not registered; the message lists registered
+            names and suggests near-misses.
     """
-    try:
-        return _TRANSFER_BACKENDS[name]
-    except KeyError:
-        known = ", ".join(sorted(_TRANSFER_BACKENDS))
-        raise ValueError(
-            f"Unknown transfer backend {name!r}. Registered backends: {known}. "
-            f"Custom backends can be added via register_transfer_backend()."
-        ) from None
+    return TRANSFER_BACKENDS.get(name)

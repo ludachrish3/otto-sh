@@ -27,7 +27,7 @@ from .progress import (
     make_transfer_progress,
 )
 from .registry import (
-    _TRANSFER_BACKENDS,
+    TRANSFER_BACKENDS,
     build_transfer_backend,
     register_transfer_backend,
 )
@@ -37,6 +37,7 @@ from .tftp import TftpFileTransfer  # registers tftp on import
 from .unix_base import UnixFileTransfer
 
 __all__ = [
+    "TRANSFER_BACKENDS",
     "BaseFileTransfer",
     "ConsoleFileTransfer",
     "EmbeddedFileTransfer",

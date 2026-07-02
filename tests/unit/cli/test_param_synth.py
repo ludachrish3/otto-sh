@@ -134,3 +134,33 @@ def test_two_variadics_is_error():
 
     with pytest.raises(ValueError, match="variadic"):
         build_cli_binding(f)
+
+
+def test_opt_name_renames_the_flag():
+    async def verb(self, dest_dir: Annotated[str, Opt(name="--dest", help="Target.")] = "/tmp"):
+        """Verb."""
+
+    binding = build_cli_binding(verb)
+    (param,) = binding.params
+    typer_meta = param.annotation.__metadata__[0]
+    assert "--dest" in typer_meta.param_decls
+
+
+def test_opt_name_renames_the_flag_for_list_option():
+    async def verb(self, tags: Annotated[list[str], Opt(name="--tag", help="Tags.")] = []):  # noqa: B006 — function never called; type must stay list[str] for the comma-list synthesizer branch
+        """Verb."""
+
+    binding = build_cli_binding(verb)
+    (param,) = binding.params
+    typer_meta = param.annotation.__metadata__[0]
+    assert "--tag" in typer_meta.param_decls
+
+
+def test_arg_name_sets_the_metavar():
+    async def verb(self, src: Annotated[str, Arg(name="SOURCE")]):
+        """Verb."""
+
+    binding = build_cli_binding(verb)
+    (param,) = binding.params
+    typer_meta = param.annotation.__metadata__[0]
+    assert typer_meta.metavar == "SOURCE"

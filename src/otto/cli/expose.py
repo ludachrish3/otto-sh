@@ -99,7 +99,9 @@ def make_method_command(
     verb = cli_name if cli_name is not None else attr_name
 
     async def _cmd(ctx: typer.Context, **kw: Any) -> None:
-        host = ctx.obj
+        from .host import resolve_cli_host
+
+        host = resolve_cli_host(ctx)
         method = getattr(host, attr_name, None)
         if method is None or not callable(method):
             rprint(
@@ -182,13 +184,13 @@ def iter_exposed_verbs() -> Iterable[tuple[str, str, str, Callable[..., Any]]]:
     method docstring's first line.  ``sample_func`` is the unbound method used to
     derive the CLI signature via :func:`~otto.cli.param_synth.build_cli_binding`.
     """
-    from ..host.os_profile import _HOST_CLASSES
+    from ..host.os_profile import HOST_CLASSES
 
     # First-wins per cli_name assumes a consistent attr_name for a given cli_name across
     # classes (true for inherited verbs; only divergent if two classes use the same
     # explicit name= for different attrs — avoid that).
     seen: set[str] = set()
-    for cls in _HOST_CLASSES.values():
+    for _name, cls in HOST_CLASSES.items():  # noqa: PERF102 — Registry has no .values(), only .items()
         for cli_name, attr_name in collect_exposed_methods(cls).items():
             if cli_name in seen:
                 continue
@@ -223,6 +225,12 @@ def _synthesize_command(
     from ..utils import async_typer_command
 
     cmd_fn = make_method_command(attr_name, sample_func, cli_name)
+    # Propagate the verb's per-invocation output-dir preference onto the command
+    # callback so the leaf-invoke preamble (which reads `__cli_output_dir__` off
+    # `ctx.command.callback`) honours read-only verbs (exists/ls/…) that opt out.
+    # functools.wraps in async_typer_command carries the marker through, but set
+    # it on cmd_fn BEFORE wrapping so the wrapper inherits it.
+    cmd_fn.__cli_output_dir__ = getattr(sample_func, "__cli_output_dir__", True)  # ty: ignore[unresolved-attribute]
     tmp = typer.Typer()
     tmp.command(name=cli_name, help=help_text or None)(async_typer_command(cmd_fn))
     converted: Any = typer.main.get_command(tmp)
@@ -261,7 +269,24 @@ def _make_host_group() -> "type[TyperGroup]":
             # goes stale.
             if getattr(ctx, "resilient_parsing", False):
                 return None
-            return host_class_for_id((ctx.params or {}).get("host_id"))
+            # No host id to scope by (e.g. `otto host --help`, `otto host <TAB>`):
+            # skip the lab probe entirely. Probing with no id can only ever return
+            # None anyway, and doing so on a help path used to trigger a full lab
+            # load (with OTTO_LAB set) or spam the "Missing option '--lab'" message
+            # once per probe. Full unscoped menu, zero lab work.
+            host_id = (ctx.params or {}).get("host_id")
+            if not host_id:
+                return None
+            # Real dispatch with an id: the lab loads lazily (leaf-invoke preamble),
+            # which runs AFTER this parse-time scoping. Ensure it here as a soft
+            # probe so ``host_class_for_id`` → ``get_host`` can resolve the concrete
+            # class. A failed probe (no --lab / broken backend) is harmless: the
+            # call below then returns None (full menu), and the leaf raises its own
+            # clean error.
+            from .invoke import try_ensure_lab
+
+            try_ensure_lab(ctx)
+            return host_class_for_id(host_id)
 
         @override
         def list_commands(self, ctx: Any) -> list[str]:

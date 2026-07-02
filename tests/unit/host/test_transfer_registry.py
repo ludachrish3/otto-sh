@@ -20,12 +20,13 @@ from otto.host.transfer import (
 
 @pytest.fixture(autouse=True)
 def _isolate_transfer_registry():
-    saved = dict(xfer_mod._TRANSFER_BACKENDS)
+    """Unregister any test-added transfer backend after each test."""
+    before = set(xfer_mod.TRANSFER_BACKENDS.names())
     try:
         yield
     finally:
-        xfer_mod._TRANSFER_BACKENDS.clear()
-        xfer_mod._TRANSFER_BACKENDS.update(saved)
+        for name in set(xfer_mod.TRANSFER_BACKENDS.names()) - before:
+            xfer_mod.TRANSFER_BACKENDS.unregister(name)
 
 
 class TestBuiltins:
@@ -124,7 +125,7 @@ def test_public_import_surface_preserved():
     # Names previously importable from otto.host.transfer still import (sans FileTransfer).
     import otto.host as host_pkg
     from otto.host.transfer import (  # noqa: F401
-        _TRANSFER_BACKENDS,
+        TRANSFER_BACKENDS,
         BaseFileTransfer,
         EmbeddedFileTransfer,
         NcListenerCheck,

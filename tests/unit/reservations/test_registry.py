@@ -8,7 +8,7 @@ from otto.reservations import (
     register_reservation_backend,
 )
 from otto.reservations.registry import (
-    _RESERVATION_BACKENDS,
+    RESERVATION_BACKENDS,
     get_reservation_backend_class,
 )
 
@@ -33,7 +33,7 @@ def test_register_and_lookup():
     try:
         assert get_reservation_backend_class("mine-test") is MyBackend
     finally:
-        _RESERVATION_BACKENDS.pop("mine-test", None)
+        RESERVATION_BACKENDS.unregister("mine-test")
 
 
 def test_unknown_name_lists_registered():

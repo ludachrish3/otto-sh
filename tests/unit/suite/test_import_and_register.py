@@ -11,7 +11,7 @@ to load files directly by path, independent of ``sys.path``.
 Two concerns are exercised end-to-end:
 
 1. **Registration** — ``import_test_files()`` triggers ``@register_suite()`` on
-   ``TestDevice`` and the suite lands in ``_SUITE_REGISTRY``, even though
+   ``TestDevice`` and the suite lands in the ``SUITES`` registry, even though
    ``tests/repo1/tests`` is not on ``sys.path``.
 
 2. **Help-menu fidelity** — the generated Typer command exposes the full set
@@ -28,7 +28,7 @@ import typer
 from typer.testing import CliRunner
 
 from otto.configmodule.repo import Repo
-from otto.suite.register import _SUITE_REGISTRY
+from otto.suite.register import SUITES
 
 runner = CliRunner()
 
@@ -52,11 +52,12 @@ _MOD_EXAMPLE = "_otto_suite_test_example"
 
 @pytest.fixture
 def clean_registry():
-    """Snapshot and restore _SUITE_REGISTRY; remove injected sys.modules entries."""
-    before_len = len(_SUITE_REGISTRY)
+    """Snapshot and restore SUITES; remove injected sys.modules entries."""
+    before_names = set(SUITES.names())
     before_mods = set(sys.modules)
     yield
-    del _SUITE_REGISTRY[before_len:]
+    for name in set(SUITES.names()) - before_names:
+        SUITES.unregister(name)
     for key in set(sys.modules) - before_mods:
         if key.startswith("_otto_suite_"):
             sys.modules.pop(key, None)
@@ -66,8 +67,8 @@ def clean_registry():
 def repo1(clean_registry) -> Repo:
     """Return a Repo for tests/repo1 with libs on sys.path.
 
-    Uses ``clean_registry`` so each test starts with a predictable
-    ``_SUITE_REGISTRY`` state and ``sys.modules`` is restored afterwards.
+    Uses ``clean_registry`` so each test starts with a predictable ``SUITES``
+    state and ``sys.modules`` is restored afterwards.
     """
     # Evict any previously cached module so we get a fresh import each test
     sys.modules.pop(_MOD_DEVICE, None)
@@ -87,12 +88,11 @@ def repo1(clean_registry) -> Repo:
 
 def _app_for(suite_name: str) -> typer.Typer:
     """Wrap the named suite's sub-app in a fresh Typer app for CliRunner tests."""
-    for name, sub_app in reversed(_SUITE_REGISTRY):
-        if name == suite_name:
-            app = typer.Typer(no_args_is_help=True)
-            app.add_typer(sub_app)
-            return app
-    raise LookupError(f"{suite_name!r} not found in _SUITE_REGISTRY")
+    if suite_name not in SUITES:
+        raise LookupError(f"{suite_name!r} not found in SUITES")
+    app = typer.Typer(no_args_is_help=True)
+    app.add_typer(SUITES.get(suite_name).sub_app)
+    return app
 
 
 # ---------------------------------------------------------------------------
@@ -104,16 +104,15 @@ class TestSuiteAutoScan:
     """``import_test_files()`` registers suites from external paths (bug-fix coverage)."""
 
     def test_test_device_registered(self, repo1: Repo):
-        """TestDevice must appear in _SUITE_REGISTRY after import_test_files()."""
+        """TestDevice must appear in SUITES after import_test_files()."""
         repo1.import_test_files()
-        names = [n for n, _ in _SUITE_REGISTRY]
-        assert "TestDevice" in names
+        assert "TestDevice" in SUITES
 
     def test_tests_dir_not_on_syspath_before_import(self, repo1: Repo):
         """Pre-condition: repo1's tests directory must NOT be on sys.path.
 
         This confirms the bug scenario: the old code would have silently skipped
-        test_device.py and left _SUITE_REGISTRY empty.
+        test_device.py and left SUITES empty.
         """
         assert str(_REPO1_TESTS_DIR) not in sys.path
 
@@ -123,17 +122,16 @@ class TestSuiteAutoScan:
 
         repo1.import_test_files()
 
-        names = [n for n, _ in _SUITE_REGISTRY]
-        assert "TestDevice" in names, (
+        assert "TestDevice" in SUITES, (
             "TestDevice not registered — import_test_files() may have fallen back "
             "to the broken sys.path-relative logic"
         )
 
     def test_plain_test_file_without_decorator_not_registered(self, repo1: Repo):
         """test_example.py has no @register_suite() and must not add to the registry."""
-        before = len(_SUITE_REGISTRY)
+        before_names = set(SUITES.names())
         repo1.import_test_files()
-        added_names = [n for n, _ in _SUITE_REGISTRY[before:]]
+        added_names = set(SUITES.names()) - before_names
         assert "test_example" not in added_names
         # test_device.py adds TestDevice; test_coverage_product.py adds TestCoverageProduct
         assert "TestDevice" in added_names
@@ -142,9 +140,9 @@ class TestSuiteAutoScan:
     def test_duplicate_import_is_skipped(self, repo1: Repo):
         """Calling import_test_files() twice must not double-register suites."""
         repo1.import_test_files()
-        count_after_first = len(_SUITE_REGISTRY)
+        count_after_first = len(SUITES)
         repo1.import_test_files()
-        assert len(_SUITE_REGISTRY) == count_after_first
+        assert len(SUITES) == count_after_first
 
 
 # ---------------------------------------------------------------------------

@@ -20,13 +20,18 @@ from otto.monitor.snmp import (
 
 @pytest.fixture
 def clean_registry():
-    """Snapshot and restore the global descriptor registry around a test."""
-    saved = dict(snmp._SNMP_METRICS)
+    """Unregister any test-added descriptor after the test.
+
+    Tests using this fixture only ever register a *new* oid (never overwrite
+    a built-in), so diff-based cleanup — mirroring the term/transfer registry
+    fixtures — is sufficient.
+    """
+    before = set(snmp.SNMP_METRICS.names())
     try:
         yield
     finally:
-        snmp._SNMP_METRICS.clear()
-        snmp._SNMP_METRICS.update(saved)
+        for oid in set(snmp.SNMP_METRICS.names()) - before:
+            snmp.SNMP_METRICS.unregister(oid)
 
 
 # ---------------------------------------------------------------------------

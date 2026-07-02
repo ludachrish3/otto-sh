@@ -38,9 +38,9 @@ COVERAGE_BOOTSTRAP = PROJECT_ROOT / "tests" / "_coverage_bootstrap"
 _PROBE = """
 import sys, json, inspect
 import otto.host
-from otto.host.os_profile import get_host_class, _HOST_CLASSES
+from otto.host.os_profile import get_host_class, HOST_CLASSES
 
-assert set(_HOST_CLASSES) >= {"unix", "embedded", "zephyr"}, sorted(_HOST_CLASSES)
+assert set(HOST_CLASSES.names()) >= {"unix", "embedded", "zephyr"}, sorted(HOST_CLASSES.names())
 
 cls = get_host_class("unix")
 exposed = [

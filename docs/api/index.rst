@@ -10,9 +10,11 @@ API Reference
    coverage/index
    docker/index
    models/index
+   bootstrap
    context
    logger
    configmodule
+   registry
    reservations
    storage
    testing

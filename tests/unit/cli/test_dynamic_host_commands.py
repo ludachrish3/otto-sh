@@ -319,7 +319,7 @@ class _FakeEmbedded:
 def _make_app(monkeypatch, hosts: dict[str, type]):
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "_HOST_CLASSES", {c.__name__: c for c in set(hosts.values())})
+    monkeypatch.setattr(op, "HOST_CLASSES", {c.__name__: c for c in set(hosts.values())})
     monkeypatch.setattr(
         "otto.cli.expose.host_class_for_id",
         hosts.get,
@@ -488,7 +488,7 @@ def test_end_to_end_dispatch_through_host_group(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "_HOST_CLASSES", {"unix": _FakeUnixLocal})
+    monkeypatch.setattr(op, "HOST_CLASSES", {"unix": _FakeUnixLocal})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _FakeUnixLocal)
 
     app = typer.Typer(name="host", cls=HostGroup)
@@ -664,7 +664,7 @@ def test_ls_path_stays_positional_and_power_state_positional(monkeypatch):
 
     import otto.host.os_profile as op
 
-    monkeypatch.setattr(op, "_HOST_CLASSES", {"h": _H})
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _H})
     monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _H)
     app = typer.Typer(name="host", cls=HostGroup)
     host = _H()
@@ -708,6 +708,28 @@ def test_class_for_skips_host_build_during_completion(monkeypatch):
 
     grp._class_for(_DispatchCtx())
     assert calls == ["u1"]  # real dispatch still resolves the class for scoping
+
+
+def test_class_for_skips_lab_probe_without_host_id(monkeypatch):
+    """With no host id (e.g. ``otto host --help``), ``_class_for`` returns None and
+    never probes the lab: probing with no id can only return None anyway, and doing
+    it on a help path used to spam the "Missing option '--lab'" error once per verb.
+    """
+    from otto.cli import expose as expose_mod
+
+    probes: list[object] = []
+    monkeypatch.setattr("otto.cli.invoke.try_ensure_lab", lambda ctx: probes.append(ctx) or None)
+    resolves: list[str | None] = []
+    monkeypatch.setattr(expose_mod, "host_class_for_id", lambda hid: resolves.append(hid) or None)
+    grp = HostGroup(name="host")
+
+    class _NoIdCtx:
+        resilient_parsing = False
+        params: ClassVar = {}  # no host_id (group-level --help / bare `otto host`)
+
+    assert grp._class_for(_NoIdCtx()) is None
+    assert probes == [], "lab must not be probed when there is no host id to scope"
+    assert resolves == [], "class resolution must not run when there is no host id"
 
 
 # ---------------------------------------------------------------------------
@@ -844,3 +866,48 @@ async def test_make_method_command_not_implemented_exits_cleanly(capsys):
     combined = captured.out + captured.err
     assert "does not support" in combined
     assert "interact" in combined
+
+
+# ---------------------------------------------------------------------------
+# Task 10: F5 — Opt(name=...) / Arg(name=...) end-to-end through _synthesize_command
+# ---------------------------------------------------------------------------
+
+
+def test_opt_name_rename_dispatches_end_to_end(monkeypatch):
+    """A verb's Opt(name="--dest") flag parses through HostGroup (built on
+    _synthesize_command) and binds to the Python param's original name."""
+    from otto.utils import Opt
+
+    captured: dict = {}
+
+    class _Host:
+        id = "h1"
+
+        @cli_exposed
+        async def frob(self, dest_dir: Annotated[str, Opt(name="--dest", help="Target.")] = "/tmp"):
+            captured["dest_dir"] = dest_dir
+
+        async def close(self):
+            pass
+
+    import otto.host.os_profile as op
+
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
+    app = typer.Typer(name="host", cls=HostGroup)
+    host = _Host()
+
+    @app.callback(invoke_without_command=True)
+    def main(ctx: typer.Context, host_id: str = typer.Argument("")):
+        if ctx.resilient_parsing:
+            return
+        ctx.obj = host
+
+    r = CliRunner().invoke(app, ["h1", "frob", "--dest", "/other"])
+    assert r.exit_code == 0, r.output
+    assert captured["dest_dir"] == "/other"
+
+    # The auto-derived --dest-dir flag must no longer be recognized: Opt(name=...)
+    # fully replaces (not appends to) the synthesized decl.
+    r_old = CliRunner().invoke(app, ["h1", "frob", "--dest-dir", "/other"])
+    assert r_old.exit_code != 0

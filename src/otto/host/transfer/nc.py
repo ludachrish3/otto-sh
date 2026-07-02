@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 from typing_extensions import override
 
-from ...logger import get_otto_logger
+from ...logger import get_logger
 from ...result import CommandResult, Result
 from ...utils import Status
 from .base import (
@@ -39,7 +39,7 @@ _NC_LISTENER_FAST_POLL_ITERS = (
 # 12 MB/s link while keeping the overhead negligible.
 _NC_DRAIN_EVERY = 64
 
-_logger = get_otto_logger()
+_logger = get_logger()
 
 # ---------------------------------------------------------------------------
 # Shell script templates for port-finding strategies

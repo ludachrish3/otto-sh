@@ -3,13 +3,16 @@
 import pytest
 
 from otto.monitor.parsers import (
+    DEFAULT_PARSERS,
     DiskParser,
     LoadParser,
     MemParser,
     MetricDataPoint,
     MetricParser,
     TopCpuParser,
+    get_host_parsers,
     human_readable,
+    register_host_parsers,
 )
 
 # ---------------------------------------------------------------------------
@@ -383,3 +386,44 @@ class TestMetricParserExtensibility:
         p = UptimeParser()
         assert p.parse("up 3 days, 4 hours")["Uptime"].value == 3.0
         assert p.parse("up 5 hours") == {}
+
+
+class TestHostParserRegistry:
+    """register_host_parsers / get_host_parsers — the per-host HOST_PARSERS registry."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_host_parser_registry(self):
+        from otto.monitor import parsers as parsers_mod
+
+        before = set(parsers_mod.HOST_PARSERS.names())
+        try:
+            yield
+        finally:
+            for host_id in set(parsers_mod.HOST_PARSERS.names()) - before:
+                parsers_mod.HOST_PARSERS.unregister(host_id)
+
+    def test_unregistered_host_falls_back_to_default_parsers(self):
+        # get_host_parsers deep-copies its result (see test below), so compare
+        # shape rather than identity/equality of the MetricParser instances.
+        fallback = get_host_parsers("no-such-host")
+        assert set(fallback) == set(DEFAULT_PARSERS)
+        assert {type(p) for p in fallback.values()} == {type(p) for p in DEFAULT_PARSERS.values()}
+
+    def test_registered_host_returns_its_own_parsers(self):
+        custom = {"free -b": MemParser()}
+        register_host_parsers("gpu-01", custom)
+        assert set(get_host_parsers("gpu-01")) == {"free -b"}
+
+    def test_returned_dict_is_a_deep_copy(self):
+        custom = {"free -b": MemParser()}
+        register_host_parsers("gpu-02", custom)
+        got = get_host_parsers("gpu-02")
+        got.clear()
+        assert set(get_host_parsers("gpu-02")) == {"free -b"}  # unaffected by caller mutation
+
+    def test_reregistering_same_host_id_overwrites(self):
+        # Re-registering a host_id is normal usage (e.g. an init module composing
+        # {**DEFAULT_PARSERS, ...}), not a mistake — it must not raise.
+        register_host_parsers("gpu-03", {"free -b": MemParser()})
+        register_host_parsers("gpu-03", {"df -h": DiskParser()})
+        assert set(get_host_parsers("gpu-03")) == {"df -h"}

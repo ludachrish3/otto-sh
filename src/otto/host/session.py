@@ -32,13 +32,13 @@ if TYPE_CHECKING:
 
     from .connections import ConnectionManager
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..logger.mode import LogMode
 from ..result import CommandResult, Results
 from ..utils import Status
 from .host import ShellCommand
 
-logger = get_otto_logger()
+logger = get_logger()
 
 # Type alias for expect patterns: (regex_pattern, response_text)
 Expect = tuple[str | re.Pattern[str], str]

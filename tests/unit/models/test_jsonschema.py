@@ -158,14 +158,12 @@ class TestSelectorEnums:
         class XmodemTransfer(UnixFileTransfer):
             host_families = frozenset({"unix"})
 
-        saved = dict(xfer_mod._TRANSFER_BACKENDS)
-        xfer_mod._TRANSFER_BACKENDS["xmodem"] = XmodemTransfer
+        xfer_mod.TRANSFER_BACKENDS.register("xmodem", XmodemTransfer)
         try:
             props = build_schemas()["unix-host"]["properties"]
             assert "xmodem" in props["valid_transfers"]["anyOf"][1]["items"]["enum"]
         finally:
-            xfer_mod._TRANSFER_BACKENDS.clear()
-            xfer_mod._TRANSFER_BACKENDS.update(saved)
+            xfer_mod.TRANSFER_BACKENDS.unregister("xmodem")
 
     def test_menu_property_accepts_scalar_and_list(self):
         import jsonschema

@@ -5,9 +5,9 @@ tree. The expensive step during that walk is not parsing CLI args — it's the
 side effects in :mod:`otto.configmodule` that populate dynamic subcommands:
 
 - :meth:`Repo.import_init_modules` — imports every user-defined instruction
-  module so ``@run_app.command`` decorators can attach to ``run_app``.
+  module so ``@instruction()`` decorators can register into ``INSTRUCTIONS``.
 - :meth:`Repo.import_test_files` — exec's every ``test_*.py`` so
-  ``@register_suite()`` decorators can populate ``_SUITE_REGISTRY``.
+  ``@register_suite()`` decorators can populate the ``SUITES`` registry.
 
 Both execute arbitrary user code. For completion all we actually need is the
 *names* those decorators would register and the *option schemas* the user can
@@ -20,7 +20,7 @@ Cache location
 ``$OTTO_XDIR/.otto/completion_cache.json``. If ``OTTO_XDIR`` is not set,
 caching is disabled and completion always falls through to the slow path.
 
-Cache schema (version 6)
+Cache schema (version 7)
 ------------------------
 
 Single flat map, keyed by fingerprint hex digest. Each entry records both the
@@ -29,7 +29,7 @@ stale entries without trusting the mtimes on-disk::
 
     {
         "<fingerprint>": {
-            "schema_version": 6,
+            "schema_version": 7,
             "generated_at": 1745000000,
             "instructions": [
                 {
@@ -52,6 +52,7 @@ stale entries without trusting the mtimes on-disk::
             "docker_hosts": ["carrot_seed", ...],
             "term_backends": ["ssh", "telnet", ...],
             "transfer_backends": [{"name": "scp", "host_families": ["unix"]}, ...],
+            "commands": [{"name": "flash", "help": "...", "lab_free": false}, ...],
         }
     }
 
@@ -82,7 +83,7 @@ import types
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Union, get_args, get_origin
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 
 if TYPE_CHECKING:
     from .repo import Repo
@@ -92,7 +93,7 @@ COMPLETION_ENV_VAR = "_OTTO_COMPLETE"
 CACHE_FILENAME = "completion_cache.json"
 
 # Bump when the on-disk schema changes in a way older readers can't parse.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 HOSTS_FILENAME = "hosts.json"
 
@@ -278,7 +279,7 @@ def _serialize_options(
     annotation form we don't know how to round-trip — that causes the
     command to be skipped entirely rather than cached with a half-signature.
     """
-    log = get_otto_logger()
+    log = get_logger()
     try:
         sig = inspect.signature(callback)
     except (TypeError, ValueError) as e:  # pragma: no cover — paranoia
@@ -354,11 +355,14 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
     path.
 
     On success returns a dict with ``instructions``, ``suites``, ``hosts``,
-    ``docker_hosts``, ``term_backends``, and ``transfer_backends`` keys. The
-    first two are lists of ``{"name": str, "options": [...]}`` dicts; ``hosts``
-    and ``docker_hosts`` are plain lists of host-ID strings; ``term_backends``
-    is a list of backend-name strings and ``transfer_backends`` a list of
-    ``{"name": str, "host_families": [str, ...]}`` dicts.
+    ``docker_hosts``, ``term_backends``, ``transfer_backends``, and
+    ``commands`` keys. The first two are lists of
+    ``{"name": str, "options": [...]}`` dicts; ``hosts`` and ``docker_hosts``
+    are plain lists of host-ID strings; ``term_backends`` is a list of
+    backend-name strings; ``transfer_backends`` is a list of
+    ``{"name": str, "host_families": [str, ...]}`` dicts; ``commands`` is a
+    list of ``{"name": str, "help": str | None, "lab_free": bool}`` dicts for
+    third-party top-level CLI commands (default ``[]`` when absent).
     """
     if not repos:
         return None
@@ -391,6 +395,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
     term_backends = entry.get("term_backends", [])
     transfer_backends = entry.get("transfer_backends", [])
     usernames = entry.get("usernames", [])
+    commands = entry.get("commands", [])
     if (
         not isinstance(instructions, list)
         or not isinstance(suites, list)
@@ -399,6 +404,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
         or not isinstance(term_backends, list)
         or not isinstance(transfer_backends, list)
         or not isinstance(usernames, list)
+        or not isinstance(commands, list)
     ):
         return None
     return {
@@ -409,6 +415,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
         "term_backends": term_backends,
         "transfer_backends": transfer_backends,
         "usernames": usernames,
+        "commands": commands,
     }
 
 
@@ -421,6 +428,7 @@ def write_cache(
     term_backends: list[str] | None = None,
     transfer_backends: list[dict[str, Any]] | None = None,
     usernames: list[str] | None = None,
+    commands: list[dict[str, Any]] | None = None,
 ) -> None:
     """Write (or update) the entry for the current fingerprint.
 
@@ -461,6 +469,7 @@ def write_cache(
         "term_backends": term_backends or [],
         "transfer_backends": transfer_backends or [],
         "usernames": usernames or [],
+        "commands": commands or [],
     }
 
     with tempfile.NamedTemporaryFile(
@@ -488,10 +497,10 @@ def write_cache(
 def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Read the currently-registered instructions and suites with options.
 
-    Must be called after :func:`apply_repo_settings` has finished populating
-    ``run_app`` and ``_SUITE_REGISTRY``. Returns empty lists for any source
-    that hasn't been loaded (e.g. no init modules → ``otto.cli.run`` never
-    imported → no instructions).
+    Must be called after :func:`otto.bootstrap.bootstrap` has finished
+    populating ``otto.cli.run.INSTRUCTIONS`` and ``otto.suite.register.SUITES``.
+    Returns empty lists for any source that hasn't been loaded (e.g. no init
+    modules → ``otto.cli.run`` never imported → no instructions).
 
     Each item is ``{"name": str, "options": list[dict]}``; a command whose
     options can't be fully serialized is cached with ``options: []`` so
@@ -499,40 +508,27 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
     """
     import sys
 
+    def _entries_to_dicts(entries: list[tuple[str, Any]]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        for name, entry in entries:
+            callback = None
+            if entry.sub_app.registered_commands:
+                callback = entry.sub_app.registered_commands[0].callback
+            options = _serialize_options(callback, command_name=name) if callback else None
+            out.append({"name": name, "options": options if options is not None else []})
+        return out
+
     instructions: list[dict[str, Any]] = []
     run_mod = sys.modules.get("otto.cli.run")
     if run_mod is not None:
-        for group in run_mod.run_app.registered_groups:
-            for cmd in group.typer_instance.registered_commands:
-                name = cmd.name
-                if name is None and cmd.callback is not None:
-                    name = cmd.callback.__name__.replace("_", "-")
-                if not name:
-                    continue
-                options = _serialize_options(cmd.callback, command_name=name)
-                instructions.append(
-                    {
-                        "name": name,
-                        "options": options if options is not None else [],
-                    }
-                )
+        instructions = _entries_to_dicts(run_mod.INSTRUCTIONS.items())
 
-    suites: list[dict[str, Any]] = []
-    try:
-        from ..suite.register import _SUITE_REGISTRY
-    except ImportError:
-        _SUITE_REGISTRY = []  # type: ignore[assignment]  # noqa: N806 — matching the imported constant name
-    for name, sub_app in _SUITE_REGISTRY:
-        callback = None
-        if sub_app.registered_commands:
-            callback = sub_app.registered_commands[0].callback
-        options = _serialize_options(callback, command_name=name) if callback is not None else None
-        suites.append(
-            {
-                "name": name,
-                "options": options if options is not None else [],
-            }
-        )
+    # Unlike otto.cli.run (guarded above via sys.modules to sidestep a real
+    # circular-import hazard at bootstrap time), otto.suite.register has no
+    # such hazard — it's safe to import directly here.
+    from ..suite.register import SUITES
+
+    suites: list[dict[str, Any]] = _entries_to_dicts(SUITES.items())
 
     return instructions, suites
 
@@ -540,21 +536,43 @@ def collect_current_commands() -> tuple[list[dict[str, Any]], list[dict[str, Any
 def collect_backend_names() -> dict[str, Any]:
     """Snapshot the registered term + transfer backend names for completion.
 
-    Call after ``apply_repo_settings`` / ``import_init_modules`` so custom
-    per-repo backends are present. Built-ins are always present (registered at
-    module import). Each transfer backend carries its ``host_families`` so the
-    completer can filter by family (e.g. unix-only for ``otto host --transfer``).
+    Call after :func:`otto.bootstrap.bootstrap` (or ``import_init_modules``) so
+    custom per-repo backends are present. Built-ins are always present
+    (registered at module import). Each transfer backend carries its
+    ``host_families`` so the completer can filter by family (e.g. unix-only
+    for ``otto host --transfer``).
     """
-    from ..host.connections import _TERM_BACKENDS
-    from ..host.transfer import _TRANSFER_BACKENDS
+    from ..host.connections import TERM_BACKENDS
+    from ..host.transfer import TRANSFER_BACKENDS
 
     return {
-        "term_backends": sorted(_TERM_BACKENDS),
+        "term_backends": sorted(TERM_BACKENDS.names()),
         "transfer_backends": [
             {"name": name, "host_families": sorted(cls.host_families)}
-            for name, cls in sorted(_TRANSFER_BACKENDS.items())
+            for name, cls in sorted(TRANSFER_BACKENDS.items())
         ],
     }
+
+
+def collect_cli_commands() -> list[dict[str, Any]]:
+    """Snapshot third-party top-level CLI commands for the completion cache.
+
+    Reads the live :data:`otto.cli.registry.CLI_COMMANDS` registry and
+    returns one ``{"name", "help", "lab_free"}`` dict per entry whose
+    ``origin`` module is *not* under ``otto.`` — built-in commands re-register
+    on every real invocation (bootstrap always runs), so caching them would
+    be redundant and risks masking a genuine removal. Third-party commands,
+    by contrast, only exist in the registry after a plugin's init module has
+    executed, which the completion fast path deliberately skips; caching
+    their name/help/``lab_free`` here is what lets them still tab-complete.
+    """
+    from ..cli.registry import CLI_COMMANDS
+
+    return [
+        {"name": spec.name, "help": spec.help, "lab_free": spec.lab_free}
+        for _name, spec in CLI_COMMANDS.items()
+        if not spec.origin.startswith("otto.")
+    ]
 
 
 def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:

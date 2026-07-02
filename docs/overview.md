@@ -91,10 +91,10 @@ their own CLI options via Typer annotations:
 
 ```python
 from otto.cli.run import instruction
-from otto.configmodule.configmodule import all_hosts
-from otto.logger import get_otto_logger
+from otto.configmodule import all_hosts
+from otto.logger import get_logger
 
-logger = get_otto_logger()
+logger = get_logger()
 
 @instruction()
 async def deploy(

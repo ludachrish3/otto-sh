@@ -18,9 +18,28 @@ import pytest
 from typer.testing import CliRunner
 
 from otto.cli.main import app
-from otto.logger import get_otto_logger, management
+from otto.cli.registry import register_cli_command
+from otto.logger import get_logger, management
+from otto.result import CommandResult
+from otto.utils import Status
 
 runner = CliRunner()
+
+
+# Task 7: lab loading is now lazy — it runs in the leaf-invoke preamble, not the
+# root callback. Tests that assert lab-load / logging side-effects must therefore
+# dispatch a real (non-help, non-lab-free) leaf so the preamble fires. This
+# scratch command is that leaf: its body is a no-op, but invoking `otto --lab X
+# _main_probe` drives ensure_cli_session (banner/logging) + ensure_lab_context
+# (lab load + reservation state) + the per-command output dir + the gate.
+async def _main_probe() -> CommandResult:
+    return CommandResult(Status.Success, value="", command="probe", retcode=0)
+
+
+# gate=False: these tests exercise logging/lab/context, not the reservation
+# gate (which has its own coverage); keeping it off avoids building a real
+# reservation backend in a mock-lab environment.
+register_cli_command("_main_probe", _main_probe, help="internal test probe", gate=False)
 
 
 # ── Shared fixtures ───────────────────────────────────────────────────────────
@@ -46,11 +65,17 @@ def main_mocks(tmp_path):
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
     clean_env["OTTO_XDIR"] = str(tmp_path)
 
+    from otto import bootstrap as bs
+
+    bs._reset()
+    # The lab / session work is lazy (Task 7) and lives in otto.cli.invoke, which
+    # imports get_repos / load_lab from otto.configmodule at call time — patch the
+    # source so both the root-callback (--show-lab) and preamble paths see mocks.
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.init_cli_logging") as p_logger,
-        patch("otto.cli.main.get_repos", return_value=[]),
-        patch("otto.cli.main.load_lab", return_value=mock_lab) as p_getlab,
+        patch("otto.configmodule.get_repos", return_value=[]),
+        patch("otto.configmodule.load_lab", return_value=mock_lab) as p_getlab,
     ):
         yield {
             "init_cli_logging": p_logger,
@@ -58,16 +83,20 @@ def main_mocks(tmp_path):
             "lab": mock_lab,
             "config": mock_config,
         }
+    bs._reset()
 
 
 def _invoke(extra_args: list[str]):
     """
-    Invoke the main app.
+    Invoke the main app, driving a real leaf so the lazy preamble fires.
 
-    The required ``--lab`` option pre-filled so tests don't have to repeat it
-    everywhere.
+    ``--lab test_lab`` is pre-filled, and the ``_main_probe`` leaf is appended so
+    that ensure_cli_session / ensure_lab_context run (they are lazy since Task 7
+    and no longer live in the root callback). Root action flags like ``--show-lab``
+    / ``--list-hosts`` still short-circuit in the root callback before the probe
+    dispatches, so those tests observe only the lab load, as before.
     """
-    return runner.invoke(app, ["--lab", "test_lab", *extra_args])
+    return runner.invoke(app, ["--lab", "test_lab", *extra_args, "_main_probe"])
 
 
 # ── Eager / early-exit options ────────────────────────────────────────────────
@@ -218,9 +247,24 @@ class TestLabFreeFlags:
     # ── Boundary: these still require --lab ───────────────────────────────────
 
     def test_actual_suite_run_still_requires_lab(self):
-        """``otto test <Suite>`` (no --help/--list-*) must still exit 2 without --lab."""
-        result = runner.invoke(app, ["test", "TestX"], env={"OTTO_LAB": ""})
-        assert result.exit_code == 2
+        """``otto test <Suite>`` (no --help/--list-*) must still exit 2 without --lab.
+
+        With lazy loading (Task 7), the ``--lab`` requirement is enforced by the
+        leaf-invoke preamble rather than the root callback, so this must exercise a
+        *real* registered suite leaf (an unknown name would error at parse time with
+        "No such command", never reaching the preamble). A registered suite reaches
+        the preamble, which enforces ``--lab`` and exits 2.
+        """
+        from otto.suite.register import register_suite
+
+        @register_suite()
+        class _LabReqSuite:
+            pass
+
+        # suite_app resolves _LabReqSuite lazily from the SUITES registry —
+        # no explicit attach step needed.
+        result = runner.invoke(app, ["test", "_LabReqSuite"], env={"OTTO_LAB": ""})
+        assert result.exit_code == 2, result.output
         assert "--lab" in result.stderr or "--lab" in result.output
 
     def test_list_hosts_still_requires_lab(self):
@@ -296,15 +340,15 @@ class TestLoggerArguments:
 
     def test_log_level_default_is_info(self, real_main_mocks):
         _invoke([])
-        assert get_otto_logger().level == logging.INFO
+        assert get_logger().level == logging.INFO
 
     def test_log_level_custom(self, real_main_mocks):
         _invoke(["--log-level", "DEBUG"])
-        assert get_otto_logger().level == logging.DEBUG
+        assert get_logger().level == logging.DEBUG
 
     def test_log_level_custom_lower_case(self, real_main_mocks):
         _invoke(["--log-level", "debug"])
-        assert get_otto_logger().level == logging.DEBUG
+        assert get_logger().level == logging.DEBUG
 
     def test_log_days_default(self, real_main_mocks):
         _invoke([])
@@ -362,7 +406,8 @@ class TestLabLoading:
         assert set(lab.hosts.keys()) == {"host1", "host2", "local"}
 
     def test_multiple_labs_split_on_comma(self, real_main_mocks):
-        result = runner.invoke(app, ["--lab", "test_lab,lab2"])
+        # Append the probe leaf so the lazy preamble loads the lab (Task 7).
+        result = runner.invoke(app, ["--lab", "test_lab,lab2", "_main_probe"])
         assert result.exit_code == 0
         from otto.configmodule import get_lab
 
@@ -370,7 +415,8 @@ class TestLabLoading:
         assert set(lab.hosts.keys()) == {"host1", "host2", "host3", "local"}
 
     def test_multiple_lab_flags(self, real_main_mocks):
-        result = runner.invoke(app, ["--lab", "test_lab", "--lab", "lab2"])
+        # Append the probe leaf so the lazy preamble loads the lab (Task 7).
+        result = runner.invoke(app, ["--lab", "test_lab", "--lab", "lab2", "_main_probe"])
         assert result.exit_code == 0
         from otto.configmodule import get_lab
 

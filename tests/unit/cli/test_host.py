@@ -146,13 +146,26 @@ class TestHostHelp:
 
 class TestHostCallback:
     def test_log_dir_set_for_subcommand(self):
+        """The leaf-invoke preamble creates the host output dir named after the verb.
+
+        Since Task 7 the output dir is created by the shared leaf-invoke preamble
+        (``otto.cli.invoke.command_preamble``), not the ``host_app`` callback — so
+        dispatch goes through the root ``app`` (which wraps the dynamic verb
+        commands with the preamble). ``ensure_cli_session`` / ``ensure_lab_context``
+        are stubbed to isolate the output-dir naming (``create_output_dir('host',
+        <verb>)``).
+        """
+        from otto.cli.main import app
+
         mock_host = _make_host_with_session([("", 0)])
 
         with (
+            patch("otto.cli.invoke.ensure_cli_session"),
+            patch("otto.cli.invoke.ensure_lab_context"),
             patch("otto.logger.management.create_output_dir") as p_create,
             patch.object(host_module, "get_host", return_value=mock_host),
         ):
-            runner.invoke(host_app, ["router1", "run", "ls"])
+            runner.invoke(app, ["--lab", "x", "host", "router1", "run", "ls"])
 
         p_create.assert_called_once_with("host", "run")
 
@@ -420,9 +433,9 @@ def _fake_repo(*lab_paths: Path) -> SimpleNamespace:
 
 class TestHostIdCompleter:
     """``_host_id_completer`` runs during tab completion, before
-    ``apply_repo_settings()`` populates the ConfigModule.  It must therefore
-    derive host IDs straight from the ``hosts.json`` files referenced by
-    each repo's ``labs`` search paths."""
+    :func:`otto.bootstrap.bootstrap` registers repo init modules.  It must
+    therefore derive host IDs straight from the ``hosts.json`` files
+    referenced by each repo's ``labs`` search paths."""
 
     def test_returns_all_host_ids(self, tmp_path):
         lab = tmp_path / "labA"

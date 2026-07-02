@@ -76,13 +76,20 @@ def build_lab_repository(
 
     backend_name = cfg.backend
 
-    if backend_name == "json":
-        return JsonFileLabRepository(search_paths=list(search_paths or []))
-
-    # Custom backend: resolved by registered name (register_lab_repository from
-    # an init module). No dotted-path / importlib resolution.
+    # Resolved by registered name for every backend, built-ins included — a
+    # re-registered replacement (e.g. register_lab_repository("json", ...,
+    # overwrite=True)) takes effect here rather than being bypassed by a
+    # hardcoded construction below.
     from .registry import get_lab_repository_class
 
     cls = get_lab_repository_class(backend_name)  # raises LabRepositoryError if unknown
+
+    if backend_name == "json":
+        # The built-in json backend takes the aggregated search paths; a
+        # re-registered replacement must accept the same constructor contract.
+        return cls(search_paths=list(search_paths or []))
+
+    # Custom backend: resolved by registered name (register_lab_repository from
+    # an init module). No dotted-path / importlib resolution.
     extra_kwargs: dict[str, Any] = settings.get(backend_name) or {}
     return cls(repo_dir=repo_dir, **extra_kwargs)  # type: ignore[no-any-return]

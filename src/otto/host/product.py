@@ -33,13 +33,13 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import override
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..utils import Status
 
 if TYPE_CHECKING:
     from .host import Host
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 class Product(ABC):

@@ -2,7 +2,7 @@
 
 from otto.examples.reservations import ExampleReservationBackend
 from otto.reservations import SupportsUsernameCompletion, register_reservation_backend
-from otto.reservations.registry import _RESERVATION_BACKENDS
+from otto.reservations.registry import RESERVATION_BACKENDS
 from otto.testing import assert_reservation_backend_conforms
 
 
@@ -55,6 +55,6 @@ def test_sample_conforms_with_round_trip_and_capability():
 def test_registrable_by_name():
     register_reservation_backend("example-reservations-test", ExampleReservationBackend)
     try:
-        assert _RESERVATION_BACKENDS["example-reservations-test"] is ExampleReservationBackend
+        assert RESERVATION_BACKENDS.get("example-reservations-test") is ExampleReservationBackend
     finally:
-        _RESERVATION_BACKENDS.pop("example-reservations-test", None)
+        RESERVATION_BACKENDS.unregister("example-reservations-test")

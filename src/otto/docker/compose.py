@@ -25,11 +25,11 @@ from ..configmodule.repo import DockerCompose, Repo
 from ..host.docker_host import DockerContainerHost
 from ..host.host import Host
 from ..host.unix_host import UnixHost
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..models.settings import OttoEnvSettings
 from ..utils import Status
 
-logger = get_otto_logger()
+logger = get_logger()
 
 # Brief pause before re-running `up -d` after a transient libnetwork race so
 # the daemon's freshly-created network has settled. Module-level so tests can

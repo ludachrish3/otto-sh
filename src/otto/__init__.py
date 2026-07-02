@@ -14,11 +14,11 @@ if TYPE_CHECKING:
     from pydantic.dataclasses import dataclass as options
 
     from otto.cli import app
-    from otto.logger import get_otto_logger
-    from otto.logger import get_otto_logger as get_logger
+    from otto.cli.registry import cli_command, register_cli_command
+    from otto.logger import get_logger
     from otto.result import CommandResult, Result, Results
 
-    from .configmodule import all_hosts, get_host, get_lab, run_on_all_hosts
+    from .configmodule import all_hosts, get_host, get_lab, load_lab, run_on_all_hosts
     from .context import OttoContext, get_context, open_context, try_get_context
 
 __all__ = [
@@ -28,13 +28,15 @@ __all__ = [
     "Results",
     "all_hosts",
     "app",
+    "cli_command",
     "get_context",
     "get_host",
     "get_lab",
     "get_logger",
-    "get_otto_logger",
+    "load_lab",
     "open_context",
     "options",
+    "register_cli_command",
     "run_on_all_hosts",
     "try_get_context",
 ]
@@ -43,11 +45,11 @@ __all__ = [
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "options": ("pydantic.dataclasses", "dataclass"),
     "app": ("otto.cli", "app"),
-    "get_otto_logger": ("otto.logger", "get_otto_logger"),
-    "get_logger": ("otto.logger", "get_otto_logger"),
+    "get_logger": ("otto.logger", "get_logger"),
     "all_hosts": ("otto.configmodule", "all_hosts"),
     "get_host": ("otto.configmodule", "get_host"),
     "get_lab": ("otto.configmodule", "get_lab"),
+    "load_lab": ("otto.configmodule", "load_lab"),
     "run_on_all_hosts": ("otto.configmodule", "run_on_all_hosts"),
     "OttoContext": ("otto.context", "OttoContext"),
     "get_context": ("otto.context", "get_context"),
@@ -56,6 +58,8 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "Result": ("otto.result", "Result"),
     "CommandResult": ("otto.result", "CommandResult"),
     "Results": ("otto.result", "Results"),
+    "register_cli_command": ("otto.cli.registry", "register_cli_command"),
+    "cli_command": ("otto.cli.registry", "cli_command"),
 }
 
 

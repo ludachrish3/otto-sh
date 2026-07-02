@@ -201,7 +201,7 @@ class TestRegistry:
 def test_builtins_registered_via_public_path():
     from otto.host import command_frame as cf
 
-    # The seed dict starts empty and is populated by _register_builtin_frames()
+    # The seed registry starts empty and is populated by _register_builtin_frames()
     # through register_command_frame — the same path third parties use.
-    assert set(cf._FRAME_CLASSES) >= {"bash", "zephyr", "zephyr-serial"}
+    assert set(cf.FRAME_CLASSES.names()) >= {"bash", "zephyr", "zephyr-serial"}
     assert cf.build_command_frame("bash").type_name == "bash"

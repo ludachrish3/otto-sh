@@ -1,6 +1,6 @@
 """Map a host method's signature to Typer CLI parameters.
 
-Generalizes the proven ``cli/run.py::_wrap_with_options`` pattern: resolve type
+Generalizes the proven ``cli/invoke.py::_wrap_with_options`` pattern: resolve type
 hints with ``get_type_hints(include_extras=True)``, build an ``inspect.Parameter``
 list (a mix of arguments, options, flags, and variadics), and let a wrapper with an
 assigned ``__signature__`` reconstruct the bound-method call. Typer owns parsing,
@@ -171,7 +171,7 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
                     f"may be Arg(variadic=True)"
                 )
             elem = arg.elem_type or str
-            ann = Annotated[list[elem], typer.Argument(help=arg.help)]
+            ann = Annotated[list[elem], typer.Argument(metavar=arg.name, help=arg.help)]
             binding.params.append(
                 inspect.Parameter(
                     name,
@@ -197,7 +197,12 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
             else:
                 binding.converters[name] = lambda raw, e=elem: parse_kv_dict(raw, e)
                 help_txt = opt.help if opt else None
-            ann = Annotated[str | None, typer.Option(help=help_txt)]
+            opt_decls = (opt.name,) if opt and opt.name else ()
+            # `typer.Option`'s signature is `Option(default=..., *param_decls, ...)`; a
+            # name override must land in the vararg slot, so the leading `...` is
+            # required — it's ignored in favor of the Python parameter's own default,
+            # same as the no-decl `typer.Option(help=...)` calls elsewhere in this module.
+            ann = Annotated[str | None, typer.Option(..., *opt_decls, help=help_txt)]
             binding.params.append(
                 inspect.Parameter(
                     name,
@@ -211,10 +216,13 @@ def build_cli_binding(func: Callable[..., Any]) -> CliBinding:
         # --- scalar: normalize union, then arg/opt/inference ---
         norm = _normalize_scalar(base, (arg.elem_type if arg else (opt.elem_type if opt else None)))
         if arg is not None:  # explicit positional (e.g. defaulted scalar we keep positional)
-            ann = Annotated[norm, typer.Argument(help=arg.help)]
+            ann = Annotated[norm, typer.Argument(metavar=arg.name, help=arg.help)]
             kind = inspect.Parameter.POSITIONAL_OR_KEYWORD
         elif opt is not None:  # explicit option
-            ann = Annotated[norm, typer.Option(help=opt.help)]
+            opt_decls = (opt.name,) if opt.name else ()
+            # See the list/dict OPTION branch above for why `...` must precede
+            # `*opt_decls` — `typer.Option`'s param_decls are varargs after `default`.
+            ann = Annotated[norm, typer.Option(..., *opt_decls, help=opt.help)]
             kind = inspect.Parameter.KEYWORD_ONLY
         else:  # attach explicit Typer annotation so KEYWORD_ONLY wrappers still render correctly
             if default is inspect.Parameter.empty:

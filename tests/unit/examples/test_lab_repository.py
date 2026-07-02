@@ -6,7 +6,7 @@ from otto.configmodule.lab import Lab
 from otto.examples.lab_repository import ExampleLabRepository
 from otto.host.remote_host import RemoteHost
 from otto.storage import LabNotFoundError, register_lab_repository
-from otto.storage.registry import _LAB_REPOSITORIES
+from otto.storage.registry import LAB_REPOSITORIES
 from otto.testing import assert_lab_repository_conforms
 
 
@@ -52,6 +52,6 @@ def test_sample_conforms():
 def test_registrable_by_name():
     register_lab_repository("example-host-source-test", ExampleLabRepository)
     try:
-        assert _LAB_REPOSITORIES["example-host-source-test"] is ExampleLabRepository
+        assert LAB_REPOSITORIES.get("example-host-source-test") is ExampleLabRepository
     finally:
-        _LAB_REPOSITORIES.pop("example-host-source-test", None)
+        LAB_REPOSITORIES.unregister("example-host-source-test")

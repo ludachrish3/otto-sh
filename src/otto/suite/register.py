@@ -1,9 +1,10 @@
 """register_suite() — class decorator that registers an ``OttoSuite`` as a Typer subcommand.
 
-Registration happens at class-definition time (import time).  ``cli/test.py``
-reads ``_SUITE_REGISTRY`` after ``configmodule`` has finished loading (which is
-also when this module is first imported via test-file auto-scan) and adds the
-pre-built sub-Typers to ``suite_app``.
+Registration happens at class-definition time (import time), storing each
+suite's built sub-app into the module-level :data:`SUITES` registry.
+``cli/test.py``'s ``suite_app`` resolves suite subcommands lazily from that
+registry through a shared ``RegistryBackedGroup`` (see ``cli/invoke.py``), so
+no Typer app mutation happens here or at ``cli/test.py`` import time.
 
 No circular imports: this module never imports from ``otto.cli.test`` at module
 level.  The runner function uses a lazy import so the actual test execution can
@@ -19,18 +20,24 @@ from typing import Any
 import typer
 
 from ..params import build_options, options_params
+from ..registry import Registry
+
+
+@dataclasses.dataclass(frozen=True)
+class SuiteEntry:
+    """One registered suite: its Typer sub-app + source file for attribution."""
+
+    name: str
+    sub_app: typer.Typer
+    file: str
+
 
 # ---------------------------------------------------------------------------
 # Module-level registry — populated by @register_suite() as test files are
-# imported during startup; consumed by cli/test.py to build suite_app subcommands.
+# imported during startup; consumed lazily by cli/test.py's RegistryBackedGroup.
 # ---------------------------------------------------------------------------
-_SUITE_REGISTRY: list[tuple[str, typer.Typer]] = []
-
-# Companion map: suite class name -> absolute source file. Populated alongside
-# _SUITE_REGISTRY so suites can be attributed to a repo (by sut_dir) for
-# `otto test --list-suites` without changing the (name, sub_app) tuple shape
-# that many consumers unpack.
-_SUITE_FILES: dict[str, str] = {}
+SUITES: Registry[SuiteEntry] = Registry("test suite", register_hint="@otto.register_suite()")
+"""Registered ``OttoSuite`` subclasses, keyed by class name; populated at import time."""
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +81,8 @@ def register_suite(*args: Any, **kwargs: Any) -> Callable[[type], type]:
 
     The decorated class is returned unchanged.  The decorator only has a
     side-effect: it builds a Typer sub-app from the class's ``Options`` inner
-    class (if present) and appends it to ``_SUITE_REGISTRY``.  ``cli/test.py``
-    reads the registry at module load time and adds the sub-apps to ``suite_app``.
+    class (if present) and registers it into :data:`SUITES`.  ``cli/test.py``'s
+    ``suite_app`` resolves it lazily by name through its ``RegistryBackedGroup``.
     """
 
     def decorator(suite_class: type) -> type:
@@ -120,8 +127,25 @@ def register_suite(*args: Any, **kwargs: Any) -> Callable[[type], type]:
 
         sub_app = typer.Typer()
         sub_app.command(suite_class.__name__, *args, **kwargs)(runner)
-        _SUITE_REGISTRY.append((suite_class.__name__, sub_app))
-        _SUITE_FILES[suite_class.__name__] = suite_file
+
+        # run_suite() executes a suite via `pytest.main([suite_file, ...])`,
+        # which makes pytest re-import suite_file under its own module name
+        # (distinct from the `_otto_suite_*` name otto's own auto-scan uses)
+        # every time a suite actually runs — a second, expected execution of
+        # this decorator for the SAME class from the SAME file within one
+        # process. Re-registration from the identical source file is that
+        # expected re-import, not a collision, so it overwrites silently; a
+        # different file registering the same class name is a real user
+        # error and still fails loudly.
+        same_file = suite_class.__name__ in SUITES and SUITES.get(suite_class.__name__).file == (
+            suite_file
+        )
+        SUITES.register(
+            suite_class.__name__,
+            SuiteEntry(name=suite_class.__name__, sub_app=sub_app, file=suite_file),
+            origin=suite_class.__module__,
+            overwrite=same_file,
+        )
 
         return suite_class
 

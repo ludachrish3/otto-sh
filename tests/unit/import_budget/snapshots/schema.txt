@@ -1,9 +1,12 @@
 otto
+otto.bootstrap
 otto.cli
+otto.cli.builtin_commands
+otto.cli.invoke
 otto.cli.main
+otto.cli.registry
 otto.cli.schema
 otto.configmodule
-otto.configmodule.completion_cache
 otto.configmodule.configmodule
 otto.configmodule.env
 otto.configmodule.lab
@@ -13,7 +16,6 @@ otto.console
 otto.context
 otto.host
 otto.host.binary_loader
-otto.host.builtin_hosts
 otto.host.capability
 otto.host.command_frame
 otto.host.connections
@@ -59,13 +61,7 @@ otto.models.monitor
 otto.models.options
 otto.models.settings
 otto.params
-otto.reservations
-otto.reservations.check
-otto.reservations.identity
-otto.reservations.json_backend
-otto.reservations.null_backend
-otto.reservations.protocol
-otto.reservations.registry
+otto.registry
 otto.result
 otto.storage
 otto.storage.errors
@@ -73,7 +69,5 @@ otto.storage.factory
 otto.storage.json_repository
 otto.storage.protocol
 otto.storage.registry
-otto.suite
-otto.suite.register
 otto.utils
 otto.version

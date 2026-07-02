@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from ..configmodule.lab import Lab
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from .errors import (
     LabNotFoundError,
     LabRepositoryError,
@@ -15,7 +15,7 @@ from .factory import (
     validate_host_dict,
 )
 
-logger = get_otto_logger()
+logger = get_logger()
 
 HOSTS_FILENAME = "hosts.json"
 

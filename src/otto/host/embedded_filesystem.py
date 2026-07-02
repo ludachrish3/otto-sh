@@ -40,6 +40,8 @@ from __future__ import annotations
 from abc import ABC
 from typing import ClassVar
 
+from ..registry import Registry, caller_module
+
 
 class EmbeddedFileSystem(ABC):
     """Abstract base for on-device filesystem variants.
@@ -60,7 +62,7 @@ class EmbeddedFileSystem(ABC):
     type_name: ClassVar[str]
     """Lab-data string for this variant (e.g. ``'fat-ram'``).
 
-    Looked up against ``_FILESYSTEM_CLASSES`` by the storage factory.
+    Looked up against ``FILESYSTEM_CLASSES`` by the storage factory.
     Must be unique across all registered subclasses.
     """
 
@@ -176,10 +178,14 @@ class LittleFsFileSystem(EmbeddedFileSystem):
 # Seeded empty here and populated by ``_register_builtin_filesystems()`` at
 # module end, so otto's own built-ins travel the same ``register_filesystem``
 # path third parties use.
-_FILESYSTEM_CLASSES: dict[str, type[EmbeddedFileSystem]] = {}
+FILESYSTEM_CLASSES: Registry[type[EmbeddedFileSystem]] = Registry(
+    "embedded filesystem type", register_hint="otto.host.embedded_filesystem.register_filesystem()"
+)
 
 
-def register_filesystem(type_name: str, cls: type[EmbeddedFileSystem]) -> None:
+def register_filesystem(
+    type_name: str, cls: type[EmbeddedFileSystem], *, overwrite: bool = False
+) -> None:
     """Make a custom :class:`EmbeddedFileSystem` subclass available to lab data.
 
     Call from an init module listed in ``.otto/settings.toml`` — the same
@@ -187,6 +193,9 @@ def register_filesystem(type_name: str, cls: type[EmbeddedFileSystem]) -> None:
     Once registered, lab-data entries can reference the subclass by
     *type_name* in the ``filesystem`` field, and
     :func:`otto.storage.factory.create_host_from_dict` will instantiate it.
+
+    *overwrite* replaces an existing registration under *type_name*
+    deliberately (e.g. a built-in); by default a duplicate name raises.
 
     Raises
     ------
@@ -199,7 +208,7 @@ def register_filesystem(type_name: str, cls: type[EmbeddedFileSystem]) -> None:
             f"register_filesystem: type_name {type_name!r} doesn't match "
             f"{cls.__name__}.type_name = {cls.type_name!r}"
         )
-    _FILESYSTEM_CLASSES[type_name] = cls
+    FILESYSTEM_CLASSES.register(type_name, cls, overwrite=overwrite, origin=caller_module())
 
 
 def build_filesystem(type_name: str) -> EmbeddedFileSystem:
@@ -215,16 +224,7 @@ def build_filesystem(type_name: str) -> EmbeddedFileSystem:
         registered types so a typo (``'fatram'`` vs ``'fat-ram'``) is
         diagnosable from the message alone.
     """
-    try:
-        cls = _FILESYSTEM_CLASSES[type_name]
-    except KeyError:
-        known = ", ".join(sorted(_FILESYSTEM_CLASSES))
-        raise ValueError(
-            f"Unknown embedded filesystem type {type_name!r}. "
-            f"Registered types: {known}. "
-            f"Custom types can be added via register_filesystem()."
-        ) from None
-    return cls()
+    return FILESYSTEM_CLASSES.get(type_name)()
 
 
 def _register_builtin_filesystems() -> None:

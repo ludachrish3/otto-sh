@@ -80,14 +80,23 @@ print(json.dumps({"count": len(mods), "modules": mods, "otto_modules": otto_mods
                   "non_stdlib_modules": non_std}))
 """
 
-# Child script for CLI surfaces: access otto.app to trigger the lazy __init__
-# __getattr__ → imports otto.cli → cli.main runs _register_subcommands(argv).
-# Measures import footprint, not CLI invocation.
+# Child script for CLI surfaces: resolve the dispatch target through the
+# registry-backed root group (otto.cli.main._OttoGroup.get_command) the same
+# way a real `--help`/completion invocation would, without running Click's
+# help-rendering pipeline (which would additionally pull in rich's markdown
+# renderer, pygments, etc. — a measurement artifact unrelated to otto's own
+# lazy-import footprint). Every surface's argv is `[..., "<name>", "--help"]`
+# except the bare `help` surface (`["otto", "--help"]`, no dispatch target).
 _CHILD_CLI = """
 import sys, json
+import typer
 sys.argv = {argv!r}
 import otto
-_ = otto.app  # triggers lazy cli.main import; measures import footprint, not invocation
+cmd = typer.main.get_command(otto.app)
+ctx = cmd.make_context("otto", sys.argv[1:], resilient_parsing=True)
+target = sys.argv[1] if len(sys.argv) > 1 and not sys.argv[1].startswith("-") else None
+if target is not None:
+    _ = cmd.get_command(ctx, target)
 mods = sorted(sys.modules)
 otto_mods = [m for m in mods if m == "otto" or m.startswith("otto.")]
 non_std = [m for m in mods if m.split(".")[0] not in sys.stdlib_module_names]

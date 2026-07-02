@@ -52,9 +52,9 @@ import typer
 
 from ..coverage.reporter import TierSpec, run_coverage_report
 from ..coverage.store.model import TIER_SYSTEM
-from ..logger import get_otto_logger
+from ..logger import get_logger
 
-logger = get_otto_logger()
+logger = get_logger()
 
 cov_app = typer.Typer(
     name="cov",

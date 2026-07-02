@@ -1,7 +1,7 @@
 target-version = "py310"
 line-length = 100
 indent-width = 4
-extend-exclude = [".vscode", ".idea", "__pycache__", ".python-version", ".ruff.toml", "ruff.toml", "setup.cfg", "pyproject.toml"]
+extend-exclude = [".vscode", ".idea", "__pycache__", ".python-version", ".ruff.toml", "ruff.toml", "setup.cfg", "pyproject.toml", "tests/repo_broken"]
 
 [format]
 indent-style = "space"

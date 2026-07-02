@@ -12,9 +12,8 @@ from rich import print as rprint
 
 from ..configmodule import all_hosts, get_host
 from ..configmodule.configmodule import _apply_option_overrides
-from ..context import get_context
+from ..host.remote_host import RemoteHost
 from ..host.unix_host import UnixHost
-from ..logger import management
 from .callbacks import list_hosts_callback
 from .expose import HostGroup
 
@@ -52,9 +51,9 @@ def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: 
     if cached is not None and isinstance(cached.get("term_backends"), list):
         names = cached["term_backends"]
     else:
-        from ..host.connections import _TERM_BACKENDS
+        from ..host.connections import TERM_BACKENDS
 
-        names = list(_TERM_BACKENDS)
+        names = TERM_BACKENDS.names()
     return sorted(n for n in names if n.startswith(incomplete))
 
 
@@ -76,9 +75,9 @@ def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
             if isinstance(e, dict) and "unix" in e.get("host_families", [])
         ]
     else:
-        from ..host.transfer import _TRANSFER_BACKENDS
+        from ..host.transfer import TRANSFER_BACKENDS
 
-        names = [n for n, c in _TRANSFER_BACKENDS.items() if "unix" in c.host_families]
+        names = [n for n, c in TRANSFER_BACKENDS.items() if "unix" in c.host_families]
     return sorted(n for n in names if n.startswith(incomplete))
 
 
@@ -142,7 +141,16 @@ def main(
         ),
     ] = False,
 ) -> None:
-    """Resolve a host by ID, apply option overrides, and store it in ``ctx.obj`` for subcommands."""
+    """Record the host request; the resolved host is built lazily by the leaf verb.
+
+    The host can no longer be built here: the lab loads lazily in the
+    leaf-invoke :func:`~otto.cli.invoke.command_preamble`, which runs *after*
+    this group callback. So this callback only stashes the raw inputs on
+    ``ctx.meta``; the verb's ``_cmd`` calls :func:`resolve_cli_host` once the
+    lab is ready. Output-dir creation and the reservation gate likewise moved to
+    the preamble (per-verb output dir keyed off each verb's
+    ``__cli_output_dir__`` marker), so a ``--help`` on a verb builds nothing.
+    """
     if ctx.resilient_parsing:
         return
 
@@ -150,37 +158,42 @@ def main(
         rprint(ctx.get_help())
         raise typer.Exit
 
-    # A help/discovery invocation (e.g. `otto host <vm> <verb> --help`) runs no
-    # verb, so it must not create an output dir, gate reservations, or build the
-    # host. The root callback records this on ctx.meta and skips init_cli_logging
-    # for it, so create_output_dir here would otherwise raise.
-    if ctx.meta.get("_help_or_discovery"):
-        return
+    ctx.meta["_otto_host_request"] = {
+        "host_id": host_id,
+        "hop": hop,
+        "term": term,
+        "transfer": transfer,
+    }
 
-    # Read-only query verbs (exists/ls/read-file/is-installed/is-uninstalled/lsmod)
-    # declare output_dir=False and create no per-invocation dir. The reservation
-    # gate still runs for every verb — even read-only ones connect to the host.
-    from .expose import verb_creates_output_dir
 
-    if verb_creates_output_dir(ctx.invoked_subcommand):
-        get_context().output_dir = management.create_output_dir("host", f"{ctx.invoked_subcommand}")
-    from ..reservations import gate
+def resolve_cli_host(ctx: typer.Context) -> RemoteHost:
+    """Build the host the ``otto host`` callback recorded (lab is ready by now).
 
-    gate(ctx)
+    Reproduces the construction the callback used to do inline: resolve the
+    host by ID, validate/attach a ``--hop``, and apply ``--term`` / ``--transfer``
+    override-copies. An already-resolved ``ctx.obj`` (e.g. a test that installs a
+    host directly) is honoured as a fast path.
+    """
+    if ctx.obj is not None:
+        return ctx.obj
 
-    host = _resolve_host(host_id)
+    request = ctx.meta["_otto_host_request"]
+    host: RemoteHost = _resolve_host(request["host_id"])
 
+    hop = request.get("hop")
     if hop:
         _resolve_host(hop)  # Validate the hop host exists
         host.hop = hop
         host.rebuild_connections()
 
+    term = request.get("term")
     if term:
         try:
             host = _apply_option_overrides(host, term=term)
         except ValueError as e:
             raise typer.BadParameter(str(e), param_hint="--term") from None
 
+    transfer = request.get("transfer")
     if transfer:
         try:
             host = _apply_option_overrides(host, transfer=transfer)
@@ -188,3 +201,4 @@ def main(
             raise typer.BadParameter(str(e), param_hint="--transfer") from None
 
     ctx.obj = host
+    return host

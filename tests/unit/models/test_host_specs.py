@@ -369,10 +369,10 @@ def test_registered_pairs_drift_guard():
     same bidirectional check as HOST_SPEC_RUNTIME_PAIRS, but sourced from the
     live registry so it covers built-ins registered through register_host_class.
     """
-    from otto.host.os_profile import _HOST_CLASSES, _HOST_SPECS
+    from otto.host.os_profile import _HOST_SPECS, HOST_CLASSES
 
     for name, spec_cls in _HOST_SPECS.items():
-        runtime_cls = _HOST_CLASSES[name]
+        runtime_cls = HOST_CLASSES.get(name)
         spec_fields = set(spec_cls.model_fields) - {"labs"}
         init_fields = {
             f.name for f in dataclasses.fields(runtime_cls) if f.init and not f.name.startswith("_")

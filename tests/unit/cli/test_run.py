@@ -18,7 +18,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from otto.cli.run import instruction, run_app
+from otto.cli.run import INSTRUCTIONS, instruction, run_app
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
 from otto.utils import Status
@@ -50,35 +50,68 @@ class TestRunHelp:
 
 
 class TestRunCallback:
-    """The run_app callback calls management.create_output_dir when a subcommand runs."""
+    """The leaf-invoke preamble creates the ``run`` output dir named after the verb.
+
+    Since Task 7 the output dir is created by the shared leaf-invoke preamble
+    (``otto.cli.invoke.command_preamble``), not the ``run_app`` callback — so the
+    dispatch must go through the root ``app`` (which wraps leaves with the
+    preamble). ``ensure_cli_session`` / ``ensure_lab_context`` are stubbed so the
+    test isolates the output-dir naming (``create_output_dir('run', <verb>)``).
+    """
 
     def test_log_dir_set_for_subcommand(self):
-        """When a subcommand named '_test_cmd' is invoked, the callback should
-        call management.create_output_dir('run', '_test_cmd').
-
-        The no_logger_output_dir autouse fixture patches create_output_dir globally;
-        we access that mock via the patch target directly.
-        """
+        from otto.cli.main import app
 
         @run_app.command("_test_cmd_cb")
         def _test_cmd_cb():
             pass
 
-        with patch("otto.logger.management.create_output_dir") as p_create:
-            runner.invoke(run_app, ["_test_cmd_cb"])
+        with (
+            patch("otto.cli.invoke.ensure_cli_session"),
+            patch("otto.cli.invoke.ensure_lab_context"),
+            patch("otto.logger.management.create_output_dir") as p_create,
+        ):
+            result = runner.invoke(app, ["--lab", "x", "run", "_test_cmd_cb"])
 
+        assert result.exit_code == 0, result.output
         p_create.assert_called_once_with("run", "_test_cmd_cb")
+
+    def test_logger_output_dir_called_for_instruction(self):
+        """Same preamble pin, but for a real ``@instruction``-registered verb.
+
+        Symmetric to ``otto.cli.test``'s ``test_logger_output_dir_called_for_suite``:
+        that test covers the ``test`` group's leaf-invoke preamble path, this one
+        covers ``run``'s. Both existing ``TestRunCallback``/``TestInstructionExecution``
+        coverage dispatches either a plain ``@run_app.command`` or invokes ``run_app``
+        directly (bypassing the root app's preamble wiring) — neither exercises an
+        ``@instruction`` command through the ROOT ``app``, which is the actual path a
+        real ``otto run <verb>`` invocation takes.
+        """
+        from otto.cli.main import app
+
+        @instruction("_unit_test_preamble")
+        async def _preamble_test() -> CommandResult:
+            return CommandResult(Status.Success, value="", command="test", retcode=0)
+
+        with (
+            patch("otto.cli.invoke.ensure_cli_session"),
+            patch("otto.cli.invoke.ensure_lab_context"),
+            patch("otto.logger.management.create_output_dir") as p_create,
+        ):
+            result = runner.invoke(app, ["--lab", "x", "run", "_unit_test_preamble"])
+
+        assert result.exit_code == 0, result.output
+        p_create.assert_called_once_with("run", "_unit_test_preamble")
 
 
 # ── @instruction() decorator ──────────────────────────────────────────────────
 
 
 class TestInstructionDecorator:
-    """The @instruction() helper wraps async functions and registers them on run_app."""
+    """The @instruction() helper wraps async functions and registers them into INSTRUCTIONS."""
 
     def test_decorator_registers_instruction(self):
-        """A function decorated with @instruction() must appear in run_app's sub-apps."""
-        initial_count = len(run_app.registered_groups)
+        """A function decorated with @instruction() must appear in the INSTRUCTIONS registry."""
 
         @instruction("_unit_test_instruction")
         async def _my_instruction() -> CommandResult:
@@ -89,8 +122,9 @@ class TestInstructionDecorator:
                 retcode=0,
             )
 
-        # The decorator adds a new sub-Typer to run_app
-        assert len(run_app.registered_groups) == initial_count + 1
+        # The decorator registers a new sub-Typer entry into INSTRUCTIONS,
+        # resolved lazily by run_app's RegistryBackedGroup.
+        assert "_unit_test_instruction" in INSTRUCTIONS
 
     def test_decorated_instruction_is_invocable(self):
         """A decorated async instruction can be invoked synchronously via CliRunner."""
@@ -106,6 +140,68 @@ class TestInstructionDecorator:
 
         result = runner.invoke(run_app, ["_unit_test_noop"])
         assert result.exit_code == 0
+
+
+# ── Name derivation (must mirror typer.main.get_command_name exactly) ────────
+
+
+class TestInstructionNameDerivation:
+    """@instruction's registered name must match what Typer itself would derive.
+
+    Typer's own rule (typer.main.get_command_name / get_command_from_info):
+    an explicit ``name`` (positional or ``name=`` kwarg) wins outright; with
+    no explicit name it falls back to the function's ``__name__`` with
+    underscores replaced by dashes. Diverging from this would silently break
+    ``otto run <name>`` for real callers.
+    """
+
+    def test_positional_name_arg(self):
+        """A positional name argument becomes the registered/dispatch name."""
+
+        @instruction("_unit_test_positional_name")
+        async def _some_func() -> CommandResult:
+            return CommandResult(Status.Success, value="", command="true", retcode=0)
+
+        assert "_unit_test_positional_name" in INSTRUCTIONS
+        assert "some-func" not in INSTRUCTIONS
+        result = runner.invoke(run_app, ["_unit_test_positional_name"])
+        assert result.exit_code == 0
+
+    def test_name_kwarg(self):
+        """An explicit name= kwarg becomes the registered/dispatch name."""
+
+        @instruction(name="_unit_test_kwarg_name")
+        async def _another_func() -> CommandResult:
+            return CommandResult(Status.Success, value="", command="true", retcode=0)
+
+        assert "_unit_test_kwarg_name" in INSTRUCTIONS
+        assert "another-func" not in INSTRUCTIONS
+        result = runner.invoke(run_app, ["_unit_test_kwarg_name"])
+        assert result.exit_code == 0
+
+    def test_derived_from_function_name(self):
+        """With no explicit name, the function name's underscores become dashes."""
+
+        @instruction()
+        async def unit_test_derived_func() -> CommandResult:
+            return CommandResult(Status.Success, value="", command="true", retcode=0)
+
+        assert "unit-test-derived-func" in INSTRUCTIONS
+        result = runner.invoke(run_app, ["unit-test-derived-func"])
+        assert result.exit_code == 0
+
+    def test_duplicate_instruction_name_fails_loudly(self):
+        """Registering two instructions under the same name raises immediately."""
+
+        @instruction("_unit_test_dup_name")
+        async def _first() -> CommandResult:
+            return CommandResult(Status.Success, value="", command="true", retcode=0)
+
+        with pytest.raises(ValueError, match="_unit_test_dup_name"):
+
+            @instruction("_unit_test_dup_name")
+            async def _second() -> CommandResult:
+                return CommandResult(Status.Success, value="", command="true", retcode=0)
 
 
 # ── Instruction execution ────────────────────────────────────────────────────
@@ -422,7 +518,7 @@ async def test_inject_ctx_supplies_active_context():
     """_inject_ctx wraps a handler so the ctx param is filled from the active context."""
     import inspect
 
-    from otto.cli.run import _inject_ctx
+    from otto.cli.invoke import _inject_ctx
     from otto.configmodule.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
 

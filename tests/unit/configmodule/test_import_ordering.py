@@ -1,14 +1,16 @@
-"""Import-ordering regression: configmodule must be importable FIRST.
+"""Import-ordering regression: configmodule must be importable FIRST, standalone.
 
 `otto/__init__.py` is import-light (PEP 562 lazy exports), so a fresh process —
 e.g. an xdist worker importing the root ``tests/conftest.py`` — can make
-``otto.configmodule`` its very first otto import. configmodule runs
-``apply_repo_settings()`` at import time, which exec's each SUT repo's init
-module; those modules legitimately ``from otto.cli.run import instruction`` →
-``cli.main`` → ``from ..configmodule import get_completion_names``. That accessor
-therefore MUST be defined before the ``apply_repo_settings()`` call, or the
-nested import hits a partially-initialized module and raises a circular
-ImportError. (Regression guard for the bug Part D's lazy __init__ exposed.)
+``otto.configmodule`` (or a submodule like ``otto.configmodule.lab``) its very
+first otto import, with an ``OTTO_SUT_DIRS`` repo configured but none of its
+init modules imported yet. Repo init-module registration now happens lazily
+inside :func:`otto.bootstrap.bootstrap`, not as an import-time side effect of
+``otto.configmodule`` — so this test's job is narrower than it used to be: it
+guards against a regression that would make plain package/submodule import
+eager again (and therefore reintroduce the old circular-import hazard between
+user init modules and ``otto.cli.main``). (Regression guard for the bug Part D's
+lazy __init__ exposed.)
 """
 
 import os

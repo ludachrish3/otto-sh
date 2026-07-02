@@ -21,6 +21,8 @@ from typing import ClassVar
 
 from typing_extensions import override
 
+from ..registry import Registry, caller_module
+
 
 class BinaryLoader(ABC):
     """How to load/unload a binary into an embedded target's runtime."""
@@ -89,34 +91,33 @@ class LlextHexLoader(BinaryLoader):
 # Seeded empty here and populated by ``_register_builtin_loaders()`` at module
 # end, so otto's own built-ins travel the same ``register_binary_loader`` path
 # third parties use.
-_LOADER_CLASSES: dict[str, type[BinaryLoader]] = {}
+LOADER_CLASSES: Registry[type[BinaryLoader]] = Registry(
+    "binary loader", register_hint="otto.host.binary_loader.register_binary_loader()"
+)
 
 
-def register_binary_loader(type_name: str, cls: type[BinaryLoader]) -> None:
+def register_binary_loader(
+    type_name: str, cls: type[BinaryLoader], *, overwrite: bool = False
+) -> None:
     """Make a custom :class:`BinaryLoader` subclass available to lab data.
 
     Call from an init module listed in ``.otto/settings.toml`` — the same
     pattern :func:`otto.host.command_frame.register_command_frame` follows.
+
+    *overwrite* replaces an existing registration under *type_name*
+    deliberately (e.g. a built-in); by default a duplicate name raises.
     """
     if cls.type_name != type_name:
         raise ValueError(
             f"register_binary_loader: type_name {type_name!r} doesn't match "
             f"{cls.__name__}.type_name = {cls.type_name!r}"
         )
-    _LOADER_CLASSES[type_name] = cls
+    LOADER_CLASSES.register(type_name, cls, overwrite=overwrite, origin=caller_module())
 
 
 def build_binary_loader(type_name: str) -> BinaryLoader:
     """Construct the :class:`BinaryLoader` registered under *type_name*."""
-    try:
-        cls = _LOADER_CLASSES[type_name]
-    except KeyError:
-        known = ", ".join(sorted(_LOADER_CLASSES))
-        raise ValueError(
-            f"Unknown binary loader {type_name!r}. Registered loaders: {known}. "
-            f"Custom loaders can be added via register_binary_loader()."
-        ) from None
-    return cls()
+    return LOADER_CLASSES.get(type_name)()
 
 
 def _register_builtin_loaders() -> None:

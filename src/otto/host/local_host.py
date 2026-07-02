@@ -24,7 +24,7 @@ from typing import Annotated
 
 from typing_extensions import override
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Status, cli_exposed
@@ -102,7 +102,7 @@ class LocalFileTransfer(BaseFileTransfer):
         return await self._do_copy(src_files, dest_dir, progress_factory)
 
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 @dataclass(

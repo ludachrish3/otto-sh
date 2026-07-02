@@ -95,7 +95,7 @@ pre-filtering yourself.
 
 ```python
 import re
-from otto.configmodule.configmodule import run_on_all_hosts
+from otto.configmodule import run_on_all_hosts
 
 async def check_all_hosts():
     """Run 'uname -a' on every host concurrently."""
@@ -128,7 +128,7 @@ your own.
 
 ```python
 from pathlib import Path
-from otto.configmodule.configmodule import do_for_all_hosts
+from otto.configmodule import do_for_all_hosts
 from otto.host.unix_host import UnixHost
 
 async def deploy_firmware():
@@ -169,7 +169,7 @@ coordinating cross-host synchronization inside the same task graph.
 
 ```python
 import asyncio
-from otto.configmodule.configmodule import all_hosts
+from otto.configmodule import all_hosts
 
 async def mixed_workload():
     hosts = list(all_hosts())

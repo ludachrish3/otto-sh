@@ -22,15 +22,14 @@ import typer
 
 # TODO: Create a SqlPath class that automatically adds the correct slashes and stuff in the front (something like sqlite:////path/to/file)  # noqa: E501 — TODO comment
 from ..configmodule import all_hosts
-from ..context import get_context
-from ..logger import get_otto_logger, management
+from ..logger import get_logger
 from ..monitor.collector import MetricCollector
 from ..monitor.factory import build_monitor_collector
 
 if TYPE_CHECKING:
     from ..monitor.server import MonitorServer
 
-logger = get_otto_logger()
+logger = get_logger()
 
 monitor_app = typer.Typer(
     help="Launch an interactive performance dashboard.",
@@ -77,11 +76,17 @@ def monitor(
         ),
     ] = None,
 ) -> None:
-    """Launch an interactive performance monitoring dashboard."""
+    """Launch an interactive performance monitoring dashboard.
+
+    Output-dir creation moved to the shared leaf-invoke
+    :func:`~otto.cli.invoke.command_preamble` (monitor's spec declares
+    ``output_dir=True``), so a ``--help`` invocation can never create a
+    spurious dir. The reservation gate is NOT uniform: monitor's spec
+    declares ``gate=False`` and this body gates only the live branch below —
+    historical ``--file`` replay is gate-exempt (see the comment there).
+    """
     if ctx.resilient_parsing:
         return
-
-    get_context().output_dir = management.create_output_dir("monitor")
 
     # ── Build collector ────────────────────────────────────────────────────
     if file is not None:

@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 
 from typing_extensions import override
 
-from ...logger import get_otto_logger
+from ...logger import get_logger
 from ...result import CommandResult, Result
 from ...utils import Status
 from .base import (
@@ -25,7 +25,7 @@ from .progress import _make_sftp_progress
 from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
 
-_logger = get_otto_logger()
+_logger = get_logger()
 
 
 class ScpFileTransfer(UnixFileTransfer):

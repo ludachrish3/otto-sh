@@ -40,6 +40,8 @@ from typing import Any, NamedTuple
 
 from typing_extensions import override
 
+from ..registry import Registry, caller_module
+
 _float_re_str = r"[\d]+(\.\d+)?"
 _mem_size_re_str = rf"{_float_re_str}(?:\s*[KMGT]B?)?"
 _percent_re_str = rf"{_float_re_str}%"
@@ -344,7 +346,14 @@ DEFAULT_PARSERS: dict[str, MetricParser] = {
 # Per-host parser registry
 # ---------------------------------------------------------------------------
 
-_host_parser_registry: dict[str, dict[str, "MetricParser"]] = {}
+# Registry of host_id -> its full parser dict (command string -> MetricParser).
+# Unlike otto's other backend registries this is keyed by an arbitrary lab host
+# id rather than a fixed set of dialect/backend names, and re-registering a
+# host_id is normal usage (see register_host_parsers) — so registration always
+# overwrites rather than raising on a second call for the same host_id.
+HOST_PARSERS: Registry[dict[str, "MetricParser"]] = Registry(
+    "host parser set", register_hint="otto.monitor.parsers.register_host_parsers()"
+)
 
 
 def register_host_parsers(host_id: str, parsers: dict[str, "MetricParser"]) -> None:
@@ -356,9 +365,14 @@ def register_host_parsers(host_id: str, parsers: dict[str, "MetricParser"]) -> N
 
     Hosts with no registered parsers automatically fall back to DEFAULT_PARSERS.
     """
-    _host_parser_registry[host_id] = parsers
+    HOST_PARSERS.register(host_id, parsers, overwrite=True, origin=caller_module())
 
 
 def get_host_parsers(host_id: str) -> dict[str, "MetricParser"]:
-    """Return the parser dict registered for *host_id*, or a copy of DEFAULT_PARSERS."""
-    return copy.deepcopy(_host_parser_registry.get(host_id, DEFAULT_PARSERS))
+    """Return the parser dict registered for *host_id*, or a copy of DEFAULT_PARSERS.
+
+    Non-raising by design: a host with no registered parsers is normal (it
+    just uses the defaults), not an error.
+    """
+    parsers = HOST_PARSERS.get(host_id) if host_id in HOST_PARSERS else DEFAULT_PARSERS
+    return copy.deepcopy(parsers)

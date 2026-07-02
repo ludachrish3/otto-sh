@@ -1,11 +1,11 @@
 """Top-level ``otto`` CLI: callback, subcommand dispatch, and eager option handlers."""
 
+import dataclasses
 import importlib
 import os
-import sys
-from logging import getLogger
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Annotated,
     Any,
     # override,     only available in Python >= 3.12
@@ -19,7 +19,6 @@ from ..configmodule import (
     get_completion_names,
     get_env,
     get_repos,
-    load_lab,
 )
 from ..configmodule.env import (
     DEFAULT_LOG_RETENTION_DAYS,
@@ -31,11 +30,14 @@ from ..configmodule.env import (
     SUT_DIRS_ENV_VAR,
     XDIR_ENV_VAR,
 )
-from ..logger import management
 from ..utils import (
     split_on_commas,
 )
 from ..version import get_version
+from .builtin_commands import register_builtin_commands
+
+if TYPE_CHECKING:
+    from .registry import CommandSpec
 
 __version__ = get_version()
 
@@ -130,34 +132,24 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
     return sorted(n for n in names if n.startswith(incomplete))
 
 
-def _is_lab_free_flag_invocation(ctx: typer.Context) -> bool:
-    """Return True when the pending subcommand tokens contain a lab-free flag.
-
-    Checks the snapshot saved by _OttoGroup.parse_args first (works under
-    CliRunner and the real binary), then falls back to sys.argv (belt-and-
-    suspenders for any invocation path that bypasses _OttoGroup.parse_args).
-    The sys.argv check is scoped to tokens following a known subcommand name
-    to avoid false-positives when sys.argv is e.g. a pytest command line.
-    """
-    subcmd_args: set[str] = set(ctx.meta.get("_pending_subcmd_args", ()))
-    if not subcmd_args & _LAB_FREE_FLAGS:
-        argv = sys.argv[1:]
-        for i, tok in enumerate(argv):
-            if tok in _SUBCOMMAND_MODULES:
-                subcmd_args = set(argv[i:])
-                break
-    return bool(subcmd_args & _LAB_FREE_FLAGS)
-
-
 class _OttoGroup(TyperGroup):
-    """Root click group that snapshots pending subcommand tokens into ctx.meta.
+    """Root group: registry-backed lazy dispatch + pending-token snapshot.
 
-    Typer's TyperGroup.invoke clears ``ctx._protected_args`` / ``ctx.args``
-    before calling the group callback, so those attributes are always empty by
-    the time ``main()`` runs.  This subclass saves a copy into ``ctx.meta``
-    during ``parse_args`` (before they are cleared) so that the callback can
-    detect help / discovery flags without touching ``sys.argv``.
+    ``list_commands`` names every registered :class:`CommandSpec`, plus any
+    third-party command name captured in the completion cache but not (yet)
+    in the live registry — e.g. on the completion fast path, where bootstrap
+    is skipped so plugin init modules never ran. ``get_command`` resolves the
+    real command (importing its module) only for the token actually being
+    dispatched or completed — every other registry name gets a lightweight
+    stub whose help comes from the spec, so ``otto --help`` imports zero
+    subcommand modules; a cache-only name gets an equivalent stub built from
+    the cached name/help. The registry always takes priority: a cached name
+    that's also registered resolves through the registry branch, so a stale
+    cache entry can never shadow real dispatch.
     """
+
+    _stub_cache: dict[str, Any]
+    _real_cache: dict[str, Any]
 
     @override
     def parse_args(self, ctx: Any, args: list[str]) -> list[str]:
@@ -171,6 +163,116 @@ class _OttoGroup(TyperGroup):
             getattr(ctx, "_protected_args", []) + getattr(ctx, "args", [])
         )
         return result
+
+    def _dispatch_target(self, ctx: Any) -> str | None:
+        """Return the subcommand name pending dispatch, if any."""
+        pending = ctx.meta.get("_pending_subcmd_args") or []
+        return pending[0] if pending else None
+
+    def _wants_real(self, ctx: Any, cmd_name: str) -> bool:
+        """Return whether *cmd_name* is the invocation's actual dispatch/completion target."""
+        if cmd_name == self._dispatch_target(ctx):
+            return True
+        if os.environ.get("_OTTO_COMPLETE"):
+            # Completion for `otto <cmd> <TAB>`: the completer resolves the
+            # named subcommand; COMP_WORDS carries the typed tokens.
+            return cmd_name in os.environ.get("COMP_WORDS", "").split()
+        return False
+
+    def _stub(self, spec: "CommandSpec") -> Any:
+        """Return (building + caching once) a lightweight help-only stub for *spec*."""
+        cache = getattr(self, "_stub_cache", None) or {}
+        self._stub_cache = cache
+        if spec.name not in cache:
+            tmp = typer.Typer(
+                name=spec.name, help=spec.help or f"(run `otto {spec.name} -h` for details)"
+            )
+            # get_group (not get_command): an empty stub Typer has zero
+            # registered commands, which get_command rejects outright.
+            stub: Any = typer.main.get_group(tmp)
+            stub.name = spec.name
+            cache[spec.name] = stub
+        return cache[spec.name]
+
+    def _real(self, spec: "CommandSpec") -> Any:
+        """Return (importing + caching once) the real resolved command for *spec*."""
+        cache = getattr(self, "_real_cache", None) or {}
+        self._real_cache = cache
+        if spec.name not in cache:
+            from .registry import resolve_spec_command
+
+            loader = spec.loader
+            cached_names = get_completion_names()
+            if cached_names is not None and isinstance(loader, str):
+                # Completion fast path: attach cached suite/instruction stubs
+                # to the freshly imported sub-app before conversion.
+                mod_name, _, attr = loader.partition(":")
+                sub_app = getattr(importlib.import_module(mod_name), attr)
+                if spec.name == "test":
+                    _attach_cached_stubs(sub_app, cached_names.get("suites", []))
+                elif spec.name == "run":
+                    _attach_cached_stubs(sub_app, cached_names.get("instructions", []))
+                spec = dataclasses.replace(spec, loader=sub_app)
+            from .invoke import wrap_leaf_callbacks
+
+            cache[spec.name] = wrap_leaf_callbacks(resolve_spec_command(spec), spec)
+        return cache[spec.name]
+
+    @override
+    def list_commands(self, ctx: Any) -> list[str]:
+        from .registry import CLI_COMMANDS
+
+        static = [n for n in super().list_commands(ctx) if n not in CLI_COMMANDS]
+        cached = [
+            name
+            for c in (get_completion_names() or {}).get("commands", [])
+            if (name := c.get("name")) and name not in CLI_COMMANDS
+        ]
+        return static + CLI_COMMANDS.names() + cached
+
+    @override
+    def get_command(self, ctx: Any, cmd_name: str) -> Any:
+        from .registry import CLI_COMMANDS
+
+        static = super().get_command(ctx, cmd_name)
+        if static is not None:
+            return static
+        if cmd_name in CLI_COMMANDS:
+            spec = CLI_COMMANDS.get(cmd_name)
+            if self._wants_real(ctx, cmd_name):
+                return self._real(spec)
+            return self._stub(spec)
+        return self._cached_stub(cmd_name)
+
+    def _cached_stub(self, cmd_name: str) -> Any:
+        """Return a help-only stub for *cmd_name* sourced from the completion cache.
+
+        Fast-path-only fallback for third-party commands: the registry never
+        holds them here (bootstrap didn't run), but the cache snapshot from a
+        prior slow-path run does. Dispatch never reaches this branch — a
+        dispatch target either resolves via ``CLI_COMMANDS`` (bootstrap ran
+        first, per :func:`entry`) or is an unknown command Typer rejects. The
+        synthesized spec's ``lab_free`` is forward-looking metadata only; stubs
+        are never dispatched and dispatch resolves through CLI_COMMANDS on the
+        slow path.
+        """
+        from .registry import CommandSpec
+
+        cached = {
+            name: c
+            for c in (get_completion_names() or {}).get("commands", [])
+            if (name := c.get("name"))
+        }
+        entry = cached.get(cmd_name)
+        if entry is None:
+            return None
+        spec = CommandSpec(
+            name=cmd_name,
+            loader=None,
+            help=entry.get("help"),
+            lab_free=bool(entry.get("lab_free")),
+        )
+        return self._stub(spec)
 
 
 app = typer.Typer(
@@ -325,261 +427,55 @@ def main(  # noqa: PLR0913 — CLI command params
         ),
     ] = False,
 ) -> None:
-    """Load the lab, initialise logging, check reservations, and install the runtime context.
+    """Record root options for lazy lab loading; handle inline root-flag actions.
 
     This is the Typer root callback executed before every ``otto`` subcommand.
-    Lab-free subcommands (e.g. ``otto schema``) skip the lab/reservation
-    bootstrap; all others require ``--lab`` and build an ``OttoContext``.
+    It no longer loads the lab or initialises logging: it stashes the root
+    options on ``ctx.meta`` and returns. The real work (lab load, session
+    setup, output dir, reservation gate) runs lazily in the leaf-invoke
+    :func:`~otto.cli.invoke.command_preamble`, so ``--help`` / discovery paths
+    are structurally incapable of touching host state. The only exceptions are
+    ``--show-lab`` / ``--list-hosts``, which inspect live lab state and so load
+    it inline here before printing and exiting.
     """
     if ctx.resilient_parsing:
         return
 
-    # A help request or discovery flag (--help, --list-suites, etc.) touches no
-    # host state and produces no run artifacts. Record that verdict on the shared
-    # ctx.meta so the per-group callbacks (run/test/...) skip create_output_dir and
-    # the reservation gate: a subcommand-level help (e.g. `otto test <Suite> --help`)
-    # otherwise creates a spurious output dir — or crashes, because this callback
-    # returns below without running init_cli_logging.
-    help_or_discovery = _is_lab_free_flag_invocation(ctx)
-    ctx.meta["_help_or_discovery"] = help_or_discovery
+    from .invoke import LabContextError, RootOptions, ensure_lab_context, report_lab_context_error
 
-    # Lab-free utility subcommands (e.g. `otto schema`) need none of the
-    # lab / reservation / context bootstrap below — and forcing `--lab` on them
-    # would be nonsensical. Skip the whole callback body for them; the
-    # subcommand runs on its own.
-    if ctx.invoked_subcommand in _LAB_FREE_SUBCOMMANDS:
-        return
-
-    # Help requests and discovery flags (--list-suites, --list-tests, etc.)
-    # touch no host state — skip the --lab requirement for them too.
-    if help_or_discovery:
-        return
-
-    # `--lab` is no longer a hard-required Typer option (so lab-free subcommands
-    # can run without it); enforce it here — before any banner/logger side
-    # effects — for everything that does need a lab.
-    if not labs:
-        # Use Typer's own echo/Exit rather than ``click.UsageError``: Typer >= 0.26
-        # vendors its own click fork, so a *real* ``click.UsageError`` is not caught
-        # by Typer's error handler and would escape uncaught (exit 1, no message).
-        typer.echo("Error: Missing option '--lab' / '-l' (env var: 'OTTO_LAB').", err=True)
-        raise typer.Exit(code=2)
-
-    from rich import print as rprint
-    from rich.align import Align
-
-    from ..host import HostFilter
-    from .banner import banner
-    from .callbacks import list_hosts_callback
-
-    rprint(Align.center(banner))
-
-    management.init_cli_logging(
+    ctx.meta["_otto_root_options"] = RootOptions(
+        labs=labs,
         xdir=xdir,
+        log_days=log_days,
         log_level=log_level,
-        keep_days=log_days,
-        show_time=show_time,
         rich_log_file=rich_log_file,
-    )
-    logger = getLogger("otto")
-    management.attach_console_suppress_filter(HostFilter())
-
-    # Set up config module
-    repos = get_repos()
-
-    # Stash the product / external logger prefixes (init roots, libs sub-packages,
-    # explicit [logging] capture) so the per-subcommand create_output_dir attaches
-    # the shared QueueHandler to them once it exists. Done here (after
-    # init_cli_logging set the log level) so capture honours the verbose floor.
-    prefixes: set[str] = set()
-    for repo in repos:
-        prefixes |= repo.product_log_prefixes()
-    management.set_capture_prefixes(prefixes)
-
-    # Extract + aggregate lab search paths across all repos (for the default
-    # json backend).
-    lab_search_paths: list[Path] = []
-    for repo in repos:
-        lab_search_paths.extend(repo.labs)
-
-    # Reduce repos' [host_preferences] tables in OTTO_SUT_DIRS order; later repos
-    # overlay earlier ones. Selections (list) are atomic — last repo to set a
-    # (selector, capability) wins it; option tables (dict) merge per key.
-    merged_host_preferences: dict[str, dict[str, Any]] = {}
-    for repo in repos:
-        for selector, entries in repo.host_preferences.items():
-            dest = merged_host_preferences.setdefault(selector, {})
-            for key, val in entries.items():
-                if isinstance(val, list):
-                    dest[key] = list(val)
-                else:
-                    dest.setdefault(key, {}).update(val)
-
-    # Select the host-source backend: the first repo that declares a [lab] block
-    # wins (mirrors reservations' "first repo declares" rule). With no [lab]
-    # block anywhere, lab_settings stays {} and the factory falls back to the
-    # built-in json backend over the aggregated search paths.
-    lab_settings: dict[str, Any] = {}
-    lab_repo_dir: Path = repos[0].sut_dir if repos else Path.cwd()
-    for repo in repos:
-        if repo.lab_settings:
-            lab_settings = repo.lab_settings
-            lab_repo_dir = repo.sut_dir
-            break
-
-    from ..storage import LabRepositoryError, build_lab_repository
-
-    try:
-        lab_repository = build_lab_repository(
-            lab_settings, lab_repo_dir, search_paths=lab_search_paths
-        )
-    except (ValueError, LabRepositoryError) as e:
-        rprint(f"[bold red]Host source unavailable:[/bold red] {e}")
-        raise typer.Exit(1) from e
-
-    lab = load_lab(labs, preferences=merged_host_preferences, repository=lab_repository)
-
-    # Synthesize placeholder Docker container hosts from each repo's
-    # `[docker]` settings. They appear in `--list-hosts` and tab-completion
-    # immediately; operations against them surface a clear "run otto docker
-    # up" error until `compose_up` overwrites the placeholder with a real
-    # entry.
-    from ..docker.compose import register_declared_container_hosts
-
-    register_declared_container_hosts(lab, repos)
-
-    # Resolve reservation identity + backend (first repo with a [reservations]
-    # section wins). With -R the backend is NOT constructed at all, so a broken
-    # or hanging scheduler can never block lab access (break-glass).
-    from ..reservations import (
-        ReservationBackendError,
-        build_reservation_state,
+        show_time=show_time,
+        dry_run=dry_run,
+        as_user=as_user,
+        skip_reservation_check=skip_reservation_check,
     )
 
-    try:
-        reservation_state = build_reservation_state(
-            repos,
-            as_user=as_user,
-            skip_reservation_check=skip_reservation_check,
-            cwd_fallback=Path.cwd(),
-        )
-    except ReservationBackendError as e:
-        rprint(
-            f"[bold red]Reservation backend unavailable:[/bold red] {e}\n"
-            f"Pass [bold]--skip-reservation-check[/bold] / [bold]-R[/bold] to proceed without the check."  # noqa: E501 — long rich markup string
-        )
-        raise typer.Exit(1) from e
+    if show_lab or list_hosts:
+        # These root flags inspect live lab state: load it now, print, exit.
+        try:
+            ensure_lab_context(ctx)
+        except LabContextError as e:
+            report_lab_context_error(e)
+        if show_lab:
+            from rich.pretty import pprint
 
-    identity = reservation_state.identity
-    if identity is not None and identity.source == "--as-user":
-        logger.info(
-            f"[bold magenta][reservations] acting as {identity.username!r}"
-            f" (--as-user)[/bold magenta]"
-        )
+            from ..context import get_context
 
-    ctx.meta["otto_reservation"] = reservation_state
+            pprint(
+                get_context().lab,
+                max_depth=(None if lab_depth == 0 else lab_depth),
+                expand_all=True,
+            )
+        else:
+            from .callbacks import list_hosts_callback
 
-    # Install the runtime context: lab + dry_run flag.
-    from ..context import OttoContext, set_context
-
-    set_context(OttoContext(lab=lab, dry_run=dry_run))
-
-    if show_lab:
-        from rich.pretty import pprint
-
-        pprint(lab, max_depth=(None if lab_depth == 0 else lab_depth), expand_all=True)
+            list_hosts_callback(True)
         raise typer.Exit
-
-    # Listing hosts can't be done as a callback because context creation must be done first.
-    # It's simpler and cleaner to just call the callback here after context creation.
-    if list_hosts:
-        list_hosts_callback(True)
-        raise typer.Exit
-
-    if dry_run:
-        logger.info(
-            "[magenta][DRY RUN] Commands and file transfers will be skipped. "
-            "Connections will still be verified."
-        )
-
-    for repo in repos:
-        logger.debug(f"{repo.sut_dir}: {repo.commit}")
-
-
-# ---------------------------------------------------------------------------
-# Dispatch-aware subcommand registration
-#
-# Importing every subcommand module at startup pulls in fastapi, jinja2, etc.
-# via cli.monitor and cli.cov — ~100 ms of wall time on the tab-completion
-# critical path. Instead, import only the subcommand module actually being
-# invoked; for the others, register an empty placeholder Typer so the
-# top-level help and shell completion still see the command name.
-#
-# When no subcommand is apparent (e.g. `otto --help`, `otto --list-labs`, or
-# plain `otto`), load every real module so help output is unchanged.
-# ---------------------------------------------------------------------------
-
-_SUBCOMMAND_MODULES: dict[str, tuple[str, str]] = {
-    "run": (".run", "run_app"),
-    "test": (".test", "suite_app"),
-    "monitor": (".monitor", "monitor_app"),
-    "cov": (".cov", "cov_app"),
-    "host": (".host", "host_app"),
-    "docker": (".docker", "docker_app"),
-    "reservation": (".reservation", "reservation_app"),
-    "schema": (".schema", "schema_app"),
-}
-
-# Subcommands that introspect otto itself rather than operate on a lab. The
-# top-level callback skips its lab / reservation bootstrap (and the `--lab`
-# requirement) for these.
-_LAB_FREE_SUBCOMMANDS: frozenset[str] = frozenset({"schema"})
-
-# Flags that request help or discovery information about registered suites /
-# instructions. When any of these appear in the pending subcommand tokens the
-# invocation touches no host state, so the `--lab` requirement is skipped.
-# NOTE: `--list-hosts` is intentionally excluded — it queries live lab state.
-_LAB_FREE_FLAGS: frozenset[str] = frozenset(
-    {"--help", "-h", "--list-suites", "--list-tests", "--list-markers", "--list-instructions"}
-)
-
-
-def _requested_subcommands() -> set[str]:
-    """Determine which subcommands to import for this invocation.
-
-    Inspects ``sys.argv`` and (in completion mode) ``COMP_WORDS`` for tokens
-    that name a known subcommand.
-    """
-    completion_mode = bool(os.environ.get("_OTTO_COMPLETE"))
-
-    tokens: set[str] = set(sys.argv[1:])
-    if completion_mode:
-        tokens.update(os.environ.get("COMP_WORDS", "").split())
-
-    matched = set(_SUBCOMMAND_MODULES) & tokens
-    if matched:
-        return matched
-
-    # Shell completion with no matched subcommand (e.g. `otto <TAB>`) only
-    # needs the top-level command list — placeholder Typers are sufficient.
-    if completion_mode:
-        return set()
-
-    # Non-completion with no subcommand token — `otto` alone, `otto --help`,
-    # `otto --list-labs`, etc. Load everything so help output is complete.
-    return set(_SUBCOMMAND_MODULES)
-
-
-def _placeholder_subapp(name: str) -> typer.Typer:
-    """Empty Typer with just a name/help.
-
-    Used for subcommands that aren't being completed in this invocation so the top-level
-    help still lists them.
-    """
-    return typer.Typer(
-        name=name,
-        help=f"(run `otto {name} -h` for details)",
-    )
 
 
 def _attach_cached_stubs(
@@ -601,35 +497,54 @@ def _attach_cached_stubs(
         parent.add_typer(build_stub_command(name, options))
 
 
-def _register_subcommands() -> None:
-    """Attach subcommand Typers to ``app`` for this invocation.
+register_builtin_commands()
 
-    Two paths:
-    - *Fast path* (completion cache hit): import only the subcommand module
-      the user is actively completing so its real callback-level options
-      (``--cov``, ``--list-suites``, …) reach the completer. For ``test`` /
-      ``run`` we additionally attach stub children for each cached suite /
-      instruction so ``otto test TestDevice --<TAB>`` has a signature to
-      introspect. Non-targeted subcommands get an empty placeholder.
-    - *Slow path* (cache miss or non-completion): same dispatch — import the
-      wanted subcommand modules and use placeholders for the rest. When no
-      subcommand is apparent (e.g. ``otto --help``) ``_requested_subcommands``
-      returns the full set so help output stays complete.
+
+def entry() -> None:
+    """Console-script entry: composition root, then the Typer app.
+
+    Completion invocations take the cache fast path (zero user code); everything
+    else runs :func:`otto.bootstrap.bootstrap` before argv parsing so registered
+    third-party commands exist when the root group is consulted. Contained
+    user-code failures print one framed warning line each; real command
+    dispatch fails loud in the invoke preamble.
     """
-    cached = get_completion_names()
-    wanted = _requested_subcommands()
+    import contextlib
 
-    for name, (modpath, attr) in _SUBCOMMAND_MODULES.items():
-        if name in wanted:
-            mod = importlib.import_module(modpath, package=__package__)
-            sub_app = getattr(mod, attr)
-            if cached is not None and name == "test":
-                _attach_cached_stubs(sub_app, cached.get("suites", []))
-            elif cached is not None and name == "run":
-                _attach_cached_stubs(sub_app, cached.get("instructions", []))
-            app.add_typer(sub_app)
-        else:
-            app.add_typer(_placeholder_subapp(name))
+    from .. import bootstrap as bs
+    from ..configmodule.completion_cache import is_completion_mode, read_cache
 
+    if is_completion_mode():
+        _env, repos = bs.discover()
+        bs.set_completion_names(read_cache(repos))
 
-_register_subcommands()
+    if bs.get_completion_names() is None:
+        result = bs.bootstrap()
+        for err in result.errors:
+            typer.echo(f"warning: {err}", err=True)
+        from ..configmodule.completion_cache import (
+            collect_backend_names,
+            collect_cli_commands,
+            collect_current_commands,
+            collect_docker_capable_host_ids,
+            collect_host_ids,
+            collect_reservation_usernames,
+            write_cache,
+        )
+
+        instructions, suites = collect_current_commands()
+        backends = collect_backend_names()
+        with contextlib.suppress(OSError):
+            write_cache(
+                result.repos,
+                instructions,
+                suites,
+                collect_host_ids(result.repos),
+                collect_docker_capable_host_ids(result.repos),
+                term_backends=backends["term_backends"],
+                transfer_backends=backends["transfer_backends"],
+                usernames=collect_reservation_usernames(result.repos),
+                commands=collect_cli_commands(),
+            )
+
+    app()

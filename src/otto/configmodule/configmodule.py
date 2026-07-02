@@ -10,7 +10,7 @@ from typing import (
     cast,
 )
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from .lab import Lab
 
 if TYPE_CHECKING:
@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 def _apply_option_overrides(

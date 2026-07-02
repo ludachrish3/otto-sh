@@ -17,7 +17,7 @@ from typing import (
 
 import tomli
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..result import CommandResult
 from ..utils import Status
 from .version import Version
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from ..host.os_profile import OsProfile
     from ..models.settings import OsProfileSpec
 
-logger = get_otto_logger()
+logger = get_logger()
 
 SETTINGS_FILENAME = "settings.toml"
 TOML_SETTINGS_PATH = Path(".otto") / SETTINGS_FILENAME
@@ -250,19 +250,13 @@ class Repo:
         """
         from rich.text import Text
 
-        from ..cli.run import run_app  # lazy import — avoids circular dependency
+        from ..cli.run import INSTRUCTIONS  # lazy import — avoids circular dependency
 
-        instruction_names: list[str] = []
-        for group in run_app.registered_groups:
-            if group.typer_instance is None:
-                continue
-            for cmd in group.typer_instance.registered_commands:
-                if cmd.callback is None:
-                    continue
-                module: str = cmd.callback.__module__
-                if any(module == m or module.startswith(m + ".") for m in self.init):
-                    name = cmd.name or getattr(cmd.callback, "__name__", "").replace("_", "-")
-                    instruction_names.append(name)
+        instruction_names: list[str] = [
+            entry.name
+            for _, entry in INSTRUCTIONS.items()
+            if any(entry.module == m or entry.module.startswith(m + ".") for m in self.init)
+        ]
 
         lines = [f"• {n}" for n in instruction_names]
         content = Text("\n".join(lines)) if lines else Text("no instructions found", style="dim")
@@ -287,9 +281,9 @@ class Repo:
             collection to tests matching the marker expression.
         suite :
             Restrict collection to the registered suite of this name (its
-            source file is looked up in ``_SUITE_FILES``).  Also passes
-            ``-k <suite>`` so only the matching class is selected within
-            that file.
+            source file is looked up in the ``SUITES`` registry).  Also
+            passes ``-k <suite>`` so only the matching class is selected
+            within that file.
         tests :
             Passed as ``-k <tests>`` to the inner pytest run, narrowing
             collection to tests whose name matches the keyword expression.
@@ -333,9 +327,9 @@ class Repo:
                 if tests:
                     selector_args += ["-k", tests]
                 if suite:
-                    from ..suite.register import _SUITE_FILES
+                    from ..suite.register import SUITES
 
-                    suite_file = _SUITE_FILES.get(suite)
+                    suite_file = SUITES.get(suite).file if suite in SUITES else None
                     if suite_file is not None:
                         paths = [suite_file]
                     else:
@@ -438,21 +432,18 @@ class Repo:
     def registered_suites(self) -> list[str]:
         """Names of ``@register_suite`` suites whose source file is under this repo.
 
-        Reads ``otto.suite.register._SUITE_FILES`` (populated at suite import
-        time) and returns the registered suite names — the exact subcommand
-        names ``otto test <name>`` accepts — for suites defined under this
-        repo's ``sut_dir``, preserving registration order.
+        Reads ``otto.suite.register.SUITES`` (populated at suite import time)
+        and returns the registered suite names — the exact subcommand names
+        ``otto test <name>`` accepts — for suites defined under this repo's
+        ``sut_dir``, preserving registration order.
         """
-        from ..suite.register import _SUITE_FILES, _SUITE_REGISTRY
+        from ..suite.register import SUITES
 
         sut_root = self.sut_dir.resolve()
         names: list[str] = []
-        for name, _sub_app in _SUITE_REGISTRY:
-            src = _SUITE_FILES.get(name)
-            if src is None:
-                continue
+        for name, entry in SUITES.items():
             try:
-                Path(src).resolve().relative_to(sut_root)
+                Path(entry.file).resolve().relative_to(sut_root)
             except ValueError:
                 continue
             names.append(name)
@@ -657,28 +648,37 @@ class Repo:
         for mod in self.init:
             importlib.import_module(mod)
 
-    def import_test_files(self) -> None:
-        """Import test_*.py files from each configured tests directory.
+    def iter_test_files(self) -> list[Path]:
+        """Return every ``test_*.py`` under this repo's configured tests dirs, sorted."""
+        found: list[Path] = []
+        for test_dir in self.tests:
+            if test_dir.is_dir():
+                found.extend(sorted(test_dir.glob("test_*.py")))
+        return found
 
-        This triggers ``@register_suite()`` decorators, which populate
-        ``otto.suite.register._SUITE_REGISTRY`` at import time.  The registry
-        is later consumed by ``cli/test.py`` to add sub-Typers to ``testing_app``.
+    def import_test_file(self, test_file: Path) -> None:
+        """Import one suite test file (idempotent per file); may raise on bad user code.
+
+        Triggers ``@register_suite()`` decorators, which populate
+        ``otto.suite.register.SUITES`` at import time.  ``cli/test.py``'s
+        ``suite_app`` resolves entries from that registry lazily.
         """
         import importlib.util
 
-        for test_dir in self.tests:
-            if not test_dir.is_dir():
-                continue
-            for test_file in sorted(test_dir.glob("test_*.py")):
-                mod_name = f"_otto_suite_{test_file.stem}"
-                if mod_name in sys.modules:
-                    continue
-                spec = importlib.util.spec_from_file_location(mod_name, test_file)
-                if spec is None or spec.loader is None:
-                    continue
-                mod = importlib.util.module_from_spec(spec)
-                sys.modules[mod_name] = mod
-                spec.loader.exec_module(mod)  # type: ignore[union-attr]
+        mod_name = f"_otto_suite_{test_file.stem}"
+        if mod_name in sys.modules:
+            return
+        spec = importlib.util.spec_from_file_location(mod_name, test_file)
+        if spec is None or spec.loader is None:
+            return
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[mod_name] = mod
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+
+    def import_test_files(self) -> None:
+        """Import all test files (uncontained; :mod:`otto.bootstrap` wraps per-file)."""
+        for test_file in self.iter_test_files():
+            self.import_test_file(test_file)
 
     def _expand_string(
         self,
@@ -699,16 +699,6 @@ class Repo:
         `str` object after all supported substitutions.
         """
         return field.replace("${sut_dir}", f"{self.sut_dir}")
-
-    def apply_settings(self) -> None:
-        """Apply all repo settings.
-
-        Extends ``sys.path`` with configured lib directories, imports init modules,
-        and imports test files to trigger suite registration.
-        """
-        self.add_libs_to_pythonpath()
-        self.import_init_modules()
-        self.import_test_files()
 
     async def set_git_description(self) -> None:
         """Populate ``_git_description`` from ``git describe`` output.
@@ -782,14 +772,6 @@ class Repo:
             return (await host.run(f"git -C {self.sut_dir} {cmd}")).only
         finally:
             await host.close()
-
-
-def apply_repo_settings(
-    repos: list[Repo],
-) -> None:
-    """Call ``apply_settings()`` on each ``Repo`` in *repos* in order."""
-    for repo in repos:
-        repo.apply_settings()
 
 
 def get_repos(

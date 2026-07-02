@@ -10,9 +10,9 @@ from otto.configmodule.configmodule import do_for_all_hosts, run_on_all_hosts
 from otto.context import get_context
 from otto.host import LocalHost
 from otto.host.unix_host import UnixHost
-from otto.logger import get_otto_logger
+from otto.logger import get_logger
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 @options

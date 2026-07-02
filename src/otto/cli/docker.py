@@ -13,7 +13,7 @@ which is also what instructions and suites import directly.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich import print as rprint
@@ -21,7 +21,6 @@ from rich.table import Table
 
 from ..configmodule import Repo, get_lab, get_repos
 from ..configmodule.lab import Lab
-from ..context import get_context
 from ..docker import (
     build_images,
     compose_down,
@@ -30,10 +29,10 @@ from ..docker import (
     get_user_compose_project,
 )
 from ..host.unix_host import UnixHost
-from ..logger import get_otto_logger, management
+from ..logger import get_logger
 from ..utils import Status, async_typer_command
 
-logger = get_otto_logger()
+logger = get_logger()
 
 docker_app = typer.Typer(
     name="docker",
@@ -51,20 +50,15 @@ _NO_OUTPUT_DIR_SUBCOMMANDS = frozenset({"ps"})
 
 @docker_app.callback()
 def docker_callback(ctx: typer.Context) -> None:
-    """Build images and orchestrate compose stacks on docker-capable lab hosts."""
+    """Build images and orchestrate compose stacks on docker-capable lab hosts.
+
+    Output-dir creation moved to the shared leaf-invoke
+    :func:`~otto.cli.invoke.command_preamble`; the read-only ``ps`` leaf opts
+    out via its ``__cli_output_dir__ = False`` marker (see below), so a
+    ``--help`` invocation can never create a spurious dir.
+    """
     if ctx.resilient_parsing:
         return
-    # Mirror run/host/test: set up this invocation's output directory (which also
-    # prunes old logs per the retention policy) for a real subcommand that does
-    # work. Skip it on a help/discovery invocation (the root callback flags that
-    # and skips init_cli_logging, so create_output_dir would otherwise raise) and
-    # for read-only subcommands (e.g. `docker ps`).
-    if (
-        ctx.invoked_subcommand is not None
-        and not ctx.meta.get("_help_or_discovery")
-        and ctx.invoked_subcommand not in _NO_OUTPUT_DIR_SUBCOMMANDS
-    ):
-        get_context().output_dir = management.create_output_dir("docker", ctx.invoked_subcommand)
 
 
 def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
@@ -290,7 +284,18 @@ async def _ps(
     rprint(table)
 
 
-docker_app.command(name="build")(async_typer_command(_build))
-docker_app.command(name="up")(async_typer_command(_up))
-docker_app.command(name="down")(async_typer_command(_down))
-docker_app.command(name="ps")(async_typer_command(_ps))
+# Read-only docker subcommands (`ps`) produce no artifacts → opt them out of
+# the per-command output dir. The leaf-invoke preamble reads `__cli_output_dir__`
+# off the command callback (default True); `functools.wraps` in
+# async_typer_command carries the marker through to the wrapper. This keeps
+# `_NO_OUTPUT_DIR_SUBCOMMANDS` the single source of truth for the policy.
+_DOCKER_SUBCOMMANDS: dict[str, Any] = {
+    "build": _build,
+    "up": _up,
+    "down": _down,
+    "ps": _ps,
+}
+for _sub_name, _sub_fn in _DOCKER_SUBCOMMANDS.items():
+    if _sub_name in _NO_OUTPUT_DIR_SUBCOMMANDS:
+        _sub_fn.__cli_output_dir__ = False
+    docker_app.command(name=_sub_name)(async_typer_command(_sub_fn))

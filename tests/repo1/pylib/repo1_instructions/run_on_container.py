@@ -21,10 +21,10 @@ import typer
 from otto import options
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import get_host
-from otto.logger import get_otto_logger
+from otto.logger import get_logger
 from otto.result import CommandResult
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 @options

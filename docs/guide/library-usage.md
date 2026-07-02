@@ -5,6 +5,35 @@ async Python scripts — for example, one-off automation, CI tooling, or
 integration scripts that operate on lab hosts without needing test suites or
 instructions.
 
+## Imports are side-effect-free; `open_context()` runs the composition root
+
+`import otto` and `import otto.configmodule` do no I/O and run no project code.
+`import otto` implements PEP 562 lazy exports (each public name resolves its
+source module only on first attribute access), so a bare import stays cheap even
+in a process that never touches a lab. `import otto.configmodule` is
+side-effect-free (no repo discovery, no user code) but eagerly imports its
+submodules. Nothing under `.otto/settings.toml` `init` is imported just because
+`otto` is on `sys.path` — that happens in {func}`otto.bootstrap.bootstrap`.
+
+The composition root — repo discovery plus importing every configured `init`
+module and test file — is {func}`otto.bootstrap.bootstrap`, and it is
+idempotent (repeated calls return the same cached result). `open_context()`
+calls it for you before loading the lab, so any `@instruction`,
+`@register_suite()`, `@cli_command()`, or `register_*_backend()` call in your
+project's `init` modules has already run by the time the `async with` block
+starts:
+
+```python
+async with otto.open_context(lab="mylab") as ctx:
+    ...  # your project's registered components are all live here
+```
+
+If you're wiring up a custom embedding that bypasses `open_context()` — for
+example, driving `OttoContext`/`set_context()` manually as shown below — call
+`otto.bootstrap.bootstrap()` yourself first if you need those registrations
+available. Skipping it isn't an error; it just means your script only sees
+otto's own built-ins, not anything your project registers in `init`.
+
 ## Recommended: `open_context()`
 
 `open_context()` is the single entry point for library use. It loads a lab,

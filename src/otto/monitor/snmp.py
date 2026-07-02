@@ -34,6 +34,7 @@ from typing import Literal, SupportsInt
 from pydantic import ConfigDict
 
 from ..models.base import OttoModel
+from ..registry import Registry, caller_module
 from .parsers import MetricDataPoint
 
 logger = logging.getLogger("otto")
@@ -104,7 +105,12 @@ class SnmpMetric(OttoModel):
 # descriptors, mirroring the host-class registry decision. (See the Phase A
 # design, "SNMP-metric registration symmetry".)
 
-_SNMP_METRICS: dict[str, SnmpMetric] = {}
+# Registration here always overwrites (see register_snmp_metric) — re-teaching
+# otto how to chart an OID, including one of the built-ins below, is documented,
+# tested behavior, not a mistake to catch loudly.
+SNMP_METRICS: Registry[SnmpMetric] = Registry(
+    "SNMP metric descriptor", register_hint="otto.monitor.snmp.register_snmp_metric()"
+)
 
 
 def register_snmp_metric(metric: SnmpMetric) -> None:
@@ -115,7 +121,7 @@ def register_snmp_metric(metric: SnmpMetric) -> None:
     :func:`otto.monitor.parsers.register_host_parsers` and
     :func:`otto.host.command_frame.register_command_frame`.
     """
-    _SNMP_METRICS[metric.oid] = metric
+    SNMP_METRICS.register(metric.oid, metric, overwrite=True, origin=caller_module())
 
 
 def _register_builtin_metrics() -> None:
@@ -173,7 +179,7 @@ _register_builtin_metrics()
 
 def get_snmp_metric(oid: str) -> SnmpMetric | None:
     """Return the registered descriptor for ``oid``, or ``None``."""
-    return _SNMP_METRICS.get(oid)
+    return SNMP_METRICS.get(oid) if oid in SNMP_METRICS else None
 
 
 def resolve_snmp_metric(oid: str) -> SnmpMetric:
@@ -183,7 +189,7 @@ def resolve_snmp_metric(oid: str) -> SnmpMetric:
     ``metrics`` tab, so a host can poll a bare OID it declared in lab data
     without anyone having registered a descriptor for it.
     """
-    metric = _SNMP_METRICS.get(oid)
+    metric = get_snmp_metric(oid)
     if metric is not None:
         return metric
     return SnmpMetric(oid=oid, label=oid, chart=oid)

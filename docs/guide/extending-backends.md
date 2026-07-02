@@ -20,6 +20,37 @@ registration runs before any lab data loads. The two seams are:
 For the lab-data fields that select them (`term`, `transfer`), see
 {doc}`lab-config`; for the host classes that carry them, see {doc}`os-profiles`.
 
+## Registration errors and replacing a built-in
+
+Both seams (and every other extension point in otto — host classes, lab
+repositories, CLI commands) share one {class}`~otto.registry.Registry` engine.
+An unknown selector doesn't just fail — the error lists every registered name
+for that seam and, when your typo is close to a real one, suggests it:
+
+```text
+ValueError: Unknown transfer backend 'sftpp'. Did you mean 'sftp'? Registered: console, ftp, nc, scp, sftp, tftp. Custom entries can be added via otto.host.transfer.register_transfer_backend().
+```
+
+Registering the *same* name twice is a hard failure by default, naming both
+modules — this is what protects you from two `init` modules silently racing
+to define `ssh`. If you deliberately want to replace a built-in (for example,
+swapping in your own `json` lab-repository backend, or overriding otto's
+stock `ssh` term with a hardened variant), pass `overwrite=True` to the
+`register_*` function:
+
+```python
+from otto.host import register_transfer_backend
+
+register_transfer_backend("scp", MyHardenedScp, overwrite=True)
+```
+
+Without `overwrite=True` this raises
+`ValueError: transfer backend 'scp' is already registered by 'otto.host.transfer.unix'; ...`.
+This asymmetry is intentional and does **not** apply everywhere: CLI top-level
+commands are the one seam with no `overwrite` escape hatch at all — see
+{doc}`extending-cli`'s [Collisions](extending-cli.md#collisions) section for
+why a duplicate `otto <name>` registration always fails loud instead.
+
 ## `host_families` applicability
 
 A backend declares which host families it serves. For a **transfer** backend

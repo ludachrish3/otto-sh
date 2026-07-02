@@ -56,7 +56,7 @@ from typing_extensions import override
 if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Status, cli_exposed
@@ -84,7 +84,7 @@ from .transfer import (
     make_rich_progress_handler,
 )
 
-logger = get_otto_logger()
+logger = get_logger()
 
 # Readiness-handshake ceiling for an embedded telnet console. The Zephyr shell
 # under QEMU can take a few seconds after the TCP connection opens before it

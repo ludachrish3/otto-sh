@@ -24,10 +24,10 @@ from weakref import WeakSet
 
 from typing_extensions import Self
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from .options import TelnetOptions
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 async def open_telnet_connection(*args: Any, **kwargs: Any) -> Any:

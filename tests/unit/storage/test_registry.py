@@ -8,7 +8,7 @@ from otto.storage import (
     register_lab_repository,
 )
 from otto.storage.registry import (
-    _LAB_REPOSITORIES,
+    LAB_REPOSITORIES,
     get_lab_repository_class,
 )
 
@@ -29,7 +29,7 @@ def test_register_and_lookup():
     try:
         assert get_lab_repository_class("mine-test") is MyRepo
     finally:
-        _LAB_REPOSITORIES.pop("mine-test", None)
+        LAB_REPOSITORIES.unregister("mine-test")
 
 
 def test_unknown_name_lists_registered():

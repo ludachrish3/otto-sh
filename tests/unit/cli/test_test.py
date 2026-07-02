@@ -23,7 +23,7 @@ from typer.testing import CliRunner
 
 from otto.cli.test import run_suite, suite_app
 from otto.context import get_context
-from otto.suite.register import _SUITE_REGISTRY, register_suite
+from otto.suite.register import SUITES, register_suite
 
 runner = CliRunner()
 
@@ -33,12 +33,11 @@ runner = CliRunner()
 
 def _make_isolated_app(suite_class: type) -> typer.Typer:
     """Build a fresh Typer app containing only the given suite as a subcommand."""
-    for name, sub_app in reversed(_SUITE_REGISTRY):
-        if name == suite_class.__name__:
-            app = typer.Typer(no_args_is_help=True)
-            app.add_typer(sub_app)
-            return app
-    raise LookupError(f"{suite_class.__name__} not found in _SUITE_REGISTRY")
+    if suite_class.__name__ not in SUITES:
+        raise LookupError(f"{suite_class.__name__} not found in SUITES")
+    app = typer.Typer(no_args_is_help=True)
+    app.add_typer(SUITES.get(suite_class.__name__).sub_app)
+    return app
 
 
 # ── Help behaviour ────────────────────────────────────────────────────────────
@@ -93,23 +92,27 @@ class TestTestHelp:
 
 class TestTestCallback:
     def test_logger_output_dir_called_for_suite(self):
-        """The suite_app callback must call management.create_output_dir('test', suite_name)."""
+        """The leaf-invoke preamble creates the test output dir named after the suite.
+
+        Since Task 7 the output dir is created by the shared leaf-invoke preamble
+        (``otto.cli.invoke.command_preamble``), not the ``suite_app`` callback — so
+        dispatch goes through the root ``app`` (which wraps leaves with the
+        preamble). ``ensure_cli_session`` / ``ensure_lab_context`` are stubbed to
+        isolate the output-dir naming (``create_output_dir('test', <suite>)``).
+        """
+        from otto.cli.main import app
 
         @register_suite()
         class _CallbackSuite:
             pass
 
-        # Attach the suite directly to suite_app so the callback fires
-        for name, sub_app in reversed(_SUITE_REGISTRY):
-            if name == "_CallbackSuite":
-                suite_app.add_typer(sub_app)
-                break
-
         with (
+            patch("otto.cli.invoke.ensure_cli_session"),
+            patch("otto.cli.invoke.ensure_lab_context"),
             patch("otto.logger.management.create_output_dir") as p_create,
             patch("otto.cli.test.run_suite"),
         ):
-            runner.invoke(suite_app, ["_CallbackSuite"])
+            runner.invoke(app, ["--lab", "x", "test", "_CallbackSuite"])
 
         p_create.assert_called_once_with("test", "_CallbackSuite")
 
@@ -348,11 +351,6 @@ class TestTypeEnforcement:
         class _IterSuite:
             pass
 
-        for name, sub_app in reversed(_SUITE_REGISTRY):
-            if name == "_IterSuite":
-                suite_app.add_typer(sub_app)
-                break
-
         mock_logger = MagicMock()
         with patch("otto.cli.test.run_suite"), patch("otto.cli.test.logger", mock_logger):
             result = runner.invoke(suite_app, ["--iterations", "oops", "_IterSuite"])
@@ -501,11 +499,6 @@ class TestParentRunnerOptionsCtx:
         class _CtxIterSuite:
             pass
 
-        for name, sub_app in reversed(_SUITE_REGISTRY):
-            if name == "_CtxIterSuite":
-                suite_app.add_typer(sub_app)
-                break
-
         ctx_obj = self._capture_ctx(["--iterations", "5"], "_CtxIterSuite")
         assert ctx_obj.get("iterations") == 5
 
@@ -513,11 +506,6 @@ class TestParentRunnerOptionsCtx:
         @register_suite()
         class _CtxMarkSuite:
             pass
-
-        for name, sub_app in reversed(_SUITE_REGISTRY):
-            if name == "_CtxMarkSuite":
-                suite_app.add_typer(sub_app)
-                break
 
         ctx_obj = self._capture_ctx(
             ["--markers", "not integration"],
@@ -529,11 +517,6 @@ class TestParentRunnerOptionsCtx:
         @register_suite()
         class _CtxDefSuite:
             pass
-
-        for name, sub_app in reversed(_SUITE_REGISTRY):
-            if name == "_CtxDefSuite":
-                suite_app.add_typer(sub_app)
-                break
 
         ctx_obj = self._capture_ctx([], "_CtxDefSuite")
         assert ctx_obj.get("markers") == ""
@@ -552,11 +535,6 @@ class TestParentRunnerOptionsCtx:
         class _CtxMonSuite:
             pass
 
-        for name, sub_app in reversed(_SUITE_REGISTRY):
-            if name == "_CtxMonSuite":
-                suite_app.add_typer(sub_app)
-                break
-
         ctx_obj = self._capture_ctx(["--monitor"], "_CtxMonSuite")
         assert ctx_obj.get("monitor") is True
 
@@ -564,11 +542,6 @@ class TestParentRunnerOptionsCtx:
         @register_suite()
         class _CtxMonOptSuite:
             pass
-
-        for name, sub_app in reversed(_SUITE_REGISTRY):
-            if name == "_CtxMonOptSuite":
-                suite_app.add_typer(sub_app)
-                break
 
         out = tmp_path / "m.json"
         ctx_obj = self._capture_ctx(
@@ -595,11 +568,6 @@ class TestParentRunnerOptionsCtx:
         class _CtxMonImplSuite:
             pass
 
-        for name, sub_app in reversed(_SUITE_REGISTRY):
-            if name == "_CtxMonImplSuite":
-                suite_app.add_typer(sub_app)
-                break
-
         ctx_obj = self._capture_ctx(["--monitor-hosts", "router"], "_CtxMonImplSuite")
         assert ctx_obj.get("monitor") is True
 
@@ -619,23 +587,13 @@ def _capture_cov_ctx(cli_args: list[str]) -> tuple[int, dict, str]:
 
     Callback options like ``--cov`` / ``--cov-dir`` are declared on
     ``suite_app`` itself, so we invoke through it (not an isolated app) to
-    exercise the actual option wiring.
+    exercise the actual option wiring. ``suite_app`` resolves ``_CovCtxSuite``
+    lazily from the ``SUITES`` registry, so no explicit attach step is needed.
 
     Returns ``(exit_code, ctx_obj, output)``. ``ctx_obj`` is ``{}`` when the
     command aborts before the subcommand is reached (e.g. during option
     validation).
     """
-    # Attach the suite's sub-app to the real ``suite_app`` the first time
-    # this helper runs. ``suite_app.registered_groups`` is initialised at
-    # module load from the registry snapshot; later @register_suite() calls
-    # (like ours at module scope) aren't automatically propagated.
-    if not getattr(_CovCtxSuite, "_otto_attached", False):
-        for name, sub_app in reversed(_SUITE_REGISTRY):
-            if name == "_CovCtxSuite":
-                suite_app.add_typer(sub_app)
-                _CovCtxSuite._otto_attached = True  # type: ignore[attr-defined]
-                break
-
     import dataclasses
 
     from otto.cli.test import RUN_OPTIONS_KEY

@@ -196,6 +196,35 @@ class TestFileOption:
         assert result.exit_code == 0
 
 
+# ── Reservation gate: per-branch, not uniform ────────────────────────────────
+#
+# monitor registers gate=False (see builtin_commands.py) and gates itself:
+# historical --file replay reads a local file and never touches live
+# hardware, so it is gate-exempt by design; live collection still gates.
+
+
+class TestGatePerBranch:
+    def test_file_replay_does_not_invoke_gate(self, tmp_path):
+        json_file = tmp_path / "metrics.json"
+        json_file.write_text('{"metrics": [], "events": []}')
+        # monitor() imports gate lazily (`from ..reservations import gate`
+        # inside the function body), so the patch target is the source
+        # module, not otto.cli.monitor.
+        with (
+            patch("otto.reservations.gate") as mock_gate,
+            patch("asyncio.run", side_effect=_close_coro),
+        ):
+            result = runner.invoke(monitor_app, ["--file", str(json_file)])
+        assert result.exit_code == 0
+        mock_gate.assert_not_called()
+
+    def test_live_mode_invokes_gate(self, live_mode_mocks):
+        with patch("otto.reservations.gate") as mock_gate:
+            result = runner.invoke(monitor_app, [])
+        assert result.exit_code == 0
+        mock_gate.assert_called_once()
+
+
 # ── _load_historical() unit tests ─────────────────────────────────────────────
 
 

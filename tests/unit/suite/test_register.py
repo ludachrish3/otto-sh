@@ -2,7 +2,8 @@
 Unit tests for ``otto.suite.register``.
 
 Tests verify:
-  - ``@register_suite()`` adds a sub-Typer to ``_SUITE_REGISTRY`` and to ``testing_app``
+  - ``@register_suite()`` registers a sub-Typer into the ``SUITES`` registry,
+    resolved lazily by ``suite_app``'s ``RegistryBackedGroup``
   - The generated Typer command has only suite-specific parameters (runner-level
     options live on the ``otto test`` parent callback in ``otto.cli.test``)
   - Dataclass inheritance works: parent fields appear alongside child fields
@@ -11,16 +12,19 @@ Tests verify:
 """
 
 import inspect
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated
 from unittest.mock import patch
 
+import pytest
 import typer
 from typer.testing import CliRunner
 
 from otto.suite.pytest_plugin import OttoOptionsPlugin
 from otto.suite.register import (
-    _SUITE_REGISTRY,
+    SUITES,
     _options_params,
     register_suite,
 )
@@ -33,13 +37,11 @@ runner = CliRunner()
 
 def _make_app_with_suite(suite_class: type) -> typer.Typer:
     """Wrap a registered suite in a fresh Typer app for isolated CliRunner tests."""
-    # Find the most-recently added entry in _SUITE_REGISTRY for this class
-    for name, sub_app in reversed(_SUITE_REGISTRY):
-        if name == suite_class.__name__:
-            app = typer.Typer()
-            app.add_typer(sub_app)
-            return app
-    raise LookupError(f"{suite_class.__name__} not found in _SUITE_REGISTRY")
+    if suite_class.__name__ not in SUITES:
+        raise LookupError(f"{suite_class.__name__} not found in SUITES")
+    app = typer.Typer()
+    app.add_typer(SUITES.get(suite_class.__name__).sub_app)
+    return app
 
 
 # ── @register_suite() decorator ───────────────────────────────────────────────
@@ -47,24 +49,23 @@ def _make_app_with_suite(suite_class: type) -> typer.Typer:
 
 class TestRegisterSuiteDecorator:
     def test_register_suite_records_source_file(self):
-        from otto.suite.register import _SUITE_FILES, register_suite
-
         @register_suite()
         class _SuiteFileProbe:
             pass
 
-        assert _SUITE_FILES["_SuiteFileProbe"] == __file__
+        assert SUITES.get("_SuiteFileProbe").file == __file__
 
     def test_adds_entry_to_registry(self):
-        initial = len(_SUITE_REGISTRY)
+        initial = len(SUITES)
 
         @register_suite()
         class _SuiteA:
             pass
 
-        assert len(_SUITE_REGISTRY) == initial + 1
-        assert _SUITE_REGISTRY[-1][0] == "_SuiteA"
-        assert isinstance(_SUITE_REGISTRY[-1][1], typer.Typer)
+        assert len(SUITES) == initial + 1
+        entry = SUITES.get("_SuiteA")
+        assert entry.name == "_SuiteA"
+        assert isinstance(entry.sub_app, typer.Typer)
 
     def test_returns_class_unchanged(self):
         @register_suite()
@@ -73,12 +74,98 @@ class TestRegisterSuiteDecorator:
 
         assert isinstance(_SuiteB, type)
 
+    @staticmethod
+    def _exec_suite_file(suite_file, mod_name: str) -> None:
+        """Load and execute *suite_file* as *mod_name*, registered in sys.modules.
+
+        Mirrors ``Repo.import_test_file``'s ``spec_from_file_location`` +
+        ``sys.modules[mod_name] = mod`` shape — needed so ``inspect.getfile``
+        (called by the ``@register_suite`` decorator) can resolve the class's
+        source file via ``sys.modules[cls.__module__].__file__``.
+        """
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(mod_name, suite_file)
+        assert spec is not None
+        assert spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[mod_name] = mod
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            sys.modules.pop(mod_name, None)
+            raise
+
+    def test_duplicate_suite_name_from_different_file_fails_loudly(self, tmp_path):
+        """Two DIFFERENT source files registering the same class name collide.
+
+        (Re-registration of the same class from the SAME file — the
+        ``pytest.main([suite_file, ...])`` re-import pattern — is a
+        deliberate exception to this rule; see
+        ``test_reregistration_from_same_file_is_idempotent``.)
+        """
+
+        def _write(dirname: str) -> Path:
+            suite_file = tmp_path / dirname / "test_dup_probe.py"
+            suite_file.parent.mkdir(parents=True, exist_ok=True)
+            suite_file.write_text(
+                "from otto.suite.register import register_suite\n\n\n"
+                "@register_suite()\n"
+                "class _DupFileSuite:\n"
+                "    pass\n"
+            )
+            return suite_file
+
+        try:
+            self._exec_suite_file(_write("a"), "_otto_suite_dup_a")
+            with pytest.raises(ValueError, match="_DupFileSuite"):
+                self._exec_suite_file(_write("b"), "_otto_suite_dup_b")
+        finally:
+            if "_DupFileSuite" in SUITES:
+                SUITES.unregister("_DupFileSuite")
+            sys.modules.pop("_otto_suite_dup_a", None)
+            sys.modules.pop("_otto_suite_dup_b", None)
+
+    def test_reregistration_from_same_file_is_idempotent(self, tmp_path):
+        """Re-registering the SAME class from the SAME source file overwrites silently.
+
+        This is the expected re-import pattern: ``run_suite()`` executes a
+        suite via ``pytest.main([suite_file, ...])``, which makes pytest
+        re-import the suite file under its own module name — a second,
+        expected execution of ``@register_suite()`` for the same class from
+        the same file within one process. It must NOT be treated as a
+        collision (unlike two genuinely different files registering the
+        same class name, which does raise).
+        """
+        suite_file = tmp_path / "test_reimport_probe.py"
+        suite_file.write_text(
+            "from otto.suite.register import register_suite\n\n\n"
+            "@register_suite()\n"
+            "class _ReimportProbe:\n"
+            "    pass\n"
+        )
+
+        try:
+            self._exec_suite_file(suite_file, "_otto_suite_test_reimport_probe")
+            first_entry = SUITES.get("_ReimportProbe")
+            # Re-importing under a DIFFERENT module name (mirrors pytest's own
+            # collection giving it a plain "test_reimport_probe" name) must not
+            # raise — same file, same class.
+            self._exec_suite_file(suite_file, "test_reimport_probe")
+            second_entry = SUITES.get("_ReimportProbe")
+            assert first_entry.file == second_entry.file == str(suite_file)
+        finally:
+            if "_ReimportProbe" in SUITES:
+                SUITES.unregister("_ReimportProbe")
+            sys.modules.pop("_otto_suite_test_reimport_probe", None)
+            sys.modules.pop("test_reimport_probe", None)
+
     def test_suite_without_options_has_only_injected_ctx(self):
         @register_suite()
         class _SuiteNoOpts:
             pass
 
-        _, sub_app = _SUITE_REGISTRY[-1]
+        sub_app = SUITES.get("_SuiteNoOpts").sub_app
         cmd = sub_app.registered_commands[0]
         sig = inspect.signature(cmd.callback)
         # Only the Typer-injected context param remains; no CLI option params.
@@ -93,7 +180,7 @@ class TestRegisterSuiteDecorator:
                 device_type: Annotated[str, typer.Option()] = "router"
                 count: Annotated[int, typer.Option()] = 3
 
-        _, sub_app = _SUITE_REGISTRY[-1]
+        sub_app = SUITES.get("_SuiteWithOpts").sub_app
         cmd = sub_app.registered_commands[0]
         sig = inspect.signature(cmd.callback)
         assert "device_type" in sig.parameters
@@ -104,7 +191,7 @@ class TestRegisterSuiteDecorator:
         class _SuiteDocstring:
             """My suite docstring."""
 
-        _, sub_app = _SUITE_REGISTRY[-1]
+        sub_app = SUITES.get("_SuiteDocstring").sub_app
         cmd = sub_app.registered_commands[0]
         assert cmd.callback.__doc__ == "My suite docstring."
 
@@ -188,7 +275,7 @@ class TestInheritedOptions:
             class Options(ParentOpts):
                 firmware: Annotated[str, typer.Option()] = "latest"
 
-        _, sub_app = _SUITE_REGISTRY[-1]
+        sub_app = SUITES.get("_SuiteInherited").sub_app
         cmd = sub_app.registered_commands[0]
         sig = inspect.signature(cmd.callback)
         assert "device_type" in sig.parameters

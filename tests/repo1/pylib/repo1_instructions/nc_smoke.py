@@ -35,11 +35,11 @@ from otto.cli.run import instruction
 from otto.configmodule.configmodule import get_host
 from otto.context import get_context
 from otto.host import LocalHost
-from otto.logger import get_otto_logger
+from otto.logger import get_logger
 from otto.result import CommandResult
 from otto.utils import Status
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 @options

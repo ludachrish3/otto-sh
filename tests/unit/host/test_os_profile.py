@@ -21,19 +21,29 @@ def restore_registry():
     each test.
 
     ``register_os_profile`` and ``register_host_class`` mutate module-global
-    state; without this a custom registration by one test would leak into the
-    next.
+    state — including in-place overwrites of built-in entries (last-writer-wins
+    is documented behavior for this module, see ``test_last_writer_wins_on_name_collision``
+    / ``test_overriding_builtin_warns``) — so a diff-only cleanup (as used by the
+    term/transfer registries, which never overwrite a built-in in tests) is not
+    enough here; a full snapshot/restore of each ``Registry``'s internal entry
+    and origin maps is required.
     """
-    saved_profiles = dict(os_profile._OS_PROFILES)
-    saved_classes = dict(os_profile._HOST_CLASSES)
+    saved_profiles = dict(os_profile.OS_PROFILES._entries)
+    saved_profile_origins = dict(os_profile.OS_PROFILES._origins)
+    saved_classes = dict(os_profile.HOST_CLASSES._entries)
+    saved_class_origins = dict(os_profile.HOST_CLASSES._origins)
     saved_specs = dict(os_profile._HOST_SPECS)
     try:
         yield
     finally:
-        os_profile._OS_PROFILES.clear()
-        os_profile._OS_PROFILES.update(saved_profiles)
-        os_profile._HOST_CLASSES.clear()
-        os_profile._HOST_CLASSES.update(saved_classes)
+        os_profile.OS_PROFILES._entries.clear()
+        os_profile.OS_PROFILES._entries.update(saved_profiles)
+        os_profile.OS_PROFILES._origins.clear()
+        os_profile.OS_PROFILES._origins.update(saved_profile_origins)
+        os_profile.HOST_CLASSES._entries.clear()
+        os_profile.HOST_CLASSES._entries.update(saved_classes)
+        os_profile.HOST_CLASSES._origins.clear()
+        os_profile.HOST_CLASSES._origins.update(saved_class_origins)
         os_profile._HOST_SPECS.clear()
         os_profile._HOST_SPECS.update(saved_specs)
 

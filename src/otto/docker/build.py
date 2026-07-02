@@ -13,12 +13,12 @@ from collections.abc import Iterable
 
 from ..configmodule.repo import DockerImage, DockerSettings, Repo
 from ..host.host import Host
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..utils import Status
 from ._context_hash import context_hash
 from .staging import stage_image_context
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 _IMPLICIT_REGISTRIES = {"", "docker.io"}

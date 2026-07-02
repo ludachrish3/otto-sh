@@ -245,6 +245,9 @@ async def open_context(
     Does NOT run a reservation check — that is a CLI concern; a script that wants
     one calls otto.reservations.check_reservations explicitly.
     """
+    from .bootstrap import bootstrap
+
+    bootstrap()  # composition root — idempotent; registers user init-module components
     from .configmodule import load_lab
     from .configmodule.lab import Lab
 

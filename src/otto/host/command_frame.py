@@ -44,6 +44,8 @@ from typing import ClassVar
 
 from typing_extensions import override
 
+from ..registry import Registry, caller_module
+
 
 @dataclass(frozen=True)
 class SessionMarkers:
@@ -90,7 +92,7 @@ class CommandFrame(ABC):
 
     type_name: ClassVar[str]
     """Lab-data string for this dialect (e.g. ``'bash'``). Looked up against
-    ``_FRAME_CLASSES`` by the storage factory; unique across frames."""
+    ``FRAME_CLASSES`` by the storage factory; unique across frames."""
 
     streams_output_live: ClassVar[bool] = False
     """Whether this dialect's raw inter-marker byte stream is already clean
@@ -350,19 +352,26 @@ class ZephyrSerialFrame(ZephyrFrame):
 
 
 # Registry of dialect name -> frame class, mirroring
-# ``embedded_filesystem._FILESYSTEM_CLASSES``. Seeded empty here and populated
+# ``embedded_filesystem.FILESYSTEM_CLASSES``. Seeded empty here and populated
 # by ``_register_builtin_frames()`` at module end, so otto's own built-ins
 # travel the same ``register_command_frame`` path third parties use.
-_FRAME_CLASSES: dict[str, type[CommandFrame]] = {}
+FRAME_CLASSES: Registry[type[CommandFrame]] = Registry(
+    "command frame", register_hint="otto.host.command_frame.register_command_frame()"
+)
 
 
-def register_command_frame(type_name: str, cls: type[CommandFrame]) -> None:
+def register_command_frame(
+    type_name: str, cls: type[CommandFrame], *, overwrite: bool = False
+) -> None:
     """Make a custom :class:`CommandFrame` subclass available to lab data.
 
     Call from an init module listed in ``.otto/settings.toml`` — the same
     pattern :func:`otto.host.embedded_filesystem.register_filesystem` follows.
     Once registered, lab-data entries can reference the subclass by *type_name*
     in the ``command_frame`` field.
+
+    *overwrite* replaces an existing registration under *type_name*
+    deliberately (e.g. a built-in); by default a duplicate name raises.
 
     Raises
     ------
@@ -375,7 +384,7 @@ def register_command_frame(type_name: str, cls: type[CommandFrame]) -> None:
             f"register_command_frame: type_name {type_name!r} doesn't match "
             f"{cls.__name__}.type_name = {cls.type_name!r}"
         )
-    _FRAME_CLASSES[type_name] = cls
+    FRAME_CLASSES.register(type_name, cls, overwrite=overwrite, origin=caller_module())
 
 
 def build_command_frame(type_name: str) -> CommandFrame:
@@ -387,15 +396,7 @@ def build_command_frame(type_name: str) -> CommandFrame:
         If *type_name* is not registered. The error lists the registered names
         so a typo is diagnosable from the message alone.
     """
-    try:
-        cls = _FRAME_CLASSES[type_name]
-    except KeyError:
-        known = ", ".join(sorted(_FRAME_CLASSES))
-        raise ValueError(
-            f"Unknown command frame {type_name!r}. Registered frames: {known}. "
-            f"Custom frames can be added via register_command_frame()."
-        ) from None
-    return cls()
+    return FRAME_CLASSES.get(type_name)()
 
 
 def _register_builtin_frames() -> None:

@@ -26,11 +26,11 @@ from repo1_common.options import RepoOptions
 from otto import options
 from otto.configmodule import all_hosts
 from otto.host.unix_host import UnixHost
-from otto.logger import get_otto_logger
+from otto.logger import get_logger
 from otto.suite import OttoSuite, register_suite
 from otto.utils import Status
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 @options

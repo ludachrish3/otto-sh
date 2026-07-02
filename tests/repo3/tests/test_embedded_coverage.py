@@ -37,12 +37,12 @@ from otto.configmodule import get_repos
 from otto.configmodule.configmodule import all_hosts
 from otto.host import LocalHost
 from otto.host.embedded_host import EmbeddedHost
-from otto.logger import get_otto_logger
+from otto.logger import get_logger
 from otto.suite import OttoSuite, register_suite
 from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
 
-logger = get_otto_logger()
+logger = get_logger()
 
 PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
 BUILD_SCRIPT = PRODUCT_DIR / "build.sh"

@@ -20,7 +20,7 @@ def test_unknown_verb_defaults_true() -> None:
 def test_read_only_flag_consistent_across_host_classes() -> None:
     """verb_creates_output_dir is global (first-registration wins), so every host
     class that exposes a read-only verb must declare the SAME output_dir flag —
-    otherwise the answer would depend on _HOST_CLASSES registration order."""
+    otherwise the answer would depend on HOST_CLASSES registration order."""
     import inspect
 
     from otto.host.embedded_host import EmbeddedHost

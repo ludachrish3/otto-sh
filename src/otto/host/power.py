@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import override
 
+from ..registry import Registry, caller_module
 from ..result import Result
 
 if TYPE_CHECKING:
@@ -122,29 +123,30 @@ class CommandPowerController(PowerController):
         return PowerState.ON if self.status_on in cmd_result.value else PowerState.OFF
 
 
-_POWER_CONTROLLERS: dict[str, type[PowerController]] = {}
+POWER_CONTROLLERS: Registry[type[PowerController]] = Registry(
+    "power controller", register_hint="otto.host.power.register_power_controller()"
+)
 
 
-def register_power_controller(type_name: str, cls: type[PowerController]) -> None:
-    """Register a :class:`PowerController` subclass for lab-data selection."""
+def register_power_controller(
+    type_name: str, cls: type[PowerController], *, overwrite: bool = False
+) -> None:
+    """Register a :class:`PowerController` subclass for lab-data selection.
+
+    *overwrite* replaces an existing registration under *type_name*
+    deliberately (e.g. a built-in); by default a duplicate name raises.
+    """
     if cls.type_name != type_name:
         raise ValueError(
             f"register_power_controller: type_name {type_name!r} doesn't match "
             f"{cls.__name__}.type_name = {cls.type_name!r}"
         )
-    _POWER_CONTROLLERS[type_name] = cls
+    POWER_CONTROLLERS.register(type_name, cls, overwrite=overwrite, origin=caller_module())
 
 
 def build_power_controller(type_name: str) -> type[PowerController]:
     """Return the :class:`PowerController` class registered under *type_name*."""
-    try:
-        return _POWER_CONTROLLERS[type_name]
-    except KeyError:
-        known = ", ".join(sorted(_POWER_CONTROLLERS))
-        raise ValueError(
-            f"Unknown power controller {type_name!r}. Registered: {known}. "
-            f"Custom controllers can be added via register_power_controller()."
-        ) from None
+    return POWER_CONTROLLERS.get(type_name)
 
 
 def power_control_from_spec(value: Any) -> PowerController | None:

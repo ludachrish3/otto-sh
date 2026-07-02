@@ -18,15 +18,16 @@ from otto.host.unix_host import UnixHost
 
 @pytest.fixture(autouse=True)
 def _isolate_registries():
-    saved_t = dict(conn_mod._TERM_BACKENDS)
-    saved_x = dict(xfer_mod._TRANSFER_BACKENDS)
+    """Unregister any test-added term/transfer backend after each test."""
+    before_t = set(conn_mod.TERM_BACKENDS.names())
+    before_x = set(xfer_mod.TRANSFER_BACKENDS.names())
     try:
         yield
     finally:
-        conn_mod._TERM_BACKENDS.clear()
-        conn_mod._TERM_BACKENDS.update(saved_t)
-        xfer_mod._TRANSFER_BACKENDS.clear()
-        xfer_mod._TRANSFER_BACKENDS.update(saved_x)
+        for name in set(conn_mod.TERM_BACKENDS.names()) - before_t:
+            conn_mod.TERM_BACKENDS.unregister(name)
+        for name in set(xfer_mod.TRANSFER_BACKENDS.names()) - before_x:
+            xfer_mod.TRANSFER_BACKENDS.unregister(name)
 
 
 def test_unix_host_builds_registered_transfer_backend():
@@ -41,7 +42,7 @@ def test_unix_host_builds_registered_transfer_backend():
             built["name"] = ctx.transfer
             return super().create(ctx)
 
-    xfer_mod._TRANSFER_BACKENDS["recording"] = RecordingTransfer
+    xfer_mod.TRANSFER_BACKENDS.register("recording", RecordingTransfer)
 
     h = UnixHost(
         ip="10.0.0.9",

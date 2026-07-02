@@ -122,6 +122,97 @@ def test_clear_cache_returns_false_when_missing(tmp_path: Path, monkeypatch) -> 
     assert cc.clear_cache() is False
 
 
+# ---------------------------------------------------------------------------
+# collect_current_commands — reads otto.cli.run.INSTRUCTIONS + otto.suite.register.SUITES
+# ---------------------------------------------------------------------------
+
+
+class TestCollectCurrentCommands:
+    """collect_current_commands() reads the live INSTRUCTIONS/SUITES registries."""
+
+    def test_no_instructions_module_imported_yields_empty_instructions(self, monkeypatch) -> None:
+        """If otto.cli.run was never imported, instructions is empty (not an error)."""
+        import sys
+
+        monkeypatch.delitem(sys.modules, "otto.cli.run", raising=False)
+        instructions, _suites = cc.collect_current_commands()
+        assert instructions == []
+
+    def test_collects_registered_instruction_with_options(self) -> None:
+        import typer
+
+        from otto.cli.run import INSTRUCTIONS, InstructionEntry
+
+        sub_app = typer.Typer()
+
+        def _probe_instr(name: Annotated[str, typer.Option("--name")] = "x") -> None: ...
+
+        sub_app.command("_cc_probe_instr")(_probe_instr)
+        INSTRUCTIONS.register(
+            "_cc_probe_instr",
+            InstructionEntry(name="_cc_probe_instr", sub_app=sub_app, module=__name__),
+            origin=__name__,
+        )
+        try:
+            instructions, _suites = cc.collect_current_commands()
+        finally:
+            INSTRUCTIONS.unregister("_cc_probe_instr")
+
+        entry = next(e for e in instructions if e["name"] == "_cc_probe_instr")
+        assert entry["options"]
+        assert entry["options"][0]["kind"] == "str"
+
+    def test_collects_registered_suite_with_options(self) -> None:
+        import typer
+
+        from otto.suite.register import SUITES, SuiteEntry
+
+        sub_app = typer.Typer()
+
+        def _probe_suite(count: Annotated[int, typer.Option("--count")] = 1) -> None: ...
+
+        sub_app.command("_CcProbeSuite")(_probe_suite)
+        SUITES.register(
+            "_CcProbeSuite",
+            SuiteEntry(name="_CcProbeSuite", sub_app=sub_app, file=__file__),
+            origin=__name__,
+        )
+        try:
+            _instructions, suites = cc.collect_current_commands()
+        finally:
+            SUITES.unregister("_CcProbeSuite")
+
+        entry = next(e for e in suites if e["name"] == "_CcProbeSuite")
+        assert entry["options"]
+        assert entry["options"][0]["kind"] == "int"
+
+    def test_unserializable_options_cache_with_empty_options_list(self) -> None:
+        """A command whose options can't be serialized still completes by name."""
+        from decimal import Decimal
+
+        import typer
+
+        from otto.suite.register import SUITES, SuiteEntry
+
+        sub_app = typer.Typer()
+
+        def _probe_bad(bad: Annotated[Decimal, typer.Option("--bad")] = Decimal(0)) -> None: ...
+
+        sub_app.command("_CcProbeBadSuite")(_probe_bad)
+        SUITES.register(
+            "_CcProbeBadSuite",
+            SuiteEntry(name="_CcProbeBadSuite", sub_app=sub_app, file=__file__),
+            origin=__name__,
+        )
+        try:
+            _instructions, suites = cc.collect_current_commands()
+        finally:
+            SUITES.unregister("_CcProbeBadSuite")
+
+        entry = next(e for e in suites if e["name"] == "_CcProbeBadSuite")
+        assert entry["options"] == []
+
+
 def test_clear_cache_removes_existing(tmp_path: Path, monkeypatch) -> None:
     """clear_cache unlinks a present cache file and reports True."""
     monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
@@ -212,6 +303,80 @@ def test_serialize_options_annotated_without_option_returns_none() -> None:
     def cb(x: Annotated[int, "meta-but-not-typer-Option"]) -> None: ...
 
     assert cc._serialize_options(cb, command_name="cb") is None
+
+
+# ---------------------------------------------------------------------------
+# collect_cli_commands — CLI_COMMANDS registry snapshot (third-party only)
+# ---------------------------------------------------------------------------
+
+
+def test_cache_round_trips_third_party_commands(tmp_path: Path, monkeypatch) -> None:
+    """collect_cli_commands surfaces third-party specs in the cache shape."""
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    from otto.cli.registry import CLI_COMMANDS, register_cli_command
+
+    register_cli_command("e2etool", typer.Typer(name="e2etool"), help="Tool.")
+    try:
+        from otto.configmodule.completion_cache import collect_cli_commands
+
+        commands = collect_cli_commands()
+        assert {"name": "e2etool", "help": "Tool.", "lab_free": False} in commands
+    finally:
+        CLI_COMMANDS.unregister("e2etool")
+
+
+def test_collect_cli_commands_skips_otto_builtins() -> None:
+    """Builtin commands (origin starting with 'otto.') are never cached."""
+    from otto.configmodule.completion_cache import collect_cli_commands
+
+    names = {c["name"] for c in collect_cli_commands()}
+    # 'run' is a builtin top-level command registered from otto.* — must be
+    # excluded since builtins re-register on every real invocation anyway.
+    assert "run" not in names
+
+
+def test_write_read_cache_round_trips_commands(tmp_path: Path, monkeypatch) -> None:
+    """write_cache/read_cache carry the 'commands' key through a round trip."""
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    fake_repo = MagicMock()
+    fake_repo.sut_dir = tmp_path / "sut"
+    fake_repo.sut_dir.mkdir()
+    (fake_repo.sut_dir / ".otto").mkdir()
+    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    fake_repo.init = []
+    fake_repo.libs = []
+    fake_repo.tests = []
+    fake_repo.labs = []
+
+    cc.write_cache(
+        [fake_repo],
+        instructions=[],
+        suites=[],
+        hosts=[],
+        commands=[{"name": "e2etool", "help": "Tool.", "lab_free": False}],
+    )
+    out = cc.read_cache([fake_repo])
+    assert out is not None
+    assert out["commands"] == [{"name": "e2etool", "help": "Tool.", "lab_free": False}]
+
+
+def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch) -> None:
+    """A cache entry written without 'commands' reads back as an empty list."""
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    fake_repo = MagicMock()
+    fake_repo.sut_dir = tmp_path / "sut"
+    fake_repo.sut_dir.mkdir()
+    (fake_repo.sut_dir / ".otto").mkdir()
+    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    fake_repo.init = []
+    fake_repo.libs = []
+    fake_repo.tests = []
+    fake_repo.labs = []
+
+    cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
+    out = cc.read_cache([fake_repo])
+    assert out is not None
+    assert out["commands"] == []
 
 
 # ---------------------------------------------------------------------------

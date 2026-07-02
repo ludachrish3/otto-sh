@@ -30,7 +30,8 @@ from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
+from ..registry import Registry, caller_module
 from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
 
@@ -61,7 +62,7 @@ class TermContext:
     ftp_options: FtpOptions | None = None
 
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 _tunneled_ftp_client_cls: type | None = None
@@ -499,19 +500,25 @@ class ConnectionManager:
         # on whatever test happens to be calling ``close()``.
 
 
-# Registry of term-protocol name -> ConnectionManager(-compatible) class, plus
-# the host families each registered name applies to. Unlike the transfer
-# registry — where each backend is a distinct class carrying its own
-# ``host_families`` ClassVar — ssh and telnet share the single
-# ``ConnectionManager`` class, so a term's applicable families cannot live on
-# the class. They are stored per-registered-name in ``_TERM_FAMILIES`` instead.
-# ``build_*`` returns the class so the host can call ``.create(ctx)`` on it.
-_TERM_BACKENDS: dict[str, type[ConnectionManager]] = {}
-_TERM_FAMILIES: dict[str, frozenset[str]] = {}
+@dataclass(frozen=True)
+class TermBackend:
+    """A registered term backend: the manager class + the host families it serves."""
+
+    cls: type[ConnectionManager]
+    host_families: frozenset[str]
+
+
+TERM_BACKENDS: Registry[TermBackend] = Registry(
+    "term backend", register_hint="otto.host.connections.register_term_backend()"
+)
 
 
 def register_term_backend(
-    name: str, cls: type[ConnectionManager], *, host_families: frozenset[str]
+    name: str,
+    cls: type[ConnectionManager],
+    *,
+    host_families: frozenset[str],
+    overwrite: bool = False,
 ) -> None:
     """Make a custom connection backend available to lab data under *name*.
 
@@ -526,6 +533,9 @@ def register_term_backend(
     ``cls.host_families``). The host spec validator rejects a term applied to a
     family it does not serve (e.g. ``ssh`` on an embedded host); an empty
     *host_families* could never validate on any host, so it is rejected here.
+
+    *overwrite* replaces an existing registration under *name* deliberately
+    (e.g. a built-in); by default a duplicate name raises.
     """
     if not host_families:
         raise ValueError(
@@ -533,26 +543,22 @@ def register_term_backend(
             f"a term backend must declare at least one host family "
             f"(e.g. frozenset({{'unix'}}))."
         )
-    _TERM_BACKENDS[name] = cls
-    _TERM_FAMILIES[name] = host_families
+    TERM_BACKENDS.register(
+        name,
+        TermBackend(cls=cls, host_families=host_families),
+        overwrite=overwrite,
+        origin=caller_module(),
+    )
 
 
 def build_term_backend(name: str) -> type[ConnectionManager]:
     """Return the connection-backend class registered under *name*.
 
-    Raises
-    ------
-    ValueError
-        If *name* is not registered; the message lists the registered names.
+    Raises:
+        ValueError: If *name* is not registered; the message lists registered
+            names and suggests near-misses.
     """
-    try:
-        return _TERM_BACKENDS[name]
-    except KeyError:
-        known = ", ".join(sorted(_TERM_BACKENDS))
-        raise ValueError(
-            f"Unknown term backend {name!r}. Registered backends: {known}. "
-            f"Custom backends can be added via register_term_backend()."
-        ) from None
+    return TERM_BACKENDS.get(name).cls
 
 
 def _register_builtin_term_backends() -> None:

@@ -16,7 +16,7 @@ and the embedded monitor's disk parser all rely on:
 import pytest
 
 from otto.host.embedded_filesystem import (
-    _FILESYSTEM_CLASSES,
+    FILESYSTEM_CLASSES,
     EmbeddedFileSystem,
     FatRamFileSystem,
     LittleFsFileSystem,
@@ -110,7 +110,7 @@ class TestCommandHooks:
 
 class TestRegistry:
     def test_builtin_types_are_registered(self):
-        assert set(_FILESYSTEM_CLASSES) >= {"none", "fat-ram", "littlefs"}
+        assert set(FILESYSTEM_CLASSES.names()) >= {"none", "fat-ram", "littlefs"}
 
     def test_build_filesystem_returns_the_right_class(self):
         assert isinstance(build_filesystem("none"), NoFileSystem)
@@ -144,7 +144,7 @@ class TestRegistry:
             assert instance.mount == "/vfs"
             assert instance.supports_transfer is True
         finally:
-            _FILESYSTEM_CLASSES.pop("vendor-fs-roundtrip-test", None)
+            FILESYSTEM_CLASSES.unregister("vendor-fs-roundtrip-test")
 
     def test_register_filesystem_rejects_type_name_mismatch(self):
         """Mismatched key and ``cls.type_name`` is a likely bug; surface it
@@ -189,4 +189,4 @@ class TestCustomCommandSyntax:
 def test_builtins_registered_via_public_path():
     from otto.host import embedded_filesystem as efs
 
-    assert set(efs._FILESYSTEM_CLASSES) >= {"none", "fat-ram", "littlefs"}
+    assert set(efs.FILESYSTEM_CLASSES.names()) >= {"none", "fat-ram", "littlefs"}

@@ -19,13 +19,13 @@ from typing_extensions import override
 
 from ..host.binary_loader import build_binary_loader
 from ..host.capability import TERM_RESOLVER, TRANSFER_RESOLVER
-from ..host.command_frame import _FRAME_CLASSES, build_command_frame
-from ..host.connections import _TERM_BACKENDS, _TERM_FAMILIES
-from ..host.embedded_filesystem import _FILESYSTEM_CLASSES, build_filesystem
+from ..host.command_frame import FRAME_CLASSES, build_command_frame
+from ..host.connections import TERM_BACKENDS
+from ..host.embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
 from ..host.embedded_host import EmbeddedHost
 from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain
-from ..host.transfer import _TRANSFER_BACKENDS
+from ..host.transfer import TRANSFER_BACKENDS
 from ..host.unix_host import UnixHost
 from ..logger.mode import LogMode
 from .base import OttoModel
@@ -78,22 +78,22 @@ _COMMON_PLAIN_FIELDS = (
 
 def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
     """Validate a transfer selector against the registry and host-family applicability."""
-    if v not in _TRANSFER_BACKENDS:
-        known = ", ".join(sorted(_TRANSFER_BACKENDS))
+    if v not in TRANSFER_BACKENDS:
+        known = ", ".join(sorted(TRANSFER_BACKENDS.names()))
         raise ValueError(f"transfer {v!r} is not a registered transfer backend. Known: {known}")
-    if family not in _TRANSFER_BACKENDS[v].host_families:
-        fam = ", ".join(sorted(_TRANSFER_BACKENDS[v].host_families))
+    if family not in TRANSFER_BACKENDS.get(v).host_families:
+        fam = ", ".join(sorted(TRANSFER_BACKENDS.get(v).host_families))
         raise ValueError(f"transfer {v!r} is not valid on {host_label} (it serves: {fam}).")
     return v
 
 
 def _validate_term_for_family(v: str, family: str, host_label: str) -> str:
     """Validate a term selector against the registry and host-family applicability."""
-    if v not in _TERM_BACKENDS:
-        known = ", ".join(sorted(_TERM_BACKENDS))
+    if v not in TERM_BACKENDS:
+        known = ", ".join(sorted(TERM_BACKENDS.names()))
         raise ValueError(f"term {v!r} is not a registered term backend. Known: {known}")
-    if family not in _TERM_FAMILIES[v]:
-        fam = ", ".join(sorted(_TERM_FAMILIES[v]))
+    if family not in TERM_BACKENDS.get(v).host_families:
+        fam = ", ".join(sorted(TERM_BACKENDS.get(v).host_families))
         raise ValueError(f"term {v!r} is not valid on {host_label} (it serves: {fam}).")
     return v
 
@@ -181,8 +181,8 @@ class HostSpec(OttoModel):
     @field_validator("command_frame")
     @classmethod
     def _validate_command_frame_name(cls, v: str | None) -> str | None:
-        if v is not None and v not in _FRAME_CLASSES:
-            known = ", ".join(sorted(_FRAME_CLASSES))
+        if v is not None and v not in FRAME_CLASSES:
+            known = ", ".join(sorted(FRAME_CLASSES.names()))
             raise ValueError(f"command_frame {v!r} is not a registered frame. Known: {known}")
         return v
 
@@ -342,8 +342,8 @@ class EmbeddedHostSpec(HostSpec):
     @field_validator("filesystem")
     @classmethod
     def _validate_filesystem_name(cls, v: str | None) -> str | None:
-        if v is not None and v not in _FILESYSTEM_CLASSES:
-            known = ", ".join(sorted(_FILESYSTEM_CLASSES))
+        if v is not None and v not in FILESYSTEM_CLASSES:
+            known = ", ".join(sorted(FILESYSTEM_CLASSES.names()))
             raise ValueError(f"filesystem {v!r} is not a registered filesystem. Known: {known}")
         return v
 

@@ -98,7 +98,11 @@ class Arg:
 
     ``variadic=True`` makes it a space-separated list of ``elem_type`` (used for
     Python-union list params Typer can't read, e.g. ``str | Sequence[...]``).
-    ``elem_type`` also overrides the CLI type for a scalar union. Imports no typer.
+    ``elem_type`` also overrides the CLI type for a scalar union. ``name`` sets
+    the argument's displayed metavar (e.g. ``Arg(name="SOURCE")`` shows
+    ``SOURCE`` in ``--help`` instead of the parameter's Python name); it does
+    not change how the argument is passed, since positional arguments have no
+    flag. Imports no typer.
     """
 
     variadic: bool = False
@@ -109,7 +113,13 @@ class Arg:
 
 @dataclass(frozen=True)
 class Opt:
-    """CLI overlay: force a parameter to a ``--option``. Imports no typer."""
+    """CLI overlay: force a parameter to a ``--option``. Imports no typer.
+
+    ``name`` overrides the synthesized flag (e.g. ``Opt(name="--dest")`` makes
+    the CLI flag ``--dest`` regardless of the parameter's Python name); the
+    value is still bound to the original Python parameter. When omitted, the
+    flag defaults to ``--<param-name>`` as usual.
+    """
 
     elem_type: type | None = None
     name: str | None = None

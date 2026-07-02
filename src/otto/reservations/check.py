@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from .identity import ResolvedIdentity
     from .protocol import ReservationBackend
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 @dataclass(frozen=True)

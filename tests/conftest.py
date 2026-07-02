@@ -79,11 +79,11 @@ from otto.configmodule.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.host.local_host import LocalHost
 from otto.host.unix_host import UnixHost
-from otto.logger import get_otto_logger
+from otto.logger import get_logger
 from otto.storage.factory import create_host_from_dict
 from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise
 
-_logger = get_otto_logger()
+_logger = get_logger()
 
 
 @pytest.hookimpl(hookwrapper=True)

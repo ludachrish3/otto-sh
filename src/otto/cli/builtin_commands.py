@@ -1,0 +1,62 @@
+"""First-party top-level command registrations — otto's own composition list.
+
+The direct analog of the backend registries' ``_register_builtin_*``
+functions: otto's eight subcommand groups travel the same public
+:func:`~otto.cli.registry.register_cli_command` path a third-party plugin
+uses, with lazy ``"module:attr"`` loaders so nothing imports until dispatch.
+"""
+
+from .registry import CLI_COMMANDS, register_cli_command
+
+
+def register_builtin_commands() -> None:
+    """Register otto's built-in subcommand groups (idempotent)."""
+    if "run" in CLI_COMMANDS:
+        return
+    register_cli_command(
+        "run", "otto.cli.run:run_app", help="Run a registered instruction on the lab."
+    )
+    register_cli_command(
+        "test", "otto.cli.test:suite_app", help="Run a registered OttoSuite test suite."
+    )
+    register_cli_command(
+        "monitor",
+        "otto.cli.monitor:monitor_app",
+        help="Launch an interactive performance dashboard.",
+        # monitor gates itself, per-branch: historical `--file` replay reads a
+        # local file and never touches live hardware, so it is gate-exempt by
+        # design, while live collection still gates. A uniform gate=True here
+        # would gate the replay branch too, which is a behavior regression.
+        gate=False,
+    )
+    register_cli_command(
+        "cov",
+        "otto.cli.cov:cov_app",
+        help="Generate coverage reports from otto test --cov output.",
+        output_dir=False,
+        gate=False,
+    )
+    register_cli_command(
+        "host", "otto.cli.host:host_app", help="Run commands and transfer files on lab hosts."
+    )
+    register_cli_command(
+        "docker",
+        "otto.cli.docker:docker_app",
+        help="Build images and orchestrate compose stacks on docker-capable lab hosts.",
+        gate=False,
+    )
+    register_cli_command(
+        "reservation",
+        "otto.cli.reservation:reservation_app",
+        help="Inspect and verify lab reservations.",
+        output_dir=False,
+        gate=False,
+    )
+    register_cli_command(
+        "schema",
+        "otto.cli.schema:schema_app",
+        help="Export JSON Schema for hosts.json / settings.toml / reservations.",
+        lab_free=True,
+        output_dir=False,
+        gate=False,
+    )

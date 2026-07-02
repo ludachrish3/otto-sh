@@ -68,7 +68,7 @@ dependencies = [
 ]
 
 [project.scripts]
-otto = "otto:app"
+otto = "otto.cli.main:entry"
 
 [project.urls]
 Homepage = "https://github.com/ludachrish3/otto-sh"

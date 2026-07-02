@@ -1,31 +1,49 @@
 """``otto run`` subcommand: decorator and Typer app for user-defined run instructions."""
 
 import dataclasses
-import functools
-import inspect
 from collections.abc import Callable, Coroutine
 from typing import (
     Annotated,
     Any,
     ParamSpec,
-    get_type_hints,
 )
 
 import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..context import get_context
-from ..logger import management
-from ..params import build_options, options_params
+from ..registry import Registry
 from ..result import CommandResult
 from ..utils import async_typer_command
+from .invoke import make_registry_group, prepare_command_target
 
 P = ParamSpec("P")
 
+
+@dataclasses.dataclass(frozen=True)
+class InstructionEntry:
+    """One registered instruction: its Typer sub-app + defining module."""
+
+    name: str
+    sub_app: typer.Typer
+    module: str
+
+
+# ---------------------------------------------------------------------------
+# Module-level registry — populated by @instruction() as init modules are
+# imported during startup; consumed lazily by run_app's RegistryBackedGroup.
+# ---------------------------------------------------------------------------
+INSTRUCTIONS: Registry[InstructionEntry] = Registry(
+    "instruction", register_hint="@otto.instruction()"
+)
+
+# `cls=` is set here (module scope, after INSTRUCTIONS exists) rather than via
+# a later app.info mutation, so run_app resolves every child instruction
+# lazily through the same idiom as the root app's CLI_COMMANDS group.
 run_app = typer.Typer(
     name="run",
     no_args_is_help=True,
+    cls=make_registry_group(INSTRUCTIONS),
     context_settings={
         "help_option_names": ["-h", "--help"],
     },
@@ -60,52 +78,14 @@ def main(
         ),
     ] = False,
 ) -> None:
-    """Set up the output directory and gate reservations before an ``otto run`` instruction runs."""
+    """Handle the eager ``--list-instructions`` flag; real work runs in the leaf preamble.
+
+    Output-dir creation and the reservation gate moved to the shared
+    leaf-invoke :func:`~otto.cli.invoke.command_preamble`, so a subcommand
+    ``--help`` (which exits before invoke) can never create a spurious dir.
+    """
     if ctx.resilient_parsing:
         return
-
-    # A help/discovery invocation (e.g. `otto run <instruction> --help`) runs no
-    # instruction, so it must not create an output dir or gate reservations. The
-    # root callback records this on ctx.meta and skips init_cli_logging for it, so
-    # calling create_output_dir here would otherwise raise.
-    if ctx.invoked_subcommand is not None and not ctx.meta.get("_help_or_discovery"):
-        get_context().output_dir = management.create_output_dir("run", f"{ctx.invoked_subcommand}")
-        from ..reservations import gate
-
-        gate(ctx)
-
-
-def _ctx_param_name(func: Callable[..., Any]) -> str | None:
-    """Return the name of any parameter annotated as OttoContext, or None."""
-    from ..context import OttoContext
-
-    hints = get_type_hints(func)
-    for name, hint in hints.items():
-        if hint is OttoContext:
-            return name
-    return None
-
-
-def _inject_ctx(func: Callable[..., Any], ctx_name: str) -> Callable[..., Any]:
-    """Wrap *func* so the OttoContext param is supplied from the active context.
-
-    Supplied at call time and hidden from the Typer-facing signature.
-    """
-    from ..context import get_context
-
-    sig = inspect.signature(func)
-    exposed = [p for n, p in sig.parameters.items() if n != ctx_name]
-
-    @functools.wraps(func)
-    async def wrapper(**kw: Any) -> Any:
-        kw[ctx_name] = get_context()
-        return await func(**kw)
-
-    # Drop ctx_name from __annotations__ too so get_type_hints() on the
-    # wrapper doesn't see it (important when _wrap_with_options composes on top).
-    wrapper.__annotations__ = {k: v for k, v in func.__annotations__.items() if k != ctx_name}
-    wrapper.__signature__ = inspect.Signature(exposed)  # ty: ignore[unresolved-attribute]
-    return wrapper
 
 
 def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Callable[..., Any]:
@@ -153,73 +133,24 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
     def decorator(
         func: Callable[P, Coroutine[Any, Any, CommandResult]],
     ) -> Callable[P, CommandResult]:
-        ctx_name = _ctx_param_name(func)
-        target: Callable[..., Any] = func
-        if ctx_name is not None:
-            target = _inject_ctx(func, ctx_name)
-
-        if options is not None and dataclasses.is_dataclass(options):
-            target = _wrap_with_options(target, options)
-
+        target = prepare_command_target(func, options)
         app = typer.Typer()
         new_instruction = app.command(*args, **kwargs)(async_typer_command(target))
-        run_app.add_typer(app)
+
+        # Mirror Typer's own name derivation (typer.main.get_command_name):
+        # explicit name (positional or name= kwarg) wins, else the function
+        # name with underscores replaced with dashes. Getting this wrong
+        # would silently break `otto run <name>` for existing callers.
+        func_name = getattr(func, "__name__", repr(func))
+        explicit_name = args[0] if args and isinstance(args[0], str) else kwargs.get("name")
+        cmd_name = explicit_name or typer.main.get_command_name(func_name)
+
+        func_module = getattr(func, "__module__", "<unknown>")
+        INSTRUCTIONS.register(
+            cmd_name,
+            InstructionEntry(name=cmd_name, sub_app=app, module=func_module),
+            origin=func_module,
+        )
         return new_instruction
 
     return decorator
-
-
-def _wrap_with_options(
-    func: Callable[..., Any],
-    opts_cls: type,
-) -> Callable[..., Any]:
-    """Build a wrapper that expands an options dataclass into CLI parameters.
-
-    The wrapper:
-    1. Accepts the expanded dataclass fields as keyword arguments.
-    2. Constructs the dataclass instance from those kwargs.
-    3. Forwards it to *func* in the position of the original options parameter.
-    """
-    sig = inspect.signature(func)
-    hints = get_type_hints(func, include_extras=True)
-
-    # Find the parameter annotated with the options class
-    opts_param_name: str | None = None
-    for name, hint in hints.items():
-        if hint is opts_cls:
-            opts_param_name = name
-            break
-
-    if opts_param_name is None:
-        raise TypeError(
-            f"instruction {getattr(func, '__name__', repr(func))!r} declares options={opts_cls.__name__} "  # noqa: E501 — long error message f-string
-            f"but has no parameter annotated as {opts_cls.__name__}"
-        )
-
-    # Build new parameter list: replace the opts param with expanded fields
-    opts_field_names = {f.name for f in dataclasses.fields(opts_cls)}
-    expanded = options_params(opts_cls)
-
-    new_params: list[inspect.Parameter] = []
-    for p in sig.parameters.values():
-        if p.name == opts_param_name:
-            new_params.extend(expanded)
-        else:
-            # Ensure all params are KEYWORD_ONLY for a consistent Typer signature
-            kw_only_p = (
-                p
-                if p.kind == inspect.Parameter.KEYWORD_ONLY
-                else p.replace(kind=inspect.Parameter.KEYWORD_ONLY)
-            )
-            new_params.append(kw_only_p)
-
-    @functools.wraps(func)
-    async def wrapper(**kw: Any) -> Any:
-        # Split kwargs: dataclass fields vs. remaining params
-        opts_kw = {k: kw.pop(k) for k in list(kw) if k in opts_field_names}
-        opts_instance = build_options(opts_cls, opts_kw)
-        kw[opts_param_name] = opts_instance
-        return await func(**kw)
-
-    wrapper.__signature__ = inspect.Signature(new_params)  # ty: ignore[unresolved-attribute]
-    return wrapper

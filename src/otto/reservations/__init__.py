@@ -101,8 +101,16 @@ def build_backend(
     backend_name = cfg.backend
     url = cfg.url
 
+    # Resolved by registered name for every backend, built-ins included — a
+    # re-registered replacement (e.g. register_reservation_backend("json", ...,
+    # overwrite=True)) takes effect here rather than being bypassed by a
+    # hardcoded construction below.
+    from .registry import get_reservation_backend_class
+
+    cls = get_reservation_backend_class(backend_name)
+
     if backend_name == "none":
-        return NullReservationBackend()
+        return cls()  # type: ignore[no-any-return]
 
     if backend_name == "json":
         json_settings = settings.get("json", {}) or {}
@@ -114,13 +122,10 @@ def build_backend(
         path = Path(path_raw)
         if not path.is_absolute():
             path = repo_dir / path
-        return JsonReservationBackend(url=url, path=path)
+        return cls(url=url, path=path)  # type: ignore[no-any-return]
 
     # Custom backend: resolved by registered name (register_reservation_backend
     # from an init module). No dotted-path / importlib resolution.
-    from .registry import get_reservation_backend_class
-
-    cls = get_reservation_backend_class(backend_name)
     extra_kwargs: dict[str, Any] = settings.get(backend_name) or {}
     if url is not None:
         return cls(url=url, **extra_kwargs)  # type: ignore[no-any-return]

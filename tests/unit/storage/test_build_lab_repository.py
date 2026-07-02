@@ -8,7 +8,7 @@ from otto.storage import (
     build_lab_repository,
     register_lab_repository,
 )
-from otto.storage.registry import _LAB_REPOSITORIES
+from otto.storage.registry import LAB_REPOSITORIES
 
 
 class TestJsonDefault:
@@ -54,7 +54,7 @@ class TestCustomBackend:
             assert repo.repo_dir == tmp_path
             assert repo.url == "https://x"
         finally:
-            _LAB_REPOSITORIES.pop("fake-build-test", None)
+            LAB_REPOSITORIES.unregister("fake-build-test")
 
     def test_registered_backend_without_kwargs(self, tmp_path):
         class BareRepo:
@@ -73,7 +73,33 @@ class TestCustomBackend:
             assert isinstance(repo, BareRepo)
             assert repo.repo_dir == tmp_path
         finally:
-            _LAB_REPOSITORIES.pop("bare-build-test", None)
+            LAB_REPOSITORIES.unregister("bare-build-test")
+
+
+class TestBuiltinBypassFix:
+    def test_reregistering_json_takes_effect(self, tmp_path):
+        """build_lab_repository resolves "json" through the registry, not a
+        hardcoded JsonFileLabRepository construction — re-registering "json"
+        (overwrite=True) must be honored, same constructor contract (search_paths=).
+        """
+
+        class ReplacementJsonRepo:
+            def __init__(self, search_paths=None):
+                self.search_paths = list(search_paths or [])
+
+            def load_lab(self, name, preferences=None):
+                raise NotImplementedError
+
+            def list_labs(self):
+                return []
+
+        register_lab_repository("json", ReplacementJsonRepo, overwrite=True)
+        try:
+            repo = build_lab_repository({}, tmp_path, search_paths=[tmp_path])
+            assert isinstance(repo, ReplacementJsonRepo)
+            assert repo.search_paths == [tmp_path]
+        finally:
+            register_lab_repository("json", JsonFileLabRepository, overwrite=True)
 
 
 class TestErrors:

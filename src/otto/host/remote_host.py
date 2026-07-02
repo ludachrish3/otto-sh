@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, NoReturn, cast
 
 from typing_extensions import override
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..logger.mode import LogMode
 from .host import BaseHost
 
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
     from .session import SessionManager
     from .transport import SshHopTransport
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 def make_host_id(

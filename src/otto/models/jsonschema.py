@@ -22,9 +22,9 @@ from typing import Any
 
 from pydantic.json_schema import models_json_schema
 
-from ..host.connections import _TERM_FAMILIES
+from ..host.connections import TERM_BACKENDS
 from ..host.os_profile import registered_host_specs
-from ..host.transfer import _TRANSFER_BACKENDS
+from ..host.transfer import TRANSFER_BACKENDS
 from .host import HostSpec
 from .settings import ReservationFile, SettingsModel
 
@@ -82,7 +82,7 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
     The schema is generated after init modules load, so the enum includes
     custom per-repo backends as well as the built-ins — strictly better than the
     old static ``Literal``. Both axes are filtered to the spec's host family via
-    ``_host_family`` (terms through ``_TERM_FAMILIES``, transfers through each
+    ``_host_family`` (terms through ``TERM_BACKENDS``, transfers through each
     backend's ``host_families``). No-op for a spec that declares neither field.
     The scalar ``term``/``transfer`` pins are nullable optional strings; their
     schema is left as pydantic generates it.
@@ -92,11 +92,15 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
         return
     family = getattr(spec_cls, "_host_family", None)
     if "valid_terms" in props:
-        names = sorted(n for n, fams in _TERM_FAMILIES.items() if family is None or family in fams)
+        names = sorted(
+            n
+            for n, backend in TERM_BACKENDS.items()
+            if family is None or family in backend.host_families
+        )
         props["valid_terms"] = _scalar_or_list_with_enum(props["valid_terms"], names)
     if "valid_transfers" in props:
         names = sorted(
-            n for n, c in _TRANSFER_BACKENDS.items() if family is None or family in c.host_families
+            n for n, c in TRANSFER_BACKENDS.items() if family is None or family in c.host_families
         )
         props["valid_transfers"] = _scalar_or_list_with_enum(props["valid_transfers"], names)
 

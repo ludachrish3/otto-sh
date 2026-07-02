@@ -225,6 +225,11 @@ def _resolve_internal_aliases(app, env, node, contnode):
 # ``aioftp.Client`` is the public return type of ``ConnectionManager.ftp()``.
 _EXTERNAL_DOC_LINKS = {
     "aioftp.Client": "https://aioftp.aio-libs.org/client_api.html#aioftp.Client",
+    # typer vendors its own click fork (Typer >= 0.26) and ships no intersphinx
+    # inventory; TyperGroup is a real public name (used to build custom Typer
+    # groups — see cli/invoke.py's RegistryBackedGroup / cli/expose.py's
+    # HostGroup) documented on typer's own API reference page.
+    "TyperGroup": "https://typer.tiangolo.com/reference/typer/#typer.core.TyperGroup",
 }
 
 
@@ -291,6 +296,7 @@ from otto.utils import Status, split_on_commas
 from otto.result import CommandResult, Result, Results
 from otto.host.local_host import LocalHost
 from otto.monitor.parsers import human_readable
+from otto.registry import Registry
 
 # Use a single persistent loop across all run() calls in a doctest block.
 # asyncio.run() creates and closes a fresh loop each call, which breaks any

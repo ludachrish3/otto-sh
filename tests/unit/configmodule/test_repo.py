@@ -67,9 +67,19 @@ def test_repo_settings_init_sut_dir_variable(default_mock_repo):
     assert mock_repo.init == ["repo1_instructions", "custom_hosts"]
 
 
-def test_repo_apply_settings(default_mock_repo):
+def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
+    """``bootstrap()`` is the granular replacement for the deleted
+    ``Repo.apply_settings()`` / ``apply_repo_settings()``: per repo it adds libs
+    to ``sys.path``, imports init modules, and imports test files — which
+    together register repo1's instructions/suites into the shared
+    ``INSTRUCTIONS``/``SUITES`` registries (module-level, process-wide).
+    """
+    from otto import bootstrap as bs
+    from otto.cli.run import INSTRUCTIONS
+    from otto.suite.register import SUITES
 
-    pylib = str(mock_repo.sut_dir / "pylib")
+    repo1 = tests_root / "repo1"
+    pylib = str(repo1 / "pylib")
 
     # Remove any prior entries so the precondition holds even if another
     # test (or a previous run in the same worker) already appended it.
@@ -78,12 +88,32 @@ def test_repo_apply_settings(default_mock_repo):
 
     assert pylib not in sys.path
 
-    mock_repo.apply_settings()
+    # Snapshot so we can undo the registration afterward. Otherwise a second
+    # bootstrap in this same worker process (e.g. from another test importing
+    # repo1's suite files) collides with these leftover entries: duplicate
+    # names now fail loudly (Registry.register), unlike the old permissive
+    # list-based registry this replaced.
+    before_instructions = set(INSTRUCTIONS.names())
+    before_suites = set(SUITES.names())
 
-    assert pylib in sys.path
+    monkeypatch.setenv("OTTO_SUT_DIRS", str(repo1))
+    bs._reset()
+    try:
+        result = bs.bootstrap()
+        assert result.errors == []
 
-    # Clean up so we don't pollute sys.path for subsequent tests.
-    sys.path.remove(pylib)
+        assert pylib in sys.path
+        assert set(INSTRUCTIONS.names()) > before_instructions
+        assert set(SUITES.names()) > before_suites
+    finally:
+        bs._reset()
+        # Clean up so we don't pollute sys.path / the registries for subsequent tests.
+        while pylib in sys.path:
+            sys.path.remove(pylib)
+        for name in set(INSTRUCTIONS.names()) - before_instructions:
+            INSTRUCTIONS.unregister(name)
+        for name in set(SUITES.names()) - before_suites:
+            SUITES.unregister(name)
 
 
 def test_product_log_prefixes_init_libs_and_explicit_capture(tmp_path):
@@ -238,12 +268,15 @@ def restore_profiles():
     """
     from otto.host import os_profile
 
-    saved = dict(os_profile._OS_PROFILES)
+    saved = dict(os_profile.OS_PROFILES._entries)
+    saved_origins = dict(os_profile.OS_PROFILES._origins)
     try:
         yield
     finally:
-        os_profile._OS_PROFILES.clear()
-        os_profile._OS_PROFILES.update(saved)
+        os_profile.OS_PROFILES._entries.clear()
+        os_profile.OS_PROFILES._entries.update(saved)
+        os_profile.OS_PROFILES._origins.clear()
+        os_profile.OS_PROFILES._origins.update(saved_origins)
 
 
 class TestOsProfilesParsing:

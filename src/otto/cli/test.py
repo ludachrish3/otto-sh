@@ -137,10 +137,11 @@ from rich.table import Table
 from ..configmodule import get_repos
 from ..configmodule.repo import Repo
 from ..context import get_context
-from ..logger import get_otto_logger, management
-from ..suite.register import _SUITE_REGISTRY
+from ..logger import get_logger
+from ..suite.register import SUITES
+from .invoke import make_registry_group
 
-logger = get_otto_logger()
+logger = get_logger()
 
 RUN_OPTIONS_KEY = "otto_test_run_options"
 
@@ -438,6 +439,7 @@ def list_markers_callback(value: bool) -> None:
 suite_app = typer.Typer(
     name="test",
     invoke_without_command=True,
+    cls=make_registry_group(SUITES),
     context_settings={
         "help_option_names": ["-h", "--help"],
     },
@@ -627,9 +629,9 @@ def main(  # noqa: PLR0913 — CLI command params
 ) -> None:
     """Collect ``otto test`` run options and store them in ``ctx.meta`` for suite runners.
 
-    Validates coverage and report directories, resolves implied flags (e.g.
-    ``--cov-dir`` implies ``--cov``), and sets up the output directory and
-    reservation gate when a suite subcommand is about to run.
+    Validates coverage and report directories and resolves implied flags (e.g.
+    ``--cov-dir`` implies ``--cov``). Output-directory creation and the
+    reservation gate happen later, in the shared leaf-invoke command preamble.
     """
     if ctx.resilient_parsing:
         return
@@ -672,28 +674,13 @@ def main(  # noqa: PLR0913 — CLI command params
         monitor_output=monitor_output,
         monitor_hosts=monitor_hosts,
     )
-    # A help/discovery invocation (e.g. `otto test <Suite> --help`) runs no suite,
-    # so it must not create an output dir or gate reservations. The root callback
-    # records this on ctx.meta and skips init_cli_logging for it, so calling
-    # create_output_dir here would otherwise raise.
-    if ctx.invoked_subcommand is not None and not ctx.meta.get("_help_or_discovery"):
-        get_context().output_dir = management.create_output_dir("test", ctx.invoked_subcommand)
-        from ..reservations import gate
-
-        gate(ctx)
-
+    # Output-dir creation and the reservation gate moved to the shared
+    # leaf-invoke command_preamble (see otto.cli.invoke), so a subcommand
+    # `--help` (which exits before invoke) can never create a spurious dir.
     if ctx.invoked_subcommand is None:
         # Phase 1: no run-by-selector yet; mirror the previous no-args behavior.
         rprint(ctx.get_help())
         raise typer.Exit
-
-
-# ---------------------------------------------------------------------------
-# Register suites discovered during configmodule initialization
-# ---------------------------------------------------------------------------
-
-for _, _suite_sub_app in _SUITE_REGISTRY:
-    suite_app.add_typer(_suite_sub_app)
 
 
 # ---------------------------------------------------------------------------

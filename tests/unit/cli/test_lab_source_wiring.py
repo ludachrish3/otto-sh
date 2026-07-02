@@ -12,7 +12,7 @@ from otto.storage import (
     build_lab_repository,
     register_lab_repository,
 )
-from otto.storage.registry import _LAB_REPOSITORIES
+from otto.storage.registry import LAB_REPOSITORIES
 
 
 def _hosts_file(path: Path, hosts: list[dict]) -> Path:
@@ -90,7 +90,7 @@ def test_custom_backend_selected_by_name(tmp_path):
         lab = load_lab(sentinel_lab_name, repository=repository)
         assert lab.name == sentinel_lab_name
     finally:
-        _LAB_REPOSITORIES.pop("dict-wiring-test", None)
+        LAB_REPOSITORIES.unregister("dict-wiring-test")
 
 
 def test_unknown_backend_name_raises(tmp_path):

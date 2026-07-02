@@ -84,18 +84,25 @@ def _item(sut_dir: Path, rel: str, name: str, cls_name: str | None = None) -> Co
 
 class TestGetTestSuitesPanel:
     def _seed(self, sut_dir, *names):
-        from otto.suite import register as reg
+        from otto.suite.register import SUITES, SuiteEntry
 
         for n in names:
-            reg._SUITE_REGISTRY.append((n, __import__("typer").Typer()))
-            reg._SUITE_FILES[n] = str((sut_dir / "tests" / f"{n}.py").resolve())
+            SUITES.register(
+                n,
+                SuiteEntry(
+                    name=n,
+                    sub_app=__import__("typer").Typer(),
+                    file=str((sut_dir / "tests" / f"{n}.py").resolve()),
+                ),
+                origin="test_listing",
+            )
 
     def _cleanup(self, *names):
-        from otto.suite import register as reg
+        from otto.suite.register import SUITES
 
-        reg._SUITE_REGISTRY[:] = [e for e in reg._SUITE_REGISTRY if e[0] not in names]
         for n in names:
-            reg._SUITE_FILES.pop(n, None)
+            if n in SUITES:
+                SUITES.unregister(n)
 
     def test_lists_registered_suite_names(self, tmp_path):
         sut_dir = _make_sut(tmp_path)
@@ -120,32 +127,40 @@ class TestGetTestSuitesPanel:
 
 class TestRegisteredSuites:
     def test_attributes_suites_under_sut_dir(self, tmp_path):
-        from otto.suite import register as reg
+        from otto.suite.register import SUITES, SuiteEntry
 
         sut_dir = _make_sut(tmp_path)
         repo = Repo(sut_dir=sut_dir)
         suite_file = str((sut_dir / "tests" / "test_thing.py").resolve())
-        # Seed the registry + companion map directly (no real import needed).
-        reg._SUITE_REGISTRY.append(("TestThing", __import__("typer").Typer()))
-        reg._SUITE_FILES["TestThing"] = suite_file
+        # Seed the registry directly (no real import needed).
+        SUITES.register(
+            "TestThing",
+            SuiteEntry(name="TestThing", sub_app=__import__("typer").Typer(), file=suite_file),
+            origin="test_listing",
+        )
         try:
             assert repo.registered_suites() == ["TestThing"]
         finally:
-            reg._SUITE_REGISTRY[:] = [e for e in reg._SUITE_REGISTRY if e[0] != "TestThing"]
-            reg._SUITE_FILES.pop("TestThing", None)
+            SUITES.unregister("TestThing")
 
     def test_excludes_suites_outside_sut_dir(self, tmp_path):
-        from otto.suite import register as reg
+        from otto.suite.register import SUITES, SuiteEntry
 
         sut_dir = _make_sut(tmp_path)
         repo = Repo(sut_dir=sut_dir)
-        reg._SUITE_REGISTRY.append(("Foreign", __import__("typer").Typer()))
-        reg._SUITE_FILES["Foreign"] = str((tmp_path / "other" / "test_x.py").resolve())
+        SUITES.register(
+            "Foreign",
+            SuiteEntry(
+                name="Foreign",
+                sub_app=__import__("typer").Typer(),
+                file=str((tmp_path / "other" / "test_x.py").resolve()),
+            ),
+            origin="test_listing",
+        )
         try:
             assert repo.registered_suites() == []
         finally:
-            reg._SUITE_REGISTRY[:] = [e for e in reg._SUITE_REGISTRY if e[0] != "Foreign"]
-            reg._SUITE_FILES.pop("Foreign", None)
+            SUITES.unregister("Foreign")
 
 
 # ---------------------------------------------------------------------------
@@ -249,17 +264,23 @@ class TestListCallbacks:
     """Verify callbacks invoke the correct panel method and exit cleanly."""
 
     def test_list_suites_renders_registry_names(self, tmp_path):
-        from otto.suite import register as reg
+        from otto.suite.register import SUITES, SuiteEntry
 
         sut_dir = _make_sut(tmp_path)
-        reg._SUITE_REGISTRY.append(("TestRealSuite", __import__("typer").Typer()))
-        reg._SUITE_FILES["TestRealSuite"] = str((sut_dir / "tests" / "test_real.py").resolve())
+        SUITES.register(
+            "TestRealSuite",
+            SuiteEntry(
+                name="TestRealSuite",
+                sub_app=__import__("typer").Typer(),
+                file=str((sut_dir / "tests" / "test_real.py").resolve()),
+            ),
+            origin="test_listing",
+        )
         try:
             with patch("otto.cli.test.get_repos", return_value=[Repo(sut_dir=sut_dir)]):
                 result = runner.invoke(suite_app, ["--list-suites"])
         finally:
-            reg._SUITE_REGISTRY[:] = [e for e in reg._SUITE_REGISTRY if e[0] != "TestRealSuite"]
-            reg._SUITE_FILES.pop("TestRealSuite", None)
+            SUITES.unregister("TestRealSuite")
         assert result.exit_code == 0
         assert "TestRealSuite" in result.stdout
 
@@ -344,44 +365,45 @@ class TestListMarkers:
 
 
 class TestGetInstructionsPanel:
-    def _fake_group(self, module: str, func_name: str, cmd_name: str | None = None) -> MagicMock:
-        cb = MagicMock()
-        cb.__module__ = module
-        cb.__name__ = func_name
-        cmd = MagicMock()
-        cmd.name = cmd_name
-        cmd.callback = cb
-        ti = MagicMock()
-        ti.registered_commands = [cmd]
-        group = MagicMock()
-        group.typer_instance = ti
-        return group
+    def _fake_registry(self, *entries: tuple[str, str]) -> MagicMock:
+        """Build a fake INSTRUCTIONS-shaped registry from (cmd_name, module) pairs.
+
+        Mirrors ``otto.cli.run.InstructionEntry``'s ``.name`` / ``.module``
+        fields consumed by ``get_instructions_panel``.
+        """
+        items = []
+        for cmd_name, module in entries:
+            entry = MagicMock()
+            entry.name = cmd_name
+            entry.module = module
+            items.append((cmd_name, entry))
+        registry = MagicMock()
+        registry.items.return_value = items
+        return registry
 
     def test_shows_command_from_matching_module(self, tmp_path):
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        group = self._fake_group("my_instructions.cmd", "do_something")
-        with patch("otto.cli.run.run_app") as mock_app:
-            mock_app.registered_groups = [group]
+        fake = self._fake_registry(("do-something", "my_instructions.cmd"))
+        with patch("otto.cli.run.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "do-something" in text
 
     def test_excludes_command_from_other_module(self, tmp_path):
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        group = self._fake_group("other_repo.cmd", "foreign_command")
-        with patch("otto.cli.run.run_app") as mock_app:
-            mock_app.registered_groups = [group]
+        fake = self._fake_registry(("foreign-command", "other_repo.cmd"))
+        with patch("otto.cli.run.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "foreign-command" not in text
         assert "no instructions found" in text
 
     def test_explicit_cmd_name_takes_priority_over_func_name(self, tmp_path):
+        """The registered name is already the explicit/derived name at registration time."""
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        group = self._fake_group("my_instructions.cmd", "func_name", cmd_name="explicit-name")
-        with patch("otto.cli.run.run_app") as mock_app:
-            mock_app.registered_groups = [group]
+        fake = self._fake_registry(("explicit-name", "my_instructions.cmd"))
+        with patch("otto.cli.run.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "explicit-name" in text
         assert "func-name" not in text
@@ -390,17 +412,16 @@ class TestGetInstructionsPanel:
         """Module name exactly equal to an init entry (not just a prefix) should match."""
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        group = self._fake_group("my_instructions", "top_level_cmd")
-        with patch("otto.cli.run.run_app") as mock_app:
-            mock_app.registered_groups = [group]
+        fake = self._fake_registry(("top-level-cmd", "my_instructions"))
+        with patch("otto.cli.run.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "top-level-cmd" in text
 
     def test_empty_when_no_groups(self, tmp_path):
         sut_dir = _make_sut(tmp_path, extra_toml='init = ["my_instructions"]\n')
         repo = Repo(sut_dir=sut_dir)
-        with patch("otto.cli.run.run_app") as mock_app:
-            mock_app.registered_groups = []
+        fake = self._fake_registry()
+        with patch("otto.cli.run.INSTRUCTIONS", fake):
             text = _render(repo.get_instructions_panel())
         assert "no instructions found" in text
 
@@ -466,7 +487,7 @@ class TestExternalRepoIntegration:
 
     def test_class_based_suites_panel_shows_class_name(self, tmp_path):
         """Class-based suites show just ClassName — the 'otto test ClassName' subcommand."""
-        from otto.suite import register as reg
+        from otto.suite.register import SUITES, SuiteEntry
 
         sut_dir = _make_sut(tmp_path)
         _add_test_file(
@@ -475,13 +496,19 @@ class TestExternalRepoIntegration:
             "class TestMyDevice:\n    def test_ping(self):\n        assert True\n",
         )
         repo = Repo(sut_dir=sut_dir)
-        reg._SUITE_REGISTRY.append(("TestMyDevice", __import__("typer").Typer()))
-        reg._SUITE_FILES["TestMyDevice"] = str((sut_dir / "tests" / "test_class.py").resolve())
+        SUITES.register(
+            "TestMyDevice",
+            SuiteEntry(
+                name="TestMyDevice",
+                sub_app=__import__("typer").Typer(),
+                file=str((sut_dir / "tests" / "test_class.py").resolve()),
+            ),
+            origin="test_listing",
+        )
         try:
             text = _render(repo.get_test_suites_panel())
         finally:
-            reg._SUITE_REGISTRY[:] = [e for e in reg._SUITE_REGISTRY if e[0] != "TestMyDevice"]
-            reg._SUITE_FILES.pop("TestMyDevice", None)
+            SUITES.unregister("TestMyDevice")
         assert "TestMyDevice" in text
         assert "test_class.py" not in text
         assert str(sut_dir) not in text

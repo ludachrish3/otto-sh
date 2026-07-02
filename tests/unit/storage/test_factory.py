@@ -20,12 +20,15 @@ from otto.storage.factory import (
 @pytest.fixture
 def restore_profiles():
     """Snapshot/restore the global os-profile registry around a test."""
-    saved = dict(os_profile._OS_PROFILES)
+    saved = dict(os_profile.OS_PROFILES._entries)
+    saved_origins = dict(os_profile.OS_PROFILES._origins)
     try:
         yield
     finally:
-        os_profile._OS_PROFILES.clear()
-        os_profile._OS_PROFILES.update(saved)
+        os_profile.OS_PROFILES._entries.clear()
+        os_profile.OS_PROFILES._entries.update(saved)
+        os_profile.OS_PROFILES._origins.clear()
+        os_profile.OS_PROFILES._origins.update(saved_origins)
 
 
 class TestCreateHostFromDict:

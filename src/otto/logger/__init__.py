@@ -3,7 +3,7 @@
 import logging
 
 from . import management as management
-from .logger import get_otto_logger as get_otto_logger
+from .logger import get_logger as get_logger
 
 # Library-citizen default: attach a NullHandler so importing otto as a library
 # is silent unless the application configures handlers. Idempotent.

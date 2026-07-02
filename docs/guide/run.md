@@ -15,10 +15,10 @@ from typing import Annotated
 import typer
 
 from otto.cli.run import instruction
-from otto.configmodule.configmodule import all_hosts
-from otto.logger import get_otto_logger
+from otto.configmodule import all_hosts
+from otto.logger import get_logger
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 @instruction()
@@ -57,7 +57,7 @@ module helpers:
 
 ```python
 import re
-from otto.configmodule.configmodule import all_hosts, get_host
+from otto.configmodule import all_hosts, get_host
 
 # Iterate (optionally filtered by a regex on host ID)
 for host in all_hosts():
@@ -154,11 +154,11 @@ import typer
 
 from otto import options
 from otto.cli.run import instruction
-from otto.logger import get_otto_logger
+from otto.logger import get_logger
 
 from .options import RepoOptions
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 @options

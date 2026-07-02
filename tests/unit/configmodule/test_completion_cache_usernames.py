@@ -20,7 +20,7 @@ def test_usernames_round_trip(tmp_path, monkeypatch):
 
 def test_collect_usernames_from_capable_backend(tmp_path):
     from otto.reservations import register_reservation_backend
-    from otto.reservations.registry import _RESERVATION_BACKENDS
+    from otto.reservations.registry import RESERVATION_BACKENDS
 
     class UCBackend:
         def __init__(self, **kwargs):
@@ -43,7 +43,7 @@ def test_collect_usernames_from_capable_backend(tmp_path):
         repo = types.SimpleNamespace(reservation_settings={"backend": "uc-test"}, sut_dir=tmp_path)
         assert cc.collect_reservation_usernames([repo]) == ["alice", "bob"]
     finally:
-        _RESERVATION_BACKENDS.pop("uc-test", None)
+        RESERVATION_BACKENDS.unregister("uc-test")
 
 
 def test_collect_usernames_empty_when_capability_absent(tmp_path):

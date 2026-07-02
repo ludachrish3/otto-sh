@@ -27,14 +27,14 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 from typing_extensions import override
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..models.base import OttoModel
 from .collector import MetricCollector
 from .events import VALID_DASH_STYLES
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 # Suppress the ASGI log from uvicorn because it clutters up the output on exit.

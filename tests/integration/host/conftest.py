@@ -15,7 +15,7 @@ import pytest
 
 from otto.configmodule.lab import Lab
 from otto.context import OttoContext, set_context
-from otto.host.command_frame import register_command_frame
+from otto.host.command_frame import FRAME_CLASSES, register_command_frame
 from otto.host.telnet import abort_console_transports
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
@@ -41,7 +41,15 @@ from tests.conftest import (
 ensure_custom_hosts_on_path()
 from custom_hosts.zephyr_inline import ZephyrInlineRetcodeFrame
 
-register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)
+# custom_hosts/__init__.py (tests/custom_hosts/custom_hosts/__init__.py) already
+# registers this exact class as an import-time side effect of the line above —
+# importing the ``custom_hosts.zephyr_inline`` submodule runs the parent
+# package's ``__init__.py`` first. Only register here if that didn't happen
+# (e.g. this conftest loads before custom_hosts' own __init__ has run in some
+# import order), so both load orders work and neither trips the registry's
+# loud-duplicate guard for what is the identical class object.
+if ZephyrInlineRetcodeFrame.type_name not in FRAME_CLASSES:
+    register_command_frame(ZephyrInlineRetcodeFrame.type_name, ZephyrInlineRetcodeFrame)
 
 
 def _install_integration_lab() -> None:

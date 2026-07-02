@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from typing_extensions import override
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Status, cli_exposed
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 from .power import PowerController
 from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
 
-logger = get_otto_logger()
+logger = get_logger()
 
 
 @dataclass(slots=True)

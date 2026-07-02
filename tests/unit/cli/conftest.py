@@ -25,7 +25,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from otto.configmodule.repo import Repo
-from otto.logger import get_otto_logger
+from otto.logger import get_logger
 from otto.result import CommandResult, Results
 from otto.utils import Status
 
@@ -129,15 +129,20 @@ def real_main_mocks(tmp_path):
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
     clean_env["OTTO_XDIR"] = str(tmp_path)
 
-    logger = get_otto_logger()
+    logger = get_logger()
     original_level = logger.level
     original_handlers = list(logger.handlers)
 
+    from otto import bootstrap as bs
+
+    bs._reset()
+    # Lab load + session setup are lazy (Task 7): otto.cli.invoke imports
+    # get_repos from otto.configmodule at call time, so patch the source.
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.remove_old_logs") as p_remove,
         patch("otto.logger.management.RichHandler") as p_rich,
-        patch("otto.cli.main.get_repos", return_value=[repo]),
+        patch("otto.configmodule.get_repos", return_value=[repo]),
         patch(
             "otto.host.local_host.LocalHost.run",
             new_callable=AsyncMock,
@@ -163,6 +168,7 @@ def real_main_mocks(tmp_path):
         }
 
     # Teardown: restore logger to pre-test state
+    bs._reset()
     for handler in logger.handlers[:]:
         logger.removeHandler(handler)
     for handler in original_handlers:

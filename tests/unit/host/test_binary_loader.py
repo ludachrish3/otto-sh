@@ -71,4 +71,4 @@ class TestRegistry:
 def test_builtins_registered_via_public_path():
     from otto.host import binary_loader as bl
 
-    assert len(bl._LOADER_CLASSES) >= 1  # at least the built-in loader(s)
+    assert len(bl.LOADER_CLASSES) >= 1  # at least the built-in loader(s)

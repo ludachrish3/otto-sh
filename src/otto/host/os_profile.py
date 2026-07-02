@@ -21,10 +21,10 @@ Profiles are authorable two ways, both feeding the same registry:
   libraries can ship profiles. Init modules import *after* settings parse, so a
   code registration overrides a data table of the same name (last writer wins).
 
-The registry mirrors ``command_frame._FRAME_CLASSES`` and
-``embedded_filesystem._FILESYSTEM_CLASSES``.
+The registry mirrors ``command_frame.FRAME_CLASSES`` and
+``embedded_filesystem.FILESYSTEM_CLASSES``.
 
-A companion registry — ``_HOST_CLASSES`` / :func:`register_host_class` — maps
+A companion registry — ``HOST_CLASSES`` / :func:`register_host_class` — maps
 a name to a concrete :class:`~otto.host.remote_host.RemoteHost` subclass.
 Built-in classes (``unix`` → ``UnixHost``, ``embedded`` → ``EmbeddedHost``,
 ``zephyr`` → ``ZephyrHost``) are registered at module load. An
@@ -56,12 +56,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..logger import get_otto_logger
+from ..logger import get_logger
+from ..registry import Registry, caller_module
 
 if TYPE_CHECKING:
     from ..models.host import HostSpec
 
-logger = get_otto_logger()
+logger = get_logger()
 
 BaseFamily = str
 """The name of a registered host class an :class:`OsProfile` builds.
@@ -72,12 +73,20 @@ Built-ins: ``unix`` (:class:`~otto.host.unix_host.UnixHost`), ``embedded``
 :func:`register_host_class`.
 """
 
-# Registry of host-class name -> class, mirroring ``_OS_PROFILES`` /
-# ``command_frame._FRAME_CLASSES``. Populated for built-ins at module load.
-_HOST_CLASSES: dict[str, type] = {}
+# Registry of host-class name -> class, mirroring ``OS_PROFILES`` /
+# ``command_frame.FRAME_CLASSES``. Populated for built-ins at module load.
+# Registration here is always last-writer-wins (see register_host_class) —
+# unlike the other backend registries, re-registering a name is documented,
+# tested behavior, not a mistake to catch loudly.
+HOST_CLASSES: Registry[type] = Registry(
+    "host class", register_hint="otto.host.os_profile.register_host_class()"
+)
 
 # Registry of host-class name -> its boundary HostSpec subclass, populated for
-# built-ins at module load alongside ``_HOST_CLASSES``.
+# built-ins at module load alongside ``HOST_CLASSES``. Kept as a plain dict
+# (not a Registry): it has no independent register_*/build_* public wrapper of
+# its own — it is always written in lockstep with HOST_CLASSES from inside
+# register_host_class, and tests reach into it directly via monkeypatch.setitem.
 _HOST_SPECS: dict[str, type[HostSpec]] = {}
 
 
@@ -105,8 +114,12 @@ class OsProfile:
 
 
 # Registry of profile name -> profile, mirroring
-# ``command_frame._FRAME_CLASSES`` / ``embedded_filesystem._FILESYSTEM_CLASSES``.
-_OS_PROFILES: dict[str, OsProfile] = {}
+# ``command_frame.FRAME_CLASSES`` / ``embedded_filesystem.FILESYSTEM_CLASSES``.
+# Registration here is always last-writer-wins (see register_os_profile) — a
+# re-registration is documented, tested behavior, not a mistake to catch loudly.
+OS_PROFILES: Registry[OsProfile] = Registry(
+    "os_type profile", register_hint="otto.host.os_profile.register_os_profile()"
+)
 
 
 def _all_slots(cls: type) -> frozenset[str]:
@@ -177,17 +190,21 @@ def register_host_class(
             raise ValueError(
                 f"register_host_class({name!r}): spec must be a HostSpec subclass, got {spec!r}"
             )
-    if name in _BUILTIN_NAMES and name in _HOST_CLASSES:
+    if name in _BUILTIN_NAMES and name in HOST_CLASSES:
         logger.warning(f"register_host_class: overriding built-in host class {name!r}")
-    _HOST_CLASSES[name] = cls
+    # Last-writer-wins by design (see docstring) — always overwrite rather
+    # than raise on re-registration.
+    HOST_CLASSES.register(name, cls, overwrite=True, origin=caller_module())
     _HOST_SPECS[name] = spec
     # Auto-register a selector profile so os_type:<name> works immediately.
-    _OS_PROFILES[name] = OsProfile(name=name, base=name, defaults={})
+    OS_PROFILES.register(
+        name, OsProfile(name=name, base=name, defaults={}), overwrite=True, origin=caller_module()
+    )
 
 
 def _nearest_registered_spec(cls: type) -> type[HostSpec] | None:
     """Return the spec registered for the nearest base of *cls* in its MRO."""
-    by_class = {_HOST_CLASSES[n]: _HOST_SPECS[n] for n in _HOST_SPECS}
+    by_class = {HOST_CLASSES.get(n): _HOST_SPECS[n] for n in _HOST_SPECS}
     for base in cls.__mro__:
         if base in by_class:
             return by_class[base]
@@ -222,13 +239,7 @@ def registered_host_specs(*, builtins_only: bool = False) -> dict[str, type[Host
 
 def build_host_class(name: str) -> type:
     """Return the host class registered under *name* (raising on miss)."""
-    try:
-        return _HOST_CLASSES[name]
-    except KeyError:
-        known = ", ".join(sorted(_HOST_CLASSES))
-        raise ValueError(
-            f"Unknown host class {name!r}. Registered: {known}. Add one via register_host_class()."
-        ) from None
+    return HOST_CLASSES.get(name)
 
 
 def get_host_class(name: str) -> type | None:
@@ -237,7 +248,7 @@ def get_host_class(name: str) -> type | None:
     Non-raising counterpart to :func:`build_host_class`, for callers that
     produce their own error (e.g. :func:`otto.storage.factory.validate_host_dict`).
     """
-    return _HOST_CLASSES.get(name)
+    return HOST_CLASSES.get(name) if name in HOST_CLASSES else None
 
 
 def _slots_for_base(base: str) -> frozenset[str]:
@@ -273,8 +284,8 @@ def register_os_profile(
         If *base* is not a registered host class name, or if a ``defaults`` key
         is not a field on the base class (a likely typo).
     """
-    if base not in _HOST_CLASSES:
-        known = ", ".join(sorted(_HOST_CLASSES))
+    if base not in HOST_CLASSES:
+        known = ", ".join(HOST_CLASSES.names())
         raise ValueError(
             f"register_os_profile({name!r}): base must name a registered "
             f"host class (one of {known}), got {base!r}"
@@ -289,10 +300,17 @@ def register_os_profile(
             f"base {base!r}: {sorted(unknown)}"
         )
 
-    if name in _BUILTIN_NAMES and name in _OS_PROFILES:
+    if name in _BUILTIN_NAMES and name in OS_PROFILES:
         logger.warning(f"register_os_profile: overriding built-in profile {name!r}")
 
-    _OS_PROFILES[name] = OsProfile(name=name, base=base, defaults=defaults)
+    # Last-writer-wins by design (see docstring) — always overwrite rather
+    # than raise on re-registration.
+    OS_PROFILES.register(
+        name,
+        OsProfile(name=name, base=base, defaults=defaults),
+        overwrite=True,
+        origin=caller_module(),
+    )
 
 
 def build_os_profile(name: str) -> OsProfile:
@@ -307,15 +325,7 @@ def build_os_profile(name: str) -> OsProfile:
         If *name* is not registered. The error lists the registered names so a
         typo is diagnosable from the message alone.
     """
-    try:
-        return _OS_PROFILES[name]
-    except KeyError:
-        known = ", ".join(sorted(_OS_PROFILES))
-        raise ValueError(
-            f"Unknown os_type {name!r}. Registered profiles: {known}. "
-            f"Custom profiles can be added via register_os_profile() or an "
-            f"[os_profiles.<name>] table in .otto/settings.toml."
-        ) from None
+    return OS_PROFILES.get(name)
 
 
 def get_os_profile(name: str) -> OsProfile | None:
@@ -325,12 +335,12 @@ def get_os_profile(name: str) -> OsProfile | None:
     :func:`otto.storage.factory.validate_host_dict` so validation can produce
     its own error message.
     """
-    return _OS_PROFILES.get(name)
+    return OS_PROFILES.get(name) if name in OS_PROFILES else None
 
 
 def registered_profile_names() -> list[str]:
     """Return the sorted names of all currently registered profiles."""
-    return sorted(_OS_PROFILES)
+    return sorted(OS_PROFILES.names())
 
 
 # Built-in host classes. ``unix`` and ``embedded`` carry no profile defaults —

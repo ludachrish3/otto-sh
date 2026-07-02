@@ -75,7 +75,7 @@ class TestJsonBackend:
 class TestRegisteredBackend:
     def test_registered_name_resolved_with_url_and_kwargs(self, tmp_path):
         from otto.reservations import register_reservation_backend
-        from otto.reservations.registry import _RESERVATION_BACKENDS
+        from otto.reservations.registry import RESERVATION_BACKENDS
 
         class FakeBackend:
             def __init__(self, *, api_key: str = "", url=None):
@@ -105,11 +105,11 @@ class TestRegisteredBackend:
             assert backend.api_key == "secret"
             assert backend.url == "https://api.example"
         finally:
-            _RESERVATION_BACKENDS.pop("fake-test", None)
+            RESERVATION_BACKENDS.unregister("fake-test")
 
     def test_registered_name_without_url(self, tmp_path):
         from otto.reservations import register_reservation_backend
-        from otto.reservations.registry import _RESERVATION_BACKENDS
+        from otto.reservations.registry import RESERVATION_BACKENDS
 
         class FakeBackend:
             def __init__(self, *, api_key: str = ""):
@@ -133,8 +133,44 @@ class TestRegisteredBackend:
             assert isinstance(backend, FakeBackend)
             assert backend.api_key == "secret"
         finally:
-            _RESERVATION_BACKENDS.pop("fake-test-2", None)
+            RESERVATION_BACKENDS.unregister("fake-test-2")
 
     def test_unknown_backend_name_raises(self, tmp_path):
         with pytest.raises(ValueError, match="Unknown reservation backend"):
             build_backend({"backend": "mystery"}, tmp_path)
+
+
+class TestBuiltinBypassFix:
+    def test_reregistering_none_takes_effect(self, tmp_path):
+        """build_backend resolves "none" through the registry, not a hardcoded
+        NullReservationBackend() construction — re-registering "none"
+        (overwrite=True) must be honored.
+        """
+        from otto.reservations import register_reservation_backend
+
+        class ReplacementNoneBackend(NullReservationBackend):
+            pass
+
+        register_reservation_backend("none", ReplacementNoneBackend, overwrite=True)
+        try:
+            backend = build_backend({"backend": "none"}, tmp_path)
+            assert isinstance(backend, ReplacementNoneBackend)
+        finally:
+            register_reservation_backend("none", NullReservationBackend, overwrite=True)
+
+    def test_reregistering_json_takes_effect(self, tmp_path):
+        """Same bypass fix for the "json" built-in."""
+        from otto.reservations import register_reservation_backend
+
+        class ReplacementJsonBackend(JsonReservationBackend):
+            pass
+
+        register_reservation_backend("json", ReplacementJsonBackend, overwrite=True)
+        try:
+            f = _write_reservations(tmp_path)
+            backend = build_backend(
+                {"backend": "json", "json": {"path": str(f)}}, repo_dir=tmp_path
+            )
+            assert isinstance(backend, ReplacementJsonBackend)
+        finally:
+            register_reservation_backend("json", JsonReservationBackend, overwrite=True)

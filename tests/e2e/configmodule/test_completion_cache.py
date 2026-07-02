@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from otto.configmodule.completion_cache import SCHEMA_VERSION
 from tests.e2e._otto_subprocess import assert_no_output_dir
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
@@ -94,7 +95,10 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     cache = _read_cache(tmp_path)
     assert len(cache) == 1
     entry = next(iter(cache.values()))
-    assert entry["schema_version"] == 6
+    # Freshly seeded cache carries the current schema version; stale-version
+    # invalidation is separately pinned by the unit test that writes
+    # SCHEMA_VERSION - 1 (tests/unit/configmodule/test_completion_cache_unit.py).
+    assert entry["schema_version"] == SCHEMA_VERSION
     assert isinstance(entry["generated_at"], int)
     instruction_names = {i["name"] for i in entry["instructions"]}
     suite_names = {s["name"] for s in entry["suites"]}
@@ -283,7 +287,8 @@ def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:
     """`otto host <TAB>` must complete host IDs from the configured hosts.json.
 
     The completer in ``otto.cli.host`` runs during completion before
-    ``apply_repo_settings()`` — this test proves host IDs reach the shell.
+    :func:`otto.bootstrap.bootstrap` registers repo init modules — this test
+    proves host IDs reach the shell.
     """
     _run_otto(["--help"], xdir=tmp_path)
 

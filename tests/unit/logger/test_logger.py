@@ -121,6 +121,6 @@ def test_remove_old_logs_no_budget_message_on_normal_run(caplog):
 
 def test_otto_get_logger_reexport():
     import otto
-    from otto.logger import get_otto_logger
+    from otto.logger import get_logger
 
-    assert otto.get_logger is get_otto_logger
+    assert otto.get_logger is get_logger
