@@ -63,3 +63,15 @@ def test_existing_area_is_never_rewritten(tmp_path: Path) -> None:
     result = runner.invoke(_app(), ["--all", "--name", "other", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert settings.read_text() == before
+
+
+def test_later_area_uses_existing_settings_name(tmp_path: Path) -> None:
+    # scaffold settings (+ everything) under an explicit name that differs from the dir
+    runner.invoke(_app(), ["--all", "--name", "widget", "--path", str(tmp_path)])
+    import shutil
+
+    shutil.rmtree(tmp_path / "pylib")
+    result = runner.invoke(_app(), ["--instructions", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "pylib" / "widget_instructions" / "__init__.py").exists()
+    assert not (tmp_path / "pylib" / f"{tmp_path.name}_instructions").exists()

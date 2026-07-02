@@ -256,6 +256,26 @@ def _scaffold_instructions(root: Path, cfg: InitConfig) -> list[Path]:
     return [init_file]
 
 
+def _existing_settings_name(root: Path) -> str | None:
+    """Read ``name`` from an already-scaffolded ``.otto/settings.toml``, if any.
+
+    Used so later area scaffolds (e.g. ``--instructions`` run after settings
+    already exists) derive module names from the repo's recorded ``name``
+    rather than falling back to the directory basename. Error-tolerant like
+    :func:`_detect_instructions`: any parse failure yields ``None`` so callers
+    fall back to ``root.name`` as before.
+    """
+    settings_path = root / ".otto" / "settings.toml"
+    if not settings_path.is_file():
+        return None
+    try:
+        data = tomli.loads(settings_path.read_text())
+    except (tomli.TOMLDecodeError, OSError):
+        return None
+    name = data.get("name")
+    return name if isinstance(name, str) and name else None
+
+
 def _detect_settings(root: Path) -> bool:
     return (root / ".otto" / "settings.toml").is_file()
 
@@ -350,7 +370,7 @@ async def init_command(
     if interactive and "settings" in missing_names:
         name = name or typer.prompt("Product name", default=root.name)
         version = typer.prompt("Version", default=version)
-    cfg = InitConfig(name=name or root.name, version=version)
+    cfg = InitConfig(name=name or _existing_settings_name(root) or root.name, version=version)
 
     scaffolded: list[str] = []
     for area in AREAS:
