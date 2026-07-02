@@ -81,15 +81,31 @@ class FakeZephyrFs:
     short-circuits before ever reaching this fake.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, mounted: bool = True) -> None:
         self.store: dict[str, bytearray] = {}
         self.calls: list[str] = []
+        self.mounted = mounted
 
     async def exec_cmd(self, cmd: str, timeout: float | None = None) -> CommandResult:
         self.calls.append(cmd)
 
         parts = cmd.split()
         sub = parts[1]
+
+        if sub == "statvfs":
+            if self.mounted:
+                return _cs(cmd, "bsize 512, frsize 512, blocks 64, bfree 60", Status.Success, 0)
+            return _cs(cmd, f"statvfs failed ({parts[2]})", Status.Failed, -2)
+
+        if sub == "mount":
+            if self.mounted:
+                # Zephyr 3.7 behavior: the shell k_mallocs the mount-point
+                # string, fs_mount fails -EBUSY, and the failure path LEAKS
+                # the allocation (fixed upstream in 4.4). otto must therefore
+                # never issue a mount against an already-mounted filesystem.
+                return _cs(cmd, "Error mounting FAT fs. Error Code [-16]", Status.Failed, -16)
+            self.mounted = True
+            return _cs(cmd, "Successfully mounted fat fs:/RAM:", Status.Success, 0)
 
         if sub == "read":
             path = parts[2]
@@ -214,6 +230,77 @@ class TestRoundTrip:
 # ---------------------------------------------------------------------------
 # put — chunking and ordering
 # ---------------------------------------------------------------------------
+
+
+class TestMountBehavior:
+    """otto must never issue a doomed re-mount against a mounted filesystem.
+
+    Zephyr 3.7's shell leaks a k_malloc'd mount-point string on every FAILED
+    ``fs mount`` (fixed upstream in 4.4 with an early -EBUSY guard + k_free).
+    The old always-mount-and-ignore-errors approach bled the 16 KB system
+    heap dry one host object at a time on long-lived FAT beds (live-diagnosed
+    on `sprout`: 12,228 bytes consumed while the fstab-auto-mounted LittleFS
+    twins sat at zero). The probe order pinned here: read-only ``fs statvfs``
+    first; ``fs mount`` only when the probe says unmounted.
+    """
+
+    @pytest.mark.asyncio
+    async def test_already_mounted_fs_never_gets_a_mount_command(self, tmp_path):
+        fake = FakeZephyrFs(mounted=True)
+        transfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"hi")
+
+        await transfer.put_files([src], RAM)
+
+        assert not [c for c in fake.calls if " mount " in c or c.endswith(" mount")], (
+            f"a mount command was issued against a mounted FS: {fake.calls}"
+        )
+        assert any("statvfs" in c for c in fake.calls), "expected a read-only statvfs probe"
+
+    @pytest.mark.asyncio
+    async def test_unmounted_fs_gets_mounted_once(self, tmp_path):
+        fake = FakeZephyrFs(mounted=False)
+        transfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"hi")
+
+        await transfer.put_files([src], RAM)
+
+        mounts = [c for c in fake.calls if c.startswith("fs mount")]
+        assert mounts == ["fs mount fat /RAM:"]
+        assert fake.mounted
+
+    @pytest.mark.asyncio
+    async def test_mount_state_probed_at_most_once_per_transfer(self, tmp_path):
+        fake = FakeZephyrFs(mounted=True)
+        transfer = _console_transfer(fake)
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"hi")
+
+        await transfer.put_files([src], RAM)
+        await transfer.put_files([src], RAM)
+
+        assert len([c for c in fake.calls if "statvfs" in c]) == 1
+
+    @pytest.mark.asyncio
+    async def test_fs_without_statvfs_falls_back_to_blind_mount(self, tmp_path):
+        class _NoStatvfsFat(FatRamFileSystem):
+            @property
+            def supports_disk_metric(self) -> bool:
+                return False
+
+        fake = FakeZephyrFs(mounted=True)
+        transfer = _console_transfer(fake, filesystem=_NoStatvfsFat())
+        src = tmp_path / "f.bin"
+        src.write_bytes(b"hi")
+
+        await transfer.put_files([src], RAM)
+
+        # No statvfs to probe with: the pre-fix behavior (mount, accept the
+        # expected already-mounted failure) is the only option left.
+        assert not [c for c in fake.calls if "statvfs" in c]
+        assert [c for c in fake.calls if c.startswith("fs mount")] == ["fs mount fat /RAM:"]
 
 
 class TestPut:

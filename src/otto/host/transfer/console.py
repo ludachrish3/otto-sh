@@ -326,21 +326,32 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
     # ------------------------------------------------------------------
 
     async def _ensure_mounted(self) -> None:
-        """Run the filesystem's optional ``mount_cmd`` once per host lifetime.
+        """Ensure the filesystem is mounted, probing before mounting.
 
         Filesystems Zephyr cannot auto-mount via ``zephyr,fstab`` (FAT, in
         3.7 LTS) need otto to issue ``fs mount fat <path>`` before any
-        ``fs read/write``. A re-mount on an already-mounted filesystem is
-        an expected error (e.g. ``-EBUSY``) and is silently accepted —
-        the goal is "the FS is mounted by the time we return", not "we
-        just mounted it now".
+        ``fs read/write``. An already-mounted filesystem is detected with the
+        read-only ``fs statvfs`` probe FIRST — never by letting the mount
+        fail: Zephyr 3.7's shell k_mallocs the mount-point string and LEAKS
+        it on every failed mount (fixed upstream in 4.4 with an early -EBUSY
+        guard + ``k_free``), so the old always-mount-and-accept-the-error
+        approach bled the 16 KB system heap dry one otto host object at a
+        time on long-lived FAT beds.
         """
         mount_cmd = self._filesystem.mount_cmd
         if mount_cmd is None or self._mount_done:
             return
-        # Whether the command succeeds (first mount) or fails (already
-        # mounted), the post-condition is the same. Errors from a missing
-        # `fs` command surface naturally on the next `fs read`/`fs write`.
+        probe_cmd = self._filesystem.statvfs_command()
+        if probe_cmd is not None:
+            probe = await self._exec_cmd(probe_cmd, timeout=_WRITE_TIMEOUT)
+            if probe.status == Status.Success:
+                self._mount_done = True
+                return
+        # Unmounted (or no statvfs to probe with): mount for real. Whether
+        # the command succeeds (first mount) or fails (already mounted, only
+        # possible on the no-statvfs fallback), the post-condition is the
+        # same. Errors from a missing `fs` command surface naturally on the
+        # next `fs read`/`fs write`.
         await self._exec_cmd(mount_cmd, timeout=_WRITE_TIMEOUT)
         self._mount_done = True
 
