@@ -2,7 +2,7 @@
 
 import pytest
 
-from otto.monitor.collector import MetricCollector
+from otto.monitor.parsers import DEFAULT_PARSERS
 from tests._fixtures._fake_collector import FakeCollector
 
 
@@ -20,20 +20,25 @@ async def test_push_stores_series_and_chart_map() -> None:
 
 
 @pytest.mark.asyncio
-async def test_meta_matches_real_collector_except_forced_live() -> None:
-    """Drift guard: FakeCollector must present exactly the real collector's meta."""
+async def test_meta_serves_production_catalog_with_forced_live() -> None:
+    """Drift guard: FakeCollector meta must carry the real DEFAULT_PARSERS catalog."""
     fake = FakeCollector()
     await fake.push("host1", "Overall CPU", 42.5)
-    real = MetricCollector(hosts=[])
 
-    fake_meta = fake.get_meta()
-    real_meta = real.get_meta()
-    assert fake_meta["live"] is True
-    assert real_meta["live"] is False  # hosts=[] means historical for the real one
-    assert fake_meta["hosts"] == ["host1"]  # derived from pushed series keys
-    # Everything except live/hosts is byte-identical to production meta.
-    for key in ("metrics", "tabs"):
-        assert fake_meta[key] == real_meta[key]
+    meta = fake.get_meta()
+    assert meta["live"] is True
+    assert meta["hosts"] == ["host1"]  # derived from pushed series keys
+
+    # The metrics/tabs catalog must be exactly what production parsers declare.
+    expected_charts = [p.chart for p in DEFAULT_PARSERS.values()]
+    assert [m["chart"] for m in meta["metrics"]] == expected_charts
+    expected_tabs: list[str] = []
+    for p in DEFAULT_PARSERS.values():
+        if p.tab not in expected_tabs:
+            expected_tabs.append(p.tab)
+    assert [t["id"] for t in meta["tabs"]] == expected_tabs
+    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk"]
+    assert meta["tabs"][0]["metrics"] == ["CPU", "Load"]  # Load shares the cpu tab
 
 
 @pytest.mark.asyncio

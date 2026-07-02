@@ -27,10 +27,13 @@ class FakeCollector(MetricCollector):
     """A MetricCollector that never talks to hosts: tests push points directly."""
 
     def __init__(self, *, force_live: bool = True) -> None:
-        # hosts=[] gives empty targets, so we must populate _parsers directly
-        # with DEFAULT_PARSERS to match production metadata.
+        # hosts=[] builds zero targets, so the base class leaves the parser
+        # and view catalogs empty. Install the production DEFAULT_PARSERS
+        # catalog so push() resolves commands and /api/meta serves the real
+        # tabs/metrics, exactly as a live single-host collector would.
         super().__init__(hosts=[])
         self._parsers = dict(DEFAULT_PARSERS)
+        self._views = list(DEFAULT_PARSERS.values())
         self._force_live = force_live
 
     @override
