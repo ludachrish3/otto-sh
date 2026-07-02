@@ -51,6 +51,35 @@ backend = "json"
 The per-host `hosts.json` schema — every field, and how labs merge — lives in
 {doc}`lab-config`.
 
+```{tip}
+Running `otto init` (or `otto init --lab`) scaffolds a `hosts.json` with one
+example entry and a `lab_data/README.md` walking through its fields — a
+faster way to see a valid entry than building one from scratch. See
+{doc}`../getting-started`.
+```
+
+### Annotating entries with `_`-prefixed keys
+
+`hosts.json` is plain JSON, which has no comment syntax. Any key beginning
+with `_` (e.g. `_comment`) on a host entry is stripped before validation, so
+it is otto's sanctioned way to leave a note inline without tripping the
+schema's `extra="forbid"` check:
+
+```json
+{
+    "_comment": "Replace before connecting to a real host.",
+    "ip": "192.0.2.1",
+    "element": "example-device",
+    "os_type": "unix",
+    "valid_terms": ["ssh"],
+    "creds": { "admin": "CHANGE_ME" },
+    "labs": ["example_lab"]
+}
+```
+
+This idiom is scoped to host entries only — it is not a general convention
+elsewhere in otto's JSON/TOML configuration.
+
 ## Selecting a different source
 
 `[lab] backend` selects any **registered** backend by name. Register your

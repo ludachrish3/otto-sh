@@ -168,8 +168,12 @@ Most of otto's configuration is a **one-time, team-level** decision. New
 contributors then just clone and run. Work through this map once when adopting
 otto for a team:
 
-1. **Create `.otto/settings.toml`** — `name`, `version`, and the `labs` / `libs`
-   / `tests` / `init` paths (this page, above).
+1. **Run `otto init`** — scaffolds `.otto/settings.toml` (`name`, `version`, and
+   the `labs` / `libs` / `tests` / `init` paths — this page, above), an example
+   lab host, an example test suite, and an example instructions module in one
+   step. `otto init --all` scaffolds everything with no prompts; bare `otto
+   init` asks per missing area. See {doc}`../getting-started` and
+   {doc}`cli-reference`.
 2. **Choose a host source** — the built-in `json` source (commit `hosts.json`
    under a `labs` directory) is the default; point `[lab] backend` at a CMDB or
    inventory API if you have one. See {doc}`host-database`.

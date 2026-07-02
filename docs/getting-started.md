@@ -235,16 +235,98 @@ Python availability
 
 ## Project setup
 
-Otto discovers your project through a `.otto/settings.toml` file.  Create a
-minimal project structure:
+Otto discovers your project through a `.otto/settings.toml` file. The
+fastest way to get a working project is `otto init` — it scaffolds a
+minimal, immediately-runnable repo (settings, an example lab host, an
+example test suite, and an example instructions module) so you have
+something real to run and edit, instead of a blank page:
+
+```bash
+mkdir my_project
+otto init --all --name my_project --path my_project
+```
+
+`otto init` is **lab-free** — it needs no `--lab` flag and no
+`OTTO_SUT_DIRS`, since it only writes files under `--path` (an existing
+directory; defaults to the current one). Run it bare with no flags for an interactive walkthrough
+that asks, per missing area, whether to scaffold it (and prompts for `name`
+and `version` only when `.otto/settings.toml` itself is missing):
+
+```bash
+otto init
+```
+
+`--all` scaffolds every missing area with no prompts. To scaffold only
+specific areas, pass one or more of `--lab`, `--tests`, `--instructions`
+(`settings` is always included automatically whenever it's missing, since
+every other area depends on it):
+
+```bash
+otto init --tests --instructions
+```
+
+Areas that already exist are never modified — otto validates them instead
+(using the same ingestion code it uses everywhere else) and reports each one
+✓ or ✗ in a summary table. The command exits with code 1 if any *existing*
+area fails validation.
+
+The four areas `otto init` manages:
+
+settings
+: `.otto/settings.toml`, pre-wired with `labs`/`tests`/`libs` paths pointing
+  at the other three areas.
+
+lab
+: `lab_data/hosts.json` with one example host (`example-device`, in lab
+  `example_lab`) plus `lab_data/README.md` explaining the schema.
+
+tests
+: `tests/test_example.py` (a decorator-less `TestExample` suite plus a plain
+  `test_example_function`) and `tests/conftest.py` demonstrating repo-wide
+  fixtures.
+
+instructions
+: `pylib/<name>_instructions/`, registering one `smoke` instruction.
+
+When it finishes, `otto init` prints a "Next steps" list — the exact
+commands to run next, in order (the `export OTTO_SUT_DIRS=...` line is
+skipped if your repo is already listed there):
+
+```text
+Next steps
+  1. export OTTO_SUT_DIRS=/path/to/my_project
+  2. otto --install-completion
+  3. otto --lab example_lab --list-hosts
+  4. otto test --list-suites
+  5. otto test TestExample
+  6. otto test --tests test_example_function
+```
+
+See {doc}`guide/cli-reference` for the full `otto init` flag reference, and
+the {ref}`team-setup-checklist` in {doc}`guide/repo-setup` for the one-time
+decisions (host source, reservations, shared libs) that come after the
+initial scaffold.
+
+### What `otto init` creates
+
+The rest of this section walks through what a scaffolded project looks
+like and why — useful whether you ran `otto init` and want to understand the
+result, or you're editing an existing project by hand.
+
+A freshly scaffolded project has this shape:
 
 ```text
 my_project/
 ├── .otto/
 │   └── settings.toml
+├── lab_data/
+│   ├── hosts.json
+│   └── README.md
 ├── pylib/
-│   └── my_instructions.py
+│   └── my_project_instructions/
+│       └── __init__.py
 └── tests/
+    ├── conftest.py
     └── test_example.py
 ```
 
@@ -254,12 +336,12 @@ The settings file tells otto where to find your code:
 
 ```toml
 name = "my_project"
-version = "1.0.0"
+version = "0.1.0"
 
-labs  = ["${sut_dir}/../lab_data"]
-libs  = ["${sut_dir}/pylib"]
+labs  = ["${sut_dir}/lab_data"]
 tests = ["${sut_dir}/tests"]
-init  = ["my_instructions"]
+libs  = ["${sut_dir}/pylib"]
+init  = ["my_project_instructions"]
 ```
 
 `${sut_dir}` is automatically replaced with the repository root directory at
@@ -271,7 +353,7 @@ load time.
 | `version` | Semantic version string |
 | `labs` | Paths to directories containing lab JSON files |
 | `libs` | Python package directories added to `PYTHONPATH` at startup |
-| `tests` | Directories scanned for `test_*.py` files (triggers suite registration) |
+| `tests` | Defines where test discovery happens: directories scanned for `test_*.py` files (triggers suite registration) |
 | `init` | Python modules imported at startup (registers instructions and shared options) |
 
 ```{tip}
@@ -299,6 +381,11 @@ Other useful environment variables:
 | `OTTO_LOG_DAYS` | Number of days to retain logs | `30` |
 
 ## Lab files
+
+`otto init --lab` (or `--all`) scaffolds `lab_data/hosts.json` with one
+example host for you, plus a `lab_data/README.md` walking through its
+fields — see {doc}`guide/host-database` for the full per-field schema. This
+section explains the format so you can add real hosts by hand.
 
 A lab file is a JSON array of host definitions.  Place lab files in one of the
 directories listed in your `labs` setting; each host joins one or more labs
@@ -353,8 +440,14 @@ like `all_hosts()` exclude it by default; see {doc}`guide/run`.
 
 ## Your first instruction
 
+`otto init --instructions` (or `--all`) scaffolds `pylib/<name>_instructions/`
+with one `smoke` instruction, so `otto --lab example_lab run smoke` works as
+soon as `OTTO_SUT_DIRS` points at the repo (`otto run`, unlike `init`, needs
+a lab). This section shows how to hand-write a more realistic one.
+
 An instruction is an async function that becomes a subcommand of `otto run`.
-Create `pylib/my_instructions.py`:
+Create `pylib/my_instructions.py` and add `"my_instructions"` to the `init`
+list in `settings.toml`:
 
 ```python
 from typing import Annotated
@@ -387,6 +480,13 @@ otto run --list-instructions          # see all available instructions
 ```
 
 ## Your first test suite
+
+`otto init --tests` (or `--all`) scaffolds `tests/test_example.py` (a
+decorator-less `TestExample` suite plus a plain `test_example_function`) and
+a `tests/conftest.py` with a repo-wide fixture, so `otto --lab example_lab
+test TestExample` and `otto --lab example_lab test --tests
+test_example_function` both work immediately. This section shows how to
+hand-write a more realistic suite.
 
 A test suite is an {class}`~otto.suite.suite.OttoSuite` subclass with a
 `Test`-prefixed name — it registers automatically, no decorator needed.
