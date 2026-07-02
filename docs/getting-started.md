@@ -428,7 +428,14 @@ otto test --list-markers              # see markers available to --markers
 otto test --list-tests                # list every test in every registered suite
 otto test --list-tests --markers slow # list tests matching the marker expression
 otto test --list-tests TestExample    # list tests in TestExample only
+otto --lab my_lab test --tests test_reachable  # run by name, no suite name needed
+otto --lab my_lab test -m "not integration"    # run by marker, no suite name needed
 ```
+
+The last two forms skip the suite name entirely — `--tests` and/or `-m`
+alone select matching tests across every suite (and every repo). See
+{doc}`guide/test` for the full selection-run syntax, including how a
+suite's `Options` defaults apply when it's reached this way.
 
 `@options` (`from otto import options`) is otto's name for **pydantic's**
 dataclass decorator: decorating an Options class with it makes the class a

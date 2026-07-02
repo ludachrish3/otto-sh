@@ -58,10 +58,13 @@ libs
   libraries.  Defaults to `[]`.
 
 tests
-: List of directories to scan for `test_*.py` files.  Each matching file
-  is imported at startup, which auto-registers any `Test`-prefixed
-  `OttoSuite` subclass and makes it available as an `otto test` subcommand.
-  Defaults to `[]`.
+: Defines where test discovery happens: a list of directories scanned for
+  `test_*.py` files.  Each matching file is imported at startup, which
+  auto-registers any `Test`-prefixed `OttoSuite` subclass as an `otto test`
+  subcommand and makes its plain `test_*` functions collectible by pytest.
+  Selection runs (`otto test --tests NAME[,NAME...]` or `otto test -m
+  EXPRESSION` with no suite name) collect from these same directories, one
+  pytest session per repo.  Defaults to `[]`.
 
 init
 : List of Python module names (dot-separated) to import at startup.  Use

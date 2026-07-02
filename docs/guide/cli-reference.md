@@ -85,14 +85,22 @@ Each instruction defines its own options via Typer annotations.  Use
 
 ## otto test
 
-Run registered test suites.
+Run registered test suites — or, without a suite name, a suite-less
+selection by exact test name (`--tests`) and/or marker expression (`-m`).
 
 ```text
 otto test [PARENT OPTIONS] <Suite> [SUITE OPTIONS]
+otto test [PARENT OPTIONS] --tests NAME[,NAME...] [--markers EXPR]
+otto test [PARENT OPTIONS] --markers EXPR
 otto test --list-suites
 otto test --list-tests [--markers EXPR] [<Suite>]
 otto test --list-markers
 ```
+
+`--tests` and/or `--markers` with no suite name select across every suite
+and repo, including plain pytest `test_*` functions; bare `otto test` with
+neither flag and no suite name prints help.  See {doc}`test` for the full
+selection-run semantics, including how suite `Options` defaults are applied.
 
 ### Parent options (before the suite name)
 
@@ -101,7 +109,8 @@ otto test --list-markers
 | `--list-suites` | | List test suites with run syntax and exit |
 | `--list-tests` | | List the selected tests and exit; narrow with a suite name and/or `--markers` |
 | `--list-markers` | | List the markers available to `--markers` and exit |
-| `--markers, -m EXPR` | `""` | Pytest marker expression (e.g. `"not integration"`) |
+| `--markers, -m EXPR` | `""` | Pytest marker expression (e.g. `"not integration"`). With no suite name, runs the marker selection across every repo |
+| `--tests NAME[,NAME...]` | `""` | Run specific tests by exact name across all suites/repos, no suite name needed; `TestClass::name` disambiguates |
 | `--iterations, -i N` | `0` | Repeat each test N times in one setup/teardown cycle |
 | `--duration, -d SECONDS` | `0` | Repeat tests for SECONDS in one setup/teardown cycle |
 | `--threshold FLOAT` | `100.0` | Minimum per-test pass rate percent in stability mode (0-100) |
@@ -119,8 +128,12 @@ otto test --list-markers
 | `--monitor-output PATH` | `<output>/monitor.json` | Override monitor data destination (`.json` or `.db`) |
 | `--monitor-hosts REGEX` | all hosts | Regex restricting which hosts `--monitor` samples |
 
-Each suite also defines its own options via its `Options` dataclass.
-Use `otto test <Suite> --help` to see them.
+Each suite also defines its own options via its `Options` dataclass — these
+flags only exist on that suite's own subcommand (`otto test <Suite>
+--flag`), not on a `--tests`/`-m` selection run. Use `otto test <Suite>
+--help` to see them. Selection runs default-construct each suite's
+`Options`; a suite with a required option fails its own tests with a hint
+to run the suite form directly.
 
 ## otto host
 

@@ -125,13 +125,67 @@ otto test --list-tests                      # list every registered test
 otto test --list-tests --markers slow TestDevice   # narrow by marker and/or suite
 ```
 
+## Running without a suite name
+
+`otto test` doesn't require a suite subcommand. Passing `--tests` and/or
+`-m`/`--markers` alone selects tests by exact name and/or marker expression
+across **every** suite and repo, including plain pytest `test_*` functions
+(not just `OttoSuite` classes). Bare `otto test` with no suite name and
+neither flag just prints help.
+
+```bash
+otto test --tests test_login                    # every test named test_login, any suite
+otto test --tests TestB::test_login,test_plain   # disambiguate + mix suite/plain names
+otto test -m "not integration"                   # marker expression, no suite name
+otto test --tests test_login -m slow             # narrow a name selection by marker too
+```
+
+- `--tests NAME[,NAME...]` matches on exact function name: a bare name (e.g.
+  `test_login`) matches that name in every suite/repo, across all
+  parametrizations; `TestClass::test_name` restricts to one suite. Unknown
+  names raise an error with did-you-mean suggestions rather than silently
+  running nothing.
+- `-m EXPRESSION` alone (no `--tests`, no suite name) runs the marker
+  selection the same way — one pytest session per repo that has a match.
+- Multi-repo selection runs write one JUnit file per repo
+  (`junit_<repo>.xml`) instead of the single-suite `junit.xml`, unless
+  `--results` overrides the path.
+- Stability (`--iterations`/`-i`, `--duration`/`-d`, `--threshold`),
+  `--cov*`, `--monitor*`, and `--results` all apply to selection runs the
+  same as to a named suite.
+
+### Suite-specific options and selection runs
+
+Suite-specific options (declared on a suite's `Options` class) only exist as
+CLI flags on that suite's own subcommand — `otto test TestDevice --flag`.
+Selection runs (`--tests`/`-m` with no suite name) span multiple suites at
+once, so there's no single flag set to parse; each suite's `Options` class is
+instead **default-constructed** once per suite. If a suite's `Options` has a
+required field (no default), its tests fail during the selection run with a
+hint to re-run that suite directly:
+
+```text
+suite 'TestDevice' has required options — run `otto test TestDevice ...` to pass them (...)
+```
+
+Suites whose options are all optional (have defaults) run fine under
+selection — they just get their defaults instead of CLI-provided values.
+
 ## Parent command options
 
 These options live on `otto test` itself and must appear **before** the
-suite name on the command line:
+suite name on the command line (when a suite name is given at all — see
+[Running without a suite name](#running-without-a-suite-name) above):
 
 `--markers / -m EXPRESSION`
-: Pytest marker expression.  Example: `--markers "not integration" TestDevice`
+: Pytest marker expression.  Example: `--markers "not integration" TestDevice`.
+  With no suite name, runs the marker selection across every repo instead.
+
+`--tests NAME[,NAME...]`
+: Run specific tests by exact name, across all suites/repos — no suite
+  subcommand needed.  Comma-separated; `TestClass::name` disambiguates.
+  Combine with `--markers` to narrow further.  Unknown names raise an error
+  with did-you-mean suggestions.  Example: `--tests test_login,TestB::test_plain`
 
 `--iterations / -i N`
 : Repeat each test *N* times within a single setup/teardown cycle.

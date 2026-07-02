@@ -186,6 +186,37 @@ class TestCollectCurrentCommands:
         assert entry["options"]
         assert entry["options"][0]["kind"] == "int"
 
+    def test_auto_registered_suite_appears_with_serialized_options(self) -> None:
+        """A Test* OttoSuite subclass defined with NO decorator/manual registration
+        still surfaces in collect_current_commands() — pins that the completion
+        cache reads the live SUITES registry, which OttoSuite.__init_subclass__
+        populates automatically (register_suite() was deleted; see
+        tests/unit/suite/test_auto_registration.py for the isolation idiom)."""
+        import typer
+
+        from otto import options
+        from otto.suite import OttoSuite
+        from otto.suite.register import SUITES
+
+        @options
+        class _AutoRegProbeOpts:
+            retries: Annotated[int, typer.Option(help="n")] = 3
+
+        class TestAutoRegProbe(OttoSuite[_AutoRegProbeOpts]):
+            Options = _AutoRegProbeOpts
+
+            async def test_something(self) -> None: ...
+
+        try:
+            assert "TestAutoRegProbe" in SUITES  # sanity: __init_subclass__ registered it
+            _instructions, suites = cc.collect_current_commands()
+        finally:
+            SUITES.unregister("TestAutoRegProbe")
+
+        entry = next(e for e in suites if e["name"] == "TestAutoRegProbe")
+        assert entry["options"]
+        assert entry["options"][0]["kind"] == "int"
+
     def test_unserializable_options_cache_with_empty_options_list(self) -> None:
         """A command whose options can't be serialized still completes by name."""
         from decimal import Decimal
