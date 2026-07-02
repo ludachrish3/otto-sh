@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless docs docs-lint docs-html docs-inventories doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless docs docs-lint docs-html docs-inventories doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -68,7 +68,7 @@ STABILITY_UNIX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),10)
 #                no-VM e2e tests. Mirrors noxfile.py tests_hostless.
 M_UNIX := integration and not embedded
 M_EMBEDDED := embedded
-M_HOSTLESS := not integration and not embedded and not stability
+M_HOSTLESS := not integration and not embedded and not stability and not browser
 
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
@@ -195,6 +195,9 @@ coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a covera
 
 coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
 	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
+
+dashboard: ## Run the browser e2e suite for the monitor dashboard (needs `make browsers` once). JUnit XML in reports/junit/dashboard/.
+	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard -m browser --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead

@@ -410,6 +410,17 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
                     "-s",
                     "-p",
                     "no:cacheprovider",
+                    # This inner session runs in-process and shares the
+                    # interpreter with the outer one. pytest-playwright installs
+                    # a session-wide pytest_runtest_call wrapper (for its
+                    # soft-assertion expect()) that runs for every test, not
+                    # just ones using its fixtures; the outer test's call is
+                    # already inside that wrapper, so entering it again here
+                    # raises "nested soft assertion scopes are not supported".
+                    # The generated suite doesn't need Playwright, so disabling
+                    # it here just avoids the collision.
+                    "-p",
+                    "no:playwright",
                     "--override-ini",
                     "addopts=",
                     "-o",

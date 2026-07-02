@@ -72,6 +72,16 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path, options: object | None = 
     need closing here: the root-conftest loop reaper (see
     ``tests/_loop_reaper.py``) closes any orphaned harness loop at the outer
     test's teardown boundary.
+
+    ``-p no:playwright`` disables pytest-playwright for the inner session.
+    That plugin installs a session-wide ``pytest_runtest_call`` wrapper
+    (used for its soft-assertion ``expect()``) that runs for *every* test,
+    not just ones using its fixtures. Since this inner session shares the
+    interpreter with the outer one, the outer test's own call is already
+    wrapped by that same hook; entering it a second time here raises
+    "nested soft assertion scopes are not supported". None of the inner
+    fixture files need Playwright, so disabling it here is a no-op for
+    behavior and just avoids the collision.
     """
     ctx = OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path)
     token = set_context(ctx)
@@ -86,6 +96,8 @@ def _run_inner_pytest(test_file: Path, tmp_path: Path, options: object | None = 
                 "--no-cov",
                 "--override-ini",
                 "addopts=",
+                "-p",
+                "no:playwright",
                 "-x",
             ],
             plugins=[OttoPlugin(), OttoOptionsPlugin(options)],

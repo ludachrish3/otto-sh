@@ -54,6 +54,23 @@ class DashboardHarness(Generic[C]):
         try:
             self._loop.run_until_complete(self.server.serve())
         finally:
+            # `server.serve()` returning doesn't guarantee uvicorn's own
+            # background lifespan task (LifespanOn.main(), started via
+            # loop.create_task() inside uvicorn) has reached a *terminal*
+            # state yet -- shutdown_event.set() is its last statement, which
+            # unblocks our await but needs one more loop iteration to mark
+            # the task itself done. asyncio.run() drains exactly this case
+            # for free; a hand-rolled new_event_loop()/close() does not. Skip
+            # this and the still-"pending" task gets closed out from under it,
+            # so Python's GC finalizes it against an already-closed loop at
+            # some arbitrary *later* point -- raising "Event loop is closed"
+            # that pytest's unraisableexception hook then attributes to
+            # whatever unrelated test happens to be running at GC time.
+            pending = asyncio.all_tasks(loop=self._loop)
+            if pending:
+                for task in pending:
+                    task.cancel()
+                self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
             self._loop.close()
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:

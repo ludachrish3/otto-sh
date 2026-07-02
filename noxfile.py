@@ -44,7 +44,7 @@ HOSTLESS_TEST_ARGS = (
     "tests/unit",
     "tests/e2e",
     "-m",
-    "not integration and not embedded and not stability",
+    "not integration and not embedded and not stability and not browser",
     "--cov-fail-under=85",
 )
 
@@ -136,6 +136,24 @@ def tests_all(session: nox.Session) -> None:
     ``make coverage`` (92%).
     """
     session.run("pytest", "--cov-fail-under=92", _junitxml(session, "nox"), *session.posargs)
+
+
+@nox_uv.session(python=["3.12"], uv_groups=["dev"])
+def dashboard(session: nox.Session) -> None:
+    """Run the monitor-dashboard browser e2e suite (Chromium via Playwright).
+
+    Kept out of the hostless gate (and its 5-Python CI matrix) so only this
+    session needs a browser binary. Installs Chromium idempotently first.
+    """
+    session.run("playwright", "install", "chromium")
+    session.run(
+        "pytest",
+        "tests/e2e/monitor/dashboard",
+        "-m",
+        "browser",
+        _junitxml(session, "dashboard"),
+        *session.posargs,
+    )
 
 
 @nox_uv.session(uv_groups=["dev"])
