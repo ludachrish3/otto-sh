@@ -191,6 +191,22 @@ def resolve_suite(suite: str, repos: list[Repo]) -> str:
     return suite
 
 
+def _repo_confcutdir(suite_file: str, repos: list[Repo]) -> Path:
+    """Root for pytest's --confcutdir: the suite file's owning repo.
+
+    Cutting at the SUT repo root (the directory holding ``.otto/``) loads the
+    user repo's FULL conftest hierarchy — root, ``tests/``, per-subdir — while
+    still excluding otto's own ``tests/conftest.py`` for the in-tree example
+    repos (it sits above ``tests/repoN/``). Fallback for a file outside every
+    repo: the file's parent (the historical behavior).
+    """
+    resolved = Path(suite_file).resolve()
+    for repo in repos:
+        if resolved.is_relative_to(repo.sut_dir):
+            return repo.sut_dir
+    return resolved.parent
+
+
 def run_suite(
     suite_class: type,
     suite_file: str,
@@ -273,11 +289,11 @@ def run_suite(
         "log_cli=false",
         "--override-ini",
         "addopts=",
-        # Restrict conftest loading to the suite file's directory tree so that
-        # otto's own tests/conftest.py (which resets logging management state)
-        # is not picked up by the inner session when the suite lives inside the
-        # otto project tree.
-        f"--confcutdir={Path(suite_file).resolve().parent}",
+        # Cut conftest loading at the suite's repo root: the user repo's whole
+        # conftest hierarchy loads; otto's own tests/conftest.py (which resets
+        # logging management state) stays excluded for in-tree example repos
+        # because it lives above their sut_dir.
+        f"--confcutdir={_repo_confcutdir(suite_file, repos)}",
         # pytest-asyncio registers anyio for assertion rewriting, but anyio is
         # already imported by the time pytest.main() is called from within otto.
         # The warning is harmless (anyio's internals don't affect test results)
