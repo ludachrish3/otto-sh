@@ -598,3 +598,61 @@ class TestSuiteRunnerIntegration:
             f"--- stdout ---\n{suite_run_exit_code.stdout}\n"
             f"--- stderr ---\n{suite_run_exit_code.stderr}"
         )
+
+
+@pytest.mark.integration
+@pytest.mark.xdist_group("coverage_e2e")
+class TestPollutedBuildTree:
+    """Rebuilding the product between the test run and the report — the
+    classic polluted-tree error mode — must produce a helpful error naming
+    the likely cause, never a traceback and never silent zero coverage.
+
+    Coverage data (.gcda) embeds a build stamp that must match the build
+    tree's .gcno notes files; a (partial) rebuild changes the stamps, so
+    reporting old data against the new tree cannot work.
+    """
+
+    def test_report_after_rebuild_fails_helpfully(self, tmp_path: Path) -> None:
+        xdir = tmp_path / "xdir"
+        xdir.mkdir()
+
+        # Stage 1 — collect real coverage against the current build.
+        _run_otto(
+            ["-l", "veggies", "test", "--cov", "TestCoverageProduct"],
+            xdir=xdir,
+            timeout=600,
+        )
+        log_dir = _find_test_log_dir(xdir)
+
+        # Pollute: force a full rebuild, giving the tree fresh .gcno stamps
+        # that no longer match the fetched .gcda. (The next suite run
+        # redeploys this build, so nothing is left inconsistent behind.)
+        subprocess.run(
+            ["make", "-C", str(PRODUCT_DIR), "clean", "all"],
+            check=True,
+            capture_output=True,
+        )
+
+        result = subprocess.run(
+            [
+                str(OTTO_BIN),
+                "-l",
+                "veggies",
+                "cov",
+                "report",
+                str(log_dir),
+                "--report",
+                str(tmp_path / "report"),
+            ],
+            env=_otto_env(xdir),
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+            timeout=120,
+            check=False,
+        )
+        combined = result.stdout + result.stderr
+        assert result.returncode == 1, f"expected exit 1, got {result.returncode}:\n{combined}"
+        assert "Traceback" not in combined, f"user saw a traceback:\n{combined}"
+        assert "rebuilt" in combined  # the likely cause...
+        assert "otto test --cov" in combined  # ...and the remedy

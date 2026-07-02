@@ -50,6 +50,7 @@ from typing import Annotated
 
 import typer
 
+from ..coverage.errors import CoverageDataMismatchError
 from ..coverage.reporter import TierSpec, run_coverage_report
 from ..coverage.store.model import TIER_SYSTEM
 from ..logger import get_logger
@@ -167,14 +168,24 @@ def report(
     cov_dirs = [d / "cov" for d in output_dirs]
     report_dir = report_dir.resolve()
 
-    store = asyncio.run(
-        run_coverage_report(
-            cov_dirs,
-            report_dir,
-            project_name=project_name,
-            tier_specs=tier_specs,
+    try:
+        store = asyncio.run(
+            run_coverage_report(
+                cov_dirs,
+                report_dir,
+                project_name=project_name,
+                tier_specs=tier_specs,
+            )
         )
-    )
+    except CoverageDataMismatchError as e:
+        # Polluted-tree error mode (product rebuilt after the test run):
+        # the message already names the cause and remedy — print it clean,
+        # never as a traceback.
+        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
+        raise typer.Exit(1) from e
+    except RuntimeError as e:
+        logger.error("Coverage merge failed: %s", e)  # noqa: TRY400 — deliberately no traceback: lcov output is the diagnostic
+        raise typer.Exit(1) from e
     if store is None:
         # run_coverage_report logged the specific warning (missing meta or
         # no host dirs); for the standalone command treat that as an error.

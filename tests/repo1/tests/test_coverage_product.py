@@ -53,13 +53,21 @@ class _Options:
 
 
 async def _compile_product() -> None:
-    """Compile the C product with --coverage on the local host."""
+    """Build the C product with --coverage on the local host (incremental).
+
+    Deliberately NOT ``make clean all``: make's dependency tracking is the
+    build cache that decouples building from test running. Unchanged sources
+    are a no-op — the binary and its ``.gcno`` stamps are reused across every
+    ``otto test`` invocation; changed sources rebuild consistently. (Stale
+    data against a NEWER build is caught downstream: gcov's stamp mismatch
+    surfaces as CoverageDataMismatchError at ``otto cov report`` time.)
+    """
     localhost = LocalHost()
     try:
-        result = await localhost.oneshot(f"make -C {PRODUCT_DIR} clean all", timeout=30)
+        result = await localhost.oneshot(f"make -C {PRODUCT_DIR} all", timeout=30)
         if result.status != Status.Success:
             raise RuntimeError(f"Product compilation failed:\n{result.value}")
-        logger.info("Product compiled successfully")
+        logger.info("Product build up to date")
     finally:
         await localhost.close()
 

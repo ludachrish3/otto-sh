@@ -50,6 +50,34 @@ class TestLcovMerger:
         await localhost.close()
 
     @pytest.mark.asyncio
+    async def test_capture_stamp_mismatch_raises_typed_helpful_error(self, tmp_path):
+        """A gcov 'stamp mismatch' (product rebuilt after the test run) must
+        surface as CoverageDataMismatchError whose message names the likely
+        cause and the remedy — not a bare RuntimeError of raw lcov output."""
+        from otto.coverage.errors import CoverageDataMismatchError
+
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+
+        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
+            mock_oneshot.return_value = CommandResult(
+                Status.Failed,
+                value=(
+                    "/x/cov/carrot_seed/product-math_ops.gcda:stamp mismatch with notes file\n"
+                    "geninfo: ERROR: GCOV failed for /x/cov/carrot_seed/product-math_ops.gcda!"
+                ),
+                command="lcov --capture ...",
+                retcode=1,
+            )
+            with pytest.raises(CoverageDataMismatchError) as ei:
+                await merger.capture(tmp_path / "gcda", tmp_path / "gcno", tmp_path / "out.info")
+        msg = str(ei.value)
+        assert "rebuilt" in msg  # names the likely cause
+        assert "otto test --cov" in msg  # names the remedy
+        assert "stamp mismatch" in msg  # carries the underlying evidence
+        await localhost.close()
+
+    @pytest.mark.asyncio
     async def test_merge_info_files(self, tmp_path):
         localhost = LocalHost()
         merger = LcovMerger(localhost)

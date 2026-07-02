@@ -101,6 +101,14 @@ class LcovMerger:
         logger.info("lcov capture: %s -> %s", gcda_dir, output)
         result = await self.localhost.oneshot(cmd, timeout=300)
         if result.status != Status.Success:
+            if "stamp mismatch" in (result.value or ""):
+                # gcov's marker for .gcda produced by a DIFFERENT build than
+                # the .gcno notes files — the polluted-tree / partial-rebuild
+                # error mode. Raise the typed error so the CLI can explain
+                # the cause instead of dumping raw lcov output.
+                from ..errors import CoverageDataMismatchError
+
+                raise CoverageDataMismatchError(result.value)
             raise RuntimeError(f"lcov --capture failed:\n{result.value}")
         return output
 

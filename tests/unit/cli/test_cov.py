@@ -89,6 +89,47 @@ class TestCovReportValidation:
         assert result.exit_code == 1
 
 
+class TestCovReportMergeErrors:
+    """Merge-stage failures must exit 1 with a clean message — no traceback."""
+
+    @pytest.fixture
+    def cov_dir(self, tmp_path):
+        (tmp_path / "cov" / "host1").mkdir(parents=True)
+        return tmp_path
+
+    def test_stamp_mismatch_reports_cause_without_traceback(self, cov_dir):
+        from otto.coverage.errors import CoverageDataMismatchError
+
+        with (
+            patch.object(
+                cov_module,
+                "run_coverage_report",
+                side_effect=CoverageDataMismatchError("x.gcda:stamp mismatch with notes file"),
+            ),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["report", str(cov_dir)])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        message = mock_err.call_args[0][0]
+        assert "rebuilt" in message  # names the likely cause
+        assert "otto test --cov" in message  # names the remedy
+
+    def test_generic_merge_failure_reports_cleanly(self, cov_dir):
+        with (
+            patch.object(
+                cov_module,
+                "run_coverage_report",
+                side_effect=RuntimeError("lcov --capture failed:\nsome lcov noise"),
+            ),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["report", str(cov_dir)])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "Coverage merge failed" in mock_err.call_args[0][0]
+
+
 # ── report command — success ─────────────────────────────────────────────────
 
 

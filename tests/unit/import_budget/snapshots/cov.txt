@@ -19,6 +19,7 @@ otto.coverage.correlator
 otto.coverage.correlator.lcov_loader
 otto.coverage.correlator.merger
 otto.coverage.correlator.paths
+otto.coverage.errors
 otto.coverage.fetcher
 otto.coverage.fetcher.remote
 otto.coverage.renderer
