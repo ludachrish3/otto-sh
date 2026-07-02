@@ -88,9 +88,9 @@ def build_stub_command(
 ) -> typer.Typer:
     """Return a single-command ``typer.Typer`` named ``name``, ready to attach.
 
-    Mirrors the shape ``@register_suite`` / ``@instruction`` produce on the
-    slow path: a sub-Typer with exactly one registered command whose
-    callback carries the option signature.
+    Mirrors the shape ``OttoSuite`` auto-registration / ``@instruction``
+    produce on the slow path: a sub-Typer with exactly one registered
+    command whose callback carries the option signature.
     """
     sub = typer.Typer()
     callback = _build_callback(options)

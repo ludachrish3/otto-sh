@@ -1,5 +1,5 @@
-"""Example OttoSuite demonstrating @register_suite(), inherited options,
-suite-specific options, timeout, retry, parametrize, and stability testing.
+"""Example OttoSuite demonstrating Test*-prefixed auto-registration, inherited
+options, suite-specific options, timeout, retry, parametrize, and stability testing.
 
 Run with::
 
@@ -16,7 +16,7 @@ import typer
 from repo1_common.options import RepoOptions
 
 from otto import options
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
 
 @options
@@ -36,7 +36,6 @@ class _Options(RepoOptions):
     ] = True
 
 
-@register_suite()
 class TestDevice(OttoSuite[_Options]):
     """Validate device configuration and connectivity."""
 

@@ -11,7 +11,7 @@ from typing import Annotated
 import typer
 
 from otto import options
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
 
 @options
@@ -19,7 +19,6 @@ class E2EFixtureOptions:
     label: Annotated[str, typer.Option(help="Label for the e2e fixture run.")] = "e2e"
 
 
-@register_suite()
 class TestE2EFixture(OttoSuite[E2EFixtureOptions]):
     """Deterministic hostless fixture suite for CLI e2e tests."""
 

@@ -388,8 +388,8 @@ otto run --list-instructions          # see all available instructions
 
 ## Your first test suite
 
-A test suite is an {class}`~otto.suite.suite.OttoSuite` subclass registered
-with {func}`@register_suite() <otto.suite.register.register_suite>`.
+A test suite is an {class}`~otto.suite.suite.OttoSuite` subclass with a
+`Test`-prefixed name — it registers automatically, no decorator needed.
 Create `tests/test_example.py`:
 
 ```python
@@ -399,7 +399,7 @@ import typer
 from pydantic import Field
 
 from otto import options
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
 
 @options
@@ -408,7 +408,6 @@ class _Options:
     retries: Annotated[int, typer.Option(help="Connection retries (>= 0).")] = Field(default=3, ge=0)
 
 
-@register_suite()
 class TestExample(OttoSuite[_Options]):
     """Basic connectivity checks."""
 

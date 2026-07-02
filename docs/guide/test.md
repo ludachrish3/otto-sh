@@ -1,9 +1,9 @@
 # otto test
 
 `otto test` runs **test suites** -- classes that extend
-{class}`~otto.suite.suite.OttoSuite` and are registered with
-{func}`@register_suite() <otto.suite.register.register_suite>`.  Each suite
-becomes its own subcommand with typed CLI options.
+{class}`~otto.suite.suite.OttoSuite` with a `Test`-prefixed name, which
+registers them automatically.  Each suite becomes its own subcommand with
+typed CLI options.
 
 ## Defining a test suite
 
@@ -16,7 +16,7 @@ import pytest
 import typer
 
 from otto import options
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
 
 @options
@@ -30,7 +30,6 @@ class _Options:
     )] = True
 
 
-@register_suite()
 class TestDevice(OttoSuite[_Options]):
     """Validate device configuration and connectivity."""
 
@@ -66,7 +65,9 @@ class TestDevice(OttoSuite[_Options]):
 
 ## Suite registration
 
-The `@register_suite()` decorator:
+`OttoSuite.__init_subclass__` auto-registers any subclass whose name starts
+with `Test` (matching pytest's own `python_classes = Test*` collection
+rule). Registration:
 
 1. Reads the inner `Options` dataclass
 2. Converts each field into a Typer CLI parameter

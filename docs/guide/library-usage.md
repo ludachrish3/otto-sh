@@ -18,8 +18,8 @@ submodules. Nothing under `.otto/settings.toml` `init` is imported just because
 The composition root — repo discovery plus importing every configured `init`
 module and test file — is {func}`otto.bootstrap.bootstrap`, and it is
 idempotent (repeated calls return the same cached result). `open_context()`
-calls it for you before loading the lab, so any `@instruction`,
-`@register_suite()`, `@cli_command()`, or `register_*_backend()` call in your
+calls it for you before loading the lab, so any `@instruction`, `Test*`-named
+`OttoSuite` subclass, `@cli_command()`, or `register_*_backend()` call in your
 project's `init` modules has already run by the time the `async with` block
 starts:
 

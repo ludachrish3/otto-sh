@@ -24,7 +24,7 @@ functions; the class is the shared engine behind them.
 | --- | --- | --- | --- |
 | `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | `run`, `test`, `host`, `monitor`, `cov`, `docker`, `reservation`, `schema`, … |
 | `INSTRUCTIONS` | `otto run` subcommand | {func}`~otto.cli.run.instruction` | — |
-| `SUITES` | `otto test` subcommand | {func}`~otto.suite.register.register_suite` | — |
+| `SUITES` | `otto test` subcommand | {func}`~otto.suite.register.register_suite_class` (auto-called by {class}`~otto.suite.suite.OttoSuite`'s `__init_subclass__`) | — |
 | `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded` |
 | `OS_PROFILES` | `os_type` profile | `otto.host.os_profile.register_os_profile` | `unix`, `embedded`, `zephyr` |
 | `TERM_BACKENDS` | term (connection) backend | `otto.host.connections.register_term_backend` | `ssh`, `telnet` |

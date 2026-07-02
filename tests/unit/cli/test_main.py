@@ -255,11 +255,12 @@ class TestLabFreeFlags:
         "No such command", never reaching the preamble). A registered suite reaches
         the preamble, which enforces ``--lab`` and exits 2.
         """
-        from otto.suite.register import register_suite
+        from otto.suite.register import register_suite_class
 
-        @register_suite()
         class _LabReqSuite:
             pass
+
+        register_suite_class(_LabReqSuite)
 
         # suite_app resolves _LabReqSuite lazily from the SUITES registry —
         # no explicit attach step needed.

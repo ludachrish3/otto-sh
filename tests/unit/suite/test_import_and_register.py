@@ -10,9 +10,10 @@ to load files directly by path, independent of ``sys.path``.
 
 Two concerns are exercised end-to-end:
 
-1. **Registration** — ``import_test_files()`` triggers ``@register_suite()`` on
-   ``TestDevice`` and the suite lands in the ``SUITES`` registry, even though
-   ``tests/repo1/tests`` is not on ``sys.path``.
+1. **Registration** — ``import_test_files()`` triggers auto-registration (via
+   ``OttoSuite.__init_subclass__``) on ``TestDevice`` and the suite lands in
+   the ``SUITES`` registry, even though ``tests/repo1/tests`` is not on
+   ``sys.path``.
 
 2. **Help-menu fidelity** — the generated Typer command exposes the full set
    of expected options: the five common options, the two ``TestDevice``-specific
@@ -64,8 +65,9 @@ def clean_registry():
         # Two origin flavors both mean "repo1's suite world": the auto-scan
         # `_otto_suite_*` module names, AND pytest's own module names left by
         # an in-process `pytest.main([suite_file])` run (run_suite), which
-        # @register_suite silently same-file-overwrites. Match by source file
-        # (all flavors share it) plus the auto-scan prefix for non-repo1 repos.
+        # register_suite_class silently same-file-overwrites. Match by source
+        # file (all flavors share it) plus the auto-scan prefix for non-repo1
+        # repos.
         if origin.startswith("_otto_suite_") or Path(entry.file).is_relative_to(_REPO1_DIR):
             parked[name] = (entry, origin)
             SUITES.unregister(name)
@@ -153,8 +155,8 @@ class TestSuiteAutoScan:
             "to the broken sys.path-relative logic"
         )
 
-    def test_plain_test_file_without_decorator_not_registered(self, repo1: Repo):
-        """test_example.py has no @register_suite() and must not add to the registry."""
+    def test_plain_test_file_without_suite_class_not_registered(self, repo1: Repo):
+        """test_example.py has no OttoSuite subclass and must not add to the registry."""
         before_names = set(SUITES.names())
         repo1.import_test_files()
         added_names = set(SUITES.names()) - before_names

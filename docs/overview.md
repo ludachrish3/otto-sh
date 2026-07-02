@@ -132,8 +132,7 @@ otto -l my_lab run deploy --debug
 ### Test suites (`otto test`)
 
 A **suite** is a class that extends {class}`~otto.suite.suite.OttoSuite`
-and is registered with the
-{func}`@register_suite() <otto.suite.register.register_suite>` decorator.
+with a `Test`-prefixed name, which registers it automatically.
 Each suite becomes a subcommand of `otto test`.  Suites can define an `Options` class whose fields appear as CLI flags:
 
 ```python
@@ -142,13 +141,12 @@ from typing import Annotated
 import typer
 
 from otto import options
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
 @options
 class _Options:
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
-@register_suite()
 class TestDevice(OttoSuite[_Options]):
     Options = _Options
 

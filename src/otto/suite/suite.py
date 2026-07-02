@@ -39,11 +39,11 @@ def _sanitize_node_name(name: str) -> str:
 class OttoSuite(Generic[TOptions]):
     """Base class for otto test suites.
 
-    Subclass this and decorate with ``@register_suite()`` to register your
-    suite as an ``otto test <ClassName>`` subcommand.  OttoSuite is a plain
-    class (not ``unittest.TestCase``), so all standard pytest features work
-    natively — fixtures, ``@pytest.mark.parametrize``, markers, conftest.py,
-    and yield-based setup/teardown.
+    Subclass this with a ``Test*``-prefixed name and it is automatically
+    registered as an ``otto test <ClassName>`` subcommand.  OttoSuite is a
+    plain class (not ``unittest.TestCase``), so all standard pytest features
+    work natively — fixtures, ``@pytest.mark.parametrize``, markers,
+    conftest.py, and yield-based setup/teardown.
 
     Defining suite options
     ----------------------
@@ -56,7 +56,7 @@ class OttoSuite(Generic[TOptions]):
 
         import typer
 
-        from otto.suite import OttoSuite, register_suite
+        from otto.suite import OttoSuite
 
         @dataclass
         class _Opts:
@@ -64,7 +64,6 @@ class OttoSuite(Generic[TOptions]):
                 help="Kind of device under test ('router', 'switch').",
             )] = "router"
 
-        @register_suite()
         class TestMyDevice(OttoSuite[_Opts]):
             \"\"\"Validate device configuration.\"\"\"
             Options = _Opts
@@ -141,7 +140,6 @@ class OttoSuite(Generic[TOptions]):
             ] = Field(default=3, ge=0)
 
 
-        @register_suite()
         class TestDevice(OttoSuite[_Opts]):
             Options = _Opts
 
@@ -173,6 +171,20 @@ class OttoSuite(Generic[TOptions]):
     #: drives session-wide collection.  Falls back to ``None`` so per-suite
     #: ``start_monitor()`` calls keep working unchanged.
     _session_monitor_collector: "MetricCollector | None" = None
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        """Auto-register ``Test*``-named subclasses as ``otto test`` subcommands.
+
+        Matches pytest's own ``python_classes = Test*`` collection rule, so a
+        shared base class (``BaseSomething(OttoSuite)``) is naturally skipped.
+        pytest re-imports a suite file under its own module name when a suite
+        runs; the registry's same-file overwrite rule absorbs that re-fire.
+        """
+        super().__init_subclass__(**kwargs)
+        if cls.__name__.startswith("Test"):
+            from otto.suite.register import register_suite_class
+
+            register_suite_class(cls)
 
     def setup_method(self, method: object = None) -> None:  # noqa: ARG002 — required by pytest setup_method hook signature
         """Initialise per-test instance attributes before each test method runs."""

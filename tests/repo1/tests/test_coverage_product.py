@@ -29,7 +29,7 @@ from otto.configmodule.configmodule import (
 from otto.host import LocalHost
 from otto.host.unix_host import UnixHost
 from otto.logger import get_logger
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
 
@@ -118,7 +118,6 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     return result.value.strip()
 
 
-@register_suite()
 @pytest.mark.asyncio(loop_scope="class")
 class TestCoverageProduct(OttoSuite[_Options]):
     """Exercise the sample C product across multiple hosts for coverage testing.

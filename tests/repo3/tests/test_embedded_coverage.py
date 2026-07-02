@@ -38,7 +38,7 @@ from otto.configmodule.configmodule import all_hosts
 from otto.host import LocalHost
 from otto.host.embedded_host import EmbeddedHost
 from otto.logger import get_logger
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
 
@@ -159,7 +159,6 @@ class _Options:
     pass
 
 
-@register_suite()
 @pytest.mark.asyncio(loop_scope="class")
 class TestEmbeddedCoverage(OttoSuite[_Options]):
     """Exercise the LLEXT coverage product over the console on each embedded

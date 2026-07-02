@@ -1,6 +1,6 @@
 """Run a registered OttoSuite test suite.
 
-Each test suite decorated with ``@register_suite()`` appears as a subcommand of
+Each ``Test*``-named ``OttoSuite`` subclass auto-registers as a subcommand of
 ``otto test``.  Suite-specific options (declared in the suite's inner ``Options``
 dataclass) are automatically registered as Typer parameters with full type
 enforcement and ``--help`` documentation.

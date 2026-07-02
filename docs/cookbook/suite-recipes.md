@@ -10,9 +10,8 @@ parameter combination gets its own artifact directory:
 
 ```python
 import pytest
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
-@register_suite()
 class TestInterfaces(OttoSuite):
 
     @pytest.mark.parametrize("interface", ["eth0", "eth1", "mgmt0"])
@@ -105,13 +104,12 @@ import typer
 
 from otto import options
 from my_shared.options import RepoOptions
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
 @options
 class _Options(RepoOptions):
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
-@register_suite()
 class TestDevice(OttoSuite[_Options]):
     Options = _Options
 

@@ -6,10 +6,12 @@ otto plugin — not a bespoke test framework.
 
 ## From class to subcommand
 
-A suite extends {class}`~otto.suite.suite.OttoSuite` and registers with
-{func}`~otto.suite.register.register_suite`. The decorator does three things
-at import time (which, for repo test files, means during bootstrap phase 2 —
-{doc}`lifecycle`):
+A suite extends {class}`~otto.suite.suite.OttoSuite` with a `Test`-prefixed
+class name (matching pytest's own `python_classes = Test*` collection rule),
+which triggers `__init_subclass__` to call
+{func}`~otto.suite.register.register_suite_class`. Registration does three
+things at import time (which, for repo test files, means during bootstrap
+phase 2 — {doc}`lifecycle`):
 
 1. Reads the suite's `Options` class (an `@options` pydantic dataclass —
    {doc}`../guide/options`) and synthesizes

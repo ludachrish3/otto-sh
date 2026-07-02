@@ -2,13 +2,18 @@
 Unit tests for ``otto.suite.register``.
 
 Tests verify:
-  - ``@register_suite()`` registers a sub-Typer into the ``SUITES`` registry,
+  - ``register_suite_class()`` registers a sub-Typer into the ``SUITES`` registry,
     resolved lazily by ``suite_app``'s ``RegistryBackedGroup``
   - The generated Typer command has only suite-specific parameters (runner-level
     options live on the ``otto test`` parent callback in ``otto.cli.test``)
   - Dataclass inheritance works: parent fields appear alongside child fields
   - The runner correctly constructs the ``Options`` instance and calls ``run_suite``
   - ``OttoOptionsPlugin`` stores options and is accessible by name via pluginmanager
+
+(``Test*``-prefixed-subclass auto-registration itself is covered by
+``test_auto_registration.py``; this file exercises ``register_suite_class()``
+directly against non-``Test*``-named probe classes so registration can be
+triggered explicitly, independent of ``OttoSuite.__init_subclass__``.)
 """
 
 import inspect
@@ -26,7 +31,7 @@ from otto.suite.pytest_plugin import OttoOptionsPlugin
 from otto.suite.register import (
     SUITES,
     _options_params,
-    register_suite,
+    register_suite_class,
 )
 
 runner = CliRunner()
@@ -44,35 +49,30 @@ def _make_app_with_suite(suite_class: type) -> typer.Typer:
     return app
 
 
-# ── @register_suite() decorator ───────────────────────────────────────────────
+# ── register_suite_class() ──────────────────────────────────────────────────
 
 
-class TestRegisterSuiteDecorator:
-    def test_register_suite_records_source_file(self):
-        @register_suite()
+class TestRegisterSuiteClass:
+    def test_register_suite_class_records_source_file(self):
         class _SuiteFileProbe:
             pass
+
+        register_suite_class(_SuiteFileProbe)
 
         assert SUITES.get("_SuiteFileProbe").file == __file__
 
     def test_adds_entry_to_registry(self):
         initial = len(SUITES)
 
-        @register_suite()
         class _SuiteA:
             pass
+
+        register_suite_class(_SuiteA)
 
         assert len(SUITES) == initial + 1
         entry = SUITES.get("_SuiteA")
         assert entry.name == "_SuiteA"
         assert isinstance(entry.sub_app, typer.Typer)
-
-    def test_returns_class_unchanged(self):
-        @register_suite()
-        class _SuiteB:
-            pass
-
-        assert isinstance(_SuiteB, type)
 
     @staticmethod
     def _exec_suite_file(suite_file, mod_name: str) -> None:
@@ -80,7 +80,7 @@ class TestRegisterSuiteDecorator:
 
         Mirrors ``Repo.import_test_file``'s ``spec_from_file_location`` +
         ``sys.modules[mod_name] = mod`` shape — needed so ``inspect.getfile``
-        (called by the ``@register_suite`` decorator) can resolve the class's
+        (called by ``register_suite_class``) can resolve the class's
         source file via ``sys.modules[cls.__module__].__file__``.
         """
         import importlib.util
@@ -109,10 +109,10 @@ class TestRegisterSuiteDecorator:
             suite_file = tmp_path / dirname / "test_dup_probe.py"
             suite_file.parent.mkdir(parents=True, exist_ok=True)
             suite_file.write_text(
-                "from otto.suite.register import register_suite\n\n\n"
-                "@register_suite()\n"
+                "from otto.suite.register import register_suite_class\n\n\n"
                 "class _DupFileSuite:\n"
-                "    pass\n"
+                "    pass\n\n\n"
+                "register_suite_class(_DupFileSuite)\n"
             )
             return suite_file
 
@@ -132,17 +132,17 @@ class TestRegisterSuiteDecorator:
         This is the expected re-import pattern: ``run_suite()`` executes a
         suite via ``pytest.main([suite_file, ...])``, which makes pytest
         re-import the suite file under its own module name — a second,
-        expected execution of ``@register_suite()`` for the same class from
-        the same file within one process. It must NOT be treated as a
+        expected execution of ``register_suite_class()`` for the same class
+        from the same file within one process. It must NOT be treated as a
         collision (unlike two genuinely different files registering the
         same class name, which does raise).
         """
         suite_file = tmp_path / "test_reimport_probe.py"
         suite_file.write_text(
-            "from otto.suite.register import register_suite\n\n\n"
-            "@register_suite()\n"
+            "from otto.suite.register import register_suite_class\n\n\n"
             "class _ReimportProbe:\n"
-            "    pass\n"
+            "    pass\n\n\n"
+            "register_suite_class(_ReimportProbe)\n"
         )
 
         try:
@@ -161,9 +161,10 @@ class TestRegisterSuiteDecorator:
             sys.modules.pop("test_reimport_probe", None)
 
     def test_suite_without_options_has_only_injected_ctx(self):
-        @register_suite()
         class _SuiteNoOpts:
             pass
+
+        register_suite_class(_SuiteNoOpts)
 
         sub_app = SUITES.get("_SuiteNoOpts").sub_app
         cmd = sub_app.registered_commands[0]
@@ -173,12 +174,13 @@ class TestRegisterSuiteDecorator:
         assert sig.parameters["ctx"].annotation is typer.Context
 
     def test_suite_with_options_includes_option_fields(self):
-        @register_suite()
         class _SuiteWithOpts:
             @dataclass
             class Options:
                 device_type: Annotated[str, typer.Option()] = "router"
                 count: Annotated[int, typer.Option()] = 3
+
+        register_suite_class(_SuiteWithOpts)
 
         sub_app = SUITES.get("_SuiteWithOpts").sub_app
         cmd = sub_app.registered_commands[0]
@@ -187,9 +189,10 @@ class TestRegisterSuiteDecorator:
         assert "count" in sig.parameters
 
     def test_suite_docstring_used_as_command_help(self):
-        @register_suite()
         class _SuiteDocstring:
             """My suite docstring."""
+
+        register_suite_class(_SuiteDocstring)
 
         sub_app = SUITES.get("_SuiteDocstring").sub_app
         cmd = sub_app.registered_commands[0]
@@ -269,11 +272,12 @@ class TestInheritedOptions:
         class ParentOpts:
             device_type: Annotated[str, typer.Option()] = "router"
 
-        @register_suite()
         class _SuiteInherited:
             @dataclass
             class Options(ParentOpts):
                 firmware: Annotated[str, typer.Option()] = "latest"
+
+        register_suite_class(_SuiteInherited)
 
         sub_app = SUITES.get("_SuiteInherited").sub_app
         cmd = sub_app.registered_commands[0]
@@ -306,11 +310,12 @@ class TestRunnerInvocation:
     def test_runner_calls_run_suite_with_options(self):
         """Invoking a suite command constructs the Options instance and calls run_suite."""
 
-        @register_suite()
         class _SuiteRunner:
             @dataclass
             class Options:
                 device_type: Annotated[str, typer.Option()] = "router"
+
+        register_suite_class(_SuiteRunner)
 
         app = _make_app_with_suite(_SuiteRunner)
 
@@ -329,11 +334,12 @@ class TestRunnerInvocation:
         assert opts.device_type == "switch"  # type: ignore[union-attr]
 
     def test_runner_uses_defaults_when_options_omitted(self):
-        @register_suite()
         class _SuiteDefaults:
             @dataclass
             class Options:
                 count: Annotated[int, typer.Option()] = 7
+
+        register_suite_class(_SuiteDefaults)
 
         app = _make_app_with_suite(_SuiteDefaults)
         captured: dict[str, object] = {}
@@ -352,9 +358,10 @@ class TestRunnerInvocation:
     def test_runner_called_with_four_args(self):
         """The runner invokes run_suite with (suite_cls, file, opts, ctx)."""
 
-        @register_suite()
         class _SuiteArity:
             pass
+
+        register_suite_class(_SuiteArity)
 
         app = _make_app_with_suite(_SuiteArity)
         captured: dict[str, object] = {}

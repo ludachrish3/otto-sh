@@ -1,14 +1,12 @@
-"""Public API for otto test suites: ``OttoSuite``, ``register_suite``, ``OttoOptionsPlugin``."""
+"""Public API for otto test suites: ``OttoSuite``, ``OttoOptionsPlugin``."""
 
 from typing import TYPE_CHECKING
-
-from .register import register_suite as register_suite
 
 if TYPE_CHECKING:
     from .pytest_plugin import OttoOptionsPlugin
     from .suite import OttoSuite
 
-__all__ = ["OttoOptionsPlugin", "OttoSuite", "register_suite"]
+__all__ = ["OttoOptionsPlugin", "OttoSuite"]
 
 
 def __getattr__(name: str) -> object:

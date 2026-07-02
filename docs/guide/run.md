@@ -130,7 +130,7 @@ same CLI flags (device type, lab environment, etc.), define a shared base
 setting — a `libs` path like `pylib/` is one common choice. See
 {doc}`options` for the full treatment. The *same* class can be inherited by
 
-- a suite's inner `Options` class (expanded by `@register_suite()`), and
+- a suite's inner `Options` class (expanded during auto-registration), and
 - an instruction's `options=` class (expanded by
   `@instruction(options=...)`).
 
@@ -223,7 +223,7 @@ import typer
 
 from otto import options
 from my_instructions.options import RepoOptions
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
 
 @options
@@ -231,7 +231,6 @@ class _Options(RepoOptions):                       # inherits --device-type, --l
     firmware: Annotated[str, typer.Option()] = "latest"
 
 
-@register_suite()
 class TestDevice(OttoSuite[_Options]):
     Options = _Options
 

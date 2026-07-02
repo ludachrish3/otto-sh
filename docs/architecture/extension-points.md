@@ -13,7 +13,7 @@ registries, same CLI listing and completion, same error messages
 | You want to add | Register with | Guide |
 | --- | --- | --- |
 | an `otto run` subcommand | {func}`@instruction() <otto.cli.run.instruction>` | {doc}`../guide/run` |
-| an `otto test` suite | {func}`@register_suite() <otto.suite.register.register_suite>` | {doc}`../guide/test` |
+| an `otto test` suite | `Test`-prefixed {class}`~otto.suite.suite.OttoSuite` subclass (auto-registers) | {doc}`../guide/test` |
 | a top-level `otto` command | {func}`otto.register_cli_command <otto.cli.registry.register_cli_command>` / {func}`@otto.cli_command <otto.cli.registry.cli_command>` | {doc}`../guide/extending-cli` |
 | a CLI verb on a host class | `@cli_exposed` on the method | {doc}`../guide/host/capabilities` |
 | a host class (new `os_type` base) | `register_host_class` | {doc}`../guide/os-profiles` |

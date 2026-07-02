@@ -27,7 +27,7 @@ from otto import options
 from otto.configmodule import all_hosts
 from otto.host.unix_host import UnixHost
 from otto.logger import get_logger
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 from otto.utils import Status
 
 logger = get_logger()
@@ -38,7 +38,6 @@ class _Options(RepoOptions):
     pass
 
 
-@register_suite()
 @pytest.mark.asyncio(loop_scope="class")
 class TestStabilityFixture(OttoSuite[_Options]):
     """Verify SSH connections survive across stability iterations."""

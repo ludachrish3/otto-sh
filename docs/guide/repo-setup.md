@@ -59,8 +59,9 @@ libs
 
 tests
 : List of directories to scan for `test_*.py` files.  Each matching file
-  is imported at startup, which triggers `@register_suite()` decorators and
-  makes suites available as `otto test` subcommands.  Defaults to `[]`.
+  is imported at startup, which auto-registers any `Test`-prefixed
+  `OttoSuite` subclass and makes it available as an `otto test` subcommand.
+  Defaults to `[]`.
 
 init
 : List of Python module names (dot-separated) to import at startup.  Use

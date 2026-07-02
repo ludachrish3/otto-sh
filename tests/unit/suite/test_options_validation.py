@@ -87,10 +87,10 @@ from otto import options
 from otto.cli.test import suite_app
 from otto.configmodule.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
-from otto.suite.register import register_suite
+from otto.suite.register import register_suite_class
 
 # suite_app resolves suite subcommands lazily from the SUITES registry (via
-# its RegistryBackedGroup), so a freshly @register_suite()'d class is already
+# its RegistryBackedGroup), so a freshly registered class is already
 # dispatchable through suite_app without any explicit attach step.
 
 
@@ -111,13 +111,14 @@ def _stub_cli_bootstrap(monkeypatch):
 
 
 def test_suite_pydantic_options_reject_bad_value(monkeypatch):
-    @register_suite()
     class _ValSuite:
         @options
         class Options:
             count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(
                 default=1, gt=0
             )
+
+    register_suite_class(_ValSuite)
 
     # run_suite is never reached — validation fails first at construction.
     monkeypatch.setattr("otto.cli.test.run_suite", lambda *a, **k: None)
@@ -129,13 +130,14 @@ def test_suite_pydantic_options_reject_bad_value(monkeypatch):
 def test_suite_pydantic_options_accept_good_value(monkeypatch):
     seen: dict = {}
 
-    @register_suite()
     class _OkSuite:
         @options
         class Options:
             count: Annotated[int, typer.Option(help="positive count")] = pydantic.Field(
                 default=1, gt=0
             )
+
+    register_suite_class(_OkSuite)
 
     # run_suite signature: (suite_cls, suite_file, opts_instance, ctx).
     monkeypatch.setattr(
@@ -153,11 +155,12 @@ def test_suite_field_default_used_when_flag_omitted(monkeypatch):
     """
     seen: dict = {}
 
-    @register_suite()
     class _DefSuite:
         @options
         class Options:
             count: Annotated[int, typer.Option()] = pydantic.Field(default=7, ge=0)
+
+    register_suite_class(_DefSuite)
 
     monkeypatch.setattr(
         "otto.cli.test.run_suite",
@@ -174,11 +177,12 @@ def test_suite_plain_dataclass_options_still_work(monkeypatch):
 
     seen: dict = {}
 
-    @register_suite()
     class _PlainSuite:
         @dataclass
         class Options:
             label: Annotated[str, typer.Option()] = "x"
+
+    register_suite_class(_PlainSuite)
 
     monkeypatch.setattr(
         "otto.cli.test.run_suite",

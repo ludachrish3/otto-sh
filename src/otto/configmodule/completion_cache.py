@@ -7,7 +7,8 @@ side effects in :mod:`otto.configmodule` that populate dynamic subcommands:
 - :meth:`Repo.import_init_modules` — imports every user-defined instruction
   module so ``@instruction()`` decorators can register into ``INSTRUCTIONS``.
 - :meth:`Repo.import_test_files` — exec's every ``test_*.py`` so
-  ``@register_suite()`` decorators can populate the ``SUITES`` registry.
+  ``OttoSuite.__init_subclass__`` can auto-register ``Test*``-named classes
+  into the ``SUITES`` registry.
 
 Both execute arbitrary user code. For completion all we actually need is the
 *names* those decorators would register and the *option schemas* the user can

@@ -15,10 +15,9 @@ Options appear at three points in a project's lifecycle:
 - **Instruction execution** — {func}`@instruction() <otto.cli.run.instruction>`
   expands an options class into `otto run` flags and hands your function a
   populated instance.
-- **Test suite runs** — {class}`~otto.suite.suite.OttoSuite` with
-  {func}`@register_suite() <otto.suite.register.register_suite>` expands an
-  options class into `otto test` flags and passes them to each test method as
-  `suite_options`.
+- **Test suite runs** — a `Test`-prefixed {class}`~otto.suite.suite.OttoSuite`
+  subclass expands an options class into `otto test` flags and passes them to
+  each test method as `suite_options`.
 
 Defining the options once and inheriting them keeps `otto run` and `otto test`
 in lock-step.
@@ -129,7 +128,7 @@ from typing import Annotated
 
 import typer
 from otto import options
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
 from my_shared.options import RepoOptions  # your base, listed in `init`
 
@@ -139,7 +138,6 @@ class _Options(RepoOptions):              # inherits --device-type, --lab-env, -
     firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
 
 
-@register_suite()
 class TestDevice(OttoSuite[_Options]):
     Options = _Options
 

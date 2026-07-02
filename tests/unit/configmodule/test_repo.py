@@ -108,10 +108,10 @@ def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
         # Suites re-registered by an in-process `pytest.main([suite_file])`
         # run (run_suite's mechanism) carry pytest's own module name as origin
         # (e.g. "test_device"), not the `_otto_suite_*` auto-scan name — and
-        # @register_suite silently overwrites same-FILE re-registrations, so
-        # an origin-prefix park would miss them and the delta assertion would
-        # see no growth. Identify repo1 ownership by the entry's source file,
-        # which every origin flavor shares.
+        # register_suite_class silently overwrites same-FILE re-registrations,
+        # so an origin-prefix park would miss them and the delta assertion
+        # would see no growth. Identify repo1 ownership by the entry's source
+        # file, which every origin flavor shares.
         parked = {}
         for name in list(SUITES.names()):
             entry = SUITES.get(name)

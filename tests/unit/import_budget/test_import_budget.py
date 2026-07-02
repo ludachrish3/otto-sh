@@ -109,7 +109,7 @@ def test_suite_public_api_still_resolves():
         [
             sys.executable,
             "-c",
-            "from otto.suite import OttoSuite, OttoOptionsPlugin, register_suite; print('ok')",
+            "from otto.suite import OttoSuite, OttoOptionsPlugin; print('ok')",
         ],
         capture_output=True,
         text=True,

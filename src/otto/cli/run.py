@@ -92,8 +92,8 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
     """Register an async function as an ``otto run`` subcommand.
 
     When *options* is a dataclass, the decorator expands its fields (including
-    inherited ones) into individual CLI flags — exactly like
-    ``@register_suite()`` does for suite options.  The original function must
+    inherited ones) into individual CLI flags — exactly like ``OttoSuite``'s
+    auto-registration does for suite options.  The original function must
     declare a parameter annotated with the options class; the decorator
     replaces it with the expanded fields and, at call time, constructs the
     populated dataclass instance before forwarding it to the function.

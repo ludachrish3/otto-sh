@@ -430,7 +430,7 @@ class Repo:
         return self._make_test_panel(f"{self.name} {self.version}", content)
 
     def registered_suites(self) -> list[str]:
-        """Names of ``@register_suite`` suites whose source file is under this repo.
+        """Names of auto-registered suites whose source file is under this repo.
 
         Reads ``otto.suite.register.SUITES`` (populated at suite import time)
         and returns the registered suite names — the exact subcommand names
@@ -659,7 +659,8 @@ class Repo:
     def import_test_file(self, test_file: Path) -> None:
         """Import one suite test file (idempotent per file); may raise on bad user code.
 
-        Triggers ``@register_suite()`` decorators, which populate
+        Triggers ``OttoSuite.__init_subclass__`` for every ``Test*``-named
+        class defined in the file, which populates
         ``otto.suite.register.SUITES`` at import time.  ``cli/test.py``'s
         ``suite_app`` resolves entries from that registry lazily.
         """

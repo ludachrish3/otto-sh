@@ -33,11 +33,9 @@ def root_marker() -> str:
 """
 
 SUITE = """\
-from otto.suite import OttoSuite, register_suite
+from otto.suite import OttoSuite
 
 
-# TODO(task-2): decorator removed by auto-registration task
-@register_suite()
 class TestConfcut(OttoSuite):
     async def test_sees_root_fixture(self, root_marker: str) -> None:
         assert root_marker == "from-repo-root"
