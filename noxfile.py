@@ -40,6 +40,13 @@ nox.options.sessions = ["lint", "tests_hostless", "typecheck", "docs"]
 # Coverage floors mirror the Makefile: the no-testbed CI gate (tests_hostless)
 # gates at 85 (CI_COVERAGE_THRESHOLD); every full-suite path at 92
 # (COVERAGE_THRESHOLD). Keep these in sync with the Makefile if either moves.
+
+# browser (Playwright) tests always run as their own pytest process — sync
+# Playwright keeps an event loop running in the worker main thread for the
+# whole session, which breaks pytest-asyncio tests that share the process.
+# `dashboard` (below) is that dedicated process; every other session whose
+# paths/markers could otherwise co-select browser + async tests in one
+# pytest invocation (tests_hostless, tests_all) excludes `browser` instead.
 HOSTLESS_TEST_ARGS = (
     "tests/unit",
     "tests/e2e",
@@ -131,11 +138,19 @@ def tests_all(session: nox.Session) -> None:
     """Run the full suite — unit + integration + hops — under each supported Python.
 
     Requires the dev VM with Vagrant hosts up; not run in CI. Pytest's
-    default ``testpaths`` and addopts (from pyproject.toml) cover the full
-    tree, so no marker filter is passed here. Coverage threshold matches
-    ``make coverage`` (92%).
+    default ``testpaths`` (from pyproject.toml) covers the full tree, so no
+    path filter is passed here. `browser` is excluded (see module-level
+    comment above) — run it via `nox -s dashboard` / `make dashboard`
+    instead. Coverage threshold matches ``make coverage`` (92%).
     """
-    session.run("pytest", "--cov-fail-under=92", _junitxml(session, "nox"), *session.posargs)
+    session.run(
+        "pytest",
+        "-m",
+        "not browser",
+        "--cov-fail-under=92",
+        _junitxml(session, "nox"),
+        *session.posargs,
+    )
 
 
 @nox_uv.session(python=["3.12"], uv_groups=["dev"])

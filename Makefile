@@ -70,6 +70,15 @@ M_UNIX := integration and not embedded
 M_EMBEDDED := embedded
 M_HOSTLESS := not integration and not embedded and not stability and not browser
 
+# `browser` (Playwright) tests always run as their own pytest process — sync
+# Playwright keeps an event loop running in the worker main thread for the
+# whole session, which breaks pytest-asyncio tests that share the process
+# (see tests/e2e/monitor/dashboard's `browser` marker). `make dashboard` is
+# that dedicated process; every multi-tier selection below that would
+# otherwise co-select browser + async tests in one pytest invocation
+# (`coverage`, `repeat`) excludes `browser` and, for `coverage`, chains
+# `make dashboard` separately so the gate still covers those tests overall.
+
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.
 # Two things dominate wall time: Docker integration tests are pinned to one
@@ -178,8 +187,8 @@ profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snaps
 build: ## (Build & Release) Build the project with uv
 	uv build
 
-coverage: ## Run the full suite (all tiers, pinned Python) and enforce the coverage gate (excludes heavy `stability`). Requires lab VMs. JUnit XML lands in reports/junit/coverage/.
-	$(TIMEOUT_CMD) uv run pytest -m "not stability" --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
+coverage: dashboard ## Run the full suite (all tiers, pinned Python) and enforce the coverage gate (excludes heavy `stability`; browser (Playwright) suite runs first, as its own process, via the `dashboard` prerequisite). Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage/ and reports/junit/dashboard/.
+	$(TIMEOUT_CMD) uv run pytest -m "not stability and not browser" --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability" $(call junitxml,coverage-unit)
@@ -254,8 +263,9 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 	@echo "── Tier 3 (cross-OS stability contract — includes embedded) ──"
 	@$(MAKE) stability-embedded COUNT=$(COUNT)
 
-repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat. Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
+repeat: ## Run the full local suite (unit + integration + e2e) under pytest-repeat (excludes `browser` — see note above M_HOSTLESS; run its soak separately). Local only; requires VMs. JUnit XML in reports/junit/repeat/. Override COUNT=N (default 10).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
+	    -m "not browser" \
 	    --count=$(COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
