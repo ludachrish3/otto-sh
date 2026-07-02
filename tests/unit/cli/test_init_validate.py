@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 import typer
 from typer.testing import CliRunner
 
@@ -9,6 +10,21 @@ from otto.cli.init import init_command
 from otto.utils import async_typer_command
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _wide_console(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the rich console width so table cells never fold inside asserted text.
+
+    The report table's ``detail`` column uses ``overflow="fold"``; under
+    CliRunner (non-tty) rich resolves its width from the ``COLUMNS`` env var,
+    defaulting to 80. The fold point then depends on the length of the
+    tmp-path rendered in the same cell — long CI basetemp paths shifted it
+    into the middle of ``"must be a JSON object"`` and broke the substring
+    assertions (GH issue #89). A fixed, generous width makes rendering
+    deterministic everywhere.
+    """
+    monkeypatch.setenv("COLUMNS", "300")
 
 
 def _app() -> typer.Typer:
