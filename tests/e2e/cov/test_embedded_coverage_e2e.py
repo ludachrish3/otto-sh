@@ -98,7 +98,9 @@ def clean_sprout_cov():
     async def _prep() -> bool:
         try:
             res = (await host.run("kernel version", timeout=20)).only
-            if res.status != Status.Success or "Zephyr" not in res.output:
+            # Result-family API: the command's output lives in .value (the
+            # pre-unification .output attribute no longer exists).
+            if res.status != Status.Success or "Zephyr" not in (res.value or ""):
                 return False
             await host.run("llext unload cov_ext", timeout=20)  # best-effort
             return True

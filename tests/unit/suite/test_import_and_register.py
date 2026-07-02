@@ -40,10 +40,6 @@ runner = CliRunner()
 _REPO1_DIR: Path = Path(__file__).parents[2] / "repo1"
 _REPO1_TESTS_DIR: Path = _REPO1_DIR / "tests"
 
-# Stable module names used by import_test_files for the two repo1 test files
-_MOD_DEVICE = "_otto_suite_test_device"
-_MOD_EXAMPLE = "_otto_suite_test_example"
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -52,15 +48,31 @@ _MOD_EXAMPLE = "_otto_suite_test_example"
 
 @pytest.fixture
 def clean_registry():
-    """Snapshot and restore SUITES; remove injected sys.modules entries."""
+    """Isolate the repo1 suite world; restore it exactly afterwards.
+
+    The global ``SUITES`` registry and Python's import cache couple these
+    tests to any earlier test in the same worker that imported repo1's test
+    files: cached ``_otto_suite_*`` modules make ``import_test_files()`` a
+    no-op, the decorators never re-run, and delta assertions become
+    order-dependent. Park pre-registered suites (with their origins), evict
+    every cached ``_otto_suite_*`` module, and restore both at teardown.
+    """
+    parked = {}
+    for name in list(SUITES.names()):
+        origin = SUITES.origin(name)
+        if origin.startswith("_otto_suite_"):
+            parked[name] = (SUITES.get(name), origin)
+            SUITES.unregister(name)
+    evicted = {m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("_otto_suite_")}
     before_names = set(SUITES.names())
-    before_mods = set(sys.modules)
     yield
     for name in set(SUITES.names()) - before_names:
         SUITES.unregister(name)
-    for key in set(sys.modules) - before_mods:
-        if key.startswith("_otto_suite_"):
-            sys.modules.pop(key, None)
+    for key in [m for m in sys.modules if m.startswith("_otto_suite_")]:
+        sys.modules.pop(key, None)
+    sys.modules.update(evicted)
+    for name, (obj, origin) in parked.items():
+        SUITES.register(name, obj, overwrite=True, origin=origin)
 
 
 @pytest.fixture
@@ -68,11 +80,12 @@ def repo1(clean_registry) -> Repo:
     """Return a Repo for tests/repo1 with libs on sys.path.
 
     Uses ``clean_registry`` so each test starts with a predictable ``SUITES``
-    state and ``sys.modules`` is restored afterwards.
+    state and ``sys.modules`` is restored afterwards. The tests-dir sys.path
+    precondition is enforced here (mirroring the pylib treatment in
+    test_repo.py) so it can't depend on what ran earlier in the worker.
     """
-    # Evict any previously cached module so we get a fresh import each test
-    sys.modules.pop(_MOD_DEVICE, None)
-    sys.modules.pop(_MOD_EXAMPLE, None)
+    while str(_REPO1_TESTS_DIR) in sys.path:
+        sys.path.remove(str(_REPO1_TESTS_DIR))
 
     repo = Repo(sut_dir=_REPO1_DIR)
     # Add repo1/pylib so that `from repo1_common.options import RepoOptions`

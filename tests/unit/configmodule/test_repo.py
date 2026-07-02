@@ -73,6 +73,13 @@ def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
     to ``sys.path``, imports init modules, and imports test files — which
     together register repo1's instructions/suites into the shared
     ``INSTRUCTIONS``/``SUITES`` registries (module-level, process-wide).
+
+    Isolation: Python's import cache couples this test to any earlier test in
+    the same worker that imported repo1's modules — the cached modules make
+    bootstrap's imports no-ops, the decorators never re-run, and the delta
+    assertions see "sets are equal" (deterministically reproducible by running
+    this test twice in one process). So: park any repo1-originated registry
+    entries, evict the cached modules, and restore both afterwards.
     """
     from otto import bootstrap as bs
     from otto.cli.run import INSTRUCTIONS
@@ -88,11 +95,23 @@ def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
 
     assert pylib not in sys.path
 
-    # Snapshot so we can undo the registration afterward. Otherwise a second
-    # bootstrap in this same worker process (e.g. from another test importing
-    # repo1's suite files) collides with these leftover entries: duplicate
-    # names now fail loudly (Registry.register), unlike the old permissive
-    # list-based registry this replaced.
+    def _park(registry, origin_prefix: str) -> dict:
+        parked = {}
+        for name in list(registry.names()):
+            origin = registry.origin(name)
+            if origin.startswith(origin_prefix):
+                parked[name] = (registry.get(name), origin)
+                registry.unregister(name)
+        return parked
+
+    parked_instructions = _park(INSTRUCTIONS, "repo1_instructions")
+    parked_suites = _park(SUITES, "_otto_suite_")
+    evicted = {
+        m: sys.modules.pop(m)
+        for m in list(sys.modules)
+        if m.startswith(("repo1_instructions", "_otto_suite_"))
+    }
+
     before_instructions = set(INSTRUCTIONS.names())
     before_suites = set(SUITES.names())
 
@@ -107,13 +126,20 @@ def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
         assert set(SUITES.names()) > before_suites
     finally:
         bs._reset()
-        # Clean up so we don't pollute sys.path / the registries for subsequent tests.
+        # Restore the exact pre-test world: sys.path, this test's
+        # registrations out, the parked entries and cached modules back in.
         while pylib in sys.path:
             sys.path.remove(pylib)
         for name in set(INSTRUCTIONS.names()) - before_instructions:
             INSTRUCTIONS.unregister(name)
         for name in set(SUITES.names()) - before_suites:
             SUITES.unregister(name)
+        for mod in [m for m in sys.modules if m.startswith(("repo1_instructions", "_otto_suite_"))]:
+            sys.modules.pop(mod, None)
+        sys.modules.update(evicted)
+        for registry, parked in ((INSTRUCTIONS, parked_instructions), (SUITES, parked_suites)):
+            for name, (obj, origin) in parked.items():
+                registry.register(name, obj, overwrite=True, origin=origin)
 
 
 def test_product_log_prefixes_init_libs_and_explicit_capture(tmp_path):
