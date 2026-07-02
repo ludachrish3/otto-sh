@@ -11,7 +11,7 @@ import json
 import os
 from collections.abc import Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, cast
 
 import tomli
 import typer
@@ -362,9 +362,16 @@ def _validate_lab(root: Path) -> list[str]:
             problems.append(f"{hosts_file}: must contain a JSON array, got {type(data).__name__}")
             continue
         for idx, host_data in enumerate(data):
+            if not isinstance(host_data, dict):
+                problems.append(
+                    f"{hosts_file}: [{idx}] must be a JSON object, got {type(host_data).__name__}"
+                )
+                continue
             try:
-                validate_host_dict(host_data)
-            except ValueError as e:  # noqa: PERF203 — per-item resilience, mirrors json_repository.py
+                # JSON object keys are always str; the isinstance guard above
+                # is the runtime check ty cannot see through.
+                validate_host_dict(cast("dict[str, Any]", host_data))
+            except ValueError as e:
                 problems.append(f"{hosts_file}: [{idx}] {e}")
     return problems
 

@@ -51,6 +51,17 @@ def test_invalid_host_field_fails_named(tmp_path: Path) -> None:
     assert "ipp" in result.output
 
 
+def test_non_dict_host_entry_fails_named(tmp_path: Path) -> None:
+    """A non-object array entry gets a clean indexed error, not an AttributeError."""
+    _scaffold_all(tmp_path)
+    hosts = tmp_path / "lab_data" / "hosts.json"
+    hosts.write_text(hosts.read_text().rstrip().rstrip("]") + ', "oops"]\n')
+    result = runner.invoke(_app(), ["--all", "--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "must be a JSON object" in result.output
+    assert "str" in result.output
+
+
 def test_missing_libs_dir_reported(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     # Remove only the module's __init__.py, NOT the whole pylib/ tree: the
