@@ -393,6 +393,24 @@ def try_ensure_lab(ctx: typer.Context) -> "OttoContext | None":
         return None
 
 
+def fail_loud_on_bootstrap_errors() -> None:
+    """Exit(1) when bootstrap contained any repo error — shared loud gate.
+
+    The per-error ``warning:`` lines were already printed by ``entry()`` at
+    startup; print ONLY the framed summary here (don't re-print each error
+    in red) — the summary points back at those warnings. Used by the leaf
+    preamble AND the root ``--show-lab``/``--list-hosts`` branch, so anything
+    that inspects the registered world fails the same way.
+    """
+    from ..bootstrap import bootstrap
+
+    if bootstrap().errors:
+        from rich import print as rprint
+
+        rprint("[red]Cannot run commands while a repo fails to load (see warnings above).[/red]")
+        raise typer.Exit(1)
+
+
 def command_preamble(ctx: typer.Context) -> None:
     """Run once when a real (non-help) command invocation starts.
 
@@ -406,17 +424,7 @@ def command_preamble(ctx: typer.Context) -> None:
         return
     meta["_otto_preamble_done"] = True
 
-    from ..bootstrap import bootstrap
-
-    result = bootstrap()
-    if result.errors:
-        from rich import print as rprint
-
-        # The per-error `warning:` lines were already printed by `entry()` at
-        # startup; print ONLY the framed summary here (don't re-print each error
-        # in red) — the summary points back at those warnings.
-        rprint("[red]Cannot run commands while a repo fails to load (see warnings above).[/red]")
-        raise typer.Exit(1)
+    fail_loud_on_bootstrap_errors()
 
     spec: CommandSpec = meta["_otto_command_spec"]
     if spec.lab_free:

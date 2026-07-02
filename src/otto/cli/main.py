@@ -445,7 +445,13 @@ def main(  # noqa: PLR0913 — CLI command params
     if ctx.resilient_parsing:
         return
 
-    from .invoke import LabContextError, RootOptions, ensure_lab_context, report_lab_context_error
+    from .invoke import (
+        LabContextError,
+        RootOptions,
+        ensure_lab_context,
+        fail_loud_on_bootstrap_errors,
+        report_lab_context_error,
+    )
 
     ctx.meta["_otto_root_options"] = RootOptions(
         labs=labs,
@@ -460,7 +466,11 @@ def main(  # noqa: PLR0913 — CLI command params
     )
 
     if show_lab or list_hosts:
-        # These root flags inspect live lab state: load it now, print, exit.
+        # These root flags inspect live lab state, which depends on the
+        # registered world — fail the same way dispatch does rather than
+        # surfacing a confusing secondary error from a half-registered world.
+        fail_loud_on_bootstrap_errors()
+        # Load the lab now, print, exit.
         try:
             ensure_lab_context(ctx)
         except LabContextError as e:

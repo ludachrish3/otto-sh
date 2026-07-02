@@ -42,6 +42,19 @@ class TestBootstrapContainment:
         assert r.returncode != 0
         assert "failed to load test_syntax_error.py" in r.stderr + r.stdout
 
+    def test_broken_repo_blocks_show_lab_loud(self, tmp_path: Path) -> None:
+        # --show-lab inspects live lab state, which depends on the registered
+        # world — a half-registered world would surface as a confusing
+        # secondary error (e.g. unknown host class) instead of the real cause.
+        r = run_otto(["--show-lab"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{REPO_BROKEN}")
+        assert r.returncode == 1
+        assert "Cannot run commands while a repo fails to load" in r.stdout + r.stderr
+
+    def test_broken_repo_blocks_list_hosts_loud(self, tmp_path: Path) -> None:
+        r = run_otto(["--list-hosts"], xdir=tmp_path, sut_dirs=f"{REPO_E2E},{REPO_BROKEN}")
+        assert r.returncode == 1
+        assert "Cannot run commands while a repo fails to load" in r.stdout + r.stderr
+
 
 class TestDiscoveryContainment:
     """Phase-1 containment: malformed config DATA degrades like broken user CODE."""
