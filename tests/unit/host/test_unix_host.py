@@ -18,7 +18,25 @@ import pytest
 from otto.host import HostSession, UnixHost
 from otto.host.session import ShellSession
 from otto.logger.mode import LogMode
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult, Result
+from otto.utils import Status
+
+
+def _cs(
+    *, command: str = "", output: str = "", status: Status = Status.Success, retcode: int = 0
+) -> CommandResult:
+    """Build a :class:`~otto.result.CommandResult` for the netcat-transfer fakes.
+
+    The nc backend reads command output from ``.value``; this keeps the old
+    ``command=/output=/status=/retcode=`` keyword call shape, mapping ``output``
+    onto ``value``.
+    """
+    return CommandResult(command=command, value=output, status=status, retcode=retcode)
+
+
+def _sm(result) -> tuple[Status, str]:
+    """Unwrap ``(status, msg)`` from a transfer aggregate :class:`~otto.result.Result`."""
+    return result.status, result.msg
 
 
 @pytest.fixture
@@ -199,33 +217,33 @@ class TestClose:
 class TestRunList:
     @pytest.mark.asyncio
     async def test_single_element_list(self, host: UnixHost):
-        ok = CommandStatus("echo hi", "hi", Status.Success, 0)
+        ok = CommandResult(command="echo hi", value="hi", status=Status.Success, retcode=0)
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok):
             result = await host.run(["echo hi"])
-        assert len(result.statuses) == 1
-        assert result.statuses[0] == ok
+        assert len(result) == 1
+        assert result[0] == ok
         assert result.status == Status.Success
 
     @pytest.mark.asyncio
     async def test_accepts_list_of_commands(self, host: UnixHost):
-        r1 = CommandStatus("ls", "", Status.Success, 0)
-        r2 = CommandStatus("pwd", "/home", Status.Success, 0)
+        r1 = CommandResult(command="ls", value="", status=Status.Success, retcode=0)
+        r2 = CommandResult(command="pwd", value="/home", status=Status.Success, retcode=0)
         with patch.object(host, "_run_one", new_callable=AsyncMock, side_effect=[r1, r2]):
             result = await host.run(["ls", "pwd"])
-        assert len(result.statuses) == 2
+        assert len(result) == 2
 
     @pytest.mark.asyncio
     async def test_overall_success_when_all_pass(self, host: UnixHost):
-        r1 = CommandStatus("ls", "", Status.Success, 0)
-        r2 = CommandStatus("pwd", "", Status.Success, 0)
+        r1 = CommandResult(command="ls", value="", status=Status.Success, retcode=0)
+        r2 = CommandResult(command="pwd", value="", status=Status.Success, retcode=0)
         with patch.object(host, "_run_one", new_callable=AsyncMock, side_effect=[r1, r2]):
             result = await host.run(["ls", "pwd"])
         assert result.status == Status.Success
 
     @pytest.mark.asyncio
     async def test_overall_failed_when_any_fails(self, host: UnixHost):
-        r1 = CommandStatus("ls", "", Status.Success, 0)
-        r2 = CommandStatus("badcmd", "", Status.Failed, 127)
+        r1 = CommandResult(command="ls", value="", status=Status.Success, retcode=0)
+        r2 = CommandResult(command="badcmd", value="", status=Status.Failed, retcode=127)
         with patch.object(host, "_run_one", new_callable=AsyncMock, side_effect=[r1, r2]):
             result = await host.run(["ls", "badcmd"])
         assert result.status == Status.Failed
@@ -237,8 +255,8 @@ class TestRunList:
 
 
 class TestCommandExecution:
-    def _mock_session(self, result: CommandStatus) -> MagicMock:
-        """Create a mock ShellSession that returns a fixed CommandStatus."""
+    def _mock_session(self, result: CommandResult) -> MagicMock:
+        """Create a mock ShellSession that returns a fixed CommandResult."""
         session = MagicMock(spec=ShellSession)
         session.alive = True
         session.run_cmd = AsyncMock(return_value=result)
@@ -247,16 +265,18 @@ class TestCommandExecution:
 
     @pytest.mark.asyncio
     async def test_success(self, host: UnixHost):
-        ok = CommandStatus("echo hello", "hello", Status.Success, 0)
+        ok = CommandResult(command="echo hello", value="hello", status=Status.Success, retcode=0)
         host._session_mgr._session = self._mock_session(ok)
         result = (await host.run("echo hello")).only
         assert result.status == Status.Success
         assert result.retcode == 0
-        assert result.output == "hello"
+        assert result.value == "hello"
 
     @pytest.mark.asyncio
     async def test_failure(self, host: UnixHost):
-        fail = CommandStatus("badcmd", "command not found", Status.Failed, 127)
+        fail = CommandResult(
+            command="badcmd", value="command not found", status=Status.Failed, retcode=127
+        )
         host._session_mgr._session = self._mock_session(fail)
         result = (await host.run("badcmd")).only
         assert result.status == Status.Failed
@@ -277,14 +297,14 @@ class TestCommandExecution:
 
     @pytest.mark.asyncio
     async def test_command_recorded(self, host: UnixHost):
-        ok = CommandStatus("echo out", "out", Status.Success, 0)
+        ok = CommandResult(command="echo out", value="out", status=Status.Success, retcode=0)
         host._session_mgr._session = self._mock_session(ok)
         result = (await host.run("echo out")).only
         assert result.command == "echo out"
 
     @pytest.mark.asyncio
     async def test_expects_forwarded_to_session(self, host: UnixHost):
-        ok = CommandStatus("sudo ls", "", Status.Success, 0)
+        ok = CommandResult(command="sudo ls", value="", status=Status.Success, retcode=0)
         host._session_mgr._session = self._mock_session(ok)
         expects = [(r"Password:", "secret\n")]
         await host.run("sudo ls", expects=expects)
@@ -299,7 +319,7 @@ class TestCommandExecution:
 
     @pytest.mark.asyncio
     async def test_timeout_forwarded_to_session(self, host: UnixHost):
-        ok = CommandStatus("sleep 1", "", Status.Success, 0)
+        ok = CommandResult(command="sleep 1", value="", status=Status.Success, retcode=0)
         host._session_mgr._session = self._mock_session(ok)
         await host.run("sleep 1", timeout=30.0)
         host._session_mgr._session.run_cmd.assert_called_once()
@@ -374,7 +394,7 @@ class TestOneshot:
 
         assert result.status == Status.Success
         assert result.retcode == 0
-        assert result.output == "hello"
+        assert result.value == "hello"
 
     @pytest.mark.asyncio
     async def test_oneshot_ssh_nonzero_exit(self, host: UnixHost):
@@ -392,7 +412,9 @@ class TestOneshot:
         h = UnixHost(
             ip="10.0.0.1", element="box", creds={"u": "p"}, term="telnet", log=LogMode.QUIET
         )
-        expected = CommandStatus("echo hello", "hello", Status.Success, 0)
+        expected = CommandResult(
+            command="echo hello", value="hello", status=Status.Success, retcode=0
+        )
 
         mock_client = MagicMock()
         mock_client.connect = AsyncMock()
@@ -412,7 +434,7 @@ class TestOneshot:
             result = await h.oneshot("echo hello")
 
         assert result.status == Status.Success
-        assert result.output == "hello"
+        assert result.value == "hello"
         mock_client.connect.assert_called_once()
         mock_session.run_cmd.assert_called_once()
         args, kwargs = mock_session.run_cmd.call_args
@@ -452,7 +474,7 @@ class TestOneshot:
             if "nc -l" in cmd:
                 listener_running.set()
                 await release_listener.wait()
-            return CommandStatus(cmd, "", Status.Success, 0)
+            return CommandResult(command=cmd, value="", status=Status.Success, retcode=0)
 
         def _new_client(*args, **kwargs):
             c = MagicMock()
@@ -516,13 +538,14 @@ class TestOneshot:
         from unittest.mock import AsyncMock
 
         from otto.host.unix_host import UnixHost
-        from otto.utils import CommandStatus, Status
+        from otto.result import CommandResult
+        from otto.utils import Status
 
         h = UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=LogMode.QUIET)
         h._session_mgr = AsyncMock()
-        h._session_mgr.oneshot.return_value = CommandStatus(
+        h._session_mgr.oneshot.return_value = CommandResult(
             command="c",
-            output="",
+            value="",
             status=Status.Success,
             retcode=0,
         )
@@ -643,9 +666,9 @@ class TestNotConnectedFileTransfer:
 
         # The file-size stat succeeds; the nc send oneshot fails (not
         # connected) — get must surface that as an error, not raise.
-        async def mock_oneshot(cmd: str, **kw) -> CommandStatus:
+        async def mock_oneshot(cmd: str, **kw) -> CommandResult:
             if cmd.startswith("stat -c %s"):
-                return CommandStatus(cmd, "0", Status.Success, 0)
+                return _cs(command=cmd, output="0", status=Status.Success, retcode=0)
             raise RuntimeError("not connected")
 
         async def fake_start_server(cb, host, port):
@@ -661,7 +684,7 @@ class TestNotConnectedFileTransfer:
             patch.object(h, "oneshot", new_callable=AsyncMock, side_effect=mock_oneshot),
             patch("otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server),
         ):
-            status, _ = await h.get([Path("/remote/file.txt")], Path("/tmp"))
+            status, _ = _sm(await h.get([Path("/remote/file.txt")], Path("/tmp")))
         assert status == Status.Error
         await h.close()
 
@@ -681,7 +704,7 @@ class TestNotConnectedFileTransfer:
                 AsyncMock(side_effect=ConnectionError("nc listener not ready")),
             ),
         ):
-            status, _ = await h.put([src], Path("/tmp"))
+            status, _ = _sm(await h.put([src], Path("/tmp")))
         assert status == Status.Error
         await h.close()
 
@@ -701,7 +724,9 @@ class TestSshFileTransfer:
     async def test_scp_get_success(self, host: UnixHost):
         host._connections._ssh_conn = self._mock_ssh_conn()
         with patch("asyncssh.scp", new_callable=AsyncMock) as mock_scp:
-            status, msg = await host.get([Path("/etc/hostname")], Path("/tmp"), show_progress=False)
+            status, msg = _sm(
+                await host.get([Path("/etc/hostname")], Path("/tmp"), show_progress=False)
+            )
         assert status == Status.Success
         assert msg == ""
         mock_scp.assert_called_once()
@@ -712,7 +737,7 @@ class TestSshFileTransfer:
         src.write_text("hello")
         host._connections._ssh_conn = self._mock_ssh_conn()
         with patch("asyncssh.scp", new_callable=AsyncMock) as mock_scp:
-            status, _msg = await host.put([src], Path("/tmp"), show_progress=False)
+            status, _msg = _sm(await host.put([src], Path("/tmp"), show_progress=False))
         assert status == Status.Success
         mock_scp.assert_called_once()
 
@@ -725,7 +750,7 @@ class TestSshFileTransfer:
         mock_sftp.get = AsyncMock()
         h._connections._sftp_conn = mock_sftp
 
-        status, _msg = await h.get([Path("/etc/hostname")], Path("/tmp"), show_progress=False)
+        status, _msg = _sm(await h.get([Path("/etc/hostname")], Path("/tmp"), show_progress=False))
         assert status == Status.Success
         mock_sftp.get.assert_called_once()
         await h.close()
@@ -741,7 +766,7 @@ class TestSshFileTransfer:
         mock_sftp.put = AsyncMock()
         h._connections._sftp_conn = mock_sftp
 
-        status, _msg = await h.put([src], Path("/tmp"), show_progress=False)
+        status, _msg = _sm(await h.put([src], Path("/tmp"), show_progress=False))
         assert status == Status.Success
         mock_sftp.put.assert_called_once()
         await h.close()
@@ -756,8 +781,8 @@ class TestSshFileTransfer:
         mock_ftp.quit = AsyncMock()  # called by close()
         h._connections._ftp_conn = mock_ftp
 
-        status, _msg = await h.get(
-            [Path("/home/vagrant/test.txt")], Path("/tmp"), show_progress=False
+        status, _msg = _sm(
+            await h.get([Path("/home/vagrant/test.txt")], Path("/tmp"), show_progress=False)
         )
         assert status == Status.Success
         mock_ftp.download.assert_called_once()
@@ -775,7 +800,7 @@ class TestSshFileTransfer:
         mock_ftp.quit = AsyncMock()  # called by close()
         h._connections._ftp_conn = mock_ftp
 
-        status, _msg = await h.put([src], Path("/tmp"), show_progress=False)
+        status, _msg = _sm(await h.put([src], Path("/tmp"), show_progress=False))
         assert status == Status.Success
         mock_ftp.upload.assert_called_once()
         await h.close()
@@ -793,13 +818,13 @@ class TestNcFileTransfer:
             ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=LogMode.QUIET
         )
 
-        send_cs = CommandStatus("nc ...", "", Status.Success, 0)
+        send_cs = _cs(command="nc ...", output="", status=Status.Success, retcode=0)
 
         # Control-plane ops (the file-size stat) and the nc send all route
         # through `oneshot` now — no dedicated monitor session.
-        async def mock_oneshot(cmd: str, **kw) -> CommandStatus:
+        async def mock_oneshot(cmd: str, **kw) -> CommandResult:
             if cmd.startswith("stat -c %s"):
-                return CommandStatus(cmd, "1024", Status.Success, 0)
+                return _cs(command=cmd, output="1024", status=Status.Success, retcode=0)
             return send_cs
 
         dest = tmp_path / "out"
@@ -827,7 +852,7 @@ class TestNcFileTransfer:
             patch.object(h, "_get_local_ip", return_value="127.0.0.1"),
             patch("otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server),
         ):
-            status, msg = await h.get([Path("/remote/file.txt")], dest, show_progress=False)
+            status, msg = _sm(await h.get([Path("/remote/file.txt")], dest, show_progress=False))
 
         assert status == Status.Success
         assert msg == ""
@@ -851,17 +876,19 @@ class TestNcFileTransfer:
         # _put_files_nc now also runs `_wait_for_remote_listener`, which
         # probes for `ss`/`netstat` and then polls the listener — several
         # extra oneshot calls whose order a positional list can't capture.
-        async def mock_oneshot(cmd: str, **kw) -> CommandStatus:
+        async def mock_oneshot(cmd: str, **kw) -> CommandResult:
             if "nc -l" in cmd:
-                return CommandStatus(cmd, "", Status.Success, 0)
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
             if cmd.startswith("type "):
-                return CommandStatus(cmd, "", Status.Success, 0)
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
             if "ss -tln" in cmd or "netstat -tln" in cmd or "/proc/net/tcp" in cmd:
-                return CommandStatus(cmd, "", Status.Success, 0)
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
             if cmd.startswith("stat -c %s "):
-                return CommandStatus(cmd, str(src.stat().st_size), Status.Success, 0)
+                return _cs(
+                    command=cmd, output=str(src.stat().st_size), status=Status.Success, retcode=0
+                )
             # Port discovery (ss/netstat/python/proc) returns a port number.
-            return CommandStatus(cmd, "44444", Status.Success, 0)
+            return _cs(command=cmd, output="44444", status=Status.Success, retcode=0)
 
         sent_data = bytearray()
         mock_writer = MagicMock()
@@ -878,7 +905,7 @@ class TestNcFileTransfer:
                 AsyncMock(return_value=(mock_reader, mock_writer)),
             ),
         ):
-            status, msg = await h.put([src], Path("/tmp"), show_progress=False)
+            status, msg = _sm(await h.put([src], Path("/tmp"), show_progress=False))
 
         assert status == Status.Success
         assert msg == ""
@@ -901,20 +928,22 @@ class TestNcFileTransfer:
 
         log_states: list[object] = []
 
-        async def oneshot_capturing_log(cmd: str, **_kw) -> CommandStatus:
+        async def oneshot_capturing_log(cmd: str, **_kw) -> CommandResult:
             log_states.append(h.log)
             # Compound strategy probe runs first (warm-up); return a valid
             # port+listener pair so the cascades don't fire.
             if cmd.startswith("port=proc; listener=proc"):
-                return CommandStatus(cmd, "python proc", Status.Success, 0)
+                return _cs(command=cmd, output="python proc", status=Status.Success, retcode=0)
             if "nc -l" in cmd:
-                return CommandStatus(cmd, "", Status.Success, 0)
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
             if "ss -tln" in cmd or "netstat -tln" in cmd or "/proc/net/tcp" in cmd:
-                return CommandStatus(cmd, "", Status.Success, 0)
+                return _cs(command=cmd, output="", status=Status.Success, retcode=0)
             if cmd.startswith("stat -c %s "):
-                return CommandStatus(cmd, str(src.stat().st_size), Status.Success, 0)
+                return _cs(
+                    command=cmd, output=str(src.stat().st_size), status=Status.Success, retcode=0
+                )
             # Port discovery returns a port number.
-            return CommandStatus(cmd, "44444", Status.Success, 0)
+            return _cs(command=cmd, output="44444", status=Status.Success, retcode=0)
 
         mock_writer = MagicMock()
         mock_writer.write = MagicMock()
@@ -931,7 +960,7 @@ class TestNcFileTransfer:
                 AsyncMock(return_value=(mock_reader, mock_writer)),
             ),
         ):
-            status, _ = await h.put([src], Path("/tmp"), show_progress=False)
+            status, _ = _sm(await h.put([src], Path("/tmp"), show_progress=False))
 
         assert status == Status.Success
         assert log_states
@@ -947,7 +976,7 @@ class TestNcFileTransfer:
             ip="10.0.0.1", element="box", creds={"u": "p"}, transfer="nc", log=LogMode.NORMAL
         )
 
-        send_cs = CommandStatus("nc ...", "", Status.Success, 0)
+        send_cs = _cs(command="nc ...", output="", status=Status.Success, retcode=0)
 
         log_states: list[object] = []
 
@@ -967,10 +996,10 @@ class TestNcFileTransfer:
             asyncio.get_running_loop().call_soon(lambda: asyncio.ensure_future(cb(reader, writer)))
             return mock_server
 
-        async def oneshot_capturing_log(cmd: str, *_a, **_kw) -> CommandStatus:
+        async def oneshot_capturing_log(cmd: str, *_a, **_kw) -> CommandResult:
             log_states.append(h.log)
             if cmd.startswith("stat -c %s"):
-                return CommandStatus(cmd, "11", Status.Success, 0)
+                return _cs(command=cmd, output="11", status=Status.Success, retcode=0)
             return send_cs
 
         assert h.log is LogMode.NORMAL
@@ -979,7 +1008,7 @@ class TestNcFileTransfer:
             patch.object(h, "_get_local_ip", return_value="127.0.0.1"),
             patch("otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server),
         ):
-            status, _ = await h.get([Path("/remote/file.txt")], dest, show_progress=False)
+            status, _ = _sm(await h.get([Path("/remote/file.txt")], dest, show_progress=False))
 
         assert status == Status.Success
         assert log_states
@@ -997,7 +1026,7 @@ class TestOpenSession:
     """Unit tests for UnixHost.open_session() — session creation and registration."""
 
     def _mock_shell_session(self, alive: bool = True) -> MagicMock:
-        ok = CommandStatus("echo hi", "hi", Status.Success, 0)
+        ok = CommandResult(command="echo hi", value="hi", status=Status.Success, retcode=0)
         session = MagicMock(spec=ShellSession)
         session.alive = alive
         session.run_cmd = AsyncMock(return_value=ok)
@@ -1261,7 +1290,7 @@ class TestHostSessionProxy:
         name: str = "monitor",
         alive: bool = True,
     ) -> tuple[HostSession, MagicMock]:
-        ok = CommandStatus("echo hi", "hi", Status.Success, 0)
+        ok = CommandResult(command="echo hi", value="hi", status=Status.Success, retcode=0)
         shell = MagicMock(spec=ShellSession)
         shell.alive = alive
         shell.run_cmd = AsyncMock(return_value=ok)
@@ -1282,9 +1311,9 @@ class TestHostSessionProxy:
     async def test_run_returns_command_status(self, host: UnixHost):
         session, _ = self._make_remote_session(host)
         result = (await session.run("echo hi")).only
-        assert isinstance(result, CommandStatus)
+        assert isinstance(result, CommandResult)
         assert result.status == Status.Success
-        assert result.output == "hi"
+        assert result.value == "hi"
 
     @pytest.mark.asyncio
     async def test_run_delegates_cmd_to_shell_session(self, host: UnixHost):
@@ -1491,25 +1520,37 @@ def _unix_host():
 async def test_loaded_modules_parses_proc_modules_column_one():
     from unittest.mock import AsyncMock
 
-    from otto.utils import CommandStatus, Status
+    from otto.result import CommandResult
+    from otto.utils import Status
 
     host = _unix_host()
     proc = "ext4 737280 2 - Live 0x0\nnvme 49152 3 nvme_core, Live 0x0\n"
     host.oneshot = AsyncMock(
-        return_value=CommandStatus("cat /proc/modules", proc, Status.Success, 0)
+        return_value=CommandResult(
+            command="cat /proc/modules", value=proc, status=Status.Success, retcode=0
+        )
     )
-    assert await host._loaded_modules() == ["ext4", "nvme"]
+    mods = await host._loaded_modules()
+    assert mods.is_ok
+    assert mods.value == ["ext4", "nvme"]
 
 
 @pytest.mark.asyncio
 async def test_loaded_modules_empty_when_read_fails():
     from unittest.mock import AsyncMock
 
-    from otto.utils import CommandStatus, Status
+    from otto.result import CommandResult
+    from otto.utils import Status
 
     host = _unix_host()
-    host.oneshot = AsyncMock(return_value=CommandStatus("cat /proc/modules", "", Status.Error, 1))
-    assert await host._loaded_modules() == []
+    host.oneshot = AsyncMock(
+        return_value=CommandResult(
+            command="cat /proc/modules", value="", status=Status.Error, retcode=1
+        )
+    )
+    mods = await host._loaded_modules()
+    assert not mods.is_ok
+    assert mods.value == []
 
 
 @pytest.mark.asyncio
@@ -1517,15 +1558,16 @@ async def test_lsmod_returns_loaded_module_names():
     from unittest.mock import AsyncMock
 
     host = _unix_host()
-    host._loaded_modules = AsyncMock(return_value=["ext4", "nvme"])
-    assert await host.lsmod() == ["ext4", "nvme"]
+    host._loaded_modules = AsyncMock(return_value=Result(Status.Success, value=["ext4", "nvme"]))
+    assert (await host.lsmod()).value == ["ext4", "nvme"]
 
 
 def _run_result(cmd, output, status, retcode):
-    from otto.host.host import RunResult
-    from otto.utils import CommandStatus
+    from otto.result import CommandResult, Results
 
-    return RunResult(status=status, statuses=[CommandStatus(cmd, output, status, retcode)])
+    return Results.collect(
+        [CommandResult(command=cmd, value=output, status=status, retcode=retcode)]
+    )
 
 
 @pytest.mark.asyncio
@@ -1539,12 +1581,12 @@ async def test_load_stages_then_insmod_sudo_for_nonroot(tmp_path):
     host._session_mgr.current_user = "admin"  # non-root
     ko = tmp_path / "my-mod.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=(Status.Success, ""))
+    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
     host.run = AsyncMock(return_value=_run_result("insmod /tmp/my-mod.ko", "", Status.Success, 0))
-    host.rm = AsyncMock(return_value=(Status.Success, ""))
-    status, msg = await host.load(ko)
-    assert status is Status.Success
-    assert msg == ""
+    host.rm = AsyncMock(return_value=Result(Status.Success))
+    result = await host.load(ko)
+    assert result.status is Status.Success
+    assert result.msg == ""
     host.put.assert_awaited_once()
     assert host.run.await_args.args[0] == "insmod /tmp/my-mod.ko"
     assert host.run.await_args.kwargs["sudo"] is True
@@ -1562,9 +1604,9 @@ async def test_load_no_sudo_when_current_user_root(tmp_path):
     host._session_mgr.current_user = "root"
     ko = tmp_path / "m.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=(Status.Success, ""))
+    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
     host.run = AsyncMock(return_value=_run_result("insmod /tmp/m.ko", "", Status.Success, 0))
-    host.rm = AsyncMock(return_value=(Status.Success, ""))
+    host.rm = AsyncMock(return_value=Result(Status.Success))
     await host.load(ko)
     assert host.run.await_args.kwargs["sudo"] is False
 
@@ -1580,11 +1622,11 @@ async def test_load_put_failure_short_circuits(tmp_path):
     host._session_mgr.current_user = "admin"
     ko = tmp_path / "m.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=(Status.Error, "scp failed"))
+    host.put = AsyncMock(return_value=Result(Status.Error, value={}, msg="scp failed"))
     host.run = AsyncMock()
-    status, msg = await host.load(ko)
-    assert status is Status.Error
-    assert "staging" in msg
+    result = await host.load(ko)
+    assert result.status is Status.Error
+    assert "staging" in result.msg
     host.run.assert_not_awaited()
 
 
@@ -1599,15 +1641,15 @@ async def test_load_error_message_uses_normalized_name(tmp_path):
     host._session_mgr.current_user = "admin"
     ko = tmp_path / "foo-bar.ko"
     ko.write_bytes(b"\x00")
-    host.put = AsyncMock(return_value=(Status.Success, ""))
+    host.put = AsyncMock(return_value=Result(Status.Success, value={}))
     host.run = AsyncMock(
         return_value=_run_result("insmod ...", "Invalid module format", Status.Error, 1)
     )
-    host.rm = AsyncMock(return_value=(Status.Success, ""))
-    status, msg = await host.load(ko)
-    assert status is Status.Error
-    assert "foo_bar" in msg
-    assert "Invalid module format" in msg
+    host.rm = AsyncMock(return_value=Result(Status.Success))
+    result = await host.load(ko)
+    assert result.status is Status.Error
+    assert "foo_bar" in result.msg
+    assert "Invalid module format" in result.msg
 
 
 @pytest.mark.asyncio
@@ -1617,11 +1659,11 @@ async def test_unload_idempotent_when_not_resident():
     from otto.utils import Status
 
     host = _unix_host()
-    host._loaded_modules = AsyncMock(return_value=["ext4"])
+    host._loaded_modules = AsyncMock(return_value=Result(Status.Success, value=["ext4"]))
     host.run = AsyncMock()
-    status, msg = await host.unload("my_mod")
-    assert status is Status.Success
-    assert msg == ""
+    result = await host.unload("my_mod")
+    assert result.status is Status.Success
+    assert result.msg == ""
     host.run.assert_not_awaited()  # not resident → no rmmod
 
 
@@ -1634,10 +1676,10 @@ async def test_unload_rmmod_with_sudo_when_resident():
     host = _unix_host()
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"
-    host._loaded_modules = AsyncMock(return_value=["my_mod"])
+    host._loaded_modules = AsyncMock(return_value=Result(Status.Success, value=["my_mod"]))
     host.run = AsyncMock(return_value=_run_result("rmmod my_mod", "", Status.Success, 0))
-    status, _msg = await host.unload("my-mod")  # dash normalized to my_mod
-    assert status is Status.Success
+    result = await host.unload("my-mod")  # dash normalized to my_mod
+    assert result.status is Status.Success
     assert host.run.await_args.args[0] == "rmmod my_mod"
     assert host.run.await_args.kwargs["sudo"] is True
 
@@ -1651,13 +1693,13 @@ async def test_unload_error_maps_rmmod_failure():
     host = _unix_host()
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"
-    host._loaded_modules = AsyncMock(return_value=["my_mod"])
+    host._loaded_modules = AsyncMock(return_value=Result(Status.Success, value=["my_mod"]))
     host.run = AsyncMock(
         return_value=_run_result("rmmod my_mod", "Module my_mod is in use", Status.Error, 1)
     )
-    status, msg = await host.unload("my_mod")
-    assert status is Status.Error
-    assert "in use" in msg
+    result = await host.unload("my_mod")
+    assert result.status is Status.Error
+    assert "in use" in result.msg
 
 
 @pytest.mark.asyncio
@@ -1667,7 +1709,9 @@ async def test_lsmod_dry_run_returns_empty():
 
     host = _unix_host()
     with active_context(dry_run=True):
-        assert await host.lsmod() == []
+        lsmod_result = await host.lsmod()
+    assert lsmod_result.status is Status.Skipped
+    assert lsmod_result.value == []
 
 
 @pytest.mark.asyncio
@@ -1682,11 +1726,13 @@ async def test_unload_dry_run_issues_rmmod_without_idempotency_check():
     host = _unix_host()
     host._session_mgr = MagicMock()
     host._session_mgr.current_user = "admin"
-    host._loaded_modules = AsyncMock(return_value=[])  # would short-circuit if consulted
+    host._loaded_modules = AsyncMock(
+        return_value=Result(Status.Success, value=[])
+    )  # would short-circuit if consulted
     host.run = AsyncMock(return_value=_run_result("rmmod foo", "[DRY RUN]", Status.Skipped, 0))
     with active_context(dry_run=True):
-        status, _ = await host.unload("foo")
+        result = await host.unload("foo")
     host.run.assert_awaited_once()
     assert host.run.await_args.args[0] == "rmmod foo"
     host._loaded_modules.assert_not_awaited()  # idempotency check skipped in dry-run
-    assert status is Status.Success
+    assert result.status is Status.Success

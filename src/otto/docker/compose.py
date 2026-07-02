@@ -125,7 +125,7 @@ async def _compose_cmd(
     if extra:
         cmd += f" {extra}"
     result = await parent.oneshot(cmd, timeout=None)
-    return result.status, result.output
+    return result.status, result.value
 
 
 async def _stack_already_up(parent: Host, project_name: str) -> bool:
@@ -133,7 +133,7 @@ async def _stack_already_up(parent: Host, project_name: str) -> bool:
     result = await parent.oneshot(
         f"docker ps -q --filter label=com.docker.compose.project={shlex.quote(project_name)}"
     )
-    return result.status.is_ok and bool(result.output.strip())
+    return result.status.is_ok and bool(result.value.strip())
 
 
 async def _resolve_container_id(
@@ -159,7 +159,7 @@ async def _resolve_container_id(
             f"--filter label=com.docker.compose.service={shlex.quote(service)}"
         )
         if result.status.is_ok:
-            cid = result.output.strip().splitlines()
+            cid = result.value.strip().splitlines()
             if cid:
                 return cid[0]
         if attempt < _CONTAINER_ID_RESOLVE_ATTEMPTS - 1:
@@ -391,7 +391,7 @@ async def compose_ps(parent: Host) -> list[dict[str, Any]]:
     if not result.status.is_ok:
         return []
     out: list[dict[str, Any]] = []
-    for raw_line in result.output.splitlines():
+    for raw_line in result.value.splitlines():
         line = raw_line.strip()
         if not line:
             continue

@@ -119,7 +119,7 @@ async def _build_extension_for(build_dir: str, zver: "str | None") -> None:
     try:
         result = await localhost.oneshot(cmd, timeout=900)
         if result.status != Status.Success:
-            raise RuntimeError(f"extension build failed (see {BUILD_SCRIPT}):\n{result.output}")
+            raise RuntimeError(f"extension build failed (see {BUILD_SCRIPT}):\n{result.value}")
         logger.info("Rebuilt %s into %s (zver=%s)", _extension(), build_dir, zver)
     finally:
         await localhost.close()
@@ -151,7 +151,7 @@ async def _call(host: EmbeddedHost, fn: str, timeout: float = 60) -> None:
     ext = _extension()
     result = await host.oneshot(f"llext call_fn {ext} {fn}", timeout=timeout)
     if result.status != Status.Success:
-        raise RuntimeError(f"call_fn {fn} failed on {host.id}: {result.output}")
+        raise RuntimeError(f"call_fn {fn} failed on {host.id}: {result.value}")
 
 
 @options
@@ -207,9 +207,9 @@ class TestEmbeddedCoverage(OttoSuite[_Options]):
             # `otto cov report` fails with a stamp mismatch. host.unload drains
             # the LLEXT use-count to 0 (idempotent when nothing is loaded).
             await host.unload(ext)
-            status, err = await host.load(host_llext[host.id], name=ext)
-            if not status.is_ok:
-                raise RuntimeError(f"load did not load {ext} on {host.id}: {err}")
+            load_result = await host.load(host_llext[host.id], name=ext)
+            if not load_result.is_ok:
+                raise RuntimeError(f"load did not load {ext} on {host.id}: {load_result.msg}")
             # Run the gcov constructor so cov_dump has a registered gcov_info.
             await _call(host, "cov_init")
             logger.info("Loaded %s (%s) on %s", ext, host_build_dir[host.id], host.id)

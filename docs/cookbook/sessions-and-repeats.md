@@ -18,7 +18,7 @@ preserving shell state in each stream, use
 ...     r2 = (await s2.run("pwd")).only
 ...     await s1.close()
 ...     await s2.close()
-...     return r1.output.strip(), r2.output.strip()
+...     return r1.value.strip(), r2.value.strip()
 >>> run(parallel_sessions())
 ('/tmp', '/var')
 ```
@@ -80,7 +80,7 @@ async def poll_status(host):
         return_exceptions=True,
     )
     run_result = results[0]
-    return run_result.statuses[0].output.strip()
+    return run_result.only.value.strip()
 ```
 
 The key insight is that `asyncio.gather` runs the command and the sleep
@@ -103,7 +103,7 @@ async def collect_from_all(hosts, interval_secs):
         return_exceptions=True,
     )
     # results[0] is the sleep (None)
-    # results[1:] are the RunResult objects (one per host)
+    # results[1:] are the Results objects (one per host)
     return results[1:]
 ```
 

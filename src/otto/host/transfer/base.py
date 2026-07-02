@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from ...utils import CommandStatus, Status
+from ...result import CommandResult, Result
+from ...utils import Status
 
 if TYPE_CHECKING:
     from ..connections import ConnectionManager
@@ -43,7 +44,7 @@ class TransferContext:
     transfer: str
     host_name: str
     max_filename_len: int = 255
-    exec_cmd: "Callable[..., Coroutine[Any, Any, CommandStatus]] | None" = None
+    exec_cmd: "Callable[..., Coroutine[Any, Any, CommandResult]] | None" = None
     # unix-family fields
     connections: "ConnectionManager | None" = None
     nc_options: "NcOptions | None" = None
@@ -57,7 +58,7 @@ def validate_filename_lengths(
     files: list[Path],
     limit: int,
     host_name: str,
-) -> tuple[Status, str]:
+) -> Result:
     """Reject files whose basename exceeds the host's filesystem cap.
 
     Shared by :class:`~otto.host.transfer.UnixFileTransfer` (Unix) and
@@ -71,21 +72,51 @@ def validate_filename_lengths(
       fails ``fs_open`` with ``-ENOENT``, giving no hint that the *name*
       was the problem.
 
-    Returns ``(Status.Success, '')`` when every basename fits.
+    Returns an ok :class:`~otto.result.Result` when every basename fits, or a
+    failing one whose ``msg`` names the offending file.
     """
     for path in files:
         name = path.name
         if len(name) > limit:
-            return Status.Error, (
-                f"filename {name!r} ({len(name)} chars) exceeds the "
-                f"{limit}-character basename limit for host "
-                f"{host_name!r}. The target filesystem cannot open longer "
-                f"names — rename the file or raise the firmware/filesystem "
-                f"limit (``CONFIG_FS_FATFS_MAX_LFN`` for FAT, "
-                f"``CONFIG_FS_LITTLEFS_NAME_MAX`` for LittleFS; ``NAME_MAX`` "
-                f"on POSIX)."
+            return Result(
+                Status.Error,
+                msg=(
+                    f"filename {name!r} ({len(name)} chars) exceeds the "
+                    f"{limit}-character basename limit for host "
+                    f"{host_name!r}. The target filesystem cannot open longer "
+                    f"names — rename the file or raise the firmware/filesystem "
+                    f"limit (``CONFIG_FS_FATFS_MAX_LFN`` for FAT, "
+                    f"``CONFIG_FS_LITTLEFS_NAME_MAX`` for LittleFS; ``NAME_MAX`` "
+                    f"on POSIX)."
+                ),
             )
-    return Status.Success, ""
+    return Result(Status.Success)
+
+
+def aggregate_transfer(per_file: dict[Path, Result]) -> Result:
+    """Fold a per-file mapping into the aggregate transfer Result.
+
+    Aggregate status is the first non-ok entry's status (Skipped counts as
+    ok); aggregate msg joins each non-ok entry's diagnostic. The mapping is
+    carried through unchanged as :attr:`~otto.result.Result.value`, keyed by
+    the source paths exactly as passed.
+    """
+    status = next((r.status for r in per_file.values() if not r.is_ok), Status.Success)
+    msg = "; ".join(r.msg for r in per_file.values() if not r.is_ok and r.msg)
+    return Result(status=status, value=per_file, msg=msg)
+
+
+def mark_skipped(per_file: dict[Path, Result], remaining: list[Path]) -> None:
+    """Mark each not-yet-attempted source path Skipped after a sequential backend stops.
+
+    A sequential backend (ftp/console/nc) stops on the first failure; the
+    files it never reached are recorded ``Status.Skipped`` (which
+    :attr:`~otto.result.Result.is_ok` treats as passing, so a trailing run of
+    Skipped never fails the aggregate on its own). Keyed by the source path
+    exactly as passed.
+    """
+    for src in remaining:
+        per_file[src] = Result(Status.Skipped, msg="not attempted (earlier failure)")
 
 
 class BaseFileTransfer(ABC):
@@ -148,29 +179,35 @@ class BaseFileTransfer(ABC):
         src_files: list[Path],
         dest_dir: Path,
         show_progress: bool = True,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Upload *src_files* to *dest_dir*, validating filenames and driving progress display.
 
         Rejects over-limit basenames up front (see :func:`validate_filename_lengths`),
         then acquires the process-wide shared Rich progress bar (if *show_progress*)
-        and delegates to the concrete backend's ``_run_put`` implementation.
+        and delegates to the concrete backend's ``_run_put`` implementation. Returns
+        the aggregate :class:`~otto.result.Result` whose ``value`` maps each source
+        path (exactly as passed) to its per-file :class:`~otto.result.Result`.
         """
         from .progress import _acquire_shared_progress, make_rich_progress_factory
 
-        status, err = validate_filename_lengths(
+        name_check = validate_filename_lengths(
             src_files,
             self._max_filename_len,
             self._name,
         )
-        if not status.is_ok:
-            return status, err
+        if not name_check.is_ok:
+            return aggregate_transfer(
+                {f: Result(name_check.status, msg=name_check.msg) for f in src_files}
+            )
         if not show_progress:
-            return await self._run_put(src_files, dest_dir, None)
+            return aggregate_transfer(await self._run_put(src_files, dest_dir, None))
         async with _acquire_shared_progress() as progress:
-            return await self._run_put(
-                src_files,
-                dest_dir,
-                make_rich_progress_factory(progress, self._name),
+            return aggregate_transfer(
+                await self._run_put(
+                    src_files,
+                    dest_dir,
+                    make_rich_progress_factory(progress, self._name),
+                )
             )
 
     async def get_files(
@@ -178,28 +215,35 @@ class BaseFileTransfer(ABC):
         src_files: list[Path],
         dest_dir: Path,
         show_progress: bool = True,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Download *src_files* into *dest_dir*, validating filenames and driving progress display.
 
         Same validation and shared-progress contract as :meth:`put_files`,
         but delegates to the concrete backend's ``_run_get`` implementation.
+        Returns the aggregate :class:`~otto.result.Result` whose ``value`` maps
+        each source path (exactly as passed) to its per-file
+        :class:`~otto.result.Result`.
         """
         from .progress import _acquire_shared_progress, make_rich_progress_factory
 
-        status, err = validate_filename_lengths(
+        name_check = validate_filename_lengths(
             src_files,
             self._max_filename_len,
             self._name,
         )
-        if not status.is_ok:
-            return status, err
+        if not name_check.is_ok:
+            return aggregate_transfer(
+                {f: Result(name_check.status, msg=name_check.msg) for f in src_files}
+            )
         if not show_progress:
-            return await self._run_get(src_files, dest_dir, None)
+            return aggregate_transfer(await self._run_get(src_files, dest_dir, None))
         async with _acquire_shared_progress() as progress:
-            return await self._run_get(
-                src_files,
-                dest_dir,
-                make_rich_progress_factory(progress, self._name),
+            return aggregate_transfer(
+                await self._run_get(
+                    src_files,
+                    dest_dir,
+                    make_rich_progress_factory(progress, self._name),
+                )
             )
 
     @abstractmethod
@@ -208,8 +252,13 @@ class BaseFileTransfer(ABC):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: "TransferProgressFactory | None",
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         """Backend-specific put implementation.
+
+        Returns a per-file mapping keyed by the source paths exactly as passed:
+        each value is a :class:`~otto.result.Result` carrying ``value=dest_path``
+        on success, a per-file ``msg`` on failure, or ``Status.Skipped`` for a
+        file a sequential backend stopped short of attempting.
 
         For each src file the implementation must call
         ``progress_factory()`` (if not ``None``) to obtain a fresh
@@ -224,10 +273,10 @@ class BaseFileTransfer(ABC):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: "TransferProgressFactory | None",
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         """Backend-specific get implementation.
 
-        Same progress contract as :meth:`_run_put`.
+        Same per-file mapping and progress contract as :meth:`_run_put`.
         """
 
 
@@ -262,15 +311,3 @@ Available strategies:
 - ``'custom'`` — run the shell command specified in ``nc_listener_cmd`` with a
   ``{port}`` placeholder. Must exit 0 when the port is listening.
 """
-
-
-def _first_error(
-    results: list[tuple[Status, str] | BaseException],
-) -> tuple[Status, str]:
-    """Return the first error from a list of gather results, or (Success, '') if all passed."""
-    for result in results:
-        if isinstance(result, BaseException):
-            return Status.Error, str(result)
-        if not result[0].is_ok:
-            return result
-    return Status.Success, ""

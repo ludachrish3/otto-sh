@@ -18,10 +18,8 @@ from typing import (
 import tomli
 
 from ..logger import get_otto_logger
-from ..utils import (
-    CommandStatus,
-    Status,
-)
+from ..result import CommandResult
+from ..utils import Status
 from .version import Version
 
 if TYPE_CHECKING:
@@ -719,9 +717,9 @@ class Repo:
         success, or to an empty string when ``git describe`` fails (e.g. no
         tags exist in the repo).
         """
-        command_status = await self.run_git_command("describe")
-        if command_status.status == Status.Success:
-            self._git_description = f"({command_status.output.strip()})"
+        result = await self.run_git_command("describe")
+        if result.status == Status.Success:
+            self._git_description = f"({result.value.strip()})"
 
         # `git describe` can fail if no names or tags exist for the repo.
         # In this case, which is expected and can happen, set the description
@@ -731,8 +729,8 @@ class Repo:
 
     async def set_commit_hash(self) -> None:
         """Populate ``_git_hash`` with the full SHA of the current HEAD commit."""
-        command_status = await self.run_git_command("log -1 --format=%H")
-        self._git_hash = command_status.output
+        result = await self.run_git_command("log -1 --format=%H")
+        self._git_hash = result.value
 
     @property
     def commit(self) -> str | None:
@@ -767,14 +765,14 @@ class Repo:
     async def run_git_command(
         self,
         cmd: str,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Run a git sub-command in this repo's ``sut_dir`` and return the result.
 
         Args:
             cmd: The git sub-command and its arguments (e.g. ``"log -1 --format=%H"``).
 
         Returns:
-            A ``CommandStatus`` containing the command's exit status and output.
+            A ``CommandResult`` containing the command's exit status and output.
         """
         from ..host.local_host import LocalHost
         from ..logger.mode import LogMode

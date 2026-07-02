@@ -19,7 +19,7 @@ class TestInterfaces(OttoSuite):
     async def test_interface_up(self, interface: str) -> None:
         """Runs 3 times — once per interface."""
         result = await host.oneshot(f"ip link show {interface}")
-        assert "UP" in result.output
+        assert "UP" in result.value
 ```
 
 ## Non-fatal assertions with expect
@@ -31,9 +31,9 @@ first failure.  Use `self.expect()`:
 async def test_device_config(self, suite_options) -> None:
     result = (await host.run("show running-config")).only
 
-    self.expect("hostname" in result.output, "Config should contain hostname")
-    self.expect("ntp server" in result.output, "Config should have NTP configured")
-    self.expect("logging" in result.output, "Config should have logging enabled")
+    self.expect("hostname" in result.value, "Config should contain hostname")
+    self.expect("ntp server" in result.value, "Config should have NTP configured")
+    self.expect("logging" in result.value, "Config should have logging enabled")
     # All three are checked; failures are reported together at the end
 ```
 
@@ -58,7 +58,7 @@ import pytest
 async def test_firmware_version(self, suite_options) -> None:
     """Fail if the test takes longer than 30 seconds."""
     result = (await host.run("show version")).only
-    assert suite_options.firmware in result.output
+    assert suite_options.firmware in result.value
 
 @pytest.mark.retry(3)
 async def test_flaky_connection(self) -> None:
@@ -165,5 +165,5 @@ async def test_capture_logs(self, suite_options) -> None:
     # self.testDir is e.g. <xdir>/test/TestDevice/<timestamp>/test_capture_logs/
     log_file = self.testDir / "device.log"
     result = (await host.run("show log")).only
-    log_file.write_text(result.output)
+    log_file.write_text(result.value)
 ```

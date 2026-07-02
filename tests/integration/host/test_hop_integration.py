@@ -178,7 +178,7 @@ class TestSingleHopSsh:
     async def test_echo_through_hop(self, single_hop_ssh: UnixHost):
         result = (await single_hop_ssh.run("echo hello_through_hop")).only
         assert result.status == Status.Success
-        assert "hello_through_hop" in result.output
+        assert "hello_through_hop" in result.value
 
     @pytest.mark.asyncio
     @pytest.mark.hops
@@ -186,15 +186,15 @@ class TestSingleHopSsh:
         result = (await single_hop_ssh.run("hostname")).only
         assert result.status == Status.Success
         # Should be test2's hostname, not test1 (the hop)
-        assert "test2" in result.output
+        assert "test2" in result.value
 
     @pytest.mark.asyncio
     @pytest.mark.hops
     async def test_multiple_commands_through_hop(self, single_hop_ssh: UnixHost):
         result = await single_hop_ssh.run(["echo first", "echo second"])
         assert result.status == Status.Success
-        assert "first" in result.statuses[0].output
-        assert "second" in result.statuses[1].output
+        assert "first" in result[0].value
+        assert "second" in result[1].value
 
     @pytest.mark.asyncio
     @pytest.mark.hops
@@ -202,7 +202,7 @@ class TestSingleHopSsh:
         await single_hop_ssh.run("export HOP_VAR=works")
         result = (await single_hop_ssh.run("echo $HOP_VAR")).only
         assert result.status == Status.Success
-        assert "works" in result.output
+        assert "works" in result.value
 
 
 # ---------------------------------------------------------------------------
@@ -217,14 +217,14 @@ class TestSingleHopTelnet:
         """Reach a telnet target through an SSH hop (port forwarding)."""
         result = (await single_hop_telnet.run("echo telnet_via_hop")).only
         assert result.status == Status.Success
-        assert "telnet_via_hop" in result.output
+        assert "telnet_via_hop" in result.value
 
     @pytest.mark.asyncio
     @pytest.mark.hops
     async def test_telnet_hostname_through_hop(self, single_hop_telnet: UnixHost):
         result = (await single_hop_telnet.run("hostname")).only
         assert result.status == Status.Success
-        assert "test2" in result.output
+        assert "test2" in result.value
 
 
 # ---------------------------------------------------------------------------
@@ -244,12 +244,12 @@ class TestFileTransferThroughHop:
     async def test_scp_get_through_hop(self, single_hop_ssh: UnixHost, tmp_path: Path):
         """Download a file from the target through an SSH hop via SCP."""
         result = (await single_hop_ssh.run("hostname")).only
-        expected = result.output.strip()
+        expected = result.value.strip()
 
-        status, msg = await transfer_with_retry(
+        res = await transfer_with_retry(
             lambda: single_hop_ssh.get([Path("/etc/hostname")], tmp_path)
         )
-        assert status == Status.Success, f"SCP get failed: {msg}"
+        assert res.status == Status.Success, f"SCP get failed: {res.msg}"
         assert (tmp_path / "hostname").read_text().strip() == expected
 
     @pytest.mark.asyncio
@@ -261,11 +261,11 @@ class TestFileTransferThroughHop:
         src.write_text(content)
         remote_path = "/tmp/hop_upload.txt"
 
-        status, msg = await transfer_with_retry(lambda: single_hop_ssh.put([src], Path("/tmp")))
-        assert status == Status.Success, f"SCP put failed: {msg}"
+        res = await transfer_with_retry(lambda: single_hop_ssh.put([src], Path("/tmp")))
+        assert res.status == Status.Success, f"SCP put failed: {res.msg}"
 
         result = (await single_hop_ssh.run(f"cat {remote_path}")).only
-        assert content in result.output
+        assert content in result.value
         await single_hop_ssh.run(f"rm -f {remote_path}")
 
     @pytest.mark.asyncio
@@ -286,12 +286,10 @@ class TestFileTransferThroughHop:
         )
         try:
             result = (await h.run("hostname")).only
-            expected = result.output.strip()
+            expected = result.value.strip()
 
-            status, msg = await transfer_with_retry(
-                lambda: h.get([Path("/etc/hostname")], tmp_path)
-            )
-            assert status == Status.Success, f"SFTP get failed: {msg}"
+            res = await transfer_with_retry(lambda: h.get([Path("/etc/hostname")], tmp_path))
+            assert res.status == Status.Success, f"SFTP get failed: {res.msg}"
             assert (tmp_path / "hostname").read_text().strip() == expected
         finally:
             await h.close()
@@ -318,11 +316,11 @@ class TestFileTransferThroughHop:
             src.write_text(content)
             remote_path = "/tmp/ftp_hop_upload.txt"
 
-            status, msg = await transfer_with_retry(lambda: h.put([src], Path("/tmp")))
-            assert status == Status.Success, f"FTP put failed: {msg}"
+            res = await transfer_with_retry(lambda: h.put([src], Path("/tmp")))
+            assert res.status == Status.Success, f"FTP put failed: {res.msg}"
 
             result = (await h.run(f"cat {remote_path}")).only
-            assert content in result.output
+            assert content in result.value
             await h.run(f"rm -f {remote_path}")
         finally:
             await h.close()
@@ -345,12 +343,10 @@ class TestFileTransferThroughHop:
         )
         try:
             result = (await h.run("hostname")).only
-            expected = result.output.strip()
+            expected = result.value.strip()
 
-            status, msg = await transfer_with_retry(
-                lambda: h.get([Path("/etc/hostname")], tmp_path)
-            )
-            assert status == Status.Success, f"FTP get failed: {msg}"
+            res = await transfer_with_retry(lambda: h.get([Path("/etc/hostname")], tmp_path))
+            assert res.status == Status.Success, f"FTP get failed: {res.msg}"
             assert (tmp_path / "hostname").read_text().strip() == expected
         finally:
             await h.close()
@@ -378,12 +374,12 @@ class TestFileTransferThroughHop:
             src.write_text(content)
             remote_path = "/tmp/nc_hop_upload.txt"
 
-            status, msg = await transfer_with_retry(lambda: h.put([src], Path("/tmp")))
-            assert status == Status.Success, f"NC put failed: {msg}"
+            res = await transfer_with_retry(lambda: h.put([src], Path("/tmp")))
+            assert res.status == Status.Success, f"NC put failed: {res.msg}"
 
             # Verify via SSH session (switch to scp for the read-back)
             result = (await h.run(f"cat {remote_path}")).only
-            assert content in result.output
+            assert content in result.value
             await h.run(f"rm -f {remote_path}")
         finally:
             await h.close()
@@ -407,12 +403,10 @@ class TestFileTransferThroughHop:
         )
         try:
             result = (await h.run("hostname")).only
-            expected = result.output.strip()
+            expected = result.value.strip()
 
-            status, msg = await transfer_with_retry(
-                lambda: h.get([Path("/etc/hostname")], tmp_path)
-            )
-            assert status == Status.Success, f"NC get failed: {msg}"
+            res = await transfer_with_retry(lambda: h.get([Path("/etc/hostname")], tmp_path))
+            assert res.status == Status.Success, f"NC get failed: {res.msg}"
             assert (tmp_path / "hostname").read_text().strip() == expected
         finally:
             await h.close()
@@ -433,7 +427,7 @@ class TestTwoHopChain:
     async def test_echo_through_two_hops(self, two_hop_ssh: UnixHost):
         result = (await two_hop_ssh.run("echo two_hop_success")).only
         assert result.status == Status.Success
-        assert "two_hop_success" in result.output
+        assert "two_hop_success" in result.value
 
     @pytest.mark.asyncio
     @pytest.mark.hops
@@ -441,19 +435,17 @@ class TestTwoHopChain:
         """Command should run on test3 (pepper), not the intermediate hops."""
         result = (await two_hop_ssh.run("hostname")).only
         assert result.status == Status.Success
-        assert "test3" in result.output
+        assert "test3" in result.value
 
     @pytest.mark.asyncio
     @pytest.mark.hops
     async def test_scp_get_through_two_hops(self, two_hop_ssh: UnixHost, tmp_path: Path):
         """Download a file through a 2-hop SSH chain."""
         result = (await two_hop_ssh.run("hostname")).only
-        expected = result.output.strip()
+        expected = result.value.strip()
 
-        status, msg = await transfer_with_retry(
-            lambda: two_hop_ssh.get([Path("/etc/hostname")], tmp_path)
-        )
-        assert status == Status.Success, f"SCP get through 2 hops failed: {msg}"
+        res = await transfer_with_retry(lambda: two_hop_ssh.get([Path("/etc/hostname")], tmp_path))
+        assert res.status == Status.Success, f"SCP get through 2 hops failed: {res.msg}"
         assert (tmp_path / "hostname").read_text().strip() == expected
 
     @pytest.mark.asyncio
@@ -465,9 +457,9 @@ class TestTwoHopChain:
         src.write_text(content)
         remote_path = "/tmp/two_hop_upload.txt"
 
-        status, msg = await transfer_with_retry(lambda: two_hop_ssh.put([src], Path("/tmp")))
-        assert status == Status.Success, f"SCP put through 2 hops failed: {msg}"
+        res = await transfer_with_retry(lambda: two_hop_ssh.put([src], Path("/tmp")))
+        assert res.status == Status.Success, f"SCP put through 2 hops failed: {res.msg}"
 
         result = (await two_hop_ssh.run(f"cat {remote_path}")).only
-        assert content in result.output
+        assert content in result.value
         await two_hop_ssh.run(f"rm -f {remote_path}")

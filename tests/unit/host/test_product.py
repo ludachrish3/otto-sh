@@ -6,6 +6,7 @@ import pytest
 
 from otto.host.product import FileProduct, Product
 from otto.logger.mode import LogMode
+from otto.result import Result
 from otto.utils import Status
 
 
@@ -43,7 +44,7 @@ async def test_fileproduct_stage_delegates_to_host_put():
 
     p = _DummyFileProduct(artifact=Path("/builds/app.bin"), dest_dir=Path("/opt"))
     host = AsyncMock()
-    host.put.return_value = (Status.Success, "")
+    host.put.return_value = Result(Status.Success, value={})
     status, _msg = await p.stage(host)
     assert status is Status.Success
     host.put.assert_awaited_once_with(Path("/builds/app.bin"), Path("/opt"))
@@ -104,32 +105,32 @@ def _host_with(products):
 @pytest.mark.asyncio
 async def test_stage_runs_every_product_stage():
     a, b = _FakeProduct("a"), _FakeProduct("b")
-    status, _ = await _host_with([a, b]).stage()
-    assert status is Status.Success
+    result = await _host_with([a, b]).stage()
+    assert result.status is Status.Success
     assert a.calls == ["stage"]
     assert b.calls == ["stage"]
 
 
 @pytest.mark.asyncio
 async def test_stage_empty_is_success_noop():
-    status, msg = await _host_with([]).stage()
-    assert status is Status.Success
-    assert msg == ""
+    result = await _host_with([]).stage()
+    assert result.status is Status.Success
+    assert result.msg == ""
 
 
 @pytest.mark.asyncio
 async def test_install_stages_then_installs():
     a = _FakeProduct("a")
-    status, _ = await _host_with([a]).install()
-    assert status is Status.Success
+    result = await _host_with([a]).install()
+    assert result.status is Status.Success
     assert a.calls == ["stage", "install"]
 
 
 @pytest.mark.asyncio
 async def test_install_stage_only_skips_install():
     a = _FakeProduct("a")
-    status, _ = await _host_with([a]).install(stage_only=True)
-    assert status is Status.Success
+    result = await _host_with([a]).install(stage_only=True)
+    assert result.status is Status.Success
     assert a.calls == ["stage"]
 
 
@@ -137,9 +138,9 @@ async def test_install_stage_only_skips_install():
 async def test_install_short_circuits_on_stage_failure():
     a = _FakeProduct("a", fail_on="stage")
     b = _FakeProduct("b")
-    status, msg = await _host_with([a, b]).install()
-    assert status is Status.Error
-    assert msg == "boom"
+    result = await _host_with([a, b]).install()
+    assert result.status is Status.Error
+    assert result.msg == "boom"
     assert b.calls == []  # never reached
 
 
@@ -147,9 +148,9 @@ async def test_install_short_circuits_on_stage_failure():
 async def test_uninstall_is_best_effort_across_products():
     a = _FakeProduct("a", fail_on="uninstall")
     b = _FakeProduct("b")
-    status, msg = await _host_with([a, b]).uninstall()
-    assert status is Status.Error
-    assert msg == "boom"
+    result = await _host_with([a, b]).uninstall()
+    assert result.status is Status.Error
+    assert result.msg == "boom"
     assert a.calls == ["uninstall"]
     assert b.calls == ["uninstall"]  # both attempted
 
@@ -201,6 +202,6 @@ async def test_install_under_dry_run_does_not_transfer(tmp_path):
     dest = tmp_path / "dest"
     host = _host_with([_StageOnlyProduct(artifact=artifact, dest_dir=dest)])
     with active_context(dry_run=True):
-        status, _ = await host.install(stage_only=True)
-    assert status.is_ok
+        result = await host.install(stage_only=True)
+    assert result.is_ok
     assert not dest.exists()  # LocalHost.put was a dry-run no-op

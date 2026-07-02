@@ -18,10 +18,12 @@ if TYPE_CHECKING:
 from typing_extensions import override
 
 from ...logger import get_otto_logger
-from ...utils import CommandStatus, Status
+from ...result import CommandResult, Result
+from ...utils import Status
 from .base import (
     TransferContext,
     TransferProgressFactory,
+    mark_skipped,
 )
 from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
@@ -57,7 +59,7 @@ class FtpFileTransfer(UnixFileTransfer):
         self,
         connections: "ConnectionManager",
         name: str,
-        exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
+        exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]],
         max_filename_len: int = 255,
     ) -> None:
         super().__init__(
@@ -95,7 +97,7 @@ class FtpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         return await self._get_files_ftp(src_files, dest_dir, progress_factory)
 
     @override
@@ -104,7 +106,7 @@ class FtpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         return await self._put_files_ftp(src_files, dest_dir, progress_factory)
 
     async def _get_files_ftp(
@@ -112,18 +114,20 @@ class FtpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         # FTP transfers are sequential: aioftp.Client uses a single control
         # connection with one data channel per transfer, so concurrent ops on
         # the same client are not supported.  _ftp_lock serializes external
         # callers so concurrent host.get() invocations queue rather than
-        # collide on the shared client.
+        # collide on the shared client. A failure stops the loop and every
+        # not-yet-attempted file is marked Skipped.
+        per_file: dict[Path, Result] = {}
         async with self._ftp_lock:
             ftp_conn = await self._connections.ftp()
-            try:
-                for src in src_files:
-                    dst = dest_dir / src.name
-                    _logger.debug(f"{self._name}: FTP get {src} -> {dst}")
+            for i, src in enumerate(src_files):
+                dst = dest_dir / src.name
+                _logger.debug(f"{self._name}: FTP get {src} -> {dst}")
+                try:
                     if progress_factory is None:
                         await ftp_conn.download(str(src), str(dst))
                     else:
@@ -143,26 +147,29 @@ class FtpFileTransfer(UnixFileTransfer):
                                     f.write(block)
                                     bytes_done += len(block)
                                     handler(str(src), str(dst), bytes_done, total)
-            except Exception as e:  # noqa: BLE001 — FTP get can fail via network/protocol/IO; all map to Error
-                return Status.Error, str(e)
-            else:
-                return Status.Success, ""
+                except Exception as e:  # noqa: BLE001 — FTP get can fail via network/protocol/IO; all map to Error
+                    per_file[src] = Result(Status.Error, msg=f"{src}: {e}")
+                    mark_skipped(per_file, src_files[i + 1 :])
+                    break
+                per_file[src] = Result(Status.Success, value=dst)
+        return per_file
 
     async def _put_files_ftp(
         self,
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         import aioftp
 
         # Sequential for the same reason as _get_files_ftp (single data channel).
+        per_file: dict[Path, Result] = {}
         async with self._ftp_lock:
             ftp_conn = await self._connections.ftp()
-            try:
-                for src in src_files:
-                    dst = dest_dir / src.name
-                    _logger.debug(f"{self._name}: FTP put {src} -> {dst}")
+            for i, src in enumerate(src_files):
+                dst = dest_dir / src.name
+                _logger.debug(f"{self._name}: FTP put {src} -> {dst}")
+                try:
                     if progress_factory is None:
                         await ftp_conn.upload(str(src), str(dst))
                     else:
@@ -178,10 +185,12 @@ class FtpFileTransfer(UnixFileTransfer):
                                     await stream.write(block)
                                     bytes_done += len(block)
                                     handler(str(src), str(dst), bytes_done, total)
-            except Exception as e:  # noqa: BLE001 — FTP put can fail via network/protocol/IO; all map to Error
-                return Status.Error, str(e)
-            else:
-                return Status.Success, ""
+                except Exception as e:  # noqa: BLE001 — FTP put can fail via network/protocol/IO; all map to Error
+                    per_file[src] = Result(Status.Error, msg=f"{src}: {e}")
+                    mark_skipped(per_file, src_files[i + 1 :])
+                    break
+                per_file[src] = Result(Status.Success, value=dst)
+        return per_file
 
 
 register_transfer_backend("ftp", FtpFileTransfer)

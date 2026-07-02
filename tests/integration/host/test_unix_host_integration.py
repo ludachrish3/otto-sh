@@ -56,27 +56,27 @@ class TestBasicCommands:
     async def test_echo(self, host1: Host):
         result = (await host1.run("echo hello")).only
         assert result.status == Status.Success
-        assert "hello" in result.output
+        assert "hello" in result.value
 
     @pytest.mark.asyncio
     async def test_multiple_commands_run_in_order(self, host1: Host):
         result = await host1.run(["echo first", "echo second"])
         assert result.status == Status.Success
-        assert len(result.statuses) == 2
-        assert "first" in result.statuses[0].output
-        assert "second" in result.statuses[1].output
+        assert len(result) == 2
+        assert "first" in result[0].value
+        assert "second" in result[1].value
 
     @pytest.mark.asyncio
     async def test_uname_returns_linux(self, host1: Host):
         result = (await host1.run("uname -s")).only
         assert result.status == Status.Success
-        assert "Linux" in result.output
+        assert "Linux" in result.value
 
     @pytest.mark.asyncio
     async def test_multiline_output(self, host1: Host):
         result = (await host1.run("echo -e 'line1\\nline2\\nline3'")).only
         assert result.status == Status.Success
-        lines = result.output.strip().splitlines()
+        lines = result.value.strip().splitlines()
         assert len(lines) == 3
 
     @pytest.mark.asyncio
@@ -96,8 +96,8 @@ class TestBasicCommands:
     async def test_overall_status_reflects_failure(self, host1: Host):
         result = await host1.run(["echo ok", "ls /nonexistent_dir_otto_test"])
         assert result.status == Status.Failed
-        assert result.statuses[0].status == Status.Success
-        assert result.statuses[1].status == Status.Failed
+        assert result[0].status == Status.Success
+        assert result[1].status == Status.Failed
 
 
 # ---------------------------------------------------------------------------
@@ -113,14 +113,14 @@ class TestStatePersistence:
         await host1.run("cd tmp")
         result = (await host1.run("pwd")).only
         assert result.status == Status.Success
-        assert result.output.strip() == "/tmp"
+        assert result.value.strip() == "/tmp"
 
     @pytest.mark.asyncio
     async def test_env_var_persists(self, host1: Host):
         await host1.run("export OTTO_TEST_VAR=hello123")
         result = (await host1.run("echo $OTTO_TEST_VAR")).only
         assert result.status == Status.Success
-        assert "hello123" in result.output
+        assert "hello123" in result.value
 
 
 # ---------------------------------------------------------------------------
@@ -135,11 +135,11 @@ class TestTimeout:
         result = (await host1.run("sleep 999", timeout=0.1)).only
         assert result.status == Status.Error, (
             f"expected Status.Error, got {result.status!r}; "
-            f"retcode={result.retcode!r} output={result.output!r}"
+            f"retcode={result.retcode!r} output={result.value!r}"
         )
-        assert "timed out" in result.output, (
+        assert "timed out" in result.value, (
             f"expected 'timed out' in output; "
-            f"status={result.status!r} retcode={result.retcode!r} output={result.output!r}"
+            f"status={result.status!r} retcode={result.retcode!r} output={result.value!r}"
         )
         # The SSH process is killed on timeout, surfacing the sentinel retcode.
         # ``LocalHost`` carries no ``term``; the assertion is ssh-scoped.
@@ -151,7 +151,7 @@ class TestTimeout:
         await host1.run("sleep 999", timeout=0.1)
         result = (await host1.run("echo recovered")).only
         assert result.status == Status.Success
-        assert "recovered" in result.output
+        assert "recovered" in result.value
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +184,7 @@ class TestNamedSessionIntegration:
         mon = await host1.open_session("monitor")
         result = (await mon.run("echo hello")).only
         assert result.status == Status.Success
-        assert "hello" in result.output
+        assert "hello" in result.value
         await mon.close()
 
     @pytest.mark.asyncio
@@ -195,8 +195,8 @@ class TestNamedSessionIntegration:
         await s2.run("cd /home")
         r1 = (await s1.run("pwd")).only
         r2 = (await s2.run("pwd")).only
-        assert r1.output.strip() == "/tmp"
-        assert "/home" in r2.output.strip()
+        assert r1.value.strip() == "/tmp"
+        assert "/home" in r2.value.strip()
         await s1.close()
         await s2.close()
 
@@ -317,7 +317,7 @@ class TestReachability:
             for host in (host1, host2):
                 result = (await host.run("echo ping")).only
                 assert result.status == Status.Success
-                assert "ping" in result.output
+                assert "ping" in result.value
         finally:
             await host2.close()
 
@@ -343,7 +343,7 @@ class TestCredentials:
         try:
             result = (await host.run("whoami")).only
             assert result.status == Status.Success
-            assert second_user in result.output
+            assert second_user in result.value
         finally:
             await host.close()
 
@@ -396,12 +396,12 @@ class TestFileTransfer:
     async def test_get_file(self, transfer_host: UnixHost, tmp_path: Path):
         """Download /etc/hostname and verify it matches the hostname command."""
         result = (await transfer_host.run("hostname")).only
-        expected_hostname = result.output.strip()
+        expected_hostname = result.value.strip()
 
-        status, msg = await transfer_with_retry(
+        res = await transfer_with_retry(
             lambda: transfer_host.get([Path("/etc/hostname")], tmp_path)
         )
-        assert status == Status.Success, f"get failed: {msg}"
+        assert res.status == Status.Success, f"get failed: {res.msg}"
 
         local_hostname = (tmp_path / "hostname").read_text().strip()
         assert local_hostname == expected_hostname
@@ -414,10 +414,10 @@ class TestFileTransfer:
         src.write_text(content)
         remote_path = f"/tmp/otto_{transfer_host.transfer}_{transfer_host.term}_upload.txt"
 
-        status, msg = await transfer_with_retry(lambda: transfer_host.put([src], Path("/tmp")))
-        assert status == Status.Success, f"put failed: {msg}"
+        res = await transfer_with_retry(lambda: transfer_host.put([src], Path("/tmp")))
+        assert res.status == Status.Success, f"put failed: {res.msg}"
 
         result = (await transfer_host.run(f"cat {remote_path}")).only
-        assert content in result.output
+        assert content in result.value
 
         await transfer_host.run(f"rm -f {remote_path}")

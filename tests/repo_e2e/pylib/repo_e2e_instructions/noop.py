@@ -1,10 +1,11 @@
 """No-op instruction for e2e discovery tests."""
 
 from otto.cli.run import instruction
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 
 @instruction()
-async def noop() -> CommandStatus:
+async def noop() -> CommandResult:
     """No-op instruction for e2e discovery tests."""
-    return CommandStatus(command="noop", output="", status=Status.Success, retcode=0)
+    return CommandResult(Status.Success, value="", command="noop", retcode=0)

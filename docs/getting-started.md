@@ -369,7 +369,7 @@ async def hello(
     """Run a simple echo command on every host in the lab."""
     for host in all_hosts():
         result = (await host.run(f"echo {message}")).only
-        logger.info(f"{host.name}: {result.output.strip()}")
+        logger.info(f"{host.name}: {result.value.strip()}")
 ```
 
 Run it:

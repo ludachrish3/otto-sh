@@ -60,9 +60,9 @@ if TYPE_CHECKING:
     from ..configmodule.lab import Lab
 
 from ..logger.mode import LogMode
+from ..result import CommandResult, Result
 from ..utils import (
     Arg,
-    CommandStatus,
     Exclude,
     Opt,
     Status,
@@ -412,7 +412,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             return s.getsockname()[0]
 
     @override
-    async def verify_connection(self) -> CommandStatus:
+    async def verify_connection(self) -> CommandResult:
         """Attempt to connect without running any commands. Used by dry-run mode."""
         try:
             if self.term == "ssh":
@@ -424,12 +424,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 await self._connections.ftp()
 
             self._log_command("[DRY RUN] Connection verified")
-            return CommandStatus(
-                command="connect", output="Connection successful", status=Status.Success, retcode=0
+            return CommandResult(
+                status=Status.Success, value="Connection successful", command="connect", retcode=0
             )
         except Exception as e:  # noqa: BLE001 — verify_connection probes all failure modes
             self._log_command(f"[DRY RUN] Connection FAILED: {e}")
-            return CommandStatus(command="connect", output=str(e), status=Status.Error, retcode=1)
+            return CommandResult(status=Status.Error, value=str(e), command="connect", retcode=1)
 
     @override
     async def close(self) -> None:
@@ -501,7 +501,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Execute a single command on the remote host via the **persistent shell session**.
 
         Called by :meth:`run` for both the single-string and list forms. The session
@@ -527,8 +527,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 the timeout (use for long-running commands).
 
         Returns:
-            ``CommandStatus`` with the command, captured output, ``Status`` enum, and
-            exit code. Exit code 0 → ``Status.Success``; non-zero → ``Status.Failed``.
+            A :class:`~otto.result.CommandResult`; ``value`` holds the output.
+            Exit code 0 → ``Status.Success``; non-zero → ``Status.Failed``.
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
@@ -542,7 +542,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         cmd: str,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Run a single command concurrent-safely, independent of the persistent shell.
 
         Unlike :meth:`~otto.host.host.BaseHost.run`, this method is **concurrent-safe**: multiple
@@ -584,8 +584,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                 such as a netcat listener waiting for a connection.
 
         Returns:
-            ``CommandStatus`` with the command, captured output, ``Status`` enum, and
-            exit code.
+            A :class:`~otto.result.CommandResult`; ``value`` holds the output.
 
         See Also:
             :meth:`~otto.host.host.BaseHost.run`: stateful, sequential alternative
@@ -665,7 +664,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Transfer files from remote host to the local machine."""
         if not isinstance(src_files, list):
             src_files = [src_files]
@@ -687,7 +686,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Transfer files from local machine to remote host."""
         if not isinstance(src_files, list):
             src_files = [src_files]
@@ -702,26 +701,33 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ####################
 
     @cli_exposed(output_dir=False)
-    async def lsmod(self) -> list[str]:
-        """List the kernel modules currently loaded on the host."""
+    async def lsmod(self) -> Result:
+        """List the kernel modules currently loaded on the host.
+
+        ``value`` holds the module names (``list[str]``); a failed read is a
+        non-ok :class:`~otto.result.Result` instead of a silent empty list.
+        """
         return await self._loaded_modules()
 
-    async def _loaded_modules(self) -> list[str]:
-        """Return loaded module names, read from ``/proc/modules`` — the source ``lsmod`` formats.
+    async def _loaded_modules(self) -> Result:
+        """Read loaded module names from ``/proc/modules`` — the source ``lsmod`` formats.
 
         World-readable (no sudo), no ``lsmod`` binary dependency; column
         one is the module name, already ``-``→``_`` normalized by the kernel.
-        Returns ``[]`` under dry-run (the live module set is unknowable, and the
-        skipped read would otherwise echo the dry-run banner).
-        ``log=LogMode.QUIET`` keeps the (potentially long) module dump out of
-        the console (still recorded in verbose.log).
+        ``value`` is the module list — empty (``Skipped``) under dry-run, empty
+        (``Error``) when the read fails. ``log=LogMode.QUIET`` keeps the
+        (potentially long) module dump out of the console (still recorded in
+        verbose.log).
         """
         if is_dry_run():
-            return []
+            return Result(Status.Skipped, value=[])
         result = await self.oneshot("cat /proc/modules", log=LogMode.QUIET)
         if not result.status.is_ok:
-            return []
-        return [line.split()[0] for line in result.output.splitlines() if line.strip()]
+            return Result(
+                Status.Error, value=[], msg=f"reading /proc/modules failed: {result.value.strip()}"
+            )
+        mods = [line.split()[0] for line in result.value.splitlines() if line.strip()]
+        return Result(Status.Success, value=mods)
 
     @cli_exposed(success="Module loaded.")
     async def load(
@@ -730,7 +736,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         name: Annotated[str | None, Opt(help="Module name; defaults to the file stem.")] = None,
         dest_dir: Annotated[Path, Exclude] = Path("/tmp"),  # noqa: S108 — deliberate staging path
         show_progress: Annotated[bool, Exclude] = False,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Insert a kernel module: stage the .ko to the host, then ``insmod`` it.
 
         ``put`` lands the .ko on the target (as the login/transfer user); the
@@ -741,46 +747,48 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """
         resolved = (name or file.stem).replace("-", "_")
         dest = dest_dir / file.name
-        status, put_msg = await self.put(file, dest_dir, show_progress=show_progress)
-        if not status.is_ok:
-            return status, f"staging {file} failed: {put_msg}"
+        put_result = await self.put(file, dest_dir, show_progress=show_progress)
+        if not put_result.is_ok:
+            return Result(put_result.status, msg=f"staging {file} failed: {put_result.msg}")
         need_sudo = self.current_user != "root"
         result = await self.run(f"insmod {self._q(dest)}", sudo=need_sudo)
         await self.rm(dest, force=True)  # best-effort cleanup
         if result.status.is_ok:
-            return Status.Success, ""
-        return Status.Error, f"insmod {resolved} failed: {result.only.output.strip()}"
+            return Result(Status.Success)
+        return Result(Status.Error, msg=f"insmod {resolved} failed: {result.only.value.strip()}")
 
     @cli_exposed(success="Module unloaded.")
     async def unload(
         self,
         name: Annotated[str, Arg(help="Module name to remove.")],
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Remove a kernel module (``rmmod``).
 
         Idempotent: removing a module that is not resident succeeds without running ``rmmod``
         (mirrors :meth:`~otto.host.embedded_host.EmbeddedHost.unload`).
         """
         resolved = name.replace("-", "_")
-        if not is_dry_run() and resolved not in await self._loaded_modules():
-            return Status.Success, ""
+        # A failed module read yields value=[] -> treated as not-resident
+        # (old-behavior parity; lsmod carries the failure channel).
+        if not is_dry_run() and resolved not in (await self._loaded_modules()).value:
+            return Result(Status.Success)
         need_sudo = self.current_user != "root"
         result = await self.run(f"rmmod {self._q(resolved)}", sudo=need_sudo)
         if result.status.is_ok:
-            return Status.Success, ""
-        return Status.Error, f"rmmod {resolved} failed: {result.only.output.strip()}"
+            return Result(Status.Success)
+        return Result(Status.Error, msg=f"rmmod {resolved} failed: {result.only.value.strip()}")
 
     ####################
     #  Power / reboot
     ####################
 
     @override
-    async def _soft_reboot(self) -> tuple[Status, str]:
+    async def _soft_reboot(self) -> Result:
         await self.run("reboot", sudo=True, timeout=10.0)
-        return Status.Success, ""
+        return Result(Status.Success)
 
     @override
     @cli_exposed
-    async def shutdown(self) -> tuple[Status, str]:
+    async def shutdown(self) -> Result:
         await self.run("shutdown -h now", sudo=True, timeout=10.0)
-        return Status.Success, ""
+        return Result(Status.Success)

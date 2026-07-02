@@ -8,7 +8,8 @@ import pytest
 from otto.coverage.correlator.merger import LcovMerger
 from otto.host.local_host import LocalHost
 from otto.host.toolchain import Toolchain
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 
 class TestLcovMerger:
@@ -24,11 +25,8 @@ class TestLcovMerger:
         output = tmp_path / "out.info"
 
         with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
-            mock_oneshot.return_value = CommandStatus(
-                command="lcov --capture ...",
-                output="",
-                status=Status.Success,
-                retcode=0,
+            mock_oneshot.return_value = CommandResult(
+                Status.Success, value="", command="lcov --capture ...", retcode=0
             )
             result = await merger.capture(gcda_dir, gcno_dir, output)
             assert result == output
@@ -41,10 +39,10 @@ class TestLcovMerger:
         merger = LcovMerger(localhost)
 
         with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
-            mock_oneshot.return_value = CommandStatus(
+            mock_oneshot.return_value = CommandResult(
+                Status.Failed,
+                value="error: no gcda files found",
                 command="lcov --capture ...",
-                output="error: no gcda files found",
-                status=Status.Failed,
                 retcode=1,
             )
             with pytest.raises(RuntimeError, match="lcov --capture failed"):
@@ -61,11 +59,8 @@ class TestLcovMerger:
         output = tmp_path / "merged.info"
 
         with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
-            mock_oneshot.return_value = CommandStatus(
-                command="lcov ...",
-                output="",
-                status=Status.Success,
-                retcode=0,
+            mock_oneshot.return_value = CommandResult(
+                Status.Success, value="", command="lcov ...", retcode=0
             )
             result = await merger.merge_info_files([info1, info2], output)
             assert result == output
@@ -89,11 +84,8 @@ class TestLcovMerger:
         work_dir = tmp_path / "work"
 
         with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
-            mock_oneshot.return_value = CommandStatus(
-                command="lcov ...",
-                output="",
-                status=Status.Success,
-                retcode=0,
+            mock_oneshot.return_value = CommandResult(
+                Status.Success, value="", command="lcov ...", retcode=0
             )
             result = await merger.capture_and_merge([gcda_dir], tmp_path / "gcno", work_dir)
             # Single host = no merge step, returns the captured info directly
@@ -117,11 +109,8 @@ class TestLcovMergerToolchain:
         )
 
         with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
-            mock_oneshot.return_value = CommandStatus(
-                command="lcov ...",
-                output="",
-                status=Status.Success,
-                retcode=0,
+            mock_oneshot.return_value = CommandResult(
+                Status.Success, value="", command="lcov ...", retcode=0
             )
             await merger.capture(
                 tmp_path / "gcda",
@@ -141,11 +130,8 @@ class TestLcovMergerToolchain:
         merger = LcovMerger(localhost, lcov="my-lcov", gcov="my-gcov")
 
         with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
-            mock_oneshot.return_value = CommandStatus(
-                command="lcov ...",
-                output="",
-                status=Status.Success,
-                retcode=0,
+            mock_oneshot.return_value = CommandResult(
+                Status.Success, value="", command="lcov ...", retcode=0
             )
             await merger.capture(
                 tmp_path / "gcda",
@@ -176,12 +162,7 @@ class TestLcovMergerToolchain:
 
         async def mock_oneshot(cmd, timeout=None):
             commands.append(cmd)
-            return CommandStatus(
-                command=cmd,
-                output="",
-                status=Status.Success,
-                retcode=0,
-            )
+            return CommandResult(Status.Success, value="", command=cmd, retcode=0)
 
         with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
             await merger.capture_and_merge(
@@ -219,12 +200,7 @@ class TestLcovMergerToolchain:
 
         async def mock_oneshot(cmd, timeout=None):
             commands.append(cmd)
-            return CommandStatus(
-                command=cmd,
-                output="",
-                status=Status.Success,
-                retcode=0,
-            )
+            return CommandResult(Status.Success, value="", command=cmd, retcode=0)
 
         with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
             await merger.capture_and_merge(

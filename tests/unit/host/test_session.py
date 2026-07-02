@@ -103,7 +103,7 @@ class TestRunCmd:
         await feed_task
 
         assert result.command == "echo hello world"
-        assert result.output == "hello world"
+        assert result.value == "hello world"
         assert result.status == Status.Success
         assert result.retcode == 0
 
@@ -121,7 +121,7 @@ class TestRunCmd:
 
         assert result.status == Status.Failed
         assert result.retcode == 127
-        assert "command not found" in result.output
+        assert "command not found" in result.value
 
     @pytest.mark.asyncio
     async def test_empty_output_command(self, session: MockSession):
@@ -133,7 +133,7 @@ class TestRunCmd:
         result = await session.run_cmd("cd /tmp")
         await feed_task
 
-        assert result.output == ""
+        assert result.value == ""
         assert result.retcode == 0
 
     @pytest.mark.asyncio
@@ -148,7 +148,7 @@ class TestRunCmd:
         result = await session.run_cmd("seq 1 3")
         await feed_task
 
-        assert result.output == "line1\nline2\nline3"
+        assert result.value == "line1\nline2\nline3"
         assert result.retcode == 0
 
     @pytest.mark.asyncio
@@ -161,7 +161,7 @@ class TestRunCmd:
         result = await session.run_cmd("echo hello")
         await feed_task
 
-        assert result.output == "hello"
+        assert result.value == "hello"
 
     @pytest.mark.asyncio
     async def test_sentinel_wrapping_sent_to_stdin(self, session: MockSession):
@@ -246,7 +246,7 @@ class TestExpects:
         await feed_task
 
         assert result.status == Status.Success
-        assert result.output == "ok"
+        assert result.value == "ok"
         # The password response should NOT have been sent
         assert "secret\n" not in session.written
 
@@ -299,7 +299,7 @@ class TestTimeout:
 
         assert result.status == Status.Error
         assert result.retcode == -1
-        assert "timed out" in result.output
+        assert "timed out" in result.value
 
     @pytest.mark.asyncio
     async def test_session_stays_alive_after_recovered_timeout(self, session: MockSession):
@@ -482,7 +482,7 @@ class TestLocalSession:
     async def test_run_echo_command(self, local_session: LocalSession):
         result = await local_session.run_cmd("echo hello_otto")
         assert result.status == Status.Success
-        assert "hello_otto" in result.output
+        assert "hello_otto" in result.value
         assert result.retcode == 0
 
     @pytest.mark.asyncio
@@ -496,31 +496,31 @@ class TestLocalSession:
         await local_session.run_cmd("cd /tmp")
         result = await local_session.run_cmd("pwd")
         assert result.status == Status.Success
-        assert result.output.strip() == "/tmp"
+        assert result.value.strip() == "/tmp"
 
     @pytest.mark.asyncio
     async def test_env_var_persists(self, local_session: LocalSession):
         await local_session.run_cmd("export OTTO_SESSION_TEST=abc123")
         result = await local_session.run_cmd("echo $OTTO_SESSION_TEST")
-        assert "abc123" in result.output
+        assert "abc123" in result.value
 
     @pytest.mark.asyncio
     async def test_multiline_output(self, local_session: LocalSession):
         result = await local_session.run_cmd("echo line1; echo line2; echo line3")
         assert result.status == Status.Success
-        lines = result.output.strip().splitlines()
+        lines = result.value.strip().splitlines()
         assert lines == ["line1", "line2", "line3"]
 
     @pytest.mark.asyncio
     async def test_timeout_recovery(self, local_session: LocalSession):
         result = await local_session.run_cmd("sleep 999", timeout=0.1)
         assert result.status == Status.Error
-        assert "timed out" in result.output
+        assert "timed out" in result.value
 
         # Session should recover
         result = await local_session.run_cmd("echo recovered")
         assert result.status == Status.Success
-        assert "recovered" in result.output
+        assert "recovered" in result.value
 
     @pytest.mark.asyncio
     async def test_send_and_expect(self, local_session: LocalSession):
@@ -682,7 +682,7 @@ class TestCommandLogging:
 
     @pytest.mark.asyncio
     async def test_final_output_unchanged(self, session: MockSession):
-        """CommandStatus.output still contains the complete output."""
+        """CommandResult.value still contains the complete output."""
         logged: list[str] = []
         session._on_output = logged.append
 
@@ -694,7 +694,7 @@ class TestCommandLogging:
         result = await session.run_cmd("test")
         await feed_task
 
-        assert result.output == "one\ntwo"
+        assert result.value == "one\ntwo"
         assert logged == ["one", "two"]
 
     @pytest.mark.asyncio
@@ -710,7 +710,7 @@ class TestCommandLogging:
         await feed_task
 
         assert result.status == Status.Success
-        assert result.output == "hello"
+        assert result.value == "hello"
 
     @pytest.mark.asyncio
     async def test_echoed_command_filtered(self, session: MockSession):
@@ -732,7 +732,7 @@ class TestCommandLogging:
         result = await session.run_cmd("ls")
         await feed_task
 
-        assert result.output == "file.txt"
+        assert result.value == "file.txt"
         assert logged == ["file.txt"]
 
 

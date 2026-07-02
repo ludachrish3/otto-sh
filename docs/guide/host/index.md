@@ -53,7 +53,7 @@ can also be done inside instructions and test suites:
 >>> result = run(host.run(["echo hello", "echo world"]))
 >>> result.status
 <Status.Success: 0>
->>> [cs.output.strip() for cs in result.statuses]
+>>> [cr.value.strip() for cr in result]
 ['hello', 'world']
 ```
 
@@ -65,16 +65,20 @@ File transfers work the same way -- `put` and `get` map to
 from pathlib import Path
 
 # Upload
-status, msg = await host.put(
+res = await host.put(
     src_files=[Path("firmware.bin")],
     dest_dir=Path("/tmp"),
 )
+if not res:
+    logger.error(f"upload failed: {res.msg}")
 
 # Download
-status, msg = await host.get(
+res = await host.get(
     src_files=[Path("/var/log/syslog")],
     dest_dir=Path("./logs"),
 )
+if not res:
+    logger.error(f"download failed: {res.msg}")
 ```
 
 ```{note}
@@ -84,6 +88,23 @@ File transfer methods are only available on
 `run` which is available on all host types.
 `EmbeddedHost` provides its own console/tftp transfer; see {doc}`../embedded`.
 ```
+
+## Exit codes
+
+Every `otto host <name> <verb>` invocation derives its exit code from the
+verb's `Result`:
+
+| Situation | Exit code |
+| --- | --- |
+| Verb succeeded (incl. `Status.Skipped`) | 0 |
+| `run`/`oneshot`: a command failed | that command's shell retcode (ssh-like: `run 'exit 42'` exits 42) |
+| `run`/`oneshot`: the command never ran (connection failure) | 255 (matches ssh's convention) |
+| Any other verb: `Status.Failed` | 1 |
+| Any other verb: `Status.Error` | 2 (note: Click also uses 2 for CLI usage errors) |
+| Any other verb: `Status.Unstable` | 3 |
+
+Custom verbs on third-party host classes may return plain values instead of a
+`Result`; the CLI prints them as-is and exits 0.
 
 ```{toctree}
 :hidden:

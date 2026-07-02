@@ -55,7 +55,7 @@ class TestStabilityFixture(OttoSuite[_Options]):
 
         # Run a command to force the SSH connection open
         result = await host.oneshot("echo stability_setup_ok", timeout=10)
-        assert result.status.is_ok, f"Failed to establish connection during setup: {result.output}"
+        assert result.status.is_ok, f"Failed to establish connection during setup: {result.value}"
 
         self.__class__._host = host
         yield
@@ -68,6 +68,6 @@ class TestStabilityFixture(OttoSuite[_Options]):
 
         result = await self._host.oneshot("echo iteration_ok", timeout=10)
         assert result.status == Status.Success, (
-            f"SSH connection failed (likely torn down between iterations): {result.output}"
+            f"SSH connection failed (likely torn down between iterations): {result.value}"
         )
-        assert "iteration_ok" in result.output
+        assert "iteration_ok" in result.value

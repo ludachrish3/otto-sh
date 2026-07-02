@@ -20,9 +20,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from typing_extensions import override
 
-from ..utils import Status
+from ..result import Result
 
 if TYPE_CHECKING:
+    from ..result import CommandResult
     from .host import Host
 
 
@@ -40,20 +41,20 @@ class PowerController(ABC):
     """Lab-data string for this controller (e.g. ``'command'``)."""
 
     @abstractmethod
-    async def on(self, host: "Host") -> tuple[Status, str]:
-        """Power *host* on."""
+    async def on(self, host: "Host") -> Result:
+        """Power *host* on. ``msg`` on the returned Result carries diagnostics."""
         ...
 
     @abstractmethod
-    async def off(self, host: "Host") -> tuple[Status, str]:
-        """Power *host* off."""
+    async def off(self, host: "Host") -> Result:
+        """Power *host* off. ``msg`` on the returned Result carries diagnostics."""
         ...
 
-    async def cycle(self, host: "Host") -> tuple[Status, str]:
+    async def cycle(self, host: "Host") -> Result:
         """Power-cycle *host*: off, then on. Override for a native reset."""
-        status, msg = await self.off(host)
-        if not status.is_ok:
-            return status, msg
+        off_result = await self.off(host)
+        if not off_result.is_ok:
+            return off_result
         return await self.on(host)
 
     async def status(self, host: "Host") -> PowerState | None:  # noqa: ARG002 — required by PowerController protocol signature; subclasses use host, this default does not
@@ -99,25 +100,26 @@ class CommandPowerController(PowerController):
     def _fmt(self, template: str, host: "Host") -> str:
         return template.format(name=host.name, ip=getattr(host, "ip", ""), id=host.id)
 
-    async def _exec(self, template: str, host: "Host") -> tuple[Status, str]:
+    async def _exec(self, template: str, host: "Host") -> "CommandResult":
         runner = await self._runner(host)
-        result = await runner.oneshot(self._fmt(template, host))
-        return result.status, result.output
+        return await runner.oneshot(self._fmt(template, host))
 
     @override
-    async def on(self, host: "Host") -> tuple[Status, str]:
-        return await self._exec(self.on_cmd, host)
+    async def on(self, host: "Host") -> Result:
+        cmd_result = await self._exec(self.on_cmd, host)
+        return Result(cmd_result.status, msg=cmd_result.value)
 
     @override
-    async def off(self, host: "Host") -> tuple[Status, str]:
-        return await self._exec(self.off_cmd, host)
+    async def off(self, host: "Host") -> Result:
+        cmd_result = await self._exec(self.off_cmd, host)
+        return Result(cmd_result.status, msg=cmd_result.value)
 
     @override
     async def status(self, host: "Host") -> PowerState | None:
         if self.status_cmd is None:
             return None
-        _status, output = await self._exec(self.status_cmd, host)
-        return PowerState.ON if self.status_on in output else PowerState.OFF
+        cmd_result = await self._exec(self.status_cmd, host)
+        return PowerState.ON if self.status_on in cmd_result.value else PowerState.OFF
 
 
 _POWER_CONTROLLERS: dict[str, type[PowerController]] = {}

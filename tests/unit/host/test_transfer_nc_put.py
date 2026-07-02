@@ -31,11 +31,18 @@ import otto.host.transfer.nc as transfer_mod
 from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 
-def _ok(output: str = "") -> CommandStatus:
-    return CommandStatus(command="", output=output, status=Status.Success, retcode=0)
+def _ok(output: str = "") -> CommandResult:
+    return CommandResult(command="", value=output, status=Status.Success, retcode=0)
+
+
+def _only(per_file: dict, src: Path) -> tuple[Status, str]:
+    """Unwrap the single per-file ``(status, msg)`` from a nc transfer's mapping."""
+    r = per_file[src]
+    return r.status, r.msg
 
 
 class _FakeWriter:
@@ -120,7 +127,7 @@ class TestNcPutDrain:
             ),
             patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
         ):
-            status, msg = await ft._put_files_nc([src], tmp_path / "dst")
+            status, msg = _only(await ft._put_files_nc([src], tmp_path / "dst"), src)
 
         assert status == Status.Success, msg
         # Pre-fix the loop drained exactly once (at the end) — the whole file
@@ -172,7 +179,7 @@ class TestNcPutDrain:
             ),
             patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
         ):
-            status, _ = await ft._put_files_nc([src], tmp_path / "dst", factory)
+            status, _ = _only(await ft._put_files_nc([src], tmp_path / "dst", factory), src)
 
         assert status == Status.Success
         # Progress callbacks must span more than one drain boundary — i.e.
@@ -213,7 +220,7 @@ class TestNcPutListenerWait:
             patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
             patch.object(transfer_mod, "_connect_with_retry", new=fake_connect),
         ):
-            status, msg = await ft._put_files_nc([src], tmp_path / "dst")
+            status, msg = _only(await ft._put_files_nc([src], tmp_path / "dst"), src)
 
         assert status == Status.Success, msg
 
@@ -238,7 +245,7 @@ class TestNcPutListenerWait:
         in_flight = 0
         max_in_flight = 0
 
-        async def tracking_exec(cmd: str, *args, **kwargs) -> CommandStatus:
+        async def tracking_exec(cmd: str, *args, **kwargs) -> CommandResult:
             nonlocal in_flight, max_in_flight
             in_flight += 1
             max_in_flight = max(max_in_flight, in_flight)
@@ -263,7 +270,7 @@ class TestNcPutListenerWait:
         in_flight = 0
         max_in_flight = 0
 
-        async def tracking_exec(cmd: str, *args, **kwargs) -> CommandStatus:
+        async def tracking_exec(cmd: str, *args, **kwargs) -> CommandResult:
             nonlocal in_flight, max_in_flight
             in_flight += 1
             max_in_flight = max(max_in_flight, in_flight)
@@ -313,7 +320,7 @@ class TestNcPutListenerWait:
             patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
             patch.object(transfer_mod, "_connect_with_retry", new=gated_connect),
         ):
-            status, msg = await ft._put_files_nc([src], tmp_path / "dst")
+            status, msg = _only(await ft._put_files_nc([src], tmp_path / "dst"), src)
 
         assert status == Status.Success, msg
 
@@ -386,9 +393,12 @@ class TestNcPutOrphanedListener:
             ),
             patch.object(NcFileTransfer, "_verify_nc_dest_size", new=AsyncMock(return_value=None)),
         ):
-            status, msg = await asyncio.wait_for(
-                ft._put_files_nc([src], tmp_path / "dst"),
-                timeout=5.0,
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._put_files_nc([src], tmp_path / "dst"),
+                    timeout=5.0,
+                ),
+                src,
             )
 
         assert status == Status.Error, msg
@@ -439,7 +449,7 @@ class TestNcPutCancellation:
 
         listener_started = asyncio.Event()
 
-        async def exec_side_effect(cmd: str, *args, **kwargs) -> CommandStatus:
+        async def exec_side_effect(cmd: str, *args, **kwargs) -> CommandResult:
             if "nc -l" in cmd:
                 # The listener "runs" until its task is cancelled.
                 listener_started.set()
@@ -531,8 +541,8 @@ class TestVerifyNcDestSize:
         ft = _make_ft(exec_cmd)
         result = await ft._verify_nc_dest_size(tmp_path / "f", expected)
         assert result is not None
-        assert result[0] is Status.Error
-        assert want in result[1]
+        assert result.status is Status.Error
+        assert want in result.msg
 
     @pytest.mark.asyncio
     async def test_ok_returns_none(self, tmp_path: Path) -> None:
@@ -633,7 +643,7 @@ class TestPutFilesNcConnectFailure:
                 AsyncMock(side_effect=ConnectionError("nope")),
             ),
         ):
-            status, msg = await ft._put_files_nc([src], tmp_path / "dst")
+            status, msg = _only(await ft._put_files_nc([src], tmp_path / "dst"), src)
 
         assert status is Status.Error
         assert "not ready" in msg

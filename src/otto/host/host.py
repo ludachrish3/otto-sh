@@ -27,9 +27,9 @@ from typing import (
 from typing_extensions import Self, override
 
 from ..logger.mode import LogMode, effective_mode
+from ..result import CommandResult, Result, Results
 from ..utils import (
     Arg,
-    CommandStatus,
     Exclude,
     Opt,
     Status,
@@ -90,35 +90,6 @@ class ShellCommand:
     """Per-command logging disposition. ``None`` inherits the run-level ``log`` value."""
 
 
-@dataclass(slots=True)
-class RunResult:
-    """Unified result of :meth:`Host.run` regardless of how many commands ran.
-
-    ``statuses`` always has one entry per issued command. ``status`` is the
-    aggregate: ``Status.Success`` when every entry is ok, otherwise the first
-    non-ok status encountered (matching the old tuple-form semantics).
-    """
-
-    status: Status
-    """Aggregate status across all commands."""
-
-    statuses: list[CommandStatus]
-    """Per-command statuses in execution order."""
-
-    @property
-    def only(self) -> CommandStatus:
-        """Return the sole :class:`~otto.utils.CommandStatus` when exactly one command ran.
-
-        Raises ``ValueError`` otherwise — useful for single-command call sites
-        that want to read fields directly without unpacking.
-        """
-        if len(self.statuses) != 1:
-            raise ValueError(
-                f"RunResult.only requires exactly 1 command status, got {len(self.statuses)}"
-            )
-        return self.statuses[0]
-
-
 def _normalize_expects(
     expects: "Expect | list[Expect] | None",
 ) -> list["Expect"] | None:
@@ -154,10 +125,10 @@ def _resolve_command(
 
 
 async def _run_cmds_with_budget(
-    run_one: Callable[[ShellCommand, float | None], Awaitable[CommandStatus]],
+    run_one: Callable[[ShellCommand, float | None], Awaitable[CommandResult]],
     cmds: list[ShellCommand],
     timeout: float | None,
-) -> RunResult:
+) -> Results:
     """Run a list of commands sequentially under a shared timeout budget.
 
     Each command receives the minimum of its own ``ShellCommand.timeout`` and
@@ -169,24 +140,21 @@ async def _run_cmds_with_budget(
     if timeout is not None:
         deadline = asyncio.get_running_loop().time() + timeout
 
-    overall_status = Status.Success
-    statuses: list[CommandStatus] = []
+    entries: list[CommandResult] = []
 
     for sc in cmds:
         remaining: float | None = None
         if deadline is not None:
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
-                statuses.append(
-                    CommandStatus(
-                        command=sc.cmd,
-                        output="Skipped: cumulative timeout budget exhausted",
+                entries.append(
+                    CommandResult(
                         status=Status.Error,
+                        value="Skipped: cumulative timeout budget exhausted",
+                        command=sc.cmd,
                         retcode=-1,
                     )
                 )
-                if overall_status.is_ok:
-                    overall_status = Status.Error
                 continue
 
         if sc.timeout is None:
@@ -197,11 +165,9 @@ async def _run_cmds_with_budget(
             effective = min(sc.timeout, remaining)
 
         result = await run_one(sc, effective)
-        statuses.append(result)
-        if not result.status.is_ok and overall_status.is_ok:
-            overall_status = result.status
+        entries.append(result)
 
-    return RunResult(status=overall_status, statuses=statuses)
+    return Results.collect(entries)
 
 
 class Host(Protocol):
@@ -246,7 +212,7 @@ class Host(Protocol):
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
         sudo: bool = False,
-    ) -> RunResult:
+    ) -> Results:
         """Run one or more commands on the host and collect their results.
 
         Args:
@@ -263,7 +229,8 @@ class Host(Protocol):
                 :exc:`NotImplementedError`.
 
         Returns:
-            A :class:`RunResult` aggregating each command's status and output.
+            A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
+            per command.
         """
         ...
 
@@ -272,7 +239,7 @@ class Host(Protocol):
         cmd: str,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Run a single command outside the typical stateful ``run`` workflow.
 
         Concurrency safety is implementation-dependent. Host families with an
@@ -284,7 +251,8 @@ class Host(Protocol):
         :class:`~otto.host.embedded_host.EmbeddedHost`) share the persistent
         session and are **not** concurrency-safe — see the concrete class.
 
-        Returns the :class:`~otto.utils.CommandStatus` for the command.
+        Returns:
+            A :class:`~otto.result.CommandResult`; ``value`` holds the output.
         """
         ...
 
@@ -337,12 +305,17 @@ class Host(Protocol):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Download one or more files from the host to a local directory.
 
-        Returns a ``(Status, message)`` tuple: :attr:`~otto.utils.Status.Success`
-        with an empty message on success; a non-ok status with a diagnostic
-        on failure.
+        Returns a :class:`~otto.result.Result` whose ``value`` is a
+        ``dict[Path, Result]`` mapping each source path — keyed exactly as
+        passed, with no resolution — to its per-file outcome: ``value=dest_path``
+        on success, a per-file ``msg`` on failure, or
+        :attr:`~otto.utils.Status.Skipped` (``"not attempted (earlier failure)"``)
+        for a file a sequential backend never reached. The aggregate status is
+        the first non-ok entry's status (Skipped counts as ok, so a trailing run
+        of Skipped never fails the aggregate on its own).
         """
         ...
 
@@ -350,39 +323,46 @@ class Host(Protocol):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Upload one or more local files to a directory on the host.
 
-        Returns a ``(Status, message)`` tuple: :attr:`~otto.utils.Status.Success`
-        with an empty message on success; a non-ok status with a diagnostic
-        on failure.
+        Returns a :class:`~otto.result.Result` whose ``value`` is a
+        ``dict[Path, Result]`` mapping each source path — keyed exactly as
+        passed, with no resolution — to its per-file outcome: ``value=dest_path``
+        on success, a per-file ``msg`` on failure, or
+        :attr:`~otto.utils.Status.Skipped` (``"not attempted (earlier failure)"``)
+        for a file a sequential backend never reached. The aggregate status is
+        the first non-ok entry's status (Skipped counts as ok, so a trailing run
+        of Skipped never fails the aggregate on its own).
         """
         ...
 
-    async def power(self, state: str | None = None) -> tuple[Status, str]:
+    async def power(self, state: str | None = None) -> Result:
         """Power this host on, off, or toggle (when *state* is ``None``).
 
-        Returns a ``(Status, message)`` tuple.
+        Returns a :class:`~otto.result.Result`; on success ``value`` is the
+        commanded :class:`~otto.host.power.PowerState` (or ``None`` when
+        unknown), and ``msg`` carries controller diagnostics.
         """
         ...
 
     async def reboot(
         self, hard: bool = False, wait: bool = False, timeout: float = 600.0
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Reboot this host.
 
         ``hard=False`` issues an in-shell reboot; ``hard=True`` power-cycles
         via the :class:`~otto.host.power.PowerController`. When *wait* is
         ``True``, blocks until the host is reachable again or *timeout* seconds
-        have elapsed. Returns a ``(Status, message)`` tuple.
+        have elapsed. Returns a :class:`~otto.result.Result`.
         """
         ...
 
-    async def shutdown(self) -> tuple[Status, str]:
+    async def shutdown(self) -> Result:
         """Power this host off from its own shell.
 
         Distinct from :meth:`power` ``('off')``, which uses an external power
-        controller. Returns a ``(Status, message)`` tuple.
+        controller. Returns a :class:`~otto.result.Result`.
         """
         ...
 
@@ -408,25 +388,27 @@ class Host(Protocol):
         """Close the host's persistent session and release any held resources."""
         ...
 
-    async def stage(self) -> tuple[Status, str]:
+    async def stage(self) -> Result:
         """Stage every product onto this host (transfer/place, no install).
 
-        Returns a ``(Status, message)`` tuple.
+        Returns a :class:`~otto.result.Result`.
         """
         ...
 
-    async def install(self, stage_only: bool = False) -> tuple[Status, str]:
+    async def install(self, stage_only: bool = False) -> Result:
         """Stage and then install every product on this host.
 
         When *stage_only* is ``True``, stops after staging without installing.
-        Returns a ``(Status, message)`` tuple, short-circuiting on the first failure.
+        Returns a :class:`~otto.result.Result`, short-circuiting on the first
+        failure.
         """
         ...
 
-    async def uninstall(self) -> tuple[Status, str]:
+    async def uninstall(self) -> Result:
         """Uninstall every product from this host (best-effort).
 
-        Returns a ``(Status, message)`` tuple.
+        Returns a :class:`~otto.result.Result` — the first non-ok outcome, after
+        attempting every product.
         """
         ...
 
@@ -465,18 +447,32 @@ class BaseHost(ABC):
     #  Dry-run helpers
     ####################
 
-    def _dry_run_result(self, cmd: str) -> CommandStatus:
-        """Return a synthetic CommandStatus for dry-run mode."""
+    def _dry_run_result(self, cmd: str) -> CommandResult:
+        """Return a synthetic CommandResult for dry-run mode."""
         self._log_command(f"[DRY RUN] {cmd}")
-        return CommandStatus(
-            command=cmd, output="[DRY RUN] Command not executed", status=Status.Skipped, retcode=0
+        return CommandResult(
+            status=Status.Skipped, value="[DRY RUN] Command not executed", command=cmd, retcode=0
         )
 
-    def _dry_run_transfer(self, action: str, files: list[Path], dest: Path) -> tuple[Status, str]:
-        """Return a synthetic transfer result for dry-run mode."""
+    def _dry_run_transfer(self, action: str, files: list[Path], dest: Path) -> Result:
+        """Return a synthetic per-file transfer result for dry-run mode.
+
+        Builds the same ``value: dict[Path, Result]`` shape as a real transfer,
+        keyed by the source paths exactly as passed. Every file is marked
+        ``Status.Skipped`` (which counts as ok) with a ``[DRY RUN]`` diagnostic,
+        so the folded aggregate is Skipped and its ``msg`` names the action.
+        """
         file_names = ", ".join(str(f) for f in files)
         self._log_command(f"[DRY RUN] {action}: {file_names} -> {dest}")
-        return (Status.Skipped, f"[DRY RUN] {action}: {file_names} -> {dest}")
+        per_file = {
+            src: Result(Status.Skipped, value=dest / src.name, msg=f"[DRY RUN] {action}: {src}")
+            for src in files
+        }
+        # Every file is Skipped (ok), so the fold would report Success; a dry-run
+        # transfer is explicitly Skipped, and the aggregate msg carries the banner.
+        return Result(
+            Status.Skipped, value=per_file, msg=f"[DRY RUN] {action}: {file_names} -> {dest}"
+        )
 
     ####################
     #  Privilege
@@ -568,7 +564,7 @@ class BaseHost(ABC):
         ] = None,
         log: Annotated[LogMode, Exclude] = LogMode.NORMAL,
         sudo: bool = False,
-    ) -> RunResult:
+    ) -> Results:
         """Execute one or more commands on the host via the persistent shell session.
 
         The session is stateful: working directory changes (``cd``), exported environment
@@ -578,8 +574,7 @@ class BaseHost(ABC):
         Args:
             cmds: A single command (``str`` or :class:`ShellCommand`) or a sequence of
                 commands. Strings and :class:`ShellCommand` objects may be mixed. For
-                single-command calls, read the result via ``result.only`` (or
-                ``result.statuses[0]``).
+                single-command calls, read the result via ``result.only``.
             expects: Default ``(pattern, response)`` pair(s) for interactive prompts.
                 Accepts a single ``Expect`` tuple or a list of them. Each command
                 inherits this value unless its own :attr:`ShellCommand.expects` is set.
@@ -593,8 +588,8 @@ class BaseHost(ABC):
                 :exc:`NotImplementedError` — see ``_elevate``.
 
         Returns:
-            :class:`~otto.host.host.RunResult` with the aggregate :class:`~otto.utils.Status`
-            and a list of per-command :class:`~otto.utils.CommandStatus` entries.
+            A :class:`~otto.result.Results` aggregating one :class:`~otto.result.CommandResult`
+            per command.
 
         See Also:
             :meth:`oneshot`: stateless, concurrent-safe alternative for one-off commands.
@@ -612,14 +607,13 @@ class BaseHost(ABC):
                 # _resolve_command collapsed the None sentinel into a concrete LogMode.
                 log=single.log if single.log is not None else LogMode.NORMAL,
             )
-            status = result.status if not result.status.is_ok else Status.Success
-            return RunResult(status=status, statuses=[result])
+            return Results.collect([result])
 
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
         if sudo:
             resolved = [self._apply_sudo(sc) for sc in resolved]
 
-        async def _run_sc(sc: ShellCommand, t: float | None) -> CommandStatus:
+        async def _run_sc(sc: ShellCommand, t: float | None) -> CommandResult:
             return await self._run_one(
                 sc.cmd,
                 expects=_normalize_expects(sc.expects),
@@ -640,7 +634,7 @@ class BaseHost(ABC):
         expects: list[Expect] | None = None,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Per-command runner for the persistent shell session. Subclasses override."""
         raise NotImplementedError from None
 
@@ -649,7 +643,7 @@ class BaseHost(ABC):
         cmd: str,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Run a single command outside the persistent shell session. Subclasses must override."""
         raise NotImplementedError from None
 
@@ -684,7 +678,7 @@ class BaseHost(ABC):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Download files from the host to a local directory. Subclasses must override."""
         raise NotImplementedError from None
 
@@ -692,7 +686,7 @@ class BaseHost(ABC):
         self,
         src_files: list[Path] | Path,
         dest_dir: Path,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Upload local files to a directory on the host. Subclasses must override."""
         raise NotImplementedError from None
 
@@ -711,20 +705,20 @@ class BaseHost(ABC):
     ####################
 
     @cli_exposed
-    async def stage(self) -> tuple[Status, str]:
+    async def stage(self) -> Result:
         """Stage every product onto this host (transfer/place, no install).
 
         Iterates :attr:`products` in declaration order, returning the first
-        non-ok ``(Status, str)``; an empty list is a successful no-op.
+        non-ok :class:`~otto.result.Result`; an empty list is a successful no-op.
         """
         for product in self.products:
             status, msg = await product.stage(cast("Host", self))
             if not status.is_ok:
-                return status, msg
-        return Status.Success, ""
+                return Result(status, msg=msg)
+        return Result(Status.Success)
 
     @cli_exposed
-    async def install(self, stage_only: bool = False) -> tuple[Status, str]:
+    async def install(self, stage_only: bool = False) -> Result:
         """Stage, then install every product.
 
         Calls :meth:`stage` first; returns early if ``stage_only`` is set or the
@@ -732,28 +726,28 @@ class BaseHost(ABC):
         short-circuiting on the first failure. Projects may override for
         cross-product ordering/dependencies.
         """
-        status, msg = await self.stage()
-        if stage_only or not status.is_ok:
-            return status, msg
+        stage_result = await self.stage()
+        if stage_only or not stage_result.is_ok:
+            return stage_result
         for product in self.products:
             status, msg = await product.install(cast("Host", self))
             if not status.is_ok:
-                return status, msg
-        return Status.Success, ""
+                return Result(status, msg=msg)
+        return Result(Status.Success)
 
     @cli_exposed
-    async def uninstall(self) -> tuple[Status, str]:
+    async def uninstall(self) -> Result:
         """Uninstall every product (best-effort).
 
         Attempts every product even if one fails, returning the first non-ok
         result seen (so cleanup is not abandoned halfway).
         """
-        first_error: tuple[Status, str] | None = None
+        first_failure: Result | None = None
         for product in self.products:
             status, msg = await product.uninstall(cast("Host", self))
-            if not status.is_ok and first_error is None:
-                first_error = (status, msg)
-        return first_error if first_error is not None else (Status.Success, "")
+            if not status.is_ok and first_failure is None:
+                first_failure = Result(status, msg=msg)
+        return first_failure if first_failure is not None else Result(Status.Success)
 
     @cli_exposed(output_dir=False)
     async def is_installed(self) -> bool:
@@ -788,19 +782,24 @@ class BaseHost(ABC):
         return self.power_control
 
     @cli_exposed
-    async def power(self, state: "Annotated[str | None, Arg()]" = None) -> tuple[Status, str]:
+    async def power(self, state: "Annotated[str | None, Arg()]" = None) -> Result:
         """Power this host ``'on'``/``'off'``, or toggle when *state* is None.
 
         Toggling reads the controller's :meth:`~otto.host.power.PowerController.status`;
-        if the controller can't report state, pass an explicit ``state``.
+        if the controller can't report state, pass an explicit ``state``. On
+        success ``value`` is the commanded :class:`~otto.host.power.PowerState`.
         """
         from .power import PowerState
 
+        def _with_state(result: Result, commanded: PowerState) -> Result:
+            value = commanded if result.is_ok else None
+            return Result(result.status, value=value, msg=result.msg)
+
         controller = self._require_power_control()
         if state == "on":
-            return await controller.on(cast("Host", self))
+            return _with_state(await controller.on(cast("Host", self)), PowerState.ON)
         if state == "off":
-            return await controller.off(cast("Host", self))
+            return _with_state(await controller.off(cast("Host", self)), PowerState.OFF)
         if state is None:
             current = await controller.status(cast("Host", self))
             if current is None:
@@ -809,11 +808,11 @@ class BaseHost(ABC):
                     f"reports status; pass state='on' or 'off'."
                 )
             if current is PowerState.ON:
-                return await controller.off(cast("Host", self))
-            return await controller.on(cast("Host", self))
+                return _with_state(await controller.off(cast("Host", self)), PowerState.OFF)
+            return _with_state(await controller.on(cast("Host", self)), PowerState.ON)
         raise ValueError(f"invalid power state {state!r}; expected 'on', 'off', or None")
 
-    async def _soft_reboot(self) -> tuple[Status, str]:
+    async def _soft_reboot(self) -> Result:
         """Issue the in-shell reboot command. Per-family override; default raises."""
         raise NotImplementedError(
             f"soft reboot is not supported on '{self.__class__.__name__}'"
@@ -822,7 +821,7 @@ class BaseHost(ABC):
     @cli_exposed
     async def reboot(
         self, hard: bool = False, wait: bool = False, timeout: float = 600.0
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Reboot this host.
 
         ``hard=False`` (default) issues the in-shell reboot command
@@ -833,17 +832,18 @@ class BaseHost(ABC):
         downgraded to :attr:`~otto.utils.Status.Failed`.
         """
         if hard:
-            status, msg = await self._require_power_control().cycle(cast("Host", self))
+            result = await self._require_power_control().cycle(cast("Host", self))
         else:
-            status, msg = await self._soft_reboot()
-        if status.is_ok and wait and not await self.wait_until_up(timeout):
-            return Status.Failed, (
-                f"{self.name!r} did not become reachable within {timeout}s after reboot"
+            result = await self._soft_reboot()
+        if result.is_ok and wait and not await self.wait_until_up(timeout):
+            return Result(
+                Status.Failed,
+                msg=f"{self.name!r} did not become reachable within {timeout}s after reboot",
             )
-        return status, msg
+        return result
 
     @cli_exposed
-    async def shutdown(self) -> tuple[Status, str]:
+    async def shutdown(self) -> Result:
         """Power this host off from its own shell (distinct from external ``power('off')``).
 
         Per-family override; default raises.

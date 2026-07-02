@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
     from ..configmodule.lab import Lab
-    from ..utils import CommandStatus
+    from ..result import CommandResult
     from .connections import ConnectionManager
     from .options import SnmpOptions
     from .power import PowerController
@@ -198,7 +198,7 @@ class RemoteHost(BaseHost):
     _session_mgr: SessionManager
     _lab: Lab | None
 
-    async def verify_connection(self) -> "CommandStatus":  # pragma: no cover
+    async def verify_connection(self) -> "CommandResult":  # pragma: no cover
         """Verify the host connection by running a diagnostic command.
 
         Subclasses override this to run an OS-appropriate probe (e.g. ``uname``

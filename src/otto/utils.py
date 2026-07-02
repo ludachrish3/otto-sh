@@ -10,7 +10,6 @@ from enum import Enum
 from typing import (
     Any,
     Literal,
-    NamedTuple,
     ParamSpec,
     TypeVar,
     Union,
@@ -191,26 +190,3 @@ class Status(Enum):
     def is_ok(self) -> bool:
         """True for statuses that should be treated as passing (Success, Skipped)."""
         return self in (Status.Success, Status.Skipped)
-
-
-class CommandStatus(NamedTuple):
-    """Result of a command execution on a host.
-
-    >>> result = CommandStatus("echo hi", "hi", Status.Success, 0)
-    >>> result.status
-    <Status.Success: 0>
-    >>> result.retcode
-    0
-    """
-
-    command: str
-    """Command that was issued"""
-
-    output: str
-    "Command output"
-
-    status: Status
-    """Command status"""
-
-    retcode: int
-    """Command shell retcode"""

@@ -40,7 +40,9 @@ def make_rich_progress_handler(progress: Progress, host_name: str) -> "TransferP
 
         with make_transfer_progress() as progress:
             handler = make_rich_progress_handler(progress, host_name=host.hostname)
-            status, err = await host.get(files, dest, progress_handler=handler)
+            result = await host.get(files, dest)
+            if not result.is_ok:
+                ...
     """
     current_src: str | None = None
     task_id: TaskID | None = None
@@ -67,7 +69,9 @@ def make_rich_progress_factory(progress: Progress, host_name: str) -> "TransferP
 
         with make_transfer_progress() as progress:
             factory = make_rich_progress_factory(progress, host_name=host.name)
-            status, err = await host.put(files, dest)
+            result = await host.put(files, dest)
+            if not result.is_ok:
+                ...
     """
 
     def factory() -> "TransferProgressHandler":

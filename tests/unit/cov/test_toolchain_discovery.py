@@ -14,7 +14,8 @@ from otto.host.toolchain_discovery import (
     discover_toolchain_from_gcno,
     toolchain_from_gcov,
 )
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 
 class TestDeriveSysroot:
@@ -116,25 +117,10 @@ class TestDiscoverToolchainFromGcno:
             nonlocal call_count
             call_count += 1
             if "find" in cmd:
-                return CommandStatus(
-                    command=cmd,
-                    output=find_output,
-                    status=Status.Success,
-                    retcode=0,
-                )
+                return CommandResult(Status.Success, value=find_output, command=cmd, retcode=0)
             if "strings" in cmd:
-                return CommandStatus(
-                    command=cmd,
-                    output=strings_output,
-                    status=Status.Success,
-                    retcode=0,
-                )
-            return CommandStatus(
-                command=cmd,
-                output="",
-                status=Status.Failed,
-                retcode=1,
-            )
+                return CommandResult(Status.Success, value=strings_output, command=cmd, retcode=0)
+            return CommandResult(Status.Failed, value="", command=cmd, retcode=1)
 
         with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
             tc = await discover_toolchain_from_gcno(gcno_dir, localhost)
@@ -156,25 +142,10 @@ class TestDiscoverToolchainFromGcno:
 
         async def mock_oneshot(cmd, timeout=None):
             if "find" in cmd:
-                return CommandStatus(
-                    command=cmd,
-                    output=find_output,
-                    status=Status.Success,
-                    retcode=0,
-                )
+                return CommandResult(Status.Success, value=find_output, command=cmd, retcode=0)
             if "strings" in cmd:
-                return CommandStatus(
-                    command=cmd,
-                    output=strings_output,
-                    status=Status.Success,
-                    retcode=0,
-                )
-            return CommandStatus(
-                command=cmd,
-                output="",
-                status=Status.Failed,
-                retcode=1,
-            )
+                return CommandResult(Status.Success, value=strings_output, command=cmd, retcode=0)
+            return CommandResult(Status.Failed, value="", command=cmd, retcode=1)
 
         with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
             tc = await discover_toolchain_from_gcno(gcno_dir, localhost, work_dir)
@@ -188,11 +159,8 @@ class TestDiscoverToolchainFromGcno:
         localhost = LocalHost()
 
         with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
-            mock_oneshot.return_value = CommandStatus(
-                command="find ...",
-                output="",
-                status=Status.Success,
-                retcode=0,
+            mock_oneshot.return_value = CommandResult(
+                Status.Success, value="", command="find ...", retcode=0
             )
             tc = await discover_toolchain_from_gcno(tmp_path, localhost)
 
@@ -207,25 +175,14 @@ class TestDiscoverToolchainFromGcno:
 
         async def mock_oneshot(cmd, timeout=None):
             if "find" in cmd:
-                return CommandStatus(
-                    command=cmd,
-                    output=str(gcno_dir / "main.gcno"),
-                    status=Status.Success,
-                    retcode=0,
+                return CommandResult(
+                    Status.Success, value=str(gcno_dir / "main.gcno"), command=cmd, retcode=0
                 )
             if "strings" in cmd:
-                return CommandStatus(
-                    command=cmd,
-                    output="main.c\nsome-random-data\n",
-                    status=Status.Success,
-                    retcode=0,
+                return CommandResult(
+                    Status.Success, value="main.c\nsome-random-data\n", command=cmd, retcode=0
                 )
-            return CommandStatus(
-                command=cmd,
-                output="",
-                status=Status.Failed,
-                retcode=1,
-            )
+            return CommandResult(Status.Failed, value="", command=cmd, retcode=1)
 
         with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
             tc = await discover_toolchain_from_gcno(gcno_dir, localhost)

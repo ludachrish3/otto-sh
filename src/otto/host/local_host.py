@@ -26,7 +26,8 @@ from typing_extensions import override
 
 from ..logger import get_otto_logger
 from ..logger.mode import LogMode
-from ..utils import Arg, CommandStatus, Exclude, Status, cli_exposed
+from ..result import CommandResult, Result
+from ..utils import Arg, Exclude, Status, cli_exposed
 from .file_ops import PosixFileOps
 from .host import BaseHost, is_dry_run
 from .power import PowerController
@@ -39,6 +40,7 @@ from .session import (
     SessionManager,
 )
 from .transfer import BaseFileTransfer, TransferProgressFactory
+from .transfer.base import mark_skipped
 
 
 class LocalFileTransfer(BaseFileTransfer):
@@ -58,19 +60,28 @@ class LocalFileTransfer(BaseFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
+        # Sequential single-directory copy: an OSError (e.g. a missing source)
+        # stops the loop and every not-yet-copied file is marked Skipped. Keyed
+        # by the source path exactly as passed.
+        per_file: dict[Path, Result] = {}
         try:
             dest_dir.mkdir(parents=True, exist_ok=True)
-            for src in src_files:
-                dest = dest_dir / src.name
+        except OSError as e:
+            return {src: Result(Status.Error, msg=str(e)) for src in src_files}
+        for i, src in enumerate(src_files):
+            dest = dest_dir / src.name
+            try:
                 await asyncio.to_thread(shutil.copy2, src, dest)
                 if progress_factory is not None:
                     size = dest.stat().st_size
                     progress_factory()(str(src), str(dest), size, size)
-        except OSError as e:
-            return Status.Error, str(e)
-        else:
-            return Status.Success, ""
+            except OSError as e:
+                per_file[src] = Result(Status.Error, msg=str(e))
+                mark_skipped(per_file, src_files[i + 1 :])
+                break
+            per_file[src] = Result(Status.Success, value=dest)
+        return per_file
 
     @override
     async def _run_put(
@@ -78,7 +89,7 @@ class LocalFileTransfer(BaseFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         return await self._do_copy(src_files, dest_dir, progress_factory)
 
     @override
@@ -87,7 +98,7 @@ class LocalFileTransfer(BaseFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         return await self._do_copy(src_files, dest_dir, progress_factory)
 
 
@@ -156,7 +167,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Execute a command via the persistent local shell session.
 
         Shell state (working directory, environment variables) persists between
@@ -174,7 +185,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Run a command in a fresh subprocess (stateless, concurrent-safe).
 
         Each call spawns an independent process — no state persists between
@@ -190,7 +201,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Fire-and-forget subprocess execution."""
         status = Status.Error
         lines: list[str] = []
@@ -206,8 +217,8 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         )
 
         if proc.stdout is None:
-            return CommandStatus(
-                command=cmd, output="Failed to set up stdout", retcode=EIO, status=status
+            return CommandResult(
+                status=status, value="Failed to set up stdout", command=cmd, retcode=EIO
             )
 
         try:
@@ -221,26 +232,26 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
                     self._log_output(line, mode)
         except asyncio.TimeoutError:
             proc.terminate()
-            return CommandStatus(
-                command=cmd,
-                output=f"Command timed out after {timeout}s\n" + "\n".join(lines),
+            return CommandResult(
                 status=Status.Error,
+                value=f"Command timed out after {timeout}s\n" + "\n".join(lines),
+                command=cmd,
                 retcode=-1,
             )
 
         await proc.wait()
         if proc.returncode is None:
-            return CommandStatus(
-                command=cmd,
-                output="Process did not provide a return code",
-                retcode=ERANGE,
+            return CommandResult(
                 status=status,
+                value="Process did not provide a return code",
+                command=cmd,
+                retcode=ERANGE,
             )
 
         status = Status.Success if proc.returncode == 0 else Status.Failed
 
-        return CommandStatus(
-            command=cmd, output="\n".join(lines), retcode=proc.returncode, status=status
+        return CommandResult(
+            status=status, value="\n".join(lines), command=cmd, retcode=proc.returncode
         )
 
     @override
@@ -288,7 +299,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Copy files to dest_dir on the local filesystem.
 
         Delegates to :class:`LocalFileTransfer` so progress reporting
@@ -314,7 +325,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Copy files to dest_dir on the local filesystem.
 
         Delegates to :class:`LocalFileTransfer`; see :meth:`get`.

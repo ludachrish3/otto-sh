@@ -16,21 +16,22 @@ from otto.docker.build import (
     image_full_tag,
     image_latest_tag,
 )
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult, Result
+from otto.utils import Status
 
 
-def _ok(out: str = "") -> CommandStatus:
-    return CommandStatus(command="", output=out, status=Status.Success, retcode=0)
+def _ok(out: str = "") -> CommandResult:
+    return CommandResult(Status.Success, value=out, command="", retcode=0)
 
 
-def _fail(out: str = "boom") -> CommandStatus:
-    return CommandStatus(command="", output=out, status=Status.Failed, retcode=1)
+def _fail(out: str = "boom") -> CommandResult:
+    return CommandResult(Status.Failed, value=out, command="", retcode=1)
 
 
 def _mock_parent():
     parent = MagicMock()
     parent.oneshot = AsyncMock(return_value=_ok())
-    parent.put = AsyncMock(return_value=(Status.Success, ""))
+    parent.put = AsyncMock(return_value=Result(Status.Success, value={}))
     return parent
 
 

@@ -56,7 +56,7 @@ async def _compile_product() -> None:
     localhost = LocalHost()
     try:
         result = await localhost.oneshot(f"make -C {PRODUCT_DIR} clean all", timeout=30)
-        assert result.status == Status.Success, f"Compilation failed:\n{result.output}"
+        assert result.status == Status.Success, f"Compilation failed:\n{result.value}"
     finally:
         await localhost.close()
 
@@ -67,11 +67,11 @@ async def _install_on_host(host: UnixHost) -> None:
     await host.oneshot(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
 
     binary = PRODUCT_DIR / "product"
-    status, msg = await host.put(
+    res = await host.put(
         src_files=[binary],
         dest_dir=Path(REMOTE_INSTALL_DIR),
     )
-    assert status.is_ok, f"Deploy to {host.id} failed: {msg}"
+    assert res.is_ok, f"Deploy to {host.id} failed: {res.msg}"
     await host.oneshot(f"chmod +x {REMOTE_INSTALL_DIR}/product", timeout=10)
 
 
@@ -90,7 +90,7 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
         f"{REMOTE_INSTALL_DIR}/product {op} {str_args}"
     )
     result = await host.oneshot(cmd, timeout=10)
-    return result.output.strip()
+    return result.value.strip()
 
 
 @pytest.mark.xdist_group("coverage_e2e")

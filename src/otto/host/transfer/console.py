@@ -13,9 +13,15 @@ from typing import Any
 from typing_extensions import override
 
 from ...logger import get_otto_logger
-from ...utils import CommandStatus, Status
+from ...result import CommandResult, Result
+from ...utils import Status
 from ..embedded_filesystem import EmbeddedFileSystem
-from .base import TransferContext, TransferProgressFactory, TransferProgressHandler
+from .base import (
+    TransferContext,
+    TransferProgressFactory,
+    TransferProgressHandler,
+    mark_skipped,
+)
 from .embedded_base import EmbeddedFileTransfer
 from .registry import register_transfer_backend
 
@@ -81,12 +87,12 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
 
     # Narrow the inherited _exec_cmd type: console transfer always requires
     # a live exec callable, never None.
-    _exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]]
+    _exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]]
 
     def __init__(
         self,
         name: str,
-        exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
+        exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]],
         filesystem: EmbeddedFileSystem | None = None,
         max_filename_len: int = 255,
         transfer: str | None = None,
@@ -121,22 +127,26 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         """Transfer files off the embedded target — sequential (single console).
 
         ``_console_get_one`` reads the file in a single ``fs read`` command,
         so per-byte progress isn't feasible; the handler is invoked once at
-        completion to satisfy the "files complete to 100%" contract.
+        completion to satisfy the "files complete to 100%" contract. A file
+        failure stops the loop and every not-yet-attempted file is Skipped.
         """
         if not self._filesystem.supports_transfer:
-            return Status.Error, _NO_FILESYSTEM_MSG
+            return {src: Result(Status.Error, msg=_NO_FILESYSTEM_MSG) for src in src_files}
         await self._ensure_mounted()
-        for src in src_files:
+        per_file: dict[Path, Result] = {}
+        for i, src in enumerate(src_files):
             handler = progress_factory() if progress_factory is not None else None
-            status, err = await self._console_get_one(src, dest_dir, handler)
-            if not status.is_ok:
-                return status, err
-        return Status.Success, ""
+            result = await self._console_get_one(src, dest_dir, handler)
+            per_file[src] = result
+            if not result.is_ok:
+                mark_skipped(per_file, src_files[i + 1 :])
+                break
+        return per_file
 
     @override
     async def _run_put(
@@ -144,23 +154,27 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         """Transfer local files onto the embedded target — sequential.
 
         ``_console_put_one`` writes in 32-byte chunks (``_WRITE_CHUNK``), so
         the handler is invoked after each chunk for genuine per-byte
         progress — much finer than asyncssh's 256 KB SCP block, fitting the
-        slowness of console transfer.
+        slowness of console transfer. A file failure stops the loop and every
+        not-yet-attempted file is Skipped.
         """
         if not self._filesystem.supports_transfer:
-            return Status.Error, _NO_FILESYSTEM_MSG
+            return {src: Result(Status.Error, msg=_NO_FILESYSTEM_MSG) for src in src_files}
         await self._ensure_mounted()
-        for src in src_files:
+        per_file: dict[Path, Result] = {}
+        for i, src in enumerate(src_files):
             handler = progress_factory() if progress_factory is not None else None
-            status, err = await self._console_put_one(src, dest_dir, handler)
-            if not status.is_ok:
-                return status, err
-        return Status.Success, ""
+            result = await self._console_put_one(src, dest_dir, handler)
+            per_file[src] = result
+            if not result.is_ok:
+                mark_skipped(per_file, src_files[i + 1 :])
+                break
+        return per_file
 
     # ------------------------------------------------------------------
     # console backend — get
@@ -171,13 +185,14 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         src: Path,
         dest_dir: Path,
         progress_handler: TransferProgressHandler | None = None,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Read one file off the target via ``fs read`` and write it locally.
 
         ``fs read`` is a single monolithic command — no chunk loop — so the
         progress handler is invoked exactly once at completion (signalling
         file done at 100%). Per-byte progress for GET would require chunked
-        ``fs read <path> <offset> <length>``; deferred.
+        ``fs read <path> <offset> <length>``; deferred. Returns a
+        :class:`~otto.result.Result` carrying ``value=dest`` on success.
         """
         src_path = src.as_posix()
         read_cmd = self._filesystem.read_command(src_path)
@@ -185,21 +200,24 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         result = await self._exec_cmd(read_cmd, timeout=_READ_TIMEOUT)
 
         if not result.status.is_ok:
-            return Status.Error, (
-                f"{read_cmd} failed (retcode={_label_errno(result.retcode)}): "
-                f"{result.output.strip()}"
+            return Result(
+                Status.Error,
+                msg=(
+                    f"{read_cmd} failed (retcode={_label_errno(result.retcode)}): "
+                    f"{result.value.strip()}"
+                ),
             )
 
         try:
-            data = self._decode_hexdump(result.output)
+            data = self._decode_hexdump(result.value)
         except ValueError as e:
-            return Status.Error, f"{read_cmd}: {e}"
+            return Result(Status.Error, msg=f"{read_cmd}: {e}")
 
         dest = dest_dir / src.name
         dest.write_bytes(data)
         if progress_handler is not None:
             progress_handler(src_path, dest.as_posix(), len(data), len(data))
-        return Status.Success, ""
+        return Result(Status.Success, value=dest)
 
     # ------------------------------------------------------------------
     # console backend — put
@@ -210,16 +228,18 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
         src: Path,
         dest_dir: Path,
         progress_handler: TransferProgressHandler | None = None,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Write one local file onto the target via chunked ``fs write``.
 
         Emits a progress event after each successful 32-byte chunk write,
         plus a final event at file completion (``bytes_done == bytes_total``).
         Empty files emit a single ``(0, 0)`` event so the bar appears and
-        immediately completes.
+        immediately completes. Returns a :class:`~otto.result.Result` carrying
+        ``value=<dest path>`` on success.
         """
         data = src.read_bytes()
-        dest_path = (dest_dir / src.name).as_posix()
+        dest = dest_dir / src.name
+        dest_path = dest.as_posix()
         src_str = str(src)
         total = len(data)
         logger.debug(f"{self._name}: fs write {src} -> {dest_path} ({total} bytes)")
@@ -244,10 +264,10 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
                 self._filesystem.write_command(dest_path, 0, ""),
                 timeout=_WRITE_TIMEOUT,
             )
-            status, err = self._check_write(result, dest_path, 0)
-            if status.is_ok and progress_handler is not None:
+            check = self._check_write(result, dest_path, 0)
+            if check.is_ok and progress_handler is not None:
                 progress_handler(src_str, dest_path, 0, 0)
-            return status, err
+            return check if not check.is_ok else Result(Status.Success, value=dest)
 
         for offset in range(0, total, _WRITE_CHUNK):
             chunk = data[offset : offset + _WRITE_CHUNK]
@@ -256,18 +276,18 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
                 self._filesystem.write_command(dest_path, offset, hexbytes),
                 timeout=_WRITE_TIMEOUT,
             )
-            status, err = self._check_write(result, dest_path, offset)
-            if not status.is_ok:
+            check = self._check_write(result, dest_path, offset)
+            if not check.is_ok:
                 # Partial file left on the device blocks any retry on a
                 # capacity-bound filesystem (the half-written bytes still
                 # consume space). Best-effort `fs rm` so the next attempt
                 # starts from a clean slate; a failure here is logged but
                 # not propagated — the caller already has the real error.
                 await self._cleanup_partial(dest_path)
-                return status, err
+                return check
             if progress_handler is not None:
                 progress_handler(src_str, dest_path, offset + len(chunk), total)
-        return Status.Success, ""
+        return Result(Status.Success, value=dest)
 
     async def _cleanup_partial(self, dest_path: str) -> None:
         """Best-effort removal of a half-written destination file after a mid-transfer failure.
@@ -285,18 +305,21 @@ class ConsoleFileTransfer(EmbeddedFileTransfer):
 
     def _check_write(
         self,
-        result: CommandStatus,
+        result: CommandResult,
         dest_path: str,
         offset: int,
-    ) -> tuple[Status, str]:
-        """Classify an ``fs write`` result into a transfer status."""
+    ) -> Result:
+        """Classify an ``fs write`` result into a transfer :class:`~otto.result.Result`."""
         if not result.status.is_ok:
-            return Status.Error, (
-                f"fs write {dest_path} at offset {offset} failed "
-                f"(retcode={_label_errno(result.retcode)}): "
-                f"{result.output.strip()}"
+            return Result(
+                Status.Error,
+                msg=(
+                    f"fs write {dest_path} at offset {offset} failed "
+                    f"(retcode={_label_errno(result.retcode)}): "
+                    f"{result.value.strip()}"
+                ),
             )
-        return Status.Success, ""
+        return Result(Status.Success)
 
     # ------------------------------------------------------------------
     # Helpers

@@ -95,9 +95,9 @@ class TestRunIterationStability:
             result = (await host1.run(host1_kit.successful_cmd)).only
             assert result.status == Status.Success, f"iteration {i}/{n} failed: {result}"
             assert result.retcode == 0, f"iteration {i}/{n} non-zero retcode: {result.retcode}"
-            assert result.output, f"iteration {i}/{n} produced empty output"
-            assert host1_kit.expect_in_output in result.output, (
-                f"iteration {i}/{n} mangled output: {result.output!r}"
+            assert result.value, f"iteration {i}/{n} produced empty output"
+            assert host1_kit.expect_in_output in result.value, (
+                f"iteration {i}/{n} mangled output: {result.value!r}"
             )
 
 
@@ -130,14 +130,18 @@ class TestTransferCycleStability:
             local_src = tmp_path / name
             local_src.write_bytes(payload)
 
-            put_status, put_err = await host1.put([local_src], remote_dir)
-            assert put_status == Status.Success, f"cycle {i}/{n} put failed: {put_err}"
+            put_result = await host1.put([local_src], remote_dir)
+            assert put_result.status == Status.Success, (
+                f"cycle {i}/{n} put failed: {put_result.msg}"
+            )
 
-            get_status, get_err = await host1.get(
+            get_result = await host1.get(
                 [remote_dir / name],
                 landing,
             )
-            assert get_status == Status.Success, f"cycle {i}/{n} get failed: {get_err}"
+            assert get_result.status == Status.Success, (
+                f"cycle {i}/{n} get failed: {get_result.msg}"
+            )
 
             got = (landing / name).read_bytes()
             assert got == payload, (
@@ -191,16 +195,20 @@ class TestLargeTransferStability:
         local_src.write_bytes(payload)
 
         remote_dir = Path(host1_kit.temp_remote_dir)
-        put_status, put_err = await host1.put([local_src], remote_dir)
-        assert put_status == Status.Success, f"large put ({size} bytes) failed: {put_err}"
+        put_result = await host1.put([local_src], remote_dir)
+        assert put_result.status == Status.Success, (
+            f"large put ({size} bytes) failed: {put_result.msg}"
+        )
 
         landing = tmp_path / "landing"
         landing.mkdir()
-        get_status, get_err = await host1.get(
+        get_result = await host1.get(
             [remote_dir / name],
             landing,
         )
-        assert get_status == Status.Success, f"large get ({size} bytes) failed: {get_err}"
+        assert get_result.status == Status.Success, (
+            f"large get ({size} bytes) failed: {get_result.msg}"
+        )
 
         got = (landing / name).read_bytes()
         assert got == payload, (

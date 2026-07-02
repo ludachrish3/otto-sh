@@ -34,8 +34,9 @@ if TYPE_CHECKING:
 
 from ..logger import get_otto_logger
 from ..logger.mode import LogMode
-from ..utils import CommandStatus, Status
-from .host import RunResult, ShellCommand
+from ..result import CommandResult, Results
+from ..utils import Status
+from .host import ShellCommand
 
 logger = get_otto_logger()
 
@@ -357,7 +358,7 @@ class ShellSession(ABC):
         on_output: Callable[[str], None] | None = None,
         redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Execute a shell command with sentinel-based output demarcation.
 
         Output is streamed line-by-line to ``_on_output`` as it arrives.
@@ -373,7 +374,7 @@ class ShellSession(ABC):
                 attempts recovery via Ctrl+C and returns Status.Error.
 
         Returns:
-            CommandStatus with exit code extracted from the sentinel.
+            CommandResult with exit code extracted from the sentinel.
         """
         await self._ensure_ready()
         sink = on_output if on_output is not None else self._on_output
@@ -387,10 +388,10 @@ class ShellSession(ABC):
 
         except asyncio.TimeoutError:
             partial = await self._recover_session()
-            return CommandStatus(
-                command=cmd,
-                output=f"Command timed out after {timeout}s" + (f"\n{partial}" if partial else ""),
+            return CommandResult(
                 status=Status.Error,
+                value=f"Command timed out after {timeout}s" + (f"\n{partial}" if partial else ""),
+                command=cmd,
                 retcode=-1,
             )
         except asyncio.CancelledError:
@@ -403,10 +404,10 @@ class ShellSession(ABC):
             raise
         except asyncio.IncompleteReadError:
             self._alive = False
-            return CommandStatus(
-                command=cmd,
-                output="Session died unexpectedly (EOF)",
+            return CommandResult(
                 status=Status.Error,
+                value="Session died unexpectedly (EOF)",
+                command=cmd,
                 retcode=-1,
             )
 
@@ -419,7 +420,7 @@ class ShellSession(ABC):
         on_output: Callable[[str], None],
         redact: bool = False,
         write_progress: Callable[[int, int], None] | None = None,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Send sentinel-wrapped command, handle expects, surface output.
 
         Output is read line-by-line. How it reaches ``on_output`` depends on the
@@ -515,7 +516,7 @@ class ShellSession(ABC):
         retcode = self._frame.extract_retcode(buffer, self._markers)
         status = Status.Success if retcode == 0 else Status.Failed
         # Buffered frames (raw stream not clean line-by-line) emit the parsed
-        # output once here — identical to the returned CommandStatus.output, so
+        # output once here — identical to the returned CommandResult.value, so
         # the log never shows shell prompts or the retcode scaffolding.
         if not live and output:
             on_output(output)
@@ -537,7 +538,7 @@ class ShellSession(ABC):
                 f"{self._log_tag}: run_cmd done cmd={cmd!r} retcode={retcode} "
                 f"output_len={len(output)} buffer={buffer_preview!r}"
             )
-        return CommandStatus(command=cmd, output=output, status=status, retcode=retcode)
+        return CommandResult(status=status, value=output, command=cmd, retcode=retcode)
 
     def _build_combined_pattern(
         self,
@@ -985,12 +986,12 @@ class HostSession:
         expects: Expect | list[Expect] | None = None,
         timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
-    ) -> RunResult:
+    ) -> Results:
         """Execute one or more commands on this named session.
 
         Mirrors :meth:`~otto.host.host.Host.run`: accepts a ``str``, a
         :class:`~otto.host.host.ShellCommand`, or a sequence mixing the two, and always returns a
-        :class:`~otto.host.host.RunResult`. Per-command ``expects`` / ``timeout`` on a
+        :class:`~otto.result.Results`. Per-command ``expects`` / ``timeout`` on a
         :class:`~otto.host.host.ShellCommand` override the run-level
         defaults; a scalar ``Expect`` tuple at the run level is normalized to a
         one-element list.
@@ -999,7 +1000,7 @@ class HostSession:
 
         default_expects = _normalize_expects(expects)
 
-        async def _run_sc(sc: ShellCommand, t: float | None) -> CommandStatus:
+        async def _run_sc(sc: ShellCommand, t: float | None) -> CommandResult:
             # _resolve_command collapsed the None sentinel into a concrete LogMode.
             mode = sc.log if sc.log is not None else LogMode.NORMAL
             if mode is not LogMode.NEVER:
@@ -1015,8 +1016,7 @@ class HostSession:
         if isinstance(cmds, (str, ShellCommand)):
             sc = _resolve_command(cmds, default_expects, timeout, log)
             result = await _run_sc(sc, sc.timeout)
-            status = result.status if not result.status.is_ok else Status.Success
-            return RunResult(status=status, statuses=[result])
+            return Results.collect([result])
 
         resolved = [_resolve_command(c, default_expects, None, log) for c in cmds]
         return await _run_cmds_with_budget(_run_sc, resolved, timeout)
@@ -1073,7 +1073,7 @@ class SessionManager:
         log_command: Callable[[str, LogMode], None] = lambda *_: None,
         log_output: Callable[[str, LogMode], None] = lambda *_: None,
         session_factory: "Callable[[], ShellSession] | None" = None,
-        oneshot_factory: "Callable[[str, float | None], Awaitable[CommandStatus]] | None" = None,
+        oneshot_factory: "Callable[[str, float | None], Awaitable[CommandResult]] | None" = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         retry_backoff: float | None = None,
@@ -1299,7 +1299,7 @@ class SessionManager:
         timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
         write_progress: Callable[[int, int], None] | None = None,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Run *cmd* on the default session, creating it if needed.
 
         Wraps :meth:`~otto.host.session.ShellSession.run_cmd` with automatic
@@ -1325,7 +1325,7 @@ class SessionManager:
         cmd: str,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Run *cmd* without sharing state with the default session.
 
         Concurrent calls are safe: for SSH each call opens an independent
@@ -1362,10 +1362,10 @@ class SessionManager:
                     process.terminate()
                 result = await process.wait()
                 status = Status.Success if result.exit_status == 0 else Status.Failed
-                return CommandStatus(
-                    command=cmd,
-                    output="\n".join(lines),
+                return CommandResult(
                     status=status,
+                    value="\n".join(lines),
+                    command=cmd,
                     retcode=result.exit_status or 0,
                 )
             case "telnet":

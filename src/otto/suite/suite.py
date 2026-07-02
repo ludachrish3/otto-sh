@@ -245,8 +245,8 @@ class OttoSuite(Generic[TOptions]):
                 assert result.status == Status.Success
 
                 # Non-fatal — records failure, test continues
-                self.expect("hostname" in result.output)
-                self.expect("interface" in result.output)
+                self.expect("hostname" in result.value)
+                self.expect("interface" in result.value)
                 self.expect(result.retcode == 0, "unexpected retcode")
 
             The failure report always includes the source location and

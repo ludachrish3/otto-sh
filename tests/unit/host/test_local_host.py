@@ -36,7 +36,7 @@ async def test_run_string_command():
         result = (await host.run("echo hello")).only
         assert result.status == Status.Success
         assert result.command == "echo hello"
-        assert "hello" in result.output
+        assert "hello" in result.value
         assert result.retcode == 0
     finally:
         await host.close()
@@ -60,8 +60,8 @@ async def test_run_commands_with_success_and_failure():
         cmds = ["echo ok", "asdf_nonexistent_cmd_12345"]
         result = await host.run(cmds)
         assert result.status == Status.Failed
-        assert result.statuses[0].status == Status.Success
-        assert result.statuses[1].status == Status.Failed
+        assert result[0].status == Status.Success
+        assert result[1].status == Status.Failed
     finally:
         await host.close()
 
@@ -72,8 +72,8 @@ async def test_run_one_cmd_with_output():
     try:
         result = await host.run(["echo hello world"])
         assert result.status == Status.Success
-        assert result.statuses[0].output == "hello world"
-        assert result.statuses[0].retcode == 0
+        assert result[0].value == "hello world"
+        assert result[0].retcode == 0
     finally:
         await host.close()
 
@@ -84,7 +84,7 @@ async def test_run_multiline_output():
     try:
         result = (await host.run("echo line1; echo line2; echo line3")).only
         assert result.status == Status.Success
-        lines = result.output.strip().splitlines()
+        lines = result.value.strip().splitlines()
         assert lines == ["line1", "line2", "line3"]
     finally:
         await host.close()
@@ -102,7 +102,7 @@ async def test_cd_persists_between_commands():
         await host.run("cd /tmp")
         result = (await host.run("pwd")).only
         assert result.status == Status.Success
-        assert result.output.strip() == "/tmp"
+        assert result.value.strip() == "/tmp"
     finally:
         await host.close()
 
@@ -114,7 +114,7 @@ async def test_env_var_persists():
         await host.run("export OTTO_LOCAL_TEST=xyz789")
         result = (await host.run("echo $OTTO_LOCAL_TEST")).only
         assert result.status == Status.Success
-        assert "xyz789" in result.output
+        assert "xyz789" in result.value
     finally:
         await host.close()
 
@@ -129,7 +129,7 @@ async def test_oneshot_basic():
     host = LocalHost()
     result = await host.oneshot("echo oneshot_test")
     assert result.status == Status.Success
-    assert "oneshot_test" in result.output
+    assert "oneshot_test" in result.value
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,7 @@ async def test_oneshot_is_stateless():
     host = LocalHost()
     await host.oneshot("export OTTO_ONESHOT_VAR=nope")
     result = await host.oneshot("echo ${OTTO_ONESHOT_VAR:-empty}")
-    assert "empty" in result.output
+    assert "empty" in result.value
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +177,7 @@ async def test_open_session():
         session = await host.open_session("test_sess")
         result = (await session.run("echo from_named_session")).only
         assert result.status == Status.Success
-        assert "from_named_session" in result.output
+        assert "from_named_session" in result.value
         await session.close()
     finally:
         await host.close()
@@ -190,7 +190,7 @@ async def test_open_session_context_manager():
         async with await host.open_session("ctx") as sess:
             result = (await sess.run("echo ctx_test")).only
             assert result.status == Status.Success
-            assert "ctx_test" in result.output
+            assert "ctx_test" in result.value
     finally:
         await host.close()
 
@@ -209,11 +209,11 @@ async def test_get_files(tmp_path: Path):
     (src_dir / "b.txt").write_text("bbb")
 
     dest_dir = tmp_path / "dest"
-    status, _msg = await host.get(
+    result = await host.get(
         [src_dir / "a.txt", src_dir / "b.txt"],
         dest_dir,
     )
-    assert status == Status.Success
+    assert result.status == Status.Success
     assert (dest_dir / "a.txt").read_text() == "aaa"
     assert (dest_dir / "b.txt").read_text() == "bbb"
 
@@ -225,20 +225,20 @@ async def test_put_files(tmp_path: Path):
     src.write_text("data")
 
     dest_dir = tmp_path / "remote"
-    status, _msg = await host.put(src, dest_dir)
-    assert status == Status.Success
+    result = await host.put(src, dest_dir)
+    assert result.status == Status.Success
     assert (dest_dir / "file.txt").read_text() == "data"
 
 
 @pytest.mark.asyncio
 async def test_get_files_nonexistent_source(tmp_path: Path):
     host = LocalHost()
-    status, msg = await host.get(
+    result = await host.get(
         [tmp_path / "no_such_file.txt"],
         tmp_path / "dest",
     )
-    assert status == Status.Error
-    assert msg  # should have an error message
+    assert result.status == Status.Error
+    assert result.msg  # should have an error message
 
 
 # ---------------------------------------------------------------------------
@@ -471,5 +471,5 @@ async def test_close():
     # After close, a new run should still work (session is recreated)
     result = (await host.run("echo after_close")).only
     assert result.status == Status.Success
-    assert "after_close" in result.output
+    assert "after_close" in result.value
     await host.close()

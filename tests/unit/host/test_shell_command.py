@@ -1,19 +1,20 @@
 """Tests for per-command options via ``ShellCommand`` and the unified
-``RunResult`` return type of :meth:`BaseHost.run`.
+``Results`` return type of :meth:`BaseHost.run`.
 
 These cover the inheritance rules (per-``ShellCommand`` field > run-kwarg >
 ``None``), budget-cap interaction for list-form calls, scalar ``Expect``
-normalization, and the ``RunResult.only`` convenience accessor.
+normalization, and the ``Results.only`` convenience accessor.
 """
 
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from otto.host import RunResult, ShellCommand
+from otto.host import Results, ShellCommand
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 
 @pytest.fixture
@@ -22,8 +23,8 @@ def host() -> UnixHost:
 
 
 @pytest.fixture
-def ok() -> CommandStatus:
-    return CommandStatus(command="cmd", output="ok", status=Status.Success, retcode=0)
+def ok() -> CommandResult:
+    return CommandResult(command="cmd", value="ok", status=Status.Success, retcode=0)
 
 
 class TestShellCommandConstruction:
@@ -46,53 +47,53 @@ class TestShellCommandConstruction:
         assert sc.expects == [("Password:", "pw\n")]
 
 
-class TestRunResultOnly:
+class TestResultsOnly:
     def test_only_returns_single_status(self):
-        cs = CommandStatus("x", "", Status.Success, 0)
-        result = RunResult(status=Status.Success, statuses=[cs])
+        cs = CommandResult(status=Status.Success, value="", command="x", retcode=0)
+        result = Results.collect([cs])
         assert result.only is cs
 
     def test_only_raises_when_empty(self):
-        result = RunResult(status=Status.Success, statuses=[])
-        with pytest.raises(ValueError, match="exactly 1 command status"):
+        result = Results.collect([])
+        with pytest.raises(ValueError, match="exactly 1 command result"):
             _ = result.only
 
     def test_only_raises_when_multiple(self):
-        cs1 = CommandStatus("a", "", Status.Success, 0)
-        cs2 = CommandStatus("b", "", Status.Success, 0)
-        result = RunResult(status=Status.Success, statuses=[cs1, cs2])
-        with pytest.raises(ValueError, match="exactly 1 command status"):
+        cs1 = CommandResult(status=Status.Success, value="", command="a", retcode=0)
+        cs2 = CommandResult(status=Status.Success, value="", command="b", retcode=0)
+        result = Results.collect([cs1, cs2])
+        with pytest.raises(ValueError, match="exactly 1 command result"):
             _ = result.only
 
 
 class TestRunInputForms:
     @pytest.mark.asyncio
-    async def test_run_string_single(self, host: UnixHost, ok: CommandStatus):
+    async def test_run_string_single(self, host: UnixHost, ok: CommandResult):
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run("ls")
         mock.assert_called_once_with("ls", expects=None, timeout=None, log=LogMode.NORMAL)
-        assert isinstance(result, RunResult)
-        assert len(result.statuses) == 1
+        assert isinstance(result, Results)
+        assert len(result) == 1
         assert result.only is ok
 
     @pytest.mark.asyncio
-    async def test_run_shell_command_single(self, host: UnixHost, ok: CommandStatus):
+    async def test_run_shell_command_single(self, host: UnixHost, ok: CommandResult):
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run(ShellCommand(cmd="ls"))
         mock.assert_called_once_with("ls", expects=None, timeout=None, log=LogMode.NORMAL)
-        assert len(result.statuses) == 1
+        assert len(result) == 1
         assert result.only is ok
 
     @pytest.mark.asyncio
-    async def test_run_shell_command_list(self, host: UnixHost, ok: CommandStatus):
+    async def test_run_shell_command_list(self, host: UnixHost, ok: CommandResult):
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             result = await host.run([ShellCommand(cmd="a"), ShellCommand(cmd="b")])
         assert mock.call_count == 2
         assert [c.args[0] for c in mock.call_args_list] == ["a", "b"]
-        assert len(result.statuses) == 2
+        assert len(result) == 2
 
     @pytest.mark.asyncio
-    async def test_run_mixed_list(self, host: UnixHost, ok: CommandStatus):
+    async def test_run_mixed_list(self, host: UnixHost, ok: CommandResult):
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(["a", ShellCommand(cmd="b", timeout=2.0)])
         assert mock.call_count == 2
@@ -103,21 +104,21 @@ class TestRunInputForms:
 
 class TestTimeoutInheritance:
     @pytest.mark.asyncio
-    async def test_shell_command_inherits_run_kwarg(self, host: UnixHost, ok: CommandStatus):
+    async def test_shell_command_inherits_run_kwarg(self, host: UnixHost, ok: CommandResult):
         """ShellCommand.timeout=None → run-kwarg timeout is used."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd="x"), timeout=5.0)
         mock.assert_called_once_with("x", expects=None, timeout=5.0, log=LogMode.NORMAL)
 
     @pytest.mark.asyncio
-    async def test_shell_command_overrides_run_kwarg(self, host: UnixHost, ok: CommandStatus):
+    async def test_shell_command_overrides_run_kwarg(self, host: UnixHost, ok: CommandResult):
         """ShellCommand.timeout=2 beats run-kwarg timeout=5 in single-cmd form."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd="x", timeout=2.0), timeout=5.0)
         mock.assert_called_once_with("x", expects=None, timeout=2.0, log=LogMode.NORMAL)
 
     @pytest.mark.asyncio
-    async def test_budget_caps_per_command_timeout(self, host: UnixHost, ok: CommandStatus):
+    async def test_budget_caps_per_command_timeout(self, host: UnixHost, ok: CommandResult):
         """In list form, ShellCommand.timeout is bounded by remaining budget."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run([ShellCommand(cmd="x", timeout=100.0)], timeout=1.0)
@@ -126,7 +127,7 @@ class TestTimeoutInheritance:
         assert 0 < actual <= 1.0, f"expected timeout bounded by 1.0s budget, got {actual}"
 
     @pytest.mark.asyncio
-    async def test_none_timeout_everywhere(self, host: UnixHost, ok: CommandStatus):
+    async def test_none_timeout_everywhere(self, host: UnixHost, ok: CommandResult):
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run([ShellCommand(cmd="x")])
         mock.assert_called_once_with("x", expects=None, timeout=None, log=LogMode.NORMAL)
@@ -135,7 +136,7 @@ class TestTimeoutInheritance:
 class TestExpectsInheritance:
     @pytest.mark.asyncio
     async def test_run_level_expects_inherits_to_commands_without_own(
-        self, host: UnixHost, ok: CommandStatus
+        self, host: UnixHost, ok: CommandResult
     ):
         """Run-level expects is a default that each command without its own inherits."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
@@ -150,7 +151,7 @@ class TestExpectsInheritance:
         assert mock.call_args_list[1].kwargs["expects"] == [("P:", "y\n")]
 
     @pytest.mark.asyncio
-    async def test_scalar_expects_wrapped_for_run_one(self, host: UnixHost, ok: CommandStatus):
+    async def test_scalar_expects_wrapped_for_run_one(self, host: UnixHost, ok: CommandResult):
         """A scalar Expect tuple passed to run() is normalized to a list."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run("sudo ls", expects=("Password:", "pw\n"))
@@ -159,7 +160,7 @@ class TestExpectsInheritance:
         )
 
     @pytest.mark.asyncio
-    async def test_scalar_expects_on_shell_command(self, host: UnixHost, ok: CommandStatus):
+    async def test_scalar_expects_on_shell_command(self, host: UnixHost, ok: CommandResult):
         """A scalar Expect tuple on a ShellCommand is normalized too."""
         with patch.object(host, "_run_one", new_callable=AsyncMock, return_value=ok) as mock:
             await host.run(ShellCommand(cmd="x", expects=("P:", "y\n")))

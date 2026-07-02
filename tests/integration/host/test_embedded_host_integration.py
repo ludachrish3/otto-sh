@@ -102,15 +102,15 @@ class TestMultilineOutputClean:
         result = (await host1.run("help")).only
         assert result.status == Status.Success
         # No otto sentinels leaked into the output.
-        assert "__OTTO_" not in result.output
+        assert "__OTTO_" not in result.value
         # No `retval` echo (the parser must take only the command's output).
         # `retval` itself as a substring could legitimately appear in other
         # contexts, so we only check for it on a line of its own.
-        for line in result.output.splitlines():
-            assert line.strip() != "retval", f"retval line leaked into output: {result.output!r}"
+        for line in result.value.splitlines():
+            assert line.strip() != "retval", f"retval line leaked into output: {result.value!r}"
         # No raw ANSI escapes (the shell's colored prompt is stripped before
         # parsing).
-        assert "\x1b[" not in result.output
+        assert "\x1b[" not in result.value
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +131,7 @@ class TestStockBuiltins:
         assert result.status == Status.Success
         # The output may include a unit-suffix label depending on the build;
         # we just need an integer somewhere in the first line.
-        first_line = result.output.splitlines()[0] if result.output else ""
+        first_line = result.value.splitlines()[0] if result.value else ""
         assert re.search(r"\d+", first_line), (
             f"kernel uptime first line had no integer: {first_line!r}"
         )
@@ -224,7 +224,7 @@ class TestSingleConsole:
         # Default session must still work.
         after = (await host1.run("kernel uptime")).only
         assert after.status == Status.Success, (
-            f"default session broke after second-open attempt: {after.output!r}"
+            f"default session broke after second-open attempt: {after.value!r}"
         )
 
 
@@ -297,7 +297,7 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
     finally:
         await host_c.close()
     assert recovered.status == Status.Success, (
-        f"console left wedged after contention: {recovered.output!r}"
+        f"console left wedged after contention: {recovered.value!r}"
     )
 
 
@@ -381,14 +381,13 @@ class TestConcurrentEmbeddedTransfer:
         assert not isinstance(result, BaseException), (
             f"{host_id}: put raised — concurrent session init regressed. Exception: {result!r}"
         )
-        status, err = result
         if _ZEPHYR_DEST[host_id] is None:
-            assert status != Status.Success, (
+            assert result.status != Status.Success, (
                 f"{host_id}: no-FS target reported Success — expected a "
-                f"graceful error (err={err!r})"
+                f"graceful error (err={result.msg!r})"
             )
         else:
-            assert status == Status.Success, f"{host_id}: put failed: {err!r}"
+            assert result.status == Status.Success, f"{host_id}: put failed: {result.msg!r}"
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(120)
@@ -447,8 +446,9 @@ class TestConcurrentEmbeddedTransfer:
             assert not isinstance(basil_result, BaseException), (
                 f"basil: SCP put raised: {basil_result!r}"
             )
-            basil_status, basil_err = basil_result
-            assert basil_status == Status.Success, f"basil: SCP put failed: {basil_err!r}"
+            assert basil_result.status == Status.Success, (
+                f"basil: SCP put failed: {basil_result.msg!r}"
+            )
 
             for h, result in zip(zephyrs, zephyr_results, strict=True):
                 self._check_put_result(h.element, result)
@@ -480,8 +480,10 @@ class TestConcurrentEmbeddedTransfer:
                 dest = _ZEPHYR_DEST[h.element]
                 if dest is None:
                     continue
-                status, err = await h.put([src], Path(dest))
-                assert status == Status.Success, f"{h.element}: pre-stage put failed: {err!r}"
+                put_result = await h.put([src], Path(dest))
+                assert put_result.status == Status.Success, (
+                    f"{h.element}: pre-stage put failed: {put_result.msg!r}"
+                )
 
             # Per-host local landing dir so concurrent gets don't collide
             # on the same destination file.
@@ -502,8 +504,7 @@ class TestConcurrentEmbeddedTransfer:
             for h, result in zip(fs_hosts, results, strict=True):
                 landing = tmp_path / f"got_{h.element}"
                 assert not isinstance(result, BaseException), f"{h.element}: get raised: {result!r}"
-                status, err = result
-                assert status == Status.Success, f"{h.element}: get failed: {err!r}"
+                assert result.status == Status.Success, f"{h.element}: get failed: {result.msg!r}"
                 assert (landing / "fanout.bin").read_bytes() == self._PAYLOAD
         finally:
             await asyncio.gather(

@@ -8,7 +8,8 @@ import pytest
 from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 
 def make_ft(
@@ -43,12 +44,12 @@ def make_ft(
     )
 
 
-def _ok(output: str = "") -> CommandStatus:
-    return CommandStatus(command="", output=output, status=Status.Success, retcode=0)
+def _ok(output: str = "") -> CommandResult:
+    return CommandResult(command="", value=output, status=Status.Success, retcode=0)
 
 
-def _fail(output: str = "") -> CommandStatus:
-    return CommandStatus(command="", output=output, status=Status.Failed, retcode=1)
+def _fail(output: str = "") -> CommandResult:
+    return CommandResult(command="", value=output, status=Status.Failed, retcode=1)
 
 
 # ============================================================================
@@ -608,7 +609,7 @@ class TestResolveListenerStrategyCascade:
     async def test_type_cascade_falls_back_to_proc(self) -> None:
         """When ss and netstat are absent, cascade returns 'proc'."""
 
-        async def mock_exec(cmd: str, **kw: object) -> CommandStatus:
+        async def mock_exec(cmd: str, **kw: object) -> CommandResult:
             if "type ss" in cmd:
                 return _fail("not found")
             if "type netstat" in cmd:
@@ -629,7 +630,7 @@ class TestResolveListenerStrategyCascade:
     async def test_type_cascade_picks_ss_when_available(self) -> None:
         """When type ss succeeds in the cascade, returns 'ss' and caches it."""
 
-        async def mock_exec(cmd: str, **kw: object) -> CommandStatus:
+        async def mock_exec(cmd: str, **kw: object) -> CommandResult:
             if "type ss" in cmd:
                 return _ok("/usr/sbin/ss")
             # compound probe fails (command -v)

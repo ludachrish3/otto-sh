@@ -261,7 +261,8 @@ from typing import cast
 
 from otto.host.connections import ConnectionManager
 from otto.host.session import SessionManager
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 
 class _AliveStubSession(ShellSession):
@@ -286,7 +287,7 @@ class _AliveStubSession(ShellSession):
     ):
         sink = on_output if on_output is not None else self._on_output
         sink("OUT")
-        return CommandStatus(command=cmd, output="OUT", status=Status.Success, retcode=0)
+        return CommandResult(status=Status.Success, value="OUT", command=cmd, retcode=0)
 
 
 def _logging_mgr():
@@ -306,7 +307,7 @@ class TestPerCommandLogSuppression:
     async def test_log_true_records_command_and_output(self):
         mgr, cmds, outs = _logging_mgr()
         result = await mgr.run_cmd("echo hi", log=LogMode.NORMAL)
-        assert result.output == "OUT"
+        assert result.value == "OUT"
         assert cmds == ["echo hi"]
         assert outs == ["OUT"]
 
@@ -315,7 +316,7 @@ class TestPerCommandLogSuppression:
         mgr, cmds, outs = _logging_mgr()
         result = await mgr.run_cmd("llext load_hex foo DEADBEEF", log=LogMode.NEVER)
         # Output still returned to the caller — only logging is suppressed.
-        assert result.output == "OUT"
+        assert result.value == "OUT"
         assert cmds == []
         assert outs == []
 

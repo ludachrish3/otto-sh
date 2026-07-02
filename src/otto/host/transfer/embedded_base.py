@@ -11,7 +11,7 @@ from typing import Any
 
 from typing_extensions import override
 
-from ...utils import CommandStatus
+from ...result import CommandResult
 from ..embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .base import BaseFileTransfer, TransferContext
 
@@ -32,7 +32,7 @@ class EmbeddedFileTransfer(BaseFileTransfer):
     def __init__(
         self,
         name: str,
-        exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]] | None = None,
+        exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]] | None = None,
         filesystem: EmbeddedFileSystem | None = None,
         max_filename_len: int = 255,
         # Legacy positional-compat: the old EmbeddedFileTransfer accepted

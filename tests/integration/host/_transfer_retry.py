@@ -16,15 +16,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from otto.utils import Status
+from otto.result import Result
 
 DEFAULT_TRANSFER_TIMEOUT = 30.0
 
 
 async def transfer_with_retry(
-    op_factory: Callable[[], Awaitable[tuple[Status, str]]],
+    op_factory: Callable[[], Awaitable[Result]],
     *,
     timeout: float = DEFAULT_TRANSFER_TIMEOUT,
-) -> tuple[Status, str]:
+) -> Result:
     """Run ``await op_factory()`` with a ``timeout`` bound."""
     return await asyncio.wait_for(op_factory(), timeout=timeout)

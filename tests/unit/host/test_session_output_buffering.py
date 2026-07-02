@@ -83,7 +83,7 @@ async def test_bash_streams_each_line_live(bash_session: FrameMockSession):
     result = await s.run_cmd("seq 1 2")
     await feed_task
 
-    assert result.output == "line1\nline2"
+    assert result.value == "line1\nline2"
     assert s.emitted == ["line1", "line2"]  # live frames emit each line as it arrives
 
 
@@ -106,7 +106,7 @@ async def test_zephyr_buffers_and_emits_parsed_output_once(zephyr_session: Frame
     result = await s.run_cmd("llext unload cov_ext")
     await feed_task
 
-    assert result.output == "Unloaded extension cov_ext"
+    assert result.value == "Unloaded extension cov_ext"
     # Exactly one emit, equal to parsed output — no prompts, no `0`, no blanks.
     assert s.emitted == ["Unloaded extension cov_ext"]
 
@@ -127,7 +127,7 @@ async def test_zephyr_no_output_emits_nothing(zephyr_session: FrameMockSession):
     result = await s.run_cmd("fs mount fat /RAM:")
     await feed_task
 
-    assert result.output == ""
+    assert result.value == ""
     assert s.emitted == []
 
 

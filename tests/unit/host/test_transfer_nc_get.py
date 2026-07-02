@@ -22,6 +22,7 @@ import otto.host.transfer.nc as transfer_mod
 from otto.host.connections import ConnectionManager
 from otto.host.options import NcOptions
 from otto.host.transfer import NcFileTransfer
+from otto.result import CommandResult, Result
 from otto.utils import Status
 
 # ---------------------------------------------------------------------------
@@ -29,10 +30,14 @@ from otto.utils import Status
 # ---------------------------------------------------------------------------
 
 
-def _ok(output: str = "") -> "transfer_mod.CommandStatus":  # type: ignore[name-defined]
-    from otto.utils import CommandStatus
+def _ok(output: str = "") -> CommandResult:
+    return CommandResult(command="", value=output, status=Status.Success, retcode=0)
 
-    return CommandStatus(command="", output=output, status=Status.Success, retcode=0)
+
+def _only(per_file: dict, src: Path) -> tuple[Status, str]:
+    """Unwrap the single per-file ``(status, msg)`` from a nc transfer's mapping."""
+    r = per_file[src]
+    return r.status, r.msg
 
 
 def _make_ft(
@@ -133,7 +138,7 @@ class TestGetFilesNcNonTunnel:
             fake_writer.wait_closed = AsyncMock(return_value=None)
             await on_connect(FakeReader([b"hello"]), fake_writer)
 
-            status, msg = await get_task
+            status, msg = _only(await get_task, src_remote)
 
         assert status is Status.Success, msg
         assert msg == ""
@@ -184,7 +189,7 @@ class TestGetFilesNcNonTunnel:
             fake_writer.wait_closed = AsyncMock(return_value=None)
             await on_connect(FakeReader([b"foo", b"bar", b"baz"]), fake_writer)
 
-            status, msg = await get_task
+            status, msg = _only(await get_task, src_remote)
 
         assert status is Status.Success, msg
         dst_file = dst_dir / "multi.bin"
@@ -243,7 +248,7 @@ class TestGetFilesNcNonTunnel:
             fake_writer.wait_closed = AsyncMock(return_value=None)
             await on_connect(BrokenReader(), fake_writer)
 
-            status, msg = await get_task
+            status, msg = _only(await get_task, src_remote)
 
         assert status is Status.Error, msg
         assert "simulated read failure" in msg
@@ -282,7 +287,7 @@ class TestGetFilesNcNonTunnel:
         ft._exec_cmd = AsyncMock(side_effect=exec_side)  # type: ignore[method-assign]
 
         with patch.object(transfer_mod.asyncio, "start_server", new=fake_start_server):
-            status, msg = await ft._get_files_nc([src_remote], dst_dir)
+            status, msg = _only(await ft._get_files_nc([src_remote], dst_dir), src_remote)
 
         assert status is Status.Error, msg
         assert "send transport failed" in msg
@@ -337,7 +342,7 @@ class TestGetFilesNcNonTunnel:
             fake_writer.wait_closed = AsyncMock(return_value=None)
             await on_connect(FakeReader([b"hello", b"world"]), fake_writer)
 
-            status, msg = await get_task
+            status, msg = _only(await get_task, src_remote)
 
         assert status is Status.Success, msg
         assert len(progress_calls) == 2
@@ -364,9 +369,9 @@ class TestGetFilesNcNonTunnel:
         with patch.object(
             NcFileTransfer,
             "_get_files_nc_tunneled",
-            new=AsyncMock(return_value=(Status.Success, "")),
+            new=AsyncMock(return_value={src_remote: Result(Status.Success, value=dst_dir)}),
         ) as mock_tunneled:
-            status, msg = await ft._get_files_nc([src_remote], dst_dir)
+            status, msg = _only(await ft._get_files_nc([src_remote], dst_dir), src_remote)
 
         assert status is Status.Success, msg
         mock_tunneled.assert_awaited_once()
@@ -416,7 +421,7 @@ class TestGetFilesNcTunneled:
                 AsyncMock(return_value=(fake_reader, fake_writer)),
             ),
         ):
-            status, msg = await ft._get_files_nc_tunneled([src_remote], dst_dir)
+            status, msg = _only(await ft._get_files_nc_tunneled([src_remote], dst_dir), src_remote)
 
         assert status is Status.Success, msg
         assert msg == ""
@@ -449,9 +454,12 @@ class TestGetFilesNcTunneled:
             "_wait_for_remote_listener",
             new=AsyncMock(side_effect=ConnectionError("probe failed")),
         ):
-            status, msg = await asyncio.wait_for(
-                ft._get_files_nc_tunneled([src_remote], dst_dir),
-                timeout=5.0,
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir),
+                    timeout=5.0,
+                ),
+                src_remote,
             )
 
         assert status is Status.Error, msg
@@ -489,9 +497,12 @@ class TestGetFilesNcTunneled:
                 AsyncMock(side_effect=ConnectionError("refused")),
             ),
         ):
-            status, msg = await asyncio.wait_for(
-                ft._get_files_nc_tunneled([src_remote], dst_dir),
-                timeout=5.0,
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir),
+                    timeout=5.0,
+                ),
+                src_remote,
             )
 
         assert status is Status.Error, msg
@@ -543,9 +554,12 @@ class TestGetFilesNcTunneled:
                 AsyncMock(return_value=(fake_reader, fake_writer)),
             ),
         ):
-            status, msg = await asyncio.wait_for(
-                ft._get_files_nc_tunneled([src_remote], dst_dir),
-                timeout=5.0,
+            status, msg = _only(
+                await asyncio.wait_for(
+                    ft._get_files_nc_tunneled([src_remote], dst_dir),
+                    timeout=5.0,
+                ),
+                src_remote,
             )
 
         assert status is Status.Error, msg
@@ -594,7 +608,9 @@ class TestGetFilesNcTunneled:
                 AsyncMock(return_value=(fake_reader, fake_writer)),
             ),
         ):
-            status, msg = await ft._get_files_nc_tunneled([src_remote], dst_dir, factory)
+            status, msg = _only(
+                await ft._get_files_nc_tunneled([src_remote], dst_dir, factory), src_remote
+            )
 
         assert status is Status.Success, msg
         assert len(progress_calls) == 2

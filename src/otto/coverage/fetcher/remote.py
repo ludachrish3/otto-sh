@@ -35,7 +35,7 @@ async def _clean_one_host(
         logger.warning(
             "Failed to clean .gcda files on %s: %s",
             label,
-            result.output,
+            result.value,
         )
     else:
         logger.info("Cleaned .gcda files on %s", label)
@@ -72,13 +72,13 @@ async def _fetch_one_host(
         f"find {gcda_remote_dir} -name '*.gcda' -type f",
         timeout=60,
     )
-    if find_result.status != Status.Success or not find_result.output.strip():
+    if find_result.status != Status.Success or not find_result.value.strip():
         logger.warning("No .gcda files found on %s at %s", label, gcda_remote_dir)
         return None
 
     gcda_files = [
         Path(line.strip())
-        for line in find_result.output.strip().splitlines()
+        for line in find_result.value.strip().splitlines()
         if line.strip().endswith(".gcda")
     ]
     if not gcda_files:
@@ -91,9 +91,9 @@ async def _fetch_one_host(
     dest.mkdir(parents=True, exist_ok=True)
 
     logger.info("Fetching .gcda files from %s", label)
-    status, msg = await host.get(gcda_files, dest, show_progress=False)
-    if status != Status.Success:
-        logger.error("Failed to fetch .gcda files from %s: %s", label, msg)
+    get_result = await host.get(gcda_files, dest, show_progress=False)
+    if not get_result.is_ok:
+        logger.error("Failed to fetch .gcda files from %s: %s", label, get_result.msg)
         return None
 
     return dest

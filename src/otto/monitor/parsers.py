@@ -1,5 +1,5 @@
 """
-Metric parsers — convert raw command output (CommandStatus.output) to numeric values.
+Metric parsers — convert raw command output (CommandResult.value) to numeric values.
 
 Built-in parsers cover the most common Linux host metrics. To add support for a
 custom command, subclass MetricParser and override parse()::

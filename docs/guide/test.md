@@ -207,7 +207,7 @@ Use `self.expect()` to record a failure without stopping the test:
 
 ```python
 self.expect(result.status == Status.Success, "Command should succeed")
-self.expect("expected" in result.output, "Output should contain 'expected'")
+self.expect("expected" in result.value, "Output should contain 'expected'")
 ```
 
 All failed expectations are reported at the end of the test.

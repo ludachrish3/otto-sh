@@ -17,6 +17,7 @@ import pytest
 
 import otto.host.transfer.progress as transfer_mod
 from otto.host.transfer import BaseFileTransfer, _acquire_shared_progress
+from otto.result import Result
 from otto.utils import Status
 
 
@@ -159,11 +160,11 @@ class TestBaseFileTransferProgressWiring:
         class Spy(BaseFileTransfer):
             async def _run_put(self, src_files, dest_dir, progress_factory):
                 captured["put_factory"] = progress_factory
-                return Status.Success, ""
+                return {s: Result(Status.Success, value=dest_dir / s.name) for s in src_files}
 
             async def _run_get(self, src_files, dest_dir, progress_factory):
                 captured["get_factory"] = progress_factory
-                return Status.Success, ""
+                return {s: Result(Status.Success, value=dest_dir / s.name) for s in src_files}
 
         return Spy(name="spy"), captured
 
@@ -185,9 +186,39 @@ class TestBaseFileTransferProgressWiring:
         executes — the spy never gets called."""
         spy, captured = self._spy_subclass()
         spy._max_filename_len = 5
-        status, _err = await spy.put_files(
+        result = await spy.put_files(
             [Path("/a/long_filename.bin")],
             Path("/dest"),
         )
-        assert status == Status.Error
+        assert result.status == Status.Error
         assert "put_factory" not in captured
+
+    @pytest.mark.asyncio
+    async def test_filename_validation_failure_keys_every_source_path(self):
+        """A validation failure must key EVERY as-passed source path in
+        ``result.value`` — not return an empty mapping. An empty mapping
+        would make ``result.value[some_source]`` raise KeyError, violating
+        the every-source-is-a-key contract shared with the transfer aggregate."""
+        spy, _captured = self._spy_subclass()
+        spy._max_filename_len = 5
+        short = Path("/a/ok.bin")
+        long = Path("/a/long_filename.bin")
+        result = await spy.put_files([short, long], Path("/dest"))
+        assert result.status == Status.Error
+        assert set(result.value.keys()) == {short, long}
+        assert not result.value[short].is_ok
+        assert not result.value[long].is_ok
+
+    @pytest.mark.asyncio
+    async def test_get_filename_validation_failure_keys_every_source_path(self):
+        """Symmetric to the put case: ``get_files`` must also key every
+        as-passed source path on a validation failure."""
+        spy, _captured = self._spy_subclass()
+        spy._max_filename_len = 5
+        short = Path("/a/ok.bin")
+        long = Path("/a/long_filename.bin")
+        result = await spy.get_files([short, long], Path("/dest"))
+        assert result.status == Status.Error
+        assert set(result.value.keys()) == {short, long}
+        assert not result.value[short].is_ok
+        assert not result.value[long].is_ok

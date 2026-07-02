@@ -14,12 +14,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from otto.host import RunResult
 from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector, MonitorTarget
 from otto.monitor.parsers import MetricDataPoint, MetricParser
 from otto.monitor.snmp import OID_SYS_UPTIME, SnmpSource
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult, Results
+from otto.utils import Status
 
 
 class StubParser(MetricParser):
@@ -61,22 +61,21 @@ def _make_mock_host(name: str, delay: float = 0.0, fail: bool = False) -> MagicM
                 # Simulate what real run does: the command times out
                 # via _run_one's wait_for, session recovers, returns Error
                 await asyncio.sleep(timeout)
-                statuses = [
-                    CommandStatus(
+                results = [
+                    CommandResult(
+                        Status.Error,
+                        value=f"Command timed out after {timeout}s",
                         command=cmd,
-                        output=f"Command timed out after {timeout}s",
-                        status=Status.Error,
                         retcode=-1,
                     )
                     for cmd in cmds
                 ]
-                return RunResult(status=Status.Error, statuses=statuses)
+                return Results.collect(results)
             await asyncio.sleep(delay)
-        statuses = [
-            CommandStatus(command=cmd, output="42\n", status=Status.Success, retcode=0)
-            for cmd in cmds
+        results = [
+            CommandResult(Status.Success, value="42\n", command=cmd, retcode=0) for cmd in cmds
         ]
-        return RunResult(status=Status.Success, statuses=statuses)
+        return Results.collect(results)
 
     host.run = AsyncMock(side_effect=_run_cmds)
     return host

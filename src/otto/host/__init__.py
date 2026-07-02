@@ -8,6 +8,8 @@ session and connection primitives (:class:`SessionManager`,
 registries (:func:`register_transfer_backend`, :func:`register_term_backend`).
 """
 
+from ..result import CommandResult as CommandResult
+from ..result import Results as Results
 from .command_frame import BashFrame as BashFrame
 from .command_frame import CommandFrame as CommandFrame
 from .command_frame import SessionMarkers as SessionMarkers
@@ -23,7 +25,6 @@ from .embedded_host import ZephyrHost as ZephyrHost
 from .file_ops import PosixFileOps as PosixFileOps
 from .host import Host as Host
 from .host import HostFilter as HostFilter
-from .host import RunResult as RunResult
 from .host import ShellCommand as ShellCommand
 from .host import SuppressCommandOutput as SuppressCommandOutput
 from .host import is_dry_run as is_dry_run

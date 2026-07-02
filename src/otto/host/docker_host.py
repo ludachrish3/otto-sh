@@ -35,7 +35,8 @@ from typing_extensions import override
 
 from ..logger import get_otto_logger
 from ..logger.mode import LogMode
-from ..utils import Arg, CommandStatus, Status, cli_exposed
+from ..result import CommandResult, Result
+from ..utils import Arg, Status, cli_exposed
 from .file_ops import PosixFileOps
 from .host import BaseHost, Host, is_dry_run
 from .privilege import PosixPrivilege
@@ -207,8 +208,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             f"--filter label=com.docker.compose.project={shlex.quote(self.compose_project)} "
             f"--filter label=com.docker.compose.service={shlex.quote(self.service)}"
         )
-        if result.status.is_ok and result.output.strip():
-            return result.output.strip().splitlines()[0]
+        if result.status.is_ok and result.value.strip():
+            return result.value.strip().splitlines()[0]
         return ""
 
     async def _auto_up(self) -> str:
@@ -273,7 +274,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Run a single command in the container via the parent.
 
         Stateless and concurrent-safe — each call spawns a fresh
@@ -289,16 +290,16 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         cmd: str,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent."""
         wrapped = await self._docker_exec(cmd)
         result = await self.parent.oneshot(wrapped, timeout=timeout, log=self._effective_log(log))
         # Replace the wrapped command in the result so callers see what
         # they asked for, not the docker-exec wrapper.
-        return CommandStatus(
-            command=cmd,
-            output=result.output,
+        return CommandResult(
             status=result.status,
+            value=result.value,
+            command=cmd,
             retcode=result.retcode,
         )
 
@@ -309,7 +310,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         expects: "list[Expect] | None" = None,
         timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Execute one command on the persistent in-container shell.
 
         Shell state (``cd``, env vars, shell vars) persists across calls,
@@ -406,13 +407,19 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             list[Path] | Path, Arg(variadic=True, elem_type=Path, help="Local file(s) to upload.")
         ],
         dest_dir: Path,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Upload local files into the container.
 
         Two-step: ``parent.put`` to a per-container staging dir, then
         ``docker cp`` from there into the container. The staging dir is
         cleaned up unconditionally so a failed transfer doesn't leak.
+
+        Returns a :class:`~otto.result.Result` whose ``value`` maps each source
+        path (as passed) to its per-file outcome, matching
+        :meth:`~otto.host.host.BaseHost.put`.
         """
+        from .transfer import aggregate_transfer
+
         files = src_files if isinstance(src_files, list) else [src_files]
         if is_dry_run():
             return self._dry_run_transfer("PUT", files, dest_dir)
@@ -422,12 +429,27 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         try:
             mkdir = await self.parent.oneshot(f"mkdir -p {shlex.quote(str(stage))}")
             if not mkdir.status.is_ok:
-                return Status.Error, f"failed to create staging dir on parent: {mkdir.output}"
+                msg = f"failed to create staging dir on parent: {mkdir.value}"
+                return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
 
-            stage_status, msg = await self.parent.put(files, stage)
-            if not stage_status.is_ok:
-                return stage_status, msg
+            stage_result = await self.parent.put(files, stage)
+            if not stage_result.is_ok:
+                # Staged-but-not-copied files must not read as Success: the
+                # batch aborted before any docker cp, so they never reached
+                # the container. Keep failure entries; downgrade the rest.
+                staged = stage_result.value or {}
+                per_file = {}
+                for f in files:
+                    entry = staged.get(f, Result(Status.Error, msg="staging failed"))
+                    if entry.is_ok:
+                        entry = Result(
+                            Status.Skipped,
+                            msg="staged to parent; docker cp not attempted (staging batch failed)",
+                        )
+                    per_file[f] = entry
+                return aggregate_transfer(per_file)
 
+            per_file: dict[Path, Result] = {}
             for f in files:
                 staged = stage / f.name
                 cp = await self.parent.oneshot(
@@ -435,8 +457,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     f"{shlex.quote(self.container_id)}:{shlex.quote(str(dest_dir))}"
                 )
                 if not cp.status.is_ok:
-                    return Status.Error, f"docker cp failed: {cp.output}"
-            return Status.Success, ""
+                    per_file[f] = Result(Status.Error, msg=f"docker cp failed: {cp.value}")
+                else:
+                    per_file[f] = Result(Status.Success, value=dest_dir / f.name)
+            return aggregate_transfer(per_file)
         finally:
             await self.parent.oneshot(f"rm -rf {shlex.quote(str(stage))}")
 
@@ -449,12 +473,18 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             Arg(variadic=True, elem_type=Path, help="Remote file(s) to download."),
         ],
         dest_dir: Path,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Download files from the container to the local machine.
 
         Two-step: ``docker cp`` from the container into a per-container
         staging dir on the parent, then ``parent.get`` to the local dir.
+
+        Returns a :class:`~otto.result.Result` whose ``value`` maps each source
+        path (as passed) to its per-file outcome, matching
+        :meth:`~otto.host.host.BaseHost.get`.
         """
+        from .transfer import aggregate_transfer
+
         files = src_files if isinstance(src_files, list) else [src_files]
         if is_dry_run():
             return self._dry_run_transfer("GET", files, dest_dir)
@@ -464,20 +494,46 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         try:
             mkdir = await self.parent.oneshot(f"mkdir -p {shlex.quote(str(stage))}")
             if not mkdir.status.is_ok:
-                return Status.Error, f"failed to create staging dir on parent: {mkdir.output}"
+                msg = f"failed to create staging dir on parent: {mkdir.value}"
+                return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
 
             staged_paths: list[Path] = []
-            for f in files:
+            for i, f in enumerate(files):
                 staged = stage / f.name
                 cp = await self.parent.oneshot(
                     f"docker cp {shlex.quote(self.container_id)}:{shlex.quote(str(f))} "
                     f"{shlex.quote(str(staged))}"
                 )
                 if not cp.status.is_ok:
-                    return Status.Error, f"docker cp failed: {cp.output}"
+                    # docker cp for one file failed — mark it and skip the rest,
+                    # keyed by the source paths exactly as passed. files[:i] were
+                    # already copied to parent staging but parent.get never runs
+                    # for them (we return before that call) and the staging dir
+                    # is removed in `finally`, so they never actually arrived
+                    # locally: downgrade them to Skipped rather than omitting
+                    # them, mirroring the put-path staging-downgrade above.
+                    per_file: dict[Path, Result] = {
+                        skipped: Result(
+                            Status.Skipped, msg="staged but not fetched (later failure)"
+                        )
+                        for skipped in files[:i]
+                    }
+                    per_file[f] = Result(Status.Error, msg=f"docker cp failed: {cp.value}")
+                    for skipped in files[i + 1 :]:
+                        per_file[skipped] = Result(
+                            Status.Skipped, msg="not attempted (earlier failure)"
+                        )
+                    return aggregate_transfer(per_file)
                 staged_paths.append(staged)
 
-            return await self.parent.get(staged_paths, dest_dir)
+            # parent.get keys its per-file dict by the staged paths; re-key it
+            # back to the container source paths (as passed) so the caller sees
+            # the keys it handed in.
+            parent_result = await self.parent.get(staged_paths, dest_dir)
+            staged_map = parent_result.value if isinstance(parent_result.value, dict) else {}
+            fallback = Result(parent_result.status, msg=parent_result.msg)
+            per_file = {f: staged_map.get(stage / f.name, fallback) for f in files}
+            return aggregate_transfer(per_file)
         finally:
             await self.parent.oneshot(f"rm -rf {shlex.quote(str(stage))}")
 

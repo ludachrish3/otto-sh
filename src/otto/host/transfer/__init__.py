@@ -12,7 +12,7 @@ from .base import (
     TransferContext,
     TransferProgressFactory,
     TransferProgressHandler,
-    _first_error,
+    aggregate_transfer,
     validate_filename_lengths,
 )
 from .console import ConsoleFileTransfer  # registers console on import
@@ -51,6 +51,7 @@ __all__ = [
     "TransferProgressFactory",
     "TransferProgressHandler",
     "UnixFileTransfer",
+    "aggregate_transfer",
     "build_transfer_backend",
     "make_rich_progress_factory",
     "make_rich_progress_handler",

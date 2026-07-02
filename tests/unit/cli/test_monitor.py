@@ -21,13 +21,13 @@ import pytest
 from typer.testing import CliRunner
 
 from otto.cli.monitor import _load_historical, monitor_app
-from otto.host import RunResult
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector
 from otto.monitor.factory import build_monitor_collector
 from otto.monitor.parsers import LoadParser, MemParser
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult, Results
+from otto.utils import Status
 
 runner = CliRunner()
 
@@ -343,28 +343,28 @@ def _make_monitor_host(name: str = "router1") -> MagicMock:
     host.id = name
     host.log = LogMode.NORMAL
 
-    responses: dict[str, CommandStatus] = {
-        "grep -c ^processor /proc/cpuinfo": CommandStatus(
+    responses: dict[str, CommandResult] = {
+        "grep -c ^processor /proc/cpuinfo": CommandResult(
+            Status.Success,
+            value=_CPUINFO_OUTPUT,
             command="grep -c ^processor /proc/cpuinfo",
-            output=_CPUINFO_OUTPUT,
-            status=Status.Success,
             retcode=0,
         ),
-        "free -b": CommandStatus(
+        "free -b": CommandResult(
+            Status.Success,
+            value=_FREE_OUTPUT,
             command="free -b",
-            output=_FREE_OUTPUT,
-            status=Status.Success,
             retcode=0,
         ),
-        "cat /proc/loadavg": CommandStatus(
+        "cat /proc/loadavg": CommandResult(
+            Status.Success,
+            value=_LOADAVG_OUTPUT,
             command="cat /proc/loadavg",
-            output=_LOADAVG_OUTPUT,
-            status=Status.Success,
             retcode=0,
         ),
     }
 
-    async def fake_run_cmds(cmds: list[str] | str, timeout: float | None = None) -> RunResult:
+    async def fake_run_cmds(cmds: list[str] | str, timeout: float | None = None) -> Results:
         if isinstance(cmds, str):
             cmds = [cmds]
         results = []
@@ -372,11 +372,8 @@ def _make_monitor_host(name: str = "router1") -> MagicMock:
             if cmd in responses:
                 results.append(responses[cmd])
             else:
-                results.append(CommandStatus(cmd, "", Status.Failed, 1))
-        overall = (
-            Status.Success if all(r.status == Status.Success for r in results) else Status.Failed
-        )
-        return RunResult(status=overall, statuses=results)
+                results.append(CommandResult(Status.Failed, value="", command=cmd, retcode=1))
+        return Results.collect(results)
 
     host.run = AsyncMock(side_effect=fake_run_cmds)
     return host
@@ -467,12 +464,11 @@ class TestCollectorLiveRun:
         host = _make_monitor_host("router1")
         # Override host.run to always return failures with empty output
         host.run = AsyncMock(
-            return_value=RunResult(
-                status=Status.Failed,
-                statuses=[
-                    CommandStatus("free -b", "", Status.Failed, 1),
-                    CommandStatus("cat /proc/loadavg", "", Status.Failed, 1),
-                ],
+            return_value=Results.collect(
+                [
+                    CommandResult(Status.Failed, value="", command="free -b", retcode=1),
+                    CommandResult(Status.Failed, value="", command="cat /proc/loadavg", retcode=1),
+                ]
             )
         )
         collector = MetricCollector(

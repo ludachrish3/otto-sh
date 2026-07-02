@@ -22,7 +22,7 @@ from otto import options
 from otto.cli.run import instruction
 from otto.configmodule.configmodule import get_host
 from otto.logger import get_otto_logger
-from otto.utils import CommandStatus
+from otto.result import CommandResult
 
 logger = get_otto_logger()
 
@@ -39,17 +39,12 @@ class _Options:
 
 
 @instruction(options=_Options)
-async def run_on_container(opts: _Options) -> CommandStatus:
+async def run_on_container(opts: _Options) -> CommandResult:
     """Cat the repo1 fixture marker from a docker container host."""
     host = get_host(opts.on)
     result = await host.oneshot("cat /etc/repo1-marker.txt")
-    logger.info(f"run-on-container [{opts.on}]: {result.output!r}")
-    if result.status.is_ok:
+    logger.info(f"run-on-container [{opts.on}]: {result.value!r}")
+    if result.is_ok:
         # Print the raw output so the caller (subprocess test) can assert it.
-        print(result.output)  # noqa: T201 — intentional: surface to subprocess stdout
-    return CommandStatus(
-        command="run-on-container",
-        output=result.output,
-        status=result.status,
-        retcode=result.retcode,
-    )
+        print(result.value)  # noqa: T201 — intentional: surface to subprocess stdout
+    return result

@@ -85,7 +85,7 @@ class TestRunContract:
         result = (await host1.run(host1_kit.successful_cmd)).only
         assert result.status == Status.Success
         assert result.retcode == 0
-        assert result.output != "", "successful command produced empty output"
+        assert result.value != "", "successful command produced empty output"
 
     @pytest.mark.asyncio
     async def test_failing_command_returns_status_failed(self, host1, host1_kit):
@@ -144,17 +144,17 @@ class TestTransferContract:
         local_src = tmp_path / name
         local_src.write_bytes(payload)
 
-        put_status, put_err = await host1.put(
+        put_result = await host1.put(
             [local_src],
             Path(host1_kit.temp_remote_dir),
         )
-        assert put_status == Status.Success, f"put failed: {put_err}"
+        assert put_result.status == Status.Success, f"put failed: {put_result.msg}"
 
         get_dir = tmp_path / "received"
         get_dir.mkdir()
         remote_path = Path(host1_kit.temp_remote_dir) / name
-        get_status, get_err = await host1.get([remote_path], get_dir)
-        assert get_status == Status.Success, f"get failed: {get_err}"
+        get_result = await host1.get([remote_path], get_dir)
+        assert get_result.status == Status.Success, f"get failed: {get_result.msg}"
 
         assert (get_dir / name).read_bytes() == payload
 
@@ -189,22 +189,26 @@ class TestTransferContract:
         landing = tmp_path / "received"
         landing.mkdir()
 
-        put_a_status, put_a_err = await host1.put([local_a], remote_dir)
-        assert put_a_status == Status.Success, f"first put failed: {put_a_err}"
-        get_a_status, get_a_err = await host1.get(
+        put_a_result = await host1.put([local_a], remote_dir)
+        assert put_a_result.status == Status.Success, f"first put failed: {put_a_result.msg}"
+        get_a_result = await host1.get(
             [remote_dir / name_a],
             landing,
         )
-        assert get_a_status == Status.Success, f"first get failed: {get_a_err}"
+        assert get_a_result.status == Status.Success, f"first get failed: {get_a_result.msg}"
         assert (landing / name_a).read_bytes() == payload_a
 
-        put_b_status, put_b_err = await host1.put([local_b], remote_dir)
-        assert put_b_status == Status.Success, f"second put on hot host failed: {put_b_err}"
-        get_b_status, get_b_err = await host1.get(
+        put_b_result = await host1.put([local_b], remote_dir)
+        assert put_b_result.status == Status.Success, (
+            f"second put on hot host failed: {put_b_result.msg}"
+        )
+        get_b_result = await host1.get(
             [remote_dir / name_b],
             landing,
         )
-        assert get_b_status == Status.Success, f"second get on hot host failed: {get_b_err}"
+        assert get_b_result.status == Status.Success, (
+            f"second get on hot host failed: {get_b_result.msg}"
+        )
         assert (landing / name_b).read_bytes() == payload_b
 
     @pytest.mark.asyncio
@@ -224,16 +228,19 @@ class TestTransferContract:
         local_src.write_bytes(b"")
 
         # The contract: either a non-Success status or a raised exception is
-        # acceptable. Silent Success is not.
+        # acceptable. Silent Success is not. The put call and Result check
+        # happen outside the except-guarded region so a shape error (e.g. an
+        # unpack of a non-tuple Result) cannot be swallowed as an "acceptable"
+        # exception — only a genuine raise from `put` itself may short-circuit.
         try:
-            status, err = await host1.put(
+            result = await host1.put(
                 [local_src],
                 Path("/nonexistent_otto_contract"),
             )
         except Exception:  # noqa: BLE001 — contract test: exception is one acceptable failure mode for no-FS backend
             return  # exception is one acceptable failure mode
-        assert status != Status.Success, (
-            f"no-FS backend reported Success for put — expected an error (err={err!r})"
+        assert result.status != Status.Success, (
+            f"no-FS backend reported Success for put — expected an error (err={result.msg!r})"
         )
 
 
@@ -288,11 +295,11 @@ class TestTransferProgressContract:
             "make_rich_progress_factory",
             new=spy_factory,
         ):
-            status, err = await host1.put(
+            put_result = await host1.put(
                 [local_src],
                 Path(host1_kit.temp_remote_dir),
             )
-        assert status == Status.Success, f"put failed: {err}"
+        assert put_result.status == Status.Success, f"put failed: {put_result.msg}"
         assert events, (
             "backend produced no progress events — "
             "`_run_put` ignored the progress_factory parameter"
@@ -322,8 +329,8 @@ class TestTransferProgressContract:
         local_src = tmp_path / name
         local_src.write_bytes(payload)
         remote_dir = Path(host1_kit.temp_remote_dir)
-        put_status, put_err = await host1.put([local_src], remote_dir)
-        assert put_status == Status.Success, f"setup put failed: {put_err}"
+        put_result = await host1.put([local_src], remote_dir)
+        assert put_result.status == Status.Success, f"setup put failed: {put_result.msg}"
 
         landing = tmp_path / "got"
         landing.mkdir()
@@ -343,11 +350,11 @@ class TestTransferProgressContract:
             "make_rich_progress_factory",
             new=spy_factory,
         ):
-            status, err = await host1.get(
+            get_result = await host1.get(
                 [remote_dir / name],
                 landing,
             )
-        assert status == Status.Success, f"get failed: {err}"
+        assert get_result.status == Status.Success, f"get failed: {get_result.msg}"
         assert events, (
             "backend produced no progress events on get — "
             "`_run_get` ignored the progress_factory parameter"

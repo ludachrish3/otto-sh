@@ -75,7 +75,7 @@ async def stack(pepper_lease):
 async def test_oneshot_returns_output_from_container(stack):
     result = await stack.oneshot("echo hello-from-container")
     assert result.status is Status.Success
-    assert "hello-from-container" in result.output
+    assert "hello-from-container" in result.value
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -90,7 +90,7 @@ async def test_marker_file_present(stack):
     """The Dockerfile bakes in /etc/repo1-marker.txt — it should be readable."""
     result = await stack.oneshot("cat /etc/repo1-marker.txt")
     assert result.status is Status.Success
-    assert "repo1-fixture" in result.output
+    assert "repo1-fixture" in result.value
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -98,18 +98,18 @@ async def test_put_then_get_roundtrip(stack, tmp_path):
     src = tmp_path / "payload.bin"
     src.write_bytes(b"otto-docker-roundtrip-" + b"\xab" * 256)
 
-    status, msg = await stack.put([src], Path("/tmp"))
-    assert status is Status.Success, msg
+    res = await stack.put([src], Path("/tmp"))
+    assert res.status is Status.Success, res.msg
 
     # Verify the bytes inside the container.
     cat = await stack.oneshot("wc -c /tmp/payload.bin")
     assert cat.status is Status.Success
-    assert "/tmp/payload.bin" in cat.output
+    assert "/tmp/payload.bin" in cat.value
 
     out_dir = tmp_path / "back"
     out_dir.mkdir()
-    status, msg = await stack.get(Path("/tmp/payload.bin"), out_dir)
-    assert status is Status.Success, msg
+    res = await stack.get(Path("/tmp/payload.bin"), out_dir)
+    assert res.status is Status.Success, res.msg
     assert (out_dir / "payload.bin").read_bytes() == src.read_bytes()
 
 
@@ -118,7 +118,7 @@ async def test_run_chained_commands_in_one_string(stack):
     """Multiple commands in a single string share state via shell `&&`."""
     result = await stack.oneshot("cd /tmp && echo $PWD")
     assert result.status is Status.Success
-    assert "/tmp" in result.output
+    assert "/tmp" in result.value
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -127,7 +127,7 @@ async def test_run_preserves_cwd_across_calls(stack):
     into the next, no `&&` required."""
     result = await stack.run(["cd /tmp", "pwd"])
     assert result.status is Status.Success
-    assert result.statuses[-1].output.strip() == "/tmp"
+    assert result[-1].value.strip() == "/tmp"
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -135,7 +135,7 @@ async def test_run_preserves_env_across_calls(stack):
     """Env vars exported in one run() call must persist into the next."""
     result = await stack.run(["export OTTO_TEST_VAR=docker_persist_ok", "echo $OTTO_TEST_VAR"])
     assert result.status is Status.Success
-    assert "docker_persist_ok" in result.statuses[-1].output
+    assert "docker_persist_ok" in result[-1].value
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -145,7 +145,7 @@ async def test_run_state_persists_across_separate_run_invocations(stack):
     assert r1.status is Status.Success
     r2 = await stack.run("pwd")
     assert r2.status is Status.Success
-    assert r2.only.output.strip() == "/var"
+    assert r2.only.value.strip() == "/var"
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -158,7 +158,7 @@ async def test_run_timeout_recovers_session(stack):
     # Session should recover; next command should succeed.
     recovered = await stack.run("echo recovered")
     assert recovered.status is Status.Success
-    assert "recovered" in recovered.only.output
+    assert "recovered" in recovered.only.value
 
 
 @pytest.mark.asyncio(loop_scope="module")

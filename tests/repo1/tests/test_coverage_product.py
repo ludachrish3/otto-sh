@@ -58,7 +58,7 @@ async def _compile_product() -> None:
     try:
         result = await localhost.oneshot(f"make -C {PRODUCT_DIR} clean all", timeout=30)
         if result.status != Status.Success:
-            raise RuntimeError(f"Product compilation failed:\n{result.output}")
+            raise RuntimeError(f"Product compilation failed:\n{result.value}")
         logger.info("Product compiled successfully")
     finally:
         await localhost.close()
@@ -72,12 +72,12 @@ async def _install_on_host(host: UnixHost) -> None:
 
     # Upload the binary
     binary = PRODUCT_DIR / "product"
-    status, msg = await host.put(
+    put_result = await host.put(
         src_files=[binary],
         dest_dir=Path(REMOTE_INSTALL_DIR),
     )
-    if not status.is_ok:
-        raise RuntimeError(f"Failed to deploy to {host.id}: {msg}")
+    if not put_result.is_ok:
+        raise RuntimeError(f"Failed to deploy to {host.id}: {put_result.msg}")
 
     await host.oneshot(f"chmod +x {REMOTE_INSTALL_DIR}/product", timeout=10)
     logger.info("Installed product on %s", host.id)
@@ -106,8 +106,8 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
     )
     result = await host.oneshot(cmd, timeout=10)
     if result.status != Status.Success:
-        raise RuntimeError(f"Product run failed on {host.id}: {result.output}")
-    return result.output.strip()
+        raise RuntimeError(f"Product run failed on {host.id}: {result.value}")
+    return result.value.strip()
 
 
 @register_suite()
@@ -195,7 +195,7 @@ class TestCoverageProduct(OttoSuite[_Options]):
             timeout=10,
         )
         # The program should exit with code 1 and print an error
-        assert "Division by zero" in result.output
+        assert "Division by zero" in result.value
 
     @pytest.mark.integration
     async def test_clamp(self) -> None:

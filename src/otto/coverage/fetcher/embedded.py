@@ -113,10 +113,10 @@ async def _collect_one_embedded_host(
     logger.info("Dumping embedded coverage from %s via %r", label, dump_command)
     result = await host.oneshot(dump_command, timeout=_DUMP_TIMEOUT)
     if result.status != Status.Success:
-        logger.error("cov_dump failed on %s: %s", label, result.output)
+        logger.error("cov_dump failed on %s: %s", label, result.value)
         return None
 
-    blocks = decode_cov_dump(result.output)
+    blocks = decode_cov_dump(result.value)
     if not blocks:
         logger.warning("No coverage data decoded from %s", label)
         return None

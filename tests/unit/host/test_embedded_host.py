@@ -17,7 +17,8 @@ from otto.host.binary_loader import LlextHexLoader
 from otto.host.command_frame import ZephyrFrame
 from otto.host.options import TelnetOptions
 from otto.logger.mode import LogMode
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 from tests.conftest import active_context
 
 
@@ -200,14 +201,14 @@ class TestFileTransfer:
     @pytest.mark.asyncio
     async def test_get_dry_run_skips(self, host: EmbeddedHost, tmp_path):
         with active_context(dry_run=True):
-            status, _ = await host.get(tmp_path / "f", tmp_path)
-        assert status == Status.Skipped
+            result = await host.get(tmp_path / "f", tmp_path)
+        assert result.status == Status.Skipped
 
     @pytest.mark.asyncio
     async def test_put_dry_run_skips(self, host: EmbeddedHost, tmp_path):
         with active_context(dry_run=True):
-            status, _ = await host.put(tmp_path / "f", tmp_path)
-        assert status == Status.Skipped
+            result = await host.put(tmp_path / "f", tmp_path)
+        assert result.status == Status.Skipped
 
 
 # ---------------------------------------------------------------------------
@@ -303,28 +304,28 @@ class TestDelegation:
     @pytest.mark.asyncio
     async def test_run_delegates_to_session_manager(self, host: EmbeddedHost):
         host._session_mgr = AsyncMock()
-        host._session_mgr.run_cmd.return_value = CommandStatus(
-            command="kernel version",
-            output="3.7.0",
+        host._session_mgr.run_cmd.return_value = CommandResult(
             status=Status.Success,
+            value="3.7.0",
+            command="kernel version",
             retcode=0,
         )
         result = await host.run("kernel version")
-        assert result.only.output == "3.7.0"
+        assert result.only.value == "3.7.0"
         host._session_mgr.run_cmd.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_oneshot_runs_on_persistent_session(self, host: EmbeddedHost):
         """oneshot shares the single console — it goes through run_cmd, not a pool."""
         host._session_mgr = AsyncMock()
-        host._session_mgr.run_cmd.return_value = CommandStatus(
-            command="kernel uptime",
-            output="42",
+        host._session_mgr.run_cmd.return_value = CommandResult(
             status=Status.Success,
+            value="42",
+            command="kernel uptime",
             retcode=0,
         )
         result = await host.oneshot("kernel uptime")
-        assert result.output == "42"
+        assert result.value == "42"
         host._session_mgr.run_cmd.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -364,10 +365,10 @@ class TestDelegation:
     async def test_oneshot_forwards_log_false(self, host):
 
         host._session_mgr = AsyncMock()
-        host._session_mgr.run_cmd.return_value = CommandStatus(
-            command="c",
-            output="",
+        host._session_mgr.run_cmd.return_value = CommandResult(
             status=Status.Success,
+            value="",
+            command="c",
             retcode=0,
         )
         # The QUIET command is composed with the host's standing mode into LogMode.QUIET.
@@ -382,10 +383,10 @@ class TestDelegation:
     async def test_run_forwards_log_false(self, host):
 
         host._session_mgr = AsyncMock()
-        host._session_mgr.run_cmd.return_value = CommandStatus(
-            command="c",
-            output="",
+        host._session_mgr.run_cmd.return_value = CommandResult(
             status=Status.Success,
+            value="",
+            command="c",
             retcode=0,
         )
         await host.run("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
@@ -412,7 +413,7 @@ class TestVerifyConnection:
         host._connections.telnet.side_effect = ConnectionError("no route to host")
         result = await host.verify_connection()
         assert result.status == Status.Error
-        assert "no route to host" in result.output
+        assert "no route to host" in result.value
 
 
 # ---------------------------------------------------------------------------
@@ -440,8 +441,8 @@ class TestLoaderField:
 # ---------------------------------------------------------------------------
 
 
-def _ok(output: str) -> CommandStatus:
-    return CommandStatus(command="c", output=output, status=Status.Success, retcode=0)
+def _ok(output: str) -> CommandResult:
+    return CommandResult(status=Status.Success, value=output, command="c", retcode=0)
 
 
 class TestLoad:
@@ -454,10 +455,10 @@ class TestLoad:
         f = tmp_path / "cov_ext.llext"
         f.write_bytes(b"\x01\x02\x03")
 
-        status, err = await host.load(f, "cov_ext")
+        result = await host.load(f, "cov_ext")
 
-        assert status == Status.Success
-        assert err == ""
+        assert result.status == Status.Success
+        assert result.msg == ""
         _, kwargs = host._session_mgr.run_cmd.await_args
         assert host._session_mgr.run_cmd.await_args.args[0] == "llext load_hex cov_ext 010203"
         assert kwargs["log"] is LogMode.NEVER
@@ -471,10 +472,10 @@ class TestLoad:
         f = tmp_path / "cov_ext.llext"
         f.write_bytes(b"\x01")
 
-        status, err = await host.load(f, "cov_ext")
+        result = await host.load(f, "cov_ext")
 
-        assert status == Status.Error
-        assert "Failed to load" in err
+        assert result.status == Status.Error
+        assert "Failed to load" in result.msg
 
     @pytest.mark.asyncio
     async def test_load_raises_without_loader(self, host, tmp_path):
@@ -519,9 +520,9 @@ class TestUnload:
             _ok("No such extension cov_ext"),
         ]
 
-        status, _err = await host.unload("cov_ext")
+        result = await host.unload("cov_ext")
 
-        assert status == Status.Success
+        assert result.status == Status.Success
         assert host._session_mgr.run_cmd.await_count == 2
 
     @pytest.mark.asyncio
@@ -530,9 +531,9 @@ class TestUnload:
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = _ok("No such extension cov_ext")
 
-        status, _ = await host.unload("cov_ext")
+        result = await host.unload("cov_ext")
 
-        assert status == Status.Success
+        assert result.status == Status.Success
         assert host._session_mgr.run_cmd.await_count == 1
 
     @pytest.mark.asyncio
@@ -541,10 +542,10 @@ class TestUnload:
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = _ok("Unloaded extension cov_ext")
 
-        status, err = await host.unload("cov_ext")
+        result = await host.unload("cov_ext")
 
-        assert status == Status.Error
-        assert "still resident" in err
+        assert result.status == Status.Error
+        assert "still resident" in result.msg
         assert host._session_mgr.run_cmd.await_count == LlextHexLoader.max_unload_rounds
 
     @pytest.mark.asyncio

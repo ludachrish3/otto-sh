@@ -15,11 +15,11 @@ if TYPE_CHECKING:
 from typing_extensions import override
 
 from ...logger import get_otto_logger
-from ...utils import CommandStatus, Status
+from ...result import CommandResult, Result
+from ...utils import Status
 from .base import (
     TransferContext,
     TransferProgressFactory,
-    _first_error,
 )
 from .progress import _make_sftp_progress
 from .registry import register_transfer_backend
@@ -43,7 +43,7 @@ class ScpFileTransfer(UnixFileTransfer):
         self,
         connections: "ConnectionManager",
         name: str,
-        exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
+        exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]],
         scp_options: "ScpOptions",
         max_filename_len: int = 255,
     ) -> None:
@@ -80,7 +80,7 @@ class ScpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         return await self._get_files_scp(src_files, dest_dir, progress_factory)
 
     @override
@@ -89,7 +89,7 @@ class ScpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         return await self._put_files_scp(src_files, dest_dir, progress_factory)
 
     async def _get_files_scp(
@@ -97,12 +97,12 @@ class ScpFileTransfer(UnixFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         import asyncssh
 
         ssh_conn = await self._connections.ssh()
 
-        async def _get_one(src: Path) -> tuple[Status, str]:
+        async def _get_one(src: Path) -> Result:
             _progress = (
                 _make_sftp_progress(progress_factory()) if progress_factory is not None else None
             )
@@ -113,24 +113,30 @@ class ScpFileTransfer(UnixFileTransfer):
                 progress_handler=_progress,
                 **self._scp_options._kwargs(),  # noqa: SLF001 — intra-package access to ScpOptions._kwargs
             )
-            return Status.Success, ""
+            return Result(Status.Success, value=dest_dir / src.name)
 
-        results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
+        gathered = await asyncio.gather(
             *(_get_one(src) for src in src_files), return_exceptions=True
         )
-        return _first_error(results)
+        per_file: dict[Path, Result] = {}
+        for src, outcome in zip(src_files, gathered, strict=True):
+            if isinstance(outcome, BaseException):
+                per_file[src] = Result(Status.Error, msg=f"{src}: {outcome}")
+            else:
+                per_file[src] = outcome
+        return per_file
 
     async def _put_files_scp(
         self,
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None = None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         import asyncssh
 
         ssh_conn = await self._connections.ssh()
 
-        async def _put_one(src: Path) -> tuple[Status, str]:
+        async def _put_one(src: Path) -> Result:
             _progress = (
                 _make_sftp_progress(progress_factory()) if progress_factory is not None else None
             )
@@ -141,12 +147,18 @@ class ScpFileTransfer(UnixFileTransfer):
                 progress_handler=_progress,
                 **self._scp_options._kwargs(),  # noqa: SLF001 — intra-package access to ScpOptions._kwargs
             )
-            return Status.Success, ""
+            return Result(Status.Success, value=dest_dir / src.name)
 
-        results: list[tuple[Status, str] | BaseException] = await asyncio.gather(
+        gathered = await asyncio.gather(
             *(_put_one(src) for src in src_files), return_exceptions=True
         )
-        return _first_error(results)
+        per_file: dict[Path, Result] = {}
+        for src, outcome in zip(src_files, gathered, strict=True):
+            if isinstance(outcome, BaseException):
+                per_file[src] = Result(Status.Error, msg=f"{src}: {outcome}")
+            else:
+                per_file[src] = outcome
+        return per_file
 
 
 register_transfer_backend("scp", ScpFileTransfer)

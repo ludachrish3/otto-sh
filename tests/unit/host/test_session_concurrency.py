@@ -19,7 +19,7 @@ from hypothesis import strategies as st
 
 from otto.host.connections import ConnectionManager
 from otto.host.session import SessionManager, ShellSession
-from otto.utils import CommandStatus
+from otto.result import CommandResult
 
 pytestmark = pytest.mark.concurrency
 
@@ -183,7 +183,7 @@ async def test_oneshot_pool_high_fanout() -> None:
 
     exceptions = [r for r in results if isinstance(r, BaseException)]
     assert not exceptions, f"{len(exceptions)} oneshot() calls raised; first: {exceptions[0]!r}"
-    statuses = cast("list[CommandStatus]", results)
+    statuses = cast("list[CommandResult]", results)
     assert all(r.status.is_ok for r in statuses), "some oneshots returned non-ok status"
 
     # Every session left in the pool should still be alive.
@@ -273,7 +273,7 @@ async def test_ensure_default_session_recreation_race() -> None:
 
     exceptions = [r for r in results if isinstance(r, BaseException)]
     assert not exceptions, f"{len(exceptions)} run_cmd calls raised; first: {exceptions[0]!r}"
-    statuses = cast("list[CommandStatus]", results)
+    statuses = cast("list[CommandResult]", results)
     assert all(r.status.is_ok for r in statuses), "some commands returned non-ok status"
 
     # Exactly one replacement: 1 initial + 1 = 2.

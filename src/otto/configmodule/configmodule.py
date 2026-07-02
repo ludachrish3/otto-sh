@@ -14,7 +14,7 @@ from ..logger import get_otto_logger
 from .lab import Lab
 
 if TYPE_CHECKING:
-    from ..host import RunResult, UnixHost
+    from ..host import Results, UnixHost
     from ..host.options import (
         FtpOptions,
         NcOptions,
@@ -265,7 +265,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
     scp_options: "ScpOptions | None" = None,
     ftp_options: "FtpOptions | None" = None,
     nc_options: "NcOptions | None" = None,
-) -> "dict[str, RunResult | BaseException]":
+) -> "dict[str, Results | BaseException]":
     """Run commands on every matching host via :meth:`~otto.host.host.BaseHost.run`.
 
     Convenience wrapper around :func:`do_for_all_hosts` for the most
@@ -286,7 +286,7 @@ async def run_on_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
             forwarded to :func:`do_for_all_hosts`.
 
     Returns:
-        A dict keyed by host ID.  Values are :class:`~otto.host.host.RunResult` instances,
+        A dict keyed by host ID.  Values are :class:`~otto.result.Results` instances,
         or a :class:`BaseException` if that host's call failed.
 
     Examples:

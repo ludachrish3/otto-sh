@@ -58,7 +58,8 @@ if TYPE_CHECKING:
 
 from ..logger import get_otto_logger
 from ..logger.mode import LogMode
-from ..utils import Arg, CommandStatus, Exclude, Status, cli_exposed
+from ..result import CommandResult, Result
+from ..utils import Arg, Exclude, Status, cli_exposed
 from .binary_loader import BinaryLoader
 from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
 from .command_frame import CommandFrame, ZephyrFrame
@@ -368,17 +369,17 @@ class EmbeddedHost(RemoteHost):
     ####################
 
     @override
-    async def verify_connection(self) -> CommandStatus:
+    async def verify_connection(self) -> CommandResult:
         """Attempt to open the telnet shell without running commands (dry-run)."""
         try:
             await self._connections.telnet()
             self._log_command("[DRY RUN] Connection verified")
-            return CommandStatus(
-                command="connect", output="Connection successful", status=Status.Success, retcode=0
+            return CommandResult(
+                status=Status.Success, value="Connection successful", command="connect", retcode=0
             )
         except Exception as e:  # noqa: BLE001 — verify_connection probes all failure modes
             self._log_command(f"[DRY RUN] Connection FAILED: {e}")
-            return CommandStatus(command="connect", output=str(e), status=Status.Error, retcode=1)
+            return CommandResult(status=Status.Error, value=str(e), command="connect", retcode=1)
 
     @override
     async def close(self) -> None:
@@ -407,7 +408,7 @@ class EmbeddedHost(RemoteHost):
         expects: list[Expect] | None = None,
         timeout: float | None = 10.0,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Execute a single command on the embedded host via the persistent shell session.
 
         Like ``UnixHost._run_one``, the session is stateful and **sequential
@@ -426,7 +427,7 @@ class EmbeddedHost(RemoteHost):
         cmd: str,
         timeout: float | None = None,
         log: LogMode = LogMode.NORMAL,
-    ) -> CommandStatus:
+    ) -> CommandResult:
         """Run a single command on the embedded host.
 
         Unlike :meth:`~otto.host.unix_host.UnixHost.oneshot`, this is **not** concurrency-safe: an
@@ -500,7 +501,7 @@ class EmbeddedHost(RemoteHost):
         ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Transfer files from the embedded host to the local machine.
 
         Delegates to :class:`~otto.host.transfer.EmbeddedFileTransfer`,
@@ -524,7 +525,7 @@ class EmbeddedHost(RemoteHost):
         ],
         dest_dir: Path,
         show_progress: Annotated[bool, Exclude] = True,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Transfer files from the local machine to the embedded host.
 
         Delegates to :class:`~otto.host.transfer.EmbeddedFileTransfer`
@@ -561,7 +562,7 @@ class EmbeddedHost(RemoteHost):
         result = await self._run_one(self.filesystem.ls_command(str(path)))
         if not result.status.is_ok:
             return []
-        return [line for line in result.output.splitlines() if line]
+        return [line for line in result.value.splitlines() if line]
 
     @cli_exposed
     async def rm(
@@ -569,10 +570,10 @@ class EmbeddedHost(RemoteHost):
         path: "str | Path",
         recursive: bool = False,  # noqa: ARG002 — required by UnixHost.rm override signature (flags not supported on embedded)
         force: bool = False,  # noqa: ARG002 — required by UnixHost.rm override signature (flags not supported on embedded)
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Remove *path* via the device ``fs rm`` former (flags ignored)."""
         result = await self._run_one(self.filesystem.rm_command(str(path)))
-        return result.status, result.output
+        return Result(result.status, msg=result.value)
 
     def _no_fileop(self, name: str) -> NoReturn:
         raise NotImplementedError(
@@ -580,7 +581,7 @@ class EmbeddedHost(RemoteHost):
             f"device shell has no equivalent. Use get()/put() for reads/writes."
         ) from None
 
-    async def mkdir(self, path: "str | Path", parents: bool = True) -> tuple[Status, str]:  # noqa: ARG002 — required by UnixHost.mkdir override signature (always raises)
+    async def mkdir(self, path: "str | Path", parents: bool = True) -> Result:  # noqa: ARG002 — required by UnixHost.mkdir override signature (always raises)
         """Not supported — embedded targets have no shell ``mkdir`` equivalent."""
         self._no_fileop("mkdir")
 
@@ -589,11 +590,11 @@ class EmbeddedHost(RemoteHost):
         src: "str | Path",  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
         dst: "str | Path",  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
         recursive: bool = False,  # noqa: ARG002 — required by UnixHost.cp override signature (always raises)
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Not supported — embedded targets have no shell ``cp`` equivalent."""
         self._no_fileop("cp")
 
-    async def mv(self, src: "str | Path", dst: "str | Path") -> tuple[Status, str]:  # noqa: ARG002 — required by UnixHost.mv override signature (always raises)
+    async def mv(self, src: "str | Path", dst: "str | Path") -> Result:  # noqa: ARG002 — required by UnixHost.mv override signature (always raises)
         """Not supported — embedded targets have no shell ``mv`` equivalent."""
         self._no_fileop("mv")
 
@@ -606,7 +607,7 @@ class EmbeddedHost(RemoteHost):
         path: "str | Path",  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
         data: str,  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
         append: bool = False,  # noqa: ARG002 — required by UnixHost.write_file override signature (always raises)
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Not supported — use :meth:`put` to send files to an embedded target."""
         self._no_fileop("write_file")
 
@@ -621,7 +622,7 @@ class EmbeddedHost(RemoteHost):
         name: Annotated[str, Arg(help="Name to register the loaded binary under.")],
         show_progress: Annotated[bool, Exclude] = False,
         timeout: Annotated[float | None, Exclude] = 120.0,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Load a binary into the device runtime via the host's binary loader.
 
         Distinct from :meth:`put` (a *file* transfer to a mounted filesystem):
@@ -629,8 +630,8 @@ class EmbeddedHost(RemoteHost):
         ``llext load_hex``), with no destination file. The payload is read from
         *file*, formatted into the device command by the loader, and sent with
         ``log=LogMode.NEVER`` so the (large) encoded payload never reaches the
-        console or log. Returns ``(Status, str)`` like :meth:`put`/:meth:`get`; the
-        ``str`` carries the device's failure text on error.
+        console or log. Returns a :class:`~otto.result.Result`; ``msg`` carries
+        the device's failure text on error.
 
         ``show_progress`` is **off by default** (the bar only renders in
         interactive / ``otto run``; under ``otto test`` output is captured). When
@@ -659,25 +660,26 @@ class EmbeddedHost(RemoteHost):
                 )
         else:
             result = await self._session_mgr.run_cmd(cmd, timeout=timeout, log=LogMode.NEVER)
-        ok, reason = loader.check_loaded(result.output)
+        ok, reason = loader.check_loaded(result.value)
         if ok:
-            return Status.Success, ""
-        return Status.Error, f"load {name} from {file} failed: {reason}"
+            return Result(Status.Success)
+        return Result(Status.Error, msg=f"load {name} from {file} failed: {reason}")
 
     @cli_exposed(success="Binary unloaded.")
     async def unload(
         self,
         name: Annotated[str, Arg(help="Name of the binary to unload.")],
         timeout: Annotated[float | None, Exclude] = 20.0,
-    ) -> tuple[Status, str]:
+    ) -> Result:
         """Unload *name* from the device runtime, draining to full eviction.
 
         Some loaders (LLEXT) refcount a resident binary, so one unload may only
         decrement it. ``unload`` loops the loader's unload command until
         :meth:`~otto.host.binary_loader.BinaryLoader.is_fully_unloaded` reports
         the binary gone (bounded by ``loader.max_unload_rounds``). Idempotent:
-        unloading something not loaded succeeds on the first round. Returns
-        ``(Status, str)``; fails loud (``ValueError``) if no loader is declared.
+        unloading something not loaded succeeds on the first round. Returns a
+        :class:`~otto.result.Result`; fails loud (``ValueError``) if no loader
+        is declared.
         """
         loader = self._require_loader()
         if is_dry_run():
@@ -686,11 +688,15 @@ class EmbeddedHost(RemoteHost):
         last = ""
         for _ in range(loader.max_unload_rounds):
             result = await self._session_mgr.run_cmd(cmd, timeout=timeout)
-            last = result.output
-            if loader.is_fully_unloaded(result.output):
-                return Status.Success, ""
-        return Status.Error, (
-            f"{name} still resident after {loader.max_unload_rounds} unload rounds: {last.strip()}"
+            last = result.value
+            if loader.is_fully_unloaded(result.value):
+                return Result(Status.Success)
+        return Result(
+            Status.Error,
+            msg=(
+                f"{name} still resident after {loader.max_unload_rounds} "
+                f"unload rounds: {last.strip()}"
+            ),
         )
 
 
@@ -721,6 +727,6 @@ class ZephyrHost(EmbeddedHost):
     ####################
 
     @override
-    async def _soft_reboot(self) -> tuple[Status, str]:
+    async def _soft_reboot(self) -> Result:
         await self.run("kernel reboot cold", timeout=10.0)
-        return Status.Success, ""
+        return Result(Status.Success)

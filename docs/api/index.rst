@@ -17,4 +17,5 @@ API Reference
    storage
    testing
    examples
+   result
    utils

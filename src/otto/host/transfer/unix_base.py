@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from ..connections import ConnectionManager
 
-from ...utils import CommandStatus
+from ...result import CommandResult
 from .base import BaseFileTransfer
 
 
@@ -36,7 +36,7 @@ class UnixFileTransfer(BaseFileTransfer):
         self,
         connections: "ConnectionManager",
         name: str,
-        exec_cmd: Callable[..., Coroutine[Any, Any, CommandStatus]],
+        exec_cmd: Callable[..., Coroutine[Any, Any, CommandResult]],
         max_filename_len: int = 255,
     ) -> None:
         super().__init__(name=name, max_filename_len=max_filename_len)

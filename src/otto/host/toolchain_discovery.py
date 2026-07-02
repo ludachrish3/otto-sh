@@ -55,18 +55,18 @@ async def discover_toolchain_from_gcno(
         f"find {gcno_dir} -name '*.gcno' -type f | head -5",
         timeout=30,
     )
-    if result.retcode != 0 or not result.output.strip():
+    if result.retcode != 0 or not result.value.strip():
         logger.debug("No .gcno files found in %s", gcno_dir)
         return None
 
-    gcno_files = result.output.strip().splitlines()
+    gcno_files = result.value.strip().splitlines()
 
     for gcno in gcno_files:
         strings_result = await localhost.oneshot(f"strings {gcno}", timeout=30)
         if strings_result.retcode != 0:
             continue
 
-        for line in strings_result.output.splitlines():
+        for line in strings_result.value.splitlines():
             match = _COMPILER_RE.search(line.strip())
             if match:
                 compiler_path = Path(match.group(1))

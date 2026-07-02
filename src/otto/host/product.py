@@ -97,7 +97,11 @@ class FileProduct(Product):
 
     @override
     async def stage(self, host: "Host") -> tuple[Status, str]:
-        return await host.put(self.artifact, self.dest_dir)
+        # host.put now returns a per-file transfer Result; collapse it to this
+        # method's (Status, str) contract until the product lifecycle is
+        # converted to the Result family in a later pass.
+        result = await host.put(self.artifact, self.dest_dir)
+        return result.status, result.msg
 
 
 ProductProvider = Callable[["Host"], Iterable[Product] | None]

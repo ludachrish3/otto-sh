@@ -14,7 +14,8 @@ from otto.coverage.fetcher.embedded import (
     decode_cov_dump,
 )
 from otto.host.embedded_host import EmbeddedHost
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "embedded_coverage"
 
@@ -23,7 +24,7 @@ def _mock_embedded_host(host_id: str, console_output: str) -> MagicMock:
     host = MagicMock(spec=EmbeddedHost)
     host.id = host_id
     host.oneshot = AsyncMock(
-        return_value=CommandStatus("dump", console_output, Status.Success, 0),
+        return_value=CommandResult(Status.Success, value=console_output, command="dump", retcode=0),
     )
     return host
 

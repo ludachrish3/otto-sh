@@ -33,39 +33,49 @@ def collect_exposed_methods(cls: type) -> dict[str, str]:
 
 
 def _render_result(result: Any, success: str | None = None) -> None:
-    """Render a host-method result and signal failure via exit code.
+    """Render a host-verb result and signal failure via exit code.
 
-    The lifecycle/file-op verbs return ``tuple[Status, str]``; query verbs return
-    ``bool``/``list``/``str``. Only a failing ``(Status, str)`` tuple is an error.
-    A ``RunResult``-like object (non-tuple with ``.status.is_ok``) means output was
-    already streamed — just signal failure if needed.
+    First-party verbs return the ``otto.result`` family (exit code comes from
+    ``result.exit_code``); ``None`` means side-effect-only success. Any other
+    value is the documented third-party fallback: printed as-is, exit 0.
     """
     from rich import print as rprint
 
-    # RunResult and similar: status-only (output already streamed during run)
-    if (
-        not isinstance(result, tuple)
-        and hasattr(result, "status")
-        and hasattr(result.status, "is_ok")
-    ):
-        if not result.status.is_ok:
-            raise typer.Exit(1)
-        return
+    from otto.result import CommandResult, Result, Results
 
-    if isinstance(result, tuple) and len(result) == 2 and hasattr(result[0], "is_ok"):  # noqa: PLR2004 — 2-element (Status, msg) tuple protocol check, clearer inline
-        status, msg = result
-        if msg:
-            rprint(msg)
-        elif success and status.is_ok:
-            rprint(f"[green]{success}[/green]")
-        if not status.is_ok:
-            raise typer.Exit(1)
-        return
+    if isinstance(result, Result):
+        is_command = isinstance(result, (CommandResult, Results))
+        if result.is_ok:
+            if is_command:
+                pass  # command output already streamed during execution
+            elif success:
+                rprint(f"[green]{success}[/green]")
+            elif isinstance(result.value, dict):
+                for src, entry in result.value.items():
+                    rprint(f"{src} -> {entry.value}")
+            elif isinstance(result.value, list):
+                for item in result.value:
+                    rprint(item)
+            elif result.value is not None:
+                rprint(result.value)
+            return
+        if result.msg:
+            rprint(f"[red]{result.msg}[/red]")
+        if isinstance(result.value, dict):
+            for entry in result.value.values():
+                if isinstance(entry, Result) and not entry.is_ok and entry.msg:
+                    rprint(f"[red]{entry.msg}[/red]")
+        elif isinstance(result, Results):
+            for entry in result:
+                if not entry.is_ok and entry.msg:
+                    rprint(f"[red]{entry.msg}[/red]")
+        raise typer.Exit(result.exit_code)
 
     if result is None:
-        rprint("[green]done[/green]")
-    else:
-        rprint(result)
+        rprint(f"[green]{success}[/green]" if success else "[green]done[/green]")
+        return
+
+    rprint(result)  # documented third-party plain-value fallback, exit 0
 
 
 def make_method_command(

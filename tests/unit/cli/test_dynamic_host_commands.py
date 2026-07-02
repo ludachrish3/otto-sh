@@ -17,6 +17,7 @@ from otto.cli.expose import (
     make_method_command,
 )
 from otto.host.unix_host import UnixHost
+from otto.result import CommandResult, Result, Results
 from otto.utils import Arg, Status, cli_exposed
 
 
@@ -76,7 +77,7 @@ async def test_make_method_command_dispatches_kwargs_and_closes():
 
         async def reboot(self, hard: bool = False):
             seen["hard"] = hard
-            return (Status.Success, "")
+            return Result(Status.Success)
 
     host = _Host()
 
@@ -93,13 +94,13 @@ async def test_make_method_command_dispatches_kwargs_and_closes():
 
 
 @pytest.mark.asyncio
-async def test_make_method_command_failure_tuple_exits_nonzero():
+async def test_make_method_command_failure_result_exits_nonzero():
     class _Host:
         id = "h1"
         close = AsyncMock()
 
         async def reboot(self, hard: bool = False):
-            return (Status.Failed, "did not come back")
+            return Result(Status.Failed, msg="did not come back")
 
     host = _Host()
 
@@ -137,34 +138,71 @@ async def test_make_method_command_unsupported_method_errors():
 # ---------------------------------------------------------------------------
 
 
-def test_render_runresult_failure_exits_nonzero():
-    class _RR:
-        class status:  # noqa: N801 — lowercase mimics result.status attribute shape
-            is_ok = False
+def _exit_code(result, success=None):
+    try:
+        _render_result(result, success)
+    except typer.Exit as e:
+        return e.exit_code
+    return 0
 
+
+def test_command_retcode_passthrough():
+    res = Results.collect([CommandResult(Status.Failed, value="", command="exit 42", retcode=42)])
+    assert _exit_code(res) == 42
+
+
+def test_command_never_ran_exits_255():
+    assert _exit_code(CommandResult(Status.Error, command="x", retcode=-1)) == 255
+
+
+def test_status_mapping_for_plain_results():
+    assert _exit_code(Result(Status.Error, msg="boom")) == 2
+    assert _exit_code(Result(Status.Failed, msg="no")) == 1
+    assert _exit_code(Result(Status.Skipped)) == 0
+
+
+def test_ok_result_prints_success_message(capsys):
+    _render_result(Result(Status.Success), success="Transfer complete.")
+    assert "Transfer complete." in capsys.readouterr().out
+
+
+def test_ok_transfer_mapping_prints_per_file_lines(capsys):
+    per_file = {Path("a.bin"): Result(Status.Success, value=Path("/dst/a.bin"))}
+    _render_result(Result(Status.Success, value=per_file))
+    out = capsys.readouterr().out
+    assert "a.bin" in out
+    assert "/dst/a.bin" in out
+
+
+def test_failed_mapping_prints_per_entry_diagnostics(capsys):
+    per_file = {Path("b.bin"): Result(Status.Error, msg="b.bin: reset")}
     with pytest.raises(typer.Exit):
-        _render_result(_RR())
+        _render_result(Result(Status.Error, value=per_file, msg="1 file failed"))
+    assert "b.bin: reset" in capsys.readouterr().out
 
 
-def test_render_runresult_ok_returns_silently():
-    class _RR:
-        class status:  # noqa: N801 — lowercase mimics result.status attribute shape
-            is_ok = True
-
-    # no exception, no output
-    _render_result(_RR())
+def test_command_results_print_nothing_on_ok(capsys):
+    _render_result(Results.collect([CommandResult(Status.Success, retcode=0)]))
+    assert capsys.readouterr().out == ""
 
 
-def test_render_success_message_on_ok_empty_tuple():
-    # Should not raise; prints the success message (visual output tested via capsys in
-    # a richer harness; here we just confirm no exception).
-    _render_result((Status.Success, ""), success="Transfer complete.")
+def test_command_results_print_per_entry_diagnostics_on_failure(capsys):
+    res = Results.collect(
+        [CommandResult(Status.Error, value="", command="x", retcode=3, msg="boom")]
+    )
+    with pytest.raises(typer.Exit):
+        _render_result(res)
+    assert "boom" in capsys.readouterr().out
 
 
-def test_render_failure_tuple_exits_nonzero():
-    with pytest.raises(typer.Exit) as ei:
-        _render_result((Status.Failed, "bad"))
-    assert ei.value.exit_code == 1
+def test_plain_value_fallback(capsys):
+    assert _exit_code(["third", "party"]) == 0
+    assert "third" in capsys.readouterr().out
+
+
+def test_none_prints_done(capsys):
+    _render_result(None)
+    assert "done" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -435,6 +473,11 @@ def test_end_to_end_dispatch_through_host_group(monkeypatch):
     class _FakeUnixLocal:
         id = "u1"
 
+        # Deliberately returns a raw (Status, str) tuple rather than a
+        # otto.result.Result — first-party host verbs no longer do this, but
+        # @cli_exposed must still dispatch a third-party/legacy verb that
+        # returns a plain value. This is intentional fallback-path coverage,
+        # not a stale pre-unification shape.
         @cli_exposed
         async def reboot(self, hard: bool = False) -> tuple[Status, str]:
             reboot_calls.append(hard)

@@ -18,10 +18,8 @@ from rich.table import Table
 from ..context import get_context
 from ..logger import management
 from ..params import build_options, options_params
-from ..utils import (
-    CommandStatus,
-    async_typer_command,
-)
+from ..result import CommandResult
+from ..utils import async_typer_command
 
 P = ParamSpec("P")
 
@@ -143,7 +141,7 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
     Usage with OttoContext injection::
 
         @instruction()
-        async def status(ctx: OttoContext) -> CommandStatus:
+        async def status(ctx: OttoContext) -> CommandResult:
             host = ctx.get_host("router")
             ...
 
@@ -153,8 +151,8 @@ def instruction(*args: Any, options: type | None = None, **kwargs: Any) -> Calla
     """
 
     def decorator(
-        func: Callable[P, Coroutine[Any, Any, CommandStatus]],
-    ) -> Callable[P, CommandStatus]:
+        func: Callable[P, Coroutine[Any, Any, CommandResult]],
+    ) -> Callable[P, CommandResult]:
         ctx_name = _ctx_param_name(func)
         target: Callable[..., Any] = func
         if ctx_name is not None:

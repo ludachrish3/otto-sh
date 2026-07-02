@@ -73,6 +73,7 @@ otto.reservations.json_backend
 otto.reservations.null_backend
 otto.reservations.protocol
 otto.reservations.registry
+otto.result
 otto.storage
 otto.storage.errors
 otto.storage.factory

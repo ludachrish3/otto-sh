@@ -377,8 +377,9 @@ In Markdown documentation files (collected by Sphinx):
 ```
 ````
 
-Common imports (`Status`, `CommandStatus`, `LocalHost`) are pre-loaded in
-doc-file doctests via `doctest_global_setup` in `docs/conf.py`.
+Common imports (`Status`, `Result`, `CommandResult`, `Results`, `LocalHost`)
+are pre-loaded in doc-file doctests via `doctest_global_setup` in
+`docs/conf.py`.
 
 ## Coverage reports
 

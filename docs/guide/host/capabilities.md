@@ -240,12 +240,13 @@ host subclass and it appears in the `otto host` menu for that class's hosts with
 extra wiring:
 
 ```python
+from otto.result import Result
 from otto.utils import cli_exposed
 from otto.host import UnixHost
 
 class MyHost(UnixHost):
     @cli_exposed(help_="Flash firmware to the board")
-    async def flash_firmware(self, image: Path) -> tuple[Status, str]:
+    async def flash_firmware(self, image: Path) -> Result:
         ...
 ```
 
@@ -253,7 +254,10 @@ class MyHost(UnixHost):
 otto host <my-host-id> flash-firmware ./build/app.bin
 ```
 
-A verb returning `(Status, str)` exits non-zero when the status is not OK.
+A verb returning a `Result` exits non-zero when its status is not OK (see
+{doc}`Exit codes <index>`). Custom verbs on third-party host classes may
+return plain values instead of a `Result`; the CLI prints them as-is and
+exits 0.
 
 ### Parameter inference rules
 

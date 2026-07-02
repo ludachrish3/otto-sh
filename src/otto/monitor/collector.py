@@ -27,15 +27,14 @@ import aiosqlite
 from pydantic import ValidationError
 
 from ..filesystem import network_fs_type
-from ..host.host import RunResult
 from ..models import EventRecord, MetricPoint, MetricRecord
+from ..result import CommandResult, Results
 from .events import MonitorEvent
 from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser
 from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
 
 if TYPE_CHECKING:
     from ..host.remote_host import RemoteHost
-    from ..utils import CommandStatus
 
 
 class MetricView(Protocol):
@@ -324,7 +323,7 @@ class MetricCollector:
         self,
         target: MonitorTarget,
         timeout: float,
-    ) -> "RunResult | list[tuple[str, MetricDataPoint, SnmpMetric]] | None":
+    ) -> "Results | list[tuple[str, MetricDataPoint, SnmpMetric]] | None":
         """Collect metrics from a single host with a per-tick timeout.
 
         SNMP targets GET their OIDs (bounded by ``timeout`` so a stuck relay is
@@ -383,9 +382,9 @@ class MetricCollector:
         )
         for target, result in zip(shell_targets, setup_results, strict=True):
             match result:
-                case RunResult(statuses=[cmd_status]):
+                case Results() as res if len(res) == 1:
                     with contextlib.suppress(ValueError):  # keep default of 1
-                        target.core_count = int(cmd_status.output.strip())
+                        target.core_count = int(res.only.value.strip())
                 case BaseException():
                     logger.warning(
                         "Monitor: could not determine core count for %s, defaulting to 1",
@@ -406,9 +405,9 @@ class MetricCollector:
         ts = datetime.now(tz=timezone.utc)
         for target, result in zip(self._targets, initial_results, strict=True):
             match result:
-                case RunResult(statuses=cmd_statuses):
+                case Results() as res:
                     await self._process_host_results(
-                        target.host.name, ts, cmd_statuses, target.parsers
+                        target.host.name, ts, list(res), target.parsers
                     )
                 case list():
                     await self._process_snmp_results(target.host.name, ts, result)
@@ -430,9 +429,9 @@ class MetricCollector:
 
             for target, result in zip(self._targets, results[1:], strict=True):
                 match result:
-                    case RunResult(statuses=cmd_statuses):
+                    case Results() as res:
                         await self._process_host_results(
-                            target.host.name, ts, cmd_statuses, target.parsers
+                            target.host.name, ts, list(res), target.parsers
                         )
 
                     case list():
@@ -486,13 +485,13 @@ class MetricCollector:
         self,
         host_name: str,
         ts: datetime,
-        cmd_statuses: "list[CommandStatus]",
+        cmd_results: "list[CommandResult]",
         parsers: dict[str, MetricParser],
     ) -> None:
-        for cmd_status in cmd_statuses:
-            parser = parsers.get(cmd_status.command)
+        for cmd_result in cmd_results:
+            parser = parsers.get(cmd_result.command)
             if parser is not None:
-                points = parser.parse(cmd_status.output)
+                points = parser.parse(cmd_result.value)
                 if not points:
                     continue
                 for label, dp in points.items():

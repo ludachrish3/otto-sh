@@ -32,12 +32,12 @@ async def deploy(
             "echo deploying...",
             "make install",
         ])
-        logger.info(f"{host.name}: {result.statuses[-1].status}")
+        logger.info(f"{host.name}: {result[-1].status}")
 ```
 
 The function:
 
-- Must be `async` and return a `CommandStatus` (or `None`)
+- Must be `async` and return a `Result` (or `None`)
 - Is imported at startup because the module is listed in `init`
 - Gets its own `--help` page automatically from the docstring and type
   annotations

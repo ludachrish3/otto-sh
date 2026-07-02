@@ -36,7 +36,8 @@ from otto.configmodule.configmodule import get_host
 from otto.context import get_context
 from otto.host import LocalHost
 from otto.logger import get_otto_logger
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 logger = get_otto_logger()
 
@@ -74,14 +75,14 @@ def _sha256(path: Path) -> str:
 
 
 @instruction(options=_Options)
-async def nc_smoke(opts: _Options) -> CommandStatus:
+async def nc_smoke(opts: _Options) -> CommandResult:
     """Round-trip files over telnet netcat and verify them byte-for-byte."""
 
-    def _result(ok: bool, detail: str) -> CommandStatus:
-        return CommandStatus(
+    def _result(ok: bool, detail: str) -> CommandResult:
+        return CommandResult(
+            Status.Success if ok else Status.Error,
+            value=detail,
             command="nc-smoke",
-            output=detail,
-            status=Status.Success if ok else Status.Error,
             retcode=0 if ok else 1,
         )
 
@@ -97,8 +98,8 @@ async def nc_smoke(opts: _Options) -> CommandStatus:
     for i in range(opts.file_count):
         f = src_dir / f"nc_smoke_{i}.bin"
         gen = await local.run(f"dd if=/dev/urandom of={f} bs=1M count={opts.file_mb} status=none")
-        if not gen.status.is_ok:
-            return _result(False, f"failed to generate {f}: {gen.output}")
+        if not gen:
+            return _result(False, f"failed to generate {f}: {gen.first_failure.value}")
         src_files.append(f)
     logger.info(f"Generated {len(src_files)} x {opts.file_mb} MiB source file(s)")
 
@@ -113,16 +114,16 @@ async def nc_smoke(opts: _Options) -> CommandStatus:
     try:
         # --- PUT: local -> remote --------------------------------------------
         logger.info(f"nc PUT: {len(src_files)} file(s) -> {opts.host_id}:{remote_dir}")
-        put_status, put_msg = await host.put(src_files, remote_dir)
-        if not put_status.is_ok:
-            return _result(False, f"put failed: {put_status} {put_msg}")
+        put = await host.put(src_files, remote_dir)
+        if not put:
+            return _result(False, f"put failed: {put.msg}")
         logger.info("nc PUT succeeded")
 
         # --- GET: remote -> local --------------------------------------------
         logger.info(f"nc GET: {len(remote_files)} file(s) -> {roundtrip_dir}")
-        get_status, get_msg = await host.get(remote_files, roundtrip_dir)
-        if not get_status.is_ok:
-            return _result(False, f"get failed: {get_status} {get_msg}")
+        get = await host.get(remote_files, roundtrip_dir)
+        if not get:
+            return _result(False, f"get failed: {get.msg}")
         logger.info("nc GET succeeded")
 
         # --- verify byte-for-byte --------------------------------------------

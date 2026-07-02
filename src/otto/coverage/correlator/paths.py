@@ -94,11 +94,11 @@ async def discover_path_mappings(
         if no ``SF:`` lines were found.
     """
     result = await localhost.oneshot(f"grep '^SF:' {info_path}")
-    if result.retcode != 0 or not result.output.strip():
+    if result.retcode != 0 or not result.value.strip():
         logger.warning("No SF: lines found in %s", info_path)
         return []
 
-    sf_paths = [line[3:] for line in result.output.strip().splitlines() if line.startswith("SF:")]
+    sf_paths = [line[3:] for line in result.value.strip().splitlines() if line.startswith("SF:")]
     if not sf_paths:
         return []
 
@@ -150,11 +150,11 @@ async def discover_from_gcno(
     """
     # Find a sample .gcno file
     result = await localhost.oneshot(f"find {gcno_dir} -name '*.gcno' -type f | head -20")
-    if result.retcode != 0 or not result.output.strip():
+    if result.retcode != 0 or not result.value.strip():
         logger.warning("No .gcno files found in %s", gcno_dir)
         return []
 
-    gcno_files = result.output.strip().splitlines()
+    gcno_files = result.value.strip().splitlines()
 
     # Extract source paths embedded in .gcno files
     source_paths: list[str] = []
@@ -162,7 +162,7 @@ async def discover_from_gcno(
         strings_result = await localhost.oneshot(f"strings {gcno}")
         if strings_result.retcode != 0:
             continue
-        for line in strings_result.output.splitlines():
+        for line in strings_result.value.splitlines():
             stripped = line.strip()
             if stripped.endswith((".c", ".cpp", ".cc", ".h", ".hpp")) and "/" in stripped:
                 source_paths.append(stripped)

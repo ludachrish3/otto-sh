@@ -13,7 +13,7 @@ The simplest pattern: run one command and inspect the result.
 >>> result = asyncio.run(host.run("echo hello")).only
 >>> result.status
 <Status.Success: 0>
->>> result.output.strip()
+>>> result.value.strip()
 'hello'
 ```
 
@@ -23,16 +23,16 @@ state like the working directory persists between calls:
 ```{doctest}
 >>> host = LocalHost()
 >>> run(host.run("cd /tmp"))
-RunResult(status=<Status.Success: 0>, statuses=[CommandStatus(command='cd /tmp', ...)])
+Results(status=<Status.Success: 0>, value=[CommandResult(status=<Status.Success: 0>, value='', msg='', command='cd /tmp', retcode=0)], msg='')
 >>> result = run(host.run("pwd")).only
->>> result.output.strip()
+>>> result.value.strip()
 '/tmp'
 ```
 
 ## Running multiple commands sequentially
 
 Pass a list of commands to {meth}`~otto.host.host.Host.run` to run them
-in order and get back a {class}`~otto.host.host.RunResult` with an
+in order and get back a {class}`~otto.result.Results` with an
 aggregate status plus individual per-command results:
 
 ```{doctest}
@@ -41,7 +41,7 @@ aggregate status plus individual per-command results:
 >>> result = asyncio.run(host.run(["echo first", "echo second"]))
 >>> result.status
 <Status.Success: 0>
->>> [cs.output.strip() for cs in result.statuses]
+>>> [cr.value.strip() for cr in result]
 ['first', 'second']
 ```
 
@@ -60,7 +60,7 @@ not share state:
 ...         host.oneshot("echo two"),
 ...         host.oneshot("echo three"),
 ...     )
-...     return [r.output.strip() for r in results]
+...     return [r.value.strip() for r in results]
 >>> run(concurrent_oneshot())
 ['one', 'two', 'three']
 ```
@@ -104,7 +104,7 @@ async def check_all_hosts():
         if isinstance(result, BaseException):
             print(f"{host_id}: ERROR - {result}")
         else:
-            print(f"{host_id}: {result.statuses[0].output.strip()}")
+            print(f"{host_id}: {result.only.value.strip()}")
 
 async def check_routers_only():
     """Target just hosts whose id matches /router/."""
@@ -142,10 +142,10 @@ async def deploy_firmware():
         match result:
             case BaseException():
                 print(f"{host_id}: transfer failed - {result}")
-            case (status, _) if status.is_ok:
+            case _ if result.is_ok:
                 print(f"{host_id}: transfer succeeded")
-            case (status, error_str):
-                print(f"{host_id}: {status} - {error_str}")
+            case _:
+                print(f"{host_id}: {result.status} - {result.msg}")
 ```
 
 You can also pass a user-defined coroutine that takes a host as its first
@@ -155,7 +155,7 @@ argument — handy for multi-step workflows:
 async def install_and_verify(host: UnixHost, package: str) -> str:
     await host.oneshot(f"sudo apt-get install -y {package}")
     result = await host.oneshot(f"dpkg -s {package}")
-    return result.output
+    return result.value
 
 results = await do_for_all_hosts(install_and_verify, "nginx")
 ```
@@ -181,12 +181,13 @@ async def mixed_workload():
     )
 ```
 
-## Handling CommandStatus results
+## Handling CommandResult results
 
-{class}`~otto.utils.CommandStatus` is a named tuple with four fields:
+{class}`~otto.result.CommandResult` is a frozen dataclass with a
+`status`/`value`/`msg` base plus `command` and `retcode`:
 
 ```{doctest}
->>> result = CommandStatus(command="echo hi", output="hi", status=Status.Success, retcode=0)
+>>> result = CommandResult(status=Status.Success, value="hi", command="echo hi", retcode=0)
 >>> result.command
 'echo hi'
 >>> result.status.is_ok

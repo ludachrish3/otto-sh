@@ -75,12 +75,24 @@ A custom transfer backend subclasses
 {class}`~otto.host.transfer.BaseFileTransfer`, declares its `host_families`,
 overrides `create`, and implements the two abstract halves `_run_put` /
 `_run_get` (each must call `progress_factory()` once per source file so the
-transfer reports progress):
+transfer reports progress).
+
+`_run_put`/`_run_get` return `dict[Path, Result]` — one entry per source
+file, keyed exactly as passed (no resolution). The public `put`/`get`
+methods fold that mapping into an aggregate `Result` via
+{func}`~otto.host.transfer.aggregate_transfer`: `value=dest_path` on a
+per-file success, a per-file `msg` on failure, and
+`Status.Skipped` (`"not attempted (earlier failure)"`) for a file a
+sequential backend never reached:
 
 ```python
 # .otto/init.py — registered via [init] in .otto/settings.toml
+from pathlib import Path
+
 from otto.host import register_transfer_backend
 from otto.host.transfer import BaseFileTransfer, TransferContext
+from otto.result import Result
+from otto.utils import Status
 
 
 class XmodemTransfer(BaseFileTransfer):
@@ -91,13 +103,30 @@ class XmodemTransfer(BaseFileTransfer):
         return cls(name=ctx.host_name, max_filename_len=ctx.max_filename_len)
 
     async def _run_put(self, src_files, dest_dir, progress_factory):
-        ...  # send each file over XMODEM; invoke progress_factory() per file
+        per_file: dict[Path, Result] = {}
+        for src in src_files:
+            progress = progress_factory() if progress_factory is not None else None
+            try:
+                ...  # send src over XMODEM; drive `progress` as bytes move
+                per_file[src] = Result(Status.Success, value=dest_dir / src.name)
+            except OSError as exc:
+                per_file[src] = Result(Status.Error, msg=f"{src}: {exc}")
+        return per_file
 
     async def _run_get(self, src_files, dest_dir, progress_factory):
-        ...
+        ...  # same shape as _run_put, reading from the device instead
 
 
 register_transfer_backend("xmodem", XmodemTransfer)
+```
+
+Callers see the aggregate, not the per-backend hooks — `put`/`get` still
+return a single `Result` whose `value` is the per-file mapping:
+
+```python
+result = await host.put(src_files=[Path("a.bin"), Path("b.bin")], dest_dir=Path("/tmp"))
+assert result.is_ok
+assert result.value[Path("a.bin")].value == Path("/tmp/a.bin")
 ```
 
 A host then selects it with `"transfer": "xmodem"` in `hosts.json`:

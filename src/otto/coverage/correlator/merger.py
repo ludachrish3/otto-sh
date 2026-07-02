@@ -103,7 +103,7 @@ class LcovMerger:
         logger.info("lcov capture: %s -> %s", gcda_dir, output)
         result = await self.localhost.oneshot(cmd, timeout=300)
         if result.status != Status.Success:
-            raise RuntimeError(f"lcov --capture failed:\n{result.output}")
+            raise RuntimeError(f"lcov --capture failed:\n{result.value}")
         return output
 
     async def merge_info_files(
@@ -136,7 +136,7 @@ class LcovMerger:
         logger.info("lcov merge: %d files -> %s", len(info_files), output)
         result = await self.localhost.oneshot(cmd, timeout=300)
         if result.status != Status.Success:
-            raise RuntimeError(f"lcov --add-tracefile failed:\n{result.output}")
+            raise RuntimeError(f"lcov --add-tracefile failed:\n{result.value}")
         return output
 
     async def capture_and_merge(

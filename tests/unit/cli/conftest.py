@@ -25,9 +25,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from otto.configmodule.repo import Repo
-from otto.host import RunResult
 from otto.logger import get_otto_logger
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult, Results
+from otto.utils import Status
 
 
 @pytest.fixture(autouse=True)
@@ -141,16 +141,15 @@ def real_main_mocks(tmp_path):
         patch(
             "otto.host.local_host.LocalHost.run",
             new_callable=AsyncMock,
-            return_value=RunResult(
-                status=Status.Success,
-                statuses=[
-                    CommandStatus(
+            return_value=Results.collect(
+                [
+                    CommandResult(
+                        Status.Success,
+                        value="abc123",
                         command="git log",
-                        output="abc123",
-                        status=Status.Success,
                         retcode=0,
                     )
-                ],
+                ]
             ),
         ),
     ):

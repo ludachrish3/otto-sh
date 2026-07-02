@@ -16,12 +16,16 @@ if TYPE_CHECKING:
     from otto.cli import app
     from otto.logger import get_otto_logger
     from otto.logger import get_otto_logger as get_logger
+    from otto.result import CommandResult, Result, Results
 
     from .configmodule import all_hosts, get_host, get_lab, run_on_all_hosts
     from .context import OttoContext, get_context, open_context, try_get_context
 
 __all__ = [
+    "CommandResult",
     "OttoContext",
+    "Result",
+    "Results",
     "all_hosts",
     "app",
     "get_context",
@@ -49,6 +53,9 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "get_context": ("otto.context", "get_context"),
     "open_context": ("otto.context", "open_context"),
     "try_get_context": ("otto.context", "try_get_context"),
+    "Result": ("otto.result", "Result"),
+    "CommandResult": ("otto.result", "CommandResult"),
+    "Results": ("otto.result", "Results"),
 }
 
 

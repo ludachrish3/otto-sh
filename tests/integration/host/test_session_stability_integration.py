@@ -22,7 +22,7 @@ from typing import cast
 import pytest
 
 from otto.host.unix_host import UnixHost
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult, Result
 from tests.integration.host._transfer_retry import transfer_with_retry
 
 # Real I/O is meaningfully slower than mocked; bump the per-test ceiling.
@@ -100,12 +100,12 @@ async def test_real_oneshot_pool_high_fanout(host1: UnixHost) -> None:
     exceptions = [r for r in results if isinstance(r, BaseException)]
     assert not exceptions, f"{len(exceptions)} oneshots raised; first: {exceptions[0]!r}"
 
-    statuses = cast("list[CommandStatus]", results)
+    statuses = cast("list[CommandResult]", results)
     failed = [(i, r) for i, r in enumerate(statuses) if not r.status.is_ok]
     assert not failed, f"{len(failed)} non-ok statuses; first: {failed[0]}"
 
     for i, r in enumerate(statuses):
-        assert f"concurrent_{i}" in r.output, f"oneshot {i} got mangled output: {r.output!r}"
+        assert f"concurrent_{i}" in r.value, f"oneshot {i} got mangled output: {r.value!r}"
 
 
 # ── 2. Named session resurrection ─────────────────────────────────────────────
@@ -131,7 +131,7 @@ async def test_real_named_session_resurrect(host1: UnixHost) -> None:
         assert id(s2._session) != initial_id, "open_session returned the dead session"
         result = (await s2.run("echo recovered")).only
         assert result.status.is_ok
-        assert "recovered" in result.output
+        assert "recovered" in result.value
     finally:
         await s2.close()
 
@@ -180,8 +180,8 @@ async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None
     for i in range(3):
         result = (await host1.run(f"echo serial_{i}")).only
         assert result.status.is_ok, f"serial command {i} failed: {result}"
-        assert f"serial_{i}" in result.output, (
-            f"serial command {i} got mangled output: {result.output!r}"
+        assert f"serial_{i}" in result.value, (
+            f"serial command {i} got mangled output: {result.value!r}"
         )
 
 
@@ -212,10 +212,10 @@ async def test_real_long_telnet_oneshot_vs_concurrent(host1: UnixHost) -> None:
         )
         exceptions = [r for r in results if isinstance(r, BaseException)]
         assert not exceptions, f"{len(exceptions)} short oneshots raised; first: {exceptions[0]!r}"
-        statuses = cast("list[CommandStatus]", results)
+        statuses = cast("list[CommandResult]", results)
         for i, r in enumerate(statuses):
             assert r.status.is_ok, f"short oneshot {i} failed: {r}"
-            assert f"short_{i}" in r.output
+            assert f"short_{i}" in r.value
     finally:
         # Wait for the long oneshot to finish so the pool isn't left mid-flight.
         await asyncio.wait_for(long_task, timeout=15.0)
@@ -259,14 +259,14 @@ async def test_real_concurrent_transfers(
     assert not exceptions, f"{len(exceptions)} transfers raised; first: {exceptions[0]!r}"
 
     for i, item in enumerate(statuses):
-        status, msg = cast("tuple[Status, str]", item)
-        assert status == Status.Success, f"transfer {i} failed: {msg}"
+        result = cast("Result", item)
+        assert result.is_ok, f"transfer {i} failed: {result.msg}"
 
     # Verify all files arrived intact.
     for i, src in enumerate(files):
         remote_path = f"/tmp/{src.name}"
         result = (await transfer_host.run(f"cat {remote_path}")).only
-        assert f"content_{i}" in result.output, f"file {i} corrupt: {result.output!r}"
+        assert f"content_{i}" in result.value, f"file {i} corrupt: {result.value!r}"
         await transfer_host.run(f"rm -f {remote_path}")
 
     # nc-only leak check: any leftover listener processes are a bug.
@@ -274,7 +274,7 @@ async def test_real_concurrent_transfers(
         result = (
             await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true')
         ).only
-        leftover = result.output.strip()
+        leftover = result.value.strip()
         assert not leftover, f"leftover nc listeners after concurrent put: {leftover}"
 
 
@@ -304,8 +304,8 @@ async def test_real_cancel_mid_run_recovers(host1: UnixHost) -> None:
     for i in range(5):
         result = (await host1.run(f"echo recovered_{i}", timeout=10.0)).only
         assert result.status.is_ok, f"recovery iter {i} failed: {result}"
-        assert f"recovered_{i}" in result.output, (
-            f"recovery iter {i} got mangled output: {result.output!r}"
+        assert f"recovered_{i}" in result.value, (
+            f"recovery iter {i} got mangled output: {result.value!r}"
         )
 
 
@@ -344,8 +344,8 @@ async def test_real_nc_concurrent_gets(
         assert not exceptions, f"{len(exceptions)} gets raised; first: {exceptions[0]!r}"
 
         for i, item in enumerate(statuses):
-            status, msg = cast("tuple[Status, str]", item)
-            assert status == Status.Success, f"get {i} failed: {msg}"
+            result = cast("Result", item)
+            assert result.is_ok, f"get {i} failed: {result.msg}"
 
         for i, p in enumerate(remote_paths):
             local = tmp_path / p.name
@@ -407,20 +407,20 @@ async def test_real_nc_high_fanout_put(
     assert not exceptions, f"{len(exceptions)} puts raised; first: {exceptions[0]!r}"
 
     for i, item in enumerate(statuses):
-        status, msg = cast("tuple[Status, str]", item)
-        assert status == Status.Success, f"put {i} failed: {msg}"
+        result = cast("Result", item)
+        assert result.is_ok, f"put {i} failed: {result.msg}"
 
     # Verify all files arrived intact.
     for i, src in enumerate(files):
         remote_path = f"/tmp/{src.name}"
         result = (await transfer_host.run(f"cat {remote_path}")).only
-        assert f"fanout_content_{i}" in result.output, f"file {i} corrupt: {result.output!r}"
+        assert f"fanout_content_{i}" in result.value, f"file {i} corrupt: {result.value!r}"
         await transfer_host.run(f"rm -f {remote_path}")
 
     result = (
         await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true')
     ).only
-    leftover = result.output.strip()
+    leftover = result.value.strip()
     assert not leftover, f"leftover nc listeners after N={N} concurrent puts: {leftover}"
 
 
@@ -451,7 +451,7 @@ async def test_real_nc_cancel_cleans_up_listener(
     # listeners from a prior test, attribute that separately.
     before = (
         (await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'))
-        .only.output.strip()
+        .only.value.strip()
         .splitlines()
     )
 
@@ -468,7 +468,7 @@ async def test_real_nc_cancel_cleans_up_listener(
 
     after = (
         (await transfer_host.run('pgrep -af "nc -l" | grep -v pgrep | grep -v "$$" || true'))
-        .only.output.strip()
+        .only.value.strip()
         .splitlines()
     )
     new_listeners = [line for line in after if line not in before]

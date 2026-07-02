@@ -27,7 +27,7 @@ class TestGlobalDryRun:
             assert result.status == Status.Skipped
             assert result.retcode == 0
             assert result.command == "echo hello"
-            assert "[DRY RUN]" in result.output
+            assert "[DRY RUN]" in result.value
 
     @pytest.mark.asyncio
     async def test_localhost_run_does_not_spawn_subprocess(self):
@@ -44,8 +44,8 @@ class TestGlobalDryRun:
             host = LocalHost()
             result = await host.run(["cmd1", "cmd2", "cmd3"])
 
-            assert len(result.statuses) == 3
-            for r in result.statuses:
+            assert len(result) == 3
+            for r in result:
                 assert r.status == Status.Skipped
             assert result.status == Status.Success
 
@@ -78,11 +78,11 @@ class TestGlobalDryRun:
             files = [Path("/tmp/file1.txt"), Path("/tmp/file2.txt")]
             dest = Path("/tmp/dest")
 
-            status, msg = await host.put(files, dest)
+            result = await host.put(files, dest)
 
-            assert status == Status.Skipped
-            assert "[DRY RUN]" in msg
-            assert "PUT" in msg
+            assert result.status == Status.Skipped
+            assert "[DRY RUN]" in result.msg
+            assert "PUT" in result.msg
 
     @pytest.mark.asyncio
     async def test_localhost_get_returns_skipped(self):
@@ -91,11 +91,11 @@ class TestGlobalDryRun:
             files = [Path("/tmp/file.bin")]
             dest = Path("/tmp/dest")
 
-            status, msg = await host.get(files, dest)
+            result = await host.get(files, dest)
 
-            assert status == Status.Skipped
-            assert "[DRY RUN]" in msg
-            assert "GET" in msg
+            assert result.status == Status.Skipped
+            assert "[DRY RUN]" in result.msg
+            assert "GET" in result.msg
 
     # ── UnixHost ──────────────────────────────────────────────────────────
 
@@ -108,7 +108,7 @@ class TestGlobalDryRun:
             assert result.status == Status.Skipped
             assert result.retcode == 0
             assert result.command == "ls -la"
-            assert "[DRY RUN]" in result.output
+            assert "[DRY RUN]" in result.value
             assert host._connections._ssh_conn is None
 
     @pytest.mark.asyncio
@@ -127,8 +127,8 @@ class TestGlobalDryRun:
             host = UnixHost(ip="10.0.0.1", element="box", creds={"user": "pass"}, log=LogMode.QUIET)
             result = await host.run(["cmd1", "cmd2", "cmd3"])
 
-            assert len(result.statuses) == 3
-            for r in result.statuses:
+            assert len(result) == 3
+            for r in result:
                 assert r.status == Status.Skipped
             assert host._connections._ssh_conn is None
 
@@ -155,11 +155,11 @@ class TestGlobalDryRun:
             files = [Path("/tmp/file1.txt"), Path("/tmp/file2.txt")]
             dest = Path("/remote/dest")
 
-            status, msg = await host.put(files, dest)
+            result = await host.put(files, dest)
 
-            assert status == Status.Skipped
-            assert "[DRY RUN]" in msg
-            assert "PUT" in msg
+            assert result.status == Status.Skipped
+            assert "[DRY RUN]" in result.msg
+            assert "PUT" in result.msg
             assert host._connections._ssh_conn is None
 
     @pytest.mark.asyncio
@@ -169,8 +169,8 @@ class TestGlobalDryRun:
             files = [Path("/remote/file.bin")]
             dest = Path("/local/dest")
 
-            status, msg = await host.get(files, dest)
+            result = await host.get(files, dest)
 
-            assert status == Status.Skipped
-            assert "[DRY RUN]" in msg
-            assert "GET" in msg
+            assert result.status == Status.Skipped
+            assert "[DRY RUN]" in result.msg
+            assert "GET" in result.msg

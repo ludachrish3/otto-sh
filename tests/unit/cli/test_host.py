@@ -22,6 +22,7 @@ from otto.cli.host import _host_id_completer, _resolve_host, host_app
 from otto.host.session import SessionManager, ShellSession
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
+from otto.result import Result
 from otto.utils import Status
 
 runner = CliRunner()
@@ -195,7 +196,9 @@ class TestHostRun:
         with patch.object(host_module, "get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "run", "bad_cmd"])
 
-        assert result.exit_code == 1
+        # Results.exit_code is ssh-like: it propagates the failing command's
+        # own return code (127) rather than a flat 1.
+        assert result.exit_code == 127
 
     def test_run_closes_host_on_exception(self):
         mock_host = _make_host()
@@ -218,11 +221,11 @@ class TestHostPut:
         src_file.write_text("hello")
 
         mock_host = _make_host()
-        # Return empty msg so _render_result falls through to the @cli_exposed
-        # success= string ("Transfer complete.").  The dynamic path reads the
+        # An ok Result with a success= string falls through to the @cli_exposed
+        # success message ("Transfer complete.").  The dynamic path reads the
         # success string from __cli_success__ on the bound method, so we must
         # preserve that marker on the AsyncMock.
-        mock_host.put = AsyncMock(return_value=(Status.Success, ""))
+        mock_host.put = AsyncMock(return_value=Result(Status.Success, value={}))
         mock_host.put.__cli_success__ = "Transfer complete."
         mock_host.close = AsyncMock()
 
@@ -239,14 +242,16 @@ class TestHostPut:
         src_file.write_text("hello")
 
         mock_host = _make_host()
-        mock_host.put = AsyncMock(return_value=(Status.Failed, "permission denied"))
+        mock_host.put = AsyncMock(
+            return_value=Result(Status.Failed, value={}, msg="permission denied")
+        )
         mock_host.close = AsyncMock()
 
         with patch.object(host_module, "get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "put", str(src_file), "/tmp/dest"])
 
         assert result.exit_code == 1
-        # Dynamic path prints the error message from the tuple, not a "Transfer failed:" prefix.
+        # Dynamic path prints the error message from the Result, not a "Transfer failed:" prefix.
         assert "permission denied" in result.output
         mock_host.close.assert_awaited_once()
 
@@ -367,11 +372,11 @@ class TestHostTermAndTransfer:
 class TestHostGet:
     def test_get_success(self, tmp_path):
         mock_host = _make_host()
-        # Return empty msg so _render_result falls through to the @cli_exposed
-        # success= string ("Download complete.").  The dynamic path reads the
+        # An ok Result with a success= string falls through to the @cli_exposed
+        # success message ("Download complete.").  The dynamic path reads the
         # success string from __cli_success__ on the bound method, so we must
         # preserve that marker on the AsyncMock.
-        mock_host.get = AsyncMock(return_value=(Status.Success, ""))
+        mock_host.get = AsyncMock(return_value=Result(Status.Success, value={}))
         mock_host.get.__cli_success__ = "Download complete."
         mock_host.close = AsyncMock()
 
@@ -385,14 +390,14 @@ class TestHostGet:
 
     def test_get_failure(self, tmp_path):
         mock_host = _make_host()
-        mock_host.get = AsyncMock(return_value=(Status.Failed, "not found"))
+        mock_host.get = AsyncMock(return_value=Result(Status.Failed, value={}, msg="not found"))
         mock_host.close = AsyncMock()
 
         with patch.object(host_module, "get_host", return_value=mock_host):
             result = runner.invoke(host_app, ["router1", "get", "/remote/file.txt", str(tmp_path)])
 
         assert result.exit_code == 1
-        # Dynamic path prints the error message from the tuple, not a "Transfer failed:" prefix.
+        # Dynamic path prints the error message from the Result, not a "Transfer failed:" prefix.
         assert "not found" in result.output
         mock_host.close.assert_awaited_once()
 

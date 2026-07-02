@@ -15,8 +15,9 @@ from otto.configmodule.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.host import EmbeddedHost, UnixHost
 from otto.host.options import SshOptions, TelnetOptions
+from otto.result import CommandResult, Results
 from otto.storage.factory import create_host_from_dict
-from otto.utils import CommandStatus, Status
+from otto.utils import Status
 from tests.conftest import host_data, make_host
 
 
@@ -192,8 +193,10 @@ class TestDoForAllHosts:
 class TestRunOnAllHosts:
     @pytest.mark.asyncio
     async def test_serial(self, three_hosts):
-        """run_on_all_hosts delegates to run and returns status tuples."""
-        expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
+        """run_on_all_hosts delegates to run and returns a Results per host."""
+        expected = Results.collect(
+            [CommandResult(Status.Success, value="out", command="ls", retcode=0)]
+        )
         with patch(
             "otto.host.unix_host.UnixHost.run",
             new_callable=AsyncMock,
@@ -208,7 +211,9 @@ class TestRunOnAllHosts:
     @pytest.mark.asyncio
     async def test_concurrent(self, three_hosts):
         """run_on_all_hosts works in concurrent mode."""
-        expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
+        expected = Results.collect(
+            [CommandResult(Status.Success, value="out", command="ls", retcode=0)]
+        )
         with patch(
             "otto.host.unix_host.UnixHost.run",
             new_callable=AsyncMock,
@@ -223,7 +228,9 @@ class TestRunOnAllHosts:
     @pytest.mark.asyncio
     async def test_pattern_filters(self, three_hosts):
         """run_on_all_hosts respects the pattern filter."""
-        expected = (Status.Success, [CommandStatus("ls", "out", Status.Success, 0)])
+        expected = Results.collect(
+            [CommandResult(Status.Success, value="out", command="ls", retcode=0)]
+        )
         with patch(
             "otto.host.unix_host.UnixHost.run",
             new_callable=AsyncMock,

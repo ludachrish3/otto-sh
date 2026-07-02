@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from .configmodule.lab import Lab
-    from .host import RunResult, UnixHost
+    from .host import Results, UnixHost
     from .host.remote_host import RemoteHost
 
 T = TypeVar("T")
@@ -201,7 +201,7 @@ class OttoContext:
         scp_options: "Any" = None,
         ftp_options: "Any" = None,
         nc_options: "Any" = None,
-    ) -> "dict[str, RunResult | BaseException]":
+    ) -> "dict[str, Results | BaseException]":
         """Run one or more shell commands on every matching host and return a results mapping.
 
         Accepts a single command string or a list of commands executed in
@@ -211,7 +211,7 @@ class OttoContext:
         """
         cmd_list = [cmds] if isinstance(cmds, str) else cmds
 
-        async def _run_list(host: "UnixHost") -> "RunResult":
+        async def _run_list(host: "UnixHost") -> "Results":
             return await host.run(cmd_list, timeout=timeout)
 
         return await self.do_for_all_hosts(

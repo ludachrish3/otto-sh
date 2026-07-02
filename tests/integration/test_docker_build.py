@@ -90,4 +90,4 @@ async def test_build_tags_locally(parent, repo1):
     image = repo1.docker_settings.images[0]
     latest = image_latest_tag(repo1.docker_settings.registry_url, repo1.name, image)
     result = await parent.oneshot(f"docker image inspect {latest}")
-    assert result.status.is_ok, f"latest tag missing: {result.output}"
+    assert result.status.is_ok, f"latest tag missing: {result.value}"

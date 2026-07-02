@@ -1,0 +1,4 @@
+result
+======
+
+.. automodule:: otto.result

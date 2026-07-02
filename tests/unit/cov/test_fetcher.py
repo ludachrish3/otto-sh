@@ -8,7 +8,8 @@ import pytest
 from otto.configmodule.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.coverage.fetcher.remote import GcdaFetcher
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult, Result
+from otto.utils import Status
 
 
 def _make_mock_host(host_id: str = "host1") -> MagicMock:
@@ -52,13 +53,13 @@ class TestGcdaFetcher:
     @pytest.mark.asyncio
     async def test_fetch_all_happy_path(self, tmp_path, fake_config_module):
         host = _make_mock_host("host1")
-        host.oneshot.return_value = CommandStatus(
+        host.oneshot.return_value = CommandResult(
+            Status.Success,
+            value="/var/cov/foo.gcda\n/var/cov/bar.gcda\n",
             command="find ...",
-            output="/var/cov/foo.gcda\n/var/cov/bar.gcda\n",
-            status=Status.Success,
             retcode=0,
         )
-        host.get.return_value = (Status.Success, "")
+        host.get.return_value = Result(Status.Success, value={})
         fake_config_module(host)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
@@ -74,11 +75,8 @@ class TestGcdaFetcher:
     @pytest.mark.asyncio
     async def test_fetch_all_no_gcda_files(self, tmp_path, fake_config_module):
         host = _make_mock_host()
-        host.oneshot.return_value = CommandStatus(
-            command="find ...",
-            output="",
-            status=Status.Success,
-            retcode=0,
+        host.oneshot.return_value = CommandResult(
+            Status.Success, value="", command="find ...", retcode=0
         )
         fake_config_module(host)
 
@@ -94,13 +92,10 @@ class TestGcdaFetcher:
 
         local = LocalHost()
         unix = _make_mock_host("host1")
-        unix.oneshot.return_value = CommandStatus(
-            command="find ...",
-            output="/var/cov/foo.gcda\n",
-            status=Status.Success,
-            retcode=0,
+        unix.oneshot.return_value = CommandResult(
+            Status.Success, value="/var/cov/foo.gcda\n", command="find ...", retcode=0
         )
-        unix.get.return_value = (Status.Success, "")
+        unix.get.return_value = Result(Status.Success, value={})
         fake_config_module(local, unix)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
@@ -113,13 +108,10 @@ class TestGcdaFetcher:
     @pytest.mark.asyncio
     async def test_fetch_all_transfer_failure(self, tmp_path, fake_config_module):
         host = _make_mock_host("host1")
-        host.oneshot.return_value = CommandStatus(
-            command="find ...",
-            output="/var/cov/foo.gcda\n",
-            status=Status.Success,
-            retcode=0,
+        host.oneshot.return_value = CommandResult(
+            Status.Success, value="/var/cov/foo.gcda\n", command="find ...", retcode=0
         )
-        host.get.return_value = (Status.Error, "connection refused")
+        host.get.return_value = Result(Status.Error, value={}, msg="connection refused")
         fake_config_module(host)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
@@ -129,11 +121,8 @@ class TestGcdaFetcher:
     @pytest.mark.asyncio
     async def test_clean_remote(self, tmp_path, fake_config_module):
         host = _make_mock_host()
-        host.oneshot.return_value = CommandStatus(
-            command="find ...",
-            output="",
-            status=Status.Success,
-            retcode=0,
+        host.oneshot.return_value = CommandResult(
+            Status.Success, value="", command="find ...", retcode=0
         )
         fake_config_module(host)
 
@@ -147,13 +136,10 @@ class TestGcdaFetcher:
         host1 = _make_mock_host("host1")
         host2 = _make_mock_host("host2")
         for h in [host1, host2]:
-            h.oneshot.return_value = CommandStatus(
-                command="find ...",
-                output="/var/cov/file.gcda\n",
-                status=Status.Success,
-                retcode=0,
+            h.oneshot.return_value = CommandResult(
+                Status.Success, value="/var/cov/file.gcda\n", command="find ...", retcode=0
             )
-            h.get.return_value = (Status.Success, "")
+            h.get.return_value = Result(Status.Success, value={})
         fake_config_module(host1, host2)
 
         fetcher = GcdaFetcher(tmp_path / "staging")
@@ -168,13 +154,10 @@ class TestGcdaFetcher:
         host1 = _make_mock_host("carrot_seed")
         host2 = _make_mock_host("tomato_seed")
         for h in [host1, host2]:
-            h.oneshot.return_value = CommandStatus(
-                command="find ...",
-                output="/var/cov/file.gcda\n",
-                status=Status.Success,
-                retcode=0,
+            h.oneshot.return_value = CommandResult(
+                Status.Success, value="/var/cov/file.gcda\n", command="find ...", retcode=0
             )
-            h.get.return_value = (Status.Success, "")
+            h.get.return_value = Result(Status.Success, value={})
         fake_config_module(host1, host2)
 
         fetcher = GcdaFetcher(tmp_path / "staging", pattern=re.compile(r"carrot"))

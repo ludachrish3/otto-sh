@@ -4,7 +4,7 @@ from pathlib import Path
 
 from typing_extensions import override
 
-from ...utils import Status
+from ...result import Result
 from .base import TransferContext, TransferProgressFactory
 from .embedded_base import EmbeddedFileTransfer
 from .registry import register_transfer_backend
@@ -24,7 +24,7 @@ class TftpFileTransfer(EmbeddedFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         raise NotImplementedError(
             "TFTP transfer for embedded hosts is not yet implemented"
         ) from None
@@ -35,7 +35,7 @@ class TftpFileTransfer(EmbeddedFileTransfer):
         src_files: list[Path],
         dest_dir: Path,
         progress_factory: TransferProgressFactory | None,
-    ) -> tuple[Status, str]:
+    ) -> dict[Path, Result]:
         raise NotImplementedError(
             "TFTP transfer for embedded hosts is not yet implemented"
         ) from None

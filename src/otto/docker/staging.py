@@ -82,9 +82,9 @@ async def stage_image_context(
             except ValueError:
                 tar.add(image.dockerfile, arcname=image.dockerfile.name)
 
-        status, msg = await parent.put([tmp_path], remote_dir)
-        if not status.is_ok:
-            raise RuntimeError(f"failed to stage build context to parent: {msg}")
+        put_result = await parent.put([tmp_path], remote_dir)
+        if not put_result.is_ok:
+            raise RuntimeError(f"failed to stage build context to parent: {put_result.msg}")
 
         # Extract on parent.
         remote_tar = remote_dir / tmp_path.name
@@ -93,7 +93,7 @@ async def stage_image_context(
             f"&& rm -f {shlex.quote(str(remote_tar))}"
         )
         if not result.status.is_ok:
-            raise RuntimeError(f"failed to extract build context on parent: {result.output}")
+            raise RuntimeError(f"failed to extract build context on parent: {result.value}")
     finally:
         tmp_path.unlink(missing_ok=True)
 
@@ -118,9 +118,9 @@ async def stage_compose_files(
     for idx, compose in enumerate(composes):
         sub = base / str(idx)
         await parent.oneshot(f"mkdir -p {shlex.quote(str(sub))}")
-        status, msg = await parent.put([compose.path], sub)
-        if not status.is_ok:
-            raise RuntimeError(f"failed to stage compose file {compose.path}: {msg}")
+        put_result = await parent.put([compose.path], sub)
+        if not put_result.is_ok:
+            raise RuntimeError(f"failed to stage compose file {compose.path}: {put_result.msg}")
         out.append(sub / compose.path.name)
     return out
 

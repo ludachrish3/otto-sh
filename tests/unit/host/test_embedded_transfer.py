@@ -17,7 +17,7 @@ from otto.host.embedded_filesystem import (
     FatRamFileSystem,
     NoFileSystem,
 )
-from otto.host.transfer import validate_filename_lengths
+from otto.host.transfer import aggregate_transfer, validate_filename_lengths
 from otto.host.transfer.console import (
     _NO_FILESYSTEM_MSG,
     _WRITE_CHUNK,
@@ -25,10 +25,32 @@ from otto.host.transfer.console import (
     _label_errno,
 )
 from otto.host.transfer.tftp import TftpFileTransfer
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 # A Zephyr filesystem mount path — the destination directory for `put`.
 RAM = Path("/RAM:")
+
+
+def _cs(command: str, output: str, status: Status, retcode: int) -> CommandResult:
+    """Build a :class:`~otto.result.CommandResult` mirroring the device shell's reply.
+
+    The console backend reads the command output from ``.value``; this keeps the
+    same positional ``(command, output, status, retcode)`` call shape the
+    ``FakeZephyrFs`` uses, mapping ``output`` onto ``value``.
+    """
+    return CommandResult(command=command, value=output, status=status, retcode=retcode)
+
+
+def _sm(result) -> tuple[Status, str]:
+    """Unwrap ``(status, msg)`` from a transfer aggregate :class:`~otto.result.Result`."""
+    return result.status, result.msg
+
+
+def _pf(per_file: dict, src: Path) -> tuple[Status, str]:
+    """Unwrap the single per-file ``(status, msg)`` from a ``_run_*`` mapping."""
+    r = per_file[src]
+    return r.status, r.msg
 
 
 # ---------------------------------------------------------------------------
@@ -63,7 +85,7 @@ class FakeZephyrFs:
         self.store: dict[str, bytearray] = {}
         self.calls: list[str] = []
 
-    async def exec_cmd(self, cmd: str, timeout: float | None = None) -> CommandStatus:
+    async def exec_cmd(self, cmd: str, timeout: float | None = None) -> CommandResult:
         self.calls.append(cmd)
 
         parts = cmd.split()
@@ -72,8 +94,8 @@ class FakeZephyrFs:
         if sub == "read":
             path = parts[2]
             if path not in self.store:
-                return CommandStatus(cmd, f"Failed to open {path} (-2)", Status.Failed, -2)
-            return CommandStatus(cmd, _hexdump(bytes(self.store[path])), Status.Success, 0)
+                return _cs(cmd, f"Failed to open {path} (-2)", Status.Failed, -2)
+            return _cs(cmd, _hexdump(bytes(self.store[path])), Status.Success, 0)
 
         if sub == "write":
             # Zephyr 3.7's fs write syntax: `fs write <path> [-o <offset>] <byte>...`
@@ -95,16 +117,16 @@ class FakeZephyrFs:
             if offset + len(data) > len(buf):
                 buf.extend(b"\x00" * (offset + len(data) - len(buf)))
             buf[offset : offset + len(data)] = data
-            return CommandStatus(cmd, "", Status.Success, 0)
+            return _cs(cmd, "", Status.Success, 0)
 
         if sub == "rm":
             path = parts[2]
             if path in self.store:
                 del self.store[path]
-                return CommandStatus(cmd, "", Status.Success, 0)
-            return CommandStatus(cmd, f"Failed to remove {path} (-2)", Status.Failed, -2)
+                return _cs(cmd, "", Status.Success, 0)
+            return _cs(cmd, f"Failed to remove {path} (-2)", Status.Failed, -2)
 
-        return CommandStatus(cmd, f"{sub}: unknown subcommand", Status.Failed, -22)
+        return _cs(cmd, f"{sub}: unknown subcommand", Status.Failed, -22)
 
 
 def _console_transfer(
@@ -131,12 +153,12 @@ class TestRoundTrip:
         src = tmp_path / "hello.txt"
         src.write_bytes(b"hello zephyr\n")
 
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Success, err
 
         dest_dir = tmp_path / "pulled"
         dest_dir.mkdir()
-        status, err = await xfer.get_files([RAM / "hello.txt"], dest_dir)
+        status, err = _sm(await xfer.get_files([RAM / "hello.txt"], dest_dir))
         assert status == Status.Success, err
         assert (dest_dir / "hello.txt").read_bytes() == b"hello zephyr\n"
 
@@ -149,14 +171,14 @@ class TestRoundTrip:
         src = tmp_path / "blob.bin"
         src.write_bytes(payload)
 
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Success, err
         assert bytes(fake.store["/RAM:/blob.bin"]) == payload
 
         writes = [c for c in fake.calls if c.startswith("fs write")]
         assert len(writes) == -(-len(payload) // _WRITE_CHUNK)  # ceil division
 
-        status, err = await xfer.get_files([RAM / "blob.bin"], tmp_path)
+        status, err = _sm(await xfer.get_files([RAM / "blob.bin"], tmp_path))
         assert status == Status.Success, err
         assert (tmp_path / "blob.bin").read_bytes() == payload
 
@@ -180,11 +202,11 @@ class TestRoundTrip:
         src = tmp_path / "empty.txt"
         src.write_bytes(b"")
 
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Success, err
         assert "/RAM:/empty.txt" in fake.store
 
-        status, err = await xfer.get_files([RAM / "empty.txt"], tmp_path)
+        status, err = _sm(await xfer.get_files([RAM / "empty.txt"], tmp_path))
         assert status == Status.Success, err
         assert (tmp_path / "empty.txt").read_bytes() == b""
 
@@ -283,7 +305,7 @@ class TestPutProgress:
         src.write_bytes(b"x" * 100)
 
         calls: list = []
-        status, err = await xfer._run_put([src], RAM, _spy_factory(calls))
+        status, err = _pf(await xfer._run_put([src], RAM, _spy_factory(calls)), src)
         assert status == Status.Success, err
         assert len(calls) == 4
         # Bytes-done monotonically increases up to bytes-total.
@@ -314,7 +336,7 @@ class TestPutProgress:
         src.write_bytes(b"")
 
         calls: list = []
-        status, err = await xfer._run_put([src], RAM, _spy_factory(calls))
+        status, err = _pf(await xfer._run_put([src], RAM, _spy_factory(calls)), src)
         assert status == Status.Success, err
         assert calls == [(str(src), "/RAM:/empty.bin", 0, 0)]
 
@@ -328,7 +350,7 @@ class TestPutProgress:
         src = tmp_path / "f.bin"
         src.write_bytes(b"data")
 
-        status, err = await xfer.put_files([src], RAM, show_progress=False)
+        status, err = _sm(await xfer.put_files([src], RAM, show_progress=False))
         assert status == Status.Success, err
         # The factory was never built, so we can't directly capture "no events";
         # the success of put with no handler param is the contract.
@@ -345,10 +367,14 @@ class TestGetProgress:
         xfer = _console_transfer(fake)
 
         calls: list = []
-        status, err = await xfer._run_get(
-            [RAM / "a.bin", RAM / "b.bin"],
-            tmp_path,
-            _spy_factory(calls),
+        status, err = _sm(
+            aggregate_transfer(
+                await xfer._run_get(
+                    [RAM / "a.bin", RAM / "b.bin"],
+                    tmp_path,
+                    _spy_factory(calls),
+                )
+            )
         )
         assert status == Status.Success, err
         assert len(calls) == 2
@@ -364,7 +390,7 @@ class TestGet:
         distinct from the FS-misconfigured short-circuit."""
         fake = FakeZephyrFs()
         xfer = _console_transfer(fake)
-        status, err = await xfer.get_files([RAM / "nope.txt"], tmp_path)
+        status, err = _sm(await xfer.get_files([RAM / "nope.txt"], tmp_path))
         assert status == Status.Error
         assert err != _NO_FILESYSTEM_MSG
         assert "fs read" in err
@@ -373,17 +399,17 @@ class TestGet:
     async def test_corrupt_hexdump_gap_is_reported(self, tmp_path):
         """A dropped hexdump line is caught, not silently mis-decoded."""
 
-        async def gappy_exec(cmd: str, timeout: float | None = None) -> CommandStatus:
+        async def gappy_exec(cmd: str, timeout: float | None = None) -> CommandResult:
             # Line at offset 0x10 is missing — 0x00 then 0x20.
             dump = "00000000  " + " ".join("41" for _ in range(16)) + "\tAAAA\n00000020  42 42\tBB"
-            return CommandStatus(cmd, dump, Status.Success, 0)
+            return _cs(cmd, dump, Status.Success, 0)
 
         xfer = ConsoleFileTransfer(
             name="sprout",
             exec_cmd=gappy_exec,
             filesystem=FatRamFileSystem(),
         )
-        status, err = await xfer.get_files([RAM / "x.bin"], tmp_path)
+        status, err = _sm(await xfer.get_files([RAM / "x.bin"], tmp_path))
         assert status == Status.Error
         assert "gap or overlap" in err
 
@@ -402,7 +428,7 @@ class TestNoFileSystem:
     async def test_get_reports_no_filesystem_error(self, tmp_path):
         fake = FakeZephyrFs()
         xfer = _console_transfer(fake, filesystem=NoFileSystem())
-        status, err = await xfer.get_files([RAM / "f"], tmp_path)
+        status, err = _sm(await xfer.get_files([RAM / "f"], tmp_path))
         assert status == Status.Error
         assert err == _NO_FILESYSTEM_MSG
         # The short-circuit fires before any shell call.
@@ -414,7 +440,7 @@ class TestNoFileSystem:
         xfer = _console_transfer(fake, filesystem=NoFileSystem())
         src = tmp_path / "f"
         src.write_bytes(b"data")
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Error
         assert err == _NO_FILESYSTEM_MSG
         assert fake.calls == []
@@ -457,7 +483,7 @@ class TestLabelErrno:
         class FailingFs(FakeZephyrFs):
             async def exec_cmd(self, cmd, timeout=None):
                 if cmd.startswith("fs write"):
-                    return CommandStatus(
+                    return _cs(
                         cmd,
                         "Failed to seek /RAM:/f (-22)",
                         Status.Failed,
@@ -473,7 +499,7 @@ class TestLabelErrno:
         xfer = _console_transfer(fake)
         src = tmp_path / "f.bin"
         src.write_bytes(b"x" * 64)
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Error
         assert "-ENOEXEC" in err
         assert "Exec format error" in err
@@ -507,7 +533,7 @@ class TestCleanupOnFailure:
                 self.write_count += 1
                 if self.write_count > self.fail_after:
                     self.calls.append(cmd)
-                    return CommandStatus(
+                    return _cs(
                         cmd,
                         "Failed to write /RAM:/f (-28)",
                         Status.Failed,
@@ -526,7 +552,7 @@ class TestCleanupOnFailure:
         src = tmp_path / "f.bin"
         src.write_bytes(b"x" * 128)
 
-        status, _err = await xfer.put_files([src], RAM)
+        status, _err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Error
         # The PRE-write rm at the top of _console_put_one is the first
         # rm; the cleanup rm after the failure is the second. Two `fs rm`
@@ -557,7 +583,7 @@ class TestCleanupOnFailure:
         src = tmp_path / "f.bin"
         src.write_bytes(b"x" * 64)
 
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         # The original -ENOSPC error wins; the cleanup exception is logged
         # and swallowed.
         assert status == Status.Error
@@ -571,7 +597,7 @@ class TestCleanupOnFailure:
         xfer = _console_transfer(fake)
         src = tmp_path / "f.bin"
         src.write_bytes(b"x" * 50)
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Success, err
         rm_calls = [c for c in fake.calls if c.startswith("fs rm")]
         assert len(rm_calls) == 1, f"happy path should issue only the pre-write rm; got: {rm_calls}"
@@ -588,34 +614,34 @@ class TestValidateFilenameLengths:
     every backend inherits the same error shape."""
 
     def test_under_limit_returns_success(self):
-        status, err = validate_filename_lengths(
+        result = validate_filename_lengths(
             [Path("/a/short.bin")],
             limit=255,
             host_name="h",
         )
-        assert status == Status.Success
-        assert err == ""
+        assert result.status == Status.Success
+        assert result.msg == ""
 
     def test_at_limit_is_accepted(self):
         name = "x" * 255  # exactly at the limit
-        status, err = validate_filename_lengths(
+        result = validate_filename_lengths(
             [Path("/a") / name],
             limit=255,
             host_name="h",
         )
-        assert status == Status.Success, err
+        assert result.status == Status.Success, result.msg
 
     def test_over_limit_reports_offending_name_and_host(self):
         name = "x" * 256
-        status, err = validate_filename_lengths(
+        result = validate_filename_lengths(
             [Path("/a") / name],
             limit=255,
             host_name="myhost",
         )
-        assert status == Status.Error
-        assert name in err
-        assert "255-character" in err
-        assert "myhost" in err
+        assert result.status == Status.Error
+        assert name in result.msg
+        assert "255-character" in result.msg
+        assert "myhost" in result.msg
 
     def test_first_offender_short_circuits(self):
         """The first over-limit file in the list is what gets reported; the
@@ -623,13 +649,13 @@ class TestValidateFilenameLengths:
         sees the next). This keeps the message focused."""
         ok = Path("/a/ok.bin")
         bad = Path("/a") / ("x" * 100)
-        status, err = validate_filename_lengths(
+        result = validate_filename_lengths(
             [ok, bad],
             limit=50,
             host_name="h",
         )
-        assert status == Status.Error
-        assert "x" * 100 in err
+        assert result.status == Status.Error
+        assert "x" * 100 in result.msg
 
 
 # ---------------------------------------------------------------------------
@@ -657,7 +683,7 @@ class TestMaxFilenameLen:
         # 14 chars > 12: should be rejected before any fs command runs.
         src = tmp_path / "concurrent.bin"
         src.write_bytes(b"x")
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Error
         assert "concurrent.bin" in err
         assert "12-character" in err
@@ -674,7 +700,7 @@ class TestMaxFilenameLen:
             filesystem=FatRamFileSystem(),
             max_filename_len=12,
         )
-        status, err = await xfer.get_files([RAM / "concurrent.bin"], tmp_path)
+        status, err = _sm(await xfer.get_files([RAM / "concurrent.bin"], tmp_path))
         assert status == Status.Error
         assert "concurrent.bin" in err
 
@@ -691,7 +717,7 @@ class TestMaxFilenameLen:
         )
         src = tmp_path / "contract.bin"  # 12 chars exactly
         src.write_bytes(b"ok")
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Success, err
 
     @pytest.mark.asyncio
@@ -703,7 +729,7 @@ class TestMaxFilenameLen:
         xfer = _console_transfer(fake)  # default max_filename_len=255
         src = tmp_path / "some_quite_long_filename.bin"
         src.write_bytes(b"ok")
-        status, err = await xfer.put_files([src], RAM)
+        status, err = _sm(await xfer.put_files([src], RAM))
         assert status == Status.Success, err
 
     @pytest.mark.asyncio
@@ -717,7 +743,7 @@ class TestMaxFilenameLen:
         fake = FakeZephyrFs()
         xfer = _console_transfer(fake)  # default max_filename_len=255
         runaway = Path("/nowhere") / ("x" * 260 + ".bin")
-        status, err = await xfer.put_files([runaway], RAM)
+        status, err = _sm(await xfer.put_files([runaway], RAM))
         assert status == Status.Error
         assert "255-character" in err
 

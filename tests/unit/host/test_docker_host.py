@@ -14,16 +14,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.host.docker_host import DockerContainerHost
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult, Result
+from otto.utils import Status
 from tests.conftest import active_context
 
 
-def _ok(cmd: str = "", out: str = "") -> CommandStatus:
-    return CommandStatus(command=cmd, output=out, status=Status.Success, retcode=0)
+def _ok(cmd: str = "", out: str = "") -> CommandResult:
+    return CommandResult(status=Status.Success, value=out, command=cmd, retcode=0)
 
 
-def _fail(cmd: str = "", out: str = "boom") -> CommandStatus:
-    return CommandStatus(command=cmd, output=out, status=Status.Failed, retcode=1)
+def _fail(cmd: str = "", out: str = "boom") -> CommandResult:
+    return CommandResult(status=Status.Failed, value=out, command=cmd, retcode=1)
+
+
+def _sm(result) -> tuple[Status, str]:
+    """Unwrap ``(status, msg)`` from a transfer aggregate :class:`~otto.result.Result`."""
+    return result.status, result.msg
 
 
 def _mock_parent(parent_id: str = "pepper_seed", *, term: str = "ssh"):
@@ -33,8 +39,8 @@ def _mock_parent(parent_id: str = "pepper_seed", *, term: str = "ssh"):
     parent.term = term
     parent.resources = set()
     parent.oneshot = AsyncMock(return_value=_ok())
-    parent.put = AsyncMock(return_value=(Status.Success, ""))
-    parent.get = AsyncMock(return_value=(Status.Success, ""))
+    parent.put = AsyncMock(return_value=Result(Status.Success, value={}))
+    parent.get = AsyncMock(return_value=Result(Status.Success, value={}))
     return parent
 
 
@@ -301,7 +307,7 @@ async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
     monkeypatch.setattr("otto.configmodule.get_repos", _mock_repos)
     monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
 
-    status, _ = await h.put([f], Path("/tmp"))
+    status, _ = _sm(await h.put([f], Path("/tmp")))
 
     compose_up.assert_awaited_once()
     assert status == Status.Success
@@ -345,7 +351,7 @@ async def test_put_stages_then_docker_cps_then_cleans_up(tmp_path):
     f = tmp_path / "payload.bin"
     f.write_bytes(b"x" * 16)
 
-    status, _ = await h.put([f], Path("/srv/in"))
+    status, _ = _sm(await h.put([f], Path("/srv/in")))
 
     assert status == Status.Success
     parent.put.assert_awaited_once()
@@ -371,7 +377,7 @@ async def test_put_failure_still_cleans_up(tmp_path):
 
     parent.oneshot.side_effect = oneshot_side_effect
 
-    status, msg = await h.put([f], Path("/srv/in"))
+    status, msg = _sm(await h.put([f], Path("/srv/in")))
     assert status == Status.Error
     assert "cp failed" in msg
     cmds = [c.args[0] for c in parent.oneshot.call_args_list]
@@ -383,7 +389,7 @@ async def test_get_two_step_via_parent():
     parent = _mock_parent()
     h = _make_container(parent)
 
-    status, _ = await h.get(Path("/etc/os-release"), Path("./out"))
+    status, _ = _sm(await h.get(Path("/etc/os-release"), Path("./out")))
 
     assert status == Status.Success
     cmds = [c.args[0] for c in parent.oneshot.call_args_list]
@@ -420,7 +426,7 @@ async def test_oneshot_dry_run_skips_parent():
     parent.oneshot.assert_not_awaited()
     assert result.status == Status.Skipped
     assert result.command == "echo hi"
-    assert "[DRY RUN]" in result.output
+    assert "[DRY RUN]" in result.value
 
 
 @pytest.mark.asyncio
@@ -463,7 +469,7 @@ async def test_put_dry_run_skips_transfer(tmp_path):
     f = tmp_path / "x.txt"
     f.write_text("hello")
     with active_context(dry_run=True):
-        status, msg = await h.put([f], Path("/dest"))
+        status, msg = _sm(await h.put([f], Path("/dest")))
     parent.oneshot.assert_not_awaited()
     parent.put.assert_not_awaited()
     assert status == Status.Skipped
@@ -476,7 +482,7 @@ async def test_get_dry_run_skips_transfer():
     parent = _mock_parent()
     h = _make_container(parent=parent)
     with active_context(dry_run=True):
-        status, msg = await h.get(Path("/etc/hosts"), Path("./out"))
+        status, msg = _sm(await h.get(Path("/etc/hosts"), Path("./out")))
     parent.oneshot.assert_not_awaited()
     parent.get.assert_not_awaited()
     assert status == Status.Skipped
@@ -519,7 +525,7 @@ async def test_put_mkdir_failure_returns_error(tmp_path):
 
     parent.oneshot.side_effect = oneshot_side_effect
 
-    status, msg = await h.put([f], Path("/dest"))
+    status, msg = _sm(await h.put([f], Path("/dest")))
     assert status == Status.Error
     assert "failed to create staging dir" in msg
 
@@ -531,11 +537,44 @@ async def test_put_parent_put_failure_passthrough(tmp_path):
     f = tmp_path / "payload.bin"
     f.write_bytes(b"data")
 
-    parent.put.return_value = (Status.Error, "sftp connection lost")
+    parent.put.return_value = Result(
+        Status.Error,
+        value={f: Result(Status.Error, msg="sftp connection lost")},
+        msg="sftp connection lost",
+    )
 
-    status, msg = await h.put([f], Path("/dest"))
-    assert status == Status.Error
-    assert msg == "sftp connection lost"
+    result = await h.put([f], Path("/dest"))
+    assert result.status == Status.Error
+    assert "sftp connection lost" in result.msg
+    # Failure path must key by the as-passed source paths.
+    assert set(result.value.keys()) == {f}
+    assert not result.value[f].is_ok
+
+
+@pytest.mark.asyncio
+async def test_put_partial_staging_failure_downgrades_staged_files(tmp_path):
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    ok_file = tmp_path / "ok.bin"
+    bad_file = tmp_path / "bad.bin"
+    ok_file.write_bytes(b"data")
+    bad_file.write_bytes(b"data")
+
+    parent.put.return_value = Result(
+        Status.Error,
+        value={
+            ok_file: Result(Status.Success, value=Path("/stage/ok.bin")),
+            bad_file: Result(Status.Error, msg="bad.bin: sftp write failed"),
+        },
+        msg="bad.bin: sftp write failed",
+    )
+
+    result = await h.put([ok_file, bad_file], Path("/dest"))
+    assert result.status == Status.Error
+    # A file that only reached the parent staging dir must NOT read as
+    # Success — docker cp never ran, so it never reached the container.
+    assert result.value[ok_file].status == Status.Skipped
+    assert not result.value[bad_file].is_ok
 
 
 @pytest.mark.asyncio
@@ -552,7 +591,7 @@ async def test_put_docker_cp_failure_returns_error(tmp_path):
 
     parent.oneshot.side_effect = oneshot_side_effect
 
-    status, msg = await h.put([f], Path("/dest"))
+    status, msg = _sm(await h.put([f], Path("/dest")))
     assert status == Status.Error
     assert "docker cp failed" in msg
 
@@ -569,7 +608,7 @@ async def test_get_mkdir_failure_returns_error():
 
     parent.oneshot.side_effect = oneshot_side_effect
 
-    status, msg = await h.get(Path("/etc/os-release"), Path("./out"))
+    status, msg = _sm(await h.get(Path("/etc/os-release"), Path("./out")))
     assert status == Status.Error
     assert "failed to create staging dir" in msg
 
@@ -586,9 +625,37 @@ async def test_get_docker_cp_failure_returns_error():
 
     parent.oneshot.side_effect = oneshot_side_effect
 
-    status, msg = await h.get(Path("/etc/os-release"), Path("./out"))
+    status, msg = _sm(await h.get(Path("/etc/os-release"), Path("./out")))
     assert status == Status.Error
     assert "docker cp failed" in msg
+
+
+@pytest.mark.asyncio
+async def test_get_mid_batch_docker_cp_failure_keeps_every_source_key(tmp_path):
+    """A mid-batch docker-cp failure must still key EVERY as-passed source
+    path — including files already copied to parent staging before the
+    failing file. Those earlier files never reach the caller (parent.get is
+    never invoked and the staging dir is removed in `finally`), so they must
+    be downgraded to Skipped rather than omitted; omitting them would make
+    ``result.value[first_file]`` raise KeyError."""
+    parent = _mock_parent()
+    h = _make_container(parent=parent)
+    first = Path("/remote/first.bin")
+    second = Path("/remote/second.bin")
+
+    def oneshot_side_effect(cmd, *args, **kwargs):
+        if "docker cp" in cmd and "second.bin" in cmd:
+            return _fail(cmd, out="no such file or directory")
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot_side_effect
+
+    result = await h.get([first, second], tmp_path)
+    assert result.status == Status.Error
+    # Every as-passed source path must be a key — no KeyError on lookup.
+    assert set(result.value.keys()) == {first, second}
+    assert result.value[first].status == Status.Skipped
+    assert not result.value[second].is_ok
 
 
 # ---------------------------------------------------------------------------

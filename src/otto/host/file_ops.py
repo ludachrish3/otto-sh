@@ -19,7 +19,8 @@ from pathlib import Path
 from typing import Annotated
 
 from ..logger.mode import LogMode
-from ..utils import Arg, Status, cli_exposed
+from ..result import Result
+from ..utils import Arg, cli_exposed
 
 
 class PosixFileOps:
@@ -44,43 +45,39 @@ class PosixFileOps:
         result = await self.oneshot(f"ls {flags} {self._q(path)}")  # ty: ignore[unresolved-attribute]
         if not result.status.is_ok:
             return []
-        return [line for line in result.output.splitlines() if line]
+        return [line for line in result.value.splitlines() if line]
 
     @cli_exposed
-    async def mkdir(self, path: "str | Path", parents: bool = True) -> tuple[Status, str]:
+    async def mkdir(self, path: "str | Path", parents: bool = True) -> Result:
         """Create directory *path* (``mkdir``; *parents* adds ``-p``)."""
         flag = "-p " if parents else ""
         result = await self.oneshot(f"mkdir {flag}{self._q(path)}")  # ty: ignore[unresolved-attribute]
-        return result.status, result.output
+        return Result(result.status, msg=result.value)
 
     @cli_exposed
-    async def rm(
-        self, path: "str | Path", recursive: bool = False, force: bool = False
-    ) -> tuple[Status, str]:
+    async def rm(self, path: "str | Path", recursive: bool = False, force: bool = False) -> Result:
         """Remove *path* (``rm``; *recursive* → ``-r``, *force* → ``-f``)."""
         flags = "".join(f for f, on in (("r", recursive), ("f", force)) if on)
         opt = f"-{flags} " if flags else ""
         result = await self.oneshot(f"rm {opt}{self._q(path)}")  # ty: ignore[unresolved-attribute]
-        return result.status, result.output
+        return Result(result.status, msg=result.value)
 
     @cli_exposed
-    async def cp(
-        self, src: "str | Path", dst: "str | Path", recursive: bool = False
-    ) -> tuple[Status, str]:
+    async def cp(self, src: "str | Path", dst: "str | Path", recursive: bool = False) -> Result:
         """Copy *src* to *dst* on the host (``cp``; *recursive* → ``-r``)."""
         opt = "-r " if recursive else ""
         result = await self.oneshot(  # ty: ignore[unresolved-attribute]
             f"cp {opt}{self._q(src)} {self._q(dst)}"
         )
-        return result.status, result.output
+        return Result(result.status, msg=result.value)
 
     @cli_exposed
-    async def mv(self, src: "str | Path", dst: "str | Path") -> tuple[Status, str]:
+    async def mv(self, src: "str | Path", dst: "str | Path") -> Result:
         """Move/rename *src* to *dst* on the host (``mv``)."""
         result = await self.oneshot(  # ty: ignore[unresolved-attribute]
             f"mv {self._q(src)} {self._q(dst)}"
         )
-        return result.status, result.output
+        return Result(result.status, msg=result.value)
 
     @cli_exposed(output_dir=False)
     async def read_file(self, path: "str | Path") -> str:
@@ -94,13 +91,11 @@ class PosixFileOps:
         """
         result = await self.oneshot(f"base64 {self._q(path)}")  # ty: ignore[unresolved-attribute]
         if not result.status.is_ok:
-            raise FileNotFoundError(f"read_file({path!r}) failed: {result.output}")
-        return base64.b64decode(result.output).decode()
+            raise FileNotFoundError(f"read_file({path!r}) failed: {result.value}")
+        return base64.b64decode(result.value).decode()
 
     @cli_exposed
-    async def write_file(
-        self, path: "str | Path", data: str, append: bool = False
-    ) -> tuple[Status, str]:
+    async def write_file(self, path: "str | Path", data: str, append: bool = False) -> Result:
         """Write *data* to *path* (overwrite, or append).
 
         The payload is base64-encoded on the wire, so arbitrary content
@@ -112,4 +107,4 @@ class PosixFileOps:
         redirect = ">>" if append else ">"
         cmd = f"echo {encoded} | base64 -d {redirect} {self._q(path)}"
         result = await self.oneshot(cmd, log=LogMode.QUIET)  # ty: ignore[unresolved-attribute]
-        return result.status, result.output
+        return Result(result.status, msg=result.value)

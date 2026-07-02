@@ -99,7 +99,7 @@ async def _build_one(
     cmd = f"docker build {' '.join(flags)} {shlex.quote(str(remote_ctx))}"
     result = await parent.oneshot(cmd, timeout=None)
     if not result.status.is_ok:
-        return result.status, result.output
+        return result.status, result.value
     return Status.Success, full_tag
 
 

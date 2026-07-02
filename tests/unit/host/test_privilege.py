@@ -5,7 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.logger.mode import LogMode
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 
 def _mock_session_mgr():
@@ -106,7 +107,7 @@ async def test_run_without_sudo_is_unchanged():
 
     async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL):
         captured["cmd"] = cmd
-        return CommandStatus(cmd, "", Status.Success, 0)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
     with patch.object(host, "_run_one", new=fake_run_one):
         await host.run("id")
@@ -119,7 +120,7 @@ def _capture_run_one(host):
     async def fake_run_one(cmd, expects=None, timeout=None, log=LogMode.NORMAL):
         captured["cmd"] = cmd
         captured["expects"] = expects
-        return CommandStatus(cmd, "", Status.Success, 0)
+        return CommandResult(status=Status.Success, value="", command=cmd, retcode=0)
 
     return captured, fake_run_one
 

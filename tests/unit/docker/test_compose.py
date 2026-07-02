@@ -29,19 +29,20 @@ from otto.docker.compose import (
 )
 from otto.host.docker_host import DockerContainerHost
 from otto.host.unix_host import UnixHost
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult, Result
+from otto.utils import Status
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _ok(out: str = "") -> CommandStatus:
-    return CommandStatus(command="", output=out, status=Status.Success, retcode=0)
+def _ok(out: str = "") -> CommandResult:
+    return CommandResult(Status.Success, value=out, command="", retcode=0)
 
 
-def _fail(out: str = "") -> CommandStatus:
-    return CommandStatus(command="", output=out, status=Status.Failed, retcode=1)
+def _fail(out: str = "") -> CommandResult:
+    return CommandResult(Status.Failed, value=out, command="", retcode=1)
 
 
 # The libnetwork race compose_up retries past: the network is Created, the
@@ -96,8 +97,8 @@ def _capable_host(host_id: str = "pepper_seed", ne: str = "pepper") -> UnixHost:
 def _wire_parent_mock(host: UnixHost) -> UnixHost:
     """Replace the host's network methods with AsyncMocks so we never connect."""
     host.oneshot = AsyncMock(return_value=_ok())  # type: ignore[method-assign]
-    host.put = AsyncMock(return_value=(Status.Success, ""))  # type: ignore[method-assign]
-    host.get = AsyncMock(return_value=(Status.Success, ""))  # type: ignore[method-assign]
+    host.put = AsyncMock(return_value=Result(Status.Success, value={}))  # type: ignore[method-assign]
+    host.get = AsyncMock(return_value=Result(Status.Success, value={}))  # type: ignore[method-assign]
     return host
 
 

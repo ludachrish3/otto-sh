@@ -16,6 +16,21 @@ from otto.host.options import NcOptions
 from otto.host.transport import SshHopTransport
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
+from otto.result import CommandResult
+from otto.utils import Status
+
+
+def _cs(
+    *, command: str = "", output: str = "", status: Status = Status.Success, retcode: int = 0
+) -> CommandResult:
+    """Build a :class:`~otto.result.CommandResult` for the netcat-over-hop fakes.
+
+    The nc backend reads command output from ``.value``; this keeps the old
+    ``command=/output=/status=/retcode=`` keyword call shape, mapping ``output``
+    onto ``value``.
+    """
+    return CommandResult(command=command, value=output, status=status, retcode=retcode)
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -398,7 +413,6 @@ class TestNetcatGetThroughHop:
         from pathlib import Path
 
         from otto.host.transfer import NcFileTransfer
-        from otto.utils import CommandStatus, Status
 
         mock_connections = MagicMock(spec=ConnectionManager)
         mock_connections.has_tunnel = True
@@ -409,14 +423,14 @@ class TestNetcatGetThroughHop:
 
         # exec_cmd handles every control + transfer command: file-size stat,
         # port-find, and the nc listener.
-        async def mock_exec(cmd: str, *a, **kw) -> CommandStatus:
+        async def mock_exec(cmd: str, *a, **kw) -> CommandResult:
             if cmd.startswith("stat -c %s"):
                 output = "9\n"
             elif "nc " in cmd:
                 output = ""
             else:  # port-find
                 output = "55555\n"
-            return CommandStatus(command=cmd, output=output, status=Status.Success, retcode=0)
+            return _cs(command=cmd, output=output, status=Status.Success, retcode=0)
 
         mock_exec = AsyncMock(side_effect=mock_exec)
 
@@ -451,7 +465,8 @@ class TestNetcatGetThroughHop:
             mock_connect.return_value = (mock_reader, mock_writer)
 
             dst = tmp_path
-            status, err = await ft.get_files([Path("/remote/a.txt")], dst, show_progress=False)
+            res = await ft.get_files([Path("/remote/a.txt")], dst, show_progress=False)
+            status, err = res.status, res.msg
 
             assert status == Status.Success, f"Unexpected error: {err}"
             # Verify port forwarding was used.
@@ -470,7 +485,6 @@ class TestNetcatGetThroughHop:
         from pathlib import Path
 
         from otto.host.transfer import NcFileTransfer
-        from otto.utils import CommandStatus, Status
 
         mock_connections = MagicMock(spec=ConnectionManager)
         mock_connections.has_tunnel = False
@@ -479,9 +493,9 @@ class TestNetcatGetThroughHop:
         mock_connections._name = "test"
 
         # exec_cmd handles the file-size stat and the nc -N send command.
-        async def mock_exec(cmd: str, *a, **kw) -> CommandStatus:
+        async def mock_exec(cmd: str, *a, **kw) -> CommandResult:
             output = "9\n" if cmd.startswith("stat -c %s") else ""
-            return CommandStatus(command=cmd, output=output, status=Status.Success, retcode=0)
+            return _cs(command=cmd, output=output, status=Status.Success, retcode=0)
 
         mock_exec = AsyncMock(side_effect=mock_exec)
 
@@ -529,7 +543,8 @@ class TestNetcatGetThroughHop:
 
             mock_start_server.side_effect = fake_start_server
 
-            status, err = await ft.get_files([Path("/remote/a.txt")], tmp_path, show_progress=False)
+            res = await ft.get_files([Path("/remote/a.txt")], tmp_path, show_progress=False)
+            status, err = res.status, res.msg
 
             assert status == Status.Success, f"Unexpected error: {err}"
             # Verify start_server was called (direct path), not forward_port.
@@ -554,16 +569,12 @@ class TestNetcatPutThroughHop:
         mock_connections.forward_port = AsyncMock(return_value=44444)
 
         # Simulate the remote nc command succeeding
-        from otto.utils import CommandStatus, Status
-
         mock_exec = AsyncMock(
             side_effect=[
                 # _find_free_port
-                CommandStatus(
-                    command="python3 ...", output="55555\n", status=Status.Success, retcode=0
-                ),
+                _cs(command="python3 ...", output="55555\n", status=Status.Success, retcode=0),
                 # nc -l listen command
-                CommandStatus(command="nc -l ...", output="", status=Status.Success, retcode=0),
+                _cs(command="nc -l ...", output="", status=Status.Success, retcode=0),
             ]
         )
 
@@ -602,7 +613,7 @@ class TestNetcatPutThroughHop:
                 mock_writer.wait_closed = AsyncMock()
                 mock_connect.return_value = (MagicMock(), mock_writer)
 
-                _, _ = await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
+                await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
 
                 # Verify port forwarding was used
                 mock_connections.forward_port.assert_awaited_once_with(55555)
@@ -628,14 +639,10 @@ class TestNetcatPutThroughHop:
         mock_connections.term = "ssh"
         mock_connections._name = "test"
 
-        from otto.utils import CommandStatus, Status
-
         mock_exec = AsyncMock(
             side_effect=[
-                CommandStatus(
-                    command="python3 ...", output="55555\n", status=Status.Success, retcode=0
-                ),
-                CommandStatus(command="nc -l ...", output="", status=Status.Success, retcode=0),
+                _cs(command="python3 ...", output="55555\n", status=Status.Success, retcode=0),
+                _cs(command="nc -l ...", output="", status=Status.Success, retcode=0),
             ]
         )
 
@@ -670,7 +677,7 @@ class TestNetcatPutThroughHop:
                 mock_writer.wait_closed = AsyncMock()
                 mock_connect.return_value = (MagicMock(), mock_writer)
 
-                _, _ = await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
+                await ft.put_files([tmp_path], Path("/tmp"), show_progress=False)
 
                 # Verify direct connection (no forward_port called)
                 mock_connections.forward_port.assert_not_awaited()

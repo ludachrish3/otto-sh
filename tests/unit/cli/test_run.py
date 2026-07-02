@@ -20,7 +20,8 @@ from typer.testing import CliRunner
 
 from otto.cli.run import instruction, run_app
 from otto.host.unix_host import UnixHost
-from otto.utils import CommandStatus, Status
+from otto.result import CommandResult
+from otto.utils import Status
 
 runner = CliRunner()
 
@@ -77,16 +78,14 @@ class TestInstructionDecorator:
 
     def test_decorator_registers_instruction(self):
         """A function decorated with @instruction() must appear in run_app's sub-apps."""
-        from otto.utils import CommandStatus, Status
-
         initial_count = len(run_app.registered_groups)
 
         @instruction("_unit_test_instruction")
-        async def _my_instruction() -> CommandStatus:
-            return CommandStatus(
+        async def _my_instruction() -> CommandResult:
+            return CommandResult(
+                Status.Success,
+                value="ok",
                 command="echo ok",
-                output="ok",
-                status=Status.Success,
                 retcode=0,
             )
 
@@ -95,14 +94,13 @@ class TestInstructionDecorator:
 
     def test_decorated_instruction_is_invocable(self):
         """A decorated async instruction can be invoked synchronously via CliRunner."""
-        from otto.utils import CommandStatus, Status
 
         @instruction("_unit_test_noop")
-        async def _noop() -> CommandStatus:
-            return CommandStatus(
+        async def _noop() -> CommandResult:
+            return CommandResult(
+                Status.Success,
+                value="",
                 command="true",
-                output="",
-                status=Status.Success,
                 retcode=0,
             )
 
@@ -127,12 +125,12 @@ class TestInstructionExecution:
         execution_log: list[str] = []
 
         @instruction("_unit_test_exec")
-        async def _exec_test() -> CommandStatus:
+        async def _exec_test() -> CommandResult:
             execution_log.append("ran")
-            return CommandStatus(
+            return CommandResult(
+                Status.Success,
+                value="executed",
                 command="test",
-                output="executed",
-                status=Status.Success,
                 retcode=0,
             )
 
@@ -148,12 +146,12 @@ class TestInstructionExecution:
         @instruction("_unit_test_args")
         async def _args_test(
             target: Annotated[str, typer.Argument()],
-        ) -> CommandStatus:
+        ) -> CommandResult:
             captured["target"] = target
-            return CommandStatus(
+            return CommandResult(
+                Status.Success,
+                value="",
                 command="test",
-                output="",
-                status=Status.Success,
                 retcode=0,
             )
 
@@ -169,15 +167,15 @@ class TestInstructionExecution:
         instructions which are thin wrappers around host calls.
         """
         mock_host = AsyncMock(spec=UnixHost)
-        mock_host.run.return_value = CommandStatus(
+        mock_host.run.return_value = CommandResult(
+            Status.Success,
+            value="hello",
             command="echo hello",
-            output="hello",
-            status=Status.Success,
             retcode=0,
         )
 
         @instruction("_unit_test_host")
-        async def _host_test() -> CommandStatus:
+        async def _host_test() -> CommandResult:
             return await mock_host.run("echo hello")
 
         result = runner.invoke(run_app, ["_unit_test_host"])
@@ -204,9 +202,9 @@ class TestInstructionOptions:
         captured: dict[str, object] = {}
 
         @instruction("_unit_test_opts_dc", options=_Opts)
-        async def _opts_dc(opts: _Opts) -> CommandStatus:
+        async def _opts_dc(opts: _Opts) -> CommandResult:
             captured["opts"] = opts
-            return CommandStatus("test", "", Status.Success, 0)
+            return CommandResult(Status.Success, value="", command="test", retcode=0)
 
         result = runner.invoke(run_app, ["_unit_test_opts_dc", "--name", "hello"])
 
@@ -228,8 +226,8 @@ class TestInstructionOptions:
             count: Annotated[int, typer.Option(help="positive")] = pydantic.Field(default=1, gt=0)
 
         @instruction("_unit_test_opts_validate", options=_ValOpts)
-        async def _opts_validate(opts: _ValOpts) -> CommandStatus:
-            return CommandStatus("test", "", Status.Success, 0)
+        async def _opts_validate(opts: _ValOpts) -> CommandResult:
+            return CommandResult(Status.Success, value="", command="test", retcode=0)
 
         result = runner.invoke(
             run_app,
@@ -253,9 +251,9 @@ class TestInstructionOptions:
         captured: dict[str, object] = {}
 
         @instruction("_unit_test_opts_inherit", options=_Child)
-        async def _opts_inherit(opts: _Child) -> CommandStatus:
+        async def _opts_inherit(opts: _Child) -> CommandResult:
             captured["opts"] = opts
-            return CommandStatus("test", "", Status.Success, 0)
+            return CommandResult(Status.Success, value="", command="test", retcode=0)
 
         result = runner.invoke(
             run_app,
@@ -284,9 +282,9 @@ class TestInstructionOptions:
         captured: dict[str, object] = {}
 
         @instruction("_unit_test_opts_defaults", options=_Defaults)
-        async def _opts_defaults(opts: _Defaults) -> CommandStatus:
+        async def _opts_defaults(opts: _Defaults) -> CommandResult:
             captured["opts"] = opts
-            return CommandStatus("test", "", Status.Success, 0)
+            return CommandResult(Status.Success, value="", command="test", retcode=0)
 
         result = runner.invoke(run_app, ["_unit_test_opts_defaults"])
 
@@ -306,10 +304,10 @@ class TestInstructionOptions:
         async def _opts_mixed(
             opts: _MixOpts,
             verbose: Annotated[bool, typer.Option("--verbose/--quiet")] = False,
-        ) -> CommandStatus:
+        ) -> CommandResult:
             captured["opts"] = opts
             captured["verbose"] = verbose
-            return CommandStatus("test", "", Status.Success, 0)
+            return CommandResult(Status.Success, value="", command="test", retcode=0)
 
         result = runner.invoke(
             run_app,
@@ -337,8 +335,8 @@ class TestInstructionOptions:
             tag: Annotated[str, typer.Option(help="Resource tag.")] = "dev"
 
         @instruction("_unit_test_opts_help", options=_HelpChild)
-        async def _opts_help(opts: _HelpChild) -> CommandStatus:
-            return CommandStatus("test", "", Status.Success, 0)
+        async def _opts_help(opts: _HelpChild) -> CommandResult:
+            return CommandResult(Status.Success, value="", command="test", retcode=0)
 
         result = runner.invoke(run_app, ["_unit_test_opts_help", "--help"])
         assert result.exit_code == 0
@@ -352,9 +350,9 @@ class TestInstructionOptions:
         @instruction("_unit_test_no_opts")
         async def _no_opts(
             msg: Annotated[str, typer.Option(help="Message.")] = "hi",
-        ) -> CommandStatus:
+        ) -> CommandResult:
             captured.append(msg)
-            return CommandStatus("test", "", Status.Success, 0)
+            return CommandResult(Status.Success, value="", command="test", retcode=0)
 
         result = runner.invoke(run_app, ["_unit_test_no_opts", "--msg", "bye"])
 
@@ -373,8 +371,8 @@ class TestInstructionOptions:
         with pytest.raises(TypeError, match="no parameter annotated"):
 
             @instruction("_unit_test_opts_orphan", options=_Orphan)
-            async def _orphan() -> CommandStatus:
-                return CommandStatus("test", "", Status.Success, 0)
+            async def _orphan() -> CommandResult:
+                return CommandResult(Status.Success, value="", command="test", retcode=0)
 
 
 # ── OttoContext injection ────────────────────────────────────────────────────
@@ -390,8 +388,8 @@ class TestInstructionCtxInjection:
         from otto.context import OttoContext
 
         @instruction(name="probe_ctx")
-        async def probe(ctx: OttoContext) -> CommandStatus:
-            return CommandStatus(command="probe", output="", status=Status.Success, retcode=0)
+        async def probe(ctx: OttoContext) -> CommandResult:
+            return CommandResult(Status.Success, value="", command="probe", retcode=0)
 
         import inspect
 
@@ -411,8 +409,8 @@ class TestInstructionCtxInjection:
 
         # Should not raise:
         @instruction("_unit_test_ctx_opts_compose", options=_CtxOpts)
-        async def _ctx_opts_handler(ctx: OttoContext, opts: _CtxOpts) -> CommandStatus:
-            return CommandStatus("test", "", Status.Success, 0)
+        async def _ctx_opts_handler(ctx: OttoContext, opts: _CtxOpts) -> CommandResult:
+            return CommandResult(Status.Success, value="", command="test", retcode=0)
 
         sig = inspect.signature(_ctx_opts_handler)
         assert "ctx" not in sig.parameters
