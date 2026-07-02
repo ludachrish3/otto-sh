@@ -8,6 +8,7 @@ flags skip prompts. See docs/guide/repo-setup.md.
 
 import dataclasses
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
@@ -506,6 +507,21 @@ async def init_command(
 
     from rich import print as rprint
     from rich.table import Table
+
+    from otto.configmodule.env import SUT_DIRS_ENV_VAR
+
+    steps: list[str] = []
+    current = os.environ.get(SUT_DIRS_ENV_VAR, "")
+    if str(root) not in current.split(","):
+        steps.append(f"export {SUT_DIRS_ENV_VAR}={root}")
+    steps.append("otto --install-completion")
+    steps.append("otto --lab example_lab --list-hosts")
+    steps.append("otto test --list-suites")
+    steps.append("otto test TestExample")
+    steps.append("otto test --tests test_example_function")
+    rprint("\n[bold]Next steps[/bold]")
+    for i, step in enumerate(steps, 1):
+        rprint(f"  {i}. {step}")
 
     table = Table(title=f"otto init — {root}", show_header=True)
     table.add_column("area")

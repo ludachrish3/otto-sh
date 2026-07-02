@@ -75,3 +75,26 @@ def test_later_area_uses_existing_settings_name(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert (tmp_path / "pylib" / "widget_instructions" / "__init__.py").exists()
     assert not (tmp_path / "pylib" / f"{tmp_path.name}_instructions").exists()
+
+
+def test_epilogue_prints_next_steps(tmp_path: Path) -> None:
+    result = runner.invoke(_app(), ["--all", "--name", "widget", "--path", str(tmp_path)])
+    assert f"export OTTO_SUT_DIRS={tmp_path}" in result.output.replace("\n", "")
+    assert "otto --install-completion" in result.output
+    assert "otto test --list-suites" in result.output
+
+
+def test_epilogue_skips_sut_dirs_when_already_set(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OTTO_SUT_DIRS", str(tmp_path))
+    result = runner.invoke(_app(), ["--all", "--name", "widget", "--path", str(tmp_path)])
+    assert "export OTTO_SUT_DIRS" not in result.output
+
+
+def test_second_run_is_pure_report(tmp_path: Path) -> None:
+    runner.invoke(_app(), ["--all", "--name", "widget", "--path", str(tmp_path)])
+    hosts = tmp_path / "lab_data" / "hosts.json"
+    mtime = hosts.stat().st_mtime_ns
+    result = runner.invoke(_app(), ["--all", "--path", str(tmp_path)])
+    assert result.exit_code == 0
+    assert hosts.stat().st_mtime_ns == mtime
+    assert "scaffolded" not in result.output  # nothing new was written
