@@ -336,19 +336,34 @@ async def init_command(
     root = path.resolve()
     if not root.is_dir():
         raise typer.BadParameter(f"{root} is not a directory", param_hint="--path")
-    cfg = InitConfig(name=name or root.name, version=version)
+
     requested = {"lab": lab, "tests": tests, "instructions": instructions}
     explicit = any(requested.values())
+    interactive = not (all_areas or explicit)
+
+    missing = [a for a in AREAS if not a.detect(root)]
+    missing_names = {a.name for a in missing}
+
+    if "settings" in missing_names and (all_areas or explicit):
+        typer.echo("settings.toml is the repo marker — scaffolding it first.")
+
+    if interactive and "settings" in missing_names:
+        name = name or typer.prompt("Product name", default=root.name)
+        version = typer.prompt("Version", default=version)
+    cfg = InitConfig(name=name or root.name, version=version)
+
+    scaffolded: list[str] = []
     for area in AREAS:
-        if area.detect(root):
+        if area.name not in missing_names:
             continue
-        if area.name == "settings":
-            # prerequisite: the repo marker accompanies any scaffold request
-            wanted = all_areas or explicit
-            if wanted:
-                typer.echo("settings.toml is the repo marker — scaffolding it first.")
+        if interactive:
+            wanted = typer.confirm(f"Scaffold the {area.name} area?", default=True)
+        elif area.name == "settings":
+            wanted = True  # prerequisite: always accompanies any explicit/all request
         else:
             wanted = all_areas or requested[area.name]
-        if wanted:
-            for created in area.scaffold(root, cfg):
-                typer.echo(f"created {created.relative_to(root)}")
+        if not wanted:
+            continue
+        for created in area.scaffold(root, cfg):
+            typer.echo(f"created {created.relative_to(root)}")
+        scaffolded.append(area.name)
