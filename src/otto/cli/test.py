@@ -386,6 +386,9 @@ def _run_pytest_session(
     if keyword:
         base_args += ["-k", keyword]
     if opts.markers:
+        # Re-apply -m at run time: _resolve_selection() filtered by markers during
+        # collection, and we apply again here so name resolution and live session can
+        # never diverge. Belt-and-suspenders marker filtering ensures consistency.
         base_args += ["-m", opts.markers]
 
     is_stability = opts.iterations > 0 or opts.duration > 0

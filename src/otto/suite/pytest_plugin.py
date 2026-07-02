@@ -36,7 +36,9 @@ class OttoOptionsPlugin:
         if self.options is not None:
             return self.options
         cls = getattr(request, "cls", None)
-        opts_cls = getattr(cls, "Options", None) if cls is not None else None
+        if cls is None:
+            return None
+        opts_cls = getattr(cls, "Options", None)
         if opts_cls is None:
             return None
         try:

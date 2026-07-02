@@ -397,7 +397,7 @@ class TestOttoOptionsPlugin:
         assert plugin.options is None
 
     def test_provides_suite_options_fixture(self):
-        """OttoOptionsPlugin exposes a session-scoped suite_options fixture."""
+        """OttoOptionsPlugin exposes a class-scoped suite_options fixture."""
         plugin = OttoOptionsPlugin({"key": "value"})
         assert hasattr(plugin, "suite_options")
         # Verify it's a pytest fixture wrapper
