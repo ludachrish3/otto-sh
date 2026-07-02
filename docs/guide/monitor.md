@@ -5,13 +5,17 @@ CPU, memory, disk, and network metrics from remote hosts in real time.
 
 ## Live mode
 
-By default, `otto monitor` polls every real host in the lab. Docker
-container hosts are excluded — they aren't operated on as part of the
-host fleet:
+By default, `otto monitor` polls every real host in the lab:
 
 ```bash
 otto --lab my_lab monitor
 ```
+
+Docker container hosts are excluded — they aren't operated on as part of
+the host fleet. Embedded targets without an `snmp` block are also
+excluded: the monitored set is Unix hosts (shell metrics) plus any host
+that declares `snmp` (polled over SNMP — see
+[SNMP monitoring](#snmp-monitoring) below).
 
 ### Selecting hosts
 
@@ -79,8 +83,10 @@ Supported formats: `.db` (SQLite) and `.json`.
 
 ## Web dashboard
 
-In both modes, otto serves an interactive web dashboard.  By default it
-listens on port 8000.  The dashboard shows:
+In both modes, otto serves an interactive web dashboard.  The server binds
+an OS-assigned free port and logs the dashboard URL at startup (`Server
+running at http://<ip>:<port>`, one URL per non-loopback interface).  The
+dashboard shows:
 
 - Live metric graphs (CPU, memory, disk, network)
 - Timeline with events

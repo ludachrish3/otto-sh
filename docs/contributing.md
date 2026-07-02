@@ -332,13 +332,17 @@ docs/
 ├── getting-started.md   # Installation and first steps
 ├── guide/               # Narrative user guides (Markdown)
 ├── cookbook/             # Recipes with doctest examples (Markdown)
+├── architecture/        # How otto is built and why (Markdown)
 ├── contributing.md      # This page
 └── api/                 # API reference (reStructuredText, auto-generated)
 ```
 
 Narrative guides go in `guide/` or as top-level Markdown files.  API
 reference pages live in `api/` and use `.. automodule::` directives to
-pull documentation from docstrings.
+pull documentation from docstrings.  Design rationale and subsystem
+internals belong in `architecture/` — when a change alters how a
+subsystem works (not just what it does), update the matching
+architecture page in the same PR.
 
 ### Docstring rules of thumb
 
@@ -407,9 +411,9 @@ make typecheck     # run ty check against src/ with all rules at error
 ```
 
 Config lives under `[tool.ty.*]` in `pyproject.toml`. ty is pinned to an
-exact version (`ty==0.0.31`) because its 0.0.x releases allow breaking
-diagnostic changes between any two versions — floating the pin would cause
-unannounced CI churn.
+exact version (see the `ty==` pin in `pyproject.toml`) because its 0.0.x
+releases allow breaking diagnostic changes between any two versions —
+floating the pin would cause unannounced CI churn.
 
 Work the count down with per-line `# ty: ignore[rule-name]` suppressions
 (justified in the surrounding context) or by fixing the underlying type.

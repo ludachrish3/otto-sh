@@ -8,6 +8,7 @@ otto
    getting-started
    guide/index
    cookbook/index
+   architecture/index
    contributing
    release_process
    api/index

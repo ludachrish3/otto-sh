@@ -8,6 +8,6 @@ that require live remote hosts.
 .. toctree::
 
    async-patterns
-   sessions-and-repeats
+   sessions
    suite-recipes
    connection-options

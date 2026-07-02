@@ -79,18 +79,39 @@ apply anywhere you have an async context (instructions, suite fixtures,
 monitors, ad-hoc scripts) and are documented in full on the
 [async patterns cookbook page](../cookbook/async-patterns.md).
 
+Two properties of the fleet helpers to keep in mind:
+
+- **Fleet membership.**  The built-in `local` host (the machine otto
+  itself runs on, present in every lab) and Docker container hosts are
+  excluded by default — a lab-wide sweep should never silently operate
+  on the runner or on containers.  Opt in with `include_local=True` (on
+  `all_hosts()` and `do_for_all_hosts()`) or `include_containers=True`;
+  `get_host("local")` always resolves the local host.
+- **Failure isolation.**  `run_on_all_hosts()` and `do_for_all_hosts()`
+  return a dict mapping each host ID to its result *or* to the exception
+  that host raised (`asyncio.gather` with `return_exceptions=True`
+  semantics), so one unreachable host never costs you the others'
+  results.  Check values with `isinstance(value, BaseException)` before
+  using them.
+
 ## Logging and artifacts
 
 Every `otto run` invocation creates an output directory under `--xdir`:
 
 ```text
-<xdir>/run/<instruction_name>/<timestamp>/
+<xdir>/run/<timestamp>_<instruction_name>/
 ```
 
-Use `logger.output_dir` to write artifacts there:
+The timestamp is UTC with millisecond precision (e.g.
+`run/20260702_143512_042_deploy/`), so directories sort chronologically —
+see the [CLI reference](cli-reference.md#output-directories) for the
+layout every command uses.  Use the active context's `output_dir` to
+write artifacts there:
 
 ```python
-output_file = logger.output_dir / "results.json"
+from otto import get_context
+
+output_file = get_context().output_dir / "results.json"
 ```
 
 ## File transfers

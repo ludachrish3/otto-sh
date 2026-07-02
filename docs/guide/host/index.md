@@ -82,23 +82,26 @@ if not res:
 ```
 
 ```{note}
-File transfer methods are only available on
-{class}`~otto.host.unix_host.UnixHost` instances, not
-{class}`~otto.host.local_host.LocalHost`.  The doctest above uses
-`run` which is available on all host types.
-`EmbeddedHost` provides its own console/tftp transfer; see {doc}`../embedded`.
+`put` and `get` are available on all host types, with per-class semantics:
+{class}`~otto.host.local_host.LocalHost` copies files within the local
+filesystem, {class}`~otto.host.unix_host.UnixHost` transfers between the
+local machine and the remote host, and `EmbeddedHost` provides its own
+console/tftp transfer path; see {doc}`../embedded`.
 ```
 
 ## Exit codes
 
 Every `otto host <name> <verb>` invocation derives its exit code from the
-verb's `Result`:
+verb's returned {class}`~otto.result.Result` family, via `Result.exit_code`.
+Command results are ssh-like: the shell's retcode when the command ran,
+255 when it never ran.  (`oneshot` is Python-only — it is not a CLI verb,
+so these rows apply to `run`.)
 
 | Situation | Exit code |
 | --- | --- |
 | Verb succeeded (incl. `Status.Skipped`) | 0 |
-| `run`/`oneshot`: a command failed | that command's shell retcode (ssh-like: `run 'exit 42'` exits 42) |
-| `run`/`oneshot`: the command never ran (connection failure) | 255 (matches ssh's convention) |
+| `run`: a command failed | that command's shell retcode (ssh-like: `run 'exit 42'` exits 42) |
+| `run`: the command never ran (connection failure) | 255 (matches ssh's convention) |
 | Any other verb: `Status.Failed` | 1 |
 | Any other verb: `Status.Error` | 2 (note: Click also uses 2 for CLI usage errors) |
 | Any other verb: `Status.Unstable` | 3 |

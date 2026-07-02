@@ -169,6 +169,26 @@ otto cov report run1_output/ run2_output/ run3_output/ --report ./combined_repor
    from `--tier NAME=PATH` flags in the order they were given.
 7. Renders a multi-tier HTML report.
 
+### Stale Builds: "stamp mismatch"
+
+gcov embeds a build stamp in both the `.gcno` notes files (written at
+compile time) and the `.gcda` data files (written at run time).  If the
+product tree is rebuilt — even partially — between `otto test --cov` and
+`otto cov report`, the stamps no longer pair up, gcov refuses the data
+(`stamp mismatch with notes file`), and otto raises a
+`CoverageDataMismatchError` explaining the cause instead of dumping raw
+`lcov` output:
+
+> Coverage data does not match the current product build (gcov reports a
+> stamp mismatch between .gcda data and .gcno notes files). The product
+> was likely rebuilt after `otto test --cov` collected this data —
+> coverage must be reported against the exact build that produced it.
+> Re-run `otto test --cov` and report on the new output directory.
+
+The recovery is what the message says: collect fresh coverage against the
+current build with `otto test --cov`, then report on the new output
+directory.
+
 ## Coverage Tiers
 
 A *tier* is a named layer of coverage data — `system`, `unit`, `manual`,

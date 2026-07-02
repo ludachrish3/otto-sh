@@ -12,7 +12,8 @@ is for and how to use it.
 | Power, reboot & reachability | `power`, `reboot`, `shutdown` | `is_reachable`, `wait_until_up`, `wait_until_down` |
 | Products & lifecycle | `stage`, `install`, `uninstall`, `is-installed`, `is-uninstalled` | — |
 | Remote file operations | `exists`, `ls`, `mkdir`, `rm`, `cp`, `mv`, `read-file`, `write-file` | — |
-| Privilege elevation | — | `run(sudo=True)`, `as_user`, `switch_user` |
+| Kernel modules | `lsmod`, `load`, `unload` | — |
+| Privilege elevation | — | `run(sudo=True)`, `as_user`, `switch_user`, `current_user` |
 
 ## Power, reboot & reachability
 
@@ -180,6 +181,32 @@ exact-byte/binary fidelity use
 `rm` (via the device `fs` commands). `mkdir`/`cp`/`mv`/`read_file`/`write_file`
 raise `NotImplementedError`; use `get`/`put` for device reads/writes.
 
+## Kernel modules
+
+Full signatures: {class}`~otto.host.unix_host.UnixHost`.
+
+Unix hosts manage kernel modules with three verbs:
+
+| Method | Behavior |
+|--------|----------|
+| `await host.lsmod()` | List loaded module names (`Result` whose `value` is `list[str]`). |
+| `await host.load(file, name=None)` | Stage the `.ko` on the host, `insmod` it, then remove the staged file. `name` defaults to the file stem. |
+| `await host.unload(name)` | `rmmod` the module. Idempotent: unloading a module that is not resident succeeds. |
+
+`load` and `unload` elevate automatically — the `insmod`/`rmmod` runs under
+`sudo` unless the session is already root (see `current_user` below).
+As `otto host` verbs:
+
+```text
+otto host <id> lsmod
+otto host <id> load ./build/my_driver.ko
+otto host <id> unload my_driver
+```
+
+(`EmbeddedHost` has its own `load`/`unload` pair for loading binaries into the
+device runtime via the host's binary loader — same verb names, different
+signatures; see {doc}`../embedded`.)
+
 ## Privilege elevation
 
 Privilege elevation is Python-only — there are no CLI verbs for `as_user` or
@@ -206,6 +233,20 @@ to the target user on entry and sends `exit` on the way out. The imperative form
 is {meth}`~otto.host.host.BaseHost.switch_user`. Target-user passwords come
 from `creds` when present, or pass `password=` explicitly. Embedded hosts raise
 `NotImplementedError`.
+
+### Inspecting the effective user: `current_user`
+
+Each shell session tracks the OS user it is currently running as. The
+read-only {attr}`~otto.host.host.BaseHost.current_user` property reports it
+for the host's default session — seeded from the login user and changed only
+by `switch_user` / `as_user`:
+
+    async with host.as_user("root"):
+        assert host.current_user == "root"
+    assert host.current_user != "root"   # back to the login user
+
+Named sessions elevate independently, so each carries its own
+`current_user` (see `HostSession.current_user`).
 
 ## Methods as CLI verbs
 

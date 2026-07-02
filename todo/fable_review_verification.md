@@ -49,7 +49,7 @@ refactor wave itself. Ranked list at the bottom.
 | #6 Reservations server-less | ✅ Implemented well | Only JSON built-in ships (spirit intact; DB arrives via registry) |
 | NFS hazards | ✅ Implemented well | Adaptations log at DEBUG, not WARNING |
 | Quick hit: lint ratchet | ✅ Done | `select=ALL`, empty ratchet, ~193 rationale'd per-site noqas |
-| Quick hit: contributor/architecture docs | 🟡 Partial | Contributor docs substantial; `docs/design/` has one page |
+| Quick hit: contributor/architecture docs | ✅ Done | `docs/architecture/` tree (12 pages: layer map, lifecycle, registries, hosts, principles, …) added 2026-07-02 |
 | Quick hit: startup profiling | ✅ Done | Import-budget guard + `make profile` (hyperfine, not pyinstrument) |
 | Quick hit: automated VM tier | ❌ Absent | Nightly CI exists but is hostless-only, GitHub-hosted |
 | Gap 1: `otto init` | ❌ Absent | Docs mitigate; no scaffold command |
@@ -233,9 +233,11 @@ refactor wave itself. Ranked list at the bottom.
   no ratchet file remains; ~193 narrow per-site noqas with inline rationale;
   enforced in CI + nightly. Done as specified.
 - **Docs:** contributor docs substantial (contributing.md 436 lines, guides,
-  cookbook); **architecture still thin** — `docs/design/` holds exactly one
-  page; the "port architecture/principles pages into the repo" ask is only
-  partly done.
+  cookbook); ✅ architecture ask closed 2026-07-02 — `docs/architecture/`
+  now holds a 12-page tree (overview/layer map, lifecycle, registries,
+  hosts, data boundary, results+logging, test pipeline, monitor+coverage,
+  extension points, design principles, docker-hosts design) wired into the
+  root toctree; the old orphaned `docs/design/docker_hosts.md` moved in.
 - **Profiling:** import-budget guard + golden snapshots + `make profile`
   (hyperfine) + PEP 562 lazy `import otto`. Intent fully satisfied.
 - **VM tier in CI:** absent. Nightly workflow exists (cron + auto-issue on

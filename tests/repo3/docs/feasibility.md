@@ -323,7 +323,9 @@ telnet:192.0.2.33:2323`), reached through the real SSH-tunnel + telnet transport
 subprocess against `sprout_cov` (skips cleanly when the product isn't built or the bed is
 down). It was the *first localhost-only* proof; running it against the real hop surfaced
 two more bugs (4–5 below). NB the x86 net-telnet bed (`sprout`, …) can be independently
-wedged (the documented e1000 net-buffer wedge — `shell never became ready`); that is a
+wedged (the recurring console wedge — `shell never became ready`; diagnosed 2026-06-06 as
+RST-close reconnect churn against the single telnet slot, *not* e1000 net-buffer
+exhaustion as earlier docs said); that is a
 separate instance from the ARM serial-telnet `sprout_cov` and does not affect coverage.
 
 ### Five bugs found + fixed getting the CLI pipeline green (each TDD'd)

@@ -11,3 +11,5 @@ custom levels and formatters.
 .. automodule:: otto.logger.formatters
 
 .. automodule:: otto.logger.mode
+
+.. automodule:: otto.logger.management

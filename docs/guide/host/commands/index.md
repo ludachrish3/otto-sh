@@ -22,6 +22,12 @@ otto --lab my_lab host router1 run "cd /tmp" "ls -la"
 The host's built-in logging displays each command and its output as it runs --
 the same output you see inside instructions and test suites.
 
+From Python, `run` (and each per-command `ShellCommand`) accepts a `log`
+mode -- `normal`, `quiet`, or `never` -- controlling how command I/O reaches
+the console and the log files.  `quiet` keeps the command's I/O off the
+console (it is still recorded in `verbose.log`); `never` redacts it from
+every sink.  Warnings and errors are never suppressed by the log mode.
+
 ## Uploading files
 
 Transfer local files to a remote host with `put`:

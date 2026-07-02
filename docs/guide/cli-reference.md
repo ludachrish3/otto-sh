@@ -21,7 +21,7 @@ These options are available on every `otto` command:
 | `--list-labs` | | | List available lab names and exit |
 | `--list-hosts` | | | List host IDs in the loaded lab and exit |
 | `--show-lab` | | | Print full lab details and exit |
-| `--lab-depth` | | `3` | Depth for `--show-lab` output (0 = unlimited) |
+| `--lab-depth` | | `3` | Nesting depth for `--show-lab` output — how deep the lab's host details are expanded (0 = unlimited) |
 | `--clear-autocomplete-cache` | | | Delete the shell-completion cache file and exit |
 | `--version` | | | Show version and exit |
 | `--install-completion` | | | Install shell completion and exit |
@@ -40,6 +40,32 @@ The same rule applies to `--dry-run`, `--xdir`, `--log-level`, and every
 other option listed above.  Subcommand-specific options (like `--firmware`
 for a suite, or `--interval` for `monitor`) go **after** the subcommand.
 ```
+
+## Output directories
+
+Most commands create a per-invocation output directory under `--xdir`
+before the command body runs; the run's log files and artifacts are
+written there, and the path is printed at the end of the run
+(`Output directory: ...`):
+
+```text
+<xdir>/<command>/<timestamp>_<subcommand>/
+```
+
+- `<command>` is the top-level subcommand (`run`, `test`, `host`, ...)
+  and `<subcommand>` is the leaf — the instruction name, suite name, or
+  host verb.  Commands with no distinct leaf (`monitor`) omit the
+  suffix: `monitor/<timestamp>/`.
+- `<timestamp>` is UTC with millisecond precision
+  (`YYYYMMDD_HHMMSS_mmm`), so directories sort chronologically.
+- Hyphens in command names become underscores (`write-file` →
+  `write_file`).
+
+Read-only commands create no directory: `otto cov`, `otto reservation`,
+and `otto schema` opt out entirely, as do read-only host verbs such as
+`ls`, `exists`, `read-file`, `is-installed`, and `is-uninstalled`.
+Third-party commands control this with the `output_dir=` flag at
+registration — see {doc}`extending-cli`.
 
 ## otto run
 
@@ -64,6 +90,8 @@ Run registered test suites.
 ```text
 otto test [PARENT OPTIONS] <Suite> [SUITE OPTIONS]
 otto test --list-suites
+otto test --list-tests [--markers EXPR] [<Suite>]
+otto test --list-markers
 ```
 
 ### Parent options (before the suite name)
@@ -71,6 +99,8 @@ otto test --list-suites
 | Option | Default | Description |
 | ------ | ------- | ----------- |
 | `--list-suites` | | List test suites with run syntax and exit |
+| `--list-tests` | | List the selected tests and exit; narrow with a suite name and/or `--markers` |
+| `--list-markers` | | List the markers available to `--markers` and exit |
 | `--markers, -m EXPR` | `""` | Pytest marker expression (e.g. `"not integration"`) |
 | `--iterations, -i N` | `0` | Repeat each test N times in one setup/teardown cycle |
 | `--duration, -d SECONDS` | `0` | Repeat tests for SECONDS in one setup/teardown cycle |

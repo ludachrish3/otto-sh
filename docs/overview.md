@@ -49,6 +49,25 @@ calls).  `oneshot` runs each call independently of the persistent shell and
 of other concurrent `oneshot` calls, making it safe to fan out via
 `asyncio.gather()`.
 
+Every lab automatically contains a built-in `local` host — a
+{class}`~otto.host.local_host.LocalHost` for the machine otto itself runs
+on, usable as `otto host local <verb>` with no configuration.  It is
+excluded from lab-wide fleet helpers by default so a deploy or monitoring
+sweep never silently operates on the runner; see {doc}`guide/run` for the
+opt-in.
+
+### Results
+
+Host verbs report their outcome through the result family in
+{mod}`otto.result`: {meth}`~otto.host.host.Host.run` returns
+{class}`~otto.result.Results`, a sequence of one
+{class}`~otto.result.CommandResult` per command executed.  Truthiness
+follows success, never the payload — an empty-but-successful result is
+truthy, a failed result carrying output is falsy — so `if not result:` is
+the idiomatic failure check.  The CLI derives its exit codes from the same
+objects, ssh-style: a failing command's own return code, or 255 when the
+command never ran.
+
 ### Labs
 
 Hosts can be reached through intermediate **hops** — SSH jump hosts that
@@ -98,7 +117,8 @@ logger = get_logger()
 
 @instruction()
 async def deploy(
-    debug: Annotated[bool, typer.Option("--field/--debug")] = False,
+    debug: Annotated[bool, typer.Option("--field/--debug",
+        help="Use field or debug products.")] = False,
 ):
     for host in all_hosts():
         await host.run(["echo deploying", "make install"])
@@ -201,5 +221,7 @@ Monitoring can also be started from within a test suite using
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`guide/index` — Detailed guides for each CLI command
 - {doc}`guide/options` — Shared options classes for instructions and suites
+- {doc}`guide/extending-cli` — Registering your own top-level `otto` commands
 - {doc}`cookbook/index` — Recipes for common asyncio patterns
+- {doc}`architecture/index` — How otto is put together, for contributors and extenders
 - {doc}`api/index` — Full API reference for all otto packages

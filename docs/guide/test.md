@@ -119,6 +119,9 @@ otto --lab my_lab test TestDevice
 otto --lab my_lab test TestDevice --firmware 2.1
 otto --lab my_lab test TestDevice --no-check-interfaces
 otto test --list-suites                     # list suites with run syntax
+otto test --list-markers                    # list markers available to --markers
+otto test --list-tests                      # list every registered test
+otto test --list-tests --markers slow TestDevice   # narrow by marker and/or suite
 ```
 
 ## Parent command options

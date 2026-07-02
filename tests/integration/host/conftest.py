@@ -112,10 +112,13 @@ def _load_lab():
 # Embedded bed health gate
 #
 # `make coverage` runs the full embedded matrix against the live Zephyr QEMU
-# bed (behind the `zephyr` VM). When an instance wedges — typically e1000
-# net-buffer exhaustion under sustained load: the QEMU process stays alive and
-# accepts TCP on the telnet port, but the guest emits nothing, so otto's
-# readiness handshake fails with "shell never became ready" — every test
+# bed (behind the `zephyr` VM). When an instance wedges — the QEMU process
+# stays alive and accepts TCP on the telnet port, but the guest emits nothing,
+# so otto's readiness handshake fails with "shell never became ready"
+# (diagnosed 2026-06-06 as RST-close reconnect churn against the single-client
+# telnet slot; NOT e1000 net-buffer exhaustion, which earlier comments here
+# claimed — see tests/firmware/zephyr/common/otto-overlay.conf for the full
+# corrected diagnosis) — every test
 # routed to it burns the full 15s session-open ceiling (up to 600s for the
 # stability suite) before failing. Across the matrix that stalls the run past
 # the Makefile's 240s outer cap, which SIGKILLs the whole pipeline.

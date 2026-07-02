@@ -16,7 +16,7 @@ pip install otto-sh
 ```
 
 The distribution is named `otto-sh`; the command it installs is `otto`. To
-install an exact version, pin it: `pip install otto-sh==0.3.4`.
+install an exact version, pin it: `pip install otto-sh==0.5.4`.
 
 ### From source (development)
 
@@ -344,6 +344,12 @@ Verify otto can see your hosts:
 ```bash
 otto --lab my_lab --list-hosts
 ```
+
+Every lab also automatically contains a built-in `local` host — a
+{class}`~otto.host.local_host.LocalHost` that runs commands on the machine
+otto itself runs on, with no JSON entry needed — so
+`otto --lab my_lab host local run "uname -a"` always works.  Fleet helpers
+like `all_hosts()` exclude it by default; see {doc}`guide/run`.
 
 ## Your first instruction
 
