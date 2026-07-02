@@ -1,0 +1,45 @@
+diff --git a/subsys/fs/shell.c b/subsys/fs/shell.c
+index c09236ed..c23d192b 100644
+--- a/subsys/fs/shell.c
++++ b/subsys/fs/shell.c
+@@ -494,6 +494,16 @@ static int cmd_mount_fat(const struct shell *shell, size_t argc, char **argv)
+ 	char *mntpt;
+ 	int res;
+ 
++	/* Backport of the upstream (4.x) fix: guard before allocating so a
++	 * re-mount of an already-mounted filesystem cannot leak the
++	 * mntpt_prepare() buffer one invocation at a time.
++	 */
++	if (fatfs_mnt.mnt_point != NULL) {
++		shell_error(shell, "FAT fs already mounted at %s",
++			    fatfs_mnt.mnt_point);
++		return -EBUSY;
++	}
++
+ 	mntpt = mntpt_prepare(argv[1]);
+ 	if (!mntpt) {
+ 		shell_error(shell,
+@@ -506,6 +516,11 @@ static int cmd_mount_fat(const struct shell *shell, size_t argc, char **argv)
+ 	if (res != 0) {
+ 		shell_error(shell,
+ 			"Error mounting fat fs.Error Code [%d]", res);
++		/* Upstream fix: don't leak the mount-point buffer on a
++		 * failed mount.
++		 */
++		k_free(mntpt);
++		fatfs_mnt.mnt_point = NULL;
+ 		return -ENOEXEC;
+ 	}
+ 
+@@ -537,6 +552,11 @@ static int cmd_mount_littlefs(const struct shell *shell, size_t argc, char **arg
+ 
+ 	if (rc != 0) {
+ 		shell_error(shell, "Error mounting as littlefs: %d", rc);
++		/* Upstream fix: don't leak the mount-point buffer on a
++		 * failed mount.
++		 */
++		k_free(mntpt);
++		littlefs_mnt.mnt_point = NULL;
+ 		return -ENOEXEC;
+ 	}
+ 

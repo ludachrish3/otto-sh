@@ -251,10 +251,11 @@ Vagrant.configure("2") do |config|
                 fi
                 pip install --quiet -r zephyr/scripts/requirements.txt
 
-                # Apply any per-version source patch (only 2.7 carries one — the
-                # `retCode` shell line; see the zephyr VM provisioner). The glob is
-                # version-gated, so only the 2.7 iteration matches. Idempotent: the
-                # reverse-check skips an already-patched tree.
+                # Apply the per-version source patches from
+                # tests/firmware/zephyr/patches/ (see its README for the
+                # what/why of each). The glob is version-gated, so each
+                # iteration picks up only its own ${ZVER}-*.patch set.
+                # Idempotent: the reverse-check skips an already-patched tree.
                 for patch in /vagrant/tests/firmware/zephyr/patches/${ZVER}-*.patch; do
                     [ -f "${patch}" ] || continue
                     if git -C zephyr apply --reverse --check "${patch}" 2>/dev/null; then
@@ -525,15 +526,22 @@ VERS
 
                 # Apply any per-version source patches before building. otto's
                 # default is STOCK Zephyr (overlays only, no firmware code — see
-                # the build comment below), and 3.7 / 4.4 carry no patches. The
-                # one deliberate exception is Zephyr 2.7: its shell predates the
-                # `retval` command (and the shell core doesn't even track a last
-                # return value), so otto cannot read exit codes the way it does
-                # on 3.x. `v2_7-shell-retcode.patch` adds a single line to the
-                # shell's command-dispatch path to print `retCode = <n>` after
-                # every command; otto's ZephyrInlineRetcodeFrame parses that in
-                # place of `retval`. The glob is version-gated, so only the 2.7
-                # iteration finds a patch.
+                # the build comment below); the deliberate exceptions live in
+                # tests/firmware/zephyr/patches/ (README there has the full
+                # story per patch):
+                #   - v2_7-shell-retcode: 2.7's shell predates `retval`, so a
+                #     one-line patch prints `retCode = <n>` after every command
+                #     for otto's ZephyrInlineRetcodeFrame to parse.
+                #   - v3_7-e1000-rx-ring: multi-descriptor RX ring for the
+                #     qemu_x86 e1000 driver.
+                #   - v{2_7,3_7}-fs-shell-mount-leak: backport of the upstream
+                #     4.x fix — the fs-shell mount commands leaked their
+                #     k_malloc'd mount-point buffer on every failed mount
+                #     (guard before allocating + free on failure). This is
+                #     what slowly drained the FAT instance's 16 KB heap; 4.4
+                #     already ships the fix upstream.
+                # The glob is version-gated, so each iteration finds only its
+                # own version's patches.
                 #
                 # Idempotent: `git apply --reverse --check` succeeds only when
                 # the patch is ALREADY applied, so a re-provision against the

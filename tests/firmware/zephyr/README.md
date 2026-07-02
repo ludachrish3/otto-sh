@@ -14,6 +14,8 @@ behavior otto relies on comes from what the stock Zephyr shell already does.
 ```text
 common/
     otto-overlay.conf       # always-on bits: shell, networking, runtime stats
+patches/
+    <zver>-*.patch          # per-version Zephyr source patches (see its README)
 configs/
     v3_7_fat_ram/           # FAT on a RAM disk (the default for transfer tests)
         overlay.conf
