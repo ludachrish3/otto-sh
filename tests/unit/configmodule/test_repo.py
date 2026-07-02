@@ -104,8 +104,24 @@ def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
                 registry.unregister(name)
         return parked
 
+    def _park_repo1_suites() -> dict:
+        # Suites re-registered by an in-process `pytest.main([suite_file])`
+        # run (run_suite's mechanism) carry pytest's own module name as origin
+        # (e.g. "test_device"), not the `_otto_suite_*` auto-scan name — and
+        # @register_suite silently overwrites same-FILE re-registrations, so
+        # an origin-prefix park would miss them and the delta assertion would
+        # see no growth. Identify repo1 ownership by the entry's source file,
+        # which every origin flavor shares.
+        parked = {}
+        for name in list(SUITES.names()):
+            entry = SUITES.get(name)
+            if Path(entry.file).is_relative_to(repo1):
+                parked[name] = (entry, SUITES.origin(name))
+                SUITES.unregister(name)
+        return parked
+
     parked_instructions = _park(INSTRUCTIONS, "repo1_instructions")
-    parked_suites = _park(SUITES, "_otto_suite_")
+    parked_suites = _park_repo1_suites()
     evicted = {
         m: sys.modules.pop(m)
         for m in list(sys.modules)

@@ -59,9 +59,15 @@ def clean_registry():
     """
     parked = {}
     for name in list(SUITES.names()):
+        entry = SUITES.get(name)
         origin = SUITES.origin(name)
-        if origin.startswith("_otto_suite_"):
-            parked[name] = (SUITES.get(name), origin)
+        # Two origin flavors both mean "repo1's suite world": the auto-scan
+        # `_otto_suite_*` module names, AND pytest's own module names left by
+        # an in-process `pytest.main([suite_file])` run (run_suite), which
+        # @register_suite silently same-file-overwrites. Match by source file
+        # (all flavors share it) plus the auto-scan prefix for non-repo1 repos.
+        if origin.startswith("_otto_suite_") or Path(entry.file).is_relative_to(_REPO1_DIR):
+            parked[name] = (entry, origin)
             SUITES.unregister(name)
     evicted = {m: sys.modules.pop(m) for m in list(sys.modules) if m.startswith("_otto_suite_")}
     before_names = set(SUITES.names())
