@@ -127,13 +127,25 @@ def prepare_command_target(
     parameter annotated ``OttoContext`` is stripped from the CLI signature and
     injected at call time; an *options_cls* dataclass parameter is expanded
     into individual CLI flags.
+
+    Idempotent by contract, not coincidence: a callable this function already
+    wrapped is returned unchanged (sentinel attribute). The dispatch path
+    prepares twice — ``@cli_command`` at decoration, then
+    ``resolve_spec_command``'s function-loader branch, which serves every
+    function loader and can't know one was pre-prepared. Without the sentinel
+    that was safe only because ``_inject_ctx`` happens to strip the ctx
+    annotation that triggers it.
     """
+    if getattr(func, "__otto_cli_prepared__", False):
+        return func
     ctx_name = _ctx_param_name(func)
     target: Callable[..., Any] = func
     if ctx_name is not None:
         target = _inject_ctx(func, ctx_name)
     if options_cls is not None and dataclasses.is_dataclass(options_cls):
         target = _wrap_with_options(target, options_cls)
+    if target is not func:
+        target.__otto_cli_prepared__ = True  # ty: ignore[unresolved-attribute]
     return target
 
 
@@ -389,7 +401,7 @@ def try_ensure_lab(ctx: typer.Context) -> "OttoContext | None":
     """
     try:
         return ensure_lab_context(ctx)
-    except (typer.Exit, Exception):  # noqa: BLE001 — soft scoping probe: ANY failure → no scoping
+    except Exception:  # noqa: BLE001 — soft scoping probe: ANY failure (incl. typer.Exit, an Exception subclass) → no scoping
         return None
 
 
@@ -547,6 +559,12 @@ def make_registry_group(child_registry: "Registry[Any]") -> "type[TyperGroup]":
                 return static
             if cmd_name not in child_registry:
                 return None
+            # Converted-child cache with NO invalidation: fine for the CLI's
+            # one-shot process lifetime, but a same-file suite re-registration
+            # (sanctioned: overwrite=True within one module) that happens
+            # AFTER this group already converted the child would keep serving
+            # the earlier conversion. If long-lived embedders ever hit that,
+            # key the cache on the registry entry (or clear it on register).
             cache = getattr(self, "_child_cache", None) or {}
             self._child_cache = cache
             if cmd_name not in cache:

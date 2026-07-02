@@ -81,8 +81,9 @@ def _validate_transfer_for_family(v: str, family: str, host_label: str) -> str:
     if v not in TRANSFER_BACKENDS:
         known = ", ".join(sorted(TRANSFER_BACKENDS.names()))
         raise ValueError(f"transfer {v!r} is not a registered transfer backend. Known: {known}")
-    if family not in TRANSFER_BACKENDS.get(v).host_families:
-        fam = ", ".join(sorted(TRANSFER_BACKENDS.get(v).host_families))
+    families = TRANSFER_BACKENDS.get(v).host_families
+    if family not in families:
+        fam = ", ".join(sorted(families))
         raise ValueError(f"transfer {v!r} is not valid on {host_label} (it serves: {fam}).")
     return v
 
@@ -92,8 +93,9 @@ def _validate_term_for_family(v: str, family: str, host_label: str) -> str:
     if v not in TERM_BACKENDS:
         known = ", ".join(sorted(TERM_BACKENDS.names()))
         raise ValueError(f"term {v!r} is not a registered term backend. Known: {known}")
-    if family not in TERM_BACKENDS.get(v).host_families:
-        fam = ", ".join(sorted(TERM_BACKENDS.get(v).host_families))
+    families = TERM_BACKENDS.get(v).host_families
+    if family not in families:
+        fam = ", ".join(sorted(families))
         raise ValueError(f"term {v!r} is not valid on {host_label} (it serves: {fam}).")
     return v
 

@@ -29,6 +29,9 @@ def caller_module(depth: int = 1) -> str:
     for _ in range(depth + 1):
         frame = frame.f_back if frame is not None else None
     if frame is None:
+        # Defensive, deliberately untested: CPython always provides frames
+        # here; only exotic runtimes without frame introspection (or a depth
+        # beyond the stack) land on this. Origin degrades, nothing breaks.
         return "<unknown>"
     return frame.f_globals.get("__name__", "<unknown>")
 
@@ -60,6 +63,11 @@ class Registry(Generic[T]):
 
         *origin* attributes the entry (defaults to the caller's module); it is
         used in collision and listing messages.
+
+        Raises:
+            ValueError: If *name* is already registered and *overwrite* is
+                false; the message names both registering modules and ends
+                with this registry's collision hint.
         """
         entry_origin = origin if origin is not None else caller_module()
         if name in self._entries and not overwrite:
@@ -91,7 +99,11 @@ class Registry(Generic[T]):
             ) from None
 
     def unregister(self, name: str) -> None:
-        """Remove the entry registered under *name* (ValueError if unknown)."""
+        """Remove the entry registered under *name*.
+
+        Raises:
+            ValueError: If *name* is unknown (same rich error as :meth:`get`).
+        """
         self.get(name)  # reuse the rich unknown-name error
         del self._entries[name]
         del self._origins[name]
@@ -101,7 +113,11 @@ class Registry(Generic[T]):
         return list(self._entries)
 
     def origin(self, name: str) -> str:
-        """Return the module that registered *name* (ValueError if unknown)."""
+        """Return the module that registered *name*.
+
+        Raises:
+            ValueError: If *name* is unknown (same rich error as :meth:`get`).
+        """
         self.get(name)
         return self._origins[name]
 

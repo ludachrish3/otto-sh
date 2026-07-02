@@ -194,6 +194,11 @@ def register_host_class(
         logger.warning(f"register_host_class: overriding built-in host class {name!r}")
     # Last-writer-wins by design (see docstring) — always overwrite rather
     # than raise on re-registration.
+    #
+    # Three global writes with no rollback: all validation happened above, so
+    # only an interpreter-level failure (KeyboardInterrupt at the wrong
+    # instant) could leave the trio half-written. Registration runs at
+    # bootstrap in one thread; accepting that window keeps this simple.
     HOST_CLASSES.register(name, cls, overwrite=True, origin=caller_module())
     _HOST_SPECS[name] = spec
     # Auto-register a selector profile so os_type:<name> works immediately.

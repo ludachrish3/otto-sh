@@ -171,10 +171,13 @@ def resolve_cli_host(ctx: typer.Context) -> RemoteHost:
 
     Reproduces the construction the callback used to do inline: resolve the
     host by ID, validate/attach a ``--hop``, and apply ``--term`` / ``--transfer``
-    override-copies. An already-resolved ``ctx.obj`` (e.g. a test that installs a
-    host directly) is honoured as a fast path.
+    override-copies. An already-resolved ``ctx.obj`` is honoured as a fast path.
     """
     if ctx.obj is not None:
+        # Today ONLY test scaffolding pre-installs ctx.obj. Anything set here
+        # bypasses hop validation and the --term/--transfer override-copies
+        # below, so a future upstream writer (e.g. a group callback building
+        # the host early) must do that work itself or leave ctx.obj unset.
         return ctx.obj
 
     request = ctx.meta["_otto_host_request"]

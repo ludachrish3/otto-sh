@@ -171,6 +171,24 @@ class TestLiveAppHelpFallback:
         assert CLI_COMMANDS.get("bare").help is None
 
 
+def test_prepare_command_target_is_idempotent_by_contract():
+    """Double preparation must be identity, not a lucky no-op.
+
+    The dispatch path prepares @cli_command targets twice (decoration +
+    resolve_spec_command's function-loader branch). The sentinel guarantees
+    the second pass returns the SAME object even if the wrappers ever stop
+    erasing their own triggers (e.g. _inject_ctx preserving annotations).
+    """
+    from otto.cli.invoke import prepare_command_target
+    from otto.context import OttoContext
+
+    async def cmd(ctx: OttoContext, who: str = "x") -> None: ...
+
+    prepared = prepare_command_target(cmd)
+    assert prepared is not cmd  # ctx injection actually wrapped it
+    assert prepare_command_target(prepared) is prepared
+
+
 def test_collision_is_loud_and_names_both_origins():
     register_cli_command("clash", typer.Typer(name="clash"))
     with pytest.raises(ValueError, match="already registered") as ei:

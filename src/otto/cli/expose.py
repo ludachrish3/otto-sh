@@ -203,18 +203,6 @@ def iter_exposed_verbs() -> Iterable[tuple[str, str, str, Callable[..., Any]]]:
             yield cli_name, attr_name, help_text, fn
 
 
-def verb_creates_output_dir(cli_name: str) -> bool:
-    """Whether a host verb declares it needs a per-invocation output dir (default True).
-
-    Read from the global exposed-verb registry so the caller needn't resolve the
-    concrete host. A verb should declare ``output_dir`` consistently across classes.
-    """
-    for name, _attr, _help, fn in iter_exposed_verbs():
-        if name == cli_name:
-            return bool(getattr(fn, "__cli_output_dir__", True))
-    return True
-
-
 def _synthesize_command(
     cli_name: str, attr_name: str, help_text: str, sample_func: Callable[..., Any]
 ) -> Any:
