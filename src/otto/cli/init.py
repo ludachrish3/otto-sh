@@ -311,15 +311,131 @@ def _detect_instructions(root: Path) -> bool:
     return any((lib_dir / str(mod)).is_dir() for lib_dir in lib_dirs for mod in init_modules)
 
 
-def _validate_stub(root: Path) -> list[str]:  # noqa: ARG001 — filled in Task B4
+def _validate_settings(root: Path) -> list[str]:
+    """Parse+validate ``.otto/settings.toml`` the same way :meth:`Repo.parse_settings` does.
+
+    Reuses :class:`otto.models.settings.SettingsModel` directly (the same
+    model ``Repo.parse_settings`` calls ``model_validate`` on) rather than
+    re-implementing the schema. Problems are the ``pydantic.ValidationError``
+    text, one block per file, prefixed with the settings path.
+    """
+    from pydantic import ValidationError
+
+    from ..models.settings import SettingsModel
+
+    settings_path = root / ".otto" / "settings.toml"
+    try:
+        data = tomli.loads(settings_path.read_text())
+    except (tomli.TOMLDecodeError, OSError) as e:
+        return [f"{settings_path}: {e}"]
+    try:
+        SettingsModel.model_validate(data)
+    except ValidationError as e:
+        return [f"{settings_path}: {e}"]
     return []
 
 
+def _validate_lab(root: Path) -> list[str]:
+    """Validate every ``hosts.json`` under the settings' ``labs`` dirs via the real host factory.
+
+    Delegates each entry to :func:`otto.storage.factory.validate_host_dict` —
+    the same per-entry validation :class:`~otto.storage.json_repository.JsonFileLabRepository`
+    runs before ever constructing a host — so a bad ``os_type`` or field name
+    surfaces exactly the pydantic error otto's own lab loader would raise.
+    """
+    from ..storage.factory import validate_host_dict
+
+    paths = _settings_paths(root)
+    lab_dirs = paths["labs"] if paths is not None else [root / "lab_data"]
+    problems: list[str] = []
+    for lab_dir in lab_dirs:
+        hosts_file = lab_dir / "hosts.json"
+        if not hosts_file.is_file():
+            continue
+        try:
+            data = json.loads(hosts_file.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            problems.append(f"{hosts_file}: {e}")
+            continue
+        if not isinstance(data, list):
+            problems.append(f"{hosts_file}: must contain a JSON array, got {type(data).__name__}")
+            continue
+        for idx, host_data in enumerate(data):
+            try:
+                validate_host_dict(host_data)
+            except ValueError as e:  # noqa: PERF203 — per-item resilience, mirrors json_repository.py
+                problems.append(f"{hosts_file}: [{idx}] {e}")
+    return problems
+
+
+def _validate_tests(root: Path) -> list[str]:
+    """Light check of configured test dirs: existence, ``test_*.py`` presence, syntax.
+
+    Deliberately does NOT build a :class:`~otto.configmodule.repo.Repo` and
+    run :meth:`~otto.configmodule.repo.Repo.collect_tests` — that spins an
+    inner pytest collection pass (module-cache save/restore, event-loop
+    bookkeeping) which is too heavy for a doctor check. ``ast.parse`` catches
+    syntax errors without importing user code.
+    """
+    import ast
+
+    paths = _settings_paths(root)
+    tests_dirs = paths["tests"] if paths is not None else [root / "tests"]
+    problems: list[str] = []
+    for tests_dir in tests_dirs:
+        if not tests_dir.is_dir():
+            problems.append(f"tests dir not found: {tests_dir}")
+            continue
+        test_files = sorted(tests_dir.glob("test_*.py"))
+        if not test_files:
+            problems.append(f"no test files found under {tests_dir}")
+            continue
+        for test_file in test_files:
+            try:
+                ast.parse(test_file.read_text(), filename=str(test_file))
+            except SyntaxError as e:  # noqa: PERF203 — per-file resilience, mirrors json_repository.py
+                problems.append(f"{test_file}: {e}")
+    return problems
+
+
+def _validate_instructions(root: Path) -> list[str]:
+    """Check each configured ``init`` module resolves under some ``libs`` dir.
+
+    Path/module-layout checks only — never imports user code (init runs
+    lab-free and may run before ``OTTO_SUT_DIRS`` is set, so importing
+    arbitrary user modules from a doctor command would be a surprising
+    side effect).
+    """
+    settings_path = root / ".otto" / "settings.toml"
+    try:
+        data = tomli.loads(settings_path.read_text())
+    except (tomli.TOMLDecodeError, OSError) as e:
+        return [f"{settings_path}: {e}"]
+    init_modules = data.get("init", [])
+    if not isinstance(init_modules, list):
+        return [f"{settings_path}: 'init' must be a list"]
+    paths = _settings_paths(root)
+    lib_dirs = paths["libs"] if paths is not None else [root / "pylib"]
+    problems: list[str] = [
+        f"libs dir not found: {lib_dir}" for lib_dir in lib_dirs if not lib_dir.is_dir()
+    ]
+    for mod in init_modules:
+        mod_name = str(mod)
+        found = any(
+            (lib_dir / mod_name / "__init__.py").is_file() or (lib_dir / f"{mod_name}.py").is_file()
+            for lib_dir in lib_dirs
+        )
+        if not found:
+            searched = ", ".join(str(lib_dir) for lib_dir in lib_dirs)
+            problems.append(f"init module {mod_name} not found under libs ({searched})")
+    return problems
+
+
 AREAS: list[Area] = [
-    Area("settings", _detect_settings, _validate_stub, _scaffold_settings),
-    Area("lab", _detect_lab, _validate_stub, _scaffold_lab),
-    Area("tests", _detect_tests, _validate_stub, _scaffold_tests),
-    Area("instructions", _detect_instructions, _validate_stub, _scaffold_instructions),
+    Area("settings", _detect_settings, _validate_settings, _scaffold_settings),
+    Area("lab", _detect_lab, _validate_lab, _scaffold_lab),
+    Area("tests", _detect_tests, _validate_tests, _scaffold_tests),
+    Area("instructions", _detect_instructions, _validate_instructions, _scaffold_instructions),
 ]
 
 
@@ -387,3 +503,27 @@ async def init_command(
         for created in area.scaffold(root, cfg):
             typer.echo(f"created {created.relative_to(root)}")
         scaffolded.append(area.name)
+
+    from rich import print as rprint
+    from rich.table import Table
+
+    table = Table(title=f"otto init — {root}", show_header=True)
+    table.add_column("area")
+    table.add_column("status")
+    table.add_column("detail", overflow="fold")
+    failed = False
+    for area in AREAS:
+        if area.name in scaffolded:
+            table.add_row(area.name, "[green]scaffolded[/green]", "")
+        elif not area.detect(root):
+            table.add_row(area.name, "[yellow]skipped[/yellow]", "not requested")
+        else:
+            problems = area.validate(root)
+            if problems:
+                failed = True
+                table.add_row(area.name, "[red]✗[/red]", "\n".join(problems))
+            else:
+                table.add_row(area.name, "[green]✓[/green]", "")
+    rprint(table)
+    if failed:
+        raise typer.Exit(code=1)
