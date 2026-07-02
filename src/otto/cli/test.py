@@ -290,6 +290,18 @@ def _resolve_selection(
     return per_repo
 
 
+def _repos_with_marker_matches(repos: list[Repo], markers: str) -> list[Repo]:
+    """Filter to repos whose collection has >=1 item matching ``markers``.
+
+    Used by the ``-m``-alone branch of ``run_selection`` so a repo whose
+    suites don't carry the given marker never gets a pytest session of its
+    own — such a session would collect nothing and exit 5
+    (NO_TESTS_COLLECTED), which previously failed the whole multi-repo run
+    via ``worst = max(worst, rc)`` even when every other repo matched fine.
+    """
+    return [repo for repo in repos if repo.collect_tests(markers=markers or None)]
+
+
 async def _pre_run_cov_clean(repos: list[Repo], opts: TestRunOptions) -> None:
     """Pre-run cleanup of .gcda files on remotes, when --cov and --cov-clean.
 
@@ -496,7 +508,8 @@ def run_selection(ctx: typer.Context) -> None:
     if names:
         per_repo = _resolve_selection(repos, names, opts.markers)
     else:  # -m alone: marker expression over each repo's test dirs
-        per_repo = [(r, [str(d) for d in r.tests if d.exists()]) for r in repos]
+        matching_repos = _repos_with_marker_matches(repos, opts.markers)
+        per_repo = [(r, [str(d) for d in r.tests if d.exists()]) for r in matching_repos]
         per_repo = [(r, t) for r, t in per_repo if t]
 
     if not per_repo:
@@ -513,7 +526,14 @@ def run_selection(ctx: typer.Context) -> None:
     multi = len(per_repo) > 1
     for repo, targets in per_repo:
         default_junit = log_dir / (f"junit_{repo.name}.xml" if multi else "junit.xml")
-        results_path = opts.results or str(default_junit)
+        if opts.results and multi:
+            # A single explicit --results path would otherwise have every
+            # participating repo's session overwrite the last one's junit
+            # output. Fan out from the same stem instead: PATH -> PATH_repo.
+            results_source = Path(opts.results)
+            results_path = str(results_source.with_stem(f"{results_source.stem}_{repo.name}"))
+        else:
+            results_path = opts.results or str(default_junit)
         sut_test_dirs = [p for r in repos for p in r.tests]
         rc = _run_pytest_session(
             targets,
@@ -825,6 +845,13 @@ def main(  # noqa: PLR0913 — CLI command params
     """
     if ctx.resilient_parsing:
         return
+
+    if ctx.invoked_subcommand is not None and tests:
+        raise typer.BadParameter(
+            "--tests cannot be combined with a suite subcommand; run `otto test --tests ...` "
+            "without naming a suite, or narrow within the suite using -m",
+            param_hint="--tests",
+        )
 
     if list_tests:
         suite = ctx.invoked_subcommand

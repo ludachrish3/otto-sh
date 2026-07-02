@@ -113,6 +113,26 @@ def test_unknown_name_is_loud_with_suggestion(tmp_path: Path) -> None:
     assert "test_alpha_one" in combined
 
 
+def test_tests_flag_with_suite_subcommand_is_loud(tmp_path: Path) -> None:
+    # --tests is a suite-less-selection flag; combined with a suite
+    # subcommand it was previously silently discarded (the suite ran in
+    # full). That silent-discard contradicts this CLI's loud-error
+    # philosophy elsewhere (e.g. _resolve_selection's unknown-name handling)
+    # so it must now be a usage error instead.
+    repo = make_selection_repo(tmp_path)
+    xdir = tmp_path / "xdir"
+    xdir.mkdir()
+    r = run_otto(
+        ["test", "--tests", "test_alpha_one", "TestAlpha"],
+        xdir=xdir,
+        sut_dirs=repo,
+        lab="veggies",
+    )
+    combined = (r.stdout + r.stderr).lower()
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "--tests cannot be combined" in combined
+
+
 def test_bare_otto_test_still_shows_help(tmp_path: Path) -> None:
     repo = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
@@ -161,6 +181,53 @@ def test_multi_repo_selection_runs_one_session_per_repo(tmp_path: Path) -> None:
     assert names == {"junit_repoA.xml", "junit_repoB.xml"}
     for junit in junit_files:
         assert _testcase_count(junit) == 1
+
+
+def test_multi_repo_explicit_results_fans_out_per_repo(tmp_path: Path) -> None:
+    # An explicit --results path in a multi-repo selection must not have every
+    # repo's session clobber the same file — each participating repo's junit
+    # gets its own name derived from the --results stem.
+    repo_a = make_selection_repo(tmp_path, name="repoA", suite_src=PLAIN_SUITE_SRC)
+    repo_b = make_selection_repo(tmp_path, name="repoB", suite_src=PLAIN_SUITE_SRC, with_lab=False)
+    xdir = tmp_path / "xdir"
+    xdir.mkdir()
+    sut_dirs = f"{repo_a}{os.pathsep}{repo_b}"
+    results_path = xdir / "custom.xml"
+    r = run_otto(
+        ["test", "--tests", "test_plain_function", "--results", str(results_path)],
+        xdir=xdir,
+        lab="veggies",
+        extra_env={"OTTO_SUT_DIRS": sut_dirs},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    custom_files = sorted(xdir.glob("custom*.xml"))
+    names = {p.name for p in custom_files}
+    assert names == {"custom_repoA.xml", "custom_repoB.xml"}
+    for junit in custom_files:
+        assert _testcase_count(junit) == 1
+
+
+def test_marker_alone_skips_repos_without_matches(tmp_path: Path) -> None:
+    # repo_a's SUITE_SRC has @pytest.mark.shared tests; repo_b's PLAIN_SUITE_SRC
+    # has none. -m shared must only launch a session for repo_a — repo_b should
+    # never spin up a pytest session that collects nothing and exits rc=5.
+    repo_a = make_selection_repo(tmp_path, name="repoA")
+    repo_b = make_selection_repo(tmp_path, name="repoB", suite_src=PLAIN_SUITE_SRC, with_lab=False)
+    xdir = tmp_path / "xdir"
+    xdir.mkdir()
+    sut_dirs = f"{repo_a}{os.pathsep}{repo_b}"
+    r = run_otto(
+        ["test", "-m", "shared"],
+        xdir=xdir,
+        lab="veggies",
+        extra_env={"OTTO_SUT_DIRS": sut_dirs},
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    # Only repoA matched -> single participant -> plain junit.xml, not
+    # junit_repoA.xml (multi = len(per_repo) > 1 is False here).
+    [junit] = _junit_files(xdir)
+    assert junit.name == "junit.xml"
+    assert _testcase_count(junit) == 2
 
 
 def test_multi_repo_worst_exit_code_wins(tmp_path: Path) -> None:

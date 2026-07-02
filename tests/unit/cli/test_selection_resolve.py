@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import typer
 
-from otto.cli.test import _resolve_selection
+from otto.cli.test import _repos_with_marker_matches, _resolve_selection
 
 
 def _repo_with(collected: list[SimpleNamespace]) -> SimpleNamespace:
@@ -66,3 +66,24 @@ def test_repo_without_matches_is_omitted() -> None:
     resolved = _resolve_selection([empty, full], ["test_plain"], "")
     assert len(resolved) == 1
     assert resolved[0][0] is full
+
+
+def test_repos_with_marker_matches_omits_repo_without_marker_hits() -> None:
+    empty = _repo_with([])
+    full = _repo_with(ITEMS)
+    matched = _repos_with_marker_matches([empty, full], "shared")
+    assert matched == [full]
+
+
+def test_repos_with_marker_matches_keeps_all_when_all_match() -> None:
+    full_a = _repo_with(ITEMS)
+    full_b = _repo_with(ITEMS)
+    matched = _repos_with_marker_matches([full_a, full_b], "shared")
+    assert matched == [full_a, full_b]
+
+
+def test_repos_with_marker_matches_empty_when_none_match() -> None:
+    empty_a = _repo_with([])
+    empty_b = _repo_with([])
+    matched = _repos_with_marker_matches([empty_a, empty_b], "shared")
+    assert matched == []

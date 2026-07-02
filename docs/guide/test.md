@@ -129,9 +129,9 @@ otto test --list-tests --markers slow TestDevice   # narrow by marker and/or sui
 
 `otto test` doesn't require a suite subcommand. Passing `--tests` and/or
 `-m`/`--markers` alone selects tests by exact name and/or marker expression
-across **every** suite and repo, including plain pytest `test_*` functions
-(not just `OttoSuite` classes). Bare `otto test` with no suite name and
-neither flag just prints help.
+across every suite and repo that has a match, including plain pytest
+`test_*` functions (not just `OttoSuite` classes). Bare `otto test` with no
+suite name and neither flag just prints help.
 
 ```bash
 otto test --tests test_login                    # every test named test_login, any suite
@@ -148,8 +148,11 @@ otto test --tests test_login -m slow             # narrow a name selection by ma
 - `-m EXPRESSION` alone (no `--tests`, no suite name) runs the marker
   selection the same way — one pytest session per repo that has a match.
 - Multi-repo selection runs write one JUnit file per repo
-  (`junit_<repo>.xml`) instead of the single-suite `junit.xml`, unless
-  `--results` overrides the path.
+  (`junit_<repo>.xml`) instead of the single-suite `junit.xml`. An explicit
+  `--results PATH` fans out the same way: `PATH`'s stem gets `_<repo>`
+  appended for each participating repo (e.g. `--results custom.xml` becomes
+  `custom_repoA.xml`, `custom_repoB.xml`, ...), so multiple repos' sessions
+  never overwrite each other's results.
 - Stability (`--iterations`/`-i`, `--duration`/`-d`, `--threshold`),
   `--cov*`, `--monitor*`, and `--results` all apply to selection runs the
   same as to a named suite.
@@ -179,7 +182,8 @@ suite name on the command line (when a suite name is given at all — see
 
 `--markers / -m EXPRESSION`
 : Pytest marker expression.  Example: `--markers "not integration" TestDevice`.
-  With no suite name, runs the marker selection across every repo instead.
+  With no suite name, runs the marker selection in every repo that has a
+  match instead.
 
 `--tests NAME[,NAME...]`
 : Run specific tests by exact name, across all suites/repos — no suite

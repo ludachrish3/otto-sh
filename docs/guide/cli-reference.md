@@ -141,9 +141,10 @@ otto test --list-markers
 ```
 
 `--tests` and/or `--markers` with no suite name select across every suite
-and repo, including plain pytest `test_*` functions; bare `otto test` with
-neither flag and no suite name prints help.  See {doc}`test` for the full
-selection-run semantics, including how suite `Options` defaults are applied.
+and repo that has a match, including plain pytest `test_*` functions; bare
+`otto test` with neither flag and no suite name prints help.  See {doc}`test`
+for the full selection-run semantics, including how suite `Options` defaults
+are applied.
 
 ### Parent options (before the suite name)
 
@@ -152,7 +153,7 @@ selection-run semantics, including how suite `Options` defaults are applied.
 | `--list-suites` | | List test suites with run syntax and exit |
 | `--list-tests` | | List the selected tests and exit; narrow with a suite name and/or `--markers` |
 | `--list-markers` | | List the markers available to `--markers` and exit |
-| `--markers, -m EXPR` | `""` | Pytest marker expression (e.g. `"not integration"`). With no suite name, runs the marker selection across every repo |
+| `--markers, -m EXPR` | `""` | Pytest marker expression (e.g. `"not integration"`). With no suite name, runs the marker selection in every repo that has a match |
 | `--tests NAME[,NAME...]` | `""` | Run specific tests by exact name across all suites/repos, no suite name needed; `TestClass::name` disambiguates |
 | `--iterations, -i N` | `0` | Repeat each test N times in one setup/teardown cycle |
 | `--duration, -d SECONDS` | `0` | Repeat tests for SECONDS in one setup/teardown cycle |
