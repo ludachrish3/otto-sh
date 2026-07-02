@@ -91,7 +91,8 @@ fi
 # OPT_DEFAULT controls which option number is selected on empty input.
 OPT_NONE="None"
 OPT_CLAUDE_OPUS="Claude Opus 4.8"
-OPT_CLAUDE_SONNET="Claude Sonnet 4.6"
+OPT_CLAUDE_SONNET="Claude Sonnet 5"
+OPT_CLAUDE_FABLE="Claude Fable 5"
 OPT_CUSTOM="Custom"
 OPT_DEFAULT=1   # Options are 1-indexed
 
@@ -99,7 +100,8 @@ OPTIONS=(
     "$OPT_NONE"             # 1
     "$OPT_CLAUDE_OPUS"      # 2
     "$OPT_CLAUDE_SONNET"    # 3
-    "$OPT_CUSTOM"           # 4
+    "$OPT_CLAUDE_FABLE"     # 4
+    "$OPT_CUSTOM"           # 5
 )
 # ──────────────────────────────────────────────────────────────────────────────
 
