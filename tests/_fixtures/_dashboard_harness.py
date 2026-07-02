@@ -69,11 +69,28 @@ class DashboardHarness(Generic[C]):
         connections to drain — dashboard pages (and streaming test clients)
         hold /api/stream open indefinitely, which would otherwise stall
         graceful shutdown until keepalive timeouts fire.
+
+        force_exit only skips *waiting* for those connections; it does not
+        close them at the OS level (h11's shutdown path merely flips
+        keep_alive for a streaming response that never completes). A live
+        EventSource on the browser side would then never observe an error —
+        so before signaling shutdown, forcibly abort every open transport on
+        the server's loop. transport.abort() closes with an RST, which makes
+        the browser's EventSource.onerror fire promptly.
         """
         if self._thread is None:
             return
         uv_server = self.server._server
-        if uv_server is not None:
+        if uv_server is not None and self._loop is not None:
+            state = uv_server.server_state
+
+            def _abort_connections() -> None:
+                for conn in list(state.connections):
+                    transport = getattr(conn, "transport", None)
+                    if transport is not None:
+                        transport.abort()
+
+            self._loop.call_soon_threadsafe(_abort_connections)
             uv_server.force_exit = True
         self.server.stop()
         self._thread.join(timeout=10)
