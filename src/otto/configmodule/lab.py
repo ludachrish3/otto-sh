@@ -1,7 +1,5 @@
 """Lab dataclass and lab-loading utilities for assembling a host registry from lab data."""
 
-from __future__ import annotations
-
 from dataclasses import (
     dataclass,
     field,
@@ -33,12 +31,12 @@ class Lab:
     resources: set[str] = field(default_factory=set)
     """Resources required to reserve this lab."""
 
-    hosts: dict[str, Host] = field(default_factory=dict)
+    hosts: "dict[str, Host]" = field(default_factory=dict)
     """Host objects, keyed by unique host id."""
 
     def add_host(
         self,
-        host: Host,
+        host: "Host",
     ) -> None:
         """Add a Host object to the `Lab`'s dictionary of hosts.
 

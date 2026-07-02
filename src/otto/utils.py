@@ -1,7 +1,5 @@
 """Shared utilities: status enums, CLI overlay sentinels, and async helpers."""
 
-from __future__ import annotations
-
 import asyncio
 import functools
 from collections.abc import Callable, Coroutine

@@ -6,8 +6,6 @@ CLI (``otto docker build``) and directly from instructions/suites; both
 share the exact same code path so semantics never diverge.
 """
 
-from __future__ import annotations
-
 import shlex
 from collections.abc import Iterable
 

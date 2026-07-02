@@ -23,8 +23,6 @@ bare annotations, the instance attributes those shared methods rely on. Each
 concrete subclass supplies the real ``@dataclass`` fields.
 """
 
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, cast
@@ -182,11 +180,11 @@ class RemoteHost(BaseHost):
     stays :attr:`ip`; this map is additive and optional (empty by default).
     Resolve a name (or pass a literal through) with :meth:`address_for`."""
 
-    products: list[Product]
+    products: "list[Product]"
     """Software-under-test deployed to this host (see
     :attr:`~otto.host.host.BaseHost.products`)."""
 
-    power_control: PowerController | None
+    power_control: "PowerController | None"
     """Pluggable power backend (see :attr:`~otto.host.host.BaseHost.power_control`)."""
 
     # --- Connection-state contract ---------------------------------------
@@ -194,9 +192,9 @@ class RemoteHost(BaseHost):
     # ``ConnectionManager`` and a ``SessionManager``). Declared here as bare
     # annotations so the shared lifecycle below — ``_connected`` — type-checks
     # against every remote host.
-    _connections: ConnectionManager
-    _session_mgr: SessionManager
-    _lab: Lab | None
+    _connections: "ConnectionManager"
+    _session_mgr: "SessionManager"
+    _lab: "Lab | None"
 
     async def verify_connection(self) -> "CommandResult":  # pragma: no cover
         """Verify the host connection by running a diagnostic command.

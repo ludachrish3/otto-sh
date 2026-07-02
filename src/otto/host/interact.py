@@ -30,8 +30,6 @@ terminal is resized: SSH and telnet both need an out-of-band resize
 message because the remote kernel has no link to the local terminal.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import os

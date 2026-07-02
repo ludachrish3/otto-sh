@@ -20,8 +20,6 @@ Local-host parents and telnet parents are rejected at session-open time —
 the per-call ``oneshot`` path still works against any parent.
 """
 
-from __future__ import annotations
-
 import asyncio
 import shlex
 from dataclasses import (

@@ -14,8 +14,6 @@ from a ``.otto`` init module — the same extension hook
 :func:`otto.host.command_frame.register_command_frame` follows.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import ClassVar
 

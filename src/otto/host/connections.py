@@ -21,8 +21,6 @@ Inject a subclass via ``UnixHost._connection_factory`` to replace the real
 transport with a test double — no monkeypatching of library functions needed.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 from dataclasses import dataclass
@@ -98,7 +96,7 @@ def _build_tunneled_ftp_client_cls() -> type:
         override is only activated after the control connection is established.
         """
 
-        def __init__(self, hop: HopTransport, dest_host: str, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, hop: "HopTransport", dest_host: str, **kwargs: Any) -> None:  # type: ignore[no-untyped-def]
             super().__init__(**kwargs)
             self._hop = hop
             self._dest_host = dest_host
@@ -193,7 +191,7 @@ class ConnectionManager:
         user: str | None,
         term: str,
         name: str,
-        hop: HopTransport | None = None,
+        hop: "HopTransport | None" = None,
         ssh_options: SshOptions | None = None,
         telnet_options: TelnetOptions | None = None,
         sftp_options: SftpOptions | None = None,
@@ -210,9 +208,9 @@ class ConnectionManager:
         self._sftp_options = sftp_options or SftpOptions()
         self._ftp_options = ftp_options or FtpOptions()
 
-        self._ssh_conn: SSHClientConnection | None = None
-        self._sftp_conn: SFTPClient | None = None
-        self._ftp_conn: aioftp.Client | None = None
+        self._ssh_conn: "SSHClientConnection | None" = None
+        self._sftp_conn: "SFTPClient | None" = None
+        self._ftp_conn: "aioftp.Client | None" = None
         self._telnet_conn: TelnetClient | None = None
 
         # Concurrent callers of ``ssh()``/``telnet()``/``ftp()``/``sftp()``
@@ -291,7 +289,7 @@ class ConnectionManager:
         """Whether this connection manager is configured to use a tunnel."""
         return self._hop is not None
 
-    async def _ensure_tunnel(self) -> SSHClientConnection:
+    async def _ensure_tunnel(self) -> "SSHClientConnection":
         """Return the tunnel SSH connection, creating it via the hop transport if needed."""
         assert self._hop is not None  # noqa: S101 — internal invariant: callers must check has_tunnel before calling _ensure_tunnel()
         logger.debug(f"Establishing SSH tunnel for {self._name}")
@@ -311,7 +309,7 @@ class ConnectionManager:
         )
         return local_port
 
-    async def ssh(self) -> SSHClientConnection:
+    async def ssh(self) -> "SSHClientConnection":
         """Return the live SSH connection, opening it if needed."""
         if self._ssh_conn is not None:
             return self._ssh_conn
@@ -335,7 +333,7 @@ class ConnectionManager:
             logger.debug(f"Connected to {self._name} via SSH")
             return conn
 
-    async def sftp(self) -> SFTPClient:
+    async def sftp(self) -> "SFTPClient":
         """Return the live SFTP client, opening it (and SSH if needed) first."""
         if self._sftp_conn is not None:
             return self._sftp_conn
@@ -349,7 +347,7 @@ class ConnectionManager:
             logger.debug(f"SFTP client connected for {self._name}")
             return sftp
 
-    async def ftp(self) -> aioftp.Client:
+    async def ftp(self) -> "aioftp.Client":
         """Return the live FTP client, opening it if needed."""
         import aioftp
 

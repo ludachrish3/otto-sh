@@ -12,8 +12,6 @@ transport.  Closing a transport cascades to its parent, tearing down the
 entire chain from the outermost hop inward.
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
@@ -30,7 +28,7 @@ logger = get_logger()
 class HopTransport(Protocol):
     """Minimal interface that ``ConnectionManager`` needs from a hop."""
 
-    async def get_tunnel(self) -> SSHClientConnection:
+    async def get_tunnel(self) -> "SSHClientConnection":
         """Return the underlying SSH connection to the hop host."""
         ...
 
@@ -61,13 +59,13 @@ class SshHopTransport:
 
     def __init__(
         self,
-        factory: Callable[..., Awaitable[SSHClientConnection]],
-        parent: SshHopTransport | None = None,
+        factory: "Callable[..., Awaitable[SSHClientConnection]]",
+        parent: "SshHopTransport | None" = None,
     ) -> None:
         self._factory = factory
         self._parent = parent
-        self._conn: SSHClientConnection | None = None
-        self._port_forwards: list[SSHListener] = []
+        self._conn: "SSHClientConnection | None" = None
+        self._port_forwards: "list[SSHListener]" = []
         # Serialize tunnel creation: without this, concurrent callers that
         # find ``_conn is None`` each open their own SSH connection to the
         # hop and race to assign the slot. The losers are orphaned (no
@@ -76,7 +74,7 @@ class SshHopTransport:
         # ``ConnectionManager.ssh`` and ``SessionManager._ensure_session``.
         self._conn_lock = asyncio.Lock()
 
-    async def get_tunnel(self, _visited: set[str] | None = None) -> SSHClientConnection:
+    async def get_tunnel(self, _visited: set[str] | None = None) -> "SSHClientConnection":
         """Return the hop SSH connection, creating it via the factory if needed.
 
         ``_visited`` threads the cycle-detection set used by

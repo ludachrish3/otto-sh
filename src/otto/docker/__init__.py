@@ -17,8 +17,6 @@ See the design notes in ``docs/design/docker_hosts.md`` for the full
 architecture (parent-delegation pattern, hop inheritance, naming scheme).
 """
 
-from __future__ import annotations
-
 from ._context_hash import context_hash
 from .build import build_images, image_full_tag, image_latest_tag
 from .compose import (

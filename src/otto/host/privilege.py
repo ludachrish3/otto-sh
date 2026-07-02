@@ -20,8 +20,6 @@ the ``@dataclass(slots=True)`` hosts. Password sourcing is host-specific:
 :class:`~otto.host.unix_host.UnixHost` overrides them from ``creds``.
 """
 
-from __future__ import annotations
-
 import shlex
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -76,7 +74,7 @@ class PosixPrivilege:
     def _elevate(self, cmd: str) -> tuple[str, list["Expect"]]:
         wrapped = f"sudo -S -p '{_SUDO_PROMPT}' {cmd}"
         pw = self._sudo_password()
-        expects: list[Expect] = [] if pw is None else [(_SUDO_PROMPT, f"{pw}\n")]
+        expects: "list[Expect]" = [] if pw is None else [(_SUDO_PROMPT, f"{pw}\n")]
         return wrapped, expects
 
     async def switch_user(self, user: str = "", password: str | None = None) -> None:

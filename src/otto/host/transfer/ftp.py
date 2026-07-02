@@ -3,8 +3,6 @@
 Registers ``ftp`` into the shared transfer registry on import.
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Callable, Coroutine
 from pathlib import Path
@@ -31,7 +29,7 @@ from .unix_base import UnixFileTransfer
 _logger = get_logger()
 
 
-async def _ftp_size(ftp_conn: aioftp.Client, path: str) -> int:
+async def _ftp_size(ftp_conn: "aioftp.Client", path: str) -> int:
     """Return remote file size via the SIZE command, or 0 if unsupported.
 
     Avoids `aioftp.Client.stat()`, whose MLST→LIST fallback leaks a passive

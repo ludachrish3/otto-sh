@@ -10,8 +10,6 @@ The public surface (re-exported from :mod:`otto.docker`) is:
 - :func:`get_user_compose_project` — name a stack so concurrent runs don't collide.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import getpass

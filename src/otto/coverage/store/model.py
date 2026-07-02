@@ -13,8 +13,6 @@ defines the precedence of tiers for presentation purposes (first =
 highest precedence).
 """
 
-from __future__ import annotations
-
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -57,7 +55,7 @@ class LineHits:
             return self.total() > 0
         return self.for_tier(tier) > 0
 
-    def merge(self, other: LineHits) -> None:
+    def merge(self, other: "LineHits") -> None:
         """Additive merge — sum counts for every tier present in *other*."""
         for tier, count in other.counts.items():
             self.add(tier, count)
@@ -119,7 +117,7 @@ class BranchHits:
             return self.hits.is_hit()
         return self.hits.for_tier(tier) > 0
 
-    def merge(self, other: BranchHits) -> None:
+    def merge(self, other: "BranchHits") -> None:
         """Merge *other* into this branch, accumulating hits and updating reachability."""
         assert self.block == other.block  # noqa: S101 — internal invariant: callers must only merge matching branch keys
         assert self.branch == other.branch  # noqa: S101 — internal invariant: callers must only merge matching branch keys
@@ -150,7 +148,7 @@ class LineRecord:
     commit_author: str | None = None
     commit_summary: str | None = None
 
-    def merge(self, other: LineRecord) -> None:
+    def merge(self, other: "LineRecord") -> None:
         """Merge *other* into this line record, accumulating hits and branch data."""
         assert self.line_number == other.line_number  # noqa: S101 — internal invariant: callers must only merge matching line numbers
         self.hits.merge(other.hits)
@@ -183,7 +181,7 @@ class FileRecord:
             self.lines[line_number] = LineRecord(line_number=line_number)
         return self.lines[line_number]
 
-    def merge(self, other: FileRecord) -> None:
+    def merge(self, other: "FileRecord") -> None:
         """Merge *other* into this file record, combining per-line hits and branches."""
         assert self.path == other.path  # noqa: S101 — internal invariant: callers must only merge records for the same file path
         for lineno, other_line in other.lines.items():
@@ -336,7 +334,7 @@ class CoverageStore:
         path.write_text(json.dumps(data, indent=2))
 
     @classmethod
-    def load(cls, path: Path) -> CoverageStore:
+    def load(cls, path: Path) -> "CoverageStore":
         """Deserialise a store from JSON."""
         data = json.loads(path.read_text())
         # Tolerate both the new envelope shape and the legacy list-only

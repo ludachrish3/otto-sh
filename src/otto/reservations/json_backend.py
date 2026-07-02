@@ -23,8 +23,6 @@ File format (``version: 1``)::
 * ``expires`` is optional; past-dated entries are silently ignored.
 """
 
-from __future__ import annotations
-
 import json
 from datetime import datetime, timezone
 from pathlib import Path

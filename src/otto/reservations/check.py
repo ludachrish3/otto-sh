@@ -14,8 +14,6 @@ the CLI: it reads the per-invocation reservation state from Typer's
 bold-red skip warning when used, and otherwise runs the check.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -64,7 +62,7 @@ class MissingReservationError(Exception):
     """
 
 
-def required_resources(lab: Lab) -> set[str]:
+def required_resources(lab: "Lab") -> set[str]:
     """Return every resource identifier the lab needs.
 
     The union of the lab's own ``resources`` set and each host's
@@ -78,9 +76,9 @@ def required_resources(lab: Lab) -> set[str]:
 
 
 def check_reservations(
-    lab: Lab,
+    lab: "Lab",
     username: str,
-    backend: ReservationBackend,
+    backend: "ReservationBackend",
 ) -> None:
     """Raise :class:`MissingReservationError` if ``username`` does not cover ``lab``.
 

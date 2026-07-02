@@ -13,8 +13,6 @@ Both GCC and Clang families are supported:
   single command).
 """
 
-from __future__ import annotations
-
 import logging
 import re
 import shutil

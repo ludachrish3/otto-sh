@@ -10,8 +10,6 @@ under someone else's identity for weeks without realizing.  When
 banner so the override is impossible to miss.
 """
 
-from __future__ import annotations
-
 import getpass
 from dataclasses import dataclass
 from typing import Literal

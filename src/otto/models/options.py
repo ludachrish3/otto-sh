@@ -7,8 +7,6 @@ carry the library adapters, callables, and open ``extra`` dicts) are never
 modified here.
 """
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from pydantic import Field, field_validator

@@ -4,8 +4,6 @@ See :mod:`otto.reservations.protocol` for the backend contract and
 ``docs/guide/reservations.md`` for the end-user and implementer docs.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 

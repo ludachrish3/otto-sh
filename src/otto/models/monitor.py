@@ -21,8 +21,6 @@ the stdlib — no runtime or ``otto.monitor`` edge — so it stays a pure leaf i
 the models package.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any
 

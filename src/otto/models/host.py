@@ -8,8 +8,6 @@ their ``to_runtime()`` builders; embedded registry-name fields
 host registries at build time.
 """
 
-from __future__ import annotations
-
 from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, ClassVar

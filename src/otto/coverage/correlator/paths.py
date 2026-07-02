@@ -5,8 +5,6 @@ remote host those paths rarely match the local source tree — especially in
 cross-compilation scenarios.  This module handles the remapping.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from pathlib import Path

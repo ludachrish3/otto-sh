@@ -6,8 +6,6 @@ scope. Propagated via a ContextVar so the bare module accessors
 passing (OttoContext methods, open_context) is first-class.
 """
 
-from __future__ import annotations
-
 import asyncio
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
@@ -38,9 +36,9 @@ class HostScope:
     """
 
     def __init__(self) -> None:
-        self._hosts: list[RemoteHost] = []
+        self._hosts: "list[RemoteHost]" = []
 
-    def register(self, host: RemoteHost) -> None:
+    def register(self, host: "RemoteHost") -> None:
         """Add *host* to the scope for deferred close on exit, deduplicating by identity."""
         if any(host is h for h in self._hosts):  # dedup by object identity
             return

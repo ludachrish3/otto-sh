@@ -11,8 +11,6 @@ All four are thin wrappers around the library API in :mod:`otto.docker`,
 which is also what instructions and suites import directly.
 """
 
-from __future__ import annotations
-
 from typing import Annotated, Any
 
 import typer

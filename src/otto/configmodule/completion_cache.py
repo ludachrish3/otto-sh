@@ -85,8 +85,6 @@ A stale fingerprint is always safe: the fast path is skipped, the slow path
 runs as normal and rewrites the cache afterward.
 """
 
-from __future__ import annotations
-
 import contextlib
 import hashlib
 import inspect

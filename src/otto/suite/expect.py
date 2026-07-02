@@ -24,8 +24,6 @@ Or use the module-level convenience function::
     collector.raise_if_failures()
 """
 
-from __future__ import annotations
-
 import inspect
 import logging
 from pathlib import Path

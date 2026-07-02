@@ -15,8 +15,6 @@ Emitted documents (default):
 - ``reservations`` — for the reservations JSON file.
 """
 
-from __future__ import annotations
-
 import re
 from typing import Any
 

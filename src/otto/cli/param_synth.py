@@ -7,8 +7,6 @@ assigned ``__signature__`` reconstruct the bound-method call. Typer owns parsing
 help, validation, completion, and exit codes.
 """
 
-from __future__ import annotations
-
 import inspect
 import types
 import typing

@@ -17,8 +17,6 @@ crash is recovered from on the next stage). The directory layout is
 stable across runs so nothing leaks into per-invocation subdirs.
 """
 
-from __future__ import annotations
-
 import shlex
 import tarfile
 import tempfile

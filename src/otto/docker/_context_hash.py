@@ -15,8 +15,6 @@ This is correct even when the same image is needed on a different parent
 host — the hash only depends on inputs, not on the build host.
 """
 
-from __future__ import annotations
-
 import fnmatch
 import hashlib
 from collections.abc import Iterable

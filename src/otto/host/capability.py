@@ -6,8 +6,6 @@ resolved from that menu. One ``CapabilityResolver`` handles one field; it is
 stateless apart from the field name it carries for error messages.
 """
 
-from __future__ import annotations
-
 import re
 from collections.abc import Sequence
 from typing import Any

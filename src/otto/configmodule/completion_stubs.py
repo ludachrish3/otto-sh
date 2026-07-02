@@ -10,8 +10,6 @@ The rebuilt callbacks are never invoked. Only their ``__signature__`` is
 inspected by Click during completion.
 """
 
-from __future__ import annotations
-
 import inspect
 from pathlib import Path
 from typing import Annotated, Any

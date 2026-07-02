@@ -9,8 +9,6 @@ Sensible defaults (``sysroot='/'``, tools under ``usr/bin/``) mean
 hosts with system-installed toolchains need no configuration at all.
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from pathlib import Path

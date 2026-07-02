@@ -6,8 +6,6 @@ trouble through these types so callers and the conformance suite can rely on a
 stable surface instead of backend-specific exceptions.
 """
 
-from __future__ import annotations
-
 
 class LabRepositoryError(Exception):
     """A host-source backend failed to satisfy a query.

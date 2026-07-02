@@ -1,7 +1,5 @@
 """Async host abstraction: the Host protocol, BaseHost ABC, and run helpers."""
 
-from __future__ import annotations
-
 import asyncio
 import re
 from abc import ABC
@@ -259,7 +257,7 @@ class Host(Protocol):
     async def open_session(
         self,
         name: str,
-    ) -> HostSession:
+    ) -> "HostSession":
         """Open a named auxiliary session on this host.
 
         Named sessions are independent of the host's default persistent
@@ -650,7 +648,7 @@ class BaseHost(ABC):
     async def open_session(
         self,
         name: str,
-    ) -> HostSession:
+    ) -> "HostSession":
         """Open a named auxiliary session on this host. Subclasses must override."""
         raise NotImplementedError from None
 

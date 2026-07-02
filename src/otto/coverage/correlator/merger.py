@@ -5,8 +5,6 @@ executing them through :class:`~otto.host.local_host.LocalHost` so
 they are fully async with proper logging and timeout handling.
 """
 
-from __future__ import annotations
-
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -68,7 +66,7 @@ class LcovMerger:
         gcda_dir: Path,
         gcno_dir: Path,
         output: Path,
-        toolchain: Toolchain | None = None,
+        toolchain: "Toolchain | None" = None,
     ) -> Path:
         """Run ``lcov --capture`` on a single host's gcda directory.
 
@@ -110,7 +108,7 @@ class LcovMerger:
         self,
         info_files: list[Path],
         output: Path,
-        toolchain: Toolchain | None = None,
+        toolchain: "Toolchain | None" = None,
     ) -> Path:
         """Merge pre-captured ``.info`` files using ``lcov --add-tracefile``.
 
@@ -144,7 +142,7 @@ class LcovMerger:
         host_gcda_dirs: list[Path],
         gcno_dir: Path,
         work_dir: Path,
-        toolchains: list[Toolchain] | None = None,
+        toolchains: "list[Toolchain] | None" = None,
         gcno_dirs: list[Path] | None = None,
     ) -> Path:
         """Capture each host dir to ``.info``, then merge all.

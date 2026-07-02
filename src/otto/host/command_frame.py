@@ -35,8 +35,6 @@ from a ``.otto`` init module — the same extension hook
 :func:`otto.host.embedded_filesystem.register_filesystem` follows.
 """
 
-from __future__ import annotations
-
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass

@@ -11,8 +11,6 @@ from ``configmodule.repo`` are imported lazily inside ``to_runtime()`` and under
 ``TYPE_CHECKING`` for annotations only.
 """
 
-from __future__ import annotations
-
 import os
 import re
 from datetime import datetime, timezone
@@ -54,7 +52,7 @@ class DockerImageSpec(OttoModel):
     # is stringified below, rather than rejected at validation.
     build_args: dict[str, Any] = Field(default_factory=dict)
 
-    def to_runtime(self) -> DockerImage:
+    def to_runtime(self) -> "DockerImage":
         """Build the ``DockerImage`` runtime dataclass from the validated spec fields."""
         from ..configmodule.repo import DockerImage
 
@@ -82,7 +80,7 @@ class DockerComposeSpec(OttoModel):
     default_host: str | None = None
     services: tuple[str, ...] = ()
 
-    def to_runtime(self) -> DockerCompose:
+    def to_runtime(self) -> "DockerCompose":
         """Build the ``DockerCompose`` runtime dataclass from the validated spec fields."""
         from ..configmodule.repo import DockerCompose
 
@@ -105,7 +103,7 @@ class DockerSettingsSpec(OttoModel):
     images: list[DockerImageSpec] = Field(default_factory=list)
     composes: list[DockerComposeSpec] = Field(default_factory=list)
 
-    def to_runtime(self) -> DockerSettings:
+    def to_runtime(self) -> "DockerSettings":
         """Build the ``DockerSettings`` runtime dataclass from the validated spec fields."""
         from ..configmodule.repo import DockerSettings
 

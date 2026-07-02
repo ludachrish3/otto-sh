@@ -44,8 +44,6 @@ The interactive bridge (``_interact``) currently raises
 :class:`NotImplementedError`.
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path

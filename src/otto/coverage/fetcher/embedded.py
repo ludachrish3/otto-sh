@@ -17,8 +17,6 @@ The on-wire format, per source file::
     Gcov End
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from pathlib import Path
@@ -86,7 +84,7 @@ def decode_cov_dump(text: str) -> dict[str, bytes]:
 
 
 async def _collect_one_embedded_host(
-    host: EmbeddedHost,
+    host: "EmbeddedHost",
     dump_command: str,
     staging_root: Path,
 ) -> Path | None:

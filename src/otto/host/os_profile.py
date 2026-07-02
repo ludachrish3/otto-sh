@@ -51,8 +51,6 @@ subclasses :class:`~otto.host.embedded_host.EmbeddedHost`, declares Zephyr-
 specific defaults, and is registered under ``"zephyr"`` at module load.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -87,7 +85,7 @@ HOST_CLASSES: Registry[type] = Registry(
 # (not a Registry): it has no independent register_*/build_* public wrapper of
 # its own — it is always written in lockstep with HOST_CLASSES from inside
 # register_host_class, and tests reach into it directly via monkeypatch.setitem.
-_HOST_SPECS: dict[str, type[HostSpec]] = {}
+_HOST_SPECS: "dict[str, type[HostSpec]]" = {}
 
 
 @dataclass(frozen=True)
@@ -139,7 +137,7 @@ def _all_slots(cls: type) -> frozenset[str]:
 def register_host_class(
     name: str,
     cls: type,
-    spec: type[HostSpec] | None = None,
+    spec: "type[HostSpec] | None" = None,
 ) -> None:
     """Register a host class (and its boundary spec) so lab data can select it by ``os_type``.
 
@@ -207,7 +205,7 @@ def register_host_class(
     )
 
 
-def _nearest_registered_spec(cls: type) -> type[HostSpec] | None:
+def _nearest_registered_spec(cls: type) -> "type[HostSpec] | None":
     """Return the spec registered for the nearest base of *cls* in its MRO."""
     by_class = {HOST_CLASSES.get(n): _HOST_SPECS[n] for n in _HOST_SPECS}
     for base in cls.__mro__:
@@ -216,7 +214,7 @@ def _nearest_registered_spec(cls: type) -> type[HostSpec] | None:
     return None
 
 
-def build_host_spec(name: str) -> type[HostSpec]:
+def build_host_spec(name: str) -> "type[HostSpec]":
     """Return the ``HostSpec`` subclass registered under host-class *name* (raises on miss)."""
     try:
         return _HOST_SPECS[name]
@@ -228,7 +226,7 @@ def build_host_spec(name: str) -> type[HostSpec]:
         ) from None
 
 
-def registered_host_specs(*, builtins_only: bool = False) -> dict[str, type[HostSpec]]:
+def registered_host_specs(*, builtins_only: bool = False) -> "dict[str, type[HostSpec]]":
     """Return a shallow copy of the ``os_type`` → ``HostSpec`` subclass registry.
 
     Names are many-to-one (``embedded`` and ``zephyr`` both resolve to

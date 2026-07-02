@@ -8,8 +8,6 @@ registries (``register_term_backend`` / ``register_transfer_backend`` /
 path.
 """
 
-from __future__ import annotations
-
 from ..registry import Registry, caller_module
 from .errors import LabRepositoryError
 

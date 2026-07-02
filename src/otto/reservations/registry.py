@@ -7,8 +7,6 @@ registers a bare name from an ``init`` module, and ``[reservations] backend =
 import so they resolve through the same path.
 """
 
-from __future__ import annotations
-
 from ..registry import Registry, caller_module
 
 # Name -> ReservationBackend-compatible class. ``build_backend`` constructs the

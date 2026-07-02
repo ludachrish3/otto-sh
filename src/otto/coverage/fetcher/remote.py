@@ -5,8 +5,6 @@ which supports SCP, SFTP, FTP, and netcat with progress tracking and
 multi-hop SSH chains.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from pathlib import Path
@@ -22,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _clean_one_host(
-    host: UnixHost,
+    host: "UnixHost",
     gcda_remote_dir: str,
 ) -> None:
     """Delete .gcda files on a single host, logging the outcome."""
@@ -42,7 +40,7 @@ async def _clean_one_host(
 
 
 async def _fetch_one_host(
-    host: UnixHost,
+    host: "UnixHost",
     gcda_remote_dir: str,
     staging_root: Path,
 ) -> Path | None:

@@ -12,8 +12,6 @@ Key features:
 - Per-command timeout with Ctrl+C recovery
 """
 
-from __future__ import annotations
-
 import asyncio
 import re
 import uuid
@@ -602,7 +600,7 @@ class SshSession(ShellSession):
 
     def __init__(
         self,
-        conn: SSHClientConnection | None,
+        conn: "SSHClientConnection | None",
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
     ) -> None:
@@ -880,7 +878,7 @@ class _DockerSshSession(SshSession):
 
     def __init__(
         self,
-        conn_provider: Callable[[], Awaitable[SSHClientConnection]],
+        conn_provider: "Callable[[], Awaitable[SSHClientConnection]]",
         container_id_getter: Callable[[], str],
     ) -> None:
         super().__init__(conn=None)

@@ -35,8 +35,6 @@ Built-in variants
   ``mount_cmd``.
 """
 
-from __future__ import annotations
-
 from abc import ABC
 from typing import ClassVar
 

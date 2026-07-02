@@ -26,8 +26,6 @@ Typical usage from the ``otto cov`` CLI command::
     store = await reporter.run()
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from pathlib import Path
@@ -113,7 +111,7 @@ def read_cov_source_roots(cov_dirs: list[Path]) -> dict[str, Path]:
     return {host_id: Path(v) for host_id, v in raw.items()}
 
 
-def read_cov_toolchains(cov_dirs: list[Path]) -> dict[str, Toolchain]:
+def read_cov_toolchains(cov_dirs: list[Path]) -> "dict[str, Toolchain]":
     """Read per-host toolchain info from coverage metadata.
 
     Returns a mapping of host directory name → :class:`~otto.host.toolchain.Toolchain`.
@@ -127,7 +125,7 @@ def read_cov_toolchains(cov_dirs: list[Path]) -> dict[str, Toolchain]:
         return {}
 
     raw_toolchains: dict[str, Any] = meta.get("toolchains", {})
-    result: dict[str, Toolchain] = {}
+    result: "dict[str, Toolchain]" = {}
     for host_id, tc_data in raw_toolchains.items():
         kwargs = {}
         for key in ("sysroot", "lcov", "gcov"):
@@ -190,7 +188,7 @@ class CoverageReporter:
         source_root: Path,
         output_dir: Path,
         project_name: str = "Coverage Report",
-        toolchains: dict[str, Toolchain] | None = None,
+        toolchains: "dict[str, Toolchain] | None" = None,
         tiers: list[TierSpec] | None = None,
         source_roots: dict[str, Path] | None = None,
     ) -> None:
@@ -222,7 +220,7 @@ class CoverageReporter:
         """
         return [self.source_roots.get(d.name, self.source_root) for d in self.gcda_dirs]
 
-    async def _resolve_toolchains(self, work_dir: Path) -> list[Toolchain | None]:
+    async def _resolve_toolchains(self, work_dir: Path) -> "list[Toolchain | None]":
         """Build a per-gcda-dir list of toolchains.
 
         Resolution order for each directory:
@@ -233,8 +231,8 @@ class CoverageReporter:
         from ..host.local_host import LocalHost
         from ..host.toolchain_discovery import discover_toolchain_from_gcno
 
-        result: list[Toolchain | None] = []
-        discovered_fallback: Toolchain | None = None
+        result: "list[Toolchain | None]" = []
+        discovered_fallback: "Toolchain | None" = None
         fallback_computed = False
 
         for gcda_dir in self.gcda_dirs:
