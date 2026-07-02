@@ -37,6 +37,54 @@ def three_hosts():
     reset_context(token)
 
 
+@pytest.fixture
+def three_hosts_plus_local(three_hosts):
+    """Append the built-in ``local`` host the way ``load_lab`` injects it (last)."""
+    from otto.context import get_context
+    from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID, make_builtin_local_host
+
+    lab = get_context().lab
+    lab.add_host(make_builtin_local_host())
+    return {**three_hosts, BUILTIN_LOCAL_HOST_ID: lab.hosts[BUILTIN_LOCAL_HOST_ID]}
+
+
+class TestFleetExcludesBuiltinLocal:
+    """The fleet generators exclude the runner's built-in ``local`` host.
+
+    The built-in host exists for TARGETED use (``get_host("local")``,
+    ``otto host local <verb>``); it is not a lab SUT. Fleet iteration
+    including it made every deploy-to-all-hosts suite operate on the otto
+    runner itself — the coverage e2e placed ``test_clamp`` on ``hosts[-1]``
+    (= ``local``), whose .gcda the fetcher then (correctly) refused to
+    fetch, yielding zero system hits for clamp lines.
+    """
+
+    def test_all_hosts_excludes_local_by_default(self, three_hosts_plus_local):
+        ids = {h.id for h in all_hosts()}
+        assert ids == {"carrot_seed", "tomato_seed", "pepper_seed"}
+
+    def test_all_hosts_include_local_opt_in(self, three_hosts_plus_local):
+        ids = {h.id for h in all_hosts(include_local=True)}
+        assert "local" in ids
+
+    def test_pattern_matching_local_still_excluded_by_default(self, three_hosts_plus_local):
+        # The coverage suite's ^[^.]+$ fleet regex matches "local"; the type
+        # exclusion must win regardless of pattern.
+        ids = {h.id for h in all_hosts(pattern=re.compile(r"^[^.]+$"))}
+        assert "local" not in ids
+
+    @pytest.mark.asyncio
+    async def test_do_for_all_hosts_excludes_local(self, three_hosts_plus_local):
+        async def _id(host):
+            return host.id
+
+        results = await do_for_all_hosts(_id)
+        assert set(results) == {"carrot_seed", "tomato_seed", "pepper_seed"}
+
+    def test_get_host_still_resolves_local(self, three_hosts_plus_local):
+        assert get_host("local").id == "local"
+
+
 class TestAllHosts:
     def test_no_pattern_yields_all(self, three_hosts):
         """Default (None) returns every host."""

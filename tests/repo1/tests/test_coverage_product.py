@@ -128,7 +128,13 @@ class TestCoverageProduct(OttoSuite[_Options]):
 
         request.cls._hosts = list(all_hosts(_REAL_HOSTS))
 
-        await do_for_all_hosts(_install_on_host, pattern=_REAL_HOSTS)
+        install_results = await do_for_all_hosts(_install_on_host, pattern=_REAL_HOSTS)
+        failed = {h: r for h, r in install_results.items() if isinstance(r, BaseException)}
+        if failed:
+            # do_for_all_hosts collects exceptions as VALUES — an unchecked
+            # result dict silently turns a broken install into missing
+            # coverage downstream. Fail the suite loudly instead.
+            raise RuntimeError(f"Product install failed on: {failed}")
 
         yield
 

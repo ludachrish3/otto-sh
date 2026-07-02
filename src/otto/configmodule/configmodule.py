@@ -102,10 +102,11 @@ def _apply_option_overrides(
     return cast("RemoteHost", dataclasses.replace(host_any, **overrides))
 
 
-def all_hosts(
+def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_hosts)
     pattern: re.Pattern[str] | None = None,
     *,
     include_containers: bool = False,
+    include_local: bool = False,
     term: str | None = None,
     transfer: str | None = None,
     ssh_options: "SshOptions | None" = None,
@@ -126,6 +127,12 @@ def all_hosts(
     (e.g. ``otto monitor``, coverage collection); containers remain
     reachable for targeted use via tab completion and ``get_host``.
     Pass ``include_containers=True`` to yield container hosts as well.
+
+    The built-in ``local`` host (the machine otto itself runs on, injected
+    into every lab for targeted ``otto host local`` use) is likewise NOT part
+    of the fleet: a deploy/monitor/coverage sweep must never silently operate
+    on the runner. It stays reachable via ``get_host("local")``; pass
+    ``include_local=True`` to opt it into fleet iteration.
 
     Args:
         pattern: Compiled regex matched against each host's ``id`` via
@@ -168,6 +175,7 @@ def all_hosts(
     yield from get_context().all_hosts(
         pattern,
         include_containers=include_containers,
+        include_local=include_local,
         term=term,
         transfer=transfer,
         ssh_options=ssh_options,
@@ -185,6 +193,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
     pattern: re.Pattern[str] | None = None,
     concurrent: bool = True,
     include_containers: bool = False,
+    include_local: bool = False,
     term: str | None = None,
     transfer: str | None = None,
     ssh_options: "SshOptions | None" = None,
@@ -206,6 +215,8 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
             When ``False``, execute serially.
         include_containers: Forwarded to :func:`all_hosts`. When
             ``False`` (default), container hosts are excluded.
+        include_local: Forwarded to :func:`all_hosts`. When ``False``
+            (default), the built-in ``local`` runner host is excluded.
         term, transfer: optional active-protocol override; see
             ``_apply_option_overrides``.
         ssh_options, telnet_options, sftp_options, scp_options,
@@ -238,6 +249,7 @@ async def do_for_all_hosts(  # noqa: PLR0913 — wide host-dispatch API
         pattern=pattern,
         concurrent=concurrent,
         include_containers=include_containers,
+        include_local=include_local,
         term=term,
         transfer=transfer,
         ssh_options=ssh_options,

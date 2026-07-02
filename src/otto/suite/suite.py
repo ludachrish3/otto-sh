@@ -384,7 +384,10 @@ class OttoSuite(Generic[TOptions]):
 
         from ..configmodule import all_hosts
 
-        for host in all_hosts():
+        # include_local: this teardown flushes sessions (which is what makes
+        # remotes write .gcda) — close everything the suite may have touched,
+        # including the built-in local host, even though it isn't fleet.
+        for host in all_hosts(include_local=True):
             try:
                 await host.close()
             except Exception as exc:  # noqa: PERF203,BLE001 — per-item teardown resilience, best-effort host close

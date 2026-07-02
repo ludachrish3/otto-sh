@@ -97,7 +97,9 @@ def _resolve_host(host_id: str) -> UnixHost:
     except KeyError:
         rprint(f"[red]Error:[/red] No host with ID '{host_id}'.")
         rprint("Available hosts:")
-        for h in all_hosts(include_containers=True):
+        # include_local: `local` IS a valid `otto host` target — this listing
+        # enumerates addressable hosts, not the fleet.
+        for h in all_hosts(include_containers=True, include_local=True):
             rprint(f"  - {h.id}")
         raise typer.Exit(1) from None
 

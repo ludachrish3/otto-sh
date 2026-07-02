@@ -116,16 +116,28 @@ class OttoContext:
         pattern: "re.Pattern[str] | None" = None,
         *,
         include_containers: bool = False,
+        include_local: bool = False,
         **overrides: Any,
     ) -> "Iterator[RemoteHost]":
-        """Yield all hosts in the lab, optionally filtered by *pattern* and keyword overrides."""
+        """Yield all hosts in the lab, optionally filtered by *pattern* and keyword overrides.
+
+        The built-in ``local`` host (the machine otto runs on, injected by
+        ``load_lab`` for targeted ``otto host local`` use) is NOT part of the
+        fleet: deploy/monitor/coverage sweeps must never silently operate on
+        the runner itself, and it is not a ``RemoteHost``. Pass
+        ``include_local=True`` to opt it in; ``get_host("local")`` always
+        resolves it.
+        """
         from .configmodule.configmodule import _apply_option_overrides
         from .host.docker_host import DockerContainerHost
+        from .host.local_host import LocalHost
 
         for host in self.lab.hosts.values():
             if pattern is not None and not pattern.search(host.id):
                 continue
             if not include_containers and isinstance(host, DockerContainerHost):
+                continue
+            if not include_local and isinstance(host, LocalHost):
                 continue
             resolved = _apply_option_overrides(cast("Any", host), **overrides)
             self.scope.register(resolved)
@@ -138,6 +150,7 @@ class OttoContext:
         pattern: "re.Pattern[str] | None" = None,
         concurrent: bool = True,
         include_containers: bool = False,
+        include_local: bool = False,
         term: "str | None" = None,
         transfer: "str | None" = None,
         ssh_options: "Any" = None,
@@ -153,12 +166,15 @@ class OttoContext:
         When *concurrent* is ``True`` (default), all calls are gathered in
         parallel via ``asyncio.gather``; exceptions from individual hosts are
         captured as values rather than propagated. When ``False``, hosts are
-        called sequentially and exceptions are likewise captured.
+        called sequentially and exceptions are likewise captured. Fleet
+        membership follows :meth:`all_hosts` — the built-in ``local`` host is
+        excluded unless ``include_local=True``.
         """
         hosts = list(
             self.all_hosts(
                 pattern=pattern,
                 include_containers=include_containers,
+                include_local=include_local,
                 term=term,
                 transfer=transfer,
                 ssh_options=ssh_options,
