@@ -505,6 +505,8 @@ async def init_command(
             typer.echo(f"created {created.relative_to(root)}")
         scaffolded.append(area.name)
 
+    import re
+
     from rich import print as rprint
     from rich.table import Table
 
@@ -512,7 +514,11 @@ async def init_command(
 
     steps: list[str] = []
     current = os.environ.get(SUT_DIRS_ENV_VAR, "")
-    if str(root) not in current.split(","):
+    # Split on comma OR os.pathsep (colon on Linux), matching configmodule.env
+    # and settings.OttoEnvSettings convention, then strip each segment
+    current_sep = re.compile(rf"[,{re.escape(os.pathsep)}]")
+    current_dirs = [p.strip() for p in current_sep.split(current) if p.strip()]
+    if str(root) not in current_dirs:
         steps.append(f"export {SUT_DIRS_ENV_VAR}={root}")
     steps.append("otto --install-completion")
     steps.append("otto --lab example_lab --list-hosts")

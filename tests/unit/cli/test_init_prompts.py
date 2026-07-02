@@ -1,5 +1,6 @@
 """otto init prompt/flag semantics."""
 
+import os
 from pathlib import Path
 
 import typer
@@ -98,3 +99,15 @@ def test_second_run_is_pure_report(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert hosts.stat().st_mtime_ns == mtime
     assert "scaffolded" not in result.output  # nothing new was written
+
+
+def test_epilogue_skips_sut_dirs_when_pathsep_separated(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else{os.pathsep}{tmp_path}")
+    result = runner.invoke(_app(), ["--all", "--name", "widget", "--path", str(tmp_path)])
+    assert "export OTTO_SUT_DIRS" not in result.output
+
+
+def test_epilogue_skips_sut_dirs_when_comma_space_separated(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OTTO_SUT_DIRS", f"/somewhere/else, {tmp_path}")
+    result = runner.invoke(_app(), ["--all", "--name", "widget", "--path", str(tmp_path)])
+    assert "export OTTO_SUT_DIRS" not in result.output
