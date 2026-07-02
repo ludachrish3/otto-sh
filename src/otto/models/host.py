@@ -12,7 +12,7 @@ from ipaddress import ip_address
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from typing_extensions import override
 
 from ..host.binary_loader import build_binary_loader
@@ -165,6 +165,19 @@ class HostSpec(OttoModel):
     # Lab membership — validated (so a `lab`/`labs` typo errors) but NOT a host
     # constructor argument; the repository uses it to filter hosts into a Lab.
     labs: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_comment_keys(cls, data: object) -> object:
+        """Drop ``_``-prefixed keys before validation — the JSON comment idiom.
+
+        hosts.json cannot carry real comments, so keys like ``_comment`` are
+        sanctioned annotation space. Only the leading-underscore form is
+        exempt from ``extra='forbid'``; any other unknown key still errors.
+        """
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items() if not (isinstance(k, str) and k.startswith("_"))}
+        return data
 
     @field_validator("interfaces")
     @classmethod
