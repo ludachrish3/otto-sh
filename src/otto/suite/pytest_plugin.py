@@ -23,10 +23,30 @@ class OttoOptionsPlugin:
     def __init__(self, options: Any | None) -> None:
         self.options = options
 
-    @pytest.fixture(scope="session")
-    def suite_options(self) -> Any:
-        """Return the Options dataclass instance populated from CLI arguments."""
-        return self.options
+    @pytest.fixture(scope="class")
+    def suite_options(self, request: pytest.FixtureRequest) -> Any:
+        """Return the suite's Options instance.
+
+        Single-suite runs (``otto test <SuiteName> --flags``) pass the
+        CLI-built instance in — returned as-is. Selection runs
+        (``otto test --tests ...`` / ``-m ...``) span suites, so each suite's
+        ``Options`` is default-constructed once per class; required fields
+        make the suite's tests fail with a pointer at the single-suite form.
+        """
+        if self.options is not None:
+            return self.options
+        cls = getattr(request, "cls", None)
+        opts_cls = getattr(cls, "Options", None) if cls is not None else None
+        if opts_cls is None:
+            return None
+        try:
+            return opts_cls()
+        except Exception as exc:  # noqa: BLE001 — opts_cls() may raise pydantic ValidationError, TypeError, or any other construction error; all are reported as a missing-options hint
+            pytest.fail(
+                f"suite {cls.__name__!r} has required options — "
+                f"run `otto test {cls.__name__} ...` to pass them ({exc})",
+                pytrace=False,
+            )
 
     @pytest.fixture
     def ctx(self) -> Any:
