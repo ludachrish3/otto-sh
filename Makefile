@@ -77,7 +77,7 @@ M_HOSTLESS := not integration and not embedded and not stability and not browser
 # that dedicated process; every multi-tier selection below that would
 # otherwise co-select browser + async tests in one pytest invocation
 # (`coverage`, `repeat`) excludes `browser` and, for `coverage`, chains
-# `make dashboard` separately so the gate still covers those tests overall.
+# `make dashboard` separately so the gate still runs those tests overall.
 
 # Hard ceiling on the pytest invocation so a hung test (e.g. an integration
 # test waiting on an unreachable VM) can't stall the pipeline indefinitely.

@@ -26,7 +26,7 @@ def test_historical_mode_chrome(
     expect(page.locator("body")).to_have_class("historical")
     expect(page.locator("#host-select option")).to_have_text(["historical"])
     expect(page.locator("#pause-btn")).to_be_disabled()
-    # DISCREPANCY vs. the brief: MetricCollector.from_json(...) (collector.py
+    # KNOWN-GAP: Discrepancy vs. the brief: MetricCollector.from_json(...) (collector.py
     # from_json, used verbatim by `otto monitor --file x.json` in
     # cli/monitor.py's _load_historical) constructs the collector with
     # hosts=[], so __init__ (collector.py ~125-164) builds zero MonitorTargets

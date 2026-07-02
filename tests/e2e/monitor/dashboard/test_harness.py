@@ -8,6 +8,7 @@ contract the Phase 1 backend refactor and Phase 2 React port build against.
 import http.client
 import json
 import urllib.request
+from datetime import datetime
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -55,6 +56,9 @@ def test_data_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
     # Points carry ts/value always; meta only when present (exclude_none).
     point_keys = {k for pts in data["series"].values() for p in pts for k in p}
     assert {"ts", "value"} <= point_keys <= {"ts", "value", "meta"}
+    # Pin the wire format, not just the key set: ts must stay ISO-8601.
+    first_point = next(p for pts in data["series"].values() for p in pts)
+    datetime.fromisoformat(first_point["ts"].replace("Z", "+00:00"))
     assert all(set(e) == EVENT_KEYS for e in data["events"])
 
 
@@ -81,6 +85,8 @@ def test_sse_stream_delivers_metric_messages(
     assert set(payload) == SSE_METRIC_KEYS
     assert payload["type"] == "metric"
     assert payload["key"] == "host1/Overall CPU"
+    # Pin the wire format, not just the key set: ts must stay ISO-8601.
+    datetime.fromisoformat(payload["ts"].replace("Z", "+00:00"))
 
 
 def test_historical_fixture_loads(historical_dash: DashboardHarness[MetricCollector]) -> None:
