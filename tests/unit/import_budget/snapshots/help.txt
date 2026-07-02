@@ -1,5 +1,4 @@
 otto
-otto.bootstrap
 otto.cli
 otto.cli.builtin_commands
 otto.cli.invoke

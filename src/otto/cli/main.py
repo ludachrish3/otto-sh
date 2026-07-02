@@ -17,11 +17,11 @@ from typing_extensions import override
 
 from ..configmodule import (
     get_completion_names,
-    get_env,
     get_repos,
 )
 from ..configmodule.env import (
     DEFAULT_LOG_RETENTION_DAYS,
+    FIELD_DEFAULT_ENV_VAR,
     FIELD_PRODUCT_ENV_VAR,
     LAB_ENV_VAR,
     LOG_DAYS_ENV_VAR,
@@ -45,10 +45,12 @@ __version__ = get_version()
 # Uncomment the line below to remove rich help menu formatting globally
 # typer.core.HAS_RICH = False  # noqa: ERA001 — intentional documented escape-hatch example
 
-_field_default = get_env().field_default is not None
+_field_default = os.environ.get(FIELD_DEFAULT_ENV_VAR) is not None
 """Determines the default for debug or field. If OTTO_FIELD_DEFAULT is set to
-anything at all, then field is the default. Read once at import via the startup
-env singleton (get_env())."""
+anything at all, then field is the default. A bare env-presence check —
+deliberately NOT ``get_env()``, which runs repo discovery: importing the CLI
+must never parse repo settings, or a malformed ``settings.toml`` would brick
+``otto --help`` before argv is even seen."""
 
 DESCRIPTION = f"""
 O.T.T.O. (Our Trusty Testing Orchestrator)
@@ -515,11 +517,24 @@ def entry() -> None:
     from ..configmodule.completion_cache import is_completion_mode, read_cache
 
     if is_completion_mode():
-        _env, repos = bs.discover()
-        bs.set_completion_names(read_cache(repos))
+        # Completion must never traceback into the shell: any discovery
+        # failure just leaves the cache unset and falls through to the
+        # slow path below.
+        with contextlib.suppress(Exception):
+            _env, repos = bs.discover()
+            bs.set_completion_names(read_cache(repos))
 
     if bs.get_completion_names() is None:
-        result = bs.bootstrap()
+        try:
+            result = bs.bootstrap()
+        except (FileNotFoundError, ValueError) as e:
+            # Env-level discovery failure (bad OTTO_SUT_DIRS / OTTO_* values;
+            # pydantic validation errors are ValueErrors): nothing user-specific
+            # can load, so there is no degraded help worth rendering — fail
+            # loud but CLEAN (one line, no traceback). Per-repo config-data
+            # errors never reach here; discover() contains those.
+            typer.echo(f"error: {e}", err=True)
+            raise SystemExit(1) from e
         for err in result.errors:
             typer.echo(f"warning: {err}", err=True)
         from ..configmodule.completion_cache import (

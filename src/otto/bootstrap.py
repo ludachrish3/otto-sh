@@ -42,19 +42,34 @@ class BootstrapResult:
 
 
 _discovered: "tuple[OttoEnvSettings, list[Repo]] | None" = None
+_discovery_errors: list[BootstrapError] = []
 _result: BootstrapResult | None = None
 _completion_names: dict[str, Any] | None = None
 
 
 def discover() -> "tuple[OttoEnvSettings, list[Repo]]":
-    """Phase 1: env + repo discovery (settings parse only — no user code). Cached."""
+    """Phase 1: env + repo discovery (settings parse only — no user code). Cached.
+
+    Per-repo config-data failures (unreadable or malformed ``settings.toml``)
+    get the same containment as phase-2 user-code failures: the repo is
+    skipped and a framed :class:`BootstrapError` is recorded, surfacing via
+    ``bootstrap().errors`` (help degrades, real dispatch fails loud).
+    Env-level failures (bad ``OTTO_SUT_DIRS`` / OTTO_* values) still raise —
+    with no environment there is nothing to degrade to.
+    """
     global _discovered  # noqa: PLW0603 — module-level singleton/cache
     if _discovered is None:
         from .configmodule.env import load_otto_env
-        from .configmodule.repo import get_repos
+        from .configmodule.repo import TOML_SETTINGS_PATH, Repo
 
         env = load_otto_env()
-        _discovered = (env, get_repos(env.sut_dirs))
+        repos: list[Repo] = []
+        for sut_dir in env.sut_dirs:
+            try:
+                repos.append(Repo(sut_dir=sut_dir))
+            except Exception as e:  # noqa: PERF203,BLE001 — containment seam: per-item resilience, ANY config-data failure becomes a framed error
+                _discovery_errors.append(BootstrapError(sut_dir, str(TOML_SETTINGS_PATH), e))
+        _discovered = (env, repos)
     return _discovered
 
 
@@ -64,7 +79,7 @@ def bootstrap() -> BootstrapResult:
     if _result is not None:
         return _result
     env, repos = discover()
-    errors: list[BootstrapError] = []
+    errors: list[BootstrapError] = list(_discovery_errors)
     for repo in repos:
         repo.add_libs_to_pythonpath()
         for mod in repo.init:
@@ -94,7 +109,8 @@ def get_completion_names() -> "dict[str, Any] | None":
 
 def _reset() -> None:
     """Clear all bootstrap state (test hook)."""
-    global _discovered, _result, _completion_names  # noqa: PLW0603 — module-level singleton/cache
+    global _discovered, _discovery_errors, _result, _completion_names  # noqa: PLW0603 — module-level singleton/cache
     _discovered = None
+    _discovery_errors = []
     _result = None
     _completion_names = None
