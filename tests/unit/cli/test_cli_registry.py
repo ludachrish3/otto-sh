@@ -102,6 +102,75 @@ def test_lazy_module_attr_loader_imports_only_on_resolve(tmp_path, monkeypatch):
     assert "go" in cmd.commands
 
 
+class TestLiveAppHelpFallback:
+    """``help=`` omitted for a LIVE Typer app → the app's own help flows into
+    the spec (the single source of truth for root help + the completion cache).
+    Lazy string loaders have nothing to read without importing — they keep
+    ``help=None`` and render the placeholder."""
+
+    def test_app_help_flows_into_spec(self):
+        app = typer.Typer(name="mytool", help="My tool does things.")
+
+        @app.command()
+        def one() -> None: ...
+
+        @app.command()
+        def two() -> None: ...
+
+        register_cli_command("mytool", app)
+        assert CLI_COMMANDS.get("mytool").help == "My tool does things."
+
+    def test_group_callback_docstring_flows_into_spec(self):
+        app = typer.Typer(name="cbtool")
+
+        @app.callback()
+        def main() -> None:
+            """Callback-doc help."""
+
+        @app.command()
+        def sub() -> None: ...
+
+        register_cli_command("cbtool", app)
+        assert CLI_COMMANDS.get("cbtool").help == "Callback-doc help."
+
+    def test_flattened_single_command_app_uses_its_commands_help(self):
+        # The monitor shape: the flattened leaf IS the command, so its help
+        # (here the function docstring) is what native add_typer would show.
+        app = typer.Typer(name="solo")
+
+        @app.command()
+        def solo() -> None:
+            """Run the solo thing."""
+
+        register_cli_command("solo", app)
+        assert CLI_COMMANDS.get("solo").help == "Run the solo thing."
+
+    def test_explicit_help_wins_over_app_help(self):
+        app = typer.Typer(help="App help.")
+
+        @app.command()
+        def c() -> None: ...
+
+        register_cli_command("expl", app, help="Explicit help.")
+        assert CLI_COMMANDS.get("expl").help == "Explicit help."
+
+    def test_string_loader_without_help_stays_none(self):
+        register_cli_command("lazystr", "fake_pkg.nonexistent:app")
+        assert CLI_COMMANDS.get("lazystr").help is None
+
+    def test_helpless_app_stays_none(self):
+        app = typer.Typer(name="bare")
+
+        @app.command()
+        def x() -> None: ...
+
+        @app.command()
+        def y() -> None: ...
+
+        register_cli_command("bare", app)
+        assert CLI_COMMANDS.get("bare").help is None
+
+
 def test_collision_is_loud_and_names_both_origins():
     register_cli_command("clash", typer.Typer(name="clash"))
     with pytest.raises(ValueError, match="already registered") as ei:

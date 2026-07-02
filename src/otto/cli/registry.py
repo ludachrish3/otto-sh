@@ -9,11 +9,13 @@ register through the same :func:`register_cli_command`.
 """
 
 import importlib
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import typer
+from typer.models import TyperInfo
 
 from ..registry import Registry, caller_module
 from ..utils import async_typer_command
@@ -72,6 +74,13 @@ def register_cli_command(
     Name collisions raise immediately, naming both registering modules —
     there is deliberately no overwrite escape hatch for CLI commands.
     """
+    if help is None and isinstance(loader, typer.Typer):
+        # A live app already carries its Typer-native help — read it once here
+        # so the spec (the single source of truth for root help AND the
+        # completion cache) inherits it instead of rendering a placeholder.
+        # Lazy "pkg.mod:attr" loaders have nothing to read without importing;
+        # that is what explicit help= is for.
+        help = _live_app_help(loader)  # noqa: A001 — mirrors typer's own `help=` keyword
     origin = caller_module()
     spec = CommandSpec(
         name=name,
@@ -138,6 +147,25 @@ def _typer_app_flattens(app: typer.Typer) -> bool:
         or app.registered_groups
         or len(app.registered_commands) != 1
     )
+
+
+def _live_app_help(app: typer.Typer) -> str | None:
+    """Return the help Typer itself would render for *app* (read at registration).
+
+    A single-command app that would flatten (see :func:`_typer_app_flattens`)
+    IS its lone command, so that command's help/docstring is what a native
+    ``add_typer`` would have shown. Everything else defers to Typer's own
+    resolution chain (``solve_typer_info_help``: app ``help=``, callback
+    ``help=``, callback docstring) so this never becomes a second opinion.
+    """
+    if _typer_app_flattens(app):
+        cmd = app.registered_commands[0]
+        if isinstance(cmd.help, str) and cmd.help:
+            return cmd.help
+        doc = inspect.getdoc(cmd.callback) if cmd.callback else None
+        if doc:
+            return doc
+    return typer.main.solve_typer_info_help(TyperInfo(app)) or None
 
 
 def resolve_spec_command(spec: CommandSpec) -> Any:
