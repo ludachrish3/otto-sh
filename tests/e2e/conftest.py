@@ -9,8 +9,8 @@ Both key off membership in the ``tests/e2e/`` tree:
 2. **Enforce the resource-marker rule:** every e2e test must declare exactly
    one *primary* bed marker from ``{hostless, integration, embedded}``, with
    ``hops`` permitted only as an additive refinement of ``integration``. All
-   other axes (``e2e`` level, ``xdist_group``, ``stability``, ``timeout``,
-   ``retry``) are ignored. This keeps the tier deliberately sorted — nothing
+   other axes (``e2e`` level, ``xdist_group``, ``browser``, ``stability``,
+   ``timeout``, ``retry``) are ignored. This keeps the tier deliberately sorted — nothing
    slips into the no-testbed gate untagged.
 
 Runs ``tryfirst`` so the guard sees every collected item before ``-m``
