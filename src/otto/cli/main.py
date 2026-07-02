@@ -172,14 +172,16 @@ class _OttoGroup(TyperGroup):
         return pending[0] if pending else None
 
     def _wants_real(self, ctx: Any, cmd_name: str) -> bool:
-        """Return whether *cmd_name* is the invocation's actual dispatch/completion target."""
-        if cmd_name == self._dispatch_target(ctx):
-            return True
-        if os.environ.get("_OTTO_COMPLETE"):
-            # Completion for `otto <cmd> <TAB>`: the completer resolves the
-            # named subcommand; COMP_WORDS carries the typed tokens.
-            return cmd_name in os.environ.get("COMP_WORDS", "").split()
-        return False
+        """Return whether *cmd_name* is the invocation's actual dispatch/completion target.
+
+        The pending-token snapshot covers completion descent too: click's
+        completion resolver builds the root context through ``make_context``
+        → our ``parse_args`` override, so `otto run <TAB>` sees ``run`` as
+        the dispatch target. (A COMP_WORDS membership check used to sit here
+        as belt-and-braces; it also matched command names typed as option
+        VALUES, importing unrelated modules during enumeration.)
+        """
+        return cmd_name == self._dispatch_target(ctx)
 
     def _stub(self, spec: "CommandSpec") -> Any:
         """Return (building + caching once) a lightweight help-only stub for *spec*."""

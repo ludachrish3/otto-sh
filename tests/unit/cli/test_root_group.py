@@ -179,6 +179,47 @@ def test_list_commands_dedupes_registry_over_cache(monkeypatch):
         CLI_COMMANDS.unregister("both-tool")
 
 
+def test_completion_descent_target_resolves_real(monkeypatch):
+    """During completion, the pending dispatch target must resolve to the real
+    command (importing its module) — completion of `otto run <TAB>` needs the
+    real run group to list instructions."""
+    from otto.cli.main import _OttoGroup
+
+    monkeypatch.setenv("_OTTO_COMPLETE", "complete_bash")
+    monkeypatch.setenv("COMP_WORDS", "otto run ")
+    monkeypatch.setenv("COMP_CWORD", "2")
+    monkeypatch.delitem(sys.modules, "otto.cli.run", raising=False)
+    group = _OttoGroup(name="otto")
+
+    class _FakeCtx:
+        def __init__(self) -> None:
+            self.meta: dict = {"_pending_subcmd_args": ["run"]}
+
+    group.get_command(_FakeCtx(), "run")
+    assert "otto.cli.run" in sys.modules
+
+
+def test_completion_enumeration_stubs_command_named_as_option_value(monkeypatch):
+    """A command name typed as an option VALUE must stay a stub during
+    completion enumeration — it is not the descent target, and resolving it
+    real imports an unrelated module chain on the fast path."""
+    from otto.cli.main import _OttoGroup
+
+    monkeypatch.setenv("_OTTO_COMPLETE", "complete_bash")
+    monkeypatch.setenv("COMP_WORDS", "otto run --host monitor ")
+    monkeypatch.setenv("COMP_CWORD", "4")
+    monkeypatch.delitem(sys.modules, "otto.cli.monitor", raising=False)
+    group = _OttoGroup(name="otto")
+
+    class _FakeCtx:
+        def __init__(self) -> None:
+            self.meta: dict = {"_pending_subcmd_args": ["run", "--host", "monitor"]}
+
+    cmd = group.get_command(_FakeCtx(), "monitor")
+    assert cmd is not None
+    assert "otto.cli.monitor" not in sys.modules, "option value must not trigger a real import"
+
+
 # ── Task 7: lazy lab + leaf-invoke preamble ──────────────────────────────────
 
 

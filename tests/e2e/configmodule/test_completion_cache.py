@@ -229,6 +229,22 @@ def test_fast_path_without_matching_cache_falls_through(tmp_path: Path) -> None:
     assert _cache_file(tmp_path).exists()
 
 
+def test_slow_path_descends_into_subcommand(tmp_path: Path) -> None:
+    """`otto run <TAB>` on a cache miss must list live instruction names.
+
+    Pins that completion descent resolves the real run group via the
+    pending-token snapshot alone (no cache, no COMP_WORDS token sniffing).
+    """
+    result = _run_otto(
+        [],
+        xdir=tmp_path,
+        comp_words="otto run ",
+        comp_cword="2",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "test-instruction" in result.stdout
+
+
 def test_fast_path_returns_static_parent_options(tmp_path: Path) -> None:
     """`otto test --<TAB>` must include parent-callback options like --cov.
 
