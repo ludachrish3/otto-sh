@@ -45,11 +45,3 @@ def test_loads_live_and_renders_after_host_selection(
     # CPU tab holds two chart groups: CPU (overall+procs) and Load.
     expect(page.locator("#tab-cpu .metric-plot")).to_have_count(2)
     assert _overall_cpu_len(page) == 3  # the three preloaded ticks
-
-    # Close the page so its open SSE (EventSource) connection drops before the
-    # live_dash fixture tears down: uvicorn's graceful shutdown waits for
-    # in-flight connections to close, and pytest finalizes fixtures in reverse
-    # of the order they were requested — live_dash (declared second in the
-    # signature) would otherwise call harness.stop() while the browser still
-    # holds /api/stream open, timing out the harness thread join.
-    page.close()

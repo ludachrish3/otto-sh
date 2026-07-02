@@ -63,9 +63,18 @@ class DashboardHarness(Generic[C]):
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=10)
 
     def stop(self) -> None:
-        """Signal shutdown and join the server thread (idempotent)."""
+        """Signal shutdown and join the server thread (idempotent).
+
+        Sets uvicorn's force_exit so shutdown does not wait for open SSE
+        connections to drain — dashboard pages (and streaming test clients)
+        hold /api/stream open indefinitely, which would otherwise stall
+        graceful shutdown until keepalive timeouts fire.
+        """
         if self._thread is None:
             return
+        uv_server = self.server._server
+        if uv_server is not None:
+            uv_server.force_exit = True
         self.server.stop()
         self._thread.join(timeout=10)
         if self._thread.is_alive():
