@@ -1,9 +1,16 @@
-"""Run a registered OttoSuite test suite.
+"""Run a registered OttoSuite test suite, or a suite-less test selection.
 
 Each ``Test*``-named ``OttoSuite`` subclass auto-registers as a subcommand of
 ``otto test``.  Suite-specific options (declared in the suite's inner ``Options``
 dataclass) are automatically registered as Typer parameters with full type
 enforcement and ``--help`` documentation.
+
+When no suite subcommand is given, ``--tests`` and/or ``--markers`` run a
+suite-less selection instead: exact test names (optionally ``Class::name``
+qualified) and/or a marker expression are resolved against every repo's
+collected tests, and pytest runs once per repo whose selection matched.
+Plain pytest functions (not just ``OttoSuite`` classes) are runnable this
+way.
 
 **Markers**
 
@@ -28,7 +35,16 @@ enforcement and ``--help`` documentation.
 **Options on ``otto test`` (before the suite name)**
 
 ``--markers / -m EXPRESSION``
-    pytest ``-m`` marker expression applied after collection.
+    pytest ``-m`` marker expression applied after collection.  With no suite
+    subcommand, runs the marker selection across every repo (one pytest
+    session per repo) instead of requiring a suite name.
+
+``--tests NAME[,NAME...]``
+    Run specific tests by exact name — no suite subcommand needed.
+    Comma-separated; bare names match every collected test with that
+    function name (all parametrizations, across suites and repos);
+    ``TestClass::name`` disambiguates.  Combine with ``--markers`` to narrow.
+    Unknown names raise a loud error with did-you-mean suggestions.
 
 ``--iterations / -i N``
     Repeat each test N times within a single setup/teardown cycle (0 = disabled).
@@ -106,6 +122,9 @@ either limit is reached first.
     otto test --list-tests
     otto test --list-tests --markers slow
     otto test --list-tests TestMyDevice
+    otto test --tests test_login
+    otto test --tests TestB::test_login,test_plain
+    otto test -m slow
     otto test TestMyDevice --help
     otto test TestMyDevice --device-type switch --firmware 2.1
     otto test --iterations 50 --threshold 95 TestMyDevice
@@ -135,7 +154,7 @@ from rich import print as rprint
 from rich.table import Table
 
 from ..configmodule import get_repos
-from ..configmodule.repo import Repo
+from ..configmodule.repo import CollectedTest, Repo
 from ..context import get_context
 from ..logger import get_logger
 from ..suite.register import SUITES
@@ -156,6 +175,7 @@ class TestRunOptions:
     """
 
     markers: str = ""
+    tests: str = ""
     iterations: int = 0
     duration: int = 0
     threshold: float = 100.0
@@ -207,73 +227,135 @@ def _repo_confcutdir(suite_file: str, repos: list[Repo]) -> Path:
     return resolved.parent
 
 
-def run_suite(
-    suite_class: type,
-    suite_file: str,
-    opts_instance: object | None,
-    ctx: typer.Context,
-) -> None:
-    """Execute a registered suite via pytest.main().
+def _base_test_name(name: str) -> str:
+    """``test_param[a-b]`` → ``test_param`` (parametrization-insensitive match)."""
+    return name.partition("[")[0]
 
-    Runner options (``--markers``, ``--iterations``, ``--duration``,
-    ``--threshold``, ``--results``) and coverage options (``--cov`` /
-    ``--cov-clean``) are read from the ``TestRunOptions`` the ``otto test``
-    callback stored in ``ctx.meta[RUN_OPTIONS_KEY]``. The context is passed in
-    by the suite runner (Typer injects it), so this function never reaches into
-    a global context stack.
+
+def _absolute_nodeid(item: CollectedTest) -> str:
+    """Rebuild a collected test's nodeid with an absolute file path.
+
+    ``CollectedTest.nodeid`` (from pytest's own ``item.nodeid``) is relative
+    to the collection rootdir chosen by :meth:`Repo.collect_tests` — not
+    otto's own process cwd — so it cannot be handed to a later, independent
+    ``pytest.main()`` call. ``CollectedTest.path`` is always absolute, so
+    rebuild the ``path::Class::name`` (or ``path::name``) suffix from it.
     """
-    import asyncio
+    suffix = item.nodeid.split("::", 1)[1] if "::" in item.nodeid else ""
+    return f"{item.path}::{suffix}" if suffix else str(item.path)
 
-    import pytest
 
+def _resolve_selection(
+    repos: list[Repo], names: list[str], markers: str
+) -> list[tuple[Repo, list[str]]]:
+    """Resolve --tests names to exact nodeids, one entry per matching repo.
+
+    A bare name matches every collected test with that function name (all
+    parametrizations); ``Class::name`` restricts to one suite. Unknown names
+    raise ``typer.BadParameter`` with did-you-mean suggestions — never a
+    silent empty run.
+    """
+    import difflib
+
+    per_repo: list[tuple[Repo, list[str]]] = []
+    matched: set[str] = set()
+    seen_names: set[str] = set()
+    for repo in repos:
+        items = repo.collect_tests(markers=markers or None)
+        nodeids: list[str] = []
+        for item in items:
+            base = _base_test_name(item.name)
+            seen_names.add(base)
+            if item.cls_name:
+                seen_names.add(f"{item.cls_name}::{base}")
+            for wanted in names:
+                cls_part, _, name_part = wanted.rpartition("::")
+                if base == name_part and (not cls_part or item.cls_name == cls_part):
+                    nodeids.append(_absolute_nodeid(item))
+                    matched.add(wanted)
+                    break
+        if nodeids:
+            per_repo.append((repo, nodeids))
+
+    unknown = [n for n in names if n not in matched]
+    if unknown:
+        hints = []
+        for n in unknown:
+            close = difflib.get_close_matches(n, sorted(seen_names), n=3)
+            hint = f" (did you mean: {', '.join(close)}?)" if close else ""
+            hints.append(f"{n!r}{hint}")
+        raise typer.BadParameter(
+            f"no collected test matches: {'; '.join(hints)}", param_hint="--tests"
+        )
+    return per_repo
+
+
+async def _pre_run_cov_clean(repos: list[Repo], opts: TestRunOptions) -> None:
+    """Pre-run cleanup of .gcda files on remotes, when --cov and --cov-clean.
+
+    Extracted from ``run_suite`` so ``run_selection`` shares the exact same
+    once-per-invocation cleanup (never once-per-repo inside the session loop).
+    """
+    if not (opts.cov and opts.cov_clean):
+        return
+    await _cov_clean_remotes(repos)
+    # Rebuild host connections so pytest gets fresh ones on its own loop.
+    # rebuild_connections() only exists on UnixHost; embedded targets
+    # don't carry the same connection lifecycle so skip them.
+    from ..configmodule import all_hosts
+    from ..host import UnixHost
+
+    for host in all_hosts():
+        if isinstance(host, UnixHost):
+            host.rebuild_connections()
+
+
+async def _post_run_coverage(repos: list[Repo], log_dir: Path, opts: TestRunOptions) -> None:
+    """Post-run coverage collection and optional HTML report, shared by both run paths."""
+    if opts.cov:
+        await _run_coverage(repos, log_dir, opts.cov_dir)
+
+    if opts.cov_report:
+        from ..coverage.reporter import run_coverage_report
+
+        cov_dir = opts.cov_dir or log_dir / "cov"
+        report_dir = (
+            opts.cov_report_dir if opts.cov_report_dir is not None else log_dir / "cov_report"
+        )
+        # Default path lives inside freshly-created log_dir → always empty;
+        # explicit path was validated in the callback. Safe to call either way.
+        _prepare_empty_dir(
+            report_dir, overwrite=opts.overwrite_cov_report_dir, flag_name="--cov-report-dir"
+        )
+        store = await run_coverage_report(
+            [cov_dir],
+            report_dir,
+            project_name=opts.project_name,
+        )
+        if store is not None:
+            logger.info(
+                "Coverage: %.1f%% overall (%d files)", store.overall_pct(), store.file_count()
+            )
+            logger.info("Report: %s", report_dir / "index.html")
+
+
+def _run_pytest_session(
+    targets: list[str],
+    keyword: str | None,
+    confcutdir: Path,
+    opts: TestRunOptions,
+    opts_instance: object | None,
+    results_path: str,
+    sut_test_dirs: list[Path],
+    log_dir: Path,
+    label: str,
+) -> int:
+    """One inner pytest session: base args + plugins + stability report. Returns rc."""
     from ..suite.plugin import OttoPlugin
     from ..suite.pytest_plugin import OttoOptionsPlugin
 
-    stored = ctx.meta.get(RUN_OPTIONS_KEY)
-    opts = stored if isinstance(stored, TestRunOptions) else TestRunOptions()
-
-    markers = opts.markers
-    iterations = opts.iterations
-    duration = opts.duration
-    threshold = opts.threshold
-    results = opts.results
-    cov = opts.cov
-    cov_dir_override = opts.cov_dir
-    cov_clean = opts.cov_clean
-    cov_report = opts.cov_report
-    cov_report_dir = opts.cov_report_dir
-    overwrite_cov_report_dir = opts.overwrite_cov_report_dir
-    project_name = opts.project_name
-    monitor = opts.monitor
-    monitor_interval = opts.monitor_interval
-    monitor_output = opts.monitor_output
-    monitor_hosts = opts.monitor_hosts
-
-    repos = get_repos()
-    sut_test_dirs = [path for repo in repos for path in repo.tests]
-    _log_dir = get_context().output_dir
-    if _log_dir is None:
-        raise RuntimeError("output_dir is not set; create_output_dir must run before run_suite")
-    log_dir: Path = _log_dir
-    results_path = results or str(log_dir / "junit.xml")
-
-    # Pre-run cleanup of .gcda files on remotes
-    if cov and cov_clean:
-        asyncio.run(_cov_clean_remotes(repos))
-        # Rebuild host connections so pytest gets fresh ones on its own loop.
-        # rebuild_connections() only exists on UnixHost; embedded targets
-        # don't carry the same connection lifecycle so skip them.
-        from ..configmodule import all_hosts
-        from ..host import UnixHost
-
-        for host in all_hosts():
-            if isinstance(host, UnixHost):
-                host.rebuild_connections()
-
     base_args: list[str] = [
-        suite_file,
-        "-k",
-        suite_class.__name__,
+        *targets,
         "-s",
         "-o",
         "asyncio_mode=auto",
@@ -293,7 +375,7 @@ def run_suite(
         # conftest hierarchy loads; otto's own tests/conftest.py (which resets
         # logging management state) stays excluded for in-tree example repos
         # because it lives above their sut_dir.
-        f"--confcutdir={_repo_confcutdir(suite_file, repos)}",
+        f"--confcutdir={confcutdir}",
         # pytest-asyncio registers anyio for assertion rewriting, but anyio is
         # already imported by the time pytest.main() is called from within otto.
         # The warning is harmless (anyio's internals don't affect test results)
@@ -301,21 +383,24 @@ def run_suite(
         "--override-ini",
         "filterwarnings=ignore::pytest.PytestAssertRewriteWarning",
     ]
-    if markers:
-        base_args += ["-m", markers]
+    if keyword:
+        base_args += ["-k", keyword]
+    if opts.markers:
+        base_args += ["-m", opts.markers]
 
-    is_stability = iterations > 0 or duration > 0
-    if monitor and monitor_output is None:
+    is_stability = opts.iterations > 0 or opts.duration > 0
+    monitor_output = opts.monitor_output
+    if opts.monitor and monitor_output is None:
         monitor_output = log_dir / "monitor.json"
     otto_plugin = OttoPlugin(
         sut_test_dirs=sut_test_dirs,
-        cov=cov,
-        iterations=iterations,
-        duration=duration,
-        monitor=monitor,
-        monitor_interval=monitor_interval,
+        cov=opts.cov,
+        iterations=opts.iterations,
+        duration=opts.duration,
+        monitor=opts.monitor,
+        monitor_interval=opts.monitor_interval,
         monitor_output=monitor_output,
-        monitor_hosts=monitor_hosts,
+        monitor_hosts=opts.monitor_hosts,
     )
     options_plugin = OttoOptionsPlugin(opts_instance)
 
@@ -326,6 +411,8 @@ def run_suite(
         collector = _StabilityCollector()
         otto_plugin._stability_collector = collector  # noqa: SLF001 — intra-package write to stability plugin's collector slot
 
+    import pytest
+
     # Capture the exit code so we can propagate it after post-run steps.
     rc = pytest.main(
         [*base_args, f"--junitxml={results_path}"],
@@ -334,35 +421,55 @@ def run_suite(
 
     if is_stability and collector is not None:
         _print_stability_report(
-            suite_class.__name__, collector, iterations, duration, threshold, log_dir
+            label, collector, opts.iterations, opts.duration, opts.threshold, log_dir
         )
 
-    # Post-test coverage collection
-    if cov:
-        asyncio.run(_run_coverage(repos, log_dir, cov_dir_override))
+    return int(rc)
 
-    if cov_report:
-        from ..coverage.reporter import run_coverage_report
 
-        cov_dir = cov_dir_override or log_dir / "cov"
-        report_dir = cov_report_dir if cov_report_dir is not None else log_dir / "cov_report"
-        # Default path lives inside freshly-created log_dir → always empty;
-        # explicit path was validated in the callback. Safe to call either way.
-        _prepare_empty_dir(
-            report_dir, overwrite=overwrite_cov_report_dir, flag_name="--cov-report-dir"
-        )
-        store = asyncio.run(
-            run_coverage_report(
-                [cov_dir],
-                report_dir,
-                project_name=project_name,
-            )
-        )
-        if store is not None:
-            logger.info(
-                "Coverage: %.1f%% overall (%d files)", store.overall_pct(), store.file_count()
-            )
-            logger.info("Report: %s", report_dir / "index.html")
+def run_suite(
+    suite_class: type,
+    suite_file: str,
+    opts_instance: object | None,
+    ctx: typer.Context,
+) -> None:
+    """Execute a registered suite via pytest.main().
+
+    Runner options (``--markers``, ``--iterations``, ``--duration``,
+    ``--threshold``, ``--results``) and coverage options (``--cov`` /
+    ``--cov-clean``) are read from the ``TestRunOptions`` the ``otto test``
+    callback stored in ``ctx.meta[RUN_OPTIONS_KEY]``. The context is passed in
+    by the suite runner (Typer injects it), so this function never reaches into
+    a global context stack.
+    """
+    import asyncio
+
+    stored = ctx.meta.get(RUN_OPTIONS_KEY)
+    opts = stored if isinstance(stored, TestRunOptions) else TestRunOptions()
+
+    repos = get_repos()
+    sut_test_dirs = [path for repo in repos for path in repo.tests]
+    _log_dir = get_context().output_dir
+    if _log_dir is None:
+        raise RuntimeError("output_dir is not set; create_output_dir must run before run_suite")
+    log_dir: Path = _log_dir
+    results_path = opts.results or str(log_dir / "junit.xml")
+
+    asyncio.run(_pre_run_cov_clean(repos, opts))
+
+    rc = _run_pytest_session(
+        [suite_file],
+        suite_class.__name__,
+        _repo_confcutdir(suite_file, repos),
+        opts,
+        opts_instance,
+        results_path,
+        sut_test_dirs,
+        log_dir,
+        suite_class.__name__,
+    )
+
+    asyncio.run(_post_run_coverage(repos, log_dir, opts))
 
     # Propagate a non-zero pytest exit code so callers and CI scripts see
     # failure.  rc=5 (NO_TESTS_COLLECTED) is also treated as an error: a
@@ -372,6 +479,55 @@ def run_suite(
     # reaching this point, so there is no double-exit risk.
     if rc != 0:
         raise typer.Exit(code=int(rc))
+
+
+def run_selection(ctx: typer.Context) -> None:
+    """Run a suite-less selection (--tests and/or -m) — one session per repo."""
+    import asyncio
+
+    stored = ctx.meta.get(RUN_OPTIONS_KEY)
+    opts = stored if isinstance(stored, TestRunOptions) else TestRunOptions()
+
+    repos = get_repos()
+    names = [n.strip() for n in opts.tests.split(",") if n.strip()]
+    if names:
+        per_repo = _resolve_selection(repos, names, opts.markers)
+    else:  # -m alone: marker expression over each repo's test dirs
+        per_repo = [(r, [str(d) for d in r.tests if d.exists()]) for r in repos]
+        per_repo = [(r, t) for r, t in per_repo if t]
+
+    if not per_repo:
+        rprint("[red]No tests matched the selection.[/red]")
+        raise typer.Exit(code=1)
+
+    _log_dir = get_context().output_dir
+    if _log_dir is None:
+        raise RuntimeError("output_dir is not set; command_preamble must run before run_selection")
+    log_dir: Path = _log_dir
+    asyncio.run(_pre_run_cov_clean(repos, opts))
+
+    worst = 0
+    multi = len(per_repo) > 1
+    for repo, targets in per_repo:
+        default_junit = log_dir / (f"junit_{repo.name}.xml" if multi else "junit.xml")
+        results_path = opts.results or str(default_junit)
+        sut_test_dirs = [p for r in repos for p in r.tests]
+        rc = _run_pytest_session(
+            targets,
+            None,
+            repo.sut_dir,
+            opts,
+            None,  # no per-suite Options instance: Task 3's fixture default-constructs
+            results_path,
+            sut_test_dirs,
+            log_dir,
+            label=f"selection:{repo.name}",
+        )
+        worst = max(worst, int(rc))
+
+    asyncio.run(_post_run_coverage(repos, log_dir, opts))
+    if worst != 0:
+        raise typer.Exit(code=worst)
 
 
 def _print_stability_report(
@@ -496,7 +652,22 @@ def main(  # noqa: PLR0913 — CLI command params
             "--markers",
             "-m",
             metavar="EXPRESSION",
-            help="pytest -m marker expression applied after collection.",
+            help=(
+                "pytest -m marker expression applied after collection. With no "
+                "suite name, runs a suite-less selection across all repos."
+            ),
+        ),
+    ] = "",
+    tests: Annotated[
+        str,
+        typer.Option(
+            "--tests",
+            metavar="NAME[,NAME...]",
+            help=(
+                "Run specific tests by exact name, across all suites and repos — "
+                "no suite subcommand needed. Comma-separated; TestClass::name "
+                "disambiguates. Combine with --markers to narrow."
+            ),
         ),
     ] = "",
     iterations: Annotated[
@@ -674,6 +845,7 @@ def main(  # noqa: PLR0913 — CLI command params
 
     ctx.meta[RUN_OPTIONS_KEY] = TestRunOptions(
         markers=markers,
+        tests=tests,
         iterations=iterations,
         duration=duration,
         threshold=threshold,
@@ -694,7 +866,17 @@ def main(  # noqa: PLR0913 — CLI command params
     # leaf-invoke command_preamble (see otto.cli.invoke), so a subcommand
     # `--help` (which exits before invoke) can never create a spurious dir.
     if ctx.invoked_subcommand is None:
-        # Phase 1: no run-by-selector yet; mirror the previous no-args behavior.
+        if tests or markers:
+            # The group callback is not a wrapped leaf, so the leaf-invoke
+            # preamble (session/lab/output-dir/gate) has not run — stamp the
+            # `test` spec and run it here before executing the selection.
+            from .invoke import command_preamble
+            from .registry import CLI_COMMANDS
+
+            ctx.meta.setdefault("_otto_command_spec", CLI_COMMANDS.get("test"))
+            command_preamble(ctx)
+            run_selection(ctx)
+            raise typer.Exit
         rprint(ctx.get_help())
         raise typer.Exit
 
