@@ -60,3 +60,11 @@ def register_builtin_commands() -> None:
         output_dir=False,
         gate=False,
     )
+    register_cli_command(
+        "init",
+        "otto.cli.init:init_command",
+        help="Scaffold a new otto repo or validate an existing one.",
+        lab_free=True,
+        output_dir=False,
+        gate=False,
+    )
