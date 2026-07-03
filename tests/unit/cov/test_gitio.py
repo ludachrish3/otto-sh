@@ -63,6 +63,34 @@ def test_blob_roundtrip(repo: Path) -> None:
     assert blob_sha(repo, Path("missing.c")) is None
 
 
+def test_blob_sha_from_nested_subdir(repo: Path) -> None:
+    # git resolves "REV:<path>" against the repo TOPLEVEL, not the cwd, so a
+    # sut_dir nested inside a larger repo (the e2e bed: tests/repo1 inside
+    # otto-sh) must still anchor its sources.  The cwd-relative "REV:./<path>"
+    # spelling is required for this to work.
+    nested = repo / "nested" / "sut"
+    product = nested / "product"
+    product.mkdir(parents=True)
+    (product / "main.c").write_text("int main;\n")
+    subprocess.run(
+        ["git", "add", "nested"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "nest"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    sha = blob_sha(nested, Path("product/main.c"))
+
+    assert sha == hash_object(repo, product / "main.c")
+    assert blob_sha(nested, Path("product/missing.c")) is None
+
+
 def test_worktree_diff_u0(repo: Path) -> None:
     (repo / "a.c").write_text("line1\nADDED\nline2\nline3\n")
     out = diff_worktree_file_u0(repo, Path("a.c"))

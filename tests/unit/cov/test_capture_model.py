@@ -87,6 +87,36 @@ def test_build_capture_dirty_remaps(repo: Path, tmp_path: Path) -> None:
     assert cap.files["f.c"].lines == {1: 0, 2: 7}
 
 
+def test_build_capture_nested_sut_dir(repo: Path, tmp_path: Path) -> None:
+    # The sut repo may be a subdirectory of a larger git repo (the e2e bed:
+    # tests/repo1 inside otto-sh).  Blob anchoring must then still resolve —
+    # a bare "HEAD:<rel>" lookup misses because git resolves it against the
+    # repo toplevel, silently producing an empty (useless) capture.
+    nested = repo / "nested" / "sut" / "product"
+    nested.mkdir(parents=True)
+    # No toplevel product/main.c exists, and the content differs from every
+    # toplevel file — so a toplevel-relative lookup can neither find it nor
+    # accidentally anchor a same-content blob.
+    (nested / "main.c").write_text("int nested_only;\nint b;\nint c;\n")
+    subprocess.run(["git", "add", "nested"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@x", "commit", "-qm", "nest"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+    info = _write_info(tmp_path, nested / "main.c")
+    sut_dir = repo / "nested" / "sut"
+    cap = build_capture(
+        info_path=info, tier="system", repo_root=sut_dir, board="board1", labs=["lab1"]
+    )
+
+    fc = cap.files["product/main.c"]
+    assert fc.lines == {1: 5, 2: 0, 3: 7}
+    assert fc.blob == blob_sha(repo, Path("nested/sut/product/main.c"))
+
+
 def test_untracked_file_skipped(
     repo: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:

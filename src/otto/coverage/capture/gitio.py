@@ -48,9 +48,15 @@ def is_dirty(repo_root: Path) -> bool:
 
 
 def blob_sha(repo_root: Path, relpath: Path, rev: str = "HEAD") -> str | None:
-    """Return the SHA of a blob at a path/revision, or None if not found."""
+    """Return the SHA of a blob at a path/revision, or None if not found.
+
+    The ``./`` prefix makes git resolve the path against ``repo_root``
+    (our cwd) — a bare ``REV:<path>`` resolves against the repo toplevel,
+    which is wrong whenever ``repo_root`` is a subdirectory of a larger
+    repo (e.g. a sut checked out inside another project).
+    """
     try:
-        return _run(["rev-parse", f"{rev}:{relpath.as_posix()}"], repo_root).strip()
+        return _run(["rev-parse", f"{rev}:./{relpath.as_posix()}"], repo_root).strip()
     except GitUnavailableError as e:
         if "not a git repository" in str(e):
             raise
