@@ -605,6 +605,33 @@ class TestCovGetValidation:
         assert "no .gcda" in message
         assert "sprout" in message
 
+    def test_zero_counters_after_produce_captures_exits_1(self, tmp_path):
+        """When produce_captures returns empty list despite non-empty host_dirs → error."""
+        repo = self._repo({"hosts": ".*"})
+
+        async def fake_collect(cov_config, staging_root, pattern=None):
+            board = staging_root / "board1"
+            board.mkdir(parents=True, exist_ok=True)
+            (board / "x.gcda").write_bytes(b"")
+            return {"board1": board}
+
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=fake_collect,
+            ),
+            patch.object(produce_module, "produce_captures", new=AsyncMock(return_value=[])),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["get", "-o", str(tmp_path / "cov_out")])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        message = mock_err.call_args[0][0]
+        assert "no .gcda" in message
+        assert "board1" in message
+
     def test_non_git_repo_exits_1(self, tmp_path):
         not_a_repo = tmp_path / "not_a_repo"
         not_a_repo.mkdir()
