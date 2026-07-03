@@ -79,6 +79,14 @@ class DashboardHarness(Generic[C]):
             raise RuntimeError("harness not started")
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=10)
 
+    def run_export(self) -> str:
+        """Serialize the collector to its --file JSON on the server loop."""
+
+        async def _export() -> str:
+            return self.collector.to_json()
+
+        return self.run(_export())
+
     def stop(self) -> None:
         """Signal shutdown and join the server thread (idempotent).
 

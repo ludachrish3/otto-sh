@@ -9,6 +9,7 @@ import http.client
 import json
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -26,6 +27,8 @@ META_TAB_KEYS = {"id", "label", "metrics"}
 DATA_KEYS = {"series", "events", "chart_map"}
 EVENT_KEYS = {"id", "timestamp", "label", "source", "color", "dash", "end_timestamp"}
 SSE_METRIC_KEYS = {"type", "host", "label", "chart", "y_title", "unit", "key", "ts", "value"}
+SSE_EVENT_KEYS = {"type", *EVENT_KEYS}
+SSE_EVENT_DELETED_KEYS = {"type", "id"}
 
 
 def _get_json(url: str) -> Any:
@@ -101,3 +104,69 @@ def test_historical_fixture_loads(historical_dash: DashboardHarness[MetricCollec
 def test_stop_joins_server_thread(live_dash: DashboardHarness[FakeCollector]) -> None:
     live_dash.stop()  # idempotent with the fixture finalizer
     assert not live_dash.thread_alive
+
+
+def _next_sse_payload(resp: http.client.HTTPResponse) -> dict[str, Any]:
+    """Read lines until the next `data:` frame and parse its JSON payload."""
+    while True:
+        line = resp.readline().decode()
+        assert line, "SSE stream closed before an expected message arrived"
+        if line.startswith("data:"):
+            return json.loads(line[len("data:") :])
+
+
+def test_sse_event_lifecycle_wire_contract(
+    live_dash: DashboardHarness[FakeCollector],
+) -> None:
+    """Pin the event/event_updated/event_deleted SSE shapes (metric shape is pinned above)."""
+    port = urlsplit(live_dash.url).port
+    assert port is not None
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        conn.request("GET", "/api/stream", headers={"Accept": "text/event-stream"})
+        resp = conn.getresponse()
+
+        ev = live_dash.run(live_dash.collector.add_event(label="pin", color="#112233", dash="dot"))
+        created = _next_sse_payload(resp)
+        assert set(created) == SSE_EVENT_KEYS
+        assert created["type"] == "event"
+        assert created["id"] == ev.id
+
+        live_dash.run(
+            live_dash.collector.update_event(ev.id, label="pin2", color="#445566", dash="dash")
+        )
+        updated = _next_sse_payload(resp)
+        assert set(updated) == SSE_EVENT_KEYS
+        assert updated["type"] == "event_updated"
+        assert updated["label"] == "pin2"
+
+        live_dash.run(live_dash.collector.delete_event(ev.id))
+        deleted = _next_sse_payload(resp)
+        assert set(deleted) == SSE_EVENT_DELETED_KEYS
+        assert deleted == {"type": "event_deleted", "id": ev.id}
+    finally:
+        conn.close()
+
+
+def test_export_import_round_trip_preserves_values(
+    live_dash: DashboardHarness[FakeCollector], tmp_path: Path
+) -> None:
+    """Losslessness at the value level, not just key sets (hostless twin of the browser pin)."""
+    live_dash.run(live_dash.collector.add_event(label="evt", color="#112233", dash="dot"))
+    exported = live_dash.run_export()
+
+    out = tmp_path / "exported.json"
+    out.write_text(exported)
+    reloaded = MetricCollector.from_json(str(out))
+
+    original = live_dash.collector.get_series()
+    round_tripped = reloaded.get_series()
+    assert round_tripped.keys() == original.keys()
+    for key, pts in original.items():
+        assert [(p.ts, p.value, p.meta) for p in round_tripped[key]] == [
+            (p.ts, p.value, p.meta) for p in pts
+        ]
+    assert [e.to_dict() for e in reloaded.get_events()] == [
+        e.to_dict() for e in live_dash.collector.get_events()
+    ]
+    assert reloaded.get_chart_map() == live_dash.collector.get_chart_map()
