@@ -76,11 +76,23 @@ tier) capture production::
 ``--clean``
     Zero the fetched Unix hosts' remote ``.gcda`` counters after a
     successful retrieval — for use before starting a manual session.
+
+``otto cov clean`` zeroes ``.gcda`` counters on the lab's **Unix** coverage
+hosts — the same host selection ``get`` fetches from — without first
+fetching anything. Useful ahead of a manual session when the previous
+capture has already been retrieved::
+
+    otto cov clean
+
+Embedded coverage hosts are out of scope for this phase (counter reset
+requires a product-side ``cov_reset`` LLEXT function mirroring
+``cov_dump``, a later phase); when the lab has any, the command logs a
+note and exits 0 rather than failing.
 """
 
 import asyncio
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
 
@@ -88,6 +100,18 @@ from ..coverage.errors import CoverageDataMismatchError
 from ..coverage.reporter import TierSpec, run_coverage_report
 from ..coverage.store.model import TIER_SYSTEM
 from ..logger import get_logger
+
+if TYPE_CHECKING:
+    # Type-only: never executed, so it carries no runtime import cost and
+    # doesn't touch the `cov` import-budget surface (measured by `otto cov
+    # --help`, which never runs get()/clean()'s bodies). Real coverage-
+    # machinery imports stay function-local per the same budget.
+    import re
+    from typing import Any
+
+    from ..configmodule.repo import Repo
+    from ..host.remote_host import RemoteHost
+    from ..host.unix_host import UnixHost
 
 logger = get_logger()
 
@@ -242,12 +266,24 @@ def report(
 # ---------------------------------------------------------------------------
 
 
-class _GetError(Exception):
+class _CovError(Exception):
+    """Base for clean, single-line-message ``otto cov`` command failures.
+
+    Raised directly by :func:`_connect_cov_hosts` for the one failure mode
+    shared by every command that discovers coverage hosts (no ``[coverage]``
+    section configured); command-specific failures raise a subclass
+    (:class:`_GetError`, :class:`_CleanError`). Each command's sync wrapper
+    catches this base type and prints ``str(e)`` without a traceback,
+    mirroring ``report``'s ``CoverageDataMismatchError`` handling.
+    """
+
+
+class _GetError(_CovError):
     """Internal signal for a clean, single-line ``cov get`` failure.
 
-    Raised by :func:`_do_get` for every failure mode; the sync ``get``
-    command catches exactly this one type and prints ``str(e)`` without a
-    traceback, mirroring ``report``'s ``CoverageDataMismatchError`` handling.
+    Raised by :func:`_do_get` for every ``get``-specific failure mode; the
+    sync ``get`` command catches the shared :class:`_CovError` base (which
+    also covers :func:`_connect_cov_hosts`'s "no config" failure).
     """
 
 
@@ -279,6 +315,61 @@ def _resolve_tester(name: str | None, email: str | None) -> dict[str, str]:
     return tester
 
 
+async def _connect_cov_hosts() -> tuple[
+    "list[Repo]",
+    "Repo",
+    "dict[str, Any]",
+    "re.Pattern[str] | None",
+    "list[RemoteHost]",
+    "list[UnixHost]",
+    str,
+]:
+    """Bootstrap, locate ``[coverage]`` config, and discover matching lab hosts.
+
+    Shared setup for both ``get``'s fetch flow and ``clean``: loads the
+    active lab's repos (:func:`~otto.configmodule.get_repos`), locates the
+    repo with a ``[coverage]`` section, compiles its ``hosts`` pattern, and
+    enumerates every lab host that pattern matches — mirroring
+    :func:`otto.cli.test._run_coverage`'s fetch stage. Deliberately stops
+    short of constructing a
+    :class:`~otto.coverage.fetcher.remote.GcdaFetcher`: ``get`` and
+    ``clean`` disagree on both the fetcher's staging root (a real output
+    dir vs. an unused placeholder) and its ``pattern`` scope (``get``
+    fetches with no pattern, preserving its existing tested behavior;
+    ``clean`` scopes to the ``[coverage].hosts`` pattern), so each command
+    builds its own fetcher from the pieces returned here.
+
+    Raises :class:`_CovError` when no ``[coverage]`` section is configured
+    at all — the one failure mode every caller treats identically.
+
+    Returns:
+        ``(repos, cov_repo, cov_config, cov_pattern, cov_hosts, unix_hosts,
+        gcda_remote_dir)``.
+    """
+    import re
+
+    from ..configmodule import all_hosts, get_repos
+    from ..host import UnixHost
+    from .test import _get_cov_config, _get_cov_repo
+
+    repos = get_repos()
+    cov_config = _get_cov_config(repos)
+    cov_repo = _get_cov_repo(repos)
+    if not cov_config or cov_repo is None:
+        raise _CovError("No [coverage] section found in .otto/settings.toml")
+
+    # Same repo-declared selector _run_coverage uses to keep infrastructure
+    # hosts (e.g. an SSH hop) out of the coverage set.
+    hosts_pattern = cov_config.get("hosts")
+    cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
+
+    cov_hosts = list(all_hosts(pattern=cov_pattern))
+    unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
+    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
+
+    return repos, cov_repo, cov_config, cov_pattern, cov_hosts, unix_hosts, gcda_remote_dir
+
+
 async def _do_get(
     output_dir: Path,
     tier_name: str | None,
@@ -297,13 +388,11 @@ async def _do_get(
     tiers additionally copy each produced capture into the repo's committed
     manual-capture store (``.otto/coverage/manual/``).
 
-    Every failure mode raises :class:`_GetError` with a single-line,
-    user-facing message; the sync ``get`` command is the only place that
-    turns that into ``typer.Exit(1)``.
+    Every failure mode raises :class:`_GetError` (or, via
+    :func:`_connect_cov_hosts`, the shared :class:`_CovError`) with a
+    single-line, user-facing message; the sync ``get`` command is the only
+    place that turns either into ``typer.Exit(1)``.
     """
-    import re
-
-    from ..configmodule import all_hosts, get_repos
     from ..coverage.capture.gitio import GitUnavailableError
     from ..coverage.capture.model import Capture
     from ..coverage.capture.produce import produce_captures
@@ -312,14 +401,17 @@ async def _do_get(
     from ..coverage.fetcher.embedded import collect_embedded_coverage
     from ..coverage.fetcher.remote import GcdaFetcher
     from ..coverage.tiers import load_tiers, resolve_get_tier
-    from ..host import UnixHost
-    from .test import _get_cov_config, _get_cov_repo, _write_cov_metadata
+    from .test import _write_cov_metadata
 
-    repos = get_repos()
-    cov_config = _get_cov_config(repos)
-    cov_repo = _get_cov_repo(repos)
-    if not cov_config or cov_repo is None:
-        raise _GetError("No [coverage] section found in .otto/settings.toml")
+    (
+        repos,
+        cov_repo,
+        cov_config,
+        cov_pattern,
+        cov_hosts,
+        unix_hosts,
+        gcda_remote_dir,
+    ) = await _connect_cov_hosts()
 
     tiers = load_tiers(cov_config)
     try:
@@ -332,15 +424,6 @@ async def _do_get(
 
     cov_dir = output_dir / "cov"
     host_dirs: dict[str, Path] = {}
-
-    # Same repo-declared selector _run_coverage uses to keep infrastructure
-    # hosts (e.g. an SSH hop) out of the coverage set.
-    hosts_pattern = cov_config.get("hosts")
-    cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
-
-    cov_hosts = list(all_hosts(pattern=cov_pattern))
-    unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
-    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
 
     unix_dirs: dict[str, Path] = {}
     fetcher: GcdaFetcher | None = None
@@ -475,6 +558,93 @@ def get(
                 clean,
             )
         )
-    except _GetError as e:
+    except _CovError as e:
+        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        raise typer.Exit(1) from e
+
+
+# ---------------------------------------------------------------------------
+# clean — zero remote .gcda counters (no fetch)
+# ---------------------------------------------------------------------------
+
+
+class _CleanError(_CovError):
+    """Internal signal for a clean, single-line ``cov clean`` failure.
+
+    Raised by :func:`_do_clean` for every ``clean``-specific failure mode
+    (no ``gcda_remote_dir`` configured, no matching Unix hosts); the sync
+    ``clean`` command catches the shared :class:`_CovError` base (which also
+    covers :func:`_connect_cov_hosts`'s "no config" failure).
+    """
+
+
+async def _do_clean() -> None:
+    """Zero remote ``.gcda`` counters on the lab's Unix coverage hosts.
+
+    Uses :func:`_connect_cov_hosts` for the identical host discovery
+    ``get`` uses (same ``[coverage].hosts`` pattern, same Unix/embedded
+    split), then hands the matched hosts to the existing
+    :meth:`~otto.coverage.fetcher.remote.GcdaFetcher.clean_remote`. That
+    method already logs one line per host (success or failure) via its own
+    module logger, so no extra per-host logging is added here — only a
+    completion summary.
+
+    Embedded coverage hosts are out of scope for this phase (counter reset
+    needs a product-side ``cov_reset`` LLEXT function mirroring
+    ``cov_dump``): when the matched hosts include any, this logs a note but
+    does not fail. A lab with *only* embedded coverage hosts (no Unix hosts
+    matched) is likewise not an error — there is simply nothing this phase
+    can clean yet.
+
+    Every failure mode raises :class:`_CleanError`; the sync ``clean``
+    command is the only place that turns the shared :class:`_CovError` base
+    into ``typer.Exit(1)``.
+    """
+    from ..coverage.fetcher.remote import GcdaFetcher
+    from ..host.embedded_host import EmbeddedHost
+
+    (
+        _repos,
+        _cov_repo,
+        _cov_config,
+        cov_pattern,
+        cov_hosts,
+        unix_hosts,
+        gcda_remote_dir,
+    ) = await _connect_cov_hosts()
+
+    if not gcda_remote_dir:
+        raise _CleanError("No coverage.gcda_remote_dir configured in .otto/settings.toml")
+
+    has_embedded = any(isinstance(h, EmbeddedHost) for h in cov_hosts)
+
+    if not unix_hosts:
+        if has_embedded:
+            logger.info(
+                "embedded boards not cleaned (requires product-side counter reset — later phase)"
+            )
+            return
+        raise _CleanError("No coverage hosts matched [coverage].hosts — nothing to clean")
+
+    for host in unix_hosts:
+        host.rebuild_connections()
+    # staging_root is unused by clean_remote() (no files are downloaded);
+    # scope pattern to [coverage].hosts, same selector `cov_hosts` used.
+    fetcher = GcdaFetcher(Path("/tmp"), pattern=cov_pattern)  # noqa: S108 — deliberate staging path, never written to
+    await fetcher.clean_remote(gcda_remote_dir)
+    logger.info("Coverage counters cleared on %d host(s)", len(unix_hosts))
+
+    if has_embedded:
+        logger.info(
+            "embedded boards not cleaned (requires product-side counter reset — later phase)"
+        )
+
+
+@cov_app.command()
+def clean() -> None:
+    """Zero .gcda counters on the lab's Unix coverage hosts."""
+    try:
+        asyncio.run(_do_clean())
+    except _CovError as e:
         logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e

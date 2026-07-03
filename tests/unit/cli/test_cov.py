@@ -76,6 +76,14 @@ class TestCovHelp:
         assert "--tier" in result.output
         assert "--ticket" in result.output
 
+    def test_clean_listed_in_help(self):
+        result = runner.invoke(cov_app, ["--help"])
+        assert "clean" in result.output
+
+    def test_clean_help(self):
+        result = runner.invoke(cov_app, ["clean", "--help"])
+        assert result.exit_code == 0
+
 
 # ── report command — validation errors ───────────────────────────────────────
 
@@ -626,3 +634,138 @@ class TestCovGetSuccess:
 
         assert result.exit_code == 0, result.output
         fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+
+
+# ── clean command — validation errors ────────────────────────────────────────
+
+
+class TestCovCleanValidation:
+    @staticmethod
+    def _repo(coverage_cfg, name="sut"):
+        repo = MagicMock()
+        repo.settings = {"coverage": coverage_cfg} if coverage_cfg is not None else {}
+        repo.name = name
+        return repo
+
+    def test_no_coverage_config_exits_1(self):
+        repo = self._repo(None)
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["clean"])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "coverage" in mock_err.call_args[0][0].lower()
+
+    def test_missing_gcda_remote_dir_exits_1(self):
+        repo = self._repo({"hosts": ".*"})
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["clean"])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "gcda_remote_dir" in mock_err.call_args[0][0]
+
+    def test_no_matching_hosts_exits_1(self):
+        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["clean"])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert mock_err.called
+
+
+# ── clean command — success (fetch layer stubbed at the I/O boundary) ───────
+
+
+class TestCovCleanSuccess:
+    @staticmethod
+    def _repo(coverage_cfg, name="sut"):
+        repo = MagicMock()
+        repo.settings = {"coverage": coverage_cfg}
+        repo.name = name
+        return repo
+
+    @staticmethod
+    def _unix_host(host_id="host1"):
+        from otto.host import UnixHost
+
+        host = MagicMock()
+        host.id = host_id
+        host.__class__ = UnixHost
+        return host
+
+    @staticmethod
+    def _embedded_host(host_id="board1"):
+        from otto.host.embedded_host import EmbeddedHost
+
+        host = MagicMock()
+        host.id = host_id
+        host.__class__ = EmbeddedHost
+        return host
+
+    def test_clean_calls_clean_remote_with_configured_dir(self):
+        """The required TDD case: stubbed fetcher, clean_remote invoked, exit 0."""
+        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        unix_host = self._unix_host()
+
+        fetcher_instance = MagicMock()
+        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.configmodule.all_hosts", return_value=[unix_host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
+        ):
+            result = runner.invoke(cov_app, ["clean"])
+
+        assert result.exit_code == 0, result.output
+        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+
+    def test_clean_embedded_only_logs_note_and_skips_clean_remote(self):
+        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        embedded_host = self._embedded_host()
+
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.configmodule.all_hosts", return_value=[embedded_host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher") as mock_fetcher_cls,
+            patch.object(cov_module.logger, "info") as mock_info,
+        ):
+            result = runner.invoke(cov_app, ["clean"])
+
+        assert result.exit_code == 0, result.output
+        mock_fetcher_cls.assert_not_called()
+        assert any(
+            "embedded boards not cleaned" in str(c.args[0]) for c in mock_info.call_args_list
+        )
+
+    def test_clean_mixed_hosts_cleans_unix_and_notes_embedded(self):
+        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        unix_host = self._unix_host()
+        embedded_host = self._embedded_host()
+
+        fetcher_instance = MagicMock()
+        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.configmodule.all_hosts", return_value=[unix_host, embedded_host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
+            patch.object(cov_module.logger, "info") as mock_info,
+        ):
+            result = runner.invoke(cov_app, ["clean"])
+
+        assert result.exit_code == 0, result.output
+        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+        assert any(
+            "embedded boards not cleaned" in str(c.args[0]) for c in mock_info.call_args_list
+        )
