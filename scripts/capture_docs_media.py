@@ -34,6 +34,7 @@ import os
 import random
 import shutil
 import sys
+import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -51,11 +52,13 @@ _STAMP_INPUTS = [
     Path(__file__).resolve(),
     REPO_ROOT / "tests" / "_fixtures" / "_dashboard_harness.py",
     REPO_ROOT / "tests" / "_fixtures" / "_fake_collector.py",
+    REPO_ROOT / "tests" / "_fixtures" / "_report_fixture.py",
     REPO_ROOT / "src" / "otto" / "monitor",
+    REPO_ROOT / "src" / "otto" / "coverage" / "renderer",
 ]
 
 # The files this script promises to produce (docs pages reference them).
-ARTIFACTS = ["dashboard-live.png", "dashboard-live.webm"]
+ARTIFACTS = ["dashboard-live.png", "dashboard-live.webm", "coverage-report.png"]
 
 _VIEWPORT = {"width": 1280, "height": 720}
 
@@ -102,6 +105,7 @@ def _write_placeholders() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "dashboard-live.png").write_bytes(_PLACEHOLDER_PNG)
     (OUT_DIR / "dashboard-live.webm").write_bytes(b"")
+    (OUT_DIR / "coverage-report.png").write_bytes(_PLACEHOLDER_PNG)
     STAMP.unlink(missing_ok=True)  # placeholders are never "fresh"
     print("docs media: wrote PLACEHOLDERS (no browser run) — media is degraded", flush=True)
 
@@ -136,6 +140,18 @@ def _open_dashboard(page, url: str) -> None:  # noqa: ANN001 — playwright impo
     page.wait_for_timeout(750)  # let Plotly finish its initial layout pass
 
 
+def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright import is deferred
+    from tests._fixtures._report_fixture import build_fixture_report
+
+    with tempfile.TemporaryDirectory(prefix="otto-docs-cov-") as tmp:
+        report_dir = build_fixture_report(Path(tmp))
+        page = browser.new_page(viewport=_VIEWPORT)
+        page.goto((report_dir / "index.html").as_uri())
+        page.wait_for_selector("table.files-table")
+        page.screenshot(path=OUT_DIR / "coverage-report.png", full_page=True)
+        page.close()
+
+
 def _capture(harness) -> None:  # noqa: ANN001 — DashboardHarness import is deferred
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import sync_playwright
@@ -156,6 +172,10 @@ def _capture(harness) -> None:  # noqa: ANN001 — DashboardHarness import is de
         _open_dashboard(page, harness.url)
         page.screenshot(path=OUT_DIR / "dashboard-live.png", full_page=True)
         page.close()
+
+        # Still shot of the coverage HTML report (same fixture the
+        # report_browser Playwright suite pins).
+        _capture_coverage_report(browser)
 
         # Live clip: keep pushing points while Playwright records, so the
         # traces visibly extend — the "live lab monitoring" money shot.

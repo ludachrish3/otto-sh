@@ -14,6 +14,14 @@ multi-tier HTML coverage reports.  Coverage tiers — `system` (e2e),
    harvested unit counters, the committed manual store) into an HTML
    report.
 
+![The multi-tier coverage report: summary, legend, and a sortable per-file
+table with per-tier percentage columns](../_static/generated/coverage-report.png)
+
+*The screenshot is generated from the live report renderer at docs build
+time by `scripts/capture_docs_media.py` — the same pipeline that captures
+the monitor dashboard — so it can never drift from what `otto cov report`
+actually produces.*
+
 ## Prerequisites
 
 The following system packages must be installed on the **otto host**
