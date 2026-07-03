@@ -86,7 +86,7 @@ color = "green"                # CSS color name or "#RRGGBB"; per-kind default i
 [coverage.tiers.unit]
 kind = "unit"
 precedence = 2
-harvest_dirs = ["build"]     # repo-relative roots swept for .gcda at report time
+harvest_dirs = ["build"]     # swept for .gcda at report time; "${sut_dir}" expands
 color = "yellow"
 
 [coverage.tiers.manual]
@@ -106,7 +106,7 @@ Each `[coverage.tiers.<name>]` block:
 | `kind` | One of `e2e`, `unit`, `manual`. Selects the collection machinery — see {ref}`coverage-tier-kinds`. |
 | `precedence` | Integer; lower wins the winner-take-all row coloring when multiple tiers cover the same line. |
 | `color` | Optional CSS named color or `#RRGGBB` hex, validated at settings load. Defaults to a per-`kind` color when omitted (`e2e` = green, `unit` = yellow, `manual` = orange). |
-| `harvest_dirs` | `unit`-kind only: repo-relative build directories swept for `.gcda` at report time. |
+| `harvest_dirs` | `unit`-kind only: build directories swept for `.gcda` at report time. `"${sut_dir}"` expands to the repo's SUT directory; relative paths resolve against the repo root. |
 | `max_age` | `manual`-kind only: `"<days>d"` (e.g. `"180d"`); enables the *aging* flag (see {ref}`coverage-validity`). Optional, off by default. |
 
 Tier **names are free-form** and multiple tiers may share a `kind` —
@@ -174,7 +174,7 @@ otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--output, -o PATH` | Directory to write fetched coverage and per-board captures into | `./cov_get` |
+| `--output, -o PATH` | Directory to write fetched coverage and per-board captures into | the command's standard per-invocation output directory |
 | `--tier NAME` | Coverage tier to stamp onto each capture | the lab's sole `e2e`-kind tier (error if ambiguous or unknown, listing the configured tiers) |
 | `--ticket STR` | Ticket reference stamped onto each capture. **Required** when `--tier` resolves to a `manual`-kind tier | none |
 | `--note STR` | Free-text note stamped onto each capture (`manual`-kind tiers only) | none |
@@ -191,8 +191,13 @@ Retrieval requires a git repository — the pin and, for a dirty tree,
 the offset remap both need it.  Outside a git repo, `otto cov get`
 refuses with a clean error; `otto cov report`'s `--tier NAME=PATH`
 escape hatch remains available for git-less flows (see
-{ref}`coverage-tier-name-path`).
+{ref}`coverage-tier-name-path`).  The SUT directory does not have to
+be the repository root: a SUT checked out as a subdirectory of a
+larger repository (a monorepo layout) anchors its captures against the
+enclosing repo — its `HEAD` is the pin, and its working-tree state
+decides dirtiness.
 
+(coverage-dirty-remap)=
 ### Locally-modified builds
 
 Manual testing frequently happens against a **locally modified**
@@ -239,8 +244,10 @@ manual capture — the human metadata:
 file's `blob` is the git blob SHA of that file at the pin — the
 rebase-tolerant anchor {ref}`coverage-validity` checks against.  An
 `e2e`-kind capture has the same shape but omits `tester`/`ticket`/
-`note`; its `pin` is used as a strict merge guard at report time
-instead of a remap anchor (see {ref}`coverage-report-stale-builds`).
+`note`; at report time its `pin` acts as a strict guard — it must
+equal the tree's current `HEAD` — and a dirty working tree only
+triggers a line-number remap onto the current tree, never the manual
+tier's validity pass (see {ref}`coverage-report-stale-builds`).
 
 ## Collecting Coverage During a Test Run: `otto test --cov`
 
@@ -289,6 +296,17 @@ otto test --cov-dir /var/artifacts/myrun --overwrite-cov-dir TestMyDevice
 ```
 
 Omitting both `--cov` and `--cov-dir` disables coverage collection.
+
+### Inline Reports
+
+`--cov-report` renders the HTML report immediately after the run,
+without a separate `otto cov report` invocation.  It goes through the
+same collection model: the configured tiers (colors, precedence,
+custom exclusion markers), the unit-tier harvest, and the committed
+manual store all apply, exactly as they would in a standalone report.
+Like the capture tail, inline report generation is best-effort — a
+report-side problem is logged and never fails an otherwise-successful
+test run.
 
 ### Pre-Run Cleanup
 
@@ -427,6 +445,11 @@ otto cov report <output_dir> --report ./my_report
 from the committed manual-capture store (and any configured unit
 tiers) alone.
 
+A report whose assembled store ends up **empty** — no captures, no
+harvested counters, no manual store — exits `1` with a one-line error
+naming every location that was searched, so a misconfigured CI job
+fails loudly instead of publishing a blank report.
+
 ### Stitching Multiple Runs
 
 To combine coverage from separate test runs into a single report:
@@ -448,12 +471,14 @@ otto cov report run1_output/ run2_output/ run3_output/ --report ./combined_repor
 ### Stale Builds: "stamp mismatch" and the e2e pin guard
 
 gcov embeds a build stamp in both the `.gcno` notes files (written at
-compile time) and the `.gcda` data files (written at run time).  If the
-product tree is rebuilt — even partially — between `otto test --cov` and
-`otto cov report`, the stamps no longer pair up, gcov refuses the data
-(`stamp mismatch with notes file`), and otto raises a
-`CoverageDataMismatchError` explaining the cause instead of dumping raw
-`lcov` output:
+compile time) and the `.gcda` data files (written at run time).  Raw
+counters are therefore only meaningful against the exact build that
+produced them — and the moment they are paired is **collection**, when
+`otto cov get` (or the `otto test --cov` tail) merges the fetched
+`.gcda` against the local `.gcno` graph.  If the product was rebuilt
+in between, gcov refuses the data (`stamp mismatch with notes file`)
+and otto raises a `CoverageDataMismatchError` explaining the cause
+instead of dumping raw `lcov` output:
 
 > Coverage data does not match the current product build (gcov reports a
 > stamp mismatch between .gcda data and .gcno notes files). The product
@@ -461,15 +486,26 @@ product tree is rebuilt — even partially — between `otto test --cov` and
 > coverage must be reported against the exact build that produced it.
 > Re-run `otto test --cov` and report on the new output directory.
 
-An already-pinned `capture.json` sidesteps gcov's stamp check (it holds
-parsed hits, not raw counters) but carries its own equivalent guard:
-its recorded `pin` must equal the tree's current `HEAD`.  A capture
-taken at a different commit — the tree moved on, or the product was
-rebuilt against a new checkout — fails the report with a clean error
-naming both commits, rather than silently reporting numbers for the
-wrong tree. Unlike a manual capture, an e2e capture is never remapped;
-the recovery is the same in both cases: collect fresh coverage with
-`otto test --cov` (or `otto cov get`), then report on the new output.
+Once a `capture.json` exists, the build tree no longer matters: the
+capture holds parsed hits, not raw counters, so **reporting on a
+capture-bearing run directory is immune to rebuilds** — recompiling
+the product between collection and `otto cov report` changes nothing.
+The same rebuild against a *pre-capture* run directory (an older otto's
+output, loaded via the legacy `.gcda`-merge fallback) still re-pairs
+raw counters at report time and fails with the error above.
+
+A capture carries its own, git-based guard instead: its recorded `pin`
+must equal the tree's current `HEAD`.  A capture taken at a different
+commit — the tree moved on since collection — fails the report with a
+clean error naming both commits, rather than silently reporting
+numbers for the wrong tree; the recovery is to collect fresh coverage
+with `otto test --cov` (or `otto cov get`) and report on the new
+output.  A working tree that is merely **dirty** at report time (same
+`HEAD`, uncommitted edits) does not fail: the e2e capture's hits are
+remapped from committed-code coordinates onto the current tree — the
+report-time mirror of the {ref}`dirty-tree remap at retrieval
+<coverage-dirty-remap>` — with a warning, and hits on
+locally-modified lines are omitted rather than misattributed.
 
 (coverage-tier-name-path)=
 ### The `--tier NAME=PATH` escape hatch
@@ -600,9 +636,9 @@ The HTML report is written to the `--report` directory (default:
   {ref}`coverage-colors`.
 
 `store.json` is written alongside the HTML report with the same data —
-validity states, colors, and provenance included — as the explicit
-data contract for tooling built on top of a report (e.g. a future
-frontend) without touching the pipeline.
+validity states, colors, provenance, and each file's excluded lines
+included — as the explicit data contract for tooling built on top of
+a report (e.g. a future frontend) without touching the pipeline.
 
 ## Embedded (console) coverage
 

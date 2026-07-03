@@ -9,10 +9,12 @@ report; this pipeline marries them.
 ```{admonition} Roadmap items pending
 :class: note
 
-A coverage-tier collection model is being designed (see
-`todo/coverage_roadmap.md`); items there — a `capture` subcommand for the
-manual tier, fail-under thresholds, console summaries — are explicitly not
-in the current release. This page describes what ships today.
+The coverage-tier collection model — declarative tiers, `otto cov get` /
+`otto cov clean`, pinned per-board captures, the committed manual store —
+ships in this release. Remaining roadmap items (`todo/coverage_roadmap.md`
+and the plan's later phases) — fail-under thresholds, console summaries,
+per-ticket rollups, embedded counter reset for `cov clean`, wiring custom
+exclusion markers into lcov's percentages — are explicitly not in it.
 ```
 
 ```{graphviz}
@@ -20,18 +22,19 @@ digraph coverage {
     rankdir=LR;
     node [shape=box];
 
-    test [label="otto test --cov\ninstrumented run"];
+    test [label="otto test --cov /\notto cov get\ninstrumented run or retrieval"];
     fetch [label="fetch\n.gcda from covered hosts\n(transfer on Unix,\nconsole extraction embedded)"];
     correlate [label="correlate\nmatch .gcda ↔ .gcno graph,\nremap sysroot paths,\nmerge hosts + runs (lcov)"];
-    render [label="render / report\nHTML + summary tiers"];
+    capture [label="capture.json\nper board: parsed hits,\ngit-pinned coordinates"];
+    render [label="otto cov report\ncaptures + unit harvest\n+ manual store → HTML"];
     err [label="CoverageDataMismatchError\nstale build → instructions,\nnot a wrong report", shape=note, style=dashed];
 
-    test -> fetch -> correlate -> render;
+    test -> fetch -> correlate -> capture -> render;
     correlate -> err [style=dashed, label=" stamp\nmismatch"];
 }
 ```
 
-The stages (`otto cov`, packages `otto.coverage.fetcher` → `correlator` →
+The stages (packages `otto.coverage.fetcher` → `correlator` → `capture` →
 `renderer` → `reporter`):
 
 1. **Fetch** — pull `.gcda` data from each covered host after the run.
@@ -42,24 +45,58 @@ The stages (`otto cov`, packages `otto.coverage.fetcher` → `correlator` →
 2. **Correlate** — match counters to the build tree's `.gcno` graph and remap
    embedded/sysroot paths back to source paths, merging counters across hosts
    and runs (lcov semantics).
-3. **Render / report** — an HTML report plus summary tiers.
+3. **Capture** — freeze the merged result into a pinned per-board
+   `capture.json`: parsed hits in committed-code coordinates, anchored to the
+   repo's `HEAD` and per-file blob SHAs.
+4. **Render / report** — `otto cov report` assembles every tier — e2e
+   captures, a fresh unit-tier harvest, the committed manual store — into an
+   HTML report plus summary tiers.
 
 The correlator's core invariant is *build/counter identity*: `.gcda` files
 are only meaningful against the exact `.gcno` graph the binary was compiled
-with. When they disagree — a stale or partially rebuilt product tree — the
-pipeline stops with a diagnostic error that names the mismatch and the
-rebuild that fixes it, rather than a gcov stack trace or a silently wrong
-report. That fail-with-instructions posture is a house rule
-({doc}`../principles`).
+with. That pairing happens once, at **collection** — the capture holds
+parsed hits, so the report step never touches the build tree again and a
+later rebuild cannot invalidate it (a capture's own guard is its git pin,
+which must match `HEAD` at report time). When the raw pairing disagrees — a
+stale or partially rebuilt product tree at collection time, or a
+pre-capture run directory re-merged via the legacy fallback — the pipeline
+stops with a diagnostic error that names the mismatch and the rebuild that
+fixes it, rather than a gcov stack trace or a silently wrong report. That
+fail-with-instructions posture is a house rule ({doc}`../principles`).
+
+## Tiers and what is committed
+
+Coverage is organized into **tiers** — `system` (e2e), `unit`, `manual`, or
+any other name — declared in `.otto/settings.toml` under `[coverage.tiers]`
+with a `kind` (`e2e` / `unit` / `manual`) that selects how otto collects that
+tier's data. Only the **manual** tier's data is pinned and committed into the
+repo: selecting a manual-kind tier on `otto cov get` copies the capture into
+the repo's committed store at `.otto/coverage/manual/` — proof of a manual
+test session that travels with the code and is PR-reviewable. E2e data lives
+in each test run's output directory, and unit data is harvested fresh from
+the build tree's `harvest_dirs` at report time.
+
+`otto cov report` assembles a store from all three sources per tier `kind`:
+e2e captures from the given output directories (behind the pin guard above),
+the unit harvest, and every committed manual capture — loaded automatically,
+no path needed. A report-time **validity pass** (`otto.coverage.validity`)
+anchors each manual capture's lines against the current tree by git blob
+SHA: unchanged lines stay **valid**, changed/deleted lines go **stale**
+(coverage revoked — the evidence no longer describes this code), and
+valid-but-old lines past the tier's `max_age` are flagged **aging** without
+losing coverage credit.
 
 ## What is unique about `cov`
 
-`otto cov` runs *after* the fact, over directories `otto test --cov` already
-wrote: it still loads the lab — per-host toolchain resolution (`gcov`,
-`lcov`) comes from host configuration, with `.gcno` inspection as the
-fallback — but it creates **no output directory of its own** and runs **no
-gate**: reporting on yesterday's run must never be blocked by today's
-reservations ({doc}`index`).
+`otto cov report` runs *after* the fact, over directories `otto test --cov`
+or `otto cov get` already wrote: it still loads the lab — per-host toolchain
+resolution (`gcov`, `lcov`) comes from host configuration, with `.gcno`
+inspection as the fallback — but it creates **no output directory of its
+own** and runs **no gate**: reporting on yesterday's run must never be
+blocked by today's reservations ({doc}`index`). Its siblings do touch the
+lab: `otto cov get` fetches counters — into the standard per-invocation
+output directory, or `--output` — and `otto cov clean` zeroes them on the
+remotes.
 
 ## `otto cov --help`
 

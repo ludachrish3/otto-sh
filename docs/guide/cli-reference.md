@@ -317,37 +317,63 @@ Docker container hosts are excluded from the default monitored fleet.
 
 ## otto cov
 
-Generate multi-tier HTML coverage reports from `otto test --cov` output
-directories.  This is the **report** half of the coverage workflow — the
-**collect** half is `otto test --cov` (see below).  For the full
-walkthrough, prerequisites (`lcov`/`gcov`), and tier recipes, see the
-[coverage guide](coverage.md).
+Retrieve, reset, and report gcov coverage across the lab's tiers.  For
+the full walkthrough, prerequisites (`lcov`/`gcov`), and tier recipes,
+see the [coverage guide](coverage.md).
 
 ```text
-otto cov report <OUTPUT_DIR...> [OPTIONS]
+otto cov get    [OPTIONS]
+otto cov clean
+otto cov report [OUTPUT_DIR...] [OPTIONS]
 ```
 
-`report` is currently the only `otto cov` subcommand.
+| Subcommand | Description |
+| ---------- | ----------- |
+| `get` | Fetch `.gcda` counters from the lab and write one pinned `capture.json` per board (also run implicitly by `otto test --cov`) |
+| `clean` | Zero remote `.gcda` counters ahead of a fresh session (Unix coverage hosts only — embedded reset is a later phase) |
+| `report` | Assemble every tier — e2e captures, unit harvest, committed manual store — into an HTML report |
 
-### Arguments
+### `otto cov get` options
+
+| Option | Default | Description |
+| ------ | ------- | ----------- |
+| `--output, -o PATH` | the per-invocation output dir | Directory for fetched counters and per-board captures |
+| `--tier NAME` | the lab's sole `e2e`-kind tier | Tier stamped onto each capture; a `manual`-kind tier switches to manual-capture mode (commits into `.otto/coverage/manual/`) |
+| `--ticket STR` | none | Ticket reference; **required** for a `manual`-kind tier |
+| `--note STR` | none | Free-text note (`manual`-kind only) |
+| `--tester-name STR` | `getpass.getuser()` | Tester name (`manual`-kind only) |
+| `--tester-email STR` | `git config user.email` | Tester email (`manual`-kind only) |
+| `--clean` | off | Zero the fetched Unix hosts' counters after a successful retrieval |
+
+Retrieval requires a git repository (captures are pinned to `HEAD`);
+a dirty working tree is remapped onto committed-code coordinates
+automatically.
+
+### `otto cov report` arguments and options
 
 | Argument | Description |
 | -------- | ----------- |
-| `OUTPUT_DIR...` | One or more `otto test` output directories, each containing a `cov/` subdirectory of per-host `.gcda` files. List several to stitch multiple runs into one report. Each must exist or the command exits with an error. |
-
-### Options
+| `OUTPUT_DIR...` | `otto test --cov` / `otto cov get` output directories, each containing a `cov/` subdirectory. List several to stitch multiple runs. Optional — with none given, the report is built from the committed manual store (and configured unit tiers) alone. |
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |
 | `--report, -r PATH` | `./cov_report` | Directory for the generated HTML report (`index.html` is written inside it) |
 | `--project-name NAME` | `Coverage Report` | Title shown in the HTML report header |
-| `--tier NAME[=PATH]` | `system` | Add a coverage tier; repeatable. See tier rules below. |
+| `--tier NAME[=PATH]` | the configured tiers | Git-less escape hatch; repeatable. See tier rules below. |
 
 ### Tiers
 
-A *tier* is a named layer of coverage data. `--tier` is repeatable, and
-the **order of flags is the precedence order** — the first tier is
-highest precedence and wins row coloring on the annotated source view.
+Tiers are normally **declared** under `[coverage.tiers]` in
+`.otto/settings.toml` and loaded automatically — with no `--tier`
+flags, the report uses the configured tiers (or an implicit `system`
+tier when none are configured).
+
+Passing any `--tier` flag **bypasses the declarative model entirely**
+(settings tiers, the manual store, and unit harvesting are not
+consulted) — a git-less fallback for foreign `.info` files. `--tier`
+is repeatable, and the **order of flags is the precedence order** —
+the first tier is highest precedence and wins row coloring on the
+annotated source view.
 
 - `--tier system` (no path) — the implicit tier built by merging the
   supplied `OUTPUT_DIR` `.gcda` files with `lcov`. Only the `system`
@@ -356,26 +382,26 @@ highest precedence and wins row coloring on the annotated source view.
   lcov-format `.info` tracefile. A non-`system` tier without a path is
   rejected.
 - Duplicate tier names are rejected.
-- If no `--tier` flag is given, the report defaults to a single
-  `system` tier.
 
 ### Examples
 
 ```text
+otto cov get --tier manual --ticket PROJ-123 --note "verified failover"
 otto cov report runs/2026-05-16_T1200/ --report ./report
 otto cov report run_a/ run_b/ run_c/ --report ./combined
 otto cov report runs/ --tier unit=unit.info --tier system --tier manual=manual.info
 ```
 
 On success, otto logs the overall coverage percentage, the file count,
-and the path to `index.html`. If no valid coverage data is found in the
-supplied directories, the command logs an error and exits non-zero.
+and the path to `index.html`. If no coverage data is found anywhere —
+supplied directories, unit harvest, or the manual store — the command
+logs an error naming the searched locations and exits non-zero.
 
 ### Collecting coverage (`otto test --cov`)
 
-`otto cov` only generates reports — it consumes `cov/` directories
-produced by a prior `otto test` run. Collect coverage with the `--cov`
-family of options on `otto test`:
+`otto test --cov` collects coverage as part of a test run — it fetches
+counters after the suite and produces the same pinned per-board
+captures as `otto cov get`:
 
 | Option | Description |
 | ------ | ----------- |
