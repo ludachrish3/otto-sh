@@ -3,6 +3,19 @@
 `otto monitor` launches an interactive performance dashboard that collects
 CPU, memory, disk, and network metrics from remote hosts in real time.
 
+![The live monitor dashboard: per-host CPU, process, and load charts with a
+marked event](../_static/generated/dashboard-live.png)
+
+Charts extend in place as new samples stream in over SSE, and events mark
+moments on the shared timeline:
+
+<video src="../_static/generated/dashboard-live.webm" autoplay loop muted playsinline width="100%"></video>
+
+<!-- Both assets above are produced AT BUILD TIME by
+scripts/capture_docs_media.py (hooked from docs/conf.py): the real dashboard,
+seeded with deterministic dummy data, captured with headless Chromium. Do not
+commit media into docs/_static/generated/. -->
+
 ## Live mode
 
 By default, `otto monitor` polls every real host in the lab:

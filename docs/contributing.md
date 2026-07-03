@@ -324,6 +324,32 @@ make docs-html     # HTML only (warnings are errors)
 pytest also runs doctests from Python source files automatically via
 `--doctest-modules`.
 
+The HTML build needs two system tools the dev environment provides:
+`graphviz` (renders the architecture diagrams; provisioned on the dev VM
+by the Vagrantfile) and headless Chromium (installed by `make dev` via
+`make browsers`).
+
+### Build-time GUI media
+
+Screenshots and video clips of otto's GUIs are **products of the build**,
+never committed. On every HTML build, `docs/conf.py` runs
+`scripts/capture_docs_media.py`: it serves the real monitor dashboard —
+through the same `DashboardHarness`/`FakeCollector` fixtures the browser
+e2e suite uses — seeds it with deterministic dummy data, and captures it
+with headless Chromium into `docs/_static/generated/` (gitignored). The
+media therefore always matches the current frontend; a UI change shows up
+in the docs on the next build with zero manual work.
+
+- Regeneration is stamp-cached: it reruns only when the capture script,
+  the harness fixtures, or anything under `src/otto/monitor` changes.
+  `make docs-media` forces a fresh capture.
+- Pages reference the generated files like any other static asset
+  (see `docs/guide/monitor.md`); a missing screenshot fails the `-W`
+  build loudly.
+- `OTTO_DOCS_MEDIA=placeholder` writes tiny placeholder assets without a
+  browser — an emergency escape hatch (e.g. a broken Chromium install on
+  a docs host), not a developer convenience.
+
 ### Documentation layout
 
 ```text

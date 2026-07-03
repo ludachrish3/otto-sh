@@ -291,7 +291,41 @@ def _strip_inherited_pydantic_signature(
     return None
 
 
+# -- build-time GUI media ------------------------------------------------------
+# Screenshots and video clips of otto's GUIs are PRODUCTS OF THE BUILD, never
+# committed: scripts/capture_docs_media.py serves the real dashboard (via the
+# browser-e2e harness fixtures) seeded with deterministic dummy data, and
+# captures it with headless Chromium into docs/_static/generated/ (gitignored).
+# Hooked here — rather than in the Makefile / CI / RTD configs — so every
+# environment that builds HTML gets the same media with one wiring point.
+# Chromium is a hard requirement of the dev environment (`make browsers`);
+# OTTO_DOCS_MEDIA=placeholder is the documented emergency escape hatch.
+
+
+def _generate_docs_media(app):
+    if app.builder.name != "html":
+        return
+    import subprocess
+
+    from sphinx.util import logging as sphinx_logging
+
+    logger = sphinx_logging.getLogger(__name__)
+    script = pathlib.Path(__file__).parent.parent / "scripts" / "capture_docs_media.py"
+    # Capture output: the harness prints benign asyncio teardown noise on
+    # stderr; keep successful builds quiet and failures fully loud.
+    proc = subprocess.run(  # noqa: S603 — fixed interpreter + repo-local script, no shell
+        [sys.executable, str(script)], capture_output=True, text=True, check=False
+    )
+    if proc.stdout.strip():
+        logger.info(proc.stdout.strip())
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"docs media capture failed with exit code {proc.returncode}:\n{proc.stderr}"
+        )
+
+
 def setup(app):
+    app.connect("builder-inited", _generate_docs_media)
     app.connect("missing-reference", _resolve_short_types)
     app.connect("missing-reference", _resolve_internal_aliases)
     app.connect("missing-reference", _resolve_external_doc_links)

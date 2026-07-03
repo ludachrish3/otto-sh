@@ -10,8 +10,20 @@ build:
     python: "3.10"
   # `dot` renders the architecture-docs diagrams (sphinx.ext.graphviz /
   # inheritance_diagram); without it the -W build fails.
+  # The lib* set is headless Chromium's runtime for the build-time GUI media
+  # (scripts/capture_docs_media.py, hooked from docs/conf.py) — the same list
+  # the Vagrantfile provisions on the dev VM for the dashboard e2e suite.
   apt_packages:
     - graphviz
+    - libatk1.0-0t64
+    - libxcomposite1
+    - libxdamage1
+    - libxext6
+    - libxfixes3
+    - libxrandr2
+    - libgbm1
+    - libasound2t64
+    - libatspi2.0-0t64
   jobs:
     # RTD's build image ships `asdf` preinstalled. uv isn't on RTD's curated
     # `tools:` list, so we use asdf to install and pin it into PATH.
@@ -21,6 +33,10 @@ build:
       - asdf global uv latest
     install:
       - uv sync --all-extras --dev
+      # The Chromium binary itself (runtime libs come from apt_packages above).
+      # If this breaks on an RTD image change, OTTO_DOCS_MEDIA=placeholder in
+      # the RTD environment variables ships degraded-but-green docs meanwhile.
+      - uv run playwright install chromium
     build:
       html:
         - uv run sphinx-build -W -b html docs/ $READTHEDOCS_OUTPUT/html

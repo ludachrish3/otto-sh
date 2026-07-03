@@ -37,6 +37,9 @@ profile.txt
 # Sphinx build output
 docs/_build
 
+# Build-time GUI media (scripts/capture_docs_media.py) — never committed
+docs/_static/generated/
+
 # Claude files
 .claude
 

@@ -90,6 +90,10 @@ jobs:
       # install explicitly so the docs gate never depends on image contents.
       - run: sudo apt-get install -y graphviz
       - run: uv python install 3.10
+      # Headless Chromium captures the build-time GUI media (screenshots +
+      # clips) via scripts/capture_docs_media.py, hooked from docs/conf.py.
+      # --with-deps also apt-installs the browser's runtime libraries.
+      - run: uv run playwright install --with-deps chromium
       - run: uv run nox -s docs
 
   # If any job above fails on a push to main, open (or update) a tracking

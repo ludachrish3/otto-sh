@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless docs docs-lint docs-html docs-inventories doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -165,10 +165,11 @@ validate: ## (Build & Release) Run validation (clean-dist, lint, typecheck, cove
 clean-dist:
 	@rm -rf dist
 
-dev: ## (Dev) Set up the dev environment (uv sync, git hooks, hyperfine)
+dev: ## (Dev) Set up the dev environment (uv sync, git hooks, hyperfine, Chromium)
 	uv sync
 	git config core.hooksPath .githooks
 	$(MAKE) hyperfine
+	$(MAKE) browsers
 	@echo "Dev environment ready"
 
 hyperfine:
@@ -178,8 +179,11 @@ hyperfine:
 		bash scripts/install_hyperfine.sh "$(HYPERFINE_VERSION)" "$(VENV_BIN)"; \
 	fi
 
-browsers: ## (Setup) Install the Playwright Chromium binary used by the dashboard e2e tests
+browsers: ## (Setup) Install the Playwright Chromium binary used by the dashboard e2e tests and the docs media pipeline
 	uv run playwright install chromium
+
+docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots + clips) in docs/_static/generated/
+	uv run python scripts/capture_docs_media.py --mode force
 
 profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snapshots + denylist) + hyperfine wall-clock
 	uv run python scripts/import_budget.py --check --hyperfine
