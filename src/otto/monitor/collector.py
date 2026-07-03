@@ -29,6 +29,7 @@ from pydantic import ValidationError
 from ..filesystem import network_fs_type
 from ..models import EventRecord, MetricPoint, MetricRecord
 from ..result import CommandResult, Results
+from .broadcast import Broadcaster
 from .events import MonitorEvent
 from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser
 from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
@@ -179,10 +180,8 @@ class MetricCollector:
         self._events: list[MonitorEvent] = []
         self._next_event_id: int = 1
 
-        # SSE subscribers: one asyncio.Queue per connected dashboard tab.
-        # _publish() uses put_nowait() — safe because collection and the SSE
-        # route handlers all run in the same event loop.
-        self._subscribers: list["asyncio.Queue[dict[str, Any]]"] = []
+        # SSE fan-out to subscriber queues
+        self._broadcast = Broadcaster()
 
         # Persistent async DB connection — opened by init_db(), closed by close_db().
         self._db_conn: aiosqlite.Connection | None = None
@@ -632,18 +631,14 @@ class MetricCollector:
 
     def subscribe(self) -> "asyncio.Queue[dict[str, Any]]":
         """Register a new SSE subscriber and return its queue."""
-        q: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
-        self._subscribers.append(q)
-        return q
+        return self._broadcast.subscribe()
 
     def unsubscribe(self, q: "asyncio.Queue[dict[str, Any]]") -> None:
         """Remove ``q`` from the SSE subscriber list so it receives no further pushes."""
-        self._subscribers = [sq for sq in self._subscribers if sq is not q]
+        self._broadcast.unsubscribe(q)
 
     def _publish(self, payload: dict[str, Any]) -> None:
-        """Push a JSON-safe dict to all SSE subscriber queues."""
-        for q in list(self._subscribers):
-            q.put_nowait(payload)
+        self._broadcast.publish(payload)
 
     # ------------------------------------------------------------------
     # Historical data loaders (class methods)
