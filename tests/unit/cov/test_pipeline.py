@@ -1,6 +1,7 @@
 """Tests for the CoverageReporter and helper functions."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -235,6 +236,7 @@ class TestE2ePinGuard:
         message = str(excinfo.value)
         assert "f" * 12 in message  # capture pin (short)
         assert head[:12] in message  # tree HEAD (short)
+        assert "re-run" in message  # remedy
 
     @pytest.mark.asyncio
     async def test_capture_pin_matches_head_loads_into_store(self, tmp_path):
@@ -332,3 +334,84 @@ class TestUnitHarvest:
         assert any("does not exist" in rec.message for rec in caplog.records)
         # The unit tier is still registered (seeded from tier_configs).
         assert "unit" in store.tier_order
+
+    @pytest.mark.asyncio
+    async def test_empty_harvest_dir_warns_and_skips(self, tmp_path, monkeypatch, caplog):
+        """A harvest dir that exists but has no .gcda files under it warns and is skipped
+        (distinct from the missing-dir case above)."""
+        from otto.coverage.correlator import merger as merger_mod
+
+        repo = _init_repo(tmp_path)
+        hdir = tmp_path / "unit_build_empty"
+        hdir.mkdir()
+
+        async def fail_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            raise AssertionError("merger.capture must not run for a harvest dir with no .gcda")
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fail_capture)
+
+        cov_config = {
+            "tiers": {
+                "unit": {
+                    "kind": "unit",
+                    "precedence": 1,
+                    "harvest_dirs": [str(hdir)],
+                },
+            }
+        }
+        with caplog.at_level("WARNING"):
+            store = await run_coverage_report(
+                [],
+                tmp_path / "report",
+                repo_root=repo,
+                tier_configs=load_tiers(cov_config),
+            )
+        assert store is not None
+        assert any("no .gcda files" in rec.message for rec in caplog.records)
+        assert "unit" in store.tier_order
+
+    @pytest.mark.asyncio
+    async def test_stale_counters_warn_but_still_load(self, tmp_path, monkeypatch, caplog):
+        """A .gcda older than the newest .gcno is flagged in the report but still loaded
+        (Task 10's `_warn_if_stale_counters`, deferred-untested finding closed here)."""
+        from otto.coverage.correlator import merger as merger_mod
+
+        repo = _init_repo(tmp_path)
+        hdir = tmp_path / "unit_build_stale"
+        hdir.mkdir()
+        gcda = hdir / "f.gcda"
+        gcno = hdir / "f.gcno"
+        gcda.write_bytes(b"")
+        gcno.write_bytes(b"")
+
+        now = 1_800_000_000.0
+        os.utime(gcda, (now - 100, now - 100))  # counters predate the build notes
+        os.utime(gcno, (now, now))
+
+        src = repo / "f.c"
+
+        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+
+        cov_config = {
+            "tiers": {
+                "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]},
+            }
+        }
+        with caplog.at_level("WARNING"):
+            store = await run_coverage_report(
+                [],
+                tmp_path / "report",
+                repo_root=repo,
+                tier_configs=load_tiers(cov_config),
+            )
+        assert store is not None
+        assert any(
+            "stale" in rec.message and "loading anyway" in rec.message for rec in caplog.records
+        )
+        # Still loaded despite the staleness warning — a warning, not a fatal error.
+        (frec,) = [f for f in store.files() if f.path.name == "f.c"]
+        assert frec.lines[1].hits.for_tier("unit") == 5

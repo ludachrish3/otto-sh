@@ -144,3 +144,19 @@ def test_unverifiable_all_stale(repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
     apply_manual_capture(store, bogus, repo, max_age_days=None)
     assert _find(store, repo, 1).state == "stale"
+
+
+def test_unverifiable_pin_warns_with_ticket_and_remedy(repo: Path, caplog) -> None:
+    """The unverifiable-pin warning is not fatal — it names the ticket and the remedy."""
+    cap = _capture(repo)
+    bogus = cap.model_copy(update={"pin": "f" * 40})
+    for fc in bogus.files.values():
+        fc.blob = "e" * 40
+    store = CoverageStore(tier_order=["manual"])
+    with caplog.at_level("WARNING"):
+        apply_manual_capture(store, bogus, repo, max_age_days=None)
+    # Not fatal: apply_manual_capture raises nothing and still loads a (stale) line.
+    assert _find(store, repo, 1).state == "stale"
+    (rec,) = [r for r in caplog.records if "unverifiable" in r.message]
+    assert cap.ticket in rec.message  # "T-1"
+    assert "re-capture" in rec.message

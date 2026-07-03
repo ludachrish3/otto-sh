@@ -537,7 +537,30 @@ class TestCovGetValidation:
         ):
             result = runner.invoke(cov_app, ["get", "--tier", "manual"])
         assert result.exit_code == 1
-        assert "ticket" in mock_err.call_args[0][0].lower()
+        message = mock_err.call_args[0][0]
+        assert "ticket" in message.lower()
+        assert "requires --ticket" in message
+
+    def test_ambiguous_default_tier_lists_candidates_exits_1(self):
+        """No --tier given and more than one e2e-kind tier configured is ambiguous."""
+        repo = self._repo(
+            {
+                "tiers": {
+                    "sys_a": {"kind": "e2e", "precedence": 1},
+                    "sys_b": {"kind": "e2e", "precedence": 2},
+                }
+            }
+        )
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["get"])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        message = mock_err.call_args[0][0]
+        assert "sys_a" in message
+        assert "sys_b" in message
 
     def test_zero_counters_exits_1(self, monkeypatch):
         repo = self._repo({"hosts": ".*"})
@@ -556,7 +579,31 @@ class TestCovGetValidation:
         ):
             result = runner.invoke(cov_app, ["get"])
         assert result.exit_code == 1
-        assert "no coverage" in mock_err.call_args[0][0].lower()
+        assert "no .gcda" in mock_err.call_args[0][0]
+
+    def test_zero_counters_lists_searched_host_names(self, monkeypatch):
+        """The zero-counter message names the hosts it searched, not just "no data"."""
+        repo = self._repo({"hosts": ".*"})
+        host1 = MagicMock()
+        host1.id = "sprout"
+
+        async def fake_collect(cov_config, staging_root, pattern=None):
+            return {}
+
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([host1])),
+            patch(
+                "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+                new=fake_collect,
+            ),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["get"])
+        assert result.exit_code == 1
+        message = mock_err.call_args[0][0]
+        assert "no .gcda" in message
+        assert "sprout" in message
 
     def test_non_git_repo_exits_1(self, tmp_path):
         not_a_repo = tmp_path / "not_a_repo"
@@ -587,6 +634,7 @@ class TestCovGetValidation:
         assert result.exit_code == 1
         assert "Traceback" not in result.output
         assert mock_err.called
+        assert "not a git repository" in mock_err.call_args[0][0]
 
 
 # ── get command — success (fetch layer stubbed at the I/O boundary) ─────────

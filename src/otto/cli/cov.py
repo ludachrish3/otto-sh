@@ -490,7 +490,9 @@ async def _do_get(
     host_dirs.update(embedded_dirs)
 
     if not host_dirs:
-        raise _GetError("No coverage data collected from any host")
+        searched = ", ".join(sorted(h.id for h in cov_hosts))
+        where = f"searched: {searched}" if searched else "no hosts matched [coverage].hosts"
+        raise _GetError(f"no .gcda counters retrieved from any host ({where})")
 
     await _write_cov_metadata(
         repos=repos,
@@ -530,7 +532,9 @@ async def _do_get(
         raise _GetError(f"Coverage merge failed: {e}") from e
 
     if not written:
-        raise _GetError("No coverage data collected from any host")
+        searched = ", ".join(sorted(host_dirs))
+        where = f"searched: {searched}" if searched else "no boards produced captures"
+        raise _GetError(f"no .gcda counters retrieved from any board ({where})")
 
     if resolved_tier.kind == "manual":
         for capture_path in written:
