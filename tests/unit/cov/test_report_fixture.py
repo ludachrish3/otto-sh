@@ -22,8 +22,15 @@ def test_fixture_report_has_branch_pills(tmp_path):
     # becomes "..._product_main.c.html" (the basename keeps its dot).
     main_page = next(p for p in (report_dir / "files").glob("*main.c.html"))
     html = main_page.read_text()
-    assert "branch-taken" in html
-    assert "branch-not-taken" in html
+    # Every file page carries a static legend that also uses the pill class
+    # names, so bare substring checks would pass with NO branch data at all.
+    # Data pills (and only data pills) carry the `title` tooltip built by
+    # HtmlRenderer._build_branch, which starts with "block=<b> branch=<n>" —
+    # assert each pill class co-occurs with its branch's tooltip so the test
+    # guards the fixture's actual branch data on main.c line 4.
+    assert 'class="branch-pill branch-taken" title="block=0 branch=0' in html
+    assert 'class="branch-pill branch-not-taken" title="block=0 branch=1' in html
+    assert 'class="branch-pill branch-unreachable" title="block=0 branch=2' in html
 
 
 def test_display_paths_are_short_and_deterministic(tmp_path):
