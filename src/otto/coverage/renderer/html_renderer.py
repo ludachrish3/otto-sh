@@ -154,13 +154,17 @@ class HtmlRenderer:
         tier_order: list[str],
         default_tier_colors: dict[str, str],
     ) -> dict[str, str]:
-        """Per-tier CSS colors: ``store.tier_colors`` first, then the kind-keyed default.
+        """Per-tier CSS colors: ``store.tier_colors`` first, then a best-effort default.
 
         ``store.tier_colors`` is a name -> color map filled by the reporter
         from declared tier settings.  A tier with no entry there (e.g. the
-        git-less ``--tier`` escape hatch, which carries no color info at
-        all) falls back to :data:`otto.coverage.colors.DEFAULT_TIER_COLORS`
-        and finally to plain ``"green"``.
+        git-less ``--tier`` escape hatch, which carries no color info at all)
+        falls back to :data:`otto.coverage.colors.DEFAULT_TIER_COLORS` indexed
+        by the tier **name**.  That default map is keyed by tier *kind*
+        (``e2e``/``unit``/``manual``), so the fallback only lands a real color
+        when a tier's name coincides with a kind key (``"unit"``/``"manual"``);
+        every other name — including the conventional ``"system"`` (kind
+        ``e2e``) — falls through to plain ``"green"``.
         """
         colors: dict[str, str] = {}
         for tier in tier_order:
@@ -248,10 +252,19 @@ class HtmlRenderer:
 
         try:
             source_text = record.path.read_text(errors="replace")
-        except OSError:
+        except OSError as e:
+            logger.warning(
+                "Could not read source %s (%s); its annotated page will be empty.",
+                record.path,
+                e,
+            )
             source_text = ""
         source_lines = source_text.splitlines()
         excluded_linenos = scan_excluded_lines(source_text, self.extra_markers or None)
+        # Annotate the store with the source-scanned exclusions (spec §9): the
+        # reporter renders before it saves store.json, so this flows through
+        # to the serialised store for frontend consumers.
+        record.excluded_lines = excluded_linenos
 
         annotated_lines = [
             self._build_line_row(i, text, record.lines.get(i), tier_order, i in excluded_linenos)

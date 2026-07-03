@@ -50,6 +50,47 @@ class TestFilePageRowPrecedence:
         assert "--tier-0: #112233" in html
 
 
+class TestExcludedLinesPersisted:
+    """spec §9 frontend contract: the renderer's per-file exclusion scan is
+    annotated onto the store so store.json carries the excluded line set."""
+
+    def test_store_json_roundtrip_has_excluded_lines(self, tmp_path):
+        src = _write(tmp_path, "f.c", "int a;\nint b; // LCOV_EXCL_LINE\nint c;\n")
+        store = CoverageStore(tier_order=["system"])
+        fr = store.get_or_create_file(src)
+        fr.lines[1] = LineRecord(line_number=1, hits=LineHits(counts={"system": 3}))
+
+        out_dir = tmp_path / "report"
+        renderer = HtmlRenderer(out_dir)
+        renderer.render(store)  # scans source → annotates fr.excluded_lines
+
+        # The renderer annotates the store; the reporter renders before saving,
+        # so a save here reflects the same flow store.json consumers see.
+        store_json = out_dir / "store.json"
+        store.save(store_json)
+        reloaded = CoverageStore.load(store_json)
+
+        (frec,) = [f for f in reloaded.files() if f.path.name == "f.c"]
+        assert frec.excluded_lines == {2}
+
+    def test_load_tolerates_absent_excluded_lines_key(self, tmp_path):
+        """Legacy store.json with no excluded_lines key loads to an empty set."""
+        import json
+
+        store_json = tmp_path / "store.json"
+        store_json.write_text(
+            json.dumps(
+                {
+                    "tier_order": ["system"],
+                    "files": [{"path": "/x/f.c", "lines": {}}],
+                }
+            )
+        )
+        reloaded = CoverageStore.load(store_json)
+        (frec,) = list(reloaded.files())
+        assert frec.excluded_lines == set()
+
+
 class TestExcludedAlwaysWins:
     """A line that is both covered and inside an LCOV_EXCL block renders excluded."""
 

@@ -175,6 +175,13 @@ class FileRecord:
     path: Path
     lines: dict[int, LineRecord] = field(default_factory=dict)
 
+    # Source-scanned exclusion markers (spec §8/§9 frontend contract). This
+    # is render-time state, not measured coverage: the renderer scans the
+    # file's source for ``LCOV_EXCL_*`` (and any extra markers) once and
+    # annotates the store here before it is serialised, so ``store.json``
+    # consumers can distinguish excluded lines from plain misses.
+    excluded_lines: set[int] = field(default_factory=set)
+
     def get_or_create_line(self, line_number: int) -> LineRecord:
         """Return the :class:`LineRecord` for *line_number*, creating it if absent."""
         if line_number not in self.lines:
@@ -242,6 +249,7 @@ class FileRecord:
                 }
                 for lineno, rec in self.lines.items()
             },
+            "excluded_lines": sorted(self.excluded_lines),
         }
 
 
@@ -357,6 +365,7 @@ class CoverageStore:
         store.tier_colors = dict(tier_colors)
         for fd in files_data:
             record = FileRecord(path=Path(fd["path"]))
+            record.excluded_lines = set(fd.get("excluded_lines") or [])
             for lineno_str, ld in fd["lines"].items():
                 hits = LineHits(counts=dict(ld["hits"]))
                 branches = []
