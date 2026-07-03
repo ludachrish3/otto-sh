@@ -50,6 +50,7 @@ stale entries without trusting the mtimes on-disk::
             ],
             "suites": [{"name": "TestDevice", "options": [...]}, ...],
             "hosts": ["carrot_seed", "tomato_seed", ...],
+            "hosts_by_lab": {"veggies": ["carrot_seed", "tomato_seed"], ...},
             "docker_hosts": ["carrot_seed", ...],
             "term_backends": ["ssh", "telnet", ...],
             "transfer_backends": [{"name": "scp", "host_families": ["unix"]}, ...],
@@ -132,7 +133,8 @@ CACHE_FILENAME = "completion_cache.json"
 
 # Bump when the on-disk schema changes in a way older readers can't parse.
 # v9: added "labs" and "tests" (sources for --lab / --tests completion).
-SCHEMA_VERSION = 9
+# v10: added "hosts_by_lab" (lab-scoped `otto host <TAB>` fast path).
+SCHEMA_VERSION = 10
 
 HOSTS_FILENAME = "hosts.json"
 
@@ -476,6 +478,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
     instructions = entry.get("instructions")
     suites = entry.get("suites")
     hosts = entry.get("hosts")
+    hosts_by_lab = entry.get("hosts_by_lab", {})
     docker_hosts = entry.get("docker_hosts", [])
     term_backends = entry.get("term_backends", [])
     transfer_backends = entry.get("transfer_backends", [])
@@ -487,6 +490,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
         not isinstance(instructions, list)
         or not isinstance(suites, list)
         or not isinstance(hosts, list)
+        or not isinstance(hosts_by_lab, dict)
         or not isinstance(docker_hosts, list)
         or not isinstance(term_backends, list)
         or not isinstance(transfer_backends, list)
@@ -500,6 +504,7 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
         "instructions": instructions,
         "suites": suites,
         "hosts": hosts,
+        "hosts_by_lab": hosts_by_lab,
         "docker_hosts": docker_hosts,
         "term_backends": term_backends,
         "transfer_backends": transfer_backends,
@@ -522,6 +527,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
     commands: list[dict[str, Any]] | None = None,
     labs: list[str] | None = None,
     tests: list[str] | None = None,
+    hosts_by_lab: dict[str, list[str]] | None = None,
 ) -> None:
     """Write (or update) the entry for the current fingerprint.
 
@@ -558,6 +564,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
         "instructions": instructions,
         "suites": suites,
         "hosts": hosts,
+        "hosts_by_lab": hosts_by_lab or {},
         "docker_hosts": docker_hosts or [],
         "term_backends": term_backends or [],
         "transfer_backends": transfer_backends or [],
@@ -815,7 +822,7 @@ def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
     return sorted(ids)
 
 
-def collect_host_ids(repos: list["Repo"]) -> list[str]:
+def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) -> list[str]:
     """Enumerate every host ID reachable via the configured lab search paths.
 
     Reads each repo's ``labs`` directories for a ``hosts.json`` file and
@@ -825,6 +832,13 @@ def collect_host_ids(repos: list["Repo"]) -> list[str]:
     from each repo's ``[docker]`` settings so declared container hosts
     are tab-completable before they're actually brought up.
 
+    When *lab_names* is given, only hosts whose ``labs`` array names one of
+    those labs are enumerated — the completion source for ``otto host <TAB>``
+    once a lab is selected via ``-l``/``--lab``/``OTTO_LAB``. Container IDs are
+    scoped the same way (only docker-capable parents in the selected lab).
+    The built-in hosts are always seeded regardless of the filter, mirroring
+    ``load_lab`` injecting ``local`` into every lab.
+
     Runs without an initialized ConfigModule, so it's safe to call from
     the completion fast path as well as the cache writer on the slow path.
 
@@ -833,6 +847,8 @@ def collect_host_ids(repos: list["Repo"]) -> list[str]:
     """
     from ..host.builtin_hosts import builtin_host_ids
     from ..storage.factory import create_host_from_dict, validate_host_dict
+
+    wanted = set(lab_names) if lab_names is not None else None
 
     # Seed with the built-in hosts otto injects into every lab (e.g. `local`) so
     # they are tab-completable in every repo, mirroring load_lab's injection.
@@ -855,6 +871,9 @@ def collect_host_ids(repos: list["Repo"]) -> list[str]:
             for host_data in data:
                 if not isinstance(host_data, dict):
                     continue
+                # Lab filter: keep only hosts tagged with a requested lab.
+                if wanted is not None and wanted.isdisjoint(host_data.get("labs", [])):
+                    continue
                 try:
                     validate_host_dict(host_data)
                     host = create_host_from_dict(host_data)
@@ -871,8 +890,17 @@ def collect_host_ids(repos: list["Repo"]) -> list[str]:
             # Pick parents to enumerate against. Prefer an explicit
             # default_host; otherwise enumerate every docker-capable host
             # in this repo's labs (pessimistic but stable; the actual
-            # bring-up picks one).
-            parents = [compose.default_host] if compose.default_host else list(docker_capable_ids)
+            # bring-up picks one). Under a lab filter, an explicit
+            # default_host only counts if it survived the filter (i.e. it is a
+            # docker-capable host in the selected lab).
+            if compose.default_host:
+                parents = (
+                    [compose.default_host]
+                    if wanted is None or compose.default_host in docker_capable_ids
+                    else []
+                )
+            else:
+                parents = list(docker_capable_ids)
             for parent in parents:
                 for service in compose.services:
                     ids.add(f"{parent}.{repo.name}.{service}".lower())
@@ -900,6 +928,29 @@ def collect_lab_names(repos: list["Repo"]) -> list[str]:
         return JsonFileLabRepository(search_paths=search_paths).list_labs()
     except Exception:  # noqa: BLE001 — completion must degrade, never crash
         return []
+
+
+def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
+    """Map each lab name to the host IDs that belong to it (pure membership).
+
+    Powers lab-scoped ``otto host <TAB>`` completion from the fast cache path:
+    the completer unions the buckets for the selected lab(s) and adds the
+    always-present built-in hosts. The buckets therefore deliberately EXCLUDE
+    built-ins — the "``local`` is in every lab" policy lives in the completer,
+    in one place, shared with the live fallback (:func:`collect_host_ids` with
+    ``lab_names``). Keeping buckets to true membership also means a bogus lab
+    name resolves to exactly the built-ins on both the warm and cold paths.
+
+    Written by the slow-path cache writer only, so the per-lab rescan of
+    ``hosts.json`` is not on any latency-sensitive path.
+    """
+    from ..host.builtin_hosts import builtin_host_ids
+
+    builtins = set(builtin_host_ids())
+    return {
+        lab: [h for h in collect_host_ids(repos, lab_names=[lab]) if h not in builtins]
+        for lab in collect_lab_names(repos)
+    }
 
 
 def collect_test_names(repos: list["Repo"]) -> list[str]:

@@ -525,6 +525,50 @@ def test_read_cache_defaults_commands_to_empty_list(tmp_path: Path, monkeypatch)
     assert out["commands"] == []
 
 
+def test_write_read_cache_round_trips_hosts_by_lab(tmp_path: Path, monkeypatch) -> None:
+    """write_cache/read_cache carry the 'hosts_by_lab' map through a round trip."""
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    fake_repo = MagicMock()
+    fake_repo.sut_dir = tmp_path / "sut"
+    fake_repo.sut_dir.mkdir()
+    (fake_repo.sut_dir / ".otto").mkdir()
+    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    fake_repo.init = []
+    fake_repo.libs = []
+    fake_repo.tests = []
+    fake_repo.labs = []
+
+    cc.write_cache(
+        [fake_repo],
+        instructions=[],
+        suites=[],
+        hosts=["carrot_seed", "apple_seed"],
+        hosts_by_lab={"veggies": ["carrot_seed"], "fruits": ["apple_seed"]},
+    )
+    out = cc.read_cache([fake_repo])
+    assert out is not None
+    assert out["hosts_by_lab"] == {"veggies": ["carrot_seed"], "fruits": ["apple_seed"]}
+
+
+def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypatch) -> None:
+    """A cache entry written without 'hosts_by_lab' reads back as an empty dict."""
+    monkeypatch.setenv("OTTO_XDIR", str(tmp_path))
+    fake_repo = MagicMock()
+    fake_repo.sut_dir = tmp_path / "sut"
+    fake_repo.sut_dir.mkdir()
+    (fake_repo.sut_dir / ".otto").mkdir()
+    (fake_repo.sut_dir / ".otto" / "settings.toml").write_text("")
+    fake_repo.init = []
+    fake_repo.libs = []
+    fake_repo.tests = []
+    fake_repo.labs = []
+
+    cc.write_cache([fake_repo], instructions=[], suites=[], hosts=[])
+    out = cc.read_cache([fake_repo])
+    assert out is not None
+    assert out["hosts_by_lab"] == {}
+
+
 # ---------------------------------------------------------------------------
 # collect_docker_capable_host_ids — hosts.json reading + docker_capable filter
 # ---------------------------------------------------------------------------

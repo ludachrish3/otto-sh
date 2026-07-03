@@ -615,6 +615,7 @@ def entry() -> None:
             collect_current_commands,
             collect_docker_capable_host_ids,
             collect_host_ids,
+            collect_host_ids_by_lab,
             collect_lab_names,
             collect_reservation_usernames,
             collect_test_names,
@@ -636,6 +637,7 @@ def entry() -> None:
                 commands=collect_cli_commands(),
                 labs=collect_lab_names(result.repos),
                 tests=collect_test_names(result.repos),
+                hosts_by_lab=collect_host_ids_by_lab(result.repos),
             )
 
     app()

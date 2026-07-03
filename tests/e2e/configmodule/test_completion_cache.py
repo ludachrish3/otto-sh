@@ -186,6 +186,67 @@ def test_fast_path_returns_cached_suites(tmp_path: Path) -> None:
     assert "TestCoverageProduct" in result.stdout
 
 
+def _host_completions(result: subprocess.CompletedProcess[str]) -> set[str]:
+    """Parse Click's ``plain,<name>`` completion lines into a name set."""
+    return {line.split(",", 1)[-1] for line in result.stdout.splitlines() if line}
+
+
+# tech1/hosts.json splits into two labs: `veggies` (carrot/tomato/pepper) and
+# `embedded` (basil/sprout*). Lab-scoped `otto host <TAB>` must show one, not both.
+_VEGGIES = {"carrot_seed", "tomato_seed", "pepper_seed"}
+_EMBEDDED = {"basil_seed", "sprout", "sprout27", "sprout_lfs"}
+
+
+def test_host_completion_scoped_by_lab_flag(tmp_path: Path) -> None:
+    """`otto -l veggies host <TAB>` offers only the veggies lab's hosts."""
+    seed = _run_otto(["--help"], xdir=tmp_path)
+    assert seed.returncode == 0, seed.stderr
+
+    result = _run_otto(
+        [],
+        xdir=tmp_path,
+        comp_words="otto -l veggies host ",
+        comp_cword="4",
+    )
+    assert result.returncode == 0, result.stderr
+    names = _host_completions(result)
+    # veggies members + the always-present built-in `local` are offered;
+    # embedded-lab hosts are filtered out.
+    assert names >= _VEGGIES
+    assert "local" in names
+    assert names.isdisjoint(_EMBEDDED), f"embedded hosts leaked: {names & _EMBEDDED}"
+
+
+def test_host_completion_scoped_by_lab_envvar(tmp_path: Path) -> None:
+    """`OTTO_LAB=embedded otto host <TAB>` offers only the embedded lab's hosts."""
+    seed = _run_otto(["--help"], xdir=tmp_path)
+    assert seed.returncode == 0, seed.stderr
+
+    result = _run_otto(
+        [],
+        xdir=tmp_path,
+        comp_words="otto host ",
+        comp_cword="2",
+        extra_env={"OTTO_LAB": "embedded"},
+    )
+    assert result.returncode == 0, result.stderr
+    names = _host_completions(result)
+    assert names >= _EMBEDDED
+    assert "local" in names
+    assert names.isdisjoint(_VEGGIES), f"veggies hosts leaked: {names & _VEGGIES}"
+
+
+def test_host_completion_unscoped_shows_all_hosts(tmp_path: Path) -> None:
+    """Without a lab, `otto host <TAB>` still offers the whole fleet."""
+    seed = _run_otto(["--help"], xdir=tmp_path)
+    assert seed.returncode == 0, seed.stderr
+
+    result = _run_otto([], xdir=tmp_path, comp_words="otto host ", comp_cword="2")
+    assert result.returncode == 0, result.stderr
+    names = _host_completions(result)
+    assert names >= (_VEGGIES | _EMBEDDED | {"local"})
+
+
 def test_touching_test_file_invalidates_cache(tmp_path: Path) -> None:
     """Bumping a tracked test file's mtime produces a new fingerprint entry."""
     _run_otto(["--help"], xdir=tmp_path)

@@ -18,8 +18,39 @@ from .callbacks import list_hosts_callback
 from .expose import HostGroup
 
 
-def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+def _selected_lab_names(ctx: typer.Context) -> list[str]:
+    """Return the lab(s) selected for this completion, or ``[]`` if none.
+
+    ``-l``/``--lab`` (and its ``OTTO_LAB`` envvar) are declared on the *root*
+    ``otto`` callback, not on the ``otto host`` sub-group whose context the
+    completer receives, so walk up the parent chain and return the first real
+    ``labs`` list found. Click populates that param from both the flag and the
+    envvar — already split into a list — even during resilient (completion)
+    parsing, so this single read covers every way a lab can be chosen.
+
+    Defensive against non-Context objects (unit tests pass mocks): only a
+    genuine ``dict`` ``params`` carrying a non-empty ``list`` of ``str`` counts,
+    and the walk is depth-capped so a self-referential mock can't loop forever.
+    """
+    node: object = ctx
+    for _ in range(25):
+        if node is None:
+            break
+        params = getattr(node, "params", None)
+        if isinstance(params, dict):
+            labs = params.get("labs")
+            if isinstance(labs, list) and labs and all(isinstance(x, str) for x in labs):
+                return labs
+        node = getattr(node, "parent", None)
+    return []
+
+
+def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     """Shell-completion source for the ``host_id`` positional argument.
+
+    Scoped to the selected lab: when ``-l``/``--lab``/``OTTO_LAB`` names a lab,
+    only that lab's hosts are offered (plus the always-present built-in hosts
+    like ``local``); with no lab selected, the whole fleet is offered.
 
     Prefers the completion-cache entry populated by the slow path (same file
     that backs suite/instruction completion, wiped by
@@ -29,8 +60,26 @@ def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noq
     from ..configmodule import get_completion_names, get_repos
     from ..configmodule.completion_cache import collect_host_ids
 
+    labs = _selected_lab_names(ctx)
     cached = get_completion_names()
-    if cached is not None and isinstance(cached.get("hosts"), list):
+
+    if labs:
+        # Lab selected → offer only that lab's hosts. Prefer the per-lab cache
+        # map; fall through to a live, lab-scoped scan on cache miss. The
+        # built-in hosts belong to every lab, so seed them here (the buckets
+        # store pure membership) — matching collect_host_ids' live behaviour.
+        by_lab = cached.get("hosts_by_lab") if cached is not None else None
+        if isinstance(by_lab, dict):
+            from ..host.builtin_hosts import builtin_host_ids
+
+            ids: list[str] = sorted(
+                set(builtin_host_ids()).union(
+                    *(by_lab.get(lab, []) for lab in labs),
+                )
+            )
+        else:
+            ids = collect_host_ids(get_repos(), lab_names=labs)
+    elif cached is not None and isinstance(cached.get("hosts"), list):
         ids = cached["hosts"]
     else:
         ids = collect_host_ids(get_repos())

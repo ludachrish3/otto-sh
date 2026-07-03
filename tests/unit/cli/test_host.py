@@ -627,3 +627,114 @@ class TestHostIdCompleter:
         metadata = get_args(sig.parameters["host_id"].annotation)
         argument = next(m for m in metadata if hasattr(m, "autocompletion"))
         assert argument.autocompletion is _host_id_completer
+
+
+def _ctx_with_labs(lab_names, *, on_child=False) -> SimpleNamespace:
+    """Build a Click-like context chain for completion.
+
+    Mirrors the real layout: ``-l/--lab`` lives on the root ``otto`` callback,
+    so ``labs`` sits on the *parent* context, while the ``otto host`` child ctx
+    (the one handed to the completer) carries only its own params. Set
+    ``on_child`` only to prove the completer reads the nearest context first.
+    """
+    child_params = {"host_id": "", "hop": "", "term": None, "transfer": None}
+    root_params = {"labs": lab_names}
+    if on_child:
+        child_params["labs"] = lab_names
+        root_params = {"labs": None}
+    root = SimpleNamespace(info_name="otto", params=root_params, parent=None)
+    return SimpleNamespace(info_name="host", params=child_params, parent=root)
+
+
+class TestHostIdCompleterLabFilter:
+    """When a lab is selected (``-l``/``--lab`` or ``OTTO_LAB``), completion
+    must offer only hosts in that lab, not the whole fleet."""
+
+    def test_live_scan_filters_by_selected_lab(self, tmp_path):
+        """Cache miss: a live hosts.json scan is restricted to the lab."""
+        lab = tmp_path / "labA"
+        _write_hosts_json(
+            lab,
+            [
+                {
+                    "ip": "1.1.1.1",
+                    "element": "carrot",
+                    "board": "seed",
+                    "creds": {"u": "p"},
+                    "labs": ["veggies"],
+                },
+                {
+                    "ip": "1.1.1.2",
+                    "element": "apple",
+                    "board": "seed",
+                    "creds": {"u": "p"},
+                    "labs": ["fruits"],
+                },
+            ],
+        )
+        with (
+            patch("otto.configmodule.get_completion_names", return_value=None),
+            patch("otto.configmodule.get_repos", return_value=[_fake_repo(lab)]),
+        ):
+            result = _host_id_completer(ctx=_ctx_with_labs(["veggies"]), incomplete="")
+        # carrot (veggies) + built-in local; apple (fruits) excluded.
+        assert result == ["carrot_seed", "local"]
+
+    def test_cached_hosts_filtered_by_selected_lab(self, tmp_path):
+        """Fast path: the completer reads the per-lab cache map, not flat hosts."""
+        fake_cache = {
+            "hosts": ["carrot_seed", "apple_seed", "grape_seed"],
+            "hosts_by_lab": {
+                "veggies": ["carrot_seed"],
+                "fruits": ["apple_seed", "grape_seed"],
+            },
+        }
+        with (
+            patch("otto.configmodule.get_completion_names", return_value=fake_cache),
+            patch(
+                "otto.configmodule.get_repos",
+                return_value=[_fake_repo(tmp_path / "does-not-exist")],
+            ),
+        ):
+            result = _host_id_completer(ctx=_ctx_with_labs(["fruits"]), incomplete="")
+        # fruits members + built-in local; carrot (veggies) excluded.
+        assert result == ["apple_seed", "grape_seed", "local"]
+
+    def test_reads_lab_from_parent_context(self, tmp_path):
+        """``-l`` sits on the root ctx, not the host child ctx — walk up to it."""
+        fake_cache = {
+            "hosts": ["carrot_seed", "apple_seed"],
+            "hosts_by_lab": {"veggies": ["carrot_seed"], "fruits": ["apple_seed"]},
+        }
+        with patch("otto.configmodule.get_completion_names", return_value=fake_cache):
+            result = _host_id_completer(ctx=_ctx_with_labs(["veggies"]), incomplete="")
+        assert result == ["carrot_seed", "local"]
+
+    def test_unknown_lab_offers_only_builtin(self, tmp_path):
+        """A lab absent from the cache map still resolves the built-in host."""
+        fake_cache = {
+            "hosts": ["carrot_seed"],
+            "hosts_by_lab": {"veggies": ["carrot_seed"]},
+        }
+        with patch("otto.configmodule.get_completion_names", return_value=fake_cache):
+            result = _host_id_completer(ctx=_ctx_with_labs(["ghosts"]), incomplete="")
+        assert result == ["local"]
+
+    def test_no_lab_selected_returns_all_hosts(self, tmp_path):
+        """No lab (labs=None on the root ctx) keeps the whole-fleet behaviour."""
+        fake_cache = {
+            "hosts": ["carrot_seed", "apple_seed", "grape_seed"],
+            "hosts_by_lab": {"veggies": ["carrot_seed"]},
+        }
+        with patch("otto.configmodule.get_completion_names", return_value=fake_cache):
+            result = _host_id_completer(ctx=_ctx_with_labs(None), incomplete="")
+        assert result == ["apple_seed", "carrot_seed", "grape_seed"]
+
+    def test_prefix_filter_still_applies_within_lab(self, tmp_path):
+        fake_cache = {
+            "hosts": ["carrot_seed", "cabbage_seed", "apple_seed"],
+            "hosts_by_lab": {"veggies": ["carrot_seed", "cabbage_seed"]},
+        }
+        with patch("otto.configmodule.get_completion_names", return_value=fake_cache):
+            result = _host_id_completer(ctx=_ctx_with_labs(["veggies"]), incomplete="car")
+        assert result == ["carrot_seed"]
