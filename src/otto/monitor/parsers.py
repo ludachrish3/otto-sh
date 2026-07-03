@@ -26,11 +26,24 @@ from an init module listed in .otto/settings.toml::
     )
 
 Hosts with no registered parsers fall back to DEFAULT_PARSERS.
+
+To add or override a parser for every monitored host instead of one host,
+call register_parsers() the same way::
+
+    from otto.monitor.parsers import register_parsers
+    from my_repo.parsers import UptimeParser
+
+    register_parsers([UptimeParser()])
+
+Project-level entries merge over DEFAULT_PARSERS by command string (a command
+matching a default overrides it; a new command extends the set), and yield to
+any per-host registration for that host.
 """
 
 import copy
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, NamedTuple
 
@@ -374,11 +387,44 @@ def register_host_parsers(host_id: str, parsers: dict[str, "MetricParser"]) -> N
     HOST_PARSERS.register(host_id, parsers, overwrite=True, origin=caller_module())
 
 
-def get_host_parsers(host_id: str) -> dict[str, "MetricParser"]:
-    """Return the parser dict registered for *host_id*, or a copy of DEFAULT_PARSERS.
+# ---------------------------------------------------------------------------
+# Project-level parser registry
+# ---------------------------------------------------------------------------
 
-    Non-raising by design: a host with no registered parsers is normal (it
-    just uses the defaults), not an error.
+# Project-wide parser additions/overrides, keyed by command string. Unlike
+# HOST_PARSERS (whole-dict per host), entries here merge over DEFAULT_PARSERS
+# for every host that has no per-host registration. Re-registering the same
+# command is a config bug and raises loudly (Registry dupe machinery).
+PROJECT_PARSERS: Registry[MetricParser] = Registry(
+    "project metric parser", register_hint="otto.monitor.parsers.register_parsers()"
+)
+
+
+def register_parsers(parsers: Sequence[MetricParser]) -> None:
+    """Register project-level parsers that apply to every monitored host.
+
+    Call from an init module (listed in ``.otto/settings.toml``). Each parser's
+    ``command`` becomes its key: a command matching a DEFAULT_PARSERS entry
+    overrides that built-in; a new command extends the set. Per-host
+    registrations (``register_host_parsers``) take total precedence for their
+    host. Registering the same command twice raises.
     """
-    parsers = HOST_PARSERS.get(host_id) if host_id in HOST_PARSERS else DEFAULT_PARSERS
-    return copy.deepcopy(parsers)
+    origin = caller_module()
+    for p in parsers:
+        PROJECT_PARSERS.register(p.command, p, origin=origin)
+
+
+def get_host_parsers(host_id: str) -> dict[str, "MetricParser"]:
+    """Return the parser dict for *host_id*: per-host > project-level > defaults.
+
+    A per-host registration (see :func:`register_host_parsers`) wins outright
+    for its host_id — it is a total replacement, not merged with anything else.
+    Otherwise, project-level parsers (see :func:`register_parsers`) are merged
+    over DEFAULT_PARSERS. Non-raising by design: a host with no registrations
+    at all is normal (it just uses the defaults), not an error.
+    """
+    if host_id in HOST_PARSERS:
+        return copy.deepcopy(HOST_PARSERS.get(host_id))
+    merged: dict[str, MetricParser] = dict(DEFAULT_PARSERS)
+    merged.update(PROJECT_PARSERS.items())
+    return copy.deepcopy(merged)

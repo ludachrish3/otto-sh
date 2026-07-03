@@ -16,6 +16,7 @@ from otto.monitor.parsers import (
     get_host_parsers,
     human_readable,
     register_host_parsers,
+    register_parsers,
 )
 
 # ---------------------------------------------------------------------------
@@ -447,3 +448,60 @@ class TestHostParserRegistry:
         register_host_parsers("gpu-03", {"free -b": MemParser()})
         register_host_parsers("gpu-03", {"df -h": DiskParser()})
         assert set(get_host_parsers("gpu-03")) == {"df -h"}
+
+
+# ---------------------------------------------------------------------------
+# Project-level parser registry
+# ---------------------------------------------------------------------------
+
+
+class _SocketParser(MetricParser):
+    y_title = "Sockets"
+    unit = ""
+    command = "ss -s"
+    chart = "Sockets"
+
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        return {}
+
+
+class TestProjectParserRegistry:
+    """register_parsers / get_host_parsers — the project-level PROJECT_PARSERS registry."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_project_and_host_parser_registries(self):
+        from otto.monitor import parsers as parsers_mod
+
+        host_before = set(parsers_mod.HOST_PARSERS.names())
+        project_before = set(parsers_mod.PROJECT_PARSERS.names())
+        try:
+            yield
+        finally:
+            for host_id in set(parsers_mod.HOST_PARSERS.names()) - host_before:
+                parsers_mod.HOST_PARSERS.unregister(host_id)
+            for command in set(parsers_mod.PROJECT_PARSERS.names()) - project_before:
+                parsers_mod.PROJECT_PARSERS.unregister(command)
+
+    def test_register_parsers_extends_defaults_for_all_hosts(self):
+        register_parsers([_SocketParser()])
+        merged = get_host_parsers("any-host-without-per-host-registration")
+        assert "ss -s" in merged
+        assert set(DEFAULT_PARSERS) <= set(merged)
+
+    def test_register_parsers_overrides_default_command(self):
+        class MyMem(MemParser):
+            chart = "My Memory"
+
+        register_parsers([MyMem()])
+        merged = get_host_parsers("some-host")
+        assert merged["free -b"].chart == "My Memory"
+
+    def test_per_host_registration_beats_project_level(self):
+        register_parsers([_SocketParser()])
+        register_host_parsers("special", dict(DEFAULT_PARSERS))
+        assert "ss -s" not in get_host_parsers("special")  # per-host dict is total
+
+    def test_duplicate_project_registration_is_loud(self):
+        register_parsers([_SocketParser()])
+        with pytest.raises(ValueError, match="ss -s"):
+            register_parsers([_SocketParser()])
