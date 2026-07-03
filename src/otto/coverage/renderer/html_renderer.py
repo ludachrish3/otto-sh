@@ -483,6 +483,15 @@ class HtmlRenderer:
         static_dst = self.output_dir / "static"
         if STATIC_DIR.exists():
             shutil.copytree(str(STATIC_DIR), str(static_dst), dirs_exist_ok=True)
+        if not (STATIC_DIR / "dist" / "covreport.js").exists():
+            # The sorter bundle is built by `make web` (vite), not committed.
+            # The report is still readable without it, so degrade — but say
+            # exactly what is missing and how to get it.
+            logger.warning(
+                "Coverage report interactivity (covreport.js) is missing — "
+                "the report renders read-only. Run `make web` to build the "
+                "frontend assets."
+            )
 
 
 def _pct(hit: int, total: int) -> float:
