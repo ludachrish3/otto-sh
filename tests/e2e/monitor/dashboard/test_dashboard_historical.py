@@ -23,23 +23,30 @@ def test_historical_mode_chrome(
 ) -> None:
     page.goto(historical_dash.url)
     expect(page.locator("#status-label")).to_have_text("Historical")
-    expect(page.locator("body")).to_have_class("historical")
+    expect(page.locator("body")).to_have_class(re.compile(r"\bhistorical\b"))
+    # Historical collectors declare the DEFAULT_PARSERS catalog, so tabs and
+    # charts render immediately without host selection (fixed Phase 1 —
+    # previously /api/meta had no tabs and nothing rendered).
+    expect(page.locator(".tab-btn")).to_have_text(["CPU", "Memory", "Disk"])
+    expect(page.locator("#tab-cpu .metric-plot").first).to_be_visible()
     expect(page.locator("#host-select option")).to_have_text(["historical"])
     expect(page.locator("#pause-btn")).to_be_disabled()
-    # KNOWN-GAP: Discrepancy vs. the brief: MetricCollector.from_json(...) (collector.py
-    # from_json, used verbatim by `otto monitor --file x.json` in
-    # cli/monitor.py's _load_historical) constructs the collector with
-    # hosts=[], so __init__ (collector.py ~125-164) builds zero MonitorTargets
-    # and leaves `_views`/`_parsers` empty. `/api/meta` therefore reports
-    # `tabs: []` and `metrics: []`. dashboard.js's initTabCharts() (~378-427)
-    # only creates tab buttons/panels/charts by iterating `state.meta.tabs`,
-    # so with zero tabs NO chart ever gets created — `#tab-cpu` never exists
-    # in the DOM. The 2 fixture events still load into `state.events` (via
-    # /api/data) but are never rendered anywhere: annotations/shapes are only
-    # attached to a metric-plot's Plotly layout, and none exists. This isn't
-    # a fixture artifact — it reproduces on the exact production code path.
-    expect(page.locator(".tab-btn")).to_have_count(0)
-    expect(page.locator(".metric-plot")).to_have_count(0)
+    # Fixture series render onto their charts; both fixture events annotate.
+    overall_len = page.evaluate(
+        "() => {"
+        "  const gd = document.querySelector('#tab-cpu .metric-plot');"
+        "  const tr = (gd?.data || []).find(t => t.name === 'Overall CPU');"
+        "  return tr ? tr.x.length : -1;"
+        "}"
+    )
+    assert overall_len == 3
+    labels = page.evaluate(
+        "() => {"
+        "  const gd = document.querySelector('#tab-cpu .metric-plot');"
+        "  return ((gd?.layout || {}).annotations || []).map(a => a.text);"
+        "}"
+    )
+    assert sorted(labels) == ["Maintenance", "Reboot"]
 
 
 def test_export_json_reimports_losslessly(

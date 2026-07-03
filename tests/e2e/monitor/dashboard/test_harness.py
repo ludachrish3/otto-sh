@@ -97,6 +97,7 @@ def test_historical_fixture_loads(historical_dash: DashboardHarness[MetricCollec
     meta = _get_json(historical_dash.url + "/api/meta")
     assert meta["live"] is False
     assert meta["hosts"] == []  # bare labels → no host derived → historical UI
+    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk"]
     data = _get_json(historical_dash.url + "/api/data")
     assert set(data["series"]) == {"Overall CPU", "Load (1m)", "Memory Usage"}
     assert len(data["events"]) == 2

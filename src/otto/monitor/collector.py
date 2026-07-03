@@ -106,10 +106,11 @@ class MetricCollector:
         db_path: str | None = None,
         targets: "list[MonitorTarget] | None" = None,
     ) -> None:
+        parser_dict: dict[str, MetricParser] = {}
         if targets is not None:
             self._targets = targets
         else:
-            parser_dict: dict[str, MetricParser] = (
+            parser_dict = (
                 {p.command: p for p in parsers} if parsers is not None else dict(DEFAULT_PARSERS)
             )
             self._targets = [MonitorTarget(host=h, parsers=parser_dict) for h in (hosts or [])]
@@ -134,6 +135,16 @@ class MetricCollector:
                         seen_commands.add(p.command)
                         unified.append(p)
         self._parsers: dict[str, MetricParser] = {p.command: p for p in unified}
+
+        # A collector with no live targets (historical --file/--db replay, or a
+        # scripted test collector) still declares its parser CATALOG: /api/meta
+        # must describe tabs/charts so the dashboard can lay out loaded data.
+        # Without this, from_json/from_sqlite served `tabs: []` and historical
+        # mode rendered no charts at all.
+        if not self._targets and targets is None:
+            unified = list(parser_dict.values())
+            self._parsers = dict(parser_dict)
+
         # list[MetricView] is invariant, so build by extending from the
         # concrete lists (Iterable[T] is covariant) rather than splatting.
         self._views: list[MetricView] = []
