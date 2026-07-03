@@ -27,3 +27,20 @@ def test_custom_marker() -> None:
 def test_unclosed_start_runs_to_eof() -> None:
     src = "a;\n// LCOV_EXCL_START\nb;\nc;\n"
     assert scan_excluded_lines(src) == {2, 3, 4}
+
+
+def test_start_stop_same_line_is_one_line_block() -> None:
+    src = "a;\n// LCOV_EXCL_START LCOV_EXCL_STOP\nb;\nc;\n"
+    assert scan_excluded_lines(src) == {2}
+
+
+def test_stop_then_start_same_line_reopens() -> None:
+    src = (
+        "a;\n// LCOV_EXCL_START\nx;\n// LCOV_EXCL_STOP LCOV_EXCL_START\ny;\n// LCOV_EXCL_STOP\nz;\n"
+    )
+    assert scan_excluded_lines(src) == {2, 3, 4, 5, 6}
+
+
+def test_br_start_stop_same_line_is_one_line_block() -> None:
+    src = "a;\n// LCOV_EXCL_BR_START LCOV_EXCL_BR_STOP\nb;\nc;\n"
+    assert scan_excluded_lines(src) == {2}
