@@ -1998,6 +1998,7 @@ Expected: PASS. Budget real time here — `ty` sees the new modules for the firs
 Recorded per review; none block this plan:
 
 1. **Embedded counter reset for `otto cov clean`** — needs a product-side `cov_reset` function in the LLEXT extension (mirror of `cov_dump` in `tests/repo3/product/cov_ext.c` / NASA embedded-gcov) plus a console-driven reset in `fetcher/embedded.py`. Until then `cov clean` covers Unix hosts only.
+1b. **Custom exclusion markers → lcov rc overrides** — `[coverage.exclusions] markers` currently affects only the renderer's visual scan; marked lines still count in percentages. Wiring the markers into lcov's rc options (`lcov_excl_line` et al) at capture time would make them percentage-affecting like the built-in `LCOV_EXCL_*` set (spec §8 promised this; deferred during implementation — lcov rc key semantics vary by version, needs live verification).
 2. **Per-ticket rollups** — next sub-project (spec §12); `ticket` is already recorded on every manual capture.
 3. **Remapping stale e2e captures** — opt-in flag to remap old output dirs onto HEAD instead of the pin-guard error.
 4. **Frontend color-name capability validation** — verify configured color names against what the React frontend can render.
