@@ -198,6 +198,28 @@ class TestRunOptions:
 # ---------------------------------------------------------------------------
 
 
+def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+    """Completion source for ``--tests``: statically-discovered test names.
+
+    Prefers the completion-cache snapshot; falls back to a live source scan
+    (:func:`~otto.configmodule.completion_cache.collect_test_names`, ``ast``
+    only — never imports or collects, so no test code runs at tab time).
+    Comma-separated, so only the in-progress segment is completed. Names come
+    from ``def test_*`` / ``Test*`` methods in the source; parametrized-only or
+    dynamically-generated ids are not offered — those need ``--list-tests``.
+    """
+    from ..configmodule import get_completion_names, get_repos
+    from ..configmodule.completion_cache import collect_test_names
+    from ..utils import complete_comma_list
+
+    cached = get_completion_names()
+    if cached is not None and isinstance(cached.get("tests"), list):
+        names = cached["tests"]
+    else:
+        names = collect_test_names(get_repos())
+    return complete_comma_list(sorted(names), incomplete)
+
+
 def resolve_suite(suite: str, repos: list[Repo]) -> str:
     """Expand a sut_dir-relative suite path to an absolute path for pytest."""
     file_part, _, suffix = suite.partition("::")
@@ -693,6 +715,7 @@ def main(  # noqa: PLR0913 — CLI command params
         typer.Option(
             "--tests",
             metavar="NAME[,NAME...]",
+            autocompletion=_tests_completer,
             help=(
                 "Run specific tests by exact name, across all suites and repos — "
                 "no suite subcommand needed. Comma-separated; TestClass::name "

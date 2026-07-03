@@ -134,6 +134,26 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
     return sorted(n for n in names if n.startswith(incomplete))
 
 
+def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+    """Completion source for ``--lab``: lab names referenced by the hosts.json files.
+
+    Prefers the completion-cache snapshot; falls back to a live, data-only scan
+    (:func:`~otto.configmodule.completion_cache.collect_lab_names`, no user
+    code). ``--lab`` is comma-separated, so only the in-progress segment is
+    completed and already-named labs are dropped.
+    """
+    from ..configmodule import get_completion_names, get_repos
+    from ..configmodule.completion_cache import collect_lab_names
+    from ..utils import complete_comma_list
+
+    cached = get_completion_names()
+    if cached is not None and isinstance(cached.get("labs"), list):
+        names = cached["labs"]
+    else:
+        names = collect_lab_names(get_repos())
+    return complete_comma_list(sorted(names), incomplete)
+
+
 class _OttoGroup(TyperGroup):
     """Root group: registry-backed lazy dispatch + pending-token snapshot.
 
@@ -326,6 +346,7 @@ def main(  # noqa: PLR0913 — CLI command params
             "-l",
             envvar=LAB_ENV_VAR,
             callback=split_on_commas,
+            autocompletion=_lab_completer,
             metavar="COMMA SEPARATED LIST",
             help="Name of lab(s) to reserve and use.",
         ),
@@ -577,7 +598,9 @@ def entry() -> None:
             collect_current_commands,
             collect_docker_capable_host_ids,
             collect_host_ids,
+            collect_lab_names,
             collect_reservation_usernames,
+            collect_test_names,
             write_cache,
         )
 
@@ -594,6 +617,8 @@ def entry() -> None:
                 transfer_backends=backends["transfer_backends"],
                 usernames=collect_reservation_usernames(result.repos),
                 commands=collect_cli_commands(),
+                labs=collect_lab_names(result.repos),
+                tests=collect_test_names(result.repos),
             )
 
     app()

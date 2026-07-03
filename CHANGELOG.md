@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- tab completion for `--lab` (lab names from `hosts.json`) and `otto test
+  --tests` (test names from a static source scan; parametrized-only ids
+  still need `--list-tests`)
+
+### Changed
+
+- `otto reservation` is now lab-free: `whoami` needs no `--lab`, and
+  `check` loads the lab itself only when required
+
 ## [0.5.4] - 2026-06-30
 
 ### Added

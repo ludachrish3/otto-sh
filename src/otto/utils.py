@@ -47,6 +47,26 @@ def split_on_commas(values: list[str] | str) -> list[str]:
             return all_values
 
 
+def complete_comma_list(candidates: list[str], incomplete: str) -> list[str]:
+    """Filter *candidates* for tab-completing one entry of a comma-separated option.
+
+    Options like ``--lab a,b`` and ``--tests x,y`` take a comma-joined value,
+    which the shell hands to the completer as a single ``incomplete`` word.
+    Complete only the final (in-progress) segment, keep the already-typed
+    prefix intact, and drop candidates already present earlier in the list so
+    completion never re-offers them.
+
+    >>> complete_comma_list(["tech1", "tech2", "prod"], "tech")
+    ['tech1', 'tech2']
+    >>> complete_comma_list(["tech1", "tech2", "prod"], "tech1,te")
+    ['tech1,tech2']
+    """
+    head, sep, frag = incomplete.rpartition(",")
+    already = set(head.split(",")) if sep else set()
+    prefix = head + sep  # "" when there is no comma yet
+    return [prefix + c for c in candidates if c.startswith(frag) and c not in already]
+
+
 def _get_literal_values(
     type_: Any,
 ) -> list[TypeVar]:

@@ -21,7 +21,7 @@ Cache location
 ``$OTTO_XDIR/.otto/completion_cache.json``. If ``OTTO_XDIR`` is not set,
 caching is disabled and completion always falls through to the slow path.
 
-Cache schema (version 8)
+Cache schema (version 9)
 ------------------------
 
 Single flat map, keyed by fingerprint hex digest. Each entry records both the
@@ -53,6 +53,8 @@ stale entries without trusting the mtimes on-disk::
             "docker_hosts": ["carrot_seed", ...],
             "term_backends": ["ssh", "telnet", ...],
             "transfer_backends": [{"name": "scp", "host_families": ["unix"]}, ...],
+            "labs": ["tech1", "tech2", ...],
+            "tests": ["test_smoke", "TestDevice::test_reachable", ...],
             "commands": [
                 {"name": "flash", "help": "...", "lab_free": false},
                 # a third-party GROUP also carries recursive child metadata;
@@ -107,7 +109,8 @@ COMPLETION_ENV_VAR = "_OTTO_COMPLETE"
 CACHE_FILENAME = "completion_cache.json"
 
 # Bump when the on-disk schema changes in a way older readers can't parse.
-SCHEMA_VERSION = 8
+# v9: added "labs" and "tests" (sources for --lab / --tests completion).
+SCHEMA_VERSION = 9
 
 HOSTS_FILENAME = "hosts.json"
 
@@ -410,6 +413,8 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
     transfer_backends = entry.get("transfer_backends", [])
     usernames = entry.get("usernames", [])
     commands = entry.get("commands", [])
+    labs = entry.get("labs", [])
+    tests = entry.get("tests", [])
     if (
         not isinstance(instructions, list)
         or not isinstance(suites, list)
@@ -419,6 +424,8 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
         or not isinstance(transfer_backends, list)
         or not isinstance(usernames, list)
         or not isinstance(commands, list)
+        or not isinstance(labs, list)
+        or not isinstance(tests, list)
     ):
         return None
     return {
@@ -430,10 +437,12 @@ def read_cache(repos: list["Repo"]) -> dict[str, Any] | None:
         "transfer_backends": transfer_backends,
         "usernames": usernames,
         "commands": commands,
+        "labs": labs,
+        "tests": tests,
     }
 
 
-def write_cache(
+def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by design
     repos: list["Repo"],
     instructions: list[dict[str, Any]],
     suites: list[dict[str, Any]],
@@ -443,6 +452,8 @@ def write_cache(
     transfer_backends: list[dict[str, Any]] | None = None,
     usernames: list[str] | None = None,
     commands: list[dict[str, Any]] | None = None,
+    labs: list[str] | None = None,
+    tests: list[str] | None = None,
 ) -> None:
     """Write (or update) the entry for the current fingerprint.
 
@@ -484,6 +495,8 @@ def write_cache(
         "transfer_backends": transfer_backends or [],
         "usernames": usernames or [],
         "commands": commands or [],
+        "labs": labs or [],
+        "tests": tests or [],
     }
 
     with tempfile.NamedTemporaryFile(
@@ -787,3 +800,70 @@ def collect_host_ids(repos: list["Repo"]) -> list[str]:
                 for service in compose.services:
                     ids.add(f"{parent}.{repo.name}.{service}".lower())
     return sorted(ids)
+
+
+def collect_lab_names(repos: list["Repo"]) -> list[str]:
+    """Enumerate every lab name referenced across the configured hosts.json files.
+
+    A lab is a *tag* on hosts (each host's ``labs`` array), not a directory,
+    so the names come straight from the built-in json backend's
+    :meth:`~otto.storage.json_repository.JsonFileLabRepository.list_labs` over
+    the aggregated ``labs`` search paths — the same source ``otto --list-labs``
+    uses. Data-only (no host construction, no user code), so it is safe in the
+    completion fast path as well as the cache writer. Malformed files are
+    skipped by ``list_labs`` itself; any unexpected error yields ``[]`` so
+    completion never crashes.
+    """
+    from ..storage.json_repository import JsonFileLabRepository
+
+    search_paths: list[Path] = []
+    for repo in repos:
+        search_paths.extend(repo.labs)
+    try:
+        return JsonFileLabRepository(search_paths=search_paths).list_labs()
+    except Exception:  # noqa: BLE001 — completion must degrade, never crash
+        return []
+
+
+def collect_test_names(repos: list["Repo"]) -> list[str]:
+    """Statically discover test names for ``otto test --tests`` completion.
+
+    Parses every ``test_*.py`` / ``*_test.py`` under each repo's test dirs with
+    :mod:`ast` — no import, no collection, no user code — and returns the base
+    names of top-level ``def test_*`` / ``async def test_*`` functions plus, for
+    each ``Test*`` class, its ``test_*`` methods (emitted both bare and as
+    ``ClassName::method`` to match ``--tests``'s disambiguation form).
+
+    This is deliberately static: real pytest collection (which ``--tests``
+    resolves against, and which ``otto test --list-tests`` runs) expands
+    parametrization and honors ``conftest`` / ``pytest_generate_tests``, none
+    of which are visible to a source scan. So a *parametrized-only* id or a
+    dynamically generated test will not appear here — those still need
+    ``--list-tests`` — but every statically-defined test name does, without
+    ever executing test code at tab time. Kept in lockstep with pytest's
+    default ``python_files`` / ``python_classes`` / ``python_functions``.
+    """
+    import ast
+
+    names: set[str] = set()
+    for repo in repos:
+        for test_dir in repo.tests:
+            if not test_dir.exists():
+                continue
+            for path in (*test_dir.rglob("test_*.py"), *test_dir.rglob("*_test.py")):
+                try:
+                    tree = ast.parse(path.read_text(), filename=str(path))
+                except (OSError, SyntaxError):
+                    continue  # unreadable / unparseable file: skip, never crash
+                for node in tree.body:
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        if node.name.startswith("test"):
+                            names.add(node.name)
+                    elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+                        for method in node.body:
+                            if isinstance(
+                                method, (ast.FunctionDef, ast.AsyncFunctionDef)
+                            ) and method.name.startswith("test"):
+                                names.add(method.name)
+                                names.add(f"{node.name}::{method.name}")
+    return sorted(names)
