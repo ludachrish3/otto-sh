@@ -94,7 +94,13 @@ class TestIndexProvenanceAndLegend:
 
         index_html = (out_dir / "index.html").read_text()
         assert "T-42" in index_html
-        assert "System" in index_html  # legend + summary both label the "system" tier
+        # Extract legend div and verify tier name + state label appear within it
+        legend_start = index_html.find('<div class="legend">')
+        legend_end = index_html.find("</div>", legend_start) + len("</div>")
+        assert legend_start >= 0, "Legend div not found"
+        legend_content = index_html[legend_start:legend_end]
+        assert "System" in legend_content, "System tier label missing from legend"
+        assert "Stale" in legend_content, "State label missing from legend"
         assert "✎" in index_html  # dirty_remap renders as the pencil glyph
 
 
@@ -115,4 +121,6 @@ class TestOutOfRangeStaleTolerance:
         assert "Stale: 1" in file_html
 
         index_html = (out_dir / "index.html").read_text()
-        assert index_html  # index render also completed without crashing
+        # Verify stale count (1) appears in the file's row in the files table
+        files_section = index_html.split('<section class="files">')[1].split("</section>")[0]
+        assert 'data-sort="1">1</td>' in files_section
