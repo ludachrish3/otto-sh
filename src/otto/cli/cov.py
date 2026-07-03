@@ -110,6 +110,7 @@ if TYPE_CHECKING:
     from typing import Any
 
     from ..configmodule.repo import Repo
+    from ..coverage.tiers import TierConfig
     from ..host.remote_host import RemoteHost
     from ..host.unix_host import UnixHost
 
@@ -173,14 +174,38 @@ def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:
     return specs
 
 
+def _resolve_cov_settings() -> "tuple[Path | None, list[TierConfig] | None]":
+    """Resolve ``(repo_root, tier_configs)`` from settings for the report command.
+
+    Uses the same first-repo-with-``[coverage]`` selection as ``get`` and
+    ``clean`` (via :func:`otto.cli.test._get_cov_repo`).  Returns
+    ``(None, None)`` when no coverage section is configured — the git-less
+    fallback that keeps ``otto cov report`` working exactly as before on a
+    tree with no ``[coverage]`` settings.
+    """
+    from ..configmodule import get_repos
+    from ..coverage.tiers import load_tiers
+    from .test import _get_cov_config, _get_cov_repo
+
+    repos = get_repos()
+    cov_repo = _get_cov_repo(repos)
+    if cov_repo is None:
+        return None, None
+    return cov_repo.sut_dir, load_tiers(_get_cov_config(repos))
+
+
 @cov_app.command()
 def report(
     output_dirs: Annotated[
-        list[Path],
+        list[Path] | None,
         typer.Argument(
-            help="One or more otto test output directories containing cov/ subdirectories.",
+            help=(
+                "otto test output directories containing cov/ subdirectories. "
+                "Optional: with none given the report is built from the "
+                "committed manual-capture store alone."
+            ),
         ),
-    ],
+    ] = None,
     report_dir: Annotated[
         Path,
         typer.Option(
@@ -204,24 +229,38 @@ def report(
                 "Add a coverage tier as NAME[=PATH]. Repeatable. "
                 "Order is precedence order (first = highest). "
                 'Use "--tier system" alone to position the implicit '
-                'lcov-merged system tier. Defaults to "--tier system".'
+                "lcov-merged system tier. When given, --tier flags take "
+                "precedence over settings tiers and select the git-less "
+                'legacy path. Defaults to the configured tiers (or "system").'
             ),
         ),
     ] = None,
 ) -> None:
     """Generate a coverage report from otto test --cov output directories."""
+    output_dirs = output_dirs or []
     # Validate output directories
     for d in output_dirs:
         if not d.is_dir():
             logger.error("Output directory does not exist: %s", d)
             raise typer.Exit(1)
 
-    # Parse tier specs (defaulting to system-only)
-    try:
-        tier_specs: list[TierSpec] = _parse_tier_specs(tier) if tier else [(TIER_SYSTEM, None)]
-    except typer.BadParameter as e:
-        logger.exception("Bad tier parameter")
-        raise typer.Exit(1) from e
+    # Precedence rule: explicit --tier flags are a git-less escape hatch and
+    # take precedence over settings tiers — route them through the legacy
+    # path unchanged (no repo_root / tier_configs resolution, exactly as
+    # before). With no --tier flags, resolve the collection-model inputs
+    # (repo_root + declared tiers) from settings; a tree with no [coverage]
+    # section falls back to (None, None), i.e. the legacy behavior.
+    repo_root: Path | None = None
+    tier_configs: "list[TierConfig] | None" = None
+    if tier:
+        try:
+            tier_specs: list[TierSpec] = _parse_tier_specs(tier)
+        except typer.BadParameter as e:
+            logger.exception("Bad tier parameter")
+            raise typer.Exit(1) from e
+    else:
+        tier_specs = [(TIER_SYSTEM, None)]
+        repo_root, tier_configs = _resolve_cov_settings()
 
     cov_dirs = [d / "cov" for d in output_dirs]
     report_dir = report_dir.resolve()
@@ -233,6 +272,8 @@ def report(
                 report_dir,
                 project_name=project_name,
                 tier_specs=tier_specs,
+                repo_root=repo_root,
+                tier_configs=tier_configs,
             )
         )
     except CoverageDataMismatchError as e:
@@ -247,10 +288,11 @@ def report(
     if store is None:
         # run_coverage_report logged the specific warning (missing meta or
         # no host dirs); for the standalone command treat that as an error.
-        logger.error(
-            "Coverage report not generated — no valid coverage data in: %s",
-            ", ".join(str(d) for d in output_dirs),
-        )
+        # store is None only on the legacy path — the collection-model path
+        # always returns a store (manual store / declared tiers still yield
+        # a report even with no output dirs).
+        where = ", ".join(str(d) for d in output_dirs) if output_dirs else "the given inputs"
+        logger.error("Coverage report not generated — no valid coverage data in: %s", where)
         raise typer.Exit(1)
 
     logger.info(

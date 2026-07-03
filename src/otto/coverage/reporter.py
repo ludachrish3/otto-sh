@@ -28,6 +28,7 @@ Typical usage from the ``otto cov`` CLI command::
 
 import json
 import logging
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -43,7 +44,9 @@ from .renderer.html_renderer import HtmlRenderer
 from .store.model import TIER_SYSTEM, CoverageStore
 
 if TYPE_CHECKING:
+    from ..host.local_host import LocalHost
     from ..host.toolchain import Toolchain
+    from .tiers import TierConfig
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +57,30 @@ TierSpec = tuple[str, Path | None]
 A ``None`` path is only valid for the implicit ``system`` tier, which is
 produced by merging the supplied ``.gcda`` directories with lcov.
 """
+
+
+@dataclass(frozen=True)
+class CollectionInputs:
+    """The collection-model inputs to :class:`CoverageReporter` (Task 10).
+
+    All fields are optional; an all-default instance (the constructor
+    default) selects the legacy, purely ``.gcda``-driven behavior — every
+    collection-model step becomes a no-op.
+
+    Attributes:
+        repo_root: SUT git repo root.  Enables e2e captures + the manual
+            store; also the pin-guard reference and the exclusion source.
+        tier_configs: Declared coverage tiers (precedence order).  Seeds
+            ``tier_order`` / ``tier_colors`` and drives unit-harvest.
+        capture_paths: ``capture.json`` files (one per board) to fold in
+            under their own tier, subject to the HEAD pin guard.
+        extra_markers: Extra source exclusion markers (spec §8).
+    """
+
+    repo_root: Path | None = None
+    tier_configs: "list[TierConfig]" = field(default_factory=list)
+    capture_paths: list[Path] = field(default_factory=list)
+    extra_markers: list[str] = field(default_factory=list)
 
 
 def _read_cov_meta(cov_dirs: list[Path]) -> dict[str, Any]:
@@ -180,6 +207,10 @@ class CoverageReporter:
             captured against its own ``.gcno`` directory instead of the
             shared *source_root* fallback.  Hosts with no entry fall back
             to *source_root*.
+        collection: The collection-model inputs (e2e captures, unit
+            harvest, manual store, exclusion markers).  Omitted / an
+            all-default :class:`CollectionInputs` selects the legacy,
+            purely ``.gcda``-driven behavior — every new step is a no-op.
     """
 
     def __init__(
@@ -191,6 +222,8 @@ class CoverageReporter:
         toolchains: "dict[str, Toolchain] | None" = None,
         tiers: list[TierSpec] | None = None,
         source_roots: dict[str, Path] | None = None,
+        *,
+        collection: CollectionInputs | None = None,
     ) -> None:
         self.gcda_dirs = gcda_dirs
         self.source_root = source_root
@@ -199,6 +232,11 @@ class CoverageReporter:
         self.toolchains = toolchains or {}
         self.tiers: list[TierSpec] = list(tiers) if tiers else [(TIER_SYSTEM, None)]
         self.source_roots: dict[str, Path] = source_roots or {}
+        coll = collection or CollectionInputs()
+        self.repo_root: Path | None = coll.repo_root
+        self.tier_configs: "list[TierConfig]" = list(coll.tier_configs)
+        self.capture_paths: list[Path] = list(coll.capture_paths)
+        self.extra_markers: list[str] = list(coll.extra_markers)
         self._validate_tiers()
 
     def _validate_tiers(self) -> None:
@@ -280,7 +318,14 @@ class CoverageReporter:
         work_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            tier_order = [name for name, _ in self.tiers]
+            # Seed tier order from the declared tiers (precedence order)
+            # first, so the renderer's winner-take-all row coloring follows
+            # settings precedence even for a tier that has no data yet;
+            # then fold in any legacy ``--tier`` specs not already present.
+            tier_order = [t.name for t in self.tier_configs]
+            for name, _ in self.tiers:
+                if name not in tier_order:
+                    tier_order.append(name)
             store = CoverageStore(tier_order=tier_order)
 
             wants_system = self._wants_system_tier()
@@ -345,6 +390,15 @@ class CoverageReporter:
                         continue
                     loader.load(tier_path, tier_name)
 
+            # 3b. Collection-model inputs (Task 10). No-ops for legacy
+            #     callers: every step is gated on the new constructor
+            #     arguments being present.
+            self._load_captures(store)
+            await self._harvest_unit_tiers(localhost, work_dir, loader)
+            self._load_manual_store(store)
+            self._fill_tier_colors(store)
+            self._apply_exclusions(store)
+
             # 4. Render HTML
             logger.info("=== Rendering HTML report ===")
             renderer = HtmlRenderer(self.output_dir, project_name=self.project_name)
@@ -358,12 +412,167 @@ class CoverageReporter:
         finally:
             await localhost.close()
 
+    # ------------------------------------------------------------------
+    # Collection-model steps (Task 10) — each is a no-op unless the
+    # relevant constructor argument is supplied.
+    # ------------------------------------------------------------------
+
+    def _load_captures(self, store: CoverageStore) -> None:
+        """Fold e2e board ``capture.json`` files in under a strict HEAD pin guard.
+
+        Each capture is pinned to the exact commit whose line numbering it
+        means; unlike a manual capture it carries no anchor chain, so it is
+        only valid against a matching tree.  A pin that differs from HEAD is
+        a hard error (the product was rebuilt or the tree moved after the
+        capture was taken).
+        """
+        if not self.capture_paths or self.repo_root is None:
+            return
+        from .capture.gitio import head_commit
+        from .capture.model import Capture
+        from .errors import CoverageDataMismatchError
+        from .validity import load_capture_into_store
+
+        head = head_commit(self.repo_root)
+        for cap_path in self.capture_paths:
+            capture = Capture.load(cap_path)
+            if capture.pin != head:
+                raise CoverageDataMismatchError(
+                    f"e2e capture {cap_path} was taken at {capture.pin[:12]} "
+                    f"but the tree is at {head[:12]}; re-run the test or "
+                    f"report from the matching commit"
+                )
+            load_capture_into_store(store, capture, self.repo_root)
+
+    async def _harvest_unit_tiers(
+        self,
+        localhost: "LocalHost",
+        work_dir: Path,
+        loader: LCOVLoader,
+    ) -> None:
+        """Capture + load each unit tier's ``harvest_dirs`` (its own gcda == gcno root)."""
+        unit_tiers = [t for t in self.tier_configs if t.kind == "unit" and t.harvest_dirs]
+        if not unit_tiers:
+            return
+        from .correlator.merger import LcovMerger
+
+        merger = LcovMerger(localhost)
+        for tier in unit_tiers:
+            for idx, hdir in enumerate(tier.harvest_dirs):
+                if not hdir.is_dir():
+                    logger.warning(
+                        "Unit tier %r: harvest dir does not exist: %s — skipping",
+                        tier.name,
+                        hdir,
+                    )
+                    continue
+                gcda_files = list(hdir.rglob("*.gcda"))
+                if not gcda_files:
+                    logger.warning(
+                        "Unit tier %r: harvest dir has no .gcda files: %s — skipping",
+                        tier.name,
+                        hdir,
+                    )
+                    continue
+                self._warn_if_stale_counters(tier.name, hdir, gcda_files)
+                info_out = work_dir / f"unit_{tier.name}_{idx}.info"
+                await merger.capture(hdir, hdir, info_out)
+                loader.load(info_out, tier.name)
+
+    @staticmethod
+    def _warn_if_stale_counters(tier_name: str, hdir: Path, gcda_files: list[Path]) -> None:
+        """Warn (but still load) when counters look older than the build notes."""
+        gcno_files = list(hdir.rglob("*.gcno"))
+        if not gcno_files:
+            return
+        newest_gcda = max(p.stat().st_mtime for p in gcda_files)
+        newest_gcno = max(p.stat().st_mtime for p in gcno_files)
+        if newest_gcda < newest_gcno:
+            logger.warning(
+                "Unit tier %r: newest .gcda under %s predates newest .gcno — "
+                "counters may be stale (loading anyway).",
+                tier_name,
+                hdir,
+            )
+
+    def _load_manual_store(self, store: CoverageStore) -> None:
+        """Fold every committed manual capture in with report-time validity states."""
+        if self.repo_root is None:
+            return
+        from .capture.store_dir import load_manual_captures
+        from .validity import apply_manual_capture
+
+        max_age_by_tier = {t.name: t.max_age_days for t in self.tier_configs}
+        for capture in load_manual_captures(self.repo_root):
+            apply_manual_capture(
+                store,
+                capture,
+                self.repo_root,
+                max_age_days=max_age_by_tier.get(capture.tier),
+            )
+
+    def _fill_tier_colors(self, store: CoverageStore) -> None:
+        """Seed ``store.tier_colors`` from the declared tiers (name → color)."""
+        for tier in self.tier_configs:
+            store.tier_colors[tier.name] = tier.color
+
+    def _apply_exclusions(self, store: CoverageStore) -> None:
+        """Mark source-excluded lines that are present but uncovered (spec §8).
+
+        Only runs in the collection-model path, and only touches lines
+        already in the store that carry no hits and no other state — so
+        covered / manual / stale / aging lines are never disturbed.
+        """
+        if self.repo_root is None and not self.tier_configs:
+            return
+        from .exclusions import scan_excluded_lines
+
+        for file_rec in store.files():
+            if not file_rec.lines:
+                continue
+            try:
+                source = file_rec.path.read_text(errors="replace")
+            except OSError:
+                continue
+            for lineno in scan_excluded_lines(source, self.extra_markers or None):
+                lr = file_rec.lines.get(lineno)
+                if lr is not None and lr.state is None and not lr.hits.is_hit():
+                    lr.state = "excluded"
+
+
+def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]:
+    """Split each cov dir's board subdirs into (gcda dirs, capture.json paths).
+
+    A board dir holding a ``capture.json`` is an already-pinned e2e capture
+    and loads via the capture path; every other board dir keeps today's
+    ``.gcda``-merge path (back-compat).  Mixed cov dirs are supported.
+    """
+    gcda_dirs: list[Path] = []
+    capture_paths: list[Path] = []
+    for cov_dir in cov_dirs:
+        if not cov_dir.is_dir():
+            logger.warning("Coverage directory does not exist: %s", cov_dir)
+            continue
+        for board_dir in sorted(cov_dir.iterdir()):
+            if not board_dir.is_dir():
+                continue
+            capture_json = board_dir / "capture.json"
+            if capture_json.is_file():
+                capture_paths.append(capture_json)
+            else:
+                gcda_dirs.append(board_dir)
+    return gcda_dirs, capture_paths
+
 
 async def run_coverage_report(
     cov_dirs: list[Path],
     report_dir: Path,
     project_name: str = "Coverage Report",
     tier_specs: list[TierSpec] | None = None,
+    *,
+    repo_root: Path | None = None,
+    tier_configs: "list[TierConfig] | None" = None,
+    extra_markers: list[str] | None = None,
 ) -> CoverageStore | None:
     """Render an HTML coverage report from one or more cov/ directories.
 
@@ -371,14 +580,55 @@ async def run_coverage_report(
     one per run) and ``otto test --cov-report`` (single cov dir produced by
     the test run just completed).
 
-    Reads the source root and per-host toolchains from
-    ``.otto_cov_meta.json`` inside the cov dirs, discovers per-host gcda
-    subdirs, and runs :class:`CoverageReporter`.
+    **Two modes, one precedence rule.**  When neither *repo_root* nor
+    *tier_configs* is given the function runs the **legacy** path unchanged:
+    it reads the source root + per-host toolchains from
+    ``.otto_cov_meta.json``, discovers per-host gcda subdirs, and merges
+    them with lcov — returning ``None`` (as before) when there is no
+    metadata sidecar or no gcda subdirs.
+
+    When *repo_root* or *tier_configs* is given the function runs the
+    **collection-model** path, which additionally consumes, in order:
+
+    1. **e2e captures** — board dirs holding a ``capture.json`` load under a
+       strict HEAD pin guard (:class:`~otto.coverage.errors.CoverageDataMismatchError`
+       on mismatch); board dirs without one keep the legacy gcda-merge.
+    2. **unit harvest** — each ``kind == "unit"`` tier's ``harvest_dirs``.
+    3. **manual store** — every committed capture under *repo_root*'s
+       ``.otto/coverage/manual/`` (with report-time validity states).
+
+    Crucially the legacy "no metadata → return ``None``" early-outs do
+    **not** fire in this mode: an empty *cov_dirs* plus a non-empty manual
+    store still yields a report.  The legacy gcda-merge only targets the
+    conventional ``system`` tier via *tier_specs* (default ``[("system",
+    None)]``); explicit ``--tier`` specs, being a git-less escape hatch,
+    never reach this mode (the CLI routes them through the legacy path).
 
     Returns:
-        The populated :class:`~otto.coverage.store.model.CoverageStore`, or ``None`` if no coverage
-        data is available (no metadata file or no gcda subdirs found).
+        The populated :class:`~otto.coverage.store.model.CoverageStore`, or
+        ``None`` when the legacy path found no coverage data.
     """
+    if repo_root is None and tier_configs is None:
+        return await _run_legacy_report(cov_dirs, report_dir, project_name, tier_specs)
+
+    return await _run_collection_report(
+        cov_dirs,
+        report_dir,
+        project_name=project_name,
+        tier_specs=tier_specs,
+        repo_root=repo_root,
+        tier_configs=tier_configs,
+        extra_markers=extra_markers,
+    )
+
+
+async def _run_legacy_report(
+    cov_dirs: list[Path],
+    report_dir: Path,
+    project_name: str,
+    tier_specs: list[TierSpec] | None,
+) -> CoverageStore | None:
+    """Run the pre-collection-model path — byte-for-byte the historical behavior."""
     try:
         source_root = read_cov_source_root(cov_dirs)
     except FileNotFoundError as e:
@@ -404,5 +654,54 @@ async def run_coverage_report(
         toolchains=toolchains,
         tiers=tier_specs,
         source_roots=source_roots,
+    )
+    return await reporter.run()
+
+
+async def _run_collection_report(
+    cov_dirs: list[Path],
+    report_dir: Path,
+    *,
+    project_name: str,
+    tier_specs: list[TierSpec] | None,
+    repo_root: Path | None,
+    tier_configs: "list[TierConfig] | None",
+    extra_markers: list[str] | None,
+) -> CoverageStore:
+    """Run the collection-model path: captures + unit harvest + manual store.
+
+    Always returns a store (never ``None``): even with no gcda dirs and no
+    captures, the manual store and the declared tiers still produce a
+    report.
+    """
+    gcda_dirs, capture_paths = _partition_board_dirs(cov_dirs)
+
+    # The gcda-merge fallback needs a source root only when there are
+    # legacy (non-capture) board dirs to merge.  When the meta sidecar is
+    # absent — e.g. a captures-only or manual-only run — fall back to the
+    # repo root (or cwd) rather than bailing out the way the legacy path
+    # would.
+    try:
+        source_root = read_cov_source_root(cov_dirs)
+    except FileNotFoundError:
+        source_root = repo_root or Path.cwd()
+
+    toolchains = read_cov_toolchains(cov_dirs)
+    source_roots = read_cov_source_roots(cov_dirs)
+
+    reporter = CoverageReporter(
+        gcda_dirs=gcda_dirs,
+        source_root=source_root,
+        output_dir=report_dir,
+        project_name=project_name,
+        toolchains=toolchains,
+        tiers=tier_specs,
+        source_roots=source_roots,
+        collection=CollectionInputs(
+            repo_root=repo_root,
+            tier_configs=list(tier_configs) if tier_configs else [],
+            capture_paths=capture_paths,
+            extra_markers=list(extra_markers) if extra_markers else [],
+        ),
     )
     return await reporter.run()

@@ -1,16 +1,30 @@
 """Tests for the CoverageReporter and helper functions."""
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from otto.coverage.capture.gitio import head_commit
+from otto.coverage.capture.model import Capture, CaptureFileCov
+from otto.coverage.errors import CoverageDataMismatchError
 from otto.coverage.reporter import (
     CoverageReporter,
     discover_gcda_dirs,
     read_cov_source_root,
     read_cov_source_roots,
+    run_coverage_report,
 )
+from otto.coverage.tiers import load_tiers
+
+_GIT_ENV = {
+    "GIT_AUTHOR_NAME": "t",
+    "GIT_AUTHOR_EMAIL": "t@x",
+    "GIT_COMMITTER_NAME": "t",
+    "GIT_COMMITTER_EMAIL": "t@x",
+    "PATH": "/usr/bin:/bin",
+}
 
 
 class TestReadCovSourceRoot:
@@ -131,3 +145,153 @@ class TestCoverageReporter:
         )
         store = await reporter.run()
         assert store.file_count() == 0
+
+
+def _init_repo(tmp_path: Path) -> Path:
+    """Create a one-commit git repo and return its root."""
+    repo = tmp_path / "sut"
+    repo.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env={**_GIT_ENV, "HOME": str(tmp_path)},
+        )
+
+    git("init", "-q")
+    (repo / "f.c").write_text("int a;\nint b;\nint c;\n")
+    git("add", "f.c")
+    git("commit", "-qm", "init")
+    return repo
+
+
+_PIN_GUARD_COV = {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}
+
+
+class TestE2ePinGuard:
+    """A board capture pinned to a different commit than HEAD is a hard error."""
+
+    @pytest.mark.asyncio
+    async def test_capture_pin_mismatch_raises_naming_both_shas(self, tmp_path):
+        repo = _init_repo(tmp_path)
+        head = head_commit(repo)
+
+        cap = Capture(
+            tier="system",
+            pin="f" * 40,
+            files={"f.c": CaptureFileCov(lines={2: 1})},
+        )
+        cov = tmp_path / "out" / "cov"
+        cap.save(cov / "board1" / "capture.json")
+
+        with pytest.raises(CoverageDataMismatchError) as excinfo:
+            await run_coverage_report(
+                [cov],
+                tmp_path / "report",
+                repo_root=repo,
+                tier_configs=load_tiers(_PIN_GUARD_COV),
+            )
+
+        message = str(excinfo.value)
+        assert "f" * 12 in message  # capture pin (short)
+        assert head[:12] in message  # tree HEAD (short)
+
+    @pytest.mark.asyncio
+    async def test_capture_pin_matches_head_loads_into_store(self, tmp_path):
+        repo = _init_repo(tmp_path)
+        head = head_commit(repo)
+
+        cap = Capture(
+            tier="system",
+            pin=head,
+            files={"f.c": CaptureFileCov(lines={2: 7})},
+        )
+        cov = tmp_path / "out" / "cov"
+        cap.save(cov / "board1" / "capture.json")
+
+        store = await run_coverage_report(
+            [cov],
+            tmp_path / "report",
+            repo_root=repo,
+            tier_configs=load_tiers(_PIN_GUARD_COV),
+        )
+        assert store is not None
+        (frec,) = [f for f in store.files() if f.path.name == "f.c"]
+        assert frec.lines[2].hits.for_tier("system") == 7
+
+
+class TestUnitHarvest:
+    """kind==unit tiers with harvest_dirs are captured+loaded via the merger."""
+
+    @pytest.mark.asyncio
+    async def test_harvest_dir_loads_under_unit_tier(self, tmp_path, monkeypatch):
+        from otto.coverage.correlator import merger as merger_mod
+
+        repo = _init_repo(tmp_path)
+        # A harvest dir that is both the gcda and gcno root.
+        hdir = tmp_path / "unit_build"
+        hdir.mkdir()
+        (hdir / "f.gcda").write_bytes(b"")
+        (hdir / "f.gcno").write_bytes(b"")
+
+        src = repo / "f.c"
+
+        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            # The merger is handed the harvest dir as *both* roots.
+            assert gcda_dir == hdir
+            assert gcno_dir == hdir
+            output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+
+        cov_config = {
+            "tiers": {
+                "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": [str(hdir)]},
+                "system": {"kind": "e2e", "precedence": 2},
+            }
+        }
+        store = await run_coverage_report(
+            [],
+            tmp_path / "report",
+            repo_root=repo,
+            tier_configs=load_tiers(cov_config),
+        )
+        assert store is not None
+        (frec,) = [f for f in store.files() if f.path.name == "f.c"]
+        assert frec.lines[1].hits.for_tier("unit") == 5
+
+    @pytest.mark.asyncio
+    async def test_missing_harvest_dir_warns_and_skips(self, tmp_path, monkeypatch, caplog):
+        from otto.coverage.correlator import merger as merger_mod
+
+        repo = _init_repo(tmp_path)
+
+        async def fail_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            raise AssertionError("merger.capture must not run for a missing harvest dir")
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fail_capture)
+
+        cov_config = {
+            "tiers": {
+                "unit": {
+                    "kind": "unit",
+                    "precedence": 1,
+                    "harvest_dirs": [str(tmp_path / "does_not_exist")],
+                },
+            }
+        }
+        with caplog.at_level("WARNING"):
+            store = await run_coverage_report(
+                [],
+                tmp_path / "report",
+                repo_root=repo,
+                tier_configs=load_tiers(cov_config),
+            )
+        assert store is not None
+        assert any("does not exist" in rec.message for rec in caplog.records)
+        # The unit tier is still registered (seeded from tier_configs).
+        assert "unit" in store.tier_order

@@ -14,9 +14,65 @@ from pathlib import Path
 from .capture import gitio
 from .capture.model import Capture, CaptureFileCov
 from .capture.remap import LineRemapper, parse_u0_hunks
-from .store.model import BranchHits, CoverageStore
+from .store.model import BranchHits, CoverageStore, FileRecord, LineRecord
 
 logger = logging.getLogger(__name__)
+
+
+def _insert_branch_triples(
+    line_rec: LineRecord, tier: str, triples: list[tuple[int, int, int | None]]
+) -> None:
+    """Merge lcov branch triples into one line under *tier* (mirrors LCOVLoader).
+
+    ``taken`` is ``None`` for a never-reached branch, ``0`` for a reached
+    but not-taken branch, and a positive count otherwise.
+    """
+    existing = {(b.block, b.branch): b for b in line_rec.branches}
+    for block, branch, taken in triples:
+        key = (block, branch)
+        if key not in existing:
+            bh = BranchHits(block=block, branch=branch)
+            line_rec.branches.append(bh)
+            existing[key] = bh
+        reachable = taken is not None
+        existing[key].set_reachable(tier, reachable)
+        if reachable and taken > 0:
+            existing[key].hits.add(tier, taken)
+
+
+def _insert_lines(
+    file_rec: FileRecord,
+    tier: str,
+    lines: dict[int, int],
+    branches: dict[int, list[tuple[int, int, int | None]]],
+) -> None:
+    """Fold one file's line hits and branch triples into *file_rec* under *tier*.
+
+    Coordinates are taken verbatim — callers pass current-worktree line
+    numbers (either because the capture pin is HEAD, or after the manual
+    anchor-chain remap). No validity states are set here; that is the
+    manual-capture pass's job. This is the single insertion path shared by
+    :func:`load_capture_into_store` and :func:`apply_manual_capture`.
+    """
+    for lineno, count in lines.items():
+        file_rec.get_or_create_line(lineno).hits.add(tier, count)
+    for lineno, triples in branches.items():
+        _insert_branch_triples(file_rec.get_or_create_line(lineno), tier, triples)
+
+
+def load_capture_into_store(store: CoverageStore, capture: Capture, repo_root: Path) -> None:
+    """Fold a pin==HEAD (e2e-kind) capture into *store* verbatim.
+
+    The caller has already verified ``capture.pin`` equals the tree's HEAD,
+    so the capture's pin coordinates *are* the current-worktree coordinates
+    and no anchor chain / remap is needed. Unlike
+    :func:`apply_manual_capture` this sets no validity states and appends no
+    provenance — an automated capture carries no human session to attribute.
+    """
+    store.register_tier(capture.tier)
+    for rel_str, fc in capture.files.items():
+        file_rec = store.get_or_create_file(repo_root / Path(rel_str))
+        _insert_lines(file_rec, capture.tier, fc.lines, fc.branches)
 
 
 def _anchor_diff(fc: CaptureFileCov, repo_root: Path, relpath: Path, pin: str) -> str | None:
@@ -74,39 +130,40 @@ def apply_manual_capture(
             continue
 
         remapper = LineRemapper(parse_u0_hunks(diff))
+
+        # Remap pin (OLD) coordinates → current-worktree (NEW) coordinates.
+        # Lines with no new position (changed/deleted since the pin) are
+        # recorded for stale marking at their own pin line number — a
+        # nearby-enough anchor for a human to find.
+        mapped_lines: dict[int, int] = {}
+        stale_linenos: list[int] = []
         for lineno, count in fc.lines.items():
             new_line = remapper.old_to_new(lineno)
             if new_line is None:
-                # Changed/deleted since the pin: no current position to
-                # credit, so mark stale at the pin's own line number
-                # (a nearby-enough anchor for a human to find) as long as
-                # no tier has already put a hit there.
                 if count > 0:
-                    lr = file_rec.get_or_create_line(lineno)
-                    if not lr.hits.is_hit():
-                        lr.state = "stale"
+                    stale_linenos.append(lineno)
                 continue
-            lr = file_rec.get_or_create_line(new_line)
-            lr.hits.add(capture.tier, count)
-            if aging and count > 0 and lr.state is None:
-                lr.state = "aging"
+            mapped_lines[new_line] = mapped_lines.get(new_line, 0) + count
 
+        mapped_branches: dict[int, list[tuple[int, int, int | None]]] = {}
         for lineno, triples in fc.branches.items():
             new_line = remapper.old_to_new(lineno)
-            if new_line is None:
-                continue
-            lr = file_rec.get_or_create_line(new_line)
-            existing = {(b.block, b.branch): b for b in lr.branches}
-            for block, branch, taken in triples:
-                key = (block, branch)
-                if key not in existing:
-                    bh = BranchHits(block=block, branch=branch)
-                    lr.branches.append(bh)
-                    existing[key] = bh
-                reachable = taken is not None
-                existing[key].set_reachable(capture.tier, reachable)
-                if reachable and taken > 0:
-                    existing[key].hits.add(capture.tier, taken)
+            if new_line is not None:
+                mapped_branches.setdefault(new_line, []).extend(triples)
+
+        _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches)
+
+        if aging:
+            for new_line, count in mapped_lines.items():
+                if count > 0:
+                    lr = file_rec.get_or_create_line(new_line)
+                    if lr.state is None:
+                        lr.state = "aging"
+
+        for lineno in stale_linenos:
+            lr = file_rec.get_or_create_line(lineno)
+            if not lr.hits.is_hit():
+                lr.state = "stale"
 
     store.provenance.append(
         {

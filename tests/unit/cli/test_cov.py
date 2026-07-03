@@ -97,8 +97,14 @@ class TestCovReportValidation:
         assert "does not exist" in mock_err.call_args[0][0]
 
     def test_no_gcda_dirs_exits_1(self, tmp_path):
-        """Real directory but no cov/ subdirectory → error."""
-        with patch.object(cov_module.logger, "error") as mock_err:
+        """Real directory but no cov/ subdirectory → error (git-less legacy path)."""
+        # Pin the git-less scenario: no [coverage] settings resolvable, so the
+        # legacy no-data path runs and returns None → exit 1. (Without this the
+        # outcome would depend on whatever repo bootstrap resolved globally.)
+        with (
+            patch.object(cov_module, "_resolve_cov_settings", return_value=(None, None)),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
         assert result.exit_code == 1
         assert "not generated" in mock_err.call_args[0][0]
@@ -106,8 +112,12 @@ class TestCovReportValidation:
     def test_source_root_not_found_exits_1(self, tmp_path):
         # Create a cov/ subdir with host dir so discover_gcda_dirs returns
         # entries, but no .otto_cov_meta.json so read_cov_source_root fails.
+        # Pin the git-less scenario so only the legacy path is exercised.
         (tmp_path / "cov" / "host1").mkdir(parents=True)
-        with patch.object(cov_module.logger, "error"):
+        with (
+            patch.object(cov_module, "_resolve_cov_settings", return_value=(None, None)),
+            patch.object(cov_module.logger, "error"),
+        ):
             result = runner.invoke(cov_app, ["report", str(tmp_path)])
         assert result.exit_code == 1
 
@@ -309,6 +319,71 @@ class TestCovReportSuccess:
                 ],
             )
         assert result.exit_code == 1
+
+
+# ── report command — collection-model wiring (Task 10) ──────────────────────
+
+
+class TestCovReportCollectionModel:
+    @pytest.fixture
+    def mock_run_report(self):
+        mock_store = MagicMock()
+        mock_store.overall_pct.return_value = 50.0
+        mock_store.file_count.return_value = 1
+        mock = AsyncMock(return_value=mock_store)
+        with patch.object(cov_module, "run_coverage_report", mock):
+            yield mock
+
+    def test_no_tier_resolves_repo_root_and_tier_configs_from_settings(
+        self, tmp_path, mock_run_report
+    ):
+        """No --tier → settings-driven collection path (repo_root + tier_configs)."""
+        from otto.coverage.tiers import TierConfig
+
+        host_dir = tmp_path / "cov" / "host1"
+        host_dir.mkdir(parents=True)
+        (host_dir / "main.gcda").write_bytes(b"\x00")
+
+        repo_root = tmp_path / "sut"
+        tiers = [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
+        with patch.object(cov_module, "_resolve_cov_settings", return_value=(repo_root, tiers)):
+            result = runner.invoke(cov_app, ["report", str(tmp_path)])
+
+        assert result.exit_code == 0
+        kwargs = mock_run_report.call_args.kwargs
+        assert kwargs["repo_root"] == repo_root
+        assert kwargs["tier_configs"] == tiers
+        assert kwargs["tier_specs"] == [("system", None)]
+
+    def test_explicit_tier_flags_bypass_settings(self, tmp_path, mock_run_report):
+        """--tier escape hatch: no settings resolution, repo_root/tier_configs None."""
+        host_dir = tmp_path / "cov" / "host1"
+        host_dir.mkdir(parents=True)
+        (host_dir / "main.gcda").write_bytes(b"\x00")
+
+        with patch.object(
+            cov_module, "_resolve_cov_settings", side_effect=AssertionError("must not resolve")
+        ):
+            result = runner.invoke(
+                cov_app, ["report", str(tmp_path), "--tier", "unit=/u.info", "--tier", "system"]
+            )
+
+        assert result.exit_code == 0
+        kwargs = mock_run_report.call_args.kwargs
+        assert kwargs["repo_root"] is None
+        assert kwargs["tier_configs"] is None
+        assert kwargs["tier_specs"] == [("unit", Path("/u.info")), ("system", None)]
+
+    def test_no_output_dirs_allowed_for_manual_only_report(self, mock_run_report):
+        """output_dirs is optional: a manual-store-only report needs no run dirs."""
+        repo_root = Path("/some/repo")
+        with patch.object(cov_module, "_resolve_cov_settings", return_value=(repo_root, None)):
+            result = runner.invoke(cov_app, ["report"])
+
+        assert result.exit_code == 0
+        args = mock_run_report.call_args.args
+        assert args[0] == []  # no cov dirs
+        assert mock_run_report.call_args.kwargs["repo_root"] == repo_root
 
 
 # ── _resolve_tester — identity defaults (spec decision 15) ──────────────────
