@@ -131,25 +131,66 @@ changes with test actions.
 ## Custom parsers
 
 The monitor uses parsers to extract metrics from command output.  By default,
-all hosts use `DEFAULT_PARSERS`.  You can register custom parsers for
-specific hosts:
+all hosts use `DEFAULT_PARSERS`.  Subclass `MetricParser` and implement
+`parse(self, output, *, ctx)` to extract one or more data points from a
+command's raw output, then register it for specific hosts:
 
 ```python
 from otto.monitor.collector import MonitorTarget
-from otto.monitor.parsers import DEFAULT_PARSERS
+from otto.monitor.parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser, ParseContext
+
+
+class NvidiaGpuParser(MetricParser):
+    y_title = "Usage %"
+    unit = "%"
+    chart = "GPU"
+    command = "nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits"
+
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        return {self.chart: MetricDataPoint(value=float(output.strip()))}
+
 
 MonitorTarget(
     host=gpu_host,
     parsers={
         **DEFAULT_PARSERS,
-        "nvidia-smi --query-gpu=utilization.gpu --format=csv,noheader,nounits":
-            NvidiaGpuParser(),
+        NvidiaGpuParser.command: NvidiaGpuParser(),
     },
 )
 ```
 
-See {mod}`otto.monitor.parsers` for the built-in parsers and the
+`ctx` (a {class}`~otto.monitor.parsers.ParseContext`) carries tick-local
+input such as the target host's core count; most parsers ignore it.  See
+{mod}`otto.monitor.parsers` for the built-in parsers and the
 {class}`~otto.monitor.parsers.MetricParser` protocol.
+
+### Project-level parsers
+
+Register parsers that apply to every monitored host from an init module
+(listed in `.otto/settings.toml`):
+
+```python
+from otto.monitor.parsers import register_parsers
+from my_repo.parsers import SocketParser
+
+register_parsers([SocketParser()])
+```
+
+A parser whose `command` matches a built-in overrides it; new commands
+extend the set.  Per-host registrations (`register_host_parsers`) still take
+total precedence for their host.  Registering the same command twice raises.
+
+### Per-parser collection intervals
+
+Set `interval` (seconds) on a parser class to poll its command on its own
+cadence; parsers without one use the global `--interval`:
+
+```python
+class SocketParser(MetricParser):
+    command = "ss -s"
+    interval = 30.0  # poll sockets every 30s regardless of --interval
+    ...
+```
 
 ## SNMP monitoring
 

@@ -6,9 +6,13 @@ and serves an interactive web dashboard.
 
 .. toctree::
 
+   broadcast
    collector
-   parsers
+   db
    events
+   factory
+   history
+   parsers
    server
    snmp
-   factory
+   store

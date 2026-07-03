@@ -138,7 +138,8 @@ class MetricParser(ABC):
     interval: float | None = None
     """Collection interval override in seconds for this parser's command.
     ``None`` means the collector's global ``--interval`` (the default).
-    Honored by :meth:`MetricCollector.run`'s per-interval scheduling."""
+    Honored by :meth:`~otto.monitor.collector.MetricCollector.run`'s per-interval
+    scheduling."""
 
     @abstractmethod
     def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
