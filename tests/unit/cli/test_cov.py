@@ -769,3 +769,60 @@ class TestCovCleanSuccess:
         assert any(
             "embedded boards not cleaned" in str(c.args[0]) for c in mock_info.call_args_list
         )
+
+    def test_clean_scopes_fetcher_pattern_to_unix_hosts_only(self):
+        """Mixed lab: the fetcher's pattern (which clean_remote()'s own
+        do_for_all_hosts() call re-matches against every lab host, with no
+        EmbeddedHost guard) must only match the unix host, never the
+        embedded one — even though both matched [coverage].hosts."""
+        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        unix_host = self._unix_host("sprout_cov")
+        embedded_host = self._embedded_host("zeph1")
+
+        fetcher_instance = MagicMock()
+        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.configmodule.all_hosts", return_value=[unix_host, embedded_host]),
+            patch(
+                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
+            ) as mock_fetcher_cls,
+            patch.object(cov_module.logger, "info") as mock_info,
+        ):
+            result = runner.invoke(cov_app, ["clean"])
+
+        assert result.exit_code == 0, result.output
+        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+
+        used_pattern = mock_fetcher_cls.call_args.kwargs["pattern"]
+        assert used_pattern.search("sprout_cov")
+        assert not used_pattern.search("zeph1")
+        assert any(
+            "embedded boards not cleaned" in str(c.args[0]) for c in mock_info.call_args_list
+        )
+
+    def test_clean_pattern_does_not_let_prefix_id_collide(self):
+        """A unix host id that is a prefix of another host's id (e.g.
+        "sprout" vs. "sprout2") must not accidentally match the longer id
+        through an unanchored regex search."""
+        repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
+        unix_host = self._unix_host("sprout")
+        other_host = self._embedded_host("sprout2")
+
+        fetcher_instance = MagicMock()
+        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+
+        with (
+            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.configmodule.all_hosts", return_value=[unix_host, other_host]),
+            patch(
+                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
+            ) as mock_fetcher_cls,
+        ):
+            result = runner.invoke(cov_app, ["clean"])
+
+        assert result.exit_code == 0, result.output
+        used_pattern = mock_fetcher_cls.call_args.kwargs["pattern"]
+        assert used_pattern.search("sprout")
+        assert not used_pattern.search("sprout2")

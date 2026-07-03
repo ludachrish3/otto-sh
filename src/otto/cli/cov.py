@@ -336,8 +336,10 @@ async def _connect_cov_hosts() -> tuple[
     ``clean`` disagree on both the fetcher's staging root (a real output
     dir vs. an unused placeholder) and its ``pattern`` scope (``get``
     fetches with no pattern, preserving its existing tested behavior;
-    ``clean`` scopes to the ``[coverage].hosts`` pattern), so each command
-    builds its own fetcher from the pieces returned here.
+    ``clean`` scopes to the already-computed ``unix_hosts`` list, not the
+    raw ``[coverage].hosts`` pattern, so it can never re-match an embedded
+    host), so each command builds its own fetcher from the pieces returned
+    here.
 
     Raises :class:`_CovError` when no ``[coverage]`` section is configured
     at all — the one failure mode every caller treats identically.
@@ -600,6 +602,8 @@ async def _do_clean() -> None:
     command is the only place that turns the shared :class:`_CovError` base
     into ``typer.Exit(1)``.
     """
+    import re
+
     from ..coverage.fetcher.remote import GcdaFetcher
     from ..host.embedded_host import EmbeddedHost
 
@@ -607,7 +611,7 @@ async def _do_clean() -> None:
         _repos,
         _cov_repo,
         _cov_config,
-        cov_pattern,
+        _cov_pattern,
         cov_hosts,
         unix_hosts,
         gcda_remote_dir,
@@ -629,8 +633,17 @@ async def _do_clean() -> None:
     for host in unix_hosts:
         host.rebuild_connections()
     # staging_root is unused by clean_remote() (no files are downloaded);
-    # scope pattern to [coverage].hosts, same selector `cov_hosts` used.
-    fetcher = GcdaFetcher(Path("/tmp"), pattern=cov_pattern)  # noqa: S108 — deliberate staging path, never written to
+    # clean_remote() re-derives its own host set from `pattern` via
+    # do_for_all_hosts()/all_hosts() (no EmbeddedHost guard there), so
+    # passing the raw `cov_pattern` would let it re-match embedded boards
+    # on a mixed lab and send them a bogus `find ... -delete`. Scope the
+    # pattern to the already-computed `unix_hosts` instead. Matching is
+    # `pattern.search(host.id)` (see OttoContext.all_hosts), so each
+    # alternative is fullmatch-anchored to keep a host id like "sprout"
+    # from also matching a sibling "sprout2".
+    unix_ids = "|".join(re.escape(h.id) for h in unix_hosts)
+    unix_only_pattern = re.compile(f"^(?:{unix_ids})$")
+    fetcher = GcdaFetcher(Path("/tmp"), pattern=unix_only_pattern)  # noqa: S108 — deliberate staging path, never written to
     await fetcher.clean_remote(gcda_remote_dir)
     logger.info("Coverage counters cleared on %d host(s)", len(unix_hosts))
 
