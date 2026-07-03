@@ -1,5 +1,7 @@
 """Unit tests for built-in metric parsers."""
 
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from otto.monitor.parsers import (
@@ -9,6 +11,7 @@ from otto.monitor.parsers import (
     MemParser,
     MetricDataPoint,
     MetricParser,
+    ParseContext,
     TopCpuParser,
     get_host_parsers,
     human_readable,
@@ -29,7 +32,7 @@ def _top_output(
     """Build a two-block top -bn2 output string.
 
     Each proc tuple: (pid, user, res_kib, stat, cpu, mem, time_plus, command)
-    cpu values are raw (per-core scale); the parser divides by parser.core_count.
+    cpu values are raw (per-core scale); the parser divides by ctx.core_count.
     """
     header = (
         "top - 12:00:00 up 1 day,  2:00,  2 users,  load average: 0.5, 0.4, 0.3\n"
@@ -116,7 +119,7 @@ class TestTopCpuParser:
             procs1=[(1, "root", 4096, "S", 99.0, 0.1, "0:01.00", "fake")],
             procs2=[(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")],
         )
-        result = self.parser.parse(output)
+        result = self.parser.parse(output, ctx=ParseContext())
         assert "Overall CPU" in result
         assert result["Overall CPU"].value == pytest.approx(15.0)
 
@@ -129,7 +132,7 @@ class TestTopCpuParser:
             procs1=[],
             procs2=[],
         )
-        result = self.parser.parse(output)
+        result = self.parser.parse(output, ctx=ParseContext())
         assert result["Overall CPU"].value == pytest.approx(20.0)
 
     def test_per_process_entries(self):
@@ -139,8 +142,7 @@ class TestTopCpuParser:
         ]
         output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
         p = TopCpuParser(top_n=3)
-        p.core_count = 2
-        result = p.parse(output)
+        result = p.parse(output, ctx=ParseContext(core_count=2))
         assert "proc/1234" in result
         assert "proc/5678" in result
         assert result["proc/1234"].value == pytest.approx(4.0)  # 8.0 / 2 cores
@@ -149,7 +151,7 @@ class TestTopCpuParser:
     def test_per_process_meta_fields(self):
         procs = [(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")]
         output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-        meta = self.parser.parse(output)["proc/1234"].meta
+        meta = self.parser.parse(output, ctx=ParseContext())["proc/1234"].meta
         assert meta is not None
         assert meta["Command"] == "python3"
         assert meta["User"] == "root"
@@ -162,7 +164,7 @@ class TestTopCpuParser:
         # 65536 KiB * 1024 = 67108864 B = 64 MiB
         procs = [(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")]
         output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-        meta = self.parser.parse(output)["proc/1234"].meta
+        meta = self.parser.parse(output, ctx=ParseContext())["proc/1234"].meta
         assert meta is not None
         assert meta["RSS"] == "64 M"
 
@@ -171,8 +173,9 @@ class TestTopCpuParser:
         procs = [(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")]
         output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
         p = TopCpuParser(top_n=3)
-        p.core_count = 2
-        assert p.parse(output)["proc/1234"].value == pytest.approx(4.0)
+        assert p.parse(output, ctx=ParseContext(core_count=2))["proc/1234"].value == pytest.approx(
+            4.0
+        )
 
     def test_core_count_isolation_between_hosts(self):
         # Two parser instances simulate two hosts with different core counts.
@@ -181,27 +184,29 @@ class TestTopCpuParser:
         output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
 
         p2 = TopCpuParser(top_n=3)
-        p2.core_count = 2
         p4 = TopCpuParser(top_n=3)
-        p4.core_count = 4
 
-        assert p2.parse(output)["proc/1234"].value == pytest.approx(4.0)  # 8.0 / 2
-        assert p4.parse(output)["proc/1234"].value == pytest.approx(2.0)  # 8.0 / 4
+        assert p2.parse(output, ctx=ParseContext(core_count=2))["proc/1234"].value == pytest.approx(
+            4.0
+        )  # 8.0 / 2
+        assert p4.parse(output, ctx=ParseContext(core_count=4))["proc/1234"].value == pytest.approx(
+            2.0
+        )  # 8.0 / 4
 
     def test_top_n_limits_processes(self):
         procs = [
             (i, "root", 1024, "S", float(10 - i), 0.1, "0:00.01", f"proc{i}") for i in range(1, 6)
         ]
         output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
-        result = self.parser.parse(output)
+        result = self.parser.parse(output, ctx=ParseContext())
         proc_keys = [k for k in result if k.startswith("proc/")]
         assert len(proc_keys) == 3  # top_n=3
 
     def test_empty_output_returns_empty_dict(self):
-        assert self.parser.parse("") == {}
+        assert self.parser.parse("", ctx=ParseContext()) == {}
 
     def test_missing_cpu_line_returns_empty_dict(self):
-        assert self.parser.parse("no cpu info here\n") == {}
+        assert self.parser.parse("no cpu info here\n", ctx=ParseContext()) == {}
 
     def test_overall_cpu_absent_when_only_one_block(self):
         # Single-block output: only one "Tasks:" line, so block never reaches 2
@@ -210,7 +215,22 @@ class TestTopCpuParser:
             "%Cpu(s):  5.0 us,  2.0 sy,  0.0 ni, 90.0 id,  0.3 wa\n"
             "    PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND\n"
         )
-        assert self.parser.parse(output) == {}
+        assert self.parser.parse(output, ctx=ParseContext()) == {}
+
+    def test_normalizes_by_ctx_core_count(self):
+        procs = [(1234, "root", 65536, "S", 8.0, 0.8, "1:23.45", "python3")]
+        output = _top_output(idle1=90.0, idle2=88.0, procs1=procs, procs2=procs)
+        parser = TopCpuParser(top_n=5)
+        two = parser.parse(output, ctx=ParseContext(core_count=2))
+        one = parser.parse(output, ctx=ParseContext(core_count=1))
+        proc_key = next(k for k in one if k.startswith("proc/"))
+        assert two[proc_key].value == pytest.approx(one[proc_key].value / 2)
+
+
+def test_parse_context_is_frozen():
+    ctx = ParseContext(core_count=4)
+    with pytest.raises(FrozenInstanceError):
+        ctx.core_count = 8  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -236,7 +256,7 @@ class TestMemParser:
             f"Mem:    {total}  {used}  {total - used}       0       0       0\n"
             "Swap:          0          0          0\n"
         )
-        result = self.parser.parse(output)
+        result = self.parser.parse(output, ctx=ParseContext())
         assert result == {
             "Memory Usage": MetricDataPoint(
                 value=pytest.approx(37.5, abs=0.01),
@@ -247,20 +267,20 @@ class TestMemParser:
     def test_full_memory(self):
         total = 4 * 1024**3
         output = f"Mem:    {total}  {total}  0  0  0  0\n"
-        result = self.parser.parse(output)
+        result = self.parser.parse(output, ctx=ParseContext())
         assert result["Memory Usage"].value == pytest.approx(100.0)
 
     def test_meta_keys_are_human_readable(self):
         total = 1024**3  # 1 GiB
         used = 512 * 1024**2  # 512 MiB
         output = f"Mem:    {total}  {used}  {total - used}  0  0  0\n"
-        meta = self.parser.parse(output)["Memory Usage"].meta
+        meta = self.parser.parse(output, ctx=ParseContext())["Memory Usage"].meta
         assert meta is not None
         assert "Used" in meta
         assert "Total" in meta
 
     def test_empty_output_returns_empty_dict(self):
-        assert self.parser.parse("") == {}
+        assert self.parser.parse("", ctx=ParseContext()) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +299,7 @@ class TestDiskParser:
             "Filesystem      Size  Used Avail Use% Mounted on\n"
             "/dev/sda1        20G  5.4G   14G  27% /\n"
         )
-        result = self.parser.parse(output)
+        result = self.parser.parse(output, ctx=ParseContext())
         assert "/" in result
         assert result["/"].value == pytest.approx(27.0)
 
@@ -288,7 +308,7 @@ class TestDiskParser:
             "Filesystem      Size  Used Avail Use% Mounted on\n"
             "/dev/sda1        20G  5.4G   14G  27% /\n"
         )
-        meta = self.parser.parse(output)["/"].meta
+        meta = self.parser.parse(output, ctx=ParseContext())["/"].meta
         assert meta is not None
         assert "Used" in meta
         assert "Total" in meta
@@ -300,7 +320,7 @@ class TestDiskParser:
             "Filesystem      Size  Used Avail Use% Mounted on\n"
             "/dev/sda1        20G   20G     0 100% /\n"
         )
-        assert self.parser.parse(output)["/"].value == pytest.approx(100.0)
+        assert self.parser.parse(output, ctx=ParseContext())["/"].value == pytest.approx(100.0)
 
     def test_multiple_mounts(self):
         output = (
@@ -308,13 +328,13 @@ class TestDiskParser:
             "/dev/sda1        20G  5.4G   14G  27% /\n"
             "/dev/sdb1       100G   40G   60G  40% /data\n"
         )
-        result = self.parser.parse(output)
+        result = self.parser.parse(output, ctx=ParseContext())
         assert "/" in result
         assert "/data" in result
         assert result["/data"].value == pytest.approx(40.0)
 
     def test_empty_output_returns_empty_dict(self):
-        assert self.parser.parse("") == {}
+        assert self.parser.parse("", ctx=ParseContext()) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -330,24 +350,24 @@ class TestLoadParser:
 
     def test_typical_output(self):
         output = "0.52 0.58 0.59 1/432 12345\n"
-        result = self.parser.parse(output)
+        result = self.parser.parse(output, ctx=ParseContext())
         assert result["Load (1m)"].value == pytest.approx(0.52)
         assert result["Load (5m)"].value == pytest.approx(0.58)
         assert result["Load (15m)"].value == pytest.approx(0.59)
 
     def test_all_three_series_present(self):
-        result = self.parser.parse("1.0 2.0 3.0 1/100 999\n")
+        result = self.parser.parse("1.0 2.0 3.0 1/100 999\n", ctx=ParseContext())
         assert set(result.keys()) == {"Load (1m)", "Load (5m)", "Load (15m)"}
 
     def test_high_load(self):
-        result = self.parser.parse("16.00 12.50 8.20 4/512 9999")
+        result = self.parser.parse("16.00 12.50 8.20 4/512 9999", ctx=ParseContext())
         assert result["Load (1m)"].value == pytest.approx(16.0)
 
     def test_empty_output_returns_empty_dict(self):
-        assert self.parser.parse("") == {}
+        assert self.parser.parse("", ctx=ParseContext()) == {}
 
     def test_non_numeric_returns_empty_dict(self):
-        assert self.parser.parse("error: permission denied") == {}
+        assert self.parser.parse("error: permission denied", ctx=ParseContext()) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +395,7 @@ class TestMetricParserExtensibility:
             command = "uptime -p"
             chart = "Uptime"
 
-            def parse(self, output: str) -> dict[str, MetricDataPoint]:
+            def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
                 import re
 
                 m = re.search(r"(\d+)\s+day", output)
@@ -384,8 +404,8 @@ class TestMetricParserExtensibility:
                 return {}
 
         p = UptimeParser()
-        assert p.parse("up 3 days, 4 hours")["Uptime"].value == 3.0
-        assert p.parse("up 5 hours") == {}
+        assert p.parse("up 3 days, 4 hours", ctx=ParseContext())["Uptime"].value == 3.0
+        assert p.parse("up 5 hours", ctx=ParseContext()) == {}
 
 
 class TestHostParserRegistry:

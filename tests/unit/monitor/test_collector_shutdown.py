@@ -19,7 +19,7 @@ import pytest
 from otto.host.local_host import LocalHost
 from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector, MonitorTarget
-from otto.monitor.parsers import MetricDataPoint, MetricParser
+from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
 
 
 class EchoParser(MetricParser):
@@ -30,7 +30,7 @@ class EchoParser(MetricParser):
     unit = ""
     command = "echo 42"
 
-    def parse(self, output: str) -> dict[str, MetricDataPoint] | None:
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint] | None:
         try:
             return {"value": MetricDataPoint(float(output.strip()))}
         except ValueError:

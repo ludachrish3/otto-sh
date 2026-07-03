@@ -16,7 +16,7 @@ import pytest
 
 from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector, MonitorTarget
-from otto.monitor.parsers import MetricDataPoint, MetricParser
+from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
 from otto.monitor.snmp import OID_SYS_UPTIME, SnmpSource
 from otto.result import CommandResult, Results
 from otto.utils import Status
@@ -30,7 +30,7 @@ class StubParser(MetricParser):
     unit = ""
     command = "echo 42"
 
-    def parse(self, output: str) -> dict[str, MetricDataPoint] | None:
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint] | None:
         try:
             return {"value": MetricDataPoint(float(output.strip()))}
         except ValueError:

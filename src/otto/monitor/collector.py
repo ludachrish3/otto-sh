@@ -26,7 +26,7 @@ from .db import MetricDB
 from .events import MonitorEvent
 from .history import load_json_into, load_sqlite_into
 from .history import to_json as history_to_json
-from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser
+from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser, ParseContext
 from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
 from .store import MetricStore
 
@@ -261,8 +261,9 @@ class MetricCollector:
 
         await self.init_db()
 
-        # One-time setup: determine core count for each shell host and propagate
-        # to any parser that uses it for normalization (e.g. TopCpuParser).
+        # One-time setup: determine core count for each shell host. It is threaded
+        # into ParseContext at each collection call site below (e.g. TopCpuParser
+        # uses it to normalize per-process CPU%).
         # grep -c ^processor /proc/cpuinfo is universally available on Linux but
         # meaningless for SNMP targets (no shell), so they are skipped — their
         # core_count stays 1 and the SNMP descriptors don't use it.
@@ -281,9 +282,6 @@ class MetricCollector:
                         "Monitor: could not determine core count for %s, defaulting to 1",
                         target.host.name,
                     )
-        for target in shell_targets:
-            for parser in target.parsers.values():
-                parser.core_count = target.core_count
 
         secs = interval.total_seconds()
         start = datetime.now(tz=timezone.utc)
@@ -298,7 +296,11 @@ class MetricCollector:
             match result:
                 case Results() as res:
                     await self._process_host_results(
-                        target.host.name, ts, list(res), target.parsers
+                        target.host.name,
+                        ts,
+                        list(res),
+                        target.parsers,
+                        ctx=ParseContext(core_count=target.core_count),
                     )
                 case list():
                     await self._process_snmp_results(target.host.name, ts, result)
@@ -322,7 +324,11 @@ class MetricCollector:
                 match result:
                     case Results() as res:
                         await self._process_host_results(
-                            target.host.name, ts, list(res), target.parsers
+                            target.host.name,
+                            ts,
+                            list(res),
+                            target.parsers,
+                            ctx=ParseContext(core_count=target.core_count),
                         )
 
                     case list():
@@ -377,11 +383,13 @@ class MetricCollector:
         ts: datetime,
         cmd_results: "list[CommandResult]",
         parsers: dict[str, MetricParser],
+        *,
+        ctx: ParseContext,
     ) -> None:
         for cmd_result in cmd_results:
             parser = parsers.get(cmd_result.command)
             if parser is not None:
-                points = parser.parse(cmd_result.value)
+                points = parser.parse(cmd_result.value, ctx=ctx)
                 if not points:
                     continue
                 for label, dp in points.items():

@@ -9,12 +9,7 @@ custom command, subclass MetricParser and override parse()::
         unit = ""
         command = "ss -s | grep estab"
 
-        def parse(self, output: str) -> float | None:
-            # output is the raw stdout/stderr string from the command
-            for line in output.splitlines():
-                if "estab" in line.lower():
-                    return float(line.split()[0])
-            return None
+        def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]: ...
 
 To associate custom parsers with a specific host, call register_host_parsers()
 from an init module listed in .otto/settings.toml::
@@ -36,6 +31,7 @@ Hosts with no registered parsers fall back to DEFAULT_PARSERS.
 import copy
 import re
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
 from typing_extensions import override
@@ -56,6 +52,15 @@ class MetricDataPoint(NamedTuple):
     meta: dict[str, Any] | None = None
     """Optional supplementary data forwarded to the dashboard as hover text
     (e.g. ``{'used': '4.2 GB', 'total': '16 GB'}`` for memory)."""
+
+
+@dataclass(frozen=True)
+class ParseContext:
+    """Tick-local input to MetricParser.parse — extensible without signature breaks."""
+
+    core_count: int = 1
+    """Number of CPU cores on the target host for this tick. Most parsers ignore
+    this; :class:`TopCpuParser` uses it to normalize per-process CPU%."""
 
 
 _BYTES_PER_UNIT = 1024.0  # binary prefix divisor used by human_readable
@@ -117,23 +122,19 @@ class MetricParser(ABC):
     Single-series parsers set this to their series label; multi-series parsers set it
     to a shared group name (e.g. ``'Load'``)."""
 
-    core_count: int = 1
-    """Number of CPU cores on the target host. Set per-host by
-    :class:`~otto.monitor.collector.MetricCollector` before the first tick.
-    Most parsers ignore this; :class:`TopCpuParser` uses it to normalize per-process CPU%."""
-
     interval: float | None = None
     """Collection interval override in seconds for this parser's command.
     ``None`` means the collector's global ``--interval`` (the default).
     Honored by :meth:`MetricCollector.run`'s per-interval scheduling."""
 
     @abstractmethod
-    def parse(self, output: str) -> dict[str, MetricDataPoint]:
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
         """
         Convert raw command output into one or more labelled data points.
 
         Args:
             output: The full stdout+stderr string returned by the remote command.
+            ctx: Tick-local input (e.g. the target host's core count).
 
         Returns:
             A dict mapping series label → :class:`MetricDataPoint` for each data
@@ -178,7 +179,7 @@ class TopCpuParser(MetricParser):
         return f"top -d {self._delay} -bn2"
 
     @override
-    def parse(self, output: str) -> dict[str, MetricDataPoint]:
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
         result: dict[str, MetricDataPoint] = {}
         block = 0
         in_table = False
@@ -214,7 +215,7 @@ class TopCpuParser(MetricParser):
                     continue
                 try:
                     result[f"proc/{parts[0]}"] = MetricDataPoint(
-                        value=round(float(parts[8]) / self.core_count, 2),
+                        value=round(float(parts[8]) / ctx.core_count, 2),
                         meta={
                             "Command": parts[11],
                             "User": parts[1],
@@ -246,7 +247,7 @@ class MemParser(MetricParser):
     chart = "Memory Usage"
 
     @override
-    def parse(self, output: str) -> dict[str, MetricDataPoint]:
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
         for line in output.splitlines():
             if line.lower().startswith("mem:"):
                 parts = line.split()
@@ -293,7 +294,7 @@ class DiskParser(MetricParser):
     )
 
     @override
-    def parse(self, output: str) -> dict[str, MetricDataPoint]:
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
         lines = [text_line for text_line in output.splitlines() if text_line.strip()]
         # Typical output (df -h):
         #   Filesystem      Size  Used Avail Use% Mounted on
@@ -326,7 +327,7 @@ class LoadParser(MetricParser):
     chart = "Load"
 
     @override
-    def parse(self, output: str) -> dict[str, MetricDataPoint]:
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
         parts = output.strip().split()
         try:
             return {
