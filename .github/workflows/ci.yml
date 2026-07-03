@@ -85,6 +85,10 @@ jobs:
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
+      # graphviz `dot` renders the architecture-docs diagrams. ubuntu-latest
+      # images currently preinstall it, but that set is not contractual —
+      # install explicitly so the docs gate never depends on image contents.
+      - run: sudo apt-get install -y graphviz
       - run: uv python install 3.10
       - run: uv run nox -s docs
 

@@ -142,12 +142,15 @@ Vagrant.configure("2") do |config|
             # the product; the coverage instance runs on the zephyr VM).
             # ruby provides `ruby -c Vagrantfile` for syntax-checking edits to
             # this file from inside the dev VM.
+            # graphviz provides `dot` for the architecture-docs diagrams
+            # (sphinx.ext.graphviz / inheritance_diagram in `make docs`).
             # The libatk/libx*/libgbm/libasound/libatspi block is headless
             # Chromium's runtime for the Playwright dashboard e2e suite (the
             # set `playwright install-deps chromium` reports missing on this
             # box); the browser binary itself comes from `make browsers`.
             apt install -y  gcc                   \
                             gh                    \
+                            graphviz              \
                             lcov                  \
                             ruby                  \
                             wget                  \

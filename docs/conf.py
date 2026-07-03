@@ -22,9 +22,28 @@ extensions = [
     "sphinx.ext.doctest",
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.graphviz",
+    "sphinx.ext.inheritance_diagram",
     "myst_parser",
     "sphinx_immaterial",
+    "sphinx_immaterial.graphviz",
 ]
+
+# -- graphviz / diagrams --------------------------------------------------------
+# Architecture-docs diagrams. Class hierarchies use inheritance_diagram, which
+# imports the LIVE classes at build time — the diagram tracks the code, and a
+# renamed/removed class fails this -W build instead of rotting silently.
+# Pipeline/lifecycle flows are hand-authored DOT in the pages themselves.
+# sphinx_immaterial.graphviz re-renders all of it as inline SVG using the
+# theme's fonts and CSS variables, so diagrams follow light/dark mode with no
+# hard-coded colors anywhere. Requires the `dot` binary: dev VM (Vagrantfile),
+# RTD (.readthedocs.yaml apt_packages), CI (explicit apt-get in ci.yml).
+#
+# `dot` measures text with its own (often missing) fonts, so its size metrics
+# rarely match the theme font the SVG is styled with; the extension warns and
+# -W would turn that cosmetic mismatch into a build failure. Documented
+# escape hatch from sphinx-immaterial for exactly this situation:
+graphviz_ignore_incorrect_font_metrics = True
 
 source_suffix = {
     ".rst": "restructuredtext",
