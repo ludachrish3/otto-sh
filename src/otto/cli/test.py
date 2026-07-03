@@ -1216,11 +1216,12 @@ async def _run_coverage(
     # Produce a pinned capture.json per board against the lab's default
     # e2e-kind tier, so a bare `otto test --cov` run always leaves behind
     # capture artifacts (not just raw .gcda) — the same production step
-    # `otto cov get` uses for a manual/on-demand pull. A non-git sut is
-    # legacy behavior (pre-dates capture production) and must not fail the
-    # test run; other _get_cov_repo/tier-resolution failures are left to
-    # propagate since they indicate a real repo/config bug.
-    from ..coverage.capture.gitio import GitUnavailableError
+    # `otto cov get` uses for a manual/on-demand pull. This tail must never
+    # fail an otherwise-successful test run: a non-git sut, ambiguous/
+    # misconfigured tiers (``resolve_get_tier`` raising ``ValueError``), or a
+    # stamp-mismatch during merge (``CoverageDataMismatchError``, a
+    # ``RuntimeError``) are all logged and swallowed, leaving the raw
+    # ``.gcda`` artifacts on disk for manual recovery via ``otto cov get``.
     from ..coverage.capture.produce import produce_captures
     from ..coverage.tiers import load_tiers, resolve_get_tier
 
@@ -1228,17 +1229,19 @@ async def _run_coverage(
     if cov_repo is None:
         return
 
-    tiers = load_tiers(cov_config)
-    e2e_tier = resolve_get_tier(tiers, None)
     try:
+        tiers = load_tiers(cov_config)
+        e2e_tier = resolve_get_tier(tiers, None)
         written = await produce_captures(
             cov_dir,
             tier=e2e_tier.name,
             repo_root=cov_repo.sut_dir,
             labs=[cov_repo.name],
         )
-    except GitUnavailableError as e:
-        logger.warning("otto test --cov: skipping capture production (non-git sut): %s", e)
+    except (ValueError, RuntimeError, FileNotFoundError) as e:
+        logger.warning(
+            "Coverage capture emission failed (%s); raw .gcda artifacts remain in %s", e, cov_dir
+        )
         return
 
     logger.info("Coverage captures produced: %d board(s)", len(written))

@@ -1080,6 +1080,148 @@ class TestRunCoverageEmbedded:
         assert meta["source_roots"]["sprout44"] == str(build44.resolve())
 
 
+class TestRunCoverageCaptureTail:
+    """The post-collection capture.json production tail (the last thing
+    ``_run_coverage`` does) must never fail an otherwise-successful
+    ``otto test --cov`` run — a non-git sut, ambiguous/misconfigured tiers,
+    or a capture-production error are all logged and swallowed.
+    """
+
+    @pytest.fixture
+    def sut_repo(self, tmp_path):
+        """A real tmp_path git repo standing in for the SUT checkout."""
+        import subprocess
+
+        root = tmp_path / "sut"
+        root.mkdir()
+
+        def git(*args: str) -> None:
+            subprocess.run(
+                ["git", *args],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                env={
+                    "GIT_AUTHOR_NAME": "t",
+                    "GIT_AUTHOR_EMAIL": "t@x",
+                    "GIT_COMMITTER_NAME": "t",
+                    "GIT_COMMITTER_EMAIL": "t@x",
+                    "HOME": str(tmp_path),
+                    "PATH": "/usr/bin:/bin",
+                },
+            )
+
+        git("init", "-q")
+        (root / "f.c").write_text("int a;\nint b;\n")
+        git("add", "f.c")
+        git("commit", "-qm", "init")
+        return root
+
+    def _run(self, repo, log_dir, cov_dir, cov_config):
+        """Invoke ``_run_coverage`` with one embedded board already collected."""
+        import asyncio
+
+        from otto.cli.test import _run_coverage
+
+        embedded_collect = AsyncMock(return_value={"board1": cov_dir / "board1"})
+        with (
+            patch("otto.cli.test._get_cov_config", return_value=cov_config),
+            patch("otto.configmodule.all_hosts", return_value=[]),
+            patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
+            patch("otto.cli.test._get_cov_repo", return_value=repo),
+        ):
+            asyncio.run(_run_coverage([repo], log_dir, cov_dir))
+
+    def test_happy_path_writes_pinned_capture(self, tmp_path, sut_repo, monkeypatch):
+        """A well-formed single-tier repo leaves behind a real capture.json."""
+        import json
+
+        from otto.coverage.capture import produce as produce_mod
+
+        cov_dir = tmp_path / "cov"
+        (cov_dir / "board1").mkdir(parents=True)
+        (cov_dir / "board1" / "x.gcda").write_bytes(b"")
+
+        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            output.write_text(f"TN:\nSF:{sut_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+
+        repo = MagicMock()
+        repo.sut_dir = sut_repo
+        repo.name = "repo"
+
+        # Non-empty (truthy) but no explicit [coverage.tiers] -> implicit
+        # single "system" e2e tier.
+        self._run(repo, tmp_path / "log", cov_dir, {"tiers": {}})
+
+        capture_path = cov_dir / "board1" / "capture.json"
+        assert capture_path.is_file()
+        assert json.loads(capture_path.read_text())["tier"] == "system"
+
+    def test_ambiguous_tiers_do_not_fail_the_run(self, tmp_path, sut_repo, monkeypatch, caplog):
+        """Two e2e-kind tiers make ``resolve_get_tier`` raise ``ValueError``;
+        the tail must swallow it (with a warning), not crash the test run.
+        """
+        from otto.coverage.capture import produce as produce_mod
+
+        cov_dir = tmp_path / "cov"
+        (cov_dir / "board1").mkdir(parents=True)
+        (cov_dir / "board1" / "x.gcda").write_bytes(b"")
+
+        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            output.write_text(f"TN:\nSF:{sut_repo / 'f.c'}\nDA:1,3\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+
+        repo = MagicMock()
+        repo.sut_dir = sut_repo
+        repo.name = "repo"
+
+        cov_config = {
+            "tiers": {
+                "system": {"kind": "e2e", "precedence": 1},
+                "nightly": {"kind": "e2e", "precedence": 2},
+            }
+        }
+
+        with caplog.at_level("WARNING"):
+            self._run(repo, tmp_path / "log", cov_dir, cov_config)
+
+        assert not (cov_dir / "board1" / "capture.json").exists()
+        assert any("Coverage capture emission failed" in rec.message for rec in caplog.records)
+
+    def test_non_git_sut_does_not_fail_the_run(self, tmp_path, monkeypatch, caplog):
+        """A non-git sut dir is legacy behavior and must not fail the run."""
+        from otto.coverage.capture import produce as produce_mod
+
+        cov_dir = tmp_path / "cov"
+        (cov_dir / "board1").mkdir(parents=True)
+        (cov_dir / "board1" / "x.gcda").write_bytes(b"")
+
+        notgit = tmp_path / "notgit"
+        notgit.mkdir()
+        (notgit / "f.c").write_text("int a;\n")
+
+        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            output.write_text(f"TN:\nSF:{notgit / 'f.c'}\nDA:1,3\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+
+        repo = MagicMock()
+        repo.sut_dir = notgit
+        repo.name = "repo"
+
+        with caplog.at_level("WARNING"):
+            self._run(repo, tmp_path / "log", cov_dir, {"tiers": {}})
+
+        assert not (cov_dir / "board1" / "capture.json").exists()
+        assert any("Coverage capture emission failed" in rec.message for rec in caplog.records)
+
+
 # ── --cov-report option (report generation alongside collection) ─────────────
 
 
