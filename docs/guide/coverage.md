@@ -329,7 +329,7 @@ Every tier's `kind` selects how `otto cov report` collects its data:
 |------|---------------|---------|
 | `e2e` | `otto test --cov` / `otto cov get` | `<output_dir>/cov/<board_id>/capture.json` — not committed, same lifecycle as other run artifacts |
 | `unit` | Nothing otto runs for you — build and run your instrumented unit tests as usual; `otto cov report` harvests `.gcda` from the tier's `harvest_dirs` in the **current build tree** at report time | no capture file |
-| `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-stamp>-<slug>.json`, committed to the SUT repo |
+| `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-stamp>-<ticket-slug>-<board-slug>.json`, committed to the SUT repo |
 
 **Only manual captures are pinned and committed to the repo.**  E2E
 data comes from the output directories of previous otto runs; unit
@@ -532,9 +532,16 @@ Extend the recognized marker set with custom strings via
 markers = ["MYPROJ_NO_COV"]
 ```
 
-These extra markers are wired into both the `lcov` capture (as `rc`
-overrides) and the renderer's source scan, so a line marked
-`// MYPROJ_NO_COV` behaves exactly like `// LCOV_EXCL_LINE`.
+Custom markers are **render-only today**: a line marked
+`// MYPROJ_NO_COV` is scanned by the renderer alongside the built-in
+`LCOV_EXCL_*` set, so it renders grey and excluded like any other
+excluded line — but unlike the built-in markers (which `lcov`'s
+`geninfo` strips from the parsed data before it ever reaches otto),
+a custom marker is *not* passed to the `lcov` capture as an `rc`
+override. The line still counts toward the coverage percentages;
+only its visual presentation changes. Making custom markers affect
+the percentages the same way the built-in ones do (wiring them into
+the `lcov` capture as `rc` overrides) is planned follow-up work.
 
 (coverage-colors)=
 ## Colors and Legend
@@ -581,10 +588,11 @@ The HTML report is written to the `--report` directory (default:
 - **Project summary** with aggregate (all-tier) and per-tier breakdowns,
   plus per-file stale/aging/excluded counts.
 - **Legend** mapping tier names and line states to their colors.
-- **Captures provenance table** — every contributing capture (tier,
-  board, labs, date, and — for manual captures — tester, ticket, note,
-  and whether the dirty-tree remap applied), shown whenever the store
-  has at least one.
+- **Captures provenance table** — every contributing **manual**
+  capture (tier, board, labs, date, tester, ticket, note, and whether
+  the dirty-tree remap applied), shown whenever the store has at least
+  one. E2E and unit data carry no human session to attribute, so
+  automated e2e captures and unit harvests append no provenance row.
 - **Sortable file table** with one column per configured tier.
 - **Per-file pages** with the same summary structure plus annotated
   source: per-tier hit counts, branch pills (taken/not-taken/
