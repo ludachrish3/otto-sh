@@ -406,6 +406,79 @@ class TestCovReportCollectionModel:
         assert mock_run_report.call_args.kwargs["repo_root"] == repo_root
 
 
+# ── report command — collection-model failure modes & empty-report contract ──
+
+
+class TestCovReportCollectionModelErrors:
+    @staticmethod
+    def _tiers():
+        from otto.coverage.tiers import TierConfig
+
+        return [TierConfig(name="system", kind="e2e", precedence=1, color="green")]
+
+    def test_malformed_manual_capture_exits_1_no_traceback(self, tmp_path):
+        """A committed but corrupt manual capture makes load_manual_captures raise
+        ValueError; report must exit 1 with the malformed-capture message, no traceback."""
+        repo_root = tmp_path / "sut"
+        manual = repo_root / ".otto" / "coverage" / "manual"
+        manual.mkdir(parents=True)
+        (manual / "bad.json").write_text("{nope")
+
+        with (
+            patch.object(
+                cov_module, "_resolve_cov_settings", return_value=(repo_root, self._tiers(), [])
+            ),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["report", "--report", str(tmp_path / "report")])
+
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "malformed manual capture" in mock_err.call_args[0][0]
+
+    def test_empty_report_exits_1_naming_searched_inputs(self, tmp_path):
+        """A store with zero files is a vacuous success; the CI-friendly loud
+        fail is restored — exit 1 naming the inputs it searched."""
+        repo_root = tmp_path / "sut"
+
+        with (
+            patch.object(
+                cov_module, "_resolve_cov_settings", return_value=(repo_root, self._tiers(), [])
+            ),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["report", "--report", str(tmp_path / "report")])
+
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "no coverage data found in" in mock_err.call_args[0][0]
+        # Names the committed manual store it searched.
+        assert "manual" in str(mock_err.call_args[0][1])
+
+    def test_non_git_repo_root_reports_cleanly(self, tmp_path):
+        """A [coverage] repo_root that is not a git repo can't run pinned-capture
+        features; report names the cause + the git-less escape hatch, no traceback."""
+        not_git = tmp_path / "notgit"
+        (not_git / "cov" / "board1").mkdir(parents=True)
+        (not_git / "cov" / "board1" / "capture.json").write_text("{}")
+
+        with (
+            patch.object(
+                cov_module, "_resolve_cov_settings", return_value=(not_git, self._tiers(), [])
+            ),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(
+                cov_app, ["report", str(not_git), "--report", str(tmp_path / "report")]
+            )
+
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        message = mock_err.call_args[0][0]
+        assert "not a git repository" in message
+        assert "--tier" in message
+
+
 # ── _resolve_cov_settings — [coverage.exclusions].markers wiring ────────────
 
 
@@ -499,6 +572,38 @@ class TestCovGetValidation:
         repo.name = name
         return repo
 
+    @pytest.fixture
+    def git_sut(self, tmp_path):
+        """A real one-commit git repo standing in for the SUT checkout.
+
+        Needed by tests that must get *past* ``_do_get``'s git preflight (a
+        non-git sut fails fast before the fetch) to exercise a later path.
+        """
+        root = tmp_path / "sut"
+        root.mkdir()
+
+        def git(*args: str) -> None:
+            subprocess.run(
+                ["git", *args],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                env={
+                    "GIT_AUTHOR_NAME": "t",
+                    "GIT_AUTHOR_EMAIL": "t@x",
+                    "GIT_COMMITTER_NAME": "t",
+                    "GIT_COMMITTER_EMAIL": "t@x",
+                    "HOME": str(tmp_path),
+                    "PATH": "/usr/bin:/bin",
+                },
+            )
+
+        git("init", "-q")
+        (root / "f.c").write_text("int a;\n")
+        git("add", "f.c")
+        git("commit", "-qm", "init")
+        return root
+
     def test_no_coverage_config_exits_1(self):
         repo = self._repo(None)
         with (
@@ -562,8 +667,8 @@ class TestCovGetValidation:
         assert "sys_a" in message
         assert "sys_b" in message
 
-    def test_zero_counters_exits_1(self, monkeypatch):
-        repo = self._repo({"hosts": ".*"})
+    def test_zero_counters_exits_1(self, monkeypatch, git_sut):
+        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
 
         async def fake_collect(cov_config, staging_root, pattern=None):
             return {}
@@ -581,9 +686,9 @@ class TestCovGetValidation:
         assert result.exit_code == 1
         assert "no .gcda" in mock_err.call_args[0][0]
 
-    def test_zero_counters_lists_searched_host_names(self, monkeypatch):
+    def test_zero_counters_lists_searched_host_names(self, monkeypatch, git_sut):
         """The zero-counter message names the hosts it searched, not just "no data"."""
-        repo = self._repo({"hosts": ".*"})
+        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
         host1 = MagicMock()
         host1.id = "sprout"
 
@@ -605,9 +710,9 @@ class TestCovGetValidation:
         assert "no .gcda" in message
         assert "sprout" in message
 
-    def test_zero_counters_after_produce_captures_exits_1(self, tmp_path):
+    def test_zero_counters_after_produce_captures_exits_1(self, tmp_path, git_sut):
         """When produce_captures returns empty list despite non-empty host_dirs → error."""
-        repo = self._repo({"hosts": ".*"})
+        repo = self._repo({"hosts": ".*"}, sut_dir=git_sut)
 
         async def fake_collect(cov_config, staging_root, pattern=None):
             board = staging_root / "board1"
@@ -842,6 +947,53 @@ class TestCovGetSuccess:
 
         assert result.exit_code == 0, result.output
         fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+
+    def test_get_clean_scopes_clean_pattern_to_unix_hosts_only(self, tmp_path, repo, monkeypatch):
+        """Mixed lab: ``get --clean`` must zero only the Unix hosts, never the
+        embedded board — the post-fetch clean uses a second fetcher scoped to
+        the unix ids (clean_remote re-derives its own host set with no
+        EmbeddedHost guard, the exact bug already fixed for `cov clean`)."""
+        cov_repo = self._repo_mock(repo, {"hosts": ".*", "gcda_remote_dir": "/remote"})
+
+        from otto.host import UnixHost
+        from otto.host.embedded_host import EmbeddedHost
+
+        unix_host = MagicMock()
+        unix_host.id = "sprout_cov"
+        unix_host.__class__ = UnixHost
+        embedded_host = MagicMock()
+        embedded_host.id = "zeph1"
+        embedded_host.__class__ = EmbeddedHost
+
+        out_dir = tmp_path / "get_out_clean"
+        board = out_dir / "cov" / "sprout_cov"
+        board.mkdir(parents=True)
+        (board / "x.gcda").write_bytes(b"")
+
+        fetcher_instance = MagicMock()
+        fetcher_instance.fetch_all = AsyncMock(return_value={"sprout_cov": board})
+        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+
+        async def fake_embedded(cov_config, staging_root, pattern=None):
+            return {}
+
+        with (
+            patch("otto.configmodule.get_repos", return_value=[cov_repo]),
+            patch("otto.configmodule.all_hosts", return_value=[unix_host, embedded_host]),
+            patch(
+                "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
+            ) as mock_fetcher_cls,
+            patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=fake_embedded),
+            patch.object(produce_module.LcovMerger, "capture", self._fake_capture(repo)),
+        ):
+            result = runner.invoke(cov_app, ["get", "-o", str(out_dir), "--clean"])
+
+        assert result.exit_code == 0, result.output
+        fetcher_instance.clean_remote.assert_awaited_once_with("/remote")
+        # The clean fetcher (second construction) is scoped to unix ids only.
+        clean_pattern = mock_fetcher_cls.call_args_list[-1].kwargs["pattern"]
+        assert clean_pattern.search("sprout_cov")
+        assert not clean_pattern.search("zeph1")
 
 
 # ── clean command — validation errors ────────────────────────────────────────

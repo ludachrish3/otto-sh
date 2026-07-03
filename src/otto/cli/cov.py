@@ -128,10 +128,12 @@ cov_app = typer.Typer(
 
 @cov_app.callback()
 def cov_callback(ctx: typer.Context) -> None:
-    """Generate coverage reports from otto test --cov output.
+    """Generate coverage reports and fetch/clean lab coverage counters.
 
-    ``cov`` reads coverage artifacts and writes its report to ``--report-dir``; it
-    never touches a remote host, so it creates no per-invocation output directory.
+    ``cov report`` is purely local — it reads coverage artifacts and writes an
+    HTML report. ``cov get`` and ``cov clean`` reach the lab's coverage hosts
+    (fetching or zeroing remote ``.gcda`` counters). None of the subcommands
+    creates a per-invocation output directory.
     """
     if ctx.resilient_parsing:
         return
@@ -197,7 +199,7 @@ def _resolve_cov_settings() -> "tuple[Path | None, list[TierConfig] | None, list
         return None, None, []
     cov_config = _get_cov_config(repos)
     extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
-    return cov_repo.sut_dir, load_tiers(cov_config), extra_markers
+    return cov_repo.sut_dir, load_tiers(cov_config, cov_repo.sut_dir), extra_markers
 
 
 @cov_app.command()
@@ -272,6 +274,8 @@ def report(
     cov_dirs = [d / "cov" for d in output_dirs]
     report_dir = report_dir.resolve()
 
+    from ..coverage.capture.gitio import GitUnavailableError
+
     try:
         store = asyncio.run(
             run_coverage_report(
@@ -290,6 +294,19 @@ def report(
         # never as a traceback.
         logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
         raise typer.Exit(1) from e
+    except GitUnavailableError as e:
+        # A [coverage] section resolved a repo_root, but it is not a git repo
+        # (or git is missing): the pinned-capture features can't run. Name the
+        # cause and the git-less escape hatch — clean line, no traceback.
+        logger.error(  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
+            "not a git repository — pinned-capture features unavailable; use --tier NAME=PATH"
+        )
+        raise typer.Exit(1) from e
+    except ValueError as e:
+        # A malformed committed manual capture (load_manual_captures wraps the
+        # parse error with the offending file name). Print the cause clean.
+        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: user-facing cause (names the bad file)
+        raise typer.Exit(1) from e
     except RuntimeError as e:
         logger.error("Coverage merge failed: %s", e)  # noqa: TRY400 — deliberately no traceback: lcov output is the diagnostic
         raise typer.Exit(1) from e
@@ -301,6 +318,17 @@ def report(
         # a report even with no output dirs).
         where = ", ".join(str(d) for d in output_dirs) if output_dirs else "the given inputs"
         logger.error("Coverage report not generated — no valid coverage data in: %s", where)
+        raise typer.Exit(1)
+
+    if store.file_count() == 0:
+        # A store with no files is a vacuous success — restore the old loud
+        # CI-friendly fail. Name every input searched (run cov dirs plus, when
+        # a [coverage] repo resolved, its committed manual-capture store).
+        searched = [str(d) for d in cov_dirs]
+        if repo_root is not None:
+            searched.append(str(repo_root / ".otto" / "coverage" / "manual"))
+        where = ", ".join(searched) if searched else "the given inputs"
+        logger.error("no coverage data found in: %s", where)
         raise typer.Exit(1)
 
     logger.info(
@@ -422,6 +450,25 @@ async def _connect_cov_hosts() -> tuple[
     return repos, cov_repo, cov_config, cov_pattern, cov_hosts, unix_hosts, gcda_remote_dir
 
 
+def _unix_only_pattern(unix_hosts: "list[UnixHost]") -> "re.Pattern[str]":
+    """Anchored regex matching exactly the given Unix hosts' ids.
+
+    :meth:`~otto.coverage.fetcher.remote.GcdaFetcher.clean_remote` re-derives
+    its own host set from its ``pattern`` via ``do_for_all_hosts()`` /
+    ``all_hosts()`` — a path with **no** ``EmbeddedHost`` guard. Passing the
+    raw ``[coverage].hosts`` pattern would therefore let ``clean_remote`` send
+    an embedded board a bogus ``find ... -delete`` on a mixed lab. Scoping to
+    the already-computed ``unix_hosts`` list closes that. Matching is
+    ``pattern.search(host.id)`` (see :meth:`OttoContext.all_hosts`), so each
+    alternative is fullmatch-anchored to keep a host id like ``"sprout"`` from
+    also matching a sibling ``"sprout2"``.
+    """
+    import re
+
+    unix_ids = "|".join(re.escape(h.id) for h in unix_hosts)
+    return re.compile(f"^(?:{unix_ids})$")
+
+
 async def _do_get(
     output_dir: Path,
     tier_name: str | None,
@@ -445,7 +492,7 @@ async def _do_get(
     single-line, user-facing message; the sync ``get`` command is the only
     place that turns either into ``typer.Exit(1)``.
     """
-    from ..coverage.capture.gitio import GitUnavailableError
+    from ..coverage.capture.gitio import GitUnavailableError, head_commit
     from ..coverage.capture.model import Capture
     from ..coverage.capture.produce import produce_captures
     from ..coverage.capture.store_dir import write_manual_capture
@@ -473,6 +520,15 @@ async def _do_get(
 
     if resolved_tier.kind == "manual" and not ticket:
         raise _GetError(f"tier {resolved_tier.name!r} is a manual-kind tier; requires --ticket")
+
+    # Git preflight: capture production pins to HEAD, so a non-git sut can
+    # never yield a capture. Fail fast here — before the fleet pull — rather
+    # than wasting a fetch and only discovering it in produce_captures. The
+    # message is identical to the post-fetch GitUnavailableError path below.
+    try:
+        head_commit(cov_repo.sut_dir)
+    except GitUnavailableError as e:
+        raise _GetError(str(e)) from e
 
     cov_dir = output_dir / "cov"
     host_dirs: dict[str, Path] = {}
@@ -541,8 +597,13 @@ async def _do_get(
             capture = Capture.load(capture_path)
             write_manual_capture(capture, cov_repo.sut_dir)
 
-    if clean and fetcher is not None and unix_dirs:
-        await fetcher.clean_remote(gcda_remote_dir)
+    if clean and unix_dirs:
+        # The fetch fetcher carries no pattern, so its clean_remote() would
+        # re-derive the raw lab host set and could zero an embedded board on a
+        # mixed lab (same bug fixed for `cov clean`). Build a second, scoped
+        # fetcher just for the clean call; the fetch above is left untouched.
+        clean_fetcher = GcdaFetcher(cov_dir, pattern=_unix_only_pattern(unix_hosts))
+        await clean_fetcher.clean_remote(gcda_remote_dir)
 
     logger.info("Coverage captured: %d board(s) -> %s", len(written), cov_dir)
     return written
@@ -656,8 +717,6 @@ async def _do_clean() -> None:
     command is the only place that turns the shared :class:`_CovError` base
     into ``typer.Exit(1)``.
     """
-    import re
-
     from ..coverage.fetcher.remote import GcdaFetcher
     from ..host.embedded_host import EmbeddedHost
 
@@ -686,18 +745,10 @@ async def _do_clean() -> None:
 
     for host in unix_hosts:
         host.rebuild_connections()
-    # staging_root is unused by clean_remote() (no files are downloaded);
-    # clean_remote() re-derives its own host set from `pattern` via
-    # do_for_all_hosts()/all_hosts() (no EmbeddedHost guard there), so
-    # passing the raw `cov_pattern` would let it re-match embedded boards
-    # on a mixed lab and send them a bogus `find ... -delete`. Scope the
-    # pattern to the already-computed `unix_hosts` instead. Matching is
-    # `pattern.search(host.id)` (see OttoContext.all_hosts), so each
-    # alternative is fullmatch-anchored to keep a host id like "sprout"
-    # from also matching a sibling "sprout2".
-    unix_ids = "|".join(re.escape(h.id) for h in unix_hosts)
-    unix_only_pattern = re.compile(f"^(?:{unix_ids})$")
-    fetcher = GcdaFetcher(Path("/tmp"), pattern=unix_only_pattern)  # noqa: S108 — deliberate staging path, never written to
+    # staging_root is unused by clean_remote() (no files are downloaded); the
+    # scoped pattern keeps clean_remote()'s own host re-derivation off embedded
+    # boards on a mixed lab (see _unix_only_pattern).
+    fetcher = GcdaFetcher(Path("/tmp"), pattern=_unix_only_pattern(unix_hosts))  # noqa: S108 — deliberate staging path, never written to
     await fetcher.clean_remote(gcda_remote_dir)
     logger.info("Coverage counters cleared on %d host(s)", len(unix_hosts))
 
