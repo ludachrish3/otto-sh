@@ -63,9 +63,16 @@ class HtmlRenderer:
         output_dir: Path,
         templates_dir: Path = TEMPLATES_DIR,
         project_name: str = "Coverage Report",
+        *,
+        extra_markers: list[str] | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.project_name = project_name
+        # Extra exclusion-marker strings (spec §8), forwarded from
+        # [coverage.exclusions].markers via the reporter. The renderer scans
+        # each rendered file's source text for LCOV_EXCL_* markers plus these
+        # at render time — exclusion display is never baked into the store.
+        self.extra_markers: list[str] = list(extra_markers or [])
         # Deferred so importing the renderer module (and thus `otto.coverage`,
         # pulled onto the CLI startup path via cli.cov) does not load jinja2.
         from jinja2 import Environment, FileSystemLoader, select_autoescape

@@ -174,14 +174,18 @@ def _parse_tier_specs(raw_tiers: list[str]) -> list[TierSpec]:
     return specs
 
 
-def _resolve_cov_settings() -> "tuple[Path | None, list[TierConfig] | None]":
-    """Resolve ``(repo_root, tier_configs)`` from settings for the report command.
+def _resolve_cov_settings() -> "tuple[Path | None, list[TierConfig] | None, list[str]]":
+    """Resolve ``(repo_root, tier_configs, extra_markers)`` from settings for ``report``.
 
     Uses the same first-repo-with-``[coverage]`` selection as ``get`` and
     ``clean`` (via :func:`otto.cli.test._get_cov_repo`).  Returns
-    ``(None, None)`` when no coverage section is configured — the git-less
-    fallback that keeps ``otto cov report`` working exactly as before on a
-    tree with no ``[coverage]`` settings.
+    ``(None, None, [])`` when no coverage section is configured — the
+    git-less fallback that keeps ``otto cov report`` working exactly as
+    before on a tree with no ``[coverage]`` settings.
+
+    ``extra_markers`` comes from ``[coverage.exclusions].markers`` — extra
+    exclusion-marker strings (spec §8) forwarded to the renderer's per-file
+    source scan alongside the built-in ``LCOV_EXCL_*`` markers.
     """
     from ..configmodule import get_repos
     from ..coverage.tiers import load_tiers
@@ -190,8 +194,10 @@ def _resolve_cov_settings() -> "tuple[Path | None, list[TierConfig] | None]":
     repos = get_repos()
     cov_repo = _get_cov_repo(repos)
     if cov_repo is None:
-        return None, None
-    return cov_repo.sut_dir, load_tiers(_get_cov_config(repos))
+        return None, None, []
+    cov_config = _get_cov_config(repos)
+    extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
+    return cov_repo.sut_dir, load_tiers(cov_config), extra_markers
 
 
 @cov_app.command()
@@ -252,6 +258,7 @@ def report(
     # section falls back to (None, None), i.e. the legacy behavior.
     repo_root: Path | None = None
     tier_configs: "list[TierConfig] | None" = None
+    extra_markers: list[str] = []
     if tier:
         try:
             tier_specs: list[TierSpec] = _parse_tier_specs(tier)
@@ -260,7 +267,7 @@ def report(
             raise typer.Exit(1) from e
     else:
         tier_specs = [(TIER_SYSTEM, None)]
-        repo_root, tier_configs = _resolve_cov_settings()
+        repo_root, tier_configs, extra_markers = _resolve_cov_settings()
 
     cov_dirs = [d / "cov" for d in output_dirs]
     report_dir = report_dir.resolve()
@@ -274,6 +281,7 @@ def report(
                 tier_specs=tier_specs,
                 repo_root=repo_root,
                 tier_configs=tier_configs,
+                extra_markers=extra_markers,
             )
         )
     except CoverageDataMismatchError as e:

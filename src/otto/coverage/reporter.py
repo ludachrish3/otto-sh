@@ -397,11 +397,18 @@ class CoverageReporter:
             await self._harvest_unit_tiers(localhost, work_dir, loader)
             self._load_manual_store(store)
             self._fill_tier_colors(store)
-            self._apply_exclusions(store)
 
-            # 4. Render HTML
+            # 4. Render HTML. Exclusion display is render-time (spec §8/§9):
+            # a single-valued LineRecord.state can't express "excluded always
+            # wins" over covered/stale/aging, so the reporter never bakes
+            # state="excluded" into the store — it just forwards the extra
+            # marker strings for the renderer's own per-file source scan.
             logger.info("=== Rendering HTML report ===")
-            renderer = HtmlRenderer(self.output_dir, project_name=self.project_name)
+            renderer = HtmlRenderer(
+                self.output_dir,
+                project_name=self.project_name,
+                extra_markers=self.extra_markers,
+            )
             renderer.render(store)
 
             store.save(self.output_dir / "store.json")
@@ -515,29 +522,6 @@ class CoverageReporter:
         """Seed ``store.tier_colors`` from the declared tiers (name → color)."""
         for tier in self.tier_configs:
             store.tier_colors[tier.name] = tier.color
-
-    def _apply_exclusions(self, store: CoverageStore) -> None:
-        """Mark source-excluded lines that are present but uncovered (spec §8).
-
-        Only runs in the collection-model path, and only touches lines
-        already in the store that carry no hits and no other state — so
-        covered / manual / stale / aging lines are never disturbed.
-        """
-        if self.repo_root is None and not self.tier_configs:
-            return
-        from .exclusions import scan_excluded_lines
-
-        for file_rec in store.files():
-            if not file_rec.lines:
-                continue
-            try:
-                source = file_rec.path.read_text(errors="replace")
-            except OSError:
-                continue
-            for lineno in scan_excluded_lines(source, self.extra_markers or None):
-                lr = file_rec.lines.get(lineno)
-                if lr is not None and lr.state is None and not lr.hits.is_hit():
-                    lr.state = "excluded"
 
 
 def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]:

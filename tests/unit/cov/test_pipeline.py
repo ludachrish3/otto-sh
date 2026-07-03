@@ -10,6 +10,7 @@ from otto.coverage.capture.gitio import head_commit
 from otto.coverage.capture.model import Capture, CaptureFileCov
 from otto.coverage.errors import CoverageDataMismatchError
 from otto.coverage.reporter import (
+    CollectionInputs,
     CoverageReporter,
     discover_gcda_dirs,
     read_cov_source_root,
@@ -145,6 +146,42 @@ class TestCoverageReporter:
         )
         store = await reporter.run()
         assert store.file_count() == 0
+
+
+class TestExclusionDisplayIsRenderTime:
+    """Routed from Task 10's review: exclusion display is render-time, not baked
+    into the store by the reporter (single-valued LineRecord.state can't express
+    "excluded always wins"). ``extra_markers`` still flows reporter -> renderer.
+    """
+
+    def test_apply_exclusions_removed_from_reporter(self):
+        assert not hasattr(CoverageReporter, "_apply_exclusions")
+
+    @pytest.mark.asyncio
+    async def test_run_passes_extra_markers_to_renderer(self, tmp_path, monkeypatch):
+        from otto.coverage import reporter as reporter_module
+
+        captured: dict[str, object] = {}
+
+        class FakeRenderer:
+            def __init__(self, output_dir, *, project_name="Coverage Report", extra_markers=None):
+                captured["output_dir"] = output_dir
+                captured["extra_markers"] = extra_markers
+
+            def render(self, store):
+                captured["rendered"] = store
+
+        monkeypatch.setattr(reporter_module, "HtmlRenderer", FakeRenderer)
+
+        reporter = CoverageReporter(
+            gcda_dirs=[],
+            source_root=tmp_path,
+            output_dir=tmp_path / "out",
+            collection=CollectionInputs(extra_markers=["MYPROJ_NO_COV"]),
+        )
+        await reporter.run()
+        assert captured["extra_markers"] == ["MYPROJ_NO_COV"]
+        assert "rendered" in captured
 
 
 def _init_repo(tmp_path: Path) -> Path:
