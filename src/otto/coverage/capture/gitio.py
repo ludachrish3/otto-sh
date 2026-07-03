@@ -13,22 +13,28 @@ class GitUnavailableError(RuntimeError):
     """Raised when git cannot answer (not a repo / git missing)."""
 
 
-def _run(args: list[str], cwd: Path | None, ok_codes: tuple[int, ...] = (0,)) -> str:
+def _run_raw(args: list[str], cwd: Path | None, ok_codes: tuple[int, ...] = (0,)) -> bytes:
+    """Run git and return raw stdout bytes; translate subprocess errors uniformly."""
     try:
         proc = subprocess.run(  # noqa: S603
             ["git", *args],  # noqa: S607
             cwd=cwd,
             capture_output=True,
-            text=True,
+            text=False,
             check=False,
         )
     except FileNotFoundError as e:
         raise GitUnavailableError("git executable not found") from e
     if proc.returncode not in ok_codes:
+        stderr = proc.stderr.decode(errors="replace")
         raise GitUnavailableError(
-            f"git {' '.join(args)} failed (rc={proc.returncode}): {proc.stderr.strip()}"
+            f"git {' '.join(args)} failed (rc={proc.returncode}): {stderr.strip()}"
         )
     return proc.stdout
+
+
+def _run(args: list[str], cwd: Path | None, ok_codes: tuple[int, ...] = (0,)) -> str:
+    return _run_raw(args, cwd, ok_codes).decode()
 
 
 def head_commit(repo_root: Path) -> str:
@@ -45,7 +51,9 @@ def blob_sha(repo_root: Path, relpath: Path, rev: str = "HEAD") -> str | None:
     """Return the SHA of a blob at a path/revision, or None if not found."""
     try:
         return _run(["rev-parse", f"{rev}:{relpath.as_posix()}"], repo_root).strip()
-    except GitUnavailableError:
+    except GitUnavailableError as e:
+        if "not a git repository" in str(e):
+            raise
         return None
 
 
@@ -58,22 +66,16 @@ def blob_exists(repo_root: Path, sha: str) -> bool:
     """Return True if a blob exists in the repository."""
     try:
         _run(["cat-file", "-e", sha], repo_root)
-    except GitUnavailableError:
+    except GitUnavailableError as e:
+        if "not a git repository" in str(e):
+            raise
         return False
     return True
 
 
 def cat_blob(repo_root: Path, sha: str) -> bytes:
     """Return the contents of a blob."""
-    proc = subprocess.run(  # noqa: S603
-        ["git", "cat-file", "blob", sha],  # noqa: S607
-        cwd=repo_root,
-        capture_output=True,
-        check=False,
-    )
-    if proc.returncode != 0:
-        raise GitUnavailableError(f"git cat-file blob {sha} failed: {proc.stderr.decode()}")
-    return proc.stdout
+    return _run_raw(["cat-file", "blob", sha], repo_root)
 
 
 def diff_worktree_file_u0(repo_root: Path, relpath: Path) -> str:

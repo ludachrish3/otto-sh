@@ -83,3 +83,13 @@ def test_no_index_diff_exit_1_ok(tmp_path: Path) -> None:
 def test_not_a_repo_raises(tmp_path: Path) -> None:
     with pytest.raises(GitUnavailableError):
         head_commit(tmp_path)
+
+
+def test_blob_sha_not_a_repo_raises(tmp_path: Path) -> None:
+    with pytest.raises(GitUnavailableError):
+        blob_sha(tmp_path, Path("a.c"))
+
+
+def test_blob_exists_not_a_repo_raises(tmp_path: Path) -> None:
+    with pytest.raises(GitUnavailableError):
+        blob_exists(tmp_path, "0" * 40)
