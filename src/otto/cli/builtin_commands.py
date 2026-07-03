@@ -1,7 +1,7 @@
 """First-party top-level command registrations — otto's own composition list.
 
 The direct analog of the backend registries' ``_register_builtin_*``
-functions: otto's eight subcommand groups travel the same public
+functions: otto's nine subcommand groups travel the same public
 :func:`~otto.cli.registry.register_cli_command` path a third-party plugin
 uses, with lazy ``"module:attr"`` loaders so nothing imports until dispatch.
 """
@@ -49,6 +49,11 @@ def register_builtin_commands() -> None:
         "reservation",
         "otto.cli.reservation:reservation_app",
         help="Inspect and verify lab reservations.",
+        # Reservation queries need the backend + identity (repo settings), not
+        # the lab, and never a live host: `whoami` runs with no lab at all;
+        # `check` loads the lab itself — lazily, loudly — because the lab
+        # defines the required-resource list.
+        lab_free=True,
         output_dir=False,
         gate=False,
     )

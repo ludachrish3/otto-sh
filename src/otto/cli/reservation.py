@@ -2,18 +2,27 @@
 
 Subcommands:
 
-- ``otto --lab LAB reservation whoami`` — show the resolved identity and backend.
-- ``otto --lab LAB reservation check``  — run the reservation check and print a
+- ``otto reservation whoami`` — show the resolved identity and backend. Needs
+  no lab: identity and backend come from repo settings + root options.
+- ``otto --lab LAB reservation check`` — run the reservation check and print a
   human-readable report. Useful as a pre-flight before a long ``otto test``.
+  Loads the lab (which defines the required resources) lazily; never contacts
+  a host.
 
-Both reuse the top-level ``--lab`` option — no redundant flags here.
+The group is registered ``lab_free`` — ``check`` is the one subcommand that
+needs lab *data*, and it pulls the lab in itself via ``ensure_lab_context``.
 """
+
+from pathlib import Path
 
 import typer
 from rich import print as rprint
 
 from ..reservations import (
     MissingReservationError,
+    ReservationBackendError,
+    ReservationState,
+    build_reservation_state,
     check_reservations,
     required_resources,
 )
@@ -39,12 +48,41 @@ def reservation_callback(ctx: typer.Context) -> None:
         return
 
 
+def _reservation_state(ctx: typer.Context) -> ReservationState | None:
+    """Return the per-invocation reservation state, resolving it lab-free if needed.
+
+    Commands that already went through ``ensure_lab_context`` find the state in
+    ``ctx.meta``; the lab-free path (``whoami`` without ``--lab``) builds it
+    here from repo settings + root options — identity and backend never depend
+    on the lab.
+    """
+    res = ctx.meta.get("otto_reservation")
+    if res is not None:
+        return res
+    opts = ctx.meta.get("_otto_root_options")
+    if opts is None:
+        return None
+
+    from ..configmodule import get_repos
+
+    try:
+        state = build_reservation_state(
+            get_repos(),
+            as_user=opts.as_user,
+            skip_reservation_check=opts.skip_reservation_check,
+            cwd_fallback=Path.cwd(),
+        )
+    except ReservationBackendError as e:
+        rprint(f"[bold red]Reservation backend unavailable:[/bold red] {e}")
+        raise typer.Exit(1) from e
+    ctx.meta["otto_reservation"] = state
+    return state
+
+
 @reservation_app.command()
 def whoami(ctx: typer.Context) -> None:
-    """Show the resolved reservation identity and backend."""
-    from ..configmodule import get_lab
-
-    res = ctx.meta.get("otto_reservation")
+    """Show the resolved reservation identity and backend (no lab required)."""
+    res = _reservation_state(ctx)
     backend = None
     if res is not None:
         backend = res.backend or (res.backend_factory() if res.backend_factory else None)
@@ -54,11 +92,13 @@ def whoami(ctx: typer.Context) -> None:
         rprint("[yellow]No identity resolved (did the top-level callback run?)[/yellow]")
         raise typer.Exit(1)
 
+    opts = ctx.meta.get("_otto_root_options")
+    labs = ", ".join(opts.labs) if opts is not None and opts.labs else "<none>"
     rprint(
         f"username: [bold]{identity.username}[/bold]\n"
         f"source:   {identity.source}\n"
         f"backend:  {backend_name}\n"
-        f"lab:      {get_lab().name}"
+        f"lab:      {labs}"
     )
 
 
@@ -66,6 +106,17 @@ def whoami(ctx: typer.Context) -> None:
 def check(ctx: typer.Context) -> None:
     """Run the reservation check for the top-level ``--lab`` and report."""
     from ..configmodule import get_lab
+
+    # The group is lab_free (whoami needs no lab); check is the one subcommand
+    # that does — the lab defines the required-resource list — so load it here,
+    # the same loud way the preamble would. Still touches no remote host.
+    if "otto_reservation" not in ctx.meta:
+        from .invoke import LabContextError, ensure_lab_context, report_lab_context_error
+
+        try:
+            ensure_lab_context(ctx)
+        except LabContextError as e:
+            report_lab_context_error(e)
 
     res = ctx.meta.get("otto_reservation")
 

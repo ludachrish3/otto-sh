@@ -193,12 +193,13 @@ otherwise has no way to proceed.
 ## Inspecting state
 
 ```bash
-otto --lab tech1 reservation whoami
+otto reservation whoami
 ```
 
 Prints the resolved identity, its source (`--as-user` or `$USER`), the
-configured backend name, and the selected lab.  Uses zero lab state
-beyond what the top-level callback already loaded.
+configured backend name, and the lab named on the command line (if any).
+Needs no lab at all — identity and backend come from repo settings —
+and never contacts a host.
 
 ```bash
 otto --lab tech1 reservation check
@@ -208,6 +209,9 @@ Runs the check standalone and prints a human-readable report: required
 resources, whether everything is covered, and if not, what's missing
 and who holds it.  Useful as a pre-flight before kicking off a long
 `otto test` run — you find out in one second instead of twenty minutes.
+`check` is the one reservation subcommand that needs `--lab`: the lab
+defines the required-resource list.  It reads lab *data* only — no host
+is contacted.
 
 ## Disabling the check team-wide
 
