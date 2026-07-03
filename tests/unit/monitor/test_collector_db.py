@@ -65,7 +65,8 @@ async def _inject_point(
     if key not in collector._series:
         collector._series[key] = deque()
     collector._series[key].append(MetricPoint(ts=ts, value=value, meta=None))
-    await collector._db_write_point(ts, host, label, value)
+    if collector._db:
+        await collector._db.write_point(ts, host, label, value)
 
 
 # ── Schema initialisation ─────────────────────────────────────────────────────
@@ -130,8 +131,8 @@ class TestWalMode:
     async def test_busy_timeout_set(self, tmp_path):
         db_path = str(tmp_path / "test.db")
         collector = await _empty_collector_with_db(db_path)
-        assert collector._db_conn is not None
-        cursor = await collector._db_conn.execute("PRAGMA busy_timeout")
+        assert collector._db is not None
+        cursor = await collector._db._conn.execute("PRAGMA busy_timeout")
         row = await cursor.fetchone()
         assert row is not None
         assert row[0] == 5000

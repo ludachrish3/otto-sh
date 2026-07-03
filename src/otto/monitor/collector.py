@@ -12,10 +12,8 @@ Supports three data sources:
 import asyncio
 import contextlib
 import copy
-import fcntl
 import json
 import logging
-import os
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -26,10 +24,10 @@ from typing import TYPE_CHECKING, Any, Protocol
 import aiosqlite
 from pydantic import ValidationError
 
-from ..filesystem import network_fs_type
 from ..models import EventRecord, MetricPoint, MetricRecord
 from ..result import CommandResult, Results
 from .broadcast import Broadcaster
+from .db import MetricDB
 from .events import MonitorEvent
 from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser
 from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
@@ -86,26 +84,6 @@ class MonitorTarget:
     parsers: dict[str, MetricParser] = field(default_factory=lambda: copy.deepcopy(DEFAULT_PARSERS))
     core_count: int = field(default=1)
     snmp: SnmpSource | None = field(default=None)
-
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS metrics (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts        TEXT    NOT NULL,
-    host      TEXT    NOT NULL DEFAULT '',
-    label     TEXT    NOT NULL,
-    value     REAL    NOT NULL
-);
-CREATE TABLE IF NOT EXISTS events (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts        TEXT    NOT NULL,
-    end_ts    TEXT,
-    label     TEXT    NOT NULL,
-    source    TEXT    NOT NULL DEFAULT 'manual',
-    color     TEXT    NOT NULL DEFAULT '#888888',
-    dash      TEXT    NOT NULL DEFAULT 'dash'
-);
-"""
 
 
 class MetricCollector:
@@ -183,74 +161,31 @@ class MetricCollector:
         # SSE fan-out to subscriber queues
         self._broadcast = Broadcaster()
 
-        # Persistent async DB connection — opened by init_db(), closed by close_db().
-        self._db_conn: aiosqlite.Connection | None = None
-        self._lock_fd: int | None = None
+        # Persistent DB store — opened by init_db(), closed by close_db().
+        self._db: MetricDB | None = None
 
     # ------------------------------------------------------------------
     # Database helpers
     # ------------------------------------------------------------------
 
     async def init_db(self) -> None:
-        """Open a persistent aiosqlite connection with WAL mode and file lock.
+        """Open the persistent DB (no-op without a --db path). See MetricDB.
 
         Must be awaited before any DB writes.  Called automatically by
         :meth:`run`; callers that skip ``run()`` (e.g. tests) should call
         this explicitly.
         """
-        if self._db_conn is not None or not self._db_path:
+        if self._db is not None or not self._db_path:
             return
-
-        # Acquire an exclusive file lock so two live collectors can't
-        # write to the same database simultaneously.
-        lock_path = self._db_path + ".lock"
-        try:
-            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR)
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            self._lock_fd = fd
-        except OSError as err:
-            raise RuntimeError(
-                f"Another otto monitor instance is already writing to '{self._db_path}'. "
-                "Use a different --db path, or stop the other instance."
-            ) from err
-
-        net_fstype = network_fs_type(self._db_path)
-        journal_mode = "DELETE" if net_fstype else "WAL"
-        if net_fstype:
-            logger.debug(
-                "Monitor DB '%s' is on a network filesystem (%s); using "
-                "journal_mode=DELETE instead of WAL (WAL is unsupported over "
-                "network filesystems).",
-                self._db_path,
-                net_fstype,
-            )
-            logger.debug(
-                "Monitor DB lock guard on '%s' is same-host only on network "
-                "filesystems; for multi-machine setups sharing one DB, place it "
-                "on local disk.",
-                self._db_path,
-            )
-
-        conn = await aiosqlite.connect(self._db_path)
-        await conn.execute(f"PRAGMA journal_mode={journal_mode}")
-        await conn.execute("PRAGMA busy_timeout=5000")
-        await conn.executescript(_SCHEMA)
-        # Migrate: add end_ts column if the events table predates span support
-        col_names = {row[1] async for row in await conn.execute("PRAGMA table_info(events)")}
-        if "end_ts" not in col_names:
-            await conn.execute("ALTER TABLE events ADD COLUMN end_ts TEXT")
-        await conn.commit()
-        self._db_conn = conn
+        db = MetricDB(self._db_path)
+        await db.open()
+        self._db = db
 
     async def close_db(self) -> None:
         """Close the persistent DB connection and release the file lock."""
-        if self._db_conn is not None:
-            await self._db_conn.close()
-            self._db_conn = None
-        if self._lock_fd is not None:
-            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
-            os.close(self._lock_fd)
-            self._lock_fd = None
+        if self._db is not None:
+            await self._db.close()
+            self._db = None
 
     async def close(self) -> None:
         """Close the DB connection and all live host sessions.
@@ -264,55 +199,6 @@ class MetricCollector:
             return_exceptions=True,
         )
         await self.close_db()
-
-    async def _db_write_point(self, ts: datetime, host: str, label: str, value: float) -> None:
-        if not self._db_conn:
-            return
-        await self._db_conn.execute(
-            "INSERT INTO metrics (ts, host, label, value) VALUES (?, ?, ?, ?)",
-            (ts.isoformat(), host, label, value),
-        )
-        await self._db_conn.commit()
-
-    async def _db_write_event(self, event: MonitorEvent) -> int:
-        """Insert event into the DB and return the rowid (0 if no DB configured)."""
-        if not self._db_conn:
-            return 0
-        cursor = await self._db_conn.execute(
-            "INSERT INTO events (ts, end_ts, label, source, color, dash) VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                event.timestamp.isoformat(),
-                event.end_timestamp.isoformat() if event.end_timestamp else None,
-                event.label,
-                event.source,
-                event.color,
-                event.dash,
-            ),
-        )
-        await self._db_conn.commit()
-        assert cursor.lastrowid is not None  # noqa: S101 — internal invariant: SQLite always sets lastrowid after a successful INSERT
-        return cursor.lastrowid
-
-    async def _db_delete_event(self, event_id: int) -> None:
-        if not self._db_conn:
-            return
-        await self._db_conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
-        await self._db_conn.commit()
-
-    async def _db_update_event(self, event: MonitorEvent) -> None:
-        if not self._db_conn:
-            return
-        await self._db_conn.execute(
-            "UPDATE events SET label = ?, color = ?, dash = ?, end_ts = ? WHERE id = ?",
-            (
-                event.label,
-                event.color,
-                event.dash,
-                event.end_timestamp.isoformat() if event.end_timestamp else None,
-                event.id,
-            ),
-        )
-        await self._db_conn.commit()
 
     # ------------------------------------------------------------------
     # Live collection
@@ -464,7 +350,8 @@ class MetricCollector:
         # Hot path: model_construct skips validation (the values are otto's own).
         self._series[key].append(MetricPoint.model_construct(ts=ts, value=dp.value, meta=dp.meta))
         self._chart_map[label] = view.chart
-        await self._db_write_point(ts, host_name, label, dp.value)
+        if self._db:
+            await self._db.write_point(ts, host_name, label, dp.value)
         msg: dict[str, Any] = {
             "type": "metric",
             "host": host_name,
@@ -527,7 +414,7 @@ class MetricCollector:
             dash=dash,
             end_timestamp=end_timestamp,
         )
-        rowid = await self._db_write_event(event)
+        rowid = await self._db.write_event(event) if self._db else 0
         event.id = rowid or self._next_event_id
         self._next_event_id += 1
         self._events.append(event)
@@ -539,7 +426,8 @@ class MetricCollector:
         for i, ev in enumerate(self._events):
             if ev.id == event_id:
                 self._events.pop(i)
-                await self._db_delete_event(event_id)
+                if self._db:
+                    await self._db.delete_event(event_id)
                 self._publish({"type": "event_deleted", "id": event_id})
                 return True
         return False
@@ -559,7 +447,8 @@ class MetricCollector:
                 ev.color = color
                 ev.dash = dash
                 ev.end_timestamp = end_timestamp
-                await self._db_update_event(ev)
+                if self._db:
+                    await self._db.update_event(ev)
                 self._publish({"type": "event_updated", **ev.to_dict()})
                 return ev
         return None

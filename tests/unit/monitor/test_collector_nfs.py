@@ -1,11 +1,11 @@
 import pytest
 
-import otto.monitor.collector as collector_mod
+import otto.monitor.db as db_mod
 from otto.monitor.collector import MetricCollector
 
 
 async def _journal_mode(collector: MetricCollector) -> str:
-    cur = await collector._db_conn.execute("PRAGMA journal_mode")
+    cur = await collector._db._conn.execute("PRAGMA journal_mode")
     row = await cur.fetchone()
     assert row is not None
     return str(row[0]).lower()
@@ -13,7 +13,7 @@ async def _journal_mode(collector: MetricCollector) -> str:
 
 @pytest.mark.asyncio
 async def test_init_db_uses_delete_journal_on_network_fs(tmp_path, monkeypatch, caplog):
-    monkeypatch.setattr(collector_mod, "network_fs_type", lambda p: "nfs4")
+    monkeypatch.setattr(db_mod, "network_fs_type", lambda p: "nfs4")
     collector = MetricCollector(db_path=str(tmp_path / "m.db"))
     with caplog.at_level("DEBUG", logger="otto"):
         await collector.init_db()
@@ -26,7 +26,7 @@ async def test_init_db_uses_delete_journal_on_network_fs(tmp_path, monkeypatch, 
 
 @pytest.mark.asyncio
 async def test_init_db_uses_wal_on_local_disk(tmp_path, monkeypatch):
-    monkeypatch.setattr(collector_mod, "network_fs_type", lambda p: None)
+    monkeypatch.setattr(db_mod, "network_fs_type", lambda p: None)
     collector = MetricCollector(db_path=str(tmp_path / "m.db"))
     await collector.init_db()
     try:
