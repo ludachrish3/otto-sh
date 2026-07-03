@@ -2,6 +2,10 @@
 
 ## General
 
+- Should `otto init` automatically place the JSON schemas in the correct `~/.vscode` location? That simplifies otto's command tree and makes the schema aspect just a flag that's on by default when running `otto init`. If the schemas are already there, validation could be done and prompt the user if they'd like to replace them.
+- If manual coverage reports track the line numbers at the time of test (even after correcting for local change drift), would further changes that shift line numbers in the file be resilient to older manual test runs? Like for instance if line 5 was manually covered and then multiple commits later added code above it (but never touching that manually tested line of code), how would we continue to correlate the manual coverage in later reports? Especially if the manual coverage is committed to the repo and always used as an input for future coverage reports?
+- Maybe each coverage run can take an annotation (manual tests already do), which can be treated like a context in python coverage reports. If a line is covered by multiple tiers and runs of coverage, expanding the line with a dropdown error on the righthand side of the page will highlight all the contexts with the appropriate tier color and the context name.
+- Use sonnet to clean up type annotations throughout the repo. I noticed that the host.py file has quoted strings for many types. Annotations should only be strings if they're self-referential to support Python 3.10.
 - Docker redesign to use remote docker daemon management. Can pass through HTTP, TCP, and raw socket data over a tunneled SSH connection to a docker daemon host and control the docker daemon. The daemon needs to open a port that it listens on, and the SSH client sets up a port forwarding rule to access the docker daemon's open port.
 - E2E testing and compatibility matrix
 - Log tracebacks to the complete log file (the otto.log that currently gets saved)
