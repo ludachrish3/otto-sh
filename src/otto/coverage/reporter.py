@@ -67,14 +67,13 @@ class CollectionInputs:
     default) selects the legacy, purely ``.gcda``-driven behavior — every
     collection-model step becomes a no-op.
 
-    Attributes:
-        repo_root: SUT git repo root.  Enables e2e captures + the manual
-            store; also the pin-guard reference and the exclusion source.
-        tier_configs: Declared coverage tiers (precedence order).  Seeds
-            ``tier_order`` / ``tier_colors`` and drives unit-harvest.
-        capture_paths: ``capture.json`` files (one per board) to fold in
-            under their own tier, subject to the HEAD pin guard.
-        extra_markers: Extra source exclusion markers (spec §8).
+    - ``repo_root``: SUT git repo root.  Enables e2e captures + the manual
+      store; also the pin-guard reference and the exclusion source.
+    - ``tier_configs``: Declared coverage tiers (precedence order).  Seeds
+      ``tier_order`` / ``tier_colors`` and drives unit-harvest.
+    - ``capture_paths``: ``capture.json`` files (one per board) to fold in
+      under their own tier, subject to the HEAD pin guard.
+    - ``extra_markers``: Extra source exclusion markers (spec §8).
     """
 
     repo_root: Path | None = None

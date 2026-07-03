@@ -1,14 +1,18 @@
 # Coverage Collection
 
-Otto can collect gcov coverage data from remote hosts after an
-OttoSuite run and generate multi-tier HTML coverage reports.
+Otto collects gcov coverage data from remote hosts and renders
+multi-tier HTML coverage reports.  Coverage tiers — `system` (e2e),
+`unit`, `manual`, or any other name — are declared in
+`.otto/settings.toml`; three commands drive the workflow:
 
-Coverage works in two steps:
-
-1. **Collect** — `otto test --cov` fetches `.gcda` files from remote
-   hosts into the suite's output directory.
-2. **Report** — `otto cov` merges `.gcda` files from one or more test
-   runs and renders an HTML report.
+1. **`otto cov get`** (also run implicitly by `otto test --cov`) —
+   fetches `.gcda` counters from the lab and writes a pinned
+   `capture.json` per board.
+2. **`otto cov clean`** — zeroes remote `.gcda` counters ahead of a
+   fresh collection session.
+3. **`otto cov report`** — assembles every tier's data (e2e captures,
+   harvested unit counters, the committed manual store) into an HTML
+   report.
 
 ## Prerequisites
 
@@ -51,10 +55,67 @@ Add a `[coverage]` section to your repo's `.otto/settings.toml`:
 gcda_remote_dir = "/var/coverage/myproduct"
 ```
 
-This is the only required configuration.  The source root is
+This is the only *required* configuration.  The source root is
 auto-detected by walking up from the current directory to find the
 `.otto/` directory.  Path mappings between build-host paths and local
 source paths are auto-discovered from the `.info` and `.gcno` files.
+
+An optional `hosts` regex scopes collection to a subset of the lab
+(matched against each host id) — this is how an SSH hop that fronts a
+coverage target is kept out of the coverage set without otto having to
+guess which hosts emit `.gcda`:
+
+```toml
+[coverage]
+gcda_remote_dir = "/var/coverage/myproduct"
+hosts = "^device.*"
+```
+
+### Declarative Tiers
+
+A *tier* is a named layer of coverage data.  Tiers are declared under
+`[coverage.tiers.<name>]` in `.otto/settings.toml` — no more ad-hoc
+`--tier NAME=PATH` flags for data otto can collect itself:
+
+```toml
+[coverage.tiers.system]
+kind = "e2e"                 # collected by `otto test --cov` / `otto cov get`
+precedence = 1                # lower number = wins winner-take-all coloring
+color = "green"                # CSS color name or "#RRGGBB"; per-kind default if omitted
+
+[coverage.tiers.unit]
+kind = "unit"
+precedence = 2
+harvest_dirs = ["build"]     # repo-relative roots swept for .gcda at report time
+color = "yellow"
+
+[coverage.tiers.manual]
+kind = "manual"
+precedence = 3
+max_age = "180d"             # optional; flag-only aging
+color = "orange"
+
+[coverage.exclusions]
+markers = ["MYPROJ_NO_COV"]  # optional additions to the LCOV_EXCL_* set
+```
+
+Each `[coverage.tiers.<name>]` block:
+
+| Field | Meaning |
+|-------|---------|
+| `kind` | One of `e2e`, `unit`, `manual`. Selects the collection machinery — see {ref}`coverage-tier-kinds`. |
+| `precedence` | Integer; lower wins the winner-take-all row coloring when multiple tiers cover the same line. |
+| `color` | Optional CSS named color or `#RRGGBB` hex, validated at settings load. Defaults to a per-`kind` color when omitted (`e2e` = green, `unit` = yellow, `manual` = orange). |
+| `harvest_dirs` | `unit`-kind only: repo-relative build directories swept for `.gcda` at report time. |
+| `max_age` | `manual`-kind only: `"<days>d"` (e.g. `"180d"`); enables the *aging* flag (see {ref}`coverage-validity`). Optional, off by default. |
+
+Tier **names are free-form** and multiple tiers may share a `kind` —
+for example two manual tiers, `manual_qa` and `manual_dev`, both
+`kind = "manual"`, distinguished by name, precedence, and color.
+
+**Backward compatibility:** a settings file with no `[coverage.tiers]`
+section behaves exactly as before — an implicit `system` tier
+(`kind = "e2e"`, precedence 1) is assumed.
 
 ### Per-Host Toolchain
 
@@ -74,22 +135,137 @@ order:
    ``--gcov-tool``).
 3. **System default** — ``/usr/bin/gcov`` and ``/usr/bin/lcov``.
 
-## Step 1: Collecting Coverage
+## Retrieving Coverage: `otto cov get`
+
+`otto cov get` is the single retrieval command.  It fetches `.gcda`
+counters from every host matched by `[coverage].hosts` — Unix hosts
+over the network, embedded boards over the console — parses them with
+the discovered toolchain, and writes one pinned `capture.json` per
+board plus debug artifacts (the raw `.gcda` and the toolchain's
+`.gcov`/`.info` intermediates) into the command's output directory:
+
+```text
+<output>/
+  cov/
+    <board_id>/
+      capture.json
+      *.gcda
+      board.info
+      board.resolved.info
+```
+
+By default `otto cov get` targets the lab's sole `e2e`-kind tier and
+writes a capture that is **not** committed anywhere — it lives in the
+output directory, the same as a run's other artifacts.  Selecting a
+`manual`-kind tier switches the command into manual-capture mode: it
+requires `--ticket`, stamps tester identity onto the capture, and
+additionally copies the capture into the repo's committed store at
+`.otto/coverage/manual/`:
+
+```bash
+# Default: retrieve against the sole e2e-kind tier.
+otto cov get
+
+# Manual session: pin a capture, attach a ticket, commit it.
+otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--output, -o PATH` | Directory to write fetched coverage and per-board captures into | `./cov_get` |
+| `--tier NAME` | Coverage tier to stamp onto each capture | the lab's sole `e2e`-kind tier (error if ambiguous or unknown, listing the configured tiers) |
+| `--ticket STR` | Ticket reference stamped onto each capture. **Required** when `--tier` resolves to a `manual`-kind tier | none |
+| `--note STR` | Free-text note stamped onto each capture (`manual`-kind tiers only) | none |
+| `--tester-name STR` | Tester name stamped onto each capture (`manual`-kind tiers only) | `getpass.getuser()` |
+| `--tester-email STR` | Tester email stamped onto each capture (`manual`-kind tiers only) | `git config user.email`, omitted entirely (not stamped empty) when unset |
+| `--clean` | Zero the fetched Unix hosts' remote `.gcda` counters after a successful retrieval — for use before starting a manual session | off |
+
+`--ticket`, `--note`, `--tester-name`, and `--tester-email` are only
+meaningful for a `manual`-kind retrieval; passing them against an
+`e2e`-kind tier has no effect (an automated pull has no human tester to
+attribute).
+
+Retrieval requires a git repository — the pin and, for a dirty tree,
+the offset remap both need it.  Outside a git repo, `otto cov get`
+refuses with a clean error; `otto cov report`'s `--tier NAME=PATH`
+escape hatch remains available for git-less flows (see
+{ref}`coverage-tier-name-path`).
+
+### Locally-modified builds
+
+Manual testing frequently happens against a **locally modified**
+build — printf-and-recompile, a GDB session poking at a running
+binary.  These sessions still run instrumented code, so real counters
+exist, but their line numbers describe the modified tree, not the
+committed one.  `otto cov get` detects a dirty working tree
+(`git status --porcelain` non-empty) automatically and remaps the
+retrieved hits onto **committed-code line numbers** before writing the
+capture — added/changed lines' hits are dropped (crediting untested
+code would be wrong), unchanged lines remap exactly even when they've
+shifted.  The capture records `dirty_remap: true`, which shows up in
+the report's provenance table; no diff is stored.
+
+### The capture file
+
+Each board's `capture.json` records line/branch hits in
+committed-code coordinates, the commit they're pinned to, and — for a
+manual capture — the human metadata:
+
+```json
+{
+  "schema": 1,
+  "tier": "manual",
+  "pin": "<commit sha>",
+  "dirty_remap": true,
+  "captured_at": "2026-07-02T18:40:00Z",
+  "tester": {"name": "chris", "email": "chriscoll93@gmail.com"},
+  "ticket": "PROJ-123",
+  "note": "verified failover via GDB",
+  "labs": ["lab1"],
+  "board": "mps2_an385",
+  "files": {
+    "src/foo.c": {
+      "blob": "<git blob sha of src/foo.c at pin>",
+      "lines": {"12": 3, "13": 1},
+      "branches": {"12": [[0, 0, 2], [0, 1, 0]]}
+    }
+  }
+}
+```
+
+`pin` is the commit whose coordinates the line numbers mean; each
+file's `blob` is the git blob SHA of that file at the pin — the
+rebase-tolerant anchor {ref}`coverage-validity` checks against.  An
+`e2e`-kind capture has the same shape but omits `tester`/`ticket`/
+`note`; its `pin` is used as a strict merge guard at report time
+instead of a remap anchor (see {ref}`coverage-report-stale-builds`).
+
+## Collecting Coverage During a Test Run: `otto test --cov`
 
 ```bash
 otto test --cov TestMyDevice
 ```
 
-This runs the test suite normally, then fetches `.gcda` files from all
-remote hosts.  The files are placed in a `cov/` directory in the suite's
-output directory, organized by host ID:
+This runs the test suite normally, fetches `.gcda` files from every
+matched host, and — on a best-effort basis — produces a pinned
+`capture.json` per board against the lab's default `e2e`-kind tier
+using the same capture-production machinery as `otto cov get`.  This
+tail never fails an otherwise-successful test run: a non-git SUT,
+misconfigured tiers, or a stamp mismatch during merge are logged and
+swallowed, leaving the raw `.gcda` artifacts on disk for manual
+recovery via `otto cov get`.  The files land in a `cov/` directory in
+the suite's output directory, organized by board:
 
-```
+```text
 <log_dir>/
   cov/
-    <host_id_1>/
+    <board_id_1>/
+      capture.json
       *.gcda
-    <host_id_2>/
+    <board_id_2>/
+      capture.json
       *.gcda
 ```
 
@@ -127,14 +303,129 @@ To skip pre-run cleanup and accumulate coverage across runs:
 otto test --cov --no-cov-clean TestMyDevice
 ```
 
-## Step 2: Generating Reports
+## Cleaning Counters: `otto cov clean`
+
+`otto cov clean` zeroes `.gcda` counters on the lab's coverage hosts
+without fetching anything — useful ahead of a manual session when the
+previous capture has already been retrieved:
+
+```bash
+otto cov clean
+```
+
+It targets the same host selection `otto cov get` fetches from, but
+**Unix hosts only**.  Embedded coverage-hosts need a product-side
+`cov_reset` LLEXT function mirroring `cov_dump` (a later phase); when
+the lab has any, the command logs a note and exits `0` rather than
+failing.  A lab with *only* embedded coverage hosts is likewise not an
+error — there is simply nothing this phase can clean yet.
+
+(coverage-tier-kinds)=
+## Coverage Tiers
+
+Every tier's `kind` selects how `otto cov report` collects its data:
+
+| Kind | Collected by | Storage |
+|------|---------------|---------|
+| `e2e` | `otto test --cov` / `otto cov get` | `<output_dir>/cov/<board_id>/capture.json` — not committed, same lifecycle as other run artifacts |
+| `unit` | Nothing otto runs for you — build and run your instrumented unit tests as usual; `otto cov report` harvests `.gcda` from the tier's `harvest_dirs` in the **current build tree** at report time | no capture file |
+| `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-stamp>-<slug>.json`, committed to the SUT repo |
+
+**Only manual captures are pinned and committed to the repo.**  E2E
+data comes from the output directories of previous otto runs; unit
+data is swept fresh from the build tree every time a report is
+generated — there is no run discipline imposed on it.
+
+### Three-tier walkthrough
+
+**e2e** — run the suite with coverage on:
+
+```bash
+otto test --cov TestMyDevice
+```
+
+**unit** — build your unit tests with coverage instrumentation and run
+them as you always have; `.gcda` files land next to the `.gcno` files
+under the tier's configured `harvest_dirs` (e.g. `build/`):
+
+```bash
+cmake -DCMAKE_C_FLAGS="--coverage" -DCMAKE_CXX_FLAGS="--coverage" \
+      -DCMAKE_EXE_LINKER_FLAGS="--coverage" -B build ..
+cmake --build build --target my_unit_tests
+./build/my_unit_tests
+```
+
+No lcov invocation and no `--tier unit=...` flag are needed — as long
+as `[coverage.tiers.unit].harvest_dirs` points at `build`, `otto cov
+report` finds and merges the counters itself.
+
+**manual** — retrieve and pin a session against the instrumented
+target, attaching a ticket:
+
+```bash
+otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
+git add .otto/coverage/manual/
+git commit -m "cov: manual verification for PROJ-123"
+```
+
+Then generate a single report covering all three:
+
+```bash
+otto cov report path/to/e2e_run_output/ --report ./cov_report
+```
+
+`otto cov report` reads the e2e capture(s) from the given output
+directory, harvests the unit tier's `harvest_dirs` from the current
+build tree, and loads every committed manual capture automatically —
+no path arguments needed for the unit or manual tiers.
+
+(coverage-validity)=
+### Staleness and aging
+
+Manual captures are pinned evidence — as the repo moves on, otto must
+decide whether that evidence still applies.  A per-file anchor chain
+(current blob SHA → blob diff → pin-commit diff → unverifiable)
+resolves each capture's lines to one of these states at report time:
+
+| State | Meaning | Effect on coverage |
+|-------|---------|---------------------|
+| **valid** | Line unchanged since the capture's pin (verified by blob SHA, which survives rebases, or by diffing against the pin commit when the blob is unreachable) | Counts normally |
+| **stale** | Code changed since the capture — the evidence no longer describes this line | Coverage is **revoked**; rendered as "needs re-verification" |
+| **aging** | Code is unchanged (still *valid*), but the capture is older than the tier's `max_age` | Coverage is **retained** (flag-only — `max_age` never silently drops data) and tallied/rendered separately, flagging the line for re-verification because surrounding behavior may have drifted |
+| **unverifiable** | Neither the blob nor the pin commit can be resolved | Treated as **stale**, with a loud per-capture warning naming the remedy (re-capture) |
+
+Stale vs. aging, precisely: **stale = the code changed** out from under
+the evidence; **aging = the code is unchanged but the evidence is
+old**.
+
+Validity only applies to the **manual** tier. E2E captures use a
+strict pin **merge guard** instead — see
+{ref}`coverage-report-stale-builds`.  Unit tiers carry no validity
+states; they're harvested fresh every report, so there's nothing to go
+stale (a `.gcda` older than its `.gcno` only produces a "may be stale"
+warning, never a revoke).
+
+## Generating Reports: `otto cov report`
 
 ```bash
 otto cov report <output_dir> --report ./my_report
 ```
 
-The `otto cov report` command takes one or more `otto test` output directories
-and produces an HTML coverage report.
+`otto cov report` assembles a store from every source available:
+
+1. **E2E captures** — `capture.json` files under each given output
+   directory's `cov/<board_id>/`, subject to the pin guard below. Board
+   directories with no `capture.json` fall back to the legacy
+   `.gcda`-merge path (back-compat with pre-tier output directories).
+2. **Unit harvest** — every `unit`-kind tier's `harvest_dirs`, swept
+   fresh from the current build tree.
+3. **Manual store** — every capture committed under the repo's
+   `.otto/coverage/manual/`, loaded automatically with the validity
+   pass applied.
+
+`OUTPUT_DIRS` is now optional: with none given, the report is built
+from the committed manual-capture store (and any configured unit
+tiers) alone.
 
 ### Stitching Multiple Runs
 
@@ -148,28 +439,13 @@ otto cov report run1_output/ run2_output/ run3_output/ --report ./combined_repor
 
 | Option                    | Description                                                          | Default             |
 |---------------------------|----------------------------------------------------------------------|---------------------|
-| `OUTPUT_DIRS`             | One or more `otto test` output dirs with `cov/`                      | Required            |
+| `OUTPUT_DIRS`             | `otto test`/`otto cov get` output dirs with `cov/` subdirectories    | none — report is built from the manual store alone |
 | `--report, -r PATH`       | Where to place the HTML report                                       | `./cov_report`      |
 | `--project-name STR`      | Title shown in the report header                                     | `Coverage Report`   |
-| `--tier NAME[=PATH]`      | Add a coverage tier (repeatable; order = precedence, first highest)  | `--tier system`     |
+| `--tier NAME[=PATH]`      | Git-less escape hatch (see below); repeatable, order = precedence    | the configured tiers (or `system` with none configured) |
 
-### How It Works
-
-1. Discovers `.gcda` directories from each output directory's `cov/`
-   subdirectory.
-2. Auto-detects the source root by finding the `.otto/` directory.
-3. Resolves per-host toolchains from coverage metadata (originally
-   written from ``hosts.json`` config or auto-discovered from
-   ``.gcno`` files).
-4. Merges `.gcda` files across hosts using `lcov --capture` and
-   `lcov --add-tracefile`, using the correct `gcov` per host.
-5. Auto-discovers path mappings between build-host paths and local
-   source paths.
-6. Loads coverage data into a store, layering in any additional tiers
-   from `--tier NAME=PATH` flags in the order they were given.
-7. Renders a multi-tier HTML report.
-
-### Stale Builds: "stamp mismatch"
+(coverage-report-stale-builds)=
+### Stale Builds: "stamp mismatch" and the e2e pin guard
 
 gcov embeds a build stamp in both the `.gcno` notes files (written at
 compile time) and the `.gcda` data files (written at run time).  If the
@@ -185,29 +461,34 @@ product tree is rebuilt — even partially — between `otto test --cov` and
 > coverage must be reported against the exact build that produced it.
 > Re-run `otto test --cov` and report on the new output directory.
 
-The recovery is what the message says: collect fresh coverage against the
-current build with `otto test --cov`, then report on the new output
-directory.
+An already-pinned `capture.json` sidesteps gcov's stamp check (it holds
+parsed hits, not raw counters) but carries its own equivalent guard:
+its recorded `pin` must equal the tree's current `HEAD`.  A capture
+taken at a different commit — the tree moved on, or the product was
+rebuilt against a new checkout — fails the report with a clean error
+naming both commits, rather than silently reporting numbers for the
+wrong tree. Unlike a manual capture, an e2e capture is never remapped;
+the recovery is the same in both cases: collect fresh coverage with
+`otto test --cov` (or `otto cov get`), then report on the new output.
 
-## Coverage Tiers
+(coverage-tier-name-path)=
+### The `--tier NAME=PATH` escape hatch
 
-A *tier* is a named layer of coverage data — `system`, `unit`, `manual`,
-`integration`, `smoke`, or anything else you wire up.  Tier names are
-free-form: any string is a valid tier.
+`--tier NAME=PATH` remains available as a **git-less** fallback for
+data the declarative model doesn't produce — a foreign `lcov` `.info`
+file, or a report built outside a git repository (retrieval and the
+validity pass both require git; this flag does not).  When any
+`--tier` flag is given, `otto cov report` **bypasses the declarative
+tiers model entirely** — settings tiers, the manual store, and unit
+harvesting are not consulted; only the exact tiers named on the
+command line are loaded.
 
-Tiers are added with the `--tier` flag, which is repeatable.  The
-**order** of `--tier` flags is the **precedence order** — the first flag
-is the highest-precedence tier and wins the row coloring on the
-annotated source view when a line is hit by multiple tiers.
-
-The implicit `system` tier (produced by merging the supplied `.gcda`
-directories with `lcov`) is referenced by `--tier system` with no path.
-Any other tier requires a path to a pre-existing `.info` file.
-
-If `--tier` is not specified at all, the report defaults to a single
-`system` tier.
-
-### Worked Example
+`NAME` is a free-form label; `PATH` is an lcov `.info` tracefile.  The
+bare form `--tier system` (no path) refers to the implicit tier
+produced by merging the supplied `.gcda` directories with `lcov`; every
+other tier requires a path.  Flag order is precedence order — the
+first flag is highest-precedence and wins the row coloring when
+multiple tiers hit the same line.
 
 ```bash
 otto cov report runs/ \
@@ -219,107 +500,101 @@ otto cov report runs/ \
 ```
 
 This produces a four-tier report with precedence
-`unit > system > integration > manual`.  A line that was hit only by the
-manual tier is colored manual; a line hit by all four tiers is colored
-unit (the highest-precedence hit wins).  The summary table and per-file
+`unit > system > integration > manual`.  A line hit only by the
+manual tier is colored manual; a line hit by all four is colored unit
+(the highest-precedence hit wins).  The summary table and per-file
 table both grow a column per tier in the same left-to-right order.
+
+## Exclusion Markers
+
+lcov's `geninfo` honors the standard exclusion markers natively —
+excluded lines never enter the parsed data, so they never enter a
+denominator:
+
+- `LCOV_EXCL_LINE` — exclude one line.
+- `LCOV_EXCL_START` / `LCOV_EXCL_STOP` — exclude a block.
+- `LCOV_EXCL_BR_LINE`, `LCOV_EXCL_BR_START` / `LCOV_EXCL_BR_STOP` —
+  branch-only variants (line/block still counted, only its branches
+  excluded).
+
+The HTML renderer additionally re-scans each rendered source file for
+these markers so excluded lines and blocks are visually distinct
+(grey, with a per-file excluded count) instead of reading as ordinary
+uncovered code.  In the row-coloring precedence (see
+{ref}`coverage-colors`), excluded **always wins**, even over a covered,
+stale, or aging line.
+
+Extend the recognized marker set with custom strings via
+`[coverage.exclusions] markers`:
+
+```toml
+[coverage.exclusions]
+markers = ["MYPROJ_NO_COV"]
+```
+
+These extra markers are wired into both the `lcov` capture (as `rc`
+overrides) and the renderer's source scan, so a line marked
+`// MYPROJ_NO_COV` behaves exactly like `// LCOV_EXCL_LINE`.
+
+(coverage-colors)=
+## Colors and Legend
+
+Each tier renders in its configured `color` — a CSS named color or
+`#RRGGBB` hex, validated when settings load (an invalid value is a
+settings error, not a report-time surprise).  A tier that declares no
+explicit `color` gets a default keyed by its `kind`:
+
+| Kind | Default color |
+|------|-----------------|
+| `e2e` | green |
+| `unit` | yellow |
+| `manual` | orange |
+
+Line **states** — as opposed to tiers — use fixed, non-configurable
+colors:
+
+| State | Color |
+|-------|-------|
+| uncovered | light red |
+| excluded | grey |
+| stale | violet |
+| aging | tan |
+
+Each annotated source line resolves to exactly one color, in this
+precedence order: **excluded** (grey, always wins) → the
+highest-precedence **tier** color among tiers with valid evidence on
+that line → **aging** (tan — the winning evidence is valid manual data
+past its `max_age`, i.e. a faded manual orange) → **stale** (violet —
+the only evidence was manual and the code changed since) →
+**uncovered** (light red).
+
+Because tier names are free-form, multiple tiers can share a `kind`,
+and colors are configurable, the report never relies on convention to
+explain itself: a **legend** mapping every tier name and state to its
+color renders on the project index and on every per-file page.
 
 ## Output
 
 The HTML report is written to the `--report` directory (default:
 `./cov_report/index.html`).  The report shows:
 
-- **Project summary** with aggregate (all-tier) and per-tier breakdowns
-- **Sortable file table** with one column per configured tier
+- **Project summary** with aggregate (all-tier) and per-tier breakdowns,
+  plus per-file stale/aging/excluded counts.
+- **Legend** mapping tier names and line states to their colors.
+- **Captures provenance table** — every contributing capture (tier,
+  board, labs, date, and — for manual captures — tester, ticket, note,
+  and whether the dirty-tree remap applied), shown whenever the store
+  has at least one.
+- **Sortable file table** with one column per configured tier.
 - **Per-file pages** with the same summary structure plus annotated
   source: per-tier hit counts, branch pills (taken/not-taken/
-  unreachable), and winner-take-all row coloring driven by the
-  configured tier precedence
+  unreachable), and winner-take-all row coloring per
+  {ref}`coverage-colors`.
 
-## Cookbook: Producing `.info` Files for Tiers
-
-The `--tier NAME=PATH` flag expects an `lcov`-format `.info` tracefile.
-This section shows how to produce them for the two most common tiers.
-
-### Unit Test Tier (gtest + lcov)
-
-For a typical googletest unit-test binary built with
-`-fprofile-arcs -ftest-coverage`:
-
-```bash
-# 1. Build the unit tests with coverage instrumentation.
-cd build/
-cmake -DCMAKE_C_FLAGS="--coverage" \
-      -DCMAKE_CXX_FLAGS="--coverage" \
-      -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
-      ../src
-make my_unit_tests
-
-# 2. Reset any stale .gcda counters from previous runs.
-lcov --directory . --zerocounters
-
-# 3. Run the unit tests — they write .gcda files next to the .gcno files.
-./my_unit_tests
-
-# 4. Capture into an .info file.
-lcov --capture --directory . --output-file unit.info
-
-# 5. Feed the .info file into the report as the "unit" tier.
-otto cov report runs/ --tier unit=$(pwd)/unit.info --tier system
-```
-
-### Manual Test Tier (running the instrumented product directly)
-
-To capture coverage from an interactive or ad-hoc session on a remote
-host — say, manually clicking through a UI or running shell scripts
-against a service — point the running binary at a writable directory
-and use `GCOV_PREFIX` / `GCOV_PREFIX_STRIP` to relocate the `.gcda`
-output away from the original build paths:
-
-```bash
-# On the remote host: run the instrumented binary in manual mode.
-# GCOV_PREFIX_STRIP drops N leading components from each .gcda path so
-# they land under /tmp/manual_cov instead of the build host's absolute
-# paths (which usually don't exist on the device).
-ssh device "GCOV_PREFIX=/tmp/manual_cov \
-            GCOV_PREFIX_STRIP=4 \
-            /opt/myproduct/bin/myproduct --interactive"
-
-# Pull the .gcda files back to the otto host.
-mkdir -p ./manual_gcda
-scp -r device:/tmp/manual_cov/. ./manual_gcda/
-
-# Capture into an .info file using the same .gcno files used for the
-# system tier (the build directory).
-lcov --capture \
-     --directory ./manual_gcda \
-     --base-directory /path/to/build \
-     --output-file manual.info
-
-# Layer the manual tier into the report.
-otto cov report runs/ \
-    --tier unit=$(pwd)/unit.info \
-    --tier system \
-    --tier manual=$(pwd)/manual.info
-```
-
-### Naming Convention
-
-A useful convention when juggling several tiers is to keep all the
-captured `.info` files alongside each test run's output directory:
-
-```text
-runs/
-  2026-04-09_T1234/
-    cov/                       # system tier (.gcda files)
-    tiers/
-      unit.info
-      manual.info
-      integration.info
-```
-
-That way a single `otto cov report runs/2026-04-09_T1234/` invocation
-has everything it needs in a single tree.
+`store.json` is written alongside the HTML report with the same data —
+validity states, colors, and provenance included — as the explicit
+data contract for tooling built on top of a report (e.g. a future
+frontend) without touching the pipeline.
 
 ## Embedded (console) coverage
 
@@ -345,7 +620,10 @@ structure used by the remote fetcher:
 
 This means the downstream merge and report pipeline (`lcov --capture`, path
 mapping, HTML render) is reused without modification — the embedded and Unix
-code paths converge at the same `.gcda` file tree.
+code paths converge at the same `.gcda` file tree, and `otto cov get` produces
+a `capture.json` for an embedded board exactly as it does for a Unix one.
+`otto cov clean` does not yet reach embedded boards — see
+{ref}`coverage-tier-kinds` above.
 
 ### Embedded coverage configuration
 

@@ -11,3 +11,8 @@ data from embedded and remote targets.
    correlator
    fetcher
    renderer
+   capture
+   validity
+   tiers
+   exclusions
+   colors
