@@ -2,9 +2,9 @@
 
 ## General
 
+- Docker redesign to use remote docker daemon management. Can pass through HTTP, TCP, and raw socket data over a tunneled SSH connection to a docker daemon host and control the docker daemon. The daemon needs to open a port that it listens on, and the SSH client sets up a port forwarding rule to access the docker daemon's open port.
+- E2E testing and compatibility matrix
 - Log tracebacks to the complete log file (the otto.log that currently gets saved)
-- Rethink command return type structure. Possibly just Status and value. Value could be anything, even somewhat "recursive" like in the case of `host.run()`, which has an overall status, and then the value would be a list of more turn values. This is a MASSIVE change and touches basically everywhere.
-- Make all commands register with otto the same way as a third party parser would. The exposing of subcommands already has a syntax, so maybe extend that to the top-level commands too? The goal is to make otto fully flexible and pluggagble and no special magic that allows otto's built-in commands. There is a chance that they could overlap, so error out and explicitly log that a collision occured and exit.
 - Clean up and rename labs. The names are currently so obscure that they are difficult to intuitively tell what kinds of hosts they have. The embedded lab name is okay, but the hosts themselves should be more technically focused. The unix labs are all over the place and should be reconsidered as well, even at the lab name level.
 - Add RemoteHost `stat()` method if one does not already exist. Tricky part: format of stat has changed over the years. It might be tricky to flexibly parse all versions of stat output including all the different forks of unix (Linux 2.6 - present, other Unix OSes)
 - Login utility
