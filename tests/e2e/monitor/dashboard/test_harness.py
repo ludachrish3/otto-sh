@@ -93,6 +93,29 @@ def test_sse_stream_delivers_metric_messages(
     datetime.fromisoformat(payload["ts"].replace("Z", "+00:00"))
 
 
+def test_sse_stream_delivers_metric_messages_with_meta(
+    live_dash: DashboardHarness[FakeCollector],
+) -> None:
+    """Pins the optional-meta variant: same shape plus a ``meta`` key when present."""
+    port = urlsplit(live_dash.url).port
+    assert port is not None
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        conn.request("GET", "/api/stream", headers={"Accept": "text/event-stream"})
+        resp = conn.getresponse()  # subscribe() has run once headers arrive
+        live_dash.run(live_dash.collector.push("host1", "Overall CPU", 42.0, meta={"Used": "1 G"}))
+        payload: dict[str, Any] | None = None
+        while payload is None:
+            line = resp.readline().decode()
+            assert line, "SSE stream closed before a metric message arrived"
+            if line.startswith("data:"):
+                payload = json.loads(line[len("data:") :])
+    finally:
+        conn.close()
+    assert set(payload) == SSE_METRIC_KEYS | {"meta"}
+    assert payload["meta"] == {"Used": "1 G"}
+
+
 def test_historical_fixture_loads(historical_dash: DashboardHarness[MetricCollector]) -> None:
     meta = _get_json(historical_dash.url + "/api/meta")
     assert meta["live"] is False
@@ -133,6 +156,8 @@ def test_sse_event_lifecycle_wire_contract(
         assert set(created) == SSE_EVENT_KEYS
         assert created["type"] == "event"
         assert created["id"] == ev.id
+        # Pin the wire format, not just the key set: ts must stay ISO-8601.
+        datetime.fromisoformat(created["timestamp"])
 
         live_dash.run(
             live_dash.collector.update_event(ev.id, label="pin2", color="#445566", dash="dash")

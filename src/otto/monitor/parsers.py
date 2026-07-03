@@ -415,6 +415,16 @@ def register_parsers(parsers: Sequence[MetricParser]) -> None:
         PROJECT_PARSERS.register(p.command, p, origin=origin)
 
 
+def default_catalog() -> dict[str, "MetricParser"]:
+    """Return the parser catalog used when no per-host registration applies.
+
+    DEFAULT_PARSERS extended/overridden by project-level registrations.
+    """
+    merged = dict(DEFAULT_PARSERS)
+    merged.update(PROJECT_PARSERS.items())
+    return merged
+
+
 def get_host_parsers(host_id: str) -> dict[str, "MetricParser"]:
     """Return the parser dict for *host_id*: per-host > project-level > defaults.
 
@@ -426,6 +436,4 @@ def get_host_parsers(host_id: str) -> dict[str, "MetricParser"]:
     """
     if host_id in HOST_PARSERS:
         return copy.deepcopy(HOST_PARSERS.get(host_id))
-    merged: dict[str, MetricParser] = dict(DEFAULT_PARSERS)
-    merged.update(PROJECT_PARSERS.items())
-    return copy.deepcopy(merged)
+    return copy.deepcopy(default_catalog())

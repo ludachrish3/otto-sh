@@ -221,6 +221,27 @@ def _batches_from(host: MagicMock) -> list[list[str]]:
 
 
 @pytest.mark.asyncio
+async def test_tick_cadence_not_slowed_by_collection_time() -> None:
+    """Sleep and collection run concurrently: period ~= interval, not interval + collect time.
+
+    interval 0.2s, collection takes 0.15s, run 0.9s:
+      concurrent  -> collects at ~0, 0.2, 0.4, 0.6, 0.8  (>= 4 after the initial)
+      serialized  -> collects at ~0, 0.35, 0.7            (2 after the initial)
+    Assert loosely (>= 4 total calls) to stay CI-jitter-proof.
+    """
+    host = _make_mock_host("host", delay=0.15)
+    collector = _build_collector([host])
+
+    await collector.run(
+        interval=timedelta(seconds=0.2),
+        duration=timedelta(seconds=0.9),
+    )
+
+    batches = _batches_from(host)
+    assert len(batches) >= 4, f"expected >= 4 collection ticks, got {len(batches)}: {batches}"
+
+
+@pytest.mark.asyncio
 async def test_per_parser_interval_buckets_commands():
     """A parser with a faster interval is collected more often than the global tick."""
 

@@ -21,7 +21,14 @@ import pytest
 
 from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
-from otto.monitor.parsers import LoadParser, TopCpuParser
+from otto.monitor.parsers import (
+    LoadParser,
+    MetricDataPoint,
+    MetricParser,
+    ParseContext,
+    TopCpuParser,
+    register_parsers,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -383,3 +390,44 @@ class TestImportValidation:
         loaded = MetricCollector.from_json(path)
         evs = loaded.get_events()
         assert [e.label for e in evs] == ["ok"]
+
+
+class TestHistoricalCatalogIncludesProjectParsers:
+    """The historical (--file/--db) parser-catalog fallback must include
+    project-level registrations, not just DEFAULT_PARSERS — otherwise replaying
+    a project that used register_parsers() serves no chart/tab for its series
+    (the same zero-charts failure mode Phase 1 fixed for built-ins).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolate_project_parser_registry(self):
+        from otto.monitor import parsers as parsers_mod
+
+        before = set(parsers_mod.PROJECT_PARSERS.names())
+        try:
+            yield
+        finally:
+            for command in set(parsers_mod.PROJECT_PARSERS.names()) - before:
+                parsers_mod.PROJECT_PARSERS.unregister(command)
+
+    async def test_from_json_meta_includes_project_parsers(self, tmp_path: Path) -> None:
+        """Historical replay serves charts for project-registered parsers (not just built-ins)."""
+
+        class SocketParser(MetricParser):
+            y_title = "Sockets"
+            unit = ""
+            command = "ss -s"
+            tab = "network"
+            tab_label = "Network"
+            chart = "Sockets"
+
+            def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+                return {}
+
+        register_parsers([SocketParser()])
+        path = tmp_path / "hist.json"
+        path.write_text('{"metrics": [], "events": []}')
+        collector = MetricCollector.from_json(str(path))
+        meta = collector.get_meta()
+        assert "Sockets" in [m["chart"] for m in meta["metrics"]]
+        assert "network" in [t["id"] for t in meta["tabs"]]

@@ -212,7 +212,9 @@ class MonitorServer:
     Wraps a FastAPI/uvicorn server for the monitoring dashboard.
 
     Call ``await serve()`` from an async context to run the server.
-    Call ``stop()`` from any thread to trigger a graceful shutdown.
+    Call ``stop()`` from any thread to trigger a graceful shutdown, or
+    ``force_stop()`` to abort open SSE connections immediately instead of
+    waiting for them to drain.
     """
 
     def __init__(

@@ -26,7 +26,7 @@ from .db import MetricDB
 from .events import MonitorEvent
 from .history import load_json_into, load_sqlite_into
 from .history import to_json as history_to_json
-from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser, ParseContext
+from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser, ParseContext, default_catalog
 from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
 from .store import MetricStore
 
@@ -111,7 +111,7 @@ class MetricCollector:
             self._targets = targets
         else:
             parser_dict = (
-                {p.command: p for p in parsers} if parsers is not None else dict(DEFAULT_PARSERS)
+                {p.command: p for p in parsers} if parsers is not None else default_catalog()
             )
             self._targets = [MonitorTarget(host=h, parsers=parser_dict) for h in (hosts or [])]
 
@@ -356,8 +356,12 @@ class MetricCollector:
             # Initial collection: no sleep, publish as soon as commands return.
             await self._collect_bucket(entries, bucket_secs)
             while duration is None or datetime.now(tz=timezone.utc) - start < duration:
-                await asyncio.sleep(bucket_secs)
-                await self._collect_bucket(entries, bucket_secs)
+                # Sleep and collect concurrently (as the pre-bucket loop did):
+                # the tick period is max(interval, collect_time), not their sum.
+                await asyncio.gather(
+                    asyncio.sleep(bucket_secs),
+                    self._collect_bucket(entries, bucket_secs),
+                )
 
         # Known dormant risk (no shipped parser sets .interval yet, so this
         # gather has exactly one bucket today): if a bucket loop ever escapes
