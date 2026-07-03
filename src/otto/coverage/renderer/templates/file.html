@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <title>{{ display_path }} - {{ project_name }}</title>
   <link rel="stylesheet" href="../static/report.css">
+  <style>
+:root {
+{% for tier in tier_order %}  --tier-{{ loop.index0 }}: {{ tier_colors[tier] }};
+{% endfor %}{% for state, color in state_colors.items() %}  --state-{{ state }}: {{ color }};
+{% endfor %}}
+  </style>
 </head>
 <body>
   <header class="report-header">
@@ -42,19 +48,19 @@
         {% endfor %}
       </tbody>
     </table>
+    <div class="file-state-counts">
+      <span class="state-count state-count-stale">Stale: {{ file_summary.stale_count }}</span>
+      <span class="state-count state-count-aging">Aging: {{ file_summary.aging_count }}</span>
+      <span class="state-count state-count-excluded">Excluded: {{ file_summary.excluded_count }}</span>
+    </div>
   </section>
 
-  <div class="legend">
-    <span><span class="swatch hit-system"></span>System hit</span>
-    <span><span class="swatch hit-unit"></span>Unit hit</span>
-    <span><span class="swatch hit-manual"></span>Manual hit</span>
-    <span><span class="swatch missed"></span>Not hit</span>
-    <span><span class="swatch uncoverable"></span>Not coverable</span>
-    <span style="margin-left:1em;">
-      <span class="branch-pill branch-taken">B</span>taken
-      <span class="branch-pill branch-not-taken">B</span>not taken
-      <span class="branch-pill branch-unreachable">B</span>unreachable
-    </span>
+  {% from "_legend.html" import legend %}
+  {{ legend(tier_order, tier_labels, tier_colors, state_colors) }}
+  <div class="legend branch-legend">
+    <span class="branch-pill branch-taken">B</span>taken
+    <span class="branch-pill branch-not-taken">B</span>not taken
+    <span class="branch-pill branch-unreachable">B</span>unreachable
   </div>
 
   <section class="source">

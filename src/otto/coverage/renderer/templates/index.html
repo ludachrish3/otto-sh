@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <title>{{ project_name }} - Coverage Report</title>
   <link rel="stylesheet" href="static/report.css">
+  <style>
+:root {
+{% for tier in tier_order %}  --tier-{{ loop.index0 }}: {{ tier_colors[tier] }};
+{% endfor %}{% for state, color in state_colors.items() %}  --state-{{ state }}: {{ color }};
+{% endfor %}}
+  </style>
   <script src="static/report.js" defer></script>
 </head>
 <body>
@@ -14,6 +20,9 @@
       {% if generated_at %}&middot; generated {{ generated_at }}{% endif %}
     </div>
   </header>
+
+  {% from "_legend.html" import legend %}
+  {{ legend(tier_order, tier_labels, tier_colors, state_colors) }}
 
   <section class="summary">
     <h2>Summary</h2>
@@ -48,6 +57,40 @@
     </table>
   </section>
 
+  {% if provenance %}
+  <section class="captures">
+    <h2>Captures</h2>
+    <table class="summary-table captures-table">
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th>Board</th>
+          <th>Labs</th>
+          <th>Date</th>
+          <th>Tester</th>
+          <th>Ticket</th>
+          <th>Note</th>
+          <th>Remap</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for cap in provenance %}
+        <tr>
+          <td>{{ cap.tier }}</td>
+          <td>{{ cap.board }}</td>
+          <td>{{ cap.labs|join(', ') }}</td>
+          <td>{{ cap.date }}</td>
+          <td>{{ cap.tester.name if cap.tester else '' }}</td>
+          <td>{{ cap.ticket or '' }}</td>
+          <td>{{ cap.note or '' }}</td>
+          <td class="num">{% if cap.dirty_remap %}✎{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endif %}
+
   <section class="files">
     <h2>Files</h2>
     <table class="files-table">
@@ -60,6 +103,9 @@
           <th class="sortable num">{{ tier_labels[tier] }} %</th>
           {% endfor %}
           <th class="sortable num">Branch %</th>
+          <th class="sortable num">Stale</th>
+          <th class="sortable num">Aging</th>
+          <th class="sortable num">Excluded</th>
         </tr>
       </thead>
       <tbody>
@@ -72,6 +118,9 @@
           <td class="num {{ pct_class(f.per_tier[tier].line_pct) }}" data-sort="{{ f.per_tier[tier].line_pct }}">{{ "%.1f"|format(f.per_tier[tier].line_pct) }}%</td>
           {% endfor %}
           <td class="num {{ pct_class(f.branch_pct_total) }}" data-sort="{{ f.branch_pct_total }}">{{ "%.1f"|format(f.branch_pct_total) }}%</td>
+          <td class="num" data-sort="{{ f.stale_count }}">{{ f.stale_count }}</td>
+          <td class="num" data-sort="{{ f.aging_count }}">{{ f.aging_count }}</td>
+          <td class="num" data-sort="{{ f.excluded_count }}">{{ f.excluded_count }}</td>
         </tr>
         {% endfor %}
       </tbody>

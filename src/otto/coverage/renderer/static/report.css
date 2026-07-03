@@ -224,15 +224,26 @@ section h2 {
   color: inherit;
 }
 
-/* Row status — precedence-winner row coloring. The "winner" class is
- * set by the renderer based on tier precedence. Explicit per-tier
- * classes are generated dynamically so adding a new tier only requires
- * adding a --tier-<name>-bg variable above. */
-.source-table tr.line-missed td.source       { background: var(--miss-bg); }
-.source-table tr.line-uncoverable td          { color: var(--text-mute); }
-.source-table tr.line-hit-system td.source    { background: var(--tier-system-bg); }
-.source-table tr.line-hit-unit   td.source    { background: var(--tier-unit-bg); }
-.source-table tr.line-hit-manual td.source    { background: var(--tier-manual-bg); }
+/* Row status — precedence-winner row coloring (spec §9): excluded always
+ * wins, then the highest-precedence tier with a hit, then aging, then
+ * stale, then plain uncovered. Tier/state classes and colors are driven
+ * entirely by the --tier-<index>/--state-<name> custom properties the
+ * renderer emits per report (see the inline <style> block in each page) —
+ * adding a tier or changing a color never requires touching this file.
+ * "uncoverable" (no LineRecord at all — blank lines, declarations gcov
+ * never emits a DA: for) is a deliberately separate, unlisted bucket so
+ * those lines read as muted, not as a red miss. */
+.source-table tr.tier-0 td.source          { background: color-mix(in srgb, var(--tier-0) 22%, white); }
+.source-table tr.tier-1 td.source          { background: color-mix(in srgb, var(--tier-1) 22%, white); }
+.source-table tr.tier-2 td.source          { background: color-mix(in srgb, var(--tier-2) 22%, white); }
+.source-table tr.tier-3 td.source          { background: color-mix(in srgb, var(--tier-3) 22%, white); }
+.source-table tr.tier-4 td.source          { background: color-mix(in srgb, var(--tier-4) 22%, white); }
+.source-table tr.tier-5 td.source          { background: color-mix(in srgb, var(--tier-5) 22%, white); }
+.source-table tr.state-uncovered td.source { background: color-mix(in srgb, var(--state-uncovered) 35%, white); }
+.source-table tr.state-excluded td.source  { background: color-mix(in srgb, var(--state-excluded) 18%, white); color: #777; }
+.source-table tr.state-stale td.source     { background: color-mix(in srgb, var(--state-stale) 25%, white); }
+.source-table tr.state-aging td.source     { background: color-mix(in srgb, var(--state-aging) 30%, white); }
+.source-table tr.state-uncoverable td      { color: var(--text-mute); }
 
 /* Subtle hover — brighten the whole row. */
 .source-table tr.line:hover td { filter: brightness(0.97); }
@@ -275,11 +286,28 @@ section h2 {
   border: 1px solid var(--border-strong);
   vertical-align: -2px;
 }
-.legend .swatch.hit-system    { background: var(--tier-system-bg); }
-.legend .swatch.hit-unit      { background: var(--tier-unit-bg); }
-.legend .swatch.hit-manual    { background: var(--tier-manual-bg); }
-.legend .swatch.missed        { background: var(--miss-bg); }
-.legend .swatch.uncoverable   { background: var(--unreachable-bg); }
+/* Tier/state swatch colors come from an inline style="background: ..."
+ * (the renderer's per-report tier_colors/state_colors, spec §9 — free-form
+ * tier names and configurable colors mean the legend can't rely on a
+ * fixed, named set of CSS classes the way the row coloring can). */
+.legend-item { display: inline-flex; align-items: center; }
+.legend.branch-legend { font-size: 0.8em; }
+
+/* ---------- Per-file state counts (stale / aging / excluded) ---------- */
+
+.file-state-counts {
+  margin-top: 0.6em;
+  font-size: 0.85em;
+  color: var(--text-dim);
+}
+.state-count { margin-right: 1.2em; }
+.state-count-stale    { color: var(--state-stale, var(--partial-fg)); }
+.state-count-aging    { color: var(--state-aging, var(--partial-fg)); }
+.state-count-excluded { color: var(--text-mute); }
+
+/* ---------- Captures (provenance) table ---------- */
+
+.captures-table td { font-size: 0.9em; }
 
 /* ---------- Footer ---------- */
 

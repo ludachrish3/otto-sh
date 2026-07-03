@@ -1,0 +1,10 @@
+{% macro legend(tier_order, tier_labels, tier_colors, state_colors) %}
+<div class="legend">
+  {% for tier in tier_order %}
+  <span class="legend-item"><span class="swatch" style="background: {{ tier_colors[tier] }};"></span>{{ tier_labels[tier] }}</span>
+  {% endfor %}
+  {% for state, color in state_colors.items() %}
+  <span class="legend-item"><span class="swatch" style="background: {{ color }};"></span>{{ state|capitalize }}</span>
+  {% endfor %}
+</div>
+{% endmacro %}

@@ -2,7 +2,8 @@
 
 The report layout follows the familiar gcovr information architecture:
 
-- ``index.html`` — project summary (aggregate + per-tier breakdown) and a
+- ``index.html`` — project summary (aggregate + per-tier breakdown), a
+  legend, a "Captures" provenance table (when the store has any), and a
   sortable file table.
 - ``files/<mangled_path>.html`` — per-file annotated source with a file
   summary block, a legend, and a code table that shows per-tier hit
@@ -15,6 +16,22 @@ renderer falls back to ``("system",)`` so the templates still have
 something to iterate.  All per-tier columns, percentages, and the
 winner-take-all row coloring on the annotated source view are driven by
 that list, so adding a new tier requires no changes here.
+
+**Row precedence (spec §9).**  Each annotated source line resolves to
+exactly one CSS class, in this order: ``state-excluded`` (source-scanned
+exclusion markers, spec §8 — always wins, even over a covered/stale/aging
+line) → ``tier-<index>`` (the highest-precedence tier in ``tier_order``
+with a nonzero hit count on that line) → ``state-aging`` → ``state-stale``
+→ ``state-uncovered``.  A line with no :class:`~otto.coverage.store.model.LineRecord`
+at all (not excluded, never measured by any tier — e.g. a blank line or a
+declaration gcov never emits a ``DA:`` for) gets ``state-uncoverable``, a
+sixth, deliberately-unlisted bucket so those lines don't read as bright-red
+misses.
+
+Colors are resolved once per report and emitted as CSS custom properties
+(``--tier-<index>``, ``--state-<name>``) in an inline ``<style>`` block on
+both pages; ``report.css`` consumes them via ``color-mix()`` so the actual
+row background never needs a template-side computation.
 """
 
 import logging
@@ -56,6 +73,10 @@ class HtmlRenderer:
         output_dir: Directory to write the report into (created if needed).
         templates_dir: Override for the default templates directory.
         project_name: Title shown in the HTML report header.
+        extra_markers: Extra source exclusion-marker strings (spec §8),
+            forwarded from ``[coverage.exclusions].markers`` via the
+            reporter.  Scanned alongside the built-in ``LCOV_EXCL_*``
+            markers when annotating each file's source.
     """
 
     def __init__(
@@ -68,10 +89,6 @@ class HtmlRenderer:
     ) -> None:
         self.output_dir = output_dir
         self.project_name = project_name
-        # Extra exclusion-marker strings (spec §8), forwarded from
-        # [coverage.exclusions].markers via the reporter. The renderer scans
-        # each rendered file's source text for LCOV_EXCL_* markers plus these
-        # at render time — exclusion display is never baked into the store.
         self.extra_markers: list[str] = list(extra_markers or [])
         # Deferred so importing the renderer module (and thus `otto.coverage`,
         # pulled onto the CLI startup path via cli.cov) does not load jinja2.
@@ -89,14 +106,40 @@ class HtmlRenderer:
 
     def render(self, store: CoverageStore) -> None:
         """Render the full HTML report."""
+        # Deferred: otto.coverage.colors is a cheap pure-python module, but
+        # keeping it out of this module's top-level imports keeps it out of
+        # the `otto cov --help` import surface too (that surface imports
+        # this module but never calls render()).
+        from ..colors import DEFAULT_TIER_COLORS, STATE_COLORS
+
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._copy_static()
         tier_order = self._effective_tier_order(store)
         tier_labels = {t: _label_for(t) for t in tier_order}
+        tier_colors = self._resolve_tier_colors(store, tier_order, DEFAULT_TIER_COLORS)
         otto_version = get_version()
-        self._render_index(store, tier_order, tier_labels, otto_version)
+
+        files_data = []
         for file_record in store.files():
-            self._render_file(file_record, tier_order, tier_labels, otto_version)
+            excluded_count = self._render_file(
+                file_record,
+                tier_order,
+                tier_labels,
+                tier_colors,
+                STATE_COLORS,
+                otto_version,
+            )
+            files_data.append(self._build_file_row(file_record, tier_order, excluded_count))
+
+        self._render_index(
+            store,
+            tier_order,
+            tier_labels,
+            tier_colors,
+            STATE_COLORS,
+            files_data,
+            otto_version,
+        )
         logger.info("Report written to %s", self.output_dir / "index.html")
 
     @staticmethod
@@ -104,6 +147,25 @@ class HtmlRenderer:
         if store.tier_order:
             return list(store.tier_order)
         return ["system"]
+
+    @staticmethod
+    def _resolve_tier_colors(
+        store: CoverageStore,
+        tier_order: list[str],
+        default_tier_colors: dict[str, str],
+    ) -> dict[str, str]:
+        """Per-tier CSS colors: ``store.tier_colors`` first, then the kind-keyed default.
+
+        ``store.tier_colors`` is a name -> color map filled by the reporter
+        from declared tier settings.  A tier with no entry there (e.g. the
+        git-less ``--tier`` escape hatch, which carries no color info at
+        all) falls back to :data:`otto.coverage.colors.DEFAULT_TIER_COLORS`
+        and finally to plain ``"green"``.
+        """
+        colors: dict[str, str] = {}
+        for tier in tier_order:
+            colors[tier] = store.tier_colors.get(tier) or default_tier_colors.get(tier, "green")
+        return colors
 
     # ------------------------------------------------------------------
     # Index page
@@ -114,10 +176,12 @@ class HtmlRenderer:
         store: CoverageStore,
         tier_order: list[str],
         tier_labels: dict[str, str],
+        tier_colors: dict[str, str],
+        state_colors: dict[str, str],
+        files_data: list[dict[str, Any]],
         otto_version: str,
     ) -> None:
         template = self.env.get_template("index.html")
-        files_data = [self._build_file_row(fr, tier_order) for fr in store.files()]
 
         summary = {
             "file_count": store.file_count(),
@@ -133,11 +197,16 @@ class HtmlRenderer:
                 summary=summary,
                 tier_order=tier_order,
                 tier_labels=tier_labels,
+                tier_colors=tier_colors,
+                state_colors=state_colors,
+                provenance=store.provenance,
                 otto_version=otto_version,
             )
         )
 
-    def _build_file_row(self, fr: FileRecord, tier_order: list[str]) -> dict[str, Any]:
+    def _build_file_row(
+        self, fr: FileRecord, tier_order: list[str], excluded_count: int
+    ) -> dict[str, Any]:
         """Build the template context for one row of the files table."""
         totals = self._file_totals(fr, tier_order)
         return {
@@ -148,6 +217,9 @@ class HtmlRenderer:
             "pct_total": totals["pct_total"],
             "branch_pct_total": totals["branch_pct_total"],
             "per_tier": totals["per_tier"],
+            "stale_count": totals["stale_count"],
+            "aging_count": totals["aging_count"],
+            "excluded_count": excluded_count,
         }
 
     # ------------------------------------------------------------------
@@ -159,21 +231,35 @@ class HtmlRenderer:
         record: FileRecord,
         tier_order: list[str],
         tier_labels: dict[str, str],
+        tier_colors: dict[str, str],
+        state_colors: dict[str, str],
         otto_version: str,
-    ) -> None:
+    ) -> int:
+        """Render one annotated-source page; returns its excluded-line count.
+
+        The excluded-line scan (spec §8) runs once here, reusing this same
+        source read, and its result both drives each line's row class and
+        feeds the file's excluded count — shared with the index's per-file
+        column via the return value, so the source is never re-read.
+        """
+        from ..exclusions import scan_excluded_lines
+
         template = self.env.get_template("file.html")
 
         try:
-            source_lines = record.path.read_text(errors="replace").splitlines()
-        except FileNotFoundError:
-            source_lines = []
+            source_text = record.path.read_text(errors="replace")
+        except OSError:
+            source_text = ""
+        source_lines = source_text.splitlines()
+        excluded_linenos = scan_excluded_lines(source_text, self.extra_markers or None)
 
         annotated_lines = [
-            self._build_line_row(i, text, record.lines.get(i), tier_order)
+            self._build_line_row(i, text, record.lines.get(i), tier_order, i in excluded_linenos)
             for i, text in enumerate(source_lines, start=1)
         ]
 
         file_summary = self._file_totals(record, tier_order)
+        file_summary["excluded_count"] = len(excluded_linenos)
 
         out = self.output_dir / self._file_link(record)
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -186,9 +272,12 @@ class HtmlRenderer:
                 file_summary=file_summary,
                 tier_order=tier_order,
                 tier_labels=tier_labels,
+                tier_colors=tier_colors,
+                state_colors=state_colors,
                 otto_version=otto_version,
             )
         )
+        return len(excluded_linenos)
 
     def _build_line_row(
         self,
@@ -196,16 +285,15 @@ class HtmlRenderer:
         source_text: str,
         lr: LineRecord | None,
         tier_order: list[str],
+        excluded: bool,
     ) -> dict[str, Any]:
         """Build the template context for one row of the source table."""
         coverable = lr is not None
         if lr is None:
             tier_hits = dict.fromkeys(tier_order, 0)
-            row_class = "line-uncoverable"
             branches: list[dict[str, Any]] = []
         else:
             tier_hits = {t: lr.hits.for_tier(t) for t in tier_order}
-            row_class = self._row_class_for(lr, tier_order)
             branches = [self._build_branch(b, tier_order) for b in lr.branches]
 
         return {
@@ -214,16 +302,24 @@ class HtmlRenderer:
             "coverable": coverable,
             "tier_hits": tier_hits,
             "branches": branches,
-            "row_class": row_class,
+            "row_class": self._row_class_for(lr, tier_order, excluded),
         }
 
     @staticmethod
-    def _row_class_for(lr: LineRecord, tier_order: list[str]) -> str:
-        """Winner-take-all: use the highest-precedence tier that hit the line."""
-        for tier in tier_order:
+    def _row_class_for(lr: LineRecord | None, tier_order: list[str], excluded: bool) -> str:
+        """Resolve one line's CSS class per the module-level precedence order."""
+        if excluded:
+            return "state-excluded"
+        if lr is None:
+            return "state-uncoverable"
+        for i, tier in enumerate(tier_order):
             if lr.hits.for_tier(tier) > 0:
-                return f"line-hit-{tier}"
-        return "line-missed"
+                return f"tier-{i}"
+        if lr.state == "aging":
+            return "state-aging"
+        if lr.state == "stale":
+            return "state-stale"
+        return "state-uncovered"
 
     @staticmethod
     def _build_branch(branch: BranchHits, tier_order: list[str]) -> dict[str, Any]:
@@ -251,7 +347,13 @@ class HtmlRenderer:
     # ------------------------------------------------------------------
 
     def _file_totals(self, fr: FileRecord, tier_order: list[str]) -> dict[str, Any]:
-        """Compute aggregate + per-tier counts and percentages for a file."""
+        """Compute aggregate + per-tier counts and percentages for a file.
+
+        ``stale_count``/``aging_count`` iterate every :class:`LineRecord` in
+        the file, not just lines within the current source's line range —
+        state-only records past EOF (shrunk-file tolerance, spec §7) still
+        count here even though they get no annotated row.
+        """
         lines_total = len(fr.lines)
         lines_hit = sum(1 for line_rec in fr.lines.values() if line_rec.hits.is_hit())
         all_branches = [b for lr in fr.lines.values() for b in lr.branches]
@@ -259,6 +361,8 @@ class HtmlRenderer:
         branches_hit = sum(
             1 for b in all_branches if b.is_reachable() is True and b.hits.total() > 0
         )
+        stale_count = sum(1 for line_rec in fr.lines.values() if line_rec.state == "stale")
+        aging_count = sum(1 for line_rec in fr.lines.values() if line_rec.state == "aging")
 
         per_tier = {}
         for tier in tier_order:
@@ -286,6 +390,8 @@ class HtmlRenderer:
             "branches_hit": branches_hit,
             "branch_pct_total": _pct(branches_hit, branches_total),
             "per_tier": per_tier,
+            "stale_count": stale_count,
+            "aging_count": aging_count,
         }
 
     def _store_totals(self, store: CoverageStore, tier_order: list[str]) -> dict[str, Any]:
