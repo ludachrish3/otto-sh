@@ -199,7 +199,7 @@ browsers: ## (Setup) Install the Playwright Chromium + WebKit binaries used by t
 web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfile (npm ci)
 	cd web && npm ci
 
-web: ## (Build & Release) Build the web/ React dashboard (vite build) into src/otto/monitor/static/dist/, then gate it against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh)
+web: ## (Build & Release) Build the web/ React dashboard + the covreport bundle (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh)
 	# Regenerate web/src/api/types.gen.ts from the live pydantic models and fail
 	# BEFORE the vite build if the committed file has drifted — a stale wire
 	# contract should be caught by its own diff, not surface later as a build
@@ -207,7 +207,9 @@ web: ## (Build & Release) Build the web/ React dashboard (vite build) into src/o
 	scripts/gen_web_types.sh
 	git diff --exit-code web/src/api/types.gen.ts
 	cd web && npm run build
+	cd web && npm run build:covreport
 	scripts/check_airgap.sh
+	scripts/check_airgap.sh src/otto/coverage/renderer/static/dist
 
 web-dev: ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to a running otto monitor (default target http://127.0.0.1:8080, override with VITE_OTTO_TARGET=http://host:port)
 	cd web && npm run dev
@@ -215,8 +217,9 @@ web-dev: ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to 
 web-test: ## (Dev) Run the web/ vitest suite once (store reducers, etc.) — no watch mode
 	cd web && npm run test
 
-web-clean: ## (Dev) Remove the built web/ dist/ output (src/otto/monitor/static/dist/)
+web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covreport)
 	rm -rf src/otto/monitor/static/dist
+	rm -rf src/otto/coverage/renderer/static/dist
 
 # uv_build embeds the ENTIRE module tree (src/otto/**) into both the sdist and
 # the wheel by default — unlike hatchling, it is not VCS-aware, so it doesn't
@@ -244,6 +247,12 @@ wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + w
 	fi; \
 	echo "wheel-check: OK — $$count otto/monitor/static/dist/ entries embedded in the wheel (incl. index.html)."; \
 	scripts/check_airgap.sh
+	@count=$$(unzip -l dist/*.whl | grep -c "otto/coverage/renderer/static/dist/" || true); \
+	if [ "$$count" -eq 0 ]; then \
+		echo "wheel-check: FAIL — no otto/coverage/renderer/static/dist/ entries in dist/*.whl; an air-gapped install would ship the coverage report without its frontend." >&2; \
+		exit 1; \
+	fi; \
+	echo "wheel-check: OK — $$count otto/coverage/renderer/static/dist/ entries embedded."
 
 docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
 	uv run python scripts/capture_docs_media.py --mode force
