@@ -33,3 +33,9 @@ Container hosts have a two-stage life:
 - **No reservation gate of its own** (`gate=False`): a container has no
   independent reservation — the parent host's reservation transitively
   covers its containers, so gating the parent is the whole story.
+
+## `otto docker --help`
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-docker.html
+```

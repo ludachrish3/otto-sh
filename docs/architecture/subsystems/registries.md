@@ -94,3 +94,15 @@ host names snapshotted on previous runs. On a cache hit, completion runs
 names still appear in listings even though their registrations never ran;
 only actually dispatching one triggers the real import. Any discovery failure
 in completion mode is swallowed and falls back to the slow path.
+
+The payoff is registry-shaped completion everywhere — captured live from a
+scaffolded demo repo at docs build time:
+
+```{raw} html
+:file: ../../_static/generated/termynal/complete-host-ids.html
+```
+
+More showcases live on the lifecycle pages: suite names
+({doc}`../lifecycles/test`), instruction names ({doc}`../lifecycles/run`),
+and per-class host verbs plus registry-backed option values
+({doc}`../lifecycles/host`).

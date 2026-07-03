@@ -23,3 +23,9 @@ them up for completion and inline validation
   classes bring their own spec models ({doc}`../subsystems/hosts`), a repo
   that extends otto sees its fields in the export; `--builtins-only`
   restricts to otto's own types.
+
+## `otto schema --help`
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-schema.html
+```

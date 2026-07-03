@@ -60,3 +60,9 @@ wrote: it still loads the lab — per-host toolchain resolution (`gcov`,
 fallback — but it creates **no output directory of its own** and runs **no
 gate**: reporting on yesterday's run must never be blocked by today's
 reservations ({doc}`index`).
+
+## `otto cov --help`
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-cov.html
+```

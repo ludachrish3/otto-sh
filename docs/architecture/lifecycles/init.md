@@ -37,3 +37,9 @@ The generated files are deliberately didactic: the sample suite is a
 auto-registration — {doc}`test`), alongside a plain pytest function runnable
 via `otto test --tests`, and the `hosts.json` template uses the sanctioned
 `_`-prefixed comment keys to explain itself in place.
+
+## `otto init --help`
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-init.html
+```

@@ -1,0 +1,23 @@
+/* otto's overrides for the vendored termynal.css (keep that file pristine).
+ *
+ * The captured CLI output is 80 columns of Rich box-drawing, so lines must
+ * keep their exact whitespace and the window must fit ~82ch of monospace. */
+
+[data-termynal] {
+    width: 100%;
+    font-size: 13px;
+    line-height: 1.45;
+    padding: 55px 25px 25px;
+    margin: 1em 0;
+    overflow-x: auto; /* narrow screens scroll inside the window, not the page */
+}
+
+[data-termynal]:after {
+    content: 'bash — otto';
+}
+
+[data-ty] {
+    display: block;
+    line-height: 1.45;
+    white-space: pre; /* CLI output alignment is whitespace; never collapse it */
+}

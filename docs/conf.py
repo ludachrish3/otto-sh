@@ -52,7 +52,12 @@ source_suffix = {
 
 html_theme = "sphinx_immaterial"
 html_static_path = ["_static"]
-html_css_files = ["custom.css"]
+# termynal renders the build-time-captured CLI blocks (help menus, tab
+# completion) as animated terminal windows. termynal.js/.css are vendored
+# verbatim (MIT, Ines Montani); otto's tweaks live in termynal-otto.css and
+# the lazy-start loader in termynal-init.js.
+html_css_files = ["custom.css", "termynal.css", "termynal-otto.css"]
+html_js_files = ["termynal.js", "termynal-init.js"]
 
 html_theme_options = {
     "palette": [
@@ -291,37 +296,46 @@ def _strip_inherited_pydantic_signature(
     return None
 
 
-# -- build-time GUI media ------------------------------------------------------
-# Screenshots and video clips of otto's GUIs are PRODUCTS OF THE BUILD, never
-# committed: scripts/capture_docs_media.py serves the real dashboard (via the
-# browser-e2e harness fixtures) seeded with deterministic dummy data, and
-# captures it with headless Chromium into docs/_static/generated/ (gitignored).
-# Hooked here — rather than in the Makefile / CI / RTD configs — so every
-# environment that builds HTML gets the same media with one wiring point.
+# -- build-time GUI media + terminal blocks ------------------------------------
+# Screenshots, video clips, and termynal terminal blocks are PRODUCTS OF THE
+# BUILD, never committed: scripts/capture_docs_media.py serves the real
+# dashboard (via the browser-e2e harness fixtures) seeded with deterministic
+# dummy data and captures it with headless Chromium; capture_docs_termynal.py
+# scaffolds a demo repo with `otto init` and captures real --help output and
+# tab-completion candidates. Both write into docs/_static/generated/
+# (gitignored). Hooked here — rather than in the Makefile / CI / RTD configs —
+# so every environment gets the same artifacts with one wiring point.
 # Chromium is a hard requirement of the dev environment (`make browsers`);
 # OTTO_DOCS_MEDIA=placeholder is the documented emergency escape hatch.
+#
+# The termynal capture runs for EVERY builder: its snippets are pulled in via
+# `{raw} html :file:`, which docutils reads at parse time, so the doctest
+# builder needs them on disk too. The browser capture is html-only — no other
+# builder touches the image/video files.
 
 
-def _generate_docs_media(app):
-    if app.builder.name != "html":
-        return
+def _run_capture_script(name: str) -> None:
     import subprocess
 
     from sphinx.util import logging as sphinx_logging
 
     logger = sphinx_logging.getLogger(__name__)
-    script = pathlib.Path(__file__).parent.parent / "scripts" / "capture_docs_media.py"
-    # Capture output: the harness prints benign asyncio teardown noise on
-    # stderr; keep successful builds quiet and failures fully loud.
+    script = pathlib.Path(__file__).parent.parent / "scripts" / name
+    # Capture output: the dashboard harness prints benign asyncio teardown
+    # noise on stderr; keep successful builds quiet and failures fully loud.
     proc = subprocess.run(  # noqa: S603 — fixed interpreter + repo-local script, no shell
         [sys.executable, str(script)], capture_output=True, text=True, check=False
     )
     if proc.stdout.strip():
         logger.info(proc.stdout.strip())
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"docs media capture failed with exit code {proc.returncode}:\n{proc.stderr}"
-        )
+        raise RuntimeError(f"{name} failed with exit code {proc.returncode}:\n{proc.stderr}")
+
+
+def _generate_docs_media(app):
+    _run_capture_script("capture_docs_termynal.py")
+    if app.builder.name == "html":
+        _run_capture_script("capture_docs_media.py")
 
 
 def setup(app):

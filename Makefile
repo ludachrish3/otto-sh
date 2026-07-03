@@ -182,8 +182,9 @@ hyperfine:
 browsers: ## (Setup) Install the Playwright Chromium binary used by the dashboard e2e tests and the docs media pipeline
 	uv run playwright install chromium
 
-docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots + clips) in docs/_static/generated/
+docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
 	uv run python scripts/capture_docs_media.py --mode force
+	uv run python scripts/capture_docs_termynal.py --mode force
 
 profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snapshots + denylist) + hyperfine wall-clock
 	uv run python scripts/import_budget.py --check --hyperfine

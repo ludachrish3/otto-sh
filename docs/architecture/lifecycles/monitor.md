@@ -78,3 +78,9 @@ without touching any host.
 **Gating.** `otto monitor` gates itself per branch rather than in the
 preamble: live collection runs the reservation gate; `--file` replay reads a
 local file and is gate-exempt by design ({doc}`index`).
+
+## `otto monitor --help`
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-monitor.html
+```

@@ -32,14 +32,44 @@ third-party fallback — printed as-is, exit `0`. Command output itself
 streams live during execution, so a successful `run` verb prints nothing
 extra at the end.
 
+## Completion, scoped like the verbs
+
+Tab completion mirrors the synthesis model at every position. Host ids come
+from the completion cache's snapshot (falling back to a live lab scan on a
+cold cache — completion never runs user code,
+{doc}`../subsystems/registries`); note the built-in `local` host in the
+candidates:
+
+```{raw} html
+:file: ../../_static/generated/termynal/complete-host-ids.html
+```
+
+Once a host id is typed, the verb candidates are *that host's class menu* —
+the same definedness scoping that decides what is dispatchable:
+
+```{raw} html
+:file: ../../_static/generated/termynal/complete-host-verbs.html
+```
+
+And option values backed by registries complete from the registry — here the
+term backends, so a project-registered backend completes exactly like a
+built-in:
+
+```{raw} html
+:file: ../../_static/generated/termynal/complete-term-backends.html
+```
+
 ## What is unique about `host`
 
 - The full preamble applies, but *read-only* verbs (`ls`, `exists`,
   `read-file`, …) are registered with `output_dir=False` — inspecting a host
   should not litter `--xdir` with empty run directories.
-- `host_id` completion is served from the completion cache's host-id snapshot,
-  falling back to a live lab scan on a cold cache — completion never runs
-  user code ({doc}`../subsystems/registries`).
 - Per-invocation `--term` / `--transfer` / `--hop` overrides apply option
   overlays to the one resolved host before the verb runs
   ({doc}`../../guide/host/connections`).
+
+## `otto host --help`
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-host.html
+```

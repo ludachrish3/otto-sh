@@ -30,3 +30,17 @@ body is just the user's coroutine on the invocation's event loop. The
 instruction's returned {class}`~otto.result.Result` (if any) becomes the
 process exit code ({doc}`../utilities/results`); artifacts belong in
 `get_context().output_dir` ({doc}`../../guide/run`).
+
+Because instructions live in the `INSTRUCTIONS` registry, tab completion of
+their names comes for free — these candidates are the demo repo's registered
+instructions, resolved by the real completion machinery:
+
+```{raw} html
+:file: ../../_static/generated/termynal/complete-instructions.html
+```
+
+## `otto run --help`
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-run.html
+```

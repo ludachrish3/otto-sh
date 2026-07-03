@@ -45,7 +45,11 @@ phase 2 — {doc}`index`):
    name from a *different* file is a loud collision.
 
 `otto test <SuiteName>` therefore gets registry-backed completion and
-`--list-suites` for free, like every other registry ({doc}`../subsystems/registries`).
+`--list-suites` for free, like every other registry ({doc}`../subsystems/registries`):
+
+```{raw} html
+:file: ../../_static/generated/termynal/complete-suites.html
+```
 
 ## Handing off to pytest
 
@@ -101,3 +105,9 @@ flash, collect — with one body and an exit code from their returned
 methods, pytest semantics, stability statistics, per-test artifacts. Shared
 repo-wide options classes keep the two consistent
 ({doc}`../../guide/options`).
+
+## `otto test --help`
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-test.html
+```

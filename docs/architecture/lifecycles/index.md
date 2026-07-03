@@ -30,6 +30,15 @@ digraph lifecycle {
 }
 ```
 
+The front door looks like this — and every terminal block in these pages is
+**captured from the real CLI at build time** (a scaffolded demo repo, real
+`--help` output, real completion candidates), so what you see here is what
+the current code does:
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-otto.html
+```
+
 ## Bootstrap: two phases, contained failures
 
 {func}`otto.bootstrap.bootstrap` replaces what used to be import-time side

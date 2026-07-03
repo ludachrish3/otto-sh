@@ -30,3 +30,9 @@ Backends are a registry like everything else (`json`, `none` built in;
 custom schedulers register by name — {doc}`../subsystems/registries`), and
 {func}`otto.testing.assert_reservation_backend_conforms` verifies a custom
 one against the contract.
+
+## `otto reservation --help`
+
+```{raw} html
+:file: ../../_static/generated/termynal/help-reservation.html
+```
