@@ -136,6 +136,66 @@ def test_branch_reachability_applied(repo: Path) -> None:
     assert never_reached.hits.for_tier("manual") == 0
 
 
+def _commit_edit(repo: Path, text: str) -> None:
+    (repo / "f.c").write_text(text)
+    subprocess.run(
+        ["git", "commit", "-aqm", "edit"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        env={
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@x",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@x",
+            "PATH": "/usr/bin:/bin",
+        },
+    )
+
+
+def test_blank_captured_at_is_not_aging_and_warns(repo: Path, caplog) -> None:
+    """A blank/damaged captured_at with a max_age configured must not crash
+    ``_is_aging``'s strptime — the capture is treated as not-aging and a
+    warning names it."""
+    cap = _capture(repo, captured_at="")
+    store = CoverageStore(tier_order=["manual"])
+    with caplog.at_level("WARNING"):
+        apply_manual_capture(store, cap, repo, max_age_days=180)
+    line1 = _find(store, repo, 1)
+    assert line1.hits.for_tier("manual") == 2  # loaded fine
+    assert line1.state is None  # not aging
+    assert any("captured_at" in rec.message for rec in caplog.records)
+
+
+def test_later_capture_clears_stale_from_earlier(repo: Path) -> None:
+    """Covered wins: when a later (post-edit-pin) capture validly credits a
+    line an earlier capture left flagged stale, the stale state is cleared."""
+    cap1 = _capture(repo)  # pinned at HEAD1, covers line 3
+
+    # Edit line 3 and commit → HEAD2. cap1's line 3 now anchors to a changed
+    # line → stale.
+    _commit_edit(repo, "int a;\nint b;\nint CHANGED;\n")
+
+    cap2 = Capture(
+        tier="manual",
+        pin=head_commit(repo),  # HEAD2, matching the edited source
+        captured_at="2026-07-02T00:00:00Z",
+        ticket="T-2",
+        labs=["lab1"],
+        board="b",
+        files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={3: 5})},
+    )
+
+    store = CoverageStore(tier_order=["manual"])
+    apply_manual_capture(store, cap1, repo, max_age_days=None)
+    assert _find(store, repo, 3).state == "stale"  # earlier capture went stale
+
+    apply_manual_capture(store, cap2, repo, max_age_days=None)
+    line3 = _find(store, repo, 3)
+    assert line3.state is None  # covered wins over the earlier stale marker
+    assert line3.hits.for_tier("manual") == 5
+
+
 def test_unverifiable_all_stale(repo: Path) -> None:
     cap = _capture(repo)
     bogus = cap.model_copy(update={"pin": "f" * 40})

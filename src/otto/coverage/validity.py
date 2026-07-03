@@ -75,6 +75,39 @@ def load_capture_into_store(store: CoverageStore, capture: Capture, repo_root: P
         _insert_lines(file_rec, capture.tier, fc.lines, fc.branches)
 
 
+def load_dirty_capture_into_store(store: CoverageStore, capture: Capture, repo_root: Path) -> None:
+    """Fold a pin==HEAD e2e capture in, remapping HEAD → dirty working tree.
+
+    An e2e capture carries no anchor chain: its coordinates are the exact
+    ``pin`` commit's line numbers. The caller has verified ``capture.pin``
+    equals HEAD, but when the working tree is *dirty* the renderer reads the
+    edited on-disk source, so a verbatim insert (:func:`load_capture_into_store`)
+    would misalign every hit past a local edit. Remap each file's line/branch
+    numbers from HEAD (OLD) to the working tree (NEW) using the same ``-U0``
+    worktree diff + ``LineRemapper`` the manual anchor chain uses; hits
+    on locally-modified lines have no NEW counterpart and are dropped.
+    """
+    store.register_tier(capture.tier)
+    for rel_str, fc in capture.files.items():
+        relpath = Path(rel_str)
+        remapper = LineRemapper(parse_u0_hunks(gitio.diff_worktree_file_u0(repo_root, relpath)))
+
+        mapped_lines: dict[int, int] = {}
+        for lineno, count in fc.lines.items():
+            new_line = remapper.old_to_new(lineno)
+            if new_line is not None:
+                mapped_lines[new_line] = mapped_lines.get(new_line, 0) + count
+
+        mapped_branches: dict[int, list[tuple[int, int, int | None]]] = {}
+        for lineno, triples in fc.branches.items():
+            new_line = remapper.old_to_new(lineno)
+            if new_line is not None:
+                mapped_branches.setdefault(new_line, []).extend(triples)
+
+        file_rec = store.get_or_create_file(repo_root / relpath)
+        _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches)
+
+
 def _anchor_diff(fc: CaptureFileCov, repo_root: Path, relpath: Path, pin: str) -> str | None:
     """-U0 diff pin→current for one file; '' = unchanged; None = unverifiable."""
     current = repo_root / relpath
@@ -92,10 +125,22 @@ def _anchor_diff(fc: CaptureFileCov, repo_root: Path, relpath: Path, pin: str) -
         return gitio.diff_no_index_u0(Path(tmp.name), current)
 
 
-def _is_aging(captured_at: str, max_age_days: int | None, today: datetime | None) -> bool:
+def _is_aging(capture: Capture, max_age_days: int | None, today: datetime | None) -> bool:
     if max_age_days is None:
         return False
-    captured = datetime.strptime(captured_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    try:
+        captured = datetime.strptime(capture.captured_at, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        logger.warning(
+            "Manual capture %s (board %s) has a blank/unparseable captured_at %r; "
+            "treating as not aging.",
+            capture.ticket,
+            capture.board,
+            capture.captured_at,
+        )
+        return False
     now = today or datetime.now(timezone.utc)
     return (now - captured).days > max_age_days
 
@@ -109,7 +154,7 @@ def apply_manual_capture(
 ) -> None:
     """Fold one manual capture into *store* with validity states."""
     store.register_tier(capture.tier)
-    aging = _is_aging(capture.captured_at, max_age_days, today)
+    aging = _is_aging(capture, max_age_days, today)
 
     for rel_str, fc in capture.files.items():
         relpath = Path(rel_str)
@@ -152,6 +197,16 @@ def apply_manual_capture(
                 mapped_branches.setdefault(new_line, []).extend(triples)
 
         _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches)
+
+        # Covered wins over a stale marker from an earlier capture: when this
+        # (later) capture validly credits a line that a previous capture left
+        # flagged "stale", clear the stale state so the freshly-covered line
+        # no longer reads as unverifiable.
+        for new_line, count in mapped_lines.items():
+            if count > 0:
+                lr = file_rec.lines.get(new_line)
+                if lr is not None and lr.state == "stale":
+                    lr.state = None
 
         if aging:
             for new_line, count in mapped_lines.items():

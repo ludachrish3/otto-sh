@@ -262,6 +262,51 @@ class TestE2ePinGuard:
         assert frec.lines[2].hits.for_tier("system") == 7
 
 
+class TestE2eDirtyTreeRemap:
+    """A dirty working tree at report time: pin==HEAD still holds (nothing was
+    committed), but the renderer reads the edited on-disk source, so every e2e
+    hit past a local edit must be remapped HEAD -> worktree, and hits on
+    locally-modified lines dropped.
+    """
+
+    @pytest.mark.asyncio
+    async def test_dirty_tree_remaps_pin_to_worktree_and_drops_edited_lines(self, tmp_path, caplog):
+        repo = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
+        head = head_commit(repo)
+
+        # Capture in HEAD (pin) coordinates: all three lines covered.
+        cap = Capture(
+            tier="system",
+            pin=head,
+            files={"f.c": CaptureFileCov(lines={1: 5, 2: 3, 3: 9})},
+        )
+        cov = tmp_path / "out" / "cov"
+        cap.save(cov / "board1" / "capture.json")
+
+        # Dirty the worktree WITHOUT committing (HEAD, and thus the pin guard,
+        # is unaffected): insert a line at the top (shifts every line down one)
+        # and edit line 3 ("int c;" -> "int CHANGED;").
+        (repo / "f.c").write_text("int NEW;\nint a;\nint b;\nint CHANGED;\n")
+
+        with caplog.at_level("WARNING"):
+            store = await run_coverage_report(
+                [cov],
+                tmp_path / "report",
+                repo_root=repo,
+                tier_configs=load_tiers(_PIN_GUARD_COV),
+            )
+
+        (frec,) = [f for f in store.files() if f.path.name == "f.c"]
+        # old line 1 -> new line 2; old line 2 -> new line 3 (the insert shift).
+        assert frec.lines[2].hits.for_tier("system") == 5
+        assert frec.lines[3].hits.for_tier("system") == 3
+        # old line 3 was locally edited -> no worktree counterpart -> dropped.
+        assert 4 not in frec.lines
+        assert frec.lines[2].hits.for_tier("system") == 5  # not misaligned to line 1
+        # The dirty-tree remap warning fired (names the omission of edited lines).
+        assert any("uncommitted changes" in rec.message for rec in caplog.records)
+
+
 class TestUnitHarvest:
     """kind==unit tiers with harvest_dirs are captured+loaded via the merger."""
 

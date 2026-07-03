@@ -329,7 +329,7 @@ class CoverageReporter:
 
             wants_system = self._wants_system_tier()
 
-            if wants_system and not self.gcda_dirs:
+            if wants_system and not self.gcda_dirs and not self.capture_paths:
                 logger.warning(
                     "No .gcda directories provided but 'system' tier requested; "
                     "system tier will be empty."
@@ -431,15 +431,30 @@ class CoverageReporter:
         only valid against a matching tree.  A pin that differs from HEAD is
         a hard error (the product was rebuilt or the tree moved after the
         capture was taken).
+
+        The pin guard proves ``capture.pin == HEAD`` but says nothing about
+        the *working tree*: a dirty tree at report time means the renderer
+        reads edited on-disk source while the capture holds HEAD coordinates,
+        silently misaligning every hit past a local edit. When the tree is
+        dirty each capture is remapped HEAD → working tree (hits on
+        locally-modified lines dropped) so the annotation lines up.
         """
         if not self.capture_paths or self.repo_root is None:
             return
-        from .capture.gitio import head_commit
+        from .capture import gitio
         from .capture.model import Capture
         from .errors import CoverageDataMismatchError
-        from .validity import load_capture_into_store
+        from .validity import load_capture_into_store, load_dirty_capture_into_store
 
-        head = head_commit(self.repo_root)
+        head = gitio.head_commit(self.repo_root)
+        dirty = gitio.is_dirty(self.repo_root)
+        if dirty:
+            logger.warning(
+                "SUT repo %s has uncommitted changes; e2e capture hits are being "
+                "remapped from HEAD to the working tree, and hits on locally-modified "
+                "lines are omitted.",
+                self.repo_root,
+            )
         for cap_path in self.capture_paths:
             capture = Capture.load(cap_path)
             if capture.pin != head:
@@ -448,7 +463,10 @@ class CoverageReporter:
                     f"but the tree is at {head[:12]}; re-run the test or "
                     f"report from the matching commit"
                 )
-            load_capture_into_store(store, capture, self.repo_root)
+            if dirty:
+                load_dirty_capture_into_store(store, capture, self.repo_root)
+            else:
+                load_capture_into_store(store, capture, self.repo_root)
 
     async def _harvest_unit_tiers(
         self,
