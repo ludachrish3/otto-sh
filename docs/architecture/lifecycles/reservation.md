@@ -2,7 +2,7 @@
 
 `otto reservation` has no pipeline; its value is *transparency*. The
 reservation **gate** runs invisibly inside other commands' preambles
-({doc}`index`); this pillar exposes the same machinery so a user can ask
+({doc}`index`); this command exposes the same machinery so a user can ask
 "who does otto think I am?" and "would my run pass the gate?" without
 starting a run.
 

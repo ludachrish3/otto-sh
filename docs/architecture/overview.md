@@ -1,4 +1,4 @@
-# The big picture
+# Overview
 
 otto is an asyncio test orchestrator: a CLI and a Python library that drive
 *labs* of remote hosts — Unix machines over SSH/Telnet, embedded targets over
@@ -6,14 +6,14 @@ serial consoles, Docker containers — to deploy products, run commands and test
 suites, and collect metrics and coverage. One process, one event loop; hosts
 are fanned out with asyncio, never threads.
 
-## The nine pillars
+## The nine first-party commands
 
 Everything a user does goes through one of nine first-party commands. Each is
 an ordinary entry in the CLI command registry — registered through the same
 public API a third-party command uses — and each has a lifecycle page
 explaining what it does once the shared machinery hands over control:
 
-| Pillar | What it is |
+| Command | What it is |
 | --- | --- |
 | {doc}`otto run <lifecycles/run>` | Procedures: registered instructions with lab access |
 | {doc}`otto test <lifecycles/test>` | Verdicts: suites and pytest-native selection runs |
@@ -25,8 +25,8 @@ explaining what it does once the shared machinery hands over control:
 | {doc}`otto schema <lifecycles/schema>` | The data contracts, exported for editors |
 | {doc}`otto init <lifecycles/init>` | Scaffold a new repo; doctor an existing one |
 
-The pillars stand on shared machinery, and the machinery stands on a small
-set of foundations:
+These first-party commands stand on shared machinery, and the machinery
+stands on a small set of foundations:
 
 ```{graphviz}
 digraph bigpicture {
@@ -34,8 +34,8 @@ digraph bigpicture {
     node [shape=box];
     compound=true;
 
-    subgraph cluster_pillars {
-        label="the nine pillars (otto <command>)";
+    subgraph cluster_commands {
+        label="the nine first-party commands (otto <command>)";
         run; test; host; monitor; cov; docker; reservation; schema; init;
     }
 
@@ -61,14 +61,14 @@ digraph bigpicture {
         logging [label="three-sink logging"];
     }
 
-    run -> cli [ltail=cluster_pillars, lhead=cluster_shared];
+    run -> cli [ltail=cluster_commands, lhead=cluster_shared];
     cli -> hosts [ltail=cluster_shared, lhead=cluster_subsystems];
     hosts -> registry [ltail=cluster_subsystems, lhead=cluster_foundation];
 }
 ```
 
 Read {doc}`lifecycles/index` for the shared path every invocation walks —
-bootstrap, dispatch, preamble, teardown — before its pillar takes over.
+bootstrap, dispatch, preamble, teardown — before its command takes over.
 
 ## Layer map
 
@@ -130,6 +130,6 @@ implementations, conformance-verified in otto's own suite).
   registries reject duplicate names loudly and attribute every entry to the
   module that registered it; see {doc}`subsystems/registries`.
 
-The lifecycle pages cover each pillar in depth, the subsystem pages cover the
-machinery, and {doc}`principles` collects the recurring design rules the
-codebase holds itself to.
+The lifecycle pages cover each first-party command in depth, the subsystem
+pages cover the machinery, and {doc}`principles` collects the recurring
+design rules the codebase holds itself to.

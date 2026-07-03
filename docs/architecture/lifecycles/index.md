@@ -1,9 +1,10 @@
 # The command lifecycle
 
-Every `otto` invocation walks the same path before a pillar takes over:
-compose the process, dispatch one command, prepare the invocation, run it,
-tear it down deterministically. This page covers that shared path; the pages
-below cover what each pillar does once it has control.
+Every `otto` invocation walks the same path before a first-party command
+takes over: compose the process, dispatch one command, prepare the
+invocation, run it, tear it down deterministically. This page covers that
+shared path; the pages below cover what each command does once it has
+control.
 
 ```{graphviz}
 digraph lifecycle {
@@ -16,7 +17,7 @@ digraph lifecycle {
     registration [label="bootstrap phase 2: registration\ninit modules + test files\n(per-file failures contained)"];
     dispatch [label="dispatch\nresolve only the target command;\nevery other command stays a help stub"];
     preamble [label="invoke preamble\nload + merge labs → OttoContext →\noutput dir + log sinks → reservation gate\n(lab_free commands skip lab and gate)"];
-    body [label="command body\n(pillar-specific — pages below)"];
+    body [label="command body\n(command-specific — pages below)"];
     teardown [label="teardown\nHostScope closes remaining hosts;\nexit code derived from the Result"];
 
     entry -> completion [label=" completion request"];
@@ -60,10 +61,10 @@ For CLI commands, the invoke preamble (`otto/cli/invoke.py`) runs just before
 the leaf callback: load and merge labs (`--lab` may repeat), build and
 install the {class}`~otto.context.OttoContext`, create the per-command output
 directory and wire the log sinks ({doc}`../utilities/logging`), and run the
-reservation gate. Each pillar declares what it needs on its
+reservation gate. Each first-party command declares what it needs on its
 {class}`~otto.cli.registry.CommandSpec` ({doc}`../subsystems/registries`):
 
-| Pillar | Needs a lab | Output dir | Reservation gate |
+| Command | Needs a lab | Output dir | Reservation gate |
 | --- | --- | --- | --- |
 | {doc}`run <run>` | yes | yes | yes |
 | {doc}`test <test>` | yes | yes | yes |
@@ -149,7 +150,7 @@ gate; that is a CLI-preamble concern, and scripts that want it call
 `check_reservations` explicitly. See {doc}`../../guide/library-usage` for the
 user-facing walkthrough.
 
-## The pillars, one by one
+## First Party Commands
 
 ```{toctree}
 :maxdepth: 1

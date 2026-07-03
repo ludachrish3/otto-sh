@@ -22,7 +22,7 @@ functions; the class is the shared engine behind them.
 
 | Registry | Kind | Register via | Built-ins |
 | --- | --- | --- | --- |
-| `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the nine pillars — see {doc}`../overview` |
+| `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the nine first-party commands — see {doc}`../overview` |
 | `INSTRUCTIONS` | `otto run` subcommand | {func}`~otto.cli.run.instruction` | — |
 | `SUITES` | `otto test` subcommand | {func}`~otto.suite.register.register_suite_class` (auto-called by {class}`~otto.suite.suite.OttoSuite`'s `__init_subclass__`) | — |
 | `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded` |

@@ -8,10 +8,9 @@ each feature; this section explains the moving parts behind them.
 
 The section reads like a story, in order:
 
-1. **The big picture** — what otto is and its pillars: the first-party
-   commands.
+1. **Overview** — what otto is and its nine first-party commands.
 2. **Command lifecycles** — the shared path every invocation walks (entry,
-   bootstrap, dispatch, preamble, teardown), then what each pillar does
+   bootstrap, dispatch, preamble, teardown), then what each command does
    differently once it takes over.
 3. **Subsystems** — the machinery underneath: hosts, registries, the data
    boundary, and the extension seams.
@@ -20,7 +19,7 @@ The section reads like a story, in order:
    coherent, and where each is enforced.
 
 .. toctree::
-   :caption: The big picture
+   :caption: Overview
    :maxdepth: 1
 
    overview
