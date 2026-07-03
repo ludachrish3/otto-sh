@@ -158,3 +158,9 @@ class TestDeleteEndpoint:
         finally:
             server.stop()
             await task
+
+
+def test_force_stop_before_serve_is_noop() -> None:
+    server = MonitorServer(MetricCollector(hosts=[]))
+    server.force_stop()  # must not raise: nothing started yet
+    assert server.started is False

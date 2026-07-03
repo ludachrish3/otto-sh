@@ -226,6 +226,7 @@ class MonitorServer:
         self._port = port
         self._app = _build_app(collector)
         self._server: uvicorn.Server | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def url(self) -> str:
@@ -262,6 +263,7 @@ class MonitorServer:
         server = uvicorn.Server(config)
 
         # start the server in a background task
+        self._loop = asyncio.get_running_loop()
         task = asyncio.create_task(server.serve())
 
         # wait until uvicorn signals it's started
@@ -287,3 +289,27 @@ class MonitorServer:
         """Signal the server to shut down (thread-safe)."""
         if self._server:
             self._server.should_exit = True
+
+    def force_stop(self) -> None:
+        """Shut down without waiting for open connections to drain (thread-safe).
+
+        SSE dashboards hold /api/stream open indefinitely, so a graceful
+        shutdown can wait forever. This sets uvicorn's ``force_exit`` (skip the
+        drain) and aborts open connection transports on the server's own loop
+        (h11 never closes a mid-stream transport, so clients would otherwise
+        not see the connection die). Used by test harnesses and Ctrl+C paths;
+        prefer ``stop()`` when clients should finish cleanly.
+        """
+        server, loop = self._server, self._loop
+        if server is not None and loop is not None:
+            server.force_exit = True
+            state = server.server_state
+
+            def _abort_connections() -> None:
+                for conn in list(state.connections):
+                    transport = getattr(conn, "transport", None)
+                    if transport is not None:
+                        transport.abort()
+
+            loop.call_soon_threadsafe(_abort_connections)
+        self.stop()

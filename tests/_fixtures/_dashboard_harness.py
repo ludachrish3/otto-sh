@@ -66,11 +66,24 @@ class DashboardHarness(Generic[C]):
             # some arbitrary *later* point -- raising "Event loop is closed"
             # that pytest's unraisableexception hook then attributes to
             # whatever unrelated test happens to be running at GC time.
-            pending = asyncio.all_tasks(loop=self._loop)
+            pending = list(asyncio.all_tasks(loop=self._loop))
             if pending:
                 for task in pending:
                     task.cancel()
-                self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                results = self._loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+                for task, result in zip(pending, results, strict=True):
+                    if isinstance(result, BaseException) and not isinstance(
+                        result, asyncio.CancelledError
+                    ):
+                        self._loop.call_exception_handler(
+                            {
+                                "message": "dashboard harness: task failed during teardown",
+                                "exception": result,
+                                "task": task,
+                            }
+                        )
             self._loop.close()
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:
@@ -90,34 +103,14 @@ class DashboardHarness(Generic[C]):
     def stop(self) -> None:
         """Signal shutdown and join the server thread (idempotent).
 
-        Sets uvicorn's force_exit so shutdown does not wait for open SSE
-        connections to drain — dashboard pages (and streaming test clients)
-        hold /api/stream open indefinitely, which would otherwise stall
-        graceful shutdown until keepalive timeouts fire.
-
-        force_exit only skips *waiting* for those connections; it does not
-        close them at the OS level (h11's shutdown path merely flips
-        keep_alive for a streaming response that never completes). A live
-        EventSource on the browser side would then never observe an error —
-        so before signaling shutdown, forcibly abort every open transport on
-        the server's loop. transport.abort() closes with an RST, which makes
-        the browser's EventSource.onerror fire promptly.
+        Delegates to ``MonitorServer.force_stop()``, which skips waiting for
+        open SSE connections to drain and aborts their transports so a live
+        EventSource on the browser side sees the connection die promptly
+        (see that method's docstring for the full h11/force_exit rationale).
         """
         if self._thread is None:
             return
-        uv_server = self.server._server
-        if uv_server is not None and self._loop is not None:
-            state = uv_server.server_state
-
-            def _abort_connections() -> None:
-                for conn in list(state.connections):
-                    transport = getattr(conn, "transport", None)
-                    if transport is not None:
-                        transport.abort()
-
-            self._loop.call_soon_threadsafe(_abort_connections)
-            uv_server.force_exit = True
-        self.server.stop()
+        self.server.force_stop()
         self._thread.join(timeout=10)
         if self._thread.is_alive():
             raise RuntimeError("dashboard harness thread did not exit within 10s")
