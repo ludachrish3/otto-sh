@@ -11,7 +11,7 @@ _HOSTS = [
     {"ip": "10.0.0.2", "element": "s", "labs": ["tech2", "shared"]},
 ]
 
-_TEST_FILE = '''\
+_TEST_FILE = """\
 from otto.suite import OttoSuite
 
 
@@ -33,7 +33,7 @@ class TestThing(OttoSuite):
 
     def helper(self):
         pass
-'''
+"""
 
 
 def _repo(*, labs: list[Path] | None = None, tests: list[Path] | None = None):
