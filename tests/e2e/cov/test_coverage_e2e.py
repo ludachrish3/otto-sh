@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -619,38 +620,76 @@ class TestSuiteRunnerIntegration:
             )
 
 
+@pytest.fixture(scope="module")
+def polluted_run(tmp_path_factory):
+    """One collect-then-rebuild cycle shared by the polluted-tree tests.
+
+    Runs ``otto test --cov`` against the current build, then forces a full
+    product rebuild so the tree's fresh .gcno stamps no longer match the
+    fetched .gcda. (The next suite run redeploys this build, so nothing is
+    left inconsistent behind.) Returns ``(xdir, log_dir)``.
+    """
+    tmp_dir = tmp_path_factory.mktemp("polluted_tree")
+    xdir = tmp_dir / "xdir"
+    xdir.mkdir()
+
+    _run_otto(
+        ["-l", "veggies", "test", "--cov", "TestCoverageProduct"],
+        xdir=xdir,
+        timeout=600,
+    )
+    log_dir = _find_test_log_dir(xdir)
+
+    subprocess.run(
+        ["make", "-C", str(PRODUCT_DIR), "clean", "all"],
+        check=True,
+        capture_output=True,
+    )
+    return xdir, log_dir
+
+
 @pytest.mark.integration
 @pytest.mark.xdist_group("coverage_e2e")
 class TestPollutedBuildTree:
     """Rebuilding the product between the test run and the report — the
-    classic polluted-tree error mode — must produce a helpful error naming
-    the likely cause, never a traceback and never silent zero coverage.
+    classic polluted-tree hazard.
 
     Coverage data (.gcda) embeds a build stamp that must match the build
-    tree's .gcno notes files; a (partial) rebuild changes the stamps, so
-    reporting old data against the new tree cannot work.
+    tree's .gcno notes files, so raw counters cannot be re-merged after a
+    rebuild. Run dirs produced by this branch are immune: their per-board
+    ``capture.json`` pins the merge result at collection time, so the
+    report never touches the polluted tree. Pre-capture run dirs (older
+    otto versions) still re-merge and must fail with a helpful error
+    naming the likely cause — never a traceback, never silent zeros.
     """
 
-    def test_report_after_rebuild_fails_helpfully(self, tmp_path: Path) -> None:
-        xdir = tmp_path / "xdir"
-        xdir.mkdir()
+    def test_report_after_rebuild_succeeds_from_captures(
+        self, polluted_run: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        xdir, log_dir = polluted_run
+        report_dir = tmp_path / "report"
 
-        # Stage 1 — collect real coverage against the current build.
-        _run_otto(
-            ["-l", "veggies", "test", "--cov", "TestCoverageProduct"],
+        result = _run_otto(
+            ["-l", "veggies", "cov", "report", str(log_dir), "--report", str(report_dir)],
             xdir=xdir,
-            timeout=600,
+            timeout=120,
         )
-        log_dir = _find_test_log_dir(xdir)
 
-        # Pollute: force a full rebuild, giving the tree fresh .gcno stamps
-        # that no longer match the fetched .gcda. (The next suite run
-        # redeploys this build, so nothing is left inconsistent behind.)
-        subprocess.run(
-            ["make", "-C", str(PRODUCT_DIR), "clean", "all"],
-            check=True,
-            capture_output=True,
-        )
+        assert (report_dir / "index.html").is_file()
+        assert "Traceback" not in result.stdout + result.stderr
+
+    def test_report_after_rebuild_fails_helpfully_without_captures(
+        self, polluted_run: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        xdir, log_dir = polluted_run
+
+        # Emulate a pre-capture run dir (an older otto's output): same
+        # fetched .gcda, no capture.json — the back-compat gcda-merge path.
+        # Work on a copy so the capture-bearing sibling test stays intact.
+        legacy_dir = tmp_path / log_dir.name
+        shutil.copytree(log_dir, legacy_dir)
+        for capture in legacy_dir.glob("cov/*/capture.json"):
+            capture.unlink()
 
         result = subprocess.run(
             [
@@ -659,7 +698,7 @@ class TestPollutedBuildTree:
                 "veggies",
                 "cov",
                 "report",
-                str(log_dir),
+                str(legacy_dir),
                 "--report",
                 str(tmp_path / "report"),
             ],
