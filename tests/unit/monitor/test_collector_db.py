@@ -169,6 +169,38 @@ class TestInstanceLock:
         assert historical.get_series() == {}
         await collector_a.close_db()
 
+    @pytest.mark.asyncio
+    async def test_open_failure_after_lock_releases_the_lock(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failure between lock-acquire and connect must not leak the flock."""
+        from otto.monitor import db as db_mod
+
+        # Save the original connect before patching
+        real_connect = db_mod.aiosqlite.connect
+        call_count = {"n": 0}
+
+        async def _selective_boom(path: str) -> None:
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("connect failed")
+            # Second call and beyond: use the real connect
+            return await real_connect(path)
+
+        monkeypatch.setattr(db_mod.aiosqlite, "connect", _selective_boom)
+        db_path = str(tmp_path / "m.db")
+        failing = db_mod.MetricDB(db_path)
+        with pytest.raises(RuntimeError, match="connect failed"):
+            await failing.open()
+        # After a failure during open(), the lock_fd must be cleaned up
+        # so the caller (or a retry) can acquire the lock on the same path.
+        assert failing._lock_fd is None
+
+        # The lock must be free: a fresh open on the same path succeeds.
+        db = db_mod.MetricDB(db_path)
+        await db.open()
+        await db.close()
+
 
 # ── Metric persistence ────────────────────────────────────────────────────────
 

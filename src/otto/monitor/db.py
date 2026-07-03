@@ -61,33 +61,42 @@ class MetricDB:
                 "Use a different --db path, or stop the other instance."
             ) from err
 
-        net_fstype = network_fs_type(self._path)
-        journal_mode = "DELETE" if net_fstype else "WAL"
-        if net_fstype:
-            logger.debug(
-                "Monitor DB '%s' is on a network filesystem (%s); using "
-                "journal_mode=DELETE instead of WAL (WAL is unsupported over "
-                "network filesystems).",
-                self._path,
-                net_fstype,
-            )
-            logger.debug(
-                "Monitor DB lock guard on '%s' is same-host only on network "
-                "filesystems; for multi-machine setups sharing one DB, place it "
-                "on local disk.",
-                self._path,
-            )
+        try:
+            net_fstype = network_fs_type(self._path)
+            journal_mode = "DELETE" if net_fstype else "WAL"
+            if net_fstype:
+                logger.debug(
+                    "Monitor DB '%s' is on a network filesystem (%s); using "
+                    "journal_mode=DELETE instead of WAL (WAL is unsupported over "
+                    "network filesystems).",
+                    self._path,
+                    net_fstype,
+                )
+                logger.debug(
+                    "Monitor DB lock guard on '%s' is same-host only on network "
+                    "filesystems; for multi-machine setups sharing one DB, place it "
+                    "on local disk.",
+                    self._path,
+                )
 
-        conn = await aiosqlite.connect(self._path)
-        await conn.execute(f"PRAGMA journal_mode={journal_mode}")
-        await conn.execute("PRAGMA busy_timeout=5000")
-        await conn.executescript(_SCHEMA)
-        # Migrate: add end_ts column if the events table predates span support
-        col_names = {row[1] async for row in await conn.execute("PRAGMA table_info(events)")}
-        if "end_ts" not in col_names:
-            await conn.execute("ALTER TABLE events ADD COLUMN end_ts TEXT")
-        await conn.commit()
-        self._conn = conn
+            conn = await aiosqlite.connect(self._path)
+            await conn.execute(f"PRAGMA journal_mode={journal_mode}")
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.executescript(_SCHEMA)
+            # Migrate: add end_ts column if the events table predates span support
+            col_names = {row[1] async for row in await conn.execute("PRAGMA table_info(events)")}
+            if "end_ts" not in col_names:
+                await conn.execute("ALTER TABLE events ADD COLUMN end_ts TEXT")
+            await conn.commit()
+            self._conn = conn
+        except BaseException:
+            # A failure after the lock was acquired must not leak the fd —
+            # the caller discards this half-open instance, so nothing else
+            # can release it.
+            fcntl.flock(self._lock_fd, fcntl.LOCK_UN)
+            os.close(self._lock_fd)
+            self._lock_fd = None
+            raise
 
     async def close(self) -> None:
         """Close the persistent DB connection and release the file lock."""
