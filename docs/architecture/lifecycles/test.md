@@ -87,6 +87,22 @@ This is the deliberate second door into the same pipeline: plain pytest
 functions (no `OttoSuite` at all) are first-class here, which is what the
 {doc}`init <init>` scaffold demonstrates.
 
+`--tests` tab-completes, from a **static source scan** of `def test_*` /
+`Test*` methods — bare functions and suite methods alike, and never running
+your test code at tab time:
+
+```{raw} html
+:file: ../../_static/generated/termynal/complete-test-names.html
+```
+
+The honest boundary: a source scan can't see what only exists after pytest
+collection — parametrized-only ids and dynamically generated tests
+(`pytest_generate_tests`, conftest fixtures) aren't offered. When you need
+the fully-expanded list, `otto test --list-tests` runs a real collection
+pass and prints it. This is the standing trade-off in otto's completion: it
+buys "never runs user code at tab time" by completing what's *statically or
+cache-visible*, not what a live collection would enumerate.
+
 ## Non-fatal assertions
 
 `self.expect(...)` records a failed expectation — with the captured source

@@ -41,6 +41,19 @@ other option listed above.  Subcommand-specific options (like `--firmware`
 for a suite, or `--interval` for `monitor`) go **after** the subcommand.
 ```
 
+## Shell completion
+
+After `otto --install-completion`, tab completion covers the dynamic,
+otto-specific values a static shell script couldn't know: suite and
+instruction names, host ids and their per-class verbs, transfer/term
+backends, reservation usernames, and — comma-separated lists included —
+`--lab` names and `--tests` names.  It is served from a per-repo cache so
+it never runs your init modules or test code at tab time; `--tests`
+completion in particular is a static source scan, so parametrized-only or
+dynamically-generated test ids need `otto test --list-tests` (see
+{doc}`test`).  `--clear-autocomplete-cache` drops the cache if it ever goes
+stale.
+
 ## Output directories
 
 Most commands create a per-invocation output directory under `--xdir`

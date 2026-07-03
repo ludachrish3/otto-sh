@@ -55,6 +55,8 @@ COMPLETIONS = {
     "term-backends": "otto host example-device --term ",
     "instructions": "otto run ",
     "suites": "otto test ",
+    "lab-names": "otto --lab ",
+    "test-names": "otto test --tests ",
 }
 
 _PLACEHOLDER_LINE = "(placeholder — build once with Chromium/CLI available for real output)"

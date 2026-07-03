@@ -147,6 +147,18 @@ otto test --tests test_login -m slow             # narrow a name selection by ma
   running nothing.
 - `-m EXPRESSION` alone (no `--tests`, no suite name) runs the marker
   selection the same way — one pytest session per repo that has a match.
+
+### Tab-completing `--tests`
+
+`--tests` tab-completes test names, but with a deliberate, honest limit.
+The candidates are discovered by a **static source scan** — the `def test_*`
+functions and `Test*` class methods otto can see without importing your code
+— so completion never runs a test at tab time. That covers every
+statically-defined name (bare functions and suite methods alike), but it
+**cannot** see names that only exist after pytest collection:
+parametrized-only ids and tests generated dynamically (`pytest_generate_tests`,
+conftest fixtures) won't be offered. When you need the exact, fully-expanded
+list, `otto test --list-tests` runs a real collection pass and prints it.
 - Multi-repo selection runs write one JUnit file per repo
   (`junit_<repo>.xml`) instead of the single-suite `junit.xml`. An explicit
   `--results PATH` fans out the same way: `PATH`'s stem gets `_<repo>`

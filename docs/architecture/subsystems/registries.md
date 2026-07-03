@@ -102,7 +102,15 @@ scaffolded demo repo at docs build time:
 :file: ../../_static/generated/termynal/complete-host-ids.html
 ```
 
-More showcases live on the lifecycle pages: suite names
+More showcases live on the lifecycle pages: suite names and `--tests`
 ({doc}`../lifecycles/test`), instruction names ({doc}`../lifecycles/run`),
-and per-class host verbs plus registry-backed option values
-({doc}`../lifecycles/host`).
+per-class host verbs plus registry-backed option values
+({doc}`../lifecycles/host`), and `--lab` ({doc}`../lifecycles/index`).
+
+The consistent rule behind all of them: a candidate source must be knowable
+**without running user code at tab time**. Registry names come from the
+cache the slow path already wrote; host ids and lab names are read from
+`hosts.json` data; `--tests` names come from a static `ast` scan of the test
+sources. Anything that would need live collection or an import (a
+parametrized-only test id) is deliberately out of scope — `otto test
+--list-tests` is the tool that pays that cost on demand.

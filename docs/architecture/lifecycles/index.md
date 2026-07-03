@@ -85,6 +85,14 @@ reservation gate. Each first-party command declares what it needs on its
 | {doc}`schema <schema>` | no (`lab_free`) | no | no |
 | {doc}`init <init>` | no (`lab_free`) | no | no |
 
+`--lab` itself tab-completes — the lab names are tags on hosts in the
+`hosts.json` files, read data-only (no host construction, no user code), and
+the option is comma-separated so each segment completes in turn:
+
+```{raw} html
+:file: ../../_static/generated/termynal/complete-lab-names.html
+```
+
 ## OttoContext: the per-invocation runtime
 
 {class}`~otto.context.OttoContext` is a plain dataclass holding exactly what

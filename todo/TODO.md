@@ -24,7 +24,7 @@
 - Add a `--list-markers` option to the test subcommand
 - Make --show-hosts display a Rich.Tree of hosts within an NE. Group by NE in panels and order by slot number.
 - ✅ Terminal examples use `termynal/termynal.py` within typer. It can be integrated into sphinx docs directly in the markdown files. See <https://claude.ai/share/51ce70f6-c618-4499-898b-fad78d68123e> for more.
-  — Done (build-time pipeline, `scripts/capture_docs_termynal.py`): every command page shows its real `--help`; run/test/host/registries pages show real tab completion. Follow-up idea it surfaced: `--tests` and `--lab` have no completion sources today.
+  — Done (build-time pipeline, `scripts/capture_docs_termynal.py`): every command page shows its real `--help`; run/test/host/registries pages show real tab completion. ✅ Follow-up done: `--lab` and `--tests` now tab-complete (`--lab` from hosts.json lab tags; `--tests` from a static `ast` scan — parametrized-only ids still need `--list-tests`, documented).
 - Graphical representation of a lab's hosts.
   - Plan available in the topology_plan.md file
 - otto cov report --report should be changed to --dir and be a dir, just like the --cov-dir option
