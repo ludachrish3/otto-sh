@@ -62,9 +62,9 @@ async def _inject_point(
     key = f"{host}/{label}"
     from collections import deque
 
-    if key not in collector._series:
-        collector._series[key] = deque()
-    collector._series[key].append(MetricPoint(ts=ts, value=value, meta=None))
+    if key not in collector._store.series:
+        collector._store.series[key] = deque()
+    collector._store.series[key].append(MetricPoint(ts=ts, value=value, meta=None))
     if collector._db:
         await collector._db.write_point(ts, host, label, value)
 

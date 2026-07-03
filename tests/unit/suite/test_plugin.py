@@ -390,10 +390,10 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
     real_collector = MetricCollector(targets=[])
 
     async def fake_run(*_a, **_kw):
-        # Mimic _process_host_results: append to _series on each tick.
+        # Mimic _process_host_results: append to the store's series on each tick.
         while True:
             await asyncio.sleep(0.01)
-            real_collector._series.setdefault("host1/cpu", deque()).append(
+            real_collector._store.series.setdefault("host1/cpu", deque()).append(
                 MetricPoint(ts=datetime.now(tz=timezone.utc), value=42.0, meta=None)
             )
 

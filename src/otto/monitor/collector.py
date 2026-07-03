@@ -31,6 +31,7 @@ from .db import MetricDB
 from .events import MonitorEvent
 from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser
 from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
+from .store import MetricStore
 
 if TYPE_CHECKING:
     from ..host.remote_host import RemoteHost
@@ -152,11 +153,8 @@ class MetricCollector:
         # Series are created lazily in _process_host_results() as data arrives,
         # so multi-series parsers (which produce labels not known until parse() runs)
         # are handled naturally without upfront enumeration.
-        self._series: dict[str, deque[MetricPoint]] = {}
-        self._chart_map: dict[str, str] = {}  # series_label → chart_key
-
-        self._events: list[MonitorEvent] = []
-        self._next_event_id: int = 1
+        # In-memory series/chart-map/event bookkeeping — see MetricStore.
+        self._store = MetricStore()
 
         # SSE fan-out to subscriber queues
         self._broadcast = Broadcaster()
@@ -345,11 +343,9 @@ class MetricCollector:
         chart/unit/title presentation regardless of where the point came from.
         """
         key = f"{host_name}/{label}"
-        if key not in self._series:
-            self._series[key] = deque()
         # Hot path: model_construct skips validation (the values are otto's own).
-        self._series[key].append(MetricPoint.model_construct(ts=ts, value=dp.value, meta=dp.meta))
-        self._chart_map[label] = view.chart
+        point = MetricPoint.model_construct(ts=ts, value=dp.value, meta=dp.meta)
+        self._store.append_point(key, point, label=label, chart=view.chart)
         if self._db:
             await self._db.write_point(ts, host_name, label, dp.value)
         msg: dict[str, Any] = {
@@ -415,22 +411,18 @@ class MetricCollector:
             end_timestamp=end_timestamp,
         )
         rowid = await self._db.write_event(event) if self._db else 0
-        event.id = rowid or self._next_event_id
-        self._next_event_id += 1
-        self._events.append(event)
+        event = self._store.add_event(event, rowid)
         self._publish({"type": "event", **event.to_dict()})
         return event
 
     async def delete_event(self, event_id: int) -> bool:
         """Remove an event by id. Returns True if found and removed, False otherwise."""
-        for i, ev in enumerate(self._events):
-            if ev.id == event_id:
-                self._events.pop(i)
-                if self._db:
-                    await self._db.delete_event(event_id)
-                self._publish({"type": "event_deleted", "id": event_id})
-                return True
-        return False
+        if not self._store.remove_event(event_id):
+            return False
+        if self._db:
+            await self._db.delete_event(event_id)
+        self._publish({"type": "event_deleted", "id": event_id})
+        return True
 
     async def update_event(
         self,
@@ -441,17 +433,17 @@ class MetricCollector:
         end_timestamp: datetime | None = None,
     ) -> "MonitorEvent | None":
         """Update an existing event's label, color, dash, and end_timestamp. Returns the updated event or None."""  # noqa: E501 — long one-liner docstring
-        for ev in self._events:
-            if ev.id == event_id:
-                ev.label = label
-                ev.color = color
-                ev.dash = dash
-                ev.end_timestamp = end_timestamp
-                if self._db:
-                    await self._db.update_event(ev)
-                self._publish({"type": "event_updated", **ev.to_dict()})
-                return ev
-        return None
+        ev = self._store.find_event(event_id)
+        if ev is None:
+            return None
+        ev.label = label
+        ev.color = color
+        ev.dash = dash
+        ev.end_timestamp = end_timestamp
+        if self._db:
+            await self._db.update_event(ev)
+        self._publish({"type": "event_updated", **ev.to_dict()})
+        return ev
 
     # ------------------------------------------------------------------
     # Data access
@@ -462,7 +454,7 @@ class MetricCollector:
 
         Format: ``{"hostname/label": [MetricPoint(ts, value, meta), ...]}``
         """
-        return {key: list(pts) for key, pts in self._series.items()}
+        return self._store.snapshot_series()
 
     def get_chart_map(self) -> dict[str, str]:
         """Return a mapping of series label → chart group key.
@@ -472,16 +464,16 @@ class MetricCollector:
         on each parser.  The map is built lazily as data arrives in
         ``_process_host_results()``.
         """
-        return dict(self._chart_map)
+        return self._store.snapshot_chart_map()
 
     def get_events(self) -> list[MonitorEvent]:
         """Return all recorded events in chronological order."""
-        return list(self._events)
+        return self._store.events()
 
     def get_meta(self) -> dict[str, Any]:
         """Return metadata for the dashboard (host names, metric labels/units, tabs)."""
         # Derive host names from series keys (all series, including proc)
-        hosts = sorted({key.split("/")[0] for key in self._series if "/" in key})
+        hosts = self._store.hosts_from_series()
         # Fall back to the list of live hosts if no data has arrived yet
         if not hosts and self._hosts:
             hosts = [h.name for h in self._hosts]
@@ -563,15 +555,15 @@ class MetricCollector:
             except ValidationError:
                 continue
             key = f"{rec.host}/{rec.label}" if rec.host else rec.label
-            if key not in collector._series:
-                collector._series[key] = deque()
-            collector._series[key].append(
+            if key not in collector._store.series:
+                collector._store.series[key] = deque()
+            collector._store.series[key].append(
                 MetricPoint.model_validate(
                     {"ts": rec.timestamp, "value": rec.value, "meta": rec.meta}
                 )
             )
         for label, chart in data.get("chart_map", {}).items():
-            collector._chart_map[label] = chart
+            collector._store.chart_map[label] = chart
         for ev in data.get("events", []):
             try:
                 rec = EventRecord.model_validate(ev)
@@ -583,11 +575,13 @@ class MetricCollector:
                 source=rec.source,
                 color=rec.color,
                 dash=rec.dash,
-                id=rec.id if rec.id is not None else collector._next_event_id,
                 end_timestamp=rec.end_timestamp,
             )
-            collector._next_event_id = max(collector._next_event_id, event.id) + 1
-            collector._events.append(event)
+            if rec.id is not None:
+                event.id = rec.id
+                collector._store.note_imported_event(event)
+            else:
+                collector._store.add_event(event, rowid=0)
         return collector
 
     @classmethod
@@ -614,9 +608,9 @@ class MetricCollector:
                 except ValidationError:
                     continue
                 key = f"{rec.host}/{rec.label}" if rec.host else rec.label
-                if key not in collector._series:
-                    collector._series[key] = deque()
-                collector._series[key].append(
+                if key not in collector._store.series:
+                    collector._store.series[key] = deque()
+                collector._store.series[key].append(
                     MetricPoint.model_validate(
                         {"ts": rec.timestamp, "value": rec.value, "meta": None}
                     )
@@ -633,19 +627,19 @@ class MetricCollector:
                     rec = EventRecord.model_validate(dict(row))
                 except ValidationError:
                     continue
-                collector._events.append(
-                    MonitorEvent(
-                        timestamp=rec.timestamp,
-                        label=rec.label,
-                        source=rec.source,
-                        color=rec.color,
-                        dash=rec.dash,
-                        id=rec.id if rec.id is not None else collector._next_event_id,
-                        end_timestamp=rec.end_timestamp,
-                    )
+                event = MonitorEvent(
+                    timestamp=rec.timestamp,
+                    label=rec.label,
+                    source=rec.source,
+                    color=rec.color,
+                    dash=rec.dash,
+                    end_timestamp=rec.end_timestamp,
                 )
-            if collector._events:
-                collector._next_event_id = max(e.id for e in collector._events) + 1
+                if rec.id is not None:
+                    event.id = rec.id
+                    collector._store.note_imported_event(event)
+                else:
+                    collector._store.add_event(event, rowid=0)
         return collector
 
     # ------------------------------------------------------------------
@@ -660,7 +654,7 @@ class MetricCollector:
     def to_json(self) -> str:
         """Serialize all metrics and events to a JSON string compatible with ``--file``."""
         metrics: list[dict[str, Any]] = []
-        for key, pts in self._series.items():
+        for key, pts in self._store.series.items():
             host = key.split("/")[0] if "/" in key else ""
             label = key.split("/", 1)[1] if "/" in key else key
             metrics.extend(
@@ -672,8 +666,8 @@ class MetricCollector:
         return json.dumps(
             {
                 "metrics": metrics,
-                "events": [e.to_dict() for e in self._events],
-                "chart_map": dict(self._chart_map),
+                "events": [e.to_dict() for e in self._store.events()],
+                "chart_map": dict(self._store.chart_map),
             },
             indent=2,
         )

@@ -62,11 +62,11 @@ async def _make_live_collector() -> MetricCollector:
         label: str, chart: str, values: list[tuple[datetime, float]], meta: object = None
     ) -> None:
         key = f"{HOST}/{label}"
-        if key not in collector._series:
-            collector._series[key] = deque()
+        if key not in collector._store.series:
+            collector._store.series[key] = deque()
         for ts, val in values:
-            collector._series[key].append(MetricPoint(ts=ts, value=val, meta=meta))
-        collector._chart_map[label] = chart
+            collector._store.series[key].append(MetricPoint(ts=ts, value=val, meta=meta))
+        collector._store.chart_map[label] = chart
 
     # Single-series: overall CPU usage
     _add("Overall CPU", "CPU", [(T0, 10.5), (T1, 12.3), (T2, 9.8)])

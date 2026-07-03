@@ -3,7 +3,7 @@
 Two seams:
 
 * :class:`MetricPoint` — the in-memory series element (replaces the old
-  ``(ts, value, meta)`` 3-tuple in ``MetricCollector._series``). It is an
+  ``(ts, value, meta)`` 3-tuple in ``MetricStore.series``). It is an
   :class:`~otto.models.base.OttoModel` (``extra='forbid'``) because otto is the
   only thing that builds it: the live append path uses ``model_construct`` (no
   validation, hot loop) and the import path uses ``model_validate``.
