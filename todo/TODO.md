@@ -3,6 +3,7 @@
 ## General
 
 - Should `otto init` automatically place the JSON schemas in the correct `~/.vscode` location? That simplifies otto's command tree and makes the schema aspect just a flag that's on by default when running `otto init`. If the schemas are already there, validation could be done and prompt the user if they'd like to replace them.
+- Monitor GUI displays UTC times instead of local times
 - If manual coverage reports track the line numbers at the time of test (even after correcting for local change drift), would further changes that shift line numbers in the file be resilient to older manual test runs? Like for instance if line 5 was manually covered and then multiple commits later added code above it (but never touching that manually tested line of code), how would we continue to correlate the manual coverage in later reports? Especially if the manual coverage is committed to the repo and always used as an input for future coverage reports?
 - Maybe each coverage run can take an annotation (manual tests already do), which can be treated like a context in python coverage reports. If a line is covered by multiple tiers and runs of coverage, expanding the line with a dropdown error on the righthand side of the page will highlight all the contexts with the appropriate tier color and the context name.
 - Use sonnet to clean up type annotations throughout the repo. I noticed that the host.py file has quoted strings for many types. Annotations should only be strings if they're self-referential to support Python 3.10.
@@ -27,8 +28,6 @@
 - Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name
 - Add a `--list-markers` option to the test subcommand
 - Make --show-hosts display a Rich.Tree of hosts within an NE. Group by NE in panels and order by slot number.
-- ✅ Terminal examples use `termynal/termynal.py` within typer. It can be integrated into sphinx docs directly in the markdown files. See <https://claude.ai/share/51ce70f6-c618-4499-898b-fad78d68123e> for more.
-  — Done (build-time pipeline, `scripts/capture_docs_termynal.py`): every command page shows its real `--help`; run/test/host/registries pages show real tab completion. ✅ Follow-up done: `--lab` and `--tests` now tab-complete (`--lab` from hosts.json lab tags; `--tests` from a static `ast` scan — parametrized-only ids still need `--list-tests`, documented).
 - Graphical representation of a lab's hosts.
   - Plan available in the topology_plan.md file
 - otto cov report --report should be changed to --dir and be a dir, just like the --cov-dir option
@@ -64,8 +63,6 @@
 - Bound the SSE subscriber queues (`asyncio.Queue(maxsize=N)` + drop-oldest) so a slow dashboard client can't grow memory unbounded. Natural home: `broadcast.py` in the Phase 1 backend decomposition. (Carried from the retired expert-feedback reassessment.)
 - Batch metric DB writes per collection tick instead of per-point `INSERT`+`commit`. Natural home: `db.py` in the Phase 1 backend decomposition. (Carried from the retired expert-feedback reassessment.)
 - Add an import button and a clear data button so that users can launch a server once and keep viewing different data sets.
-- Anomoly detection
-  - See <https://claude.ai/chat/2f1b6165-1325-482c-b430-f788ea80d691>
 - Default database should be `otto.db` in the xdir/`monitor` directory.
 - Plots do not dynamically resize when the window changes size
 
@@ -97,10 +94,3 @@
 
 - Possibly need a new database table for NetEm connections.
   - Defined as connecting 2 NEs together (the NE's would have lab names and NE IDs associated with them)
-
-## Test
-
-## Publishing
-
-- Ask Claude what kinds of things should be in place for it to be a fully fleshed out open source github repo. I'd like to use an MIT License.
-- How to publish to PyPI: <https://www.youtube.com/watch?v=NMQwzI9hprg>
