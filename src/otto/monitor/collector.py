@@ -359,6 +359,15 @@ class MetricCollector:
                 await asyncio.sleep(bucket_secs)
                 await self._collect_bucket(entries, bucket_secs)
 
+        # Known dormant risk (no shipped parser sets .interval yet, so this
+        # gather has exactly one bucket today): if a bucket loop ever escapes
+        # with a processing exception (parser.parse or a DB write raising —
+        # collection errors are contained per-tick inside _collect_bucket),
+        # gather() re-raises without cancelling sibling bucket loops, and the
+        # CLI's collection_task.cancel() is a no-op on the already-failed
+        # task — orphaned buckets would keep polling until process exit.
+        # First real multi-bucket activation should harden this (cancel
+        # siblings on first exception).
         await asyncio.gather(*(_bucket_loop(s, e) for s, e in buckets.items()))
 
     async def _record_point(
