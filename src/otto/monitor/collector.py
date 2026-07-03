@@ -637,6 +637,10 @@ class MetricCollector:
                 )
                 if rec.id is not None:
                     event.id = rec.id
+                    # Per-event counter advance: with ids out of ts-order the
+                    # counter can end HIGHER than the legacy batch max()+1 — never
+                    # lower, so no collision; deliberately monotone (pinned by
+                    # test_from_sqlite_out_of_order_ids_keep_counter_collision_free).
                     collector._store.note_imported_event(event)
                 else:
                     collector._store.add_event(event, rowid=0)

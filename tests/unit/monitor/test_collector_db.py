@@ -460,6 +460,50 @@ class TestFromSqlite:
         # Without host, the key is just 'label' (no prefix)
         assert any("CPU %" in k for k in series)
 
+    @pytest.mark.asyncio
+    async def test_from_sqlite_out_of_order_ids_keep_counter_collision_free(
+        self, tmp_path: Path
+    ) -> None:
+        """Ids out of ts-order: the next live event id stays above every import."""
+        # Two events whose sqlite ids are NOT in ts order: id=5 has the
+        # EARLIER ts, id=3 the later one, so ORDER BY ts yields 5 then 3.
+        ts0 = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
+        ts1 = datetime(2024, 3, 1, 10, 1, 0, tzinfo=timezone.utc).isoformat()
+        db_path = str(tmp_path / "data.db")
+        with closing(sqlite3.connect(db_path)) as conn, conn:
+            conn.executescript("""
+                CREATE TABLE metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ts TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
+                    label TEXT NOT NULL, value REAL NOT NULL
+                );
+                CREATE TABLE events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
+                    end_ts TEXT, label TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'manual',
+                    color TEXT NOT NULL DEFAULT '#888888',
+                    dash TEXT NOT NULL DEFAULT 'dash'
+                );
+            """)
+            # Insert with explicit ids to create out-of-order scenario
+            conn.execute(
+                "INSERT INTO events (id, ts, end_ts, label, source, color, dash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (5, ts0, None, "early-event", "manual", "#888888", "dash"),
+            )
+            conn.execute(
+                "INSERT INTO events (id, ts, end_ts, label, source, color, dash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (3, ts1, None, "late-event", "manual", "#888888", "dash"),
+            )
+        collector = await MetricCollector.from_sqlite(db_path)
+        imported_ids = {e.id for e in collector.get_events()}
+        assert imported_ids == {5, 3}
+
+        new_event = await collector.add_event(label="after-import")
+        assert new_event.id not in imported_ids
+        assert new_event.id > max(imported_ids)
+
 
 # ── JSON round-trip ───────────────────────────────────────────────────────────
 
