@@ -26,7 +26,20 @@ class TierConfig:
     max_age_days: int | None = None
 
 
-def _tier_from_entry(name: str, entry: dict[str, Any]) -> TierConfig:
+def _expand_harvest_dir(raw: str, sut_dir: Path | None) -> Path:
+    """Expand ``${sut_dir}`` in a harvest-dir entry, mirroring ``Repo._expand_string``.
+
+    Runtime reads the raw ``[coverage.tiers]`` dict (not the ``${sut_dir}``-
+    expanded ``lab_settings`` view), so the substitution the rest of the
+    settings file enjoys is applied here on read. With no *sut_dir* the string
+    passes through unchanged.
+    """
+    if sut_dir is not None:
+        raw = raw.replace("${sut_dir}", f"{sut_dir}")
+    return Path(raw)
+
+
+def _tier_from_entry(name: str, entry: dict[str, Any], sut_dir: Path | None) -> TierConfig:
     kind = entry["kind"]
     max_age = entry.get("max_age")
     return TierConfig(
@@ -34,16 +47,18 @@ def _tier_from_entry(name: str, entry: dict[str, Any]) -> TierConfig:
         kind=kind,
         precedence=int(entry["precedence"]),
         color=entry.get("color") or DEFAULT_TIER_COLORS[kind],
-        harvest_dirs=[Path(p) for p in entry.get("harvest_dirs") or []],
+        harvest_dirs=[_expand_harvest_dir(p, sut_dir) for p in entry.get("harvest_dirs") or []],
         max_age_days=int(max_age[:-1]) if max_age else None,
     )
 
 
-def load_tiers(cov_config: dict[str, Any]) -> list[TierConfig]:
+def load_tiers(cov_config: dict[str, Any], sut_dir: Path | None = None) -> list[TierConfig]:
     """Ordered tier configs (highest precedence first).
 
     An empty/missing ``tiers`` table yields the implicit ``system`` tier
-    only — identical to pre-tier behavior.
+    only — identical to pre-tier behavior. When *sut_dir* is given, each
+    tier's ``harvest_dirs`` has ``${sut_dir}`` expanded (mirroring the rest
+    of the repo's settings expansion).
     """
     raw = cov_config.get("tiers") or {}
     if not raw:
@@ -55,7 +70,7 @@ def load_tiers(cov_config: dict[str, Any]) -> list[TierConfig]:
                 color=DEFAULT_TIER_COLORS["e2e"],
             )
         ]
-    tiers = [_tier_from_entry(name, entry) for name, entry in raw.items()]
+    tiers = [_tier_from_entry(name, entry, sut_dir) for name, entry in raw.items()]
     return sorted(tiers, key=lambda t: t.precedence)
 
 

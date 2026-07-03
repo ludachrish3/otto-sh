@@ -1,5 +1,7 @@
 """Runtime tier config parsing from the settings dict."""
 
+from pathlib import Path
+
 import pytest
 
 from otto.coverage.tiers import load_tiers, resolve_get_tier
@@ -50,3 +52,26 @@ def test_resolve_ambiguous_e2e_raises() -> None:
 def test_resolve_unknown_name_raises() -> None:
     with pytest.raises(ValueError, match="nope"):
         resolve_get_tier(load_tiers({}), "nope")
+
+
+def test_harvest_dirs_expand_sut_dir() -> None:
+    """``${sut_dir}`` in a harvest dir is expanded on read (runtime reads the
+    raw dict, so the substitution mirrors Repo._expand_string)."""
+    cov = {
+        "tiers": {
+            "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["${sut_dir}/build"]},
+        }
+    }
+    (unit,) = load_tiers(cov, Path("/home/me/myproduct"))
+    assert unit.harvest_dirs == [Path("/home/me/myproduct/build")]
+
+
+def test_harvest_dirs_pass_through_without_sut_dir() -> None:
+    """No sut_dir given → the raw string is used verbatim (legacy behavior)."""
+    cov = {
+        "tiers": {
+            "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["${sut_dir}/build"]},
+        }
+    }
+    (unit,) = load_tiers(cov)
+    assert unit.harvest_dirs == [Path("${sut_dir}/build")]
