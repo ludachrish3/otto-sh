@@ -290,8 +290,8 @@ coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage r
 # the main run's --cov-append, folding the browser-driven server/collector
 # lines (e.g. the dashboard HTML route, UI event round-trips) into the gated
 # report.
-dashboard: ## Run the browser e2e suite for the monitor dashboard (needs `make browsers` once). Writes coverage data for `coverage` to append. JUnit XML in reports/junit/dashboard/.
-	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard -m browser -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+dashboard: ## Run the browser e2e suites (monitor dashboard + coverage report; needs `make browsers` once). Writes coverage data for `coverage` to append. JUnit XML in reports/junit/dashboard/.
+	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m browser -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 
 # Task 11's WebKit lane. Design choice, in full:
 # pytest-playwright parametrizes the `browser_name` fixture from
