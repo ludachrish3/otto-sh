@@ -187,8 +187,8 @@ profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snaps
 build: ## (Build & Release) Build the project with uv
 	uv build
 
-coverage: dashboard ## Run the full suite (all tiers, pinned Python) and enforce the coverage gate (excludes heavy `stability`; browser (Playwright) suite runs first, as its own process, via the `dashboard` prerequisite). Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage/ and reports/junit/dashboard/.
-	$(TIMEOUT_CMD) uv run pytest -m "not stability and not browser" --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
+coverage: dashboard ## Run the full suite (all tiers, pinned Python) and enforce the coverage gate (excludes heavy `stability`; browser (Playwright) suite runs first, as its own process, via the `dashboard` prerequisite — its coverage data is folded in via --cov-append). Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage/ and reports/junit/dashboard/.
+	$(TIMEOUT_CMD) uv run pytest -m "not stability and not browser" --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability" $(call junitxml,coverage-unit)
@@ -205,8 +205,16 @@ coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a covera
 coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
 	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
 
-dashboard: ## Run the browser e2e suite for the monitor dashboard (needs `make browsers` once). JUnit XML in reports/junit/dashboard/.
-	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard -m browser --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+# The dashboard lane runs -n 1 (all browser tests share one xdist_group anyway;
+# extra workers would sit idle and emit "No data was collected" coverage
+# warnings) and writes coverage DATA only: --cov-report= suppresses the report
+# so a standalone `make dashboard` never stomps reports/coverage/html. Running
+# first as `coverage`'s prerequisite, its fresh data file is then extended by
+# the main run's --cov-append, folding the browser-driven server/collector
+# lines (e.g. the dashboard HTML route, UI event round-trips) into the gated
+# report.
+dashboard: ## Run the browser e2e suite for the monitor dashboard (needs `make browsers` once). Writes coverage data for `coverage` to append. JUnit XML in reports/junit/dashboard/.
+	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard -m browser -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead

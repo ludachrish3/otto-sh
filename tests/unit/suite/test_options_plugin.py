@@ -44,7 +44,19 @@ class TestRequired(OttoSuite[_Required]):
 # configure. tests/unit/suite/test_plugin.py hits the same trap driving
 # pytest.main() directly and works around it with this same `-o` override;
 # mirrored here for the pytester-based inner runs.
-INNER_ARGS = ("-p", "no:cacheprovider", "-o", "asyncio_default_fixture_loop_scope=function")
+# `-p no:playwright`: pytest-playwright's session-wide soft-assertion hook
+# wraps every test call and rejects re-entry ("nested soft assertion scopes
+# are not supported"), so it must be disabled for in-process nested sessions —
+# same fix as test_otto_suite.py / test_plugin.py / the integration
+# passthrough test. These inner runs use no Playwright fixtures.
+INNER_ARGS = (
+    "-p",
+    "no:cacheprovider",
+    "-p",
+    "no:playwright",
+    "-o",
+    "asyncio_default_fixture_loop_scope=function",
+)
 
 
 @pytest.fixture(autouse=True)

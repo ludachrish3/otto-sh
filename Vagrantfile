@@ -142,6 +142,10 @@ Vagrant.configure("2") do |config|
             # the product; the coverage instance runs on the zephyr VM).
             # ruby provides `ruby -c Vagrantfile` for syntax-checking edits to
             # this file from inside the dev VM.
+            # The libatk/libx*/libgbm/libasound/libatspi block is headless
+            # Chromium's runtime for the Playwright dashboard e2e suite (the
+            # set `playwright install-deps chromium` reports missing on this
+            # box); the browser binary itself comes from `make browsers`.
             apt install -y  gcc                   \
                             gh                    \
                             lcov                  \
@@ -158,6 +162,15 @@ Vagrant.configure("2") do |config|
                             python3-dev           \
                             python3-pip           \
                             python3-venv          \
+                            libatk1.0-0t64        \
+                            libxcomposite1        \
+                            libxdamage1           \
+                            libxext6              \
+                            libxfixes3            \
+                            libxrandr2            \
+                            libgbm1               \
+                            libasound2t64         \
+                            libatspi2.0-0t64      \
 
             # Set MTU to 1350 on all ethernet interfaces to support mobile
             # connections that have a smaller MTU size

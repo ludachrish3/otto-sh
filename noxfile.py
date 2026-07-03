@@ -166,6 +166,10 @@ def dashboard(session: nox.Session) -> None:
         "tests/e2e/monitor/dashboard",
         "-m",
         "browser",
+        # CI-only lane: unlike `make dashboard` (which writes coverage data for
+        # `make coverage` to fold in via --cov-append), this job stands alone
+        # with nothing to combine into, so coverage stays off entirely.
+        "--no-cov",
         _junitxml(session, "dashboard"),
         *session.posargs,
     )
