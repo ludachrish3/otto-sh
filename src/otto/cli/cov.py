@@ -42,6 +42,40 @@ See the :doc:`/guide/coverage` and :doc:`/guide/host/index` documentation.
             --tier system \\
             --tier integration=i.info \\
             --tier manual=m.info
+
+``otto cov get`` fetches ``.gcda`` counters straight from the lab (mirroring
+``otto test --cov``'s collection step) and produces a pinned
+``capture.json`` per board under ``--output``. It is the single retrieval
+command for both automated (e2e-kind tier) and manual-session (manual-kind
+tier) capture production::
+
+    otto cov get --output ./cov_get --tier manual --ticket JIRA-123
+
+**Options**
+
+``--output PATH / -o PATH``
+    Where to write fetched coverage and per-board captures (default:
+    ``./cov_get``).
+
+``--tier NAME``
+    Coverage tier to stamp onto each capture. Defaults to the lab's sole
+    e2e-kind tier; ambiguous or unknown names list the configured tiers.
+
+``--ticket STR``
+    Ticket reference stamped onto each capture. Required when ``--tier``
+    resolves to a manual-kind tier.
+
+``--note STR``
+    Free-text note stamped onto each capture (manual-kind tiers only).
+
+``--tester-name STR`` / ``--tester-email STR``
+    Tester identity stamped onto each capture (manual-kind tiers only).
+    Default to ``getpass.getuser()`` and ``git config user.email``
+    respectively; an unset email is omitted rather than stamped empty.
+
+``--clean``
+    Zero the fetched Unix hosts' remote ``.gcda`` counters after a
+    successful retrieval — for use before starting a manual session.
 """
 
 import asyncio
@@ -201,3 +235,246 @@ def report(
         store.file_count(),
     )
     logger.info("Report: %s", report_dir / "index.html")
+
+
+# ---------------------------------------------------------------------------
+# get — single retrieval command (fetch + produce_captures)
+# ---------------------------------------------------------------------------
+
+
+class _GetError(Exception):
+    """Internal signal for a clean, single-line ``cov get`` failure.
+
+    Raised by :func:`_do_get` for every failure mode; the sync ``get``
+    command catches exactly this one type and prints ``str(e)`` without a
+    traceback, mirroring ``report``'s ``CoverageDataMismatchError`` handling.
+    """
+
+
+def _resolve_tester(name: str | None, email: str | None) -> dict[str, str]:
+    """Resolve tester identity for a manual capture (spec decision 15).
+
+    ``name`` defaults to :func:`getpass.getuser`; ``email`` defaults to
+    ``git config user.email`` and is omitted entirely (not stamped empty)
+    when unset. CLI-supplied values always win over both defaults.
+    """
+    import getpass
+    import subprocess
+
+    resolved_name = name or getpass.getuser()
+    resolved_email = email
+    if not resolved_email:
+        proc = subprocess.run(
+            ["git", "config", "user.email"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode == 0:
+            resolved_email = proc.stdout.strip()
+
+    tester: dict[str, str] = {"name": resolved_name}
+    if resolved_email:
+        tester["email"] = resolved_email
+    return tester
+
+
+async def _do_get(
+    output_dir: Path,
+    tier_name: str | None,
+    ticket: str | None,
+    note: str | None,
+    tester_name: str | None,
+    tester_email: str | None,
+    clean: bool,
+) -> list[Path]:
+    """Fetch coverage from the lab and produce per-board captures.
+
+    Mirrors :func:`otto.cli.test._run_coverage`'s fetch (Unix ``.gcda`` over
+    the network + embedded console dump) and metadata sidecar, then hands
+    the collected ``cov_dir`` to
+    :func:`~otto.coverage.capture.produce.produce_captures`. Manual-kind
+    tiers additionally copy each produced capture into the repo's committed
+    manual-capture store (``.otto/coverage/manual/``).
+
+    Every failure mode raises :class:`_GetError` with a single-line,
+    user-facing message; the sync ``get`` command is the only place that
+    turns that into ``typer.Exit(1)``.
+    """
+    import re
+
+    from ..configmodule import all_hosts, get_repos
+    from ..coverage.capture.gitio import GitUnavailableError
+    from ..coverage.capture.model import Capture
+    from ..coverage.capture.produce import produce_captures
+    from ..coverage.capture.store_dir import write_manual_capture
+    from ..coverage.errors import CoverageDataMismatchError
+    from ..coverage.fetcher.embedded import collect_embedded_coverage
+    from ..coverage.fetcher.remote import GcdaFetcher
+    from ..coverage.tiers import load_tiers, resolve_get_tier
+    from ..host import UnixHost
+    from .test import _get_cov_config, _get_cov_repo, _write_cov_metadata
+
+    repos = get_repos()
+    cov_config = _get_cov_config(repos)
+    cov_repo = _get_cov_repo(repos)
+    if not cov_config or cov_repo is None:
+        raise _GetError("No [coverage] section found in .otto/settings.toml")
+
+    tiers = load_tiers(cov_config)
+    try:
+        resolved_tier = resolve_get_tier(tiers, tier_name)
+    except ValueError as e:
+        raise _GetError(str(e)) from e
+
+    if resolved_tier.kind == "manual" and not ticket:
+        raise _GetError(f"tier {resolved_tier.name!r} is a manual-kind tier; requires --ticket")
+
+    cov_dir = output_dir / "cov"
+    host_dirs: dict[str, Path] = {}
+
+    # Same repo-declared selector _run_coverage uses to keep infrastructure
+    # hosts (e.g. an SSH hop) out of the coverage set.
+    hosts_pattern = cov_config.get("hosts")
+    cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
+
+    cov_hosts = list(all_hosts(pattern=cov_pattern))
+    unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
+    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
+
+    unix_dirs: dict[str, Path] = {}
+    fetcher: GcdaFetcher | None = None
+    if gcda_remote_dir and unix_hosts:
+        for host in unix_hosts:
+            host.rebuild_connections()
+        fetcher = GcdaFetcher(cov_dir)
+        unix_dirs = await fetcher.fetch_all(gcda_remote_dir)
+        host_dirs.update(unix_dirs)
+
+    embedded_dirs = await collect_embedded_coverage(cov_config, cov_dir, pattern=cov_pattern)
+    host_dirs.update(embedded_dirs)
+
+    if not host_dirs:
+        raise _GetError("No coverage data collected from any host")
+
+    await _write_cov_metadata(
+        repos=repos,
+        cov_config=cov_config,
+        unix_hosts=unix_hosts,
+        unix_dirs=unix_dirs,
+        cov_hosts=cov_hosts,
+        embedded_dirs=embedded_dirs,
+        cov_dir=cov_dir,
+    )
+
+    # Tester/ticket/note are only meaningful for a manual-kind tier — an
+    # automated e2e-kind pull has no human "tester" to attribute.
+    tester: dict[str, str] | None = None
+    produce_ticket: str | None = None
+    produce_note: str | None = None
+    if resolved_tier.kind == "manual":
+        tester = _resolve_tester(tester_name, tester_email)
+        produce_ticket = ticket
+        produce_note = note
+
+    try:
+        written = await produce_captures(
+            cov_dir,
+            tier=resolved_tier.name,
+            repo_root=cov_repo.sut_dir,
+            labs=[cov_repo.name],
+            tester=tester,
+            ticket=produce_ticket,
+            note=produce_note,
+        )
+    except GitUnavailableError as e:
+        raise _GetError(str(e)) from e
+    except CoverageDataMismatchError as e:
+        raise _GetError(str(e)) from e
+    except RuntimeError as e:
+        raise _GetError(f"Coverage merge failed: {e}") from e
+
+    if not written:
+        raise _GetError("No coverage data collected from any host")
+
+    if resolved_tier.kind == "manual":
+        for capture_path in written:
+            capture = Capture.load(capture_path)
+            write_manual_capture(capture, cov_repo.sut_dir)
+
+    if clean and fetcher is not None and unix_dirs:
+        await fetcher.clean_remote(gcda_remote_dir)
+
+    logger.info("Coverage captured: %d board(s) -> %s", len(written), cov_dir)
+    return written
+
+
+@cov_app.command()
+def get(
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Directory to write fetched coverage and per-board captures into.",
+        ),
+    ] = Path("./cov_get"),
+    tier: Annotated[
+        str | None,
+        typer.Option(
+            "--tier",
+            help="Coverage tier to stamp onto each capture. Defaults to the sole e2e-kind tier.",
+        ),
+    ] = None,
+    ticket: Annotated[
+        str | None,
+        typer.Option(
+            "--ticket",
+            help="Ticket reference to stamp onto each capture. Required for manual-kind tiers.",
+        ),
+    ] = None,
+    note: Annotated[
+        str | None,
+        typer.Option("--note", help="Free-text note to stamp onto each capture."),
+    ] = None,
+    tester_name: Annotated[
+        str | None,
+        typer.Option(
+            "--tester-name",
+            help="Tester name to stamp onto each capture. Defaults to the current user.",
+        ),
+    ] = None,
+    tester_email: Annotated[
+        str | None,
+        typer.Option(
+            "--tester-email",
+            help="Tester email to stamp onto each capture. Defaults to `git config user.email`.",
+        ),
+    ] = None,
+    clean: Annotated[
+        bool,
+        typer.Option(
+            "--clean",
+            help=(
+                "Zero the fetched hosts' remote .gcda counters after a successful "
+                "retrieval — for use before starting a manual session."
+            ),
+        ),
+    ] = False,
+) -> None:
+    """Fetch .gcda coverage from the lab and produce pinned per-board captures."""
+    try:
+        asyncio.run(
+            _do_get(
+                output_dir.resolve(),
+                tier,
+                ticket,
+                note,
+                tester_name,
+                tester_email,
+                clean,
+            )
+        )
+    except _GetError as e:
+        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        raise typer.Exit(1) from e
