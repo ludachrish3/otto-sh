@@ -66,6 +66,22 @@ os.environ["TERM"] = "dumb"
 for _var in ("FORCE_COLOR", "CLICOLOR_FORCE", "PY_COLORS", "CLICOLOR"):
     os.environ.pop(_var, None)
 
+# Hermetic otto env: ambient otto configuration must never leak into the
+# suite. A developer shell with OTTO_SUT_DIRS exported (e.g. pointing at
+# another checkout's tests/repo1) makes every ambient-env bootstrap() in a
+# CLI test register that repo's suites under foreign file paths, which later
+# collide with the real tests/repo1 imports in test_repo.py's bootstrap test
+# ("test suite ... is already registered", xdist worker-order dependent).
+# Strip everything OTTO_-prefixed at import time — this runs in the
+# controller and every xdist worker before any test code. Tests that need
+# otto env set their own values (monkeypatch / explicit subprocess env
+# dicts), which happens after this and is unaffected. Harness opt-ins
+# legitimately read from the ambient environment are exempt. Pinned by
+# tests/unit/test_env_hermeticity.py.
+_OTTO_AMBIENT_ALLOWED = {"OTTO_DETECT_ASYNCIO_LEAKS"}
+for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in _OTTO_AMBIENT_ALLOWED]:
+    os.environ.pop(_var, None)
+
 import asyncio
 import contextlib
 import sys

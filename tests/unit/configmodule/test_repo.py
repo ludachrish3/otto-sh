@@ -105,18 +105,21 @@ def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):
         return parked
 
     def _park_repo1_suites() -> dict:
-        # Suites re-registered by an in-process `pytest.main([suite_file])`
-        # run (run_suite's mechanism) carry pytest's own module name as origin
-        # (e.g. "test_device"), not the `_otto_suite_*` auto-scan name — and
-        # register_suite_class silently overwrites same-FILE re-registrations,
-        # so an origin-prefix park would miss them and the delta assertion
-        # would see no growth. Identify repo1 ownership by the entry's source
-        # file, which every origin flavor shares.
+        # Two origin flavors both mean "repo1's suite world" (mirrors
+        # test_import_and_register.py's clean_registry): suites re-registered
+        # by an in-process `pytest.main([suite_file])` run (run_suite's
+        # mechanism) carry pytest's own module name as origin (e.g.
+        # "test_device") but keep repo1's file, while a bootstrap() of ANY
+        # repo carries the `_otto_suite_*` auto-scan origin but may carry a
+        # foreign file (another checkout's repo1 — an entry a repo1-file-only
+        # park would miss, colliding with this test's own imports as
+        # "already registered"). Park on either signal.
         parked = {}
         for name in list(SUITES.names()):
             entry = SUITES.get(name)
-            if Path(entry.file).is_relative_to(repo1):
-                parked[name] = (entry, SUITES.origin(name))
+            origin = SUITES.origin(name)
+            if origin.startswith("_otto_suite_") or Path(entry.file).is_relative_to(repo1):
+                parked[name] = (entry, origin)
                 SUITES.unregister(name)
         return parked
 
