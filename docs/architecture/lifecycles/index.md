@@ -1,10 +1,33 @@
-# Composition root and context lifecycle
+# The command lifecycle
 
-Two modules own "how an otto process comes to life and how it dies":
-{mod}`otto.bootstrap` composes the process (what is registered), and
-{mod}`otto.context` composes the invocation (which lab, which flags, which
-hosts are open). Keeping them separate is deliberate — registration is
-process-wide and idempotent, while a context is per-invocation and disposable.
+Every `otto` invocation walks the same path before a pillar takes over:
+compose the process, dispatch one command, prepare the invocation, run it,
+tear it down deterministically. This page covers that shared path; the pages
+below cover what each pillar does once it has control.
+
+```{graphviz}
+digraph lifecycle {
+    rankdir=TB;
+    node [shape=box];
+
+    entry [label="entry() — console script"];
+    completion [label="completion fast path\ncache hit → zero user code", style=dashed];
+    discovery [label="bootstrap phase 1: discovery\nOTTO_* env + settings.toml\n(no user code runs)"];
+    registration [label="bootstrap phase 2: registration\ninit modules + test files\n(per-file failures contained)"];
+    dispatch [label="dispatch\nresolve only the target command;\nevery other command stays a help stub"];
+    preamble [label="invoke preamble\nload + merge labs → OttoContext →\noutput dir + log sinks → reservation gate\n(lab_free commands skip lab and gate)"];
+    body [label="command body\n(pillar-specific — pages below)"];
+    teardown [label="teardown\nHostScope closes remaining hosts;\nexit code derived from the Result"];
+
+    entry -> completion [label=" completion request"];
+    entry -> discovery;
+    discovery -> registration;
+    registration -> dispatch;
+    dispatch -> preamble;
+    preamble -> body;
+    body -> teardown;
+}
+```
 
 ## Bootstrap: two phases, contained failures
 
@@ -30,6 +53,27 @@ repeated calls return the same result.
 Lab loading is deliberately **not** part of bootstrap. `otto --help`,
 `--list-*` flags, and shell completion never open `hosts.json`, and a missing
 or malformed lab file only matters once a command that needs the lab runs.
+
+## The preamble, and who opts out
+
+For CLI commands, the invoke preamble (`otto/cli/invoke.py`) runs just before
+the leaf callback: load and merge labs (`--lab` may repeat), build and
+install the {class}`~otto.context.OttoContext`, create the per-command output
+directory and wire the log sinks ({doc}`../utilities/logging`), and run the
+reservation gate. Each pillar declares what it needs on its
+{class}`~otto.cli.registry.CommandSpec` ({doc}`../subsystems/registries`):
+
+| Pillar | Needs a lab | Output dir | Reservation gate |
+| --- | --- | --- | --- |
+| {doc}`run <run>` | yes | yes | yes |
+| {doc}`test <test>` | yes | yes | yes |
+| {doc}`host <host>` | yes | yes | yes |
+| {doc}`monitor <monitor>` | yes | yes | self-gated per branch: live collection gates, `--file` replay doesn't |
+| {doc}`docker <docker>` | yes | yes | no — containers ride the parent's reservation |
+| {doc}`cov <cov>` | yes | no — reads existing run dirs | no |
+| {doc}`reservation <reservation>` | no (`lab_free`) — `check` loads lab data itself | no | no — it *is* the gate, made inspectable |
+| {doc}`schema <schema>` | no (`lab_free`) | no | no |
+| {doc}`init <init>` | no (`lab_free`) | no | no |
 
 ## OttoContext: the per-invocation runtime
 
@@ -102,15 +146,21 @@ async with otto.open_context(lab="my_lab") as ctx:
 loads and merges the requested lab(s), installs the context, and tears
 everything down — scope included — on exit. It does *not* run the reservation
 gate; that is a CLI-preamble concern, and scripts that want it call
-`check_reservations` explicitly. See {doc}`../guide/library-usage` for the
+`check_reservations` explicitly. See {doc}`../../guide/library-usage` for the
 user-facing walkthrough.
 
-## The CLI preamble
+## The pillars, one by one
 
-For CLI commands, the same steps run in the invoke preamble
-(`otto/cli/invoke.py`) just before the leaf callback: load and merge labs
-(`--lab` may repeat), build and install the `OttoContext`, create the
-per-command output directory and wire the log sinks
-({doc}`results-and-logging`), and run the reservation gate — skipped for
-commands registered with `gate=False` or `lab_free=True`
-({doc}`registries`), or when the user passes `--skip-reservation-check`.
+```{toctree}
+:maxdepth: 1
+
+run
+test
+host
+monitor
+cov
+docker
+reservation
+schema
+init
+```

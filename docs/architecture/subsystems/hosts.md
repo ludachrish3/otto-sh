@@ -6,23 +6,31 @@ power-cycle — over SSH, Telnet, a serial console, or `docker exec`.
 
 ## Class hierarchy
 
-```text
-Host (Protocol)                     the structural contract
-└── BaseHost (ABC)                  shared verb logic, dry-run + log gates
-    ├── RemoteHost (ABC)            lazy-connect ConnectionManager, products
-    │   ├── UnixHost                SSH/Telnet: sessions, file ops, privilege,
-    │   │                           kernel modules, toolchains
-    │   └── EmbeddedHost            console-only, oneshot semantics,
-    │       │                       binary load/unload, on-device filesystems
-    │       └── ZephyrHost          Zephyr RTOS defaults
-    ├── LocalHost                   subprocess on the machine otto runs on
-    └── DockerContainerHost         docker exec via a parent UnixHost
+The concrete host classes and every base between them and
+{class}`~otto.host.host.BaseHost` — generated from the live classes at build
+time, so this diagram tracks the code (each node links to its API page):
+
+```{inheritance-diagram} otto.host.unix_host.UnixHost otto.host.embedded_host.ZephyrHost otto.host.local_host.LocalHost otto.host.docker_host.DockerContainerHost
+:parts: 1
+:top-classes: otto.host.host.BaseHost
 ```
+
+What each layer adds:
+
+| Class | Adds |
+| --- | --- |
+| `Host` (Protocol) / {class}`~otto.host.host.BaseHost` | the structural contract; shared verb logic, dry-run + log gates |
+| {class}`~otto.host.remote_host.RemoteHost` | lazy-connect `ConnectionManager`, products |
+| {class}`~otto.host.unix_host.UnixHost` | SSH/Telnet sessions, file ops, privilege, kernel modules, toolchains |
+| {class}`~otto.host.embedded_host.EmbeddedHost` | console-only oneshot semantics, binary load/unload, on-device filesystems |
+| {class}`~otto.host.embedded_host.ZephyrHost` | Zephyr RTOS defaults |
+| {class}`~otto.host.local_host.LocalHost` | subprocess on the machine otto runs on |
+| {class}`~otto.host.docker_host.DockerContainerHost` | `docker exec` via a parent `UnixHost` |
 
 {class}`~otto.host.local_host.LocalHost` exists so instructions can mix local
 build steps with remote deployment through one interface; every lab gets a
 built-in `local` host, excluded from fleet iteration by default
-({doc}`lifecycle`). {class}`~otto.host.docker_host.DockerContainerHost`
+({doc}`../lifecycles/index`). {class}`~otto.host.docker_host.DockerContainerHost`
 delegates everything to a parent `UnixHost` rather than duplicating the
 transport stack — that design has its own page: {doc}`docker-hosts`.
 
@@ -90,7 +98,7 @@ Which backend a host actually uses is resolved from three inputs:
 
 The same mechanism resolves per-protocol option tables (e.g. `ssh_options`),
 so "prefer netcat on this board family, with these ports" is data, not code.
-See {doc}`../guide/host/configuration` for the user-facing rules.
+See {doc}`../../guide/host/configuration` for the user-facing rules.
 
 ## From lab data to a host object
 
@@ -101,7 +109,7 @@ over a *base family* (`unix`, `embedded`) — the profile picks the host class
 and its pydantic spec, defaults and host fields are merged (host fields win),
 the spec validates, and `to_host()` builds the runtime object. Custom host
 classes and profiles register through `register_host_class` /
-`register_os_profile` ({doc}`../guide/os-profiles`).
+`register_os_profile` ({doc}`../../guide/os-profiles`).
 
 Profiles are the **data** half of otto's customization split: they name a
 bundle of defaults many hosts share. The **code** half is products —

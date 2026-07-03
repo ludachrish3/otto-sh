@@ -1,43 +1,10 @@
-# Results, exit codes, and logging
+# Logging
 
-Two cross-cutting spines run through every host verb: what it *returns*
-(the {mod}`otto.result` family) and what it *emits* (the three-sink logging
-model). Both are deliberately small and uniform.
-
-## The Result family
-
-Every host verb returns a member of one family in {mod}`otto.result`:
-
-- {class}`~otto.result.Result` — status + optional payload (`value`) + human
-  diagnostic (`msg`). Truthiness follows {attr}`~otto.result.Result.is_ok`
-  (Success or Skipped), never the payload — `if result:` always asks "did it
-  work?".
-- {class}`~otto.result.CommandResult` — one shell command: adds the `command`
-  string and the shell `retcode` (`-1` means the command never ran).
-- {class}`~otto.result.Results` — the aggregate `run()` returns: a `Result`
-  that is also a `Sequence[CommandResult]`. Its status is the first non-ok
-  entry's status; `only` asserts exactly one command ran and returns it;
-  `first_failure` finds the culprit in a batch. Transfer verbs aggregate
-  per-file results the same way.
-
-The shared vocabulary is {class}`~otto.utils.Status`: `Success`, `Failed`,
-`Error`, `Unstable`, `Skipped`.
-
-### Exit codes
-
-CLI exit codes are *derived from* results — there is no separate exit-code
-logic to drift. `Result.exit_code` is `0` when ok, else the status value.
-`CommandResult.exit_code` follows the ssh convention users already know:
-
-| Situation | Exit code |
-| --- | --- |
-| Command succeeded | `0` |
-| Command ran and failed | the shell's own `retcode` |
-| Command never ran (connection/timeout) | `255` |
-| Failed without a retcode | the `Status` value |
-
-A `@cli_exposed` host verb returning any `Result` gets these semantics on the
-CLI for free; returning a plain value exits `0`.
+Everything an otto invocation *emits* flows through one model: three sinks
+fed by one queue, with a single per-host/per-command knob
+({class}`~otto.logger.mode.LogMode`) deciding what command I/O shows up
+where. What a verb *returns* is the other cross-cutting spine — see
+{doc}`results`.
 
 ## Three sinks
 
@@ -75,7 +42,7 @@ Scope is the important invariant: **LogMode gates command I/O only** —
 records tagged with the host that emitted them. Framework diagnostics,
 warnings, and errors are never suppressed by LogMode; a `NEVER` host still
 logs its connection failures. This is why the monitor can set its polling
-hosts to `NEVER` ({doc}`monitoring-and-coverage`) without hiding real
+hosts to `NEVER` ({doc}`../lifecycles/monitor`) without hiding real
 problems.
 
 ## otto as a library citizen

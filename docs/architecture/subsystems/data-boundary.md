@@ -23,13 +23,25 @@ deep in connection code) and keeps runtime classes free of parsing concerns.
 Field names are `snake_case` end to end — JSON, TOML, models, and runtime
 attributes all agree, so there is no translation layer.
 
+One deliberate escape hatch: keys beginning with `_` are stripped from each
+`hosts.json` entry before validation — the sanctioned way to keep comments
+in a format that has none (`"_comment": "…"`). Everything else unknown is
+still rejected loudly.
+
 ## Host construction
 
 {class}`~otto.models.host.HostSpec` is the abstract boundary model for one
 lab-data host entry; `UnixHostSpec` and `EmbeddedHostSpec` extend it with
 family-specific fields (menus like `valid_transfers`, embedded strategy
 selectors like `filesystem` and `binary_loader`, per-protocol option tables
-like `ssh_options`). Construction, driven by
+like `ssh_options`):
+
+```{inheritance-diagram} otto.models.host.UnixHostSpec otto.models.host.EmbeddedHostSpec
+:parts: 1
+:top-classes: otto.models.host.HostSpec
+```
+
+Construction, driven by
 {func}`otto.storage.create_host_from_dict`, runs in a fixed order:
 
 1. The entry's `os_type` selects an {class}`~otto.host.os_profile.OsProfile`,
@@ -49,7 +61,7 @@ counterpart fails CI.
 
 `OttoEnvSettings` (pydantic-settings) is the single reader of `OTTO_*`
 variables. Repo `settings.toml` files are parsed during bootstrap phase 1
-into `Repo` objects ({doc}`lifecycle`); their tables (`[docker]`,
+into `Repo` objects ({doc}`../lifecycles/index`); their tables (`[docker]`,
 `[reservations]`, `[coverage]`, `[[os_profiles]]`, `[host_preferences]`) each
 have spec models. `otto.models.settings` is deliberately a leaf module — it
 must not import the packages it configures, or validation would drag the app
@@ -64,7 +76,7 @@ configured lab paths, and alternatives (a database, an inventory service)
 register a name via {func}`otto.storage.register_lab_repository`.
 {func}`otto.testing.assert_lab_repository_conforms` verifies a custom backend
 against the contract, and `otto.examples.lab_repository` is a copyable
-reference implementation. See {doc}`../guide/host-database`.
+reference implementation. See {doc}`../../guide/host-database`.
 
 Merging is part of loading: `--lab` may be passed multiple times and the
 resulting `Lab` objects merge, so a shared lab file and a personal overlay
@@ -75,7 +87,7 @@ compose without editing either.
 Because every boundary is a pydantic model, otto can *emit* its data contracts:
 `otto schema export` writes JSON Schemas for `hosts.json`,
 `settings.toml`, and reservation files, which editors use for completion and
-inline validation ({doc}`../guide/editor-schemas`). The schema version is
+inline validation ({doc}`../../guide/editor-schemas`). The schema version is
 bumped when host-spec fields change shape, keeping downstream lab data
 diagnosable.
 
@@ -86,4 +98,4 @@ network filesystems (NFS/SMB), and write-heavy components adapt — the monitor
 database uses SQLite WAL journaling on local disks but DELETE journaling on
 network mounts (where WAL's shared-memory semantics are unreliable), and log
 rotation time-boxes its directory scans so an NFS stat storm cannot stall
-startup ({doc}`results-and-logging`).
+startup ({doc}`../utilities/logging`).

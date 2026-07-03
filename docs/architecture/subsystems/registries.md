@@ -22,7 +22,7 @@ functions; the class is the shared engine behind them.
 
 | Registry | Kind | Register via | Built-ins |
 | --- | --- | --- | --- |
-| `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | `run`, `test`, `host`, `monitor`, `cov`, `docker`, `reservation`, `schema`, … |
+| `CLI_COMMANDS` | top-level CLI command | {func}`otto.cli.registry.register_cli_command` / {func}`~otto.cli.registry.cli_command` | the nine pillars — see {doc}`../overview` |
 | `INSTRUCTIONS` | `otto run` subcommand | {func}`~otto.cli.run.instruction` | — |
 | `SUITES` | `otto test` subcommand | {func}`~otto.suite.register.register_suite_class` (auto-called by {class}`~otto.suite.suite.OttoSuite`'s `__init_subclass__`) | — |
 | `HOST_CLASSES` | host class | `otto.host.os_profile.register_host_class` | `unix`, `embedded` |
@@ -50,7 +50,7 @@ public seams honest: if a registration API is awkward for otto's own
 built-ins, it is awkward for everyone, and it gets fixed rather than bypassed.
 Downstream repos register from their init modules (the `init` list in
 `.otto/settings.toml`), which bootstrap imports in phase 2
-({doc}`lifecycle`).
+({doc}`../lifecycles/index`).
 
 ## The CLI command registry
 
@@ -70,7 +70,7 @@ The top-level CLI is itself registry-backed. A
 First-party commands in `otto/cli/builtin_commands.py` and third-party
 commands both go through {func}`~otto.cli.registry.register_cli_command` (or
 the {func}`~otto.cli.registry.cli_command` decorator) — the symmetry rule
-again. See {doc}`../guide/extending-cli` for the how-to.
+again. See {doc}`../../guide/extending-cli` for the how-to.
 
 ### Lazy dispatch
 

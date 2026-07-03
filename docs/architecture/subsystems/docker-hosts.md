@@ -4,7 +4,7 @@ How {class}`~otto.host.docker_host.DockerContainerHost` fits the host
 subsystem ({doc}`hosts`): why containers delegate to a parent
 {class}`~otto.host.unix_host.UnixHost` instead of being a parallel transport
 stack, and the consequences of that choice. The user-facing workflow lives in
-{doc}`../guide/docker`.
+{doc}`../../guide/docker`.
 
 ## Why parent-delegation
 

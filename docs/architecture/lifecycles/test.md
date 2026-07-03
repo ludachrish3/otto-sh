@@ -1,8 +1,29 @@
-# The test pipeline
+# otto test — the test pipeline
 
 `otto test` is a thin, deliberate bridge: suites are ordinary classes, tests
 are ordinary async methods, and the runner underneath is stock pytest with an
 otto plugin — not a bespoke test framework.
+
+```{graphviz}
+digraph testpipeline {
+    rankdir=TB;
+    node [shape=box];
+
+    import [label="bootstrap phase 2 imports test files"];
+    reg [label="OttoSuite.__init_subclass__\nTest*-named subclass →\nregister_suite_class → SUITES registry\n+ synthesized Typer subcommand"];
+    suite [label="otto test <Suite> [flags]\nbuild Options instance → run_suite\none pytest session, the suite's file"];
+    select [label="otto test --tests a,b / -m EXPR\nsuite-less selection run:\nresolve names → one pytest\nsession per matching repo"];
+    pytest_ [label="pytest\ncollection · fixtures · parametrize · markers"];
+    plugin [label="OttoPlugin\nper-test artifact dirs · stability\nmodes · retry · monitor events ·\ncoverage fetch after the session"];
+
+    import -> reg;
+    reg -> suite;
+    reg -> select [style=dashed, label=" names feed\nresolution"];
+    suite -> pytest_;
+    select -> pytest_;
+    pytest_ -> plugin;
+}
+```
 
 ## From class to subcommand
 
@@ -11,38 +32,56 @@ class name (matching pytest's own `python_classes = Test*` collection rule),
 which triggers `__init_subclass__` to call
 {func}`~otto.suite.register.register_suite_class`. Registration does three
 things at import time (which, for repo test files, means during bootstrap
-phase 2 — {doc}`lifecycle`):
+phase 2 — {doc}`index`):
 
-1. Reads the suite's `Options` class (an `@options` pydantic dataclass —
-   {doc}`../guide/options`) and synthesizes
-   a Typer subcommand whose flags mirror its fields — the same
+1. Reads the suite's `Options` class — any dataclass works; an `@options`
+   pydantic dataclass adds validation ({doc}`../../guide/options`) — and
+   synthesizes a Typer subcommand whose flags mirror its fields: the same
    options-to-parameters machinery instructions use, so suites and
-   instructions share option classes ({doc}`../guide/options`).
+   instructions share option classes.
 2. Registers the suite in the `SUITES` registry under its class name.
 3. Makes re-registration idempotent *per source file*: pytest re-importing
    the same file is expected and harmless, while a second suite of the same
    name from a *different* file is a loud collision.
 
 `otto test <SuiteName>` therefore gets registry-backed completion and
-`--list-suites` for free, like every other registry ({doc}`registries`).
+`--list-suites` for free, like every other registry ({doc}`../subsystems/registries`).
 
 ## Handing off to pytest
 
 The suite's synthesized subcommand builds the options instance and calls
 `run_suite` (`otto/cli/test.py`), which invokes `pytest.main()` scoped to the
-suite's source file, with otto's plugin installed. pytest keeps what it is
+suite's source file, with otto's plugin installed. Conftest loading is cut at
+the *owning repo's root* (`--confcutdir`), so the user repo's full conftest
+hierarchy applies while otto's own never leaks in. pytest keeps what it is
 good at — collection, fixtures, `parametrize`, markers, reporting — and the
 plugin ({class}`~otto.suite.plugin.OttoPlugin`) layers on otto's concerns:
 
 - **Artifacts** — each test gets its own directory under the invocation's
-  output dir ({doc}`results-and-logging`), exposed to the suite as `testDir`.
+  output dir ({doc}`../utilities/logging`), exposed to the suite as `testDir`.
 - **Stability modes** — `--iterations N` / `--duration` re-run tests via the
   runtest protocol and aggregate per-test pass rates, reporting `Unstable`
   rather than failing on the first flake.
 - **Retry** — `@pytest.mark.retry(n)` re-runs a failing test in place.
 - **Monitoring and coverage** — test start/end events are stamped onto the
   monitor timeline, and coverage runs fetch embedded counters after the
-  session ({doc}`monitoring-and-coverage`).
+  session ({doc}`monitor`, {doc}`cov`).
+
+## Selection runs: pytest-native, no suite required
+
+`--tests NAME[,NAME…]` and `-m/--markers EXPR` also work *without* naming a
+suite. The selection path resolves test names to exact pytest nodeids
+(unknown names fail with a did-you-mean), then runs **one pytest session per
+matching repo** — a repo with no match is skipped rather than reported as
+"collected 0 items", and per-repo `--results` files fan out automatically.
+Combining `--tests` with a suite subcommand is a loud usage error, not a
+silent intersection. Suite `Options` are default-constructed per class in
+selection runs; a suite whose options are *required* points you back at the
+single-suite form.
+
+This is the deliberate second door into the same pipeline: plain pytest
+functions (no `OttoSuite` at all) are first-class here, which is what the
+{doc}`init <init>` scaffold demonstrates.
 
 ## Non-fatal assertions
 
@@ -61,4 +100,4 @@ flash, collect — with one body and an exit code from their returned
 {class}`~otto.result.Result`. Suites are *verdicts*: many independent test
 methods, pytest semantics, stability statistics, per-test artifacts. Shared
 repo-wide options classes keep the two consistent
-({doc}`../guide/options`).
+({doc}`../../guide/options`).

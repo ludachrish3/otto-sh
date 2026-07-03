@@ -1,10 +1,74 @@
-# Architecture overview
+# The big picture
 
 otto is an asyncio test orchestrator: a CLI and a Python library that drive
 *labs* of remote hosts — Unix machines over SSH/Telnet, embedded targets over
 serial consoles, Docker containers — to deploy products, run commands and test
 suites, and collect metrics and coverage. One process, one event loop; hosts
 are fanned out with asyncio, never threads.
+
+## The nine pillars
+
+Everything a user does goes through one of nine first-party commands. Each is
+an ordinary entry in the CLI command registry — registered through the same
+public API a third-party command uses — and each has a lifecycle page
+explaining what it does once the shared machinery hands over control:
+
+| Pillar | What it is |
+| --- | --- |
+| {doc}`otto run <lifecycles/run>` | Procedures: registered instructions with lab access |
+| {doc}`otto test <lifecycles/test>` | Verdicts: suites and pytest-native selection runs |
+| {doc}`otto host <lifecycles/host>` | Direct host verbs, synthesized from Python methods |
+| {doc}`otto monitor <lifecycles/monitor>` | Live metrics, dashboard, and replay |
+| {doc}`otto cov <lifecycles/cov>` | Cross-compiled gcov coverage reports |
+| {doc}`otto docker <lifecycles/docker>` | Images and compose stacks on lab hosts |
+| {doc}`otto reservation <lifecycles/reservation>` | The reservation gate, made inspectable |
+| {doc}`otto schema <lifecycles/schema>` | The data contracts, exported for editors |
+| {doc}`otto init <lifecycles/init>` | Scaffold a new repo; doctor an existing one |
+
+The pillars stand on shared machinery, and the machinery stands on a small
+set of foundations:
+
+```{graphviz}
+digraph bigpicture {
+    rankdir=TB;
+    node [shape=box];
+    compound=true;
+
+    subgraph cluster_pillars {
+        label="the nine pillars (otto <command>)";
+        run; test; host; monitor; cov; docker; reservation; schema; init;
+    }
+
+    subgraph cluster_shared {
+        label="shared lifecycle machinery";
+        cli [label="CLI registry + lazy dispatch"];
+        boot [label="bootstrap\n(discovery + registration)"];
+        ctx [label="OttoContext + HostScope"];
+    }
+
+    subgraph cluster_subsystems {
+        label="subsystems";
+        hosts [label="host subsystem\nsessions · connections · transfer"];
+        suites [label="suite subsystem\n+ pytest plugin"];
+        observers [label="monitor + coverage\npipelines"];
+        data [label="data boundary\nmodels · storage · settings"];
+    }
+
+    subgraph cluster_foundation {
+        label="foundations";
+        registry [label="Registry engine"];
+        result [label="Result family"];
+        logging [label="three-sink logging"];
+    }
+
+    run -> cli [ltail=cluster_pillars, lhead=cluster_shared];
+    cli -> hosts [ltail=cluster_shared, lhead=cluster_subsystems];
+    hosts -> registry [ltail=cluster_subsystems, lhead=cluster_foundation];
+}
+```
+
+Read {doc}`lifecycles/index` for the shared path every invocation walks —
+bootstrap, dispatch, preamble, teardown — before its pillar takes over.
 
 ## Layer map
 
@@ -35,7 +99,7 @@ a lower layer never imports from a higher one.
 | Package | Responsibility |
 | --- | --- |
 | `otto.host` | Host classes, sessions, connections, transfers, privilege, power |
-| `otto.suite` | Test-suite base class, registration, the pytest plugin, `expect()` |
+| `otto.suite` | Test-suite base class, auto-registration, the pytest plugin, `expect()` |
 | `otto.monitor` | Metric collection, parsers, SNMP, the live dashboard |
 | `otto.coverage` | The embedded gcov pipeline: fetch, correlate, render, report |
 | {mod}`otto.docker` | Image builds and compose lifecycles on parent hosts |
@@ -53,42 +117,6 @@ Two support packages sit alongside: `otto.testing` (conformance helpers
 for third-party backends) and `otto.examples` (small, copyable reference
 implementations, conformance-verified in otto's own suite).
 
-## The life of an invocation
-
-What happens on `otto -l my_lab run deploy --debug`:
-
-1. **Entry.** The console script calls `entry()` in `otto/cli/main.py`.
-   Shell-completion invocations take a cache fast path that runs *zero user
-   code*; every other invocation runs {func}`otto.bootstrap.bootstrap` before
-   argv parsing so third-party commands exist when the root group is built.
-2. **Bootstrap.** Phase 1 (*discovery*) parses `OTTO_*` environment variables
-   and each repo's `.otto/settings.toml` — no user code runs. Phase 2
-   (*registration*) imports each repo's init modules and test files; every
-   user-module exec is wrapped so one broken file becomes a framed
-   `BootstrapError` warning instead of bricking the process.
-3. **Dispatch.** The root Typer group is registry-backed: `--help` renders
-   every registered command from lightweight stubs without importing a single
-   subcommand module. Only the command actually being dispatched (`run`) has
-   its module imported and resolved.
-4. **Preamble.** The invoke preamble runs for the leaf command: the lab is
-   loaded *now* (lab loading is deliberately not part of bootstrap), an
-   {class}`~otto.context.OttoContext` is built and installed in a
-   context-variable, the per-command output directory and log sinks are wired,
-   and the reservation gate runs (unless the command opted out or
-   `--skip-reservation-check` was passed).
-5. **Execution.** The `deploy` instruction coroutine runs. Hosts it obtains
-   via the context are registered with the context's
-   {class}`~otto.context.HostScope`.
-6. **Teardown.** When the command returns, the scope closes every host that
-   is still connected — deterministically, with no reliance on garbage
-   collection. The process exit code is derived from the returned
-   {class}`~otto.result.Result` when there is one.
-
-`otto test TestDevice` follows the same shape through step 4, then hands off
-to the test pipeline: the registered suite's synthesized subcommand builds the
-suite's options object and invokes pytest with otto's plugin — see
-{doc}`test-pipeline`.
-
 ## Where the boundaries are enforced
 
 - **The CLI edge is lazy.** Importing `otto.cli` must never parse repo
@@ -97,10 +125,11 @@ suite's options object and invokes pytest with otto's plugin — see
   pay only for what they touch.
 - **The data edge is validated.** Everything that enters from JSON, TOML, or
   the environment passes through a pydantic spec in `otto.models` exactly
-  once; see {doc}`data-boundary`.
+  once; see {doc}`subsystems/data-boundary`.
 - **User code is contained.** Bootstrap frames per-file failures;
   registries reject duplicate names loudly and attribute every entry to the
-  module that registered it; see {doc}`registries`.
+  module that registered it; see {doc}`subsystems/registries`.
 
-The remaining pages cover each subsystem in depth, and {doc}`principles`
-collects the recurring design rules the codebase holds itself to.
+The lifecycle pages cover each pillar in depth, the subsystem pages cover the
+machinery, and {doc}`principles` collects the recurring design rules the
+codebase holds itself to.
