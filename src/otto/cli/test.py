@@ -369,6 +369,7 @@ async def _post_run_coverage(repos: list[Repo], log_dir: Path, opts: TestRunOpti
 
     if opts.cov_report:
         from ..coverage.reporter import run_coverage_report
+        from ..coverage.tiers import load_tiers
 
         cov_dir = opts.cov_dir or log_dir / "cov"
         report_dir = (
@@ -379,11 +380,37 @@ async def _post_run_coverage(repos: list[Repo], log_dir: Path, opts: TestRunOpti
         _prepare_empty_dir(
             report_dir, overwrite=opts.overwrite_cov_report_dir, flag_name="--cov-report-dir"
         )
-        store = await run_coverage_report(
-            [cov_dir],
-            report_dir,
-            project_name=opts.project_name,
-        )
+        # Resolve the same collection-model inputs `otto cov report` uses
+        # (declared tiers/colors, exclusion markers, the committed manual
+        # store), from the repos already in hand — mirroring
+        # cov._resolve_cov_settings but without re-fetching. A tree with no
+        # [coverage] section falls back to (None, None, []), i.e. the legacy
+        # gcda-only report, exactly as before.
+        cov_repo = _get_cov_repo(repos)
+        repo_root = cov_repo.sut_dir if cov_repo is not None else None
+        cov_config = _get_cov_config(repos)
+        tier_configs = load_tiers(cov_config, repo_root) if cov_repo is not None else None
+        extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
+        # Like the capture tail, in-run report generation must never fail an
+        # otherwise-successful test run: a non-git sut, a polluted tree, or a
+        # malformed manual capture are logged and swallowed, leaving the raw
+        # coverage artifacts on disk.
+        try:
+            store = await run_coverage_report(
+                [cov_dir],
+                report_dir,
+                project_name=opts.project_name,
+                repo_root=repo_root,
+                tier_configs=tier_configs,
+                extra_markers=extra_markers,
+            )
+        except (ValueError, RuntimeError, FileNotFoundError) as e:
+            logger.warning(
+                "Coverage report generation failed (%s); raw coverage artifacts remain in %s",
+                e,
+                cov_dir,
+            )
+            store = None
         if store is not None:
             logger.info(
                 "Coverage: %.1f%% overall (%d files)", store.overall_pct(), store.file_count()

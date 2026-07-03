@@ -1221,6 +1221,43 @@ class TestRunCoverageCaptureTail:
         assert not (cov_dir / "board1" / "capture.json").exists()
         assert any("Coverage capture emission failed" in rec.message for rec in caplog.records)
 
+    def test_in_run_report_uses_configured_tiers(self, tmp_path, sut_repo):
+        """``otto test --cov-report`` must render via the collection-model path,
+        not the legacy system-only one: the store.json the in-run report writes
+        carries the settings-declared tier precedence."""
+        import asyncio
+        import json
+
+        from otto.cli.test import TestRunOptions, _post_run_coverage
+
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        report_dir = tmp_path / "cov_report"
+
+        cov_config = {
+            "tiers": {
+                "unit": {"kind": "unit", "precedence": 1},
+                "system": {"kind": "e2e", "precedence": 2},
+                "manual": {"kind": "manual", "precedence": 3},
+            }
+        }
+        repo = MagicMock()
+        repo.sut_dir = sut_repo
+        repo.name = "repo"
+        repo.settings = {"coverage": cov_config}
+
+        # cov=False keeps the fetch machinery out; only the report block runs.
+        opts = TestRunOptions(
+            cov=False,
+            cov_report=True,
+            cov_dir=cov_dir,
+            cov_report_dir=report_dir,
+        )
+        asyncio.run(_post_run_coverage([repo], tmp_path / "log", opts))
+
+        store_json = json.loads((report_dir / "store.json").read_text())
+        assert store_json["tier_order"] == ["unit", "system", "manual"]
+
 
 # ── --cov-report option (report generation alongside collection) ─────────────
 
@@ -1324,6 +1361,11 @@ class TestRunSuiteReport:
         repo.tests = [log_dir]
         repo.sut_dir = log_dir
         repo.name = "repo"
+        # No [coverage] section → _post_run_coverage resolves (None, None, [])
+        # and the report runs on the legacy gcda-only path (what these tests
+        # pin). A real dict (not a MagicMock) keeps _get_cov_repo/load_tiers
+        # from iterating an auto-attribute.
+        repo.settings = {}
 
         mock_store = MagicMock()
         mock_store.overall_pct.return_value = 50.0
