@@ -60,7 +60,7 @@ def test_parse_info(tmp_path: Path) -> None:
     files = parse_info(_write_info(tmp_path, src))
     lines, branches = files[str(src)]
     assert lines == {1: 5, 2: 0, 3: 7}
-    assert branches[3] == [(0, 0, 4), (0, 1, 0)]
+    assert branches[3] == [(0, 0, 4), (0, 1, None)]
 
 
 def test_build_capture_clean(repo: Path, tmp_path: Path) -> None:
@@ -134,12 +134,15 @@ def test_gitignored_file_skipped(repo: Path, tmp_path: Path) -> None:
 def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, repo / "f.c")
     cap = build_capture(info_path=info, tier="system", repo_root=repo, board="b", labs=[])
+    assert cap.files["f.c"].branches[3] == [(0, 0, 4), (0, 1, None)]
     out = tmp_path / "capture.json"
     cap.save(out)
     loaded = Capture.load(out)
     assert loaded == cap
     raw = json.loads(out.read_text())
     assert raw["schema"] == 1
+    # never-reached branch ("-") must round-trip as JSON null, not 0.
+    assert raw["files"]["f.c"]["branches"]["3"][1] == [0, 1, None]
     raw["surprise"] = True
     out.write_text(json.dumps(raw))
     with pytest.raises(ValidationError):

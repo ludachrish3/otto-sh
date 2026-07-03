@@ -26,7 +26,7 @@ class CaptureFileCov(BaseModel):
 
     blob: str | None = None
     lines: dict[int, int] = Field(default_factory=dict)
-    branches: dict[int, list[tuple[int, int, int]]] = Field(default_factory=dict)
+    branches: dict[int, list[tuple[int, int, int | None]]] = Field(default_factory=dict)
 
 
 class Capture(BaseModel):
@@ -59,11 +59,17 @@ class Capture(BaseModel):
 
 def parse_info(
     info_path: Path,
-) -> dict[str, tuple[dict[int, int], dict[int, list[tuple[int, int, int]]]]]:
-    """Minimal SF/DA/BRDA parser: source path → (line hits, branch triples)."""
-    files: dict[str, tuple[dict[int, int], dict[int, list[tuple[int, int, int]]]]] = {}
+) -> dict[str, tuple[dict[int, int], dict[int, list[tuple[int, int, int | None]]]]]:
+    """Minimal SF/DA/BRDA parser: source path → (line hits, branch triples).
+
+    Branch triples are ``(block, branch, taken)`` where ``taken`` is
+    ``None`` for lcov's ``-`` (branch never reached) and an ``int`` count
+    otherwise — preserving the never-reached/reached-but-not-taken
+    distinction through to the capture file.
+    """
+    files: dict[str, tuple[dict[int, int], dict[int, list[tuple[int, int, int | None]]]]] = {}
     lines: dict[int, int] = {}
-    branches: dict[int, list[tuple[int, int, int]]] = {}
+    branches: dict[int, list[tuple[int, int, int | None]]] = {}
     current: str | None = None
     with info_path.open() as f:
         for raw in f:
@@ -76,7 +82,7 @@ def parse_info(
                 lines[int(parts[0])] = lines.get(int(parts[0]), 0) + int(parts[1])
             elif line.startswith("BRDA:") and current is not None:
                 lineno_s, block_s, branch_s, taken = line[5:].split(",")
-                count = 0 if taken == "-" else int(taken)
+                count = None if taken == "-" else int(taken)
                 branches.setdefault(int(lineno_s), []).append((int(block_s), int(branch_s), count))
             elif line == "end_of_record" and current is not None:
                 files[current] = (lines, branches)
@@ -86,16 +92,16 @@ def parse_info(
 
 def _remap_file(
     lines: dict[int, int],
-    branches: dict[int, list[tuple[int, int, int]]],
+    branches: dict[int, list[tuple[int, int, int | None]]],
     remapper: LineRemapper,
-) -> tuple[dict[int, int], dict[int, list[tuple[int, int, int]]]]:
+) -> tuple[dict[int, int], dict[int, list[tuple[int, int, int | None]]]]:
     """Worktree (NEW) coordinates → pin (OLD) coordinates; drop unmappables."""
     out_lines: dict[int, int] = {}
     for lineno, count in lines.items():
         old = remapper.new_to_old(lineno)
         if old is not None:
             out_lines[old] = out_lines.get(old, 0) + count
-    out_branches: dict[int, list[tuple[int, int, int]]] = {}
+    out_branches: dict[int, list[tuple[int, int, int | None]]] = {}
     for lineno, triples in branches.items():
         old = remapper.new_to_old(lineno)
         if old is not None:

@@ -103,8 +103,9 @@ def apply_manual_capture(
                     bh = BranchHits(block=block, branch=branch)
                     lr.branches.append(bh)
                     existing[key] = bh
-                existing[key].set_reachable(capture.tier, True)
-                if taken > 0:
+                reachable = taken is not None
+                existing[key].set_reachable(capture.tier, reachable)
+                if reachable and taken > 0:
                     existing[key].hits.add(capture.tier, taken)
 
     store.provenance.append(

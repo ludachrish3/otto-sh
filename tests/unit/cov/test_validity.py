@@ -103,6 +103,39 @@ def test_aging_flag(repo: Path) -> None:
     assert line1.state == "aging"
 
 
+def test_branch_reachability_applied(repo: Path) -> None:
+    cap = Capture(
+        tier="manual",
+        pin=head_commit(repo),
+        captured_at="2026-07-01T00:00:00Z",
+        ticket="T-1",
+        labs=["lab1"],
+        board="b",
+        files={
+            "f.c": CaptureFileCov(
+                blob=blob_sha(repo, Path("f.c")),
+                branches={3: [(0, 0, 2), (0, 1, 0), (1, 0, None)]},
+            )
+        },
+    )
+    store = CoverageStore(tier_order=["manual"])
+    apply_manual_capture(store, cap, repo, max_age_days=None)
+    line3 = _find(store, repo, 3)
+    branches = {b.branch_id: b for b in line3.branches}
+
+    reached = branches[(0, 0)]
+    assert reached.is_reachable("manual") is True
+    assert reached.hits.for_tier("manual") == 2
+
+    not_taken = branches[(0, 1)]
+    assert not_taken.is_reachable("manual") is True
+    assert not_taken.hits.for_tier("manual") == 0
+
+    never_reached = branches[(1, 0)]
+    assert never_reached.is_reachable("manual") is False
+    assert never_reached.hits.for_tier("manual") == 0
+
+
 def test_unverifiable_all_stale(repo: Path) -> None:
     cap = _capture(repo)
     bogus = cap.model_copy(update={"pin": "f" * 40})
