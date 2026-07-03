@@ -108,7 +108,7 @@ dev = [
     "pytest-xdist>=3.8.0",
     "hypothesis>=6.131.0",
     "jsonschema>=4.0",
-    "ruff>=0.14.7",
+    "ruff>=0.15.20",
     "sphinx>=8.0",
     "doc8>=1.1",
     "ty==0.0.55",
