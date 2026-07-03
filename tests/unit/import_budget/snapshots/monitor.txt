@@ -62,11 +62,15 @@ otto.models.monitor
 otto.models.options
 otto.models.settings
 otto.monitor
+otto.monitor.broadcast
 otto.monitor.collector
+otto.monitor.db
 otto.monitor.events
 otto.monitor.factory
+otto.monitor.history
 otto.monitor.parsers
 otto.monitor.snmp
+otto.monitor.store
 otto.params
 otto.registry
 otto.result

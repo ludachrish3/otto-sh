@@ -12,23 +12,20 @@ Supports three data sources:
 import asyncio
 import contextlib
 import copy
-import json
 import logging
-from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-import aiosqlite
-from pydantic import ValidationError
-
-from ..models import EventRecord, MetricPoint, MetricRecord
+from ..models import MetricPoint
 from ..result import CommandResult, Results
 from .broadcast import Broadcaster
 from .db import MetricDB
 from .events import MonitorEvent
+from .history import load_json_into, load_sqlite_into
+from .history import to_json as history_to_json
 from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser
 from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
 from .store import MetricStore
@@ -547,41 +544,7 @@ class MetricCollector:
         The ``host`` field is optional for backward compatibility.
         """
         collector = cls(hosts=[], parsers=parsers)
-        with Path(path).open() as f:
-            data = json.load(f)
-        for point in data.get("metrics", []):
-            try:
-                rec = MetricRecord.model_validate(point)
-            except ValidationError:
-                continue
-            key = f"{rec.host}/{rec.label}" if rec.host else rec.label
-            if key not in collector._store.series:
-                collector._store.series[key] = deque()
-            collector._store.series[key].append(
-                MetricPoint.model_validate(
-                    {"ts": rec.timestamp, "value": rec.value, "meta": rec.meta}
-                )
-            )
-        for label, chart in data.get("chart_map", {}).items():
-            collector._store.chart_map[label] = chart
-        for ev in data.get("events", []):
-            try:
-                rec = EventRecord.model_validate(ev)
-            except ValidationError:
-                continue
-            event = MonitorEvent(
-                timestamp=rec.timestamp,
-                label=rec.label,
-                source=rec.source,
-                color=rec.color,
-                dash=rec.dash,
-                end_timestamp=rec.end_timestamp,
-            )
-            if rec.id is not None:
-                event.id = rec.id
-                collector._store.note_imported_event(event)
-            else:
-                collector._store.add_event(event, rowid=0)
+        load_json_into(collector._store, path)
         return collector
 
     @classmethod
@@ -592,58 +555,7 @@ class MetricCollector:
     ) -> "MetricCollector":
         """Load historical metrics and events from a SQLite database."""
         collector = cls(hosts=[], parsers=parsers)
-        async with aiosqlite.connect(path) as conn:
-            conn.row_factory = aiosqlite.Row
-            # Support both the new schema (with host column) and the old schema (without)
-            col_names = {row[1] async for row in await conn.execute("PRAGMA table_info(metrics)")}
-            has_host = "host" in col_names
-            query = (
-                "SELECT ts, host, label, value FROM metrics ORDER BY ts"
-                if has_host
-                else "SELECT ts, label, value FROM metrics ORDER BY ts"
-            )
-            async for row in await conn.execute(query):
-                try:
-                    rec = MetricRecord.model_validate(dict(row))
-                except ValidationError:
-                    continue
-                key = f"{rec.host}/{rec.label}" if rec.host else rec.label
-                if key not in collector._store.series:
-                    collector._store.series[key] = deque()
-                collector._store.series[key].append(
-                    MetricPoint.model_validate(
-                        {"ts": rec.timestamp, "value": rec.value, "meta": None}
-                    )
-                )
-            event_cols = {row[1] async for row in await conn.execute("PRAGMA table_info(events)")}
-            has_end_ts = "end_ts" in event_cols
-            events_query = (
-                "SELECT id, ts, end_ts, label, source, color, dash FROM events ORDER BY ts"
-                if has_end_ts
-                else "SELECT id, ts, label, source, color, dash FROM events ORDER BY ts"
-            )
-            async for row in await conn.execute(events_query):
-                try:
-                    rec = EventRecord.model_validate(dict(row))
-                except ValidationError:
-                    continue
-                event = MonitorEvent(
-                    timestamp=rec.timestamp,
-                    label=rec.label,
-                    source=rec.source,
-                    color=rec.color,
-                    dash=rec.dash,
-                    end_timestamp=rec.end_timestamp,
-                )
-                if rec.id is not None:
-                    event.id = rec.id
-                    # Per-event counter advance: with ids out of ts-order the
-                    # counter can end HIGHER than the legacy batch max()+1 — never
-                    # lower, so no collision; deliberately monotone (pinned by
-                    # test_from_sqlite_out_of_order_ids_keep_counter_collision_free).
-                    collector._store.note_imported_event(event)
-                else:
-                    collector._store.add_event(event, rowid=0)
+        await load_sqlite_into(collector._store, path)
         return collector
 
     # ------------------------------------------------------------------
@@ -657,21 +569,4 @@ class MetricCollector:
 
     def to_json(self) -> str:
         """Serialize all metrics and events to a JSON string compatible with ``--file``."""
-        metrics: list[dict[str, Any]] = []
-        for key, pts in self._store.series.items():
-            host = key.split("/")[0] if "/" in key else ""
-            label = key.split("/", 1)[1] if "/" in key else key
-            metrics.extend(
-                MetricRecord(
-                    timestamp=pt.ts, host=host, label=label, value=pt.value, meta=pt.meta
-                ).model_dump(mode="json", exclude_none=True)
-                for pt in pts
-            )
-        return json.dumps(
-            {
-                "metrics": metrics,
-                "events": [e.to_dict() for e in self._store.events()],
-                "chart_map": dict(self._store.chart_map),
-            },
-            indent=2,
-        )
+        return history_to_json(self._store)
