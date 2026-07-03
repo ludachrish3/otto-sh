@@ -48,6 +48,7 @@ otto.host.remote_host
 otto.host.session
 otto.host.telnet
 otto.host.toolchain
+otto.host.toolchain_discovery
 otto.host.transfer
 otto.host.transfer.base
 otto.host.transfer.console

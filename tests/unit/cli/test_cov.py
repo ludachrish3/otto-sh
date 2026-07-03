@@ -156,6 +156,26 @@ class TestCovReportMergeErrors:
         assert "rebuilt" in message  # names the likely cause
         assert "otto test --cov" in message  # names the remedy
 
+    def test_incompatible_gcov_tool_reports_cause_without_traceback(self, cov_dir):
+        """A clang build captured with GNU gcov (geninfo: Incompatible
+        GCC/GCOV version) must exit 1 with the cause and fix — no traceback."""
+        from otto.coverage.errors import CoverageToolVersionError
+
+        with (
+            patch.object(
+                cov_module,
+                "run_coverage_report",
+                side_effect=CoverageToolVersionError("Your test was built with '4.8'."),
+            ),
+            patch.object(cov_module.logger, "error") as mock_err,
+        ):
+            result = runner.invoke(cov_app, ["report", str(cov_dir)])
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        message = mock_err.call_args[0][0]
+        assert "clang" in message  # names the likely cause
+        assert "llvm-cov" in message  # names the fix
+
     def test_generic_merge_failure_reports_cleanly(self, cov_dir):
         with (
             patch.object(

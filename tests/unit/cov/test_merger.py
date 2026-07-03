@@ -78,6 +78,39 @@ class TestLcovMerger:
         await localhost.close()
 
     @pytest.mark.asyncio
+    async def test_capture_incompatible_tool_raises_typed_helpful_error(self, tmp_path):
+        """geninfo's 'Incompatible GCC/GCOV version' (e.g. a clang build
+        captured with GNU gcov — clang emits the GCC 4.8-era file format) must
+        surface as CoverageToolVersionError naming the cause and the fix, not
+        a bare RuntimeError of raw lcov output."""
+        from otto.coverage.errors import CoverageToolVersionError
+
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+
+        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
+            mock_oneshot.return_value = CommandResult(
+                Status.Failed,
+                value=(
+                    "/x/cov/host0/sample-sample.gcda:version '408*', prefer version 'B33*'\n"
+                    "geninfo: ERROR: Incompatible GCC/GCOV version found while processing "
+                    "/x/cov/host0/sample-sample.gcda:\n"
+                    "\tYour test was built with '4.8'.\n"
+                    "\tYou are trying to capture with gcov tool '/usr/bin/gcov' "
+                    "which is version 'B33*'."
+                ),
+                command="lcov --capture ...",
+                retcode=1,
+            )
+            with pytest.raises(CoverageToolVersionError) as ei:
+                await merger.capture(tmp_path / "gcda", tmp_path / "gcno", tmp_path / "out.info")
+        msg = str(ei.value)
+        assert "clang" in msg  # names the most likely cause
+        assert "llvm-cov" in msg  # names the fix
+        assert "408*" in msg  # carries the underlying evidence
+        await localhost.close()
+
+    @pytest.mark.asyncio
     async def test_merge_info_files(self, tmp_path):
         localhost = LocalHost()
         merger = LcovMerger(localhost)
@@ -169,6 +202,33 @@ class TestLcovMergerToolchain:
             cmd = mock_oneshot.call_args[0][0]
             assert "my-lcov" in cmd
             assert "my-gcov" in cmd
+        await localhost.close()
+
+    @pytest.mark.asyncio
+    async def test_capture_wraps_llvm_cov_gcov_tool(self, tmp_path):
+        """A toolchain whose gcov is an llvm-cov binary cannot be handed to
+        ``lcov --gcov-tool`` as-is (lcov takes one word; llvm-cov needs its
+        ``gcov`` subcommand). capture() must substitute a generated one-word
+        wrapper script."""
+        localhost = LocalHost()
+        merger = LcovMerger(localhost)
+        tc = Toolchain(sysroot=Path("/"), gcov=Path("usr/bin/llvm-cov"))
+
+        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
+            mock_oneshot.return_value = CommandResult(
+                Status.Success, value="", command="lcov ...", retcode=0
+            )
+            await merger.capture(
+                tmp_path / "gcda",
+                tmp_path / "gcno",
+                tmp_path / "out.info",
+                toolchain=tc,
+            )
+            cmd = mock_oneshot.call_args[0][0]
+        assert "--gcov-tool /usr/bin/llvm-cov" not in cmd
+        wrapper = tmp_path / "llvm-gcov-wrapper.sh"
+        assert f"--gcov-tool {wrapper}" in cmd
+        assert 'exec /usr/bin/llvm-cov gcov "$@"' in wrapper.read_text()
         await localhost.close()
 
     @pytest.mark.asyncio

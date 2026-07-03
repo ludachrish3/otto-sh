@@ -930,7 +930,7 @@ class TestRunCoverageEmbedded:
             lcov=Path("/usr/bin/lcov"),
         )
 
-        async def _fake_discover(build_dir_arg, localhost, work_dir):
+        def _fake_discover(build_dir_arg):
             return discovered
 
         with (

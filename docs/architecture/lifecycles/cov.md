@@ -90,8 +90,9 @@ losing coverage credit.
 
 `otto cov report` runs *after* the fact, over directories `otto test --cov`
 or `otto cov get` already wrote: it still loads the lab — per-host toolchain
-resolution (`gcov`, `lcov`) comes from host configuration, with `.gcno`
-inspection as the fallback — but it creates **no output directory of its
+resolution (`gcov`, `lcov`) comes from host configuration, with the `.gcno`
+header's gcov version stamp as the fallback (a clang stamp routes counters
+through `llvm-cov gcov`) — but it creates **no output directory of its
 own** and runs **no gate**: reporting on yesterday's run must never be
 blocked by today's reservations ({doc}`index`). Its siblings do touch the
 lab: `otto cov get` fetches counters — into the standard per-invocation

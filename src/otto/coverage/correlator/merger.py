@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ...host.local_host import LocalHost
+from ...host.toolchain_discovery import ensure_gcov_tool
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -86,6 +87,9 @@ class LcovMerger:
         """
         lcov = toolchain.lcov_bin if toolchain else self.lcov
         gcov = toolchain.gcov_bin if toolchain else self.gcov
+        # An llvm-cov gcov tool (clang-instrumented build) needs a one-word
+        # wrapper for lcov; anything else passes through unchanged.
+        gcov = ensure_gcov_tool(gcov, output.parent)
 
         build_dirs = _find_gcno_dirs(gcda_dir, gcno_dir)
         build_args = " ".join(f"--build-directory {d}" for d in build_dirs)
@@ -109,6 +113,13 @@ class LcovMerger:
                 from ..errors import CoverageDataMismatchError
 
                 raise CoverageDataMismatchError(result.value)
+            if "Incompatible GCC/GCOV version" in (result.value or ""):
+                # geninfo's marker for a gcov tool that cannot read this
+                # build's file format — the wrong-compiler-family error mode
+                # (classically: a clang build captured with GNU gcov).
+                from ..errors import CoverageToolVersionError
+
+                raise CoverageToolVersionError(result.value)
             raise RuntimeError(f"lcov --capture failed:\n{result.value}")
         return output
 
@@ -150,7 +161,7 @@ class LcovMerger:
         host_gcda_dirs: list[Path],
         gcno_dir: Path,
         work_dir: Path,
-        toolchains: "list[Toolchain] | None" = None,
+        toolchains: "list[Toolchain | None] | None" = None,
         gcno_dirs: list[Path] | None = None,
     ) -> Path:
         """Capture each host dir to ``.info``, then merge all.

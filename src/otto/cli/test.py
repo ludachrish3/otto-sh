@@ -1111,7 +1111,6 @@ async def _write_cov_metadata(
 
     source_roots: dict[str, str] = {}
     if embedded_dirs and (embedded_build_dir or embedded_builds):
-        from ..host import LocalHost
         from ..host.embedded_host import EmbeddedHost
         from ..host.toolchain import Toolchain
         from ..host.toolchain_discovery import discover_toolchain_from_gcno
@@ -1130,11 +1129,7 @@ async def _write_cov_metadata(
                 bd_key = host_build_dir or ""
                 if bd_key not in discovery_cache:
                     if host_build_dir:
-                        discovery_cache[bd_key] = await discover_toolchain_from_gcno(
-                            Path(host_build_dir),
-                            LocalHost(),
-                            cov_dir / "_toolchain_work",
-                        )
+                        discovery_cache[bd_key] = discover_toolchain_from_gcno(Path(host_build_dir))
                     else:
                         discovery_cache[bd_key] = None
                 tc = discovery_cache[bd_key]

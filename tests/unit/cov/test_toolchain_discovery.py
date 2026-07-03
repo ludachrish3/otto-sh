@@ -1,227 +1,185 @@
-"""Tests for toolchain auto-discovery from .gcno files."""
+"""Tests for toolchain auto-discovery from ``.gcno`` files.
 
+Discovery is stamp-based: the 8-byte ``.gcno`` header carries a gcov format
+version (GCC writes its own release, e.g. ``B33*`` for 13.3; clang always
+writes the GCC 4.8-era ``408*`` unless overridden), and that stamp — not any
+embedded compiler path, because .gcno files embed none — tells the coverage
+pipeline which gcov tool family can read the build's counters.
+
+Header bytes in these tests are real ones observed from gcc 13.3 and
+clang 18 (``oncg`` magic = little-endian file, stamp chars reversed on disk).
+"""
+
+import os
+import stat
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
-import pytest
-
-from otto.host.local_host import LocalHost
 from otto.host.toolchain_discovery import (
-    _clang_toolchain,
-    _derive_sysroot,
-    _gcc_toolchain,
-    _toolchain_from_compiler,
     discover_toolchain_from_gcno,
-    toolchain_from_gcov,
+    ensure_gcov_tool,
+    read_gcno_version,
 )
-from otto.result import CommandResult
-from otto.utils import Status
+
+# Real on-disk headers: 4-byte magic + 4-byte version stamp.
+GCC13_LE_HEADER = b"oncg*33B" + b"\x28\x88\xf5\x39"  # gcc 13.3, stamp word follows
+CLANG18_LE_HEADER = b"oncg*804" + b"\xa2\x1c\x9d\x13"  # clang 18 (4.8 emulation)
+GCC13_BE_HEADER = b"gcnoB33*" + b"\x28\x88\xf5\x39"  # big-endian target
+CLANG_BE_HEADER = b"gcno408*" + b"\xa2\x1c\x9d\x13"
 
 
-class TestDeriveSysroot:
-    def test_usr_bin(self):
-        assert _derive_sysroot(Path("/opt/arm/usr/bin")) == Path("/opt/arm")
-
-    def test_plain_bin(self):
-        assert _derive_sysroot(Path("/opt/arm/bin")) == Path("/opt/arm")
-
-    def test_system_usr_bin(self):
-        assert _derive_sysroot(Path("/usr/bin")) == Path("/")
+def _write_gcno(path: Path, header: bytes) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(header)
+    return path
 
 
-class TestGccToolchain:
-    def test_simple_gcc(self):
-        tc = _gcc_toolchain("gcc", Path("/usr/bin"), Path("/"))
-        assert tc.gcov_bin == "/usr/bin/gcov"
-
-    def test_cross_gcc(self):
-        tc = _gcc_toolchain(
-            "arm-linux-gnueabihf-gcc",
-            Path("/opt/arm/bin"),
-            Path("/opt/arm"),
-        )
-        assert tc.gcov_bin == "/opt/arm/bin/arm-linux-gnueabihf-gcov"
-        assert tc.sysroot == Path("/opt/arm")
-
-    def test_gpp(self):
-        tc = _gcc_toolchain("g++", Path("/usr/bin"), Path("/"))
-        assert tc.gcov_bin == "/usr/bin/gcov"
+def _fake_llvm_cov(bin_dir: Path, name: str = "llvm-cov") -> Path:
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    exe = bin_dir / name
+    exe.write_text("#!/bin/sh\nexit 0\n")
+    exe.chmod(exe.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return exe
 
 
-class TestClangToolchain:
-    def test_creates_wrapper(self, tmp_path):
-        _clang_toolchain(
-            Path("/opt/llvm/bin"),
-            Path("/opt/llvm"),
-            tmp_path,
-        )
-        wrapper = tmp_path / "llvm-gcov-wrapper.sh"
-        assert wrapper.exists()
-        content = wrapper.read_text()
-        assert "llvm-cov gcov" in content
-        assert "exec" in content
+class TestReadGcnoVersion:
+    def test_little_endian_gcc(self, tmp_path):
+        gcno = _write_gcno(tmp_path / "a.gcno", GCC13_LE_HEADER)
+        assert read_gcno_version(gcno) == "B33*"
 
-    def test_wrapper_is_executable(self, tmp_path):
-        _clang_toolchain(
-            Path("/opt/llvm/bin"),
-            Path("/opt/llvm"),
-            tmp_path,
-        )
-        wrapper = tmp_path / "llvm-gcov-wrapper.sh"
-        import os
+    def test_little_endian_clang(self, tmp_path):
+        gcno = _write_gcno(tmp_path / "a.gcno", CLANG18_LE_HEADER)
+        assert read_gcno_version(gcno) == "408*"
 
-        assert os.access(wrapper, os.X_OK)
+    def test_big_endian_gcc(self, tmp_path):
+        """A big-endian target's .gcno stores magic and stamp unreversed."""
+        gcno = _write_gcno(tmp_path / "a.gcno", GCC13_BE_HEADER)
+        assert read_gcno_version(gcno) == "B33*"
 
+    def test_big_endian_clang(self, tmp_path):
+        gcno = _write_gcno(tmp_path / "a.gcno", CLANG_BE_HEADER)
+        assert read_gcno_version(gcno) == "408*"
 
-class TestToolchainFromCompiler:
-    def test_gcc(self, tmp_path):
-        tc = _toolchain_from_compiler(
-            Path("/opt/arm/bin/arm-linux-gnueabihf-gcc"),
-            tmp_path,
-        )
-        assert tc is not None
-        assert tc.gcov_bin == "/opt/arm/bin/arm-linux-gnueabihf-gcov"
+    def test_truncated_file_returns_none(self, tmp_path):
+        gcno = _write_gcno(tmp_path / "a.gcno", b"oncg")
+        assert read_gcno_version(gcno) is None
 
-    def test_clang(self, tmp_path):
-        tc = _toolchain_from_compiler(
-            Path("/opt/llvm/bin/clang"),
-            tmp_path,
-        )
-        assert tc is not None
-        # Should have generated a wrapper
-        assert "llvm-gcov-wrapper" in tc.gcov_bin
+    def test_not_a_gcno_returns_none(self, tmp_path):
+        gcno = _write_gcno(tmp_path / "a.gcno", b"\x7fELF\x02\x01\x01\x00")
+        assert read_gcno_version(gcno) is None
 
-    def test_unknown_compiler(self, tmp_path):
-        tc = _toolchain_from_compiler(
-            Path("/opt/arm/bin/unknown-compiler"),
-            tmp_path,
-        )
-        assert tc is None
+    def test_missing_file_returns_none(self, tmp_path):
+        assert read_gcno_version(tmp_path / "nope.gcno") is None
 
 
 class TestDiscoverToolchainFromGcno:
-    @pytest.mark.asyncio
-    async def test_discovers_gcc(self, tmp_path):
-        localhost = LocalHost()
-        gcno_dir = tmp_path / "build"
-        gcno_dir.mkdir()
+    """Family detection: clang stamps resolve to llvm-cov; GCC stamps mean
+    the default gcov already applies (a cross-GCC toolchain cannot be located
+    from the .gcno alone and must be configured on the host)."""
 
-        find_output = str(gcno_dir / "main.gcno")
-        strings_output = (
-            "main.c\n/opt/arm-toolchain/bin/arm-linux-gnueabihf-gcc\nsome-other-string\n"
-        )
+    def test_clang_build_resolves_llvm_cov(self, tmp_path, monkeypatch):
+        _write_gcno(tmp_path / "build" / "obj" / "a.gcno", CLANG18_LE_HEADER)
+        llvm_cov = _fake_llvm_cov(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
-        call_count = 0
-
-        async def mock_oneshot(cmd, timeout=None):
-            nonlocal call_count
-            call_count += 1
-            if "find" in cmd:
-                return CommandResult(Status.Success, value=find_output, command=cmd, retcode=0)
-            if "strings" in cmd:
-                return CommandResult(Status.Success, value=strings_output, command=cmd, retcode=0)
-            return CommandResult(Status.Failed, value="", command=cmd, retcode=1)
-
-        with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
-            tc = await discover_toolchain_from_gcno(gcno_dir, localhost)
+        tc = discover_toolchain_from_gcno(tmp_path / "build")
 
         assert tc is not None
-        assert tc.sysroot == Path("/opt/arm-toolchain")
-        assert "arm-linux-gnueabihf-gcov" in tc.gcov_bin
-        await localhost.close()
+        assert tc.gcov_bin == str(llvm_cov)
 
-    @pytest.mark.asyncio
-    async def test_discovers_clang(self, tmp_path):
-        localhost = LocalHost()
-        gcno_dir = tmp_path / "build"
-        gcno_dir.mkdir()
-        work_dir = tmp_path / "work"
+    def test_clang_build_resolves_versioned_llvm_cov(self, tmp_path, monkeypatch):
+        """Ubuntu/Debian ship only ``llvm-cov-<N>`` unless the meta package
+        is installed; the highest version wins."""
+        _write_gcno(tmp_path / "build" / "a.gcno", CLANG18_LE_HEADER)
+        _fake_llvm_cov(tmp_path / "bin", "llvm-cov-17")
+        want = _fake_llvm_cov(tmp_path / "bin", "llvm-cov-18")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
-        find_output = str(gcno_dir / "main.gcno")
-        strings_output = "main.c\n/opt/llvm-15/bin/clang\n"
-
-        async def mock_oneshot(cmd, timeout=None):
-            if "find" in cmd:
-                return CommandResult(Status.Success, value=find_output, command=cmd, retcode=0)
-            if "strings" in cmd:
-                return CommandResult(Status.Success, value=strings_output, command=cmd, retcode=0)
-            return CommandResult(Status.Failed, value="", command=cmd, retcode=1)
-
-        with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
-            tc = await discover_toolchain_from_gcno(gcno_dir, localhost, work_dir)
+        tc = discover_toolchain_from_gcno(tmp_path / "build")
 
         assert tc is not None
-        assert "llvm-gcov-wrapper" in tc.gcov_bin
-        await localhost.close()
+        assert tc.gcov_bin == str(want)
 
-    @pytest.mark.asyncio
-    async def test_no_gcno_files_returns_none(self, tmp_path):
-        localhost = LocalHost()
+    def test_clang_build_without_llvm_cov_returns_none_with_warning(
+        self, tmp_path, monkeypatch, caplog
+    ):
+        _write_gcno(tmp_path / "build" / "a.gcno", CLANG18_LE_HEADER)
+        monkeypatch.setenv("PATH", str(tmp_path / "emptybin"))
 
-        with patch.object(localhost, "oneshot", new_callable=AsyncMock) as mock_oneshot:
-            mock_oneshot.return_value = CommandResult(
-                Status.Success, value="", command="find ...", retcode=0
-            )
-            tc = await discover_toolchain_from_gcno(tmp_path, localhost)
+        tc = discover_toolchain_from_gcno(tmp_path / "build")
 
         assert tc is None
-        await localhost.close()
+        assert any("llvm-cov" in r.message for r in caplog.records)
 
-    @pytest.mark.asyncio
-    async def test_no_compiler_in_strings_returns_none(self, tmp_path):
-        localhost = LocalHost()
-        gcno_dir = tmp_path / "build"
-        gcno_dir.mkdir()
+    def test_gcc_build_returns_none(self, tmp_path, monkeypatch):
+        """GCC-family stamp: no override — the merger's default gcov applies."""
+        _write_gcno(tmp_path / "build" / "a.gcno", GCC13_LE_HEADER)
+        _fake_llvm_cov(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
 
-        async def mock_oneshot(cmd, timeout=None):
-            if "find" in cmd:
-                return CommandResult(
-                    Status.Success, value=str(gcno_dir / "main.gcno"), command=cmd, retcode=0
-                )
-            if "strings" in cmd:
-                return CommandResult(
-                    Status.Success, value="main.c\nsome-random-data\n", command=cmd, retcode=0
-                )
-            return CommandResult(Status.Failed, value="", command=cmd, retcode=1)
+        assert discover_toolchain_from_gcno(tmp_path / "build") is None
 
-        with patch.object(localhost, "oneshot", side_effect=mock_oneshot):
-            tc = await discover_toolchain_from_gcno(gcno_dir, localhost)
+    def test_no_gcno_files_returns_none(self, tmp_path):
+        (tmp_path / "build").mkdir()
+        assert discover_toolchain_from_gcno(tmp_path / "build") is None
 
-        assert tc is None
-        await localhost.close()
+    def test_missing_dir_returns_none(self, tmp_path):
+        assert discover_toolchain_from_gcno(tmp_path / "nope") is None
+
+    def test_skips_unreadable_gcno_and_uses_next(self, tmp_path, monkeypatch):
+        _write_gcno(tmp_path / "build" / "a_bad.gcno", b"oncg")  # truncated
+        _write_gcno(tmp_path / "build" / "b_good.gcno", CLANG18_LE_HEADER)
+        llvm_cov = _fake_llvm_cov(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        tc = discover_toolchain_from_gcno(tmp_path / "build")
+
+        assert tc is not None
+        assert tc.gcov_bin == str(llvm_cov)
+
+    def test_discovered_toolchain_uses_host_lcov(self, tmp_path, monkeypatch):
+        """lcov is a host-side orchestrator; the discovered clang toolchain
+        must resolve the host lcov, not a path under a clang sysroot."""
+        _write_gcno(tmp_path / "build" / "a.gcno", CLANG18_LE_HEADER)
+        _fake_llvm_cov(tmp_path / "bin")
+        fake_lcov = _fake_llvm_cov(tmp_path / "bin", "lcov")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+
+        tc = discover_toolchain_from_gcno(tmp_path / "build")
+
+        assert tc is not None
+        assert tc.lcov_bin == str(fake_lcov)
 
 
-class TestToolchainFromGcov:
-    """The cross-gcov is named explicitly in the repo config (a .gcno embeds no
-    compiler path, and not every build system is CMake).
-    """
+class TestEnsureGcovTool:
+    """``lcov --gcov-tool`` accepts exactly one word, but llvm-cov is only
+    gcov-compatible via its ``gcov`` subcommand — llvm-cov paths are wrapped
+    in a one-word exec script; real gcov binaries pass through untouched."""
 
-    def test_cross_gcov_path(self):
-        gcov = Path("/opt/zephyr-sdk-0.16.8/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov")
-        tc = toolchain_from_gcov(gcov)
-        assert tc.gcov_bin == str(gcov)
-        assert tc.sysroot == Path("/opt/zephyr-sdk-0.16.8/arm-zephyr-eabi")
+    def test_plain_gcov_passes_through(self, tmp_path):
+        assert ensure_gcov_tool("/usr/bin/gcov", tmp_path) == "/usr/bin/gcov"
 
-    def test_usr_bin_gcov(self):
-        tc = toolchain_from_gcov(Path("/opt/arm/usr/bin/arm-none-eabi-gcov"))
-        assert tc.gcov_bin == "/opt/arm/usr/bin/arm-none-eabi-gcov"
-        assert tc.sysroot == Path("/opt/arm")
+    def test_cross_gcov_passes_through(self, tmp_path):
+        gcov = "/opt/zephyr-sdk/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov"
+        assert ensure_gcov_tool(gcov, tmp_path) == gcov
 
-    def test_lcov_resolves_to_host_lcov(self, monkeypatch):
-        """A cross gcov has no bundled lcov: lcov is a host-side Perl
-        orchestrator that shells out to ``--gcov-tool <gcov>``. It must resolve
-        to the host lcov, not ``<cross-sysroot>/usr/bin/lcov`` (which does not
-        exist) — otherwise ``otto cov report`` execs a missing binary on the
-        embedded path. The cross gcov itself stays under the cross sysroot.
-        """
-        import otto.host.toolchain_discovery as td
+    def test_llvm_cov_gets_wrapped(self, tmp_path):
+        wrapped = ensure_gcov_tool("/usr/bin/llvm-cov", tmp_path)
 
-        monkeypatch.setattr(
-            td.shutil,
-            "which",
-            lambda name: "/usr/bin/lcov" if name == "lcov" else None,
-        )
-        gcov = Path("/opt/zephyr-sdk-0.16.8/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcov")
-        tc = toolchain_from_gcov(gcov)
-        assert tc.lcov_bin == "/usr/bin/lcov"
-        assert tc.gcov_bin == str(gcov)
+        wrapper = Path(wrapped)
+        assert wrapper.parent == tmp_path
+        content = wrapper.read_text()
+        assert 'exec /usr/bin/llvm-cov gcov "$@"' in content
+        assert os.access(wrapper, os.X_OK)
+
+    def test_versioned_llvm_cov_gets_wrapped(self, tmp_path):
+        wrapped = ensure_gcov_tool("/usr/lib/llvm-18/bin/llvm-cov-18", tmp_path)
+        assert 'exec /usr/lib/llvm-18/bin/llvm-cov-18 gcov "$@"' in Path(wrapped).read_text()
+
+    def test_wrapping_is_idempotent(self, tmp_path):
+        first = ensure_gcov_tool("/usr/bin/llvm-cov", tmp_path)
+        second = ensure_gcov_tool("/usr/bin/llvm-cov", tmp_path)
+        assert first == second
+
+    def test_creates_missing_work_dir(self, tmp_path):
+        wrapped = ensure_gcov_tool("/usr/bin/llvm-cov", tmp_path / "deep" / "dir")
+        assert Path(wrapped).exists()

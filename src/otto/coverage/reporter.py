@@ -257,7 +257,7 @@ class CoverageReporter:
         """
         return [self.source_roots.get(d.name, self.source_root) for d in self.gcda_dirs]
 
-    async def _resolve_toolchains(self, work_dir: Path) -> "list[Toolchain | None]":
+    def _resolve_toolchains(self) -> "list[Toolchain | None]":
         """Build a per-gcda-dir list of toolchains.
 
         Resolution order for each directory:
@@ -265,7 +265,6 @@ class CoverageReporter:
         2. Auto-discovery from ``.gcno`` files in the source root
         3. ``None`` (merger will use its own defaults)
         """
-        from ..host.local_host import LocalHost
         from ..host.toolchain_discovery import discover_toolchain_from_gcno
 
         result: "list[Toolchain | None]" = []
@@ -286,15 +285,7 @@ class CoverageReporter:
             # toolchain whenever it emits a per-host source root, so this path
             # is not reached for per-version embedded hosts.
             if not fallback_computed:
-                localhost = LocalHost()
-                try:
-                    discovered_fallback = await discover_toolchain_from_gcno(
-                        self.source_root,
-                        localhost,
-                        work_dir,
-                    )
-                finally:
-                    await localhost.close()
+                discovered_fallback = discover_toolchain_from_gcno(self.source_root)
                 fallback_computed = True
 
             result.append(discovered_fallback)
@@ -340,17 +331,21 @@ class CoverageReporter:
 
             if wants_system and self.gcda_dirs:
                 # 0. Resolve per-host toolchains
-                toolchain_list = await self._resolve_toolchains(work_dir)
+                toolchain_list = self._resolve_toolchains()
 
                 # 1. Merge across hosts using lcov
                 logger.info("=== Merging coverage across %d host(s) ===", len(self.gcda_dirs))
                 merger = LcovMerger(localhost)
-                filtered_toolchains = [t for t in toolchain_list if t is not None]
+                # The list is positional (parallel to gcda_dirs) — hosts
+                # without a toolchain stay as None entries so a mixed bed
+                # (e.g. one clang product, one default-gcov host) keeps each
+                # host paired with its own toolchain.
+                has_toolchains = any(t is not None for t in toolchain_list)
                 system_info = await merger.capture_and_merge(
                     host_gcda_dirs=self.gcda_dirs,
                     gcno_dir=self.source_root,
                     work_dir=work_dir,
-                    toolchains=filtered_toolchains or None,
+                    toolchains=toolchain_list if has_toolchains else None,
                     gcno_dirs=self._per_host_gcno_dirs() if self.source_roots else None,
                 )
 

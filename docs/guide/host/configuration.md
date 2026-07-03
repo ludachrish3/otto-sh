@@ -217,14 +217,17 @@ Tool paths (``gcov``, ``lcov``) are resolved **relative to the sysroot**.
 The defaults are ``usr/bin/gcov`` and ``usr/bin/lcov``, so setting just
 ``sysroot`` is sufficient when the toolchain follows the standard layout.
 
-For non-standard layouts, override individual paths:
+For non-standard layouts, override individual paths.  A host whose
+product is built with ``clang --coverage`` points ``gcov`` at an
+``llvm-cov`` binary — otto substitutes the one-word ``llvm-cov gcov``
+wrapper that ``lcov`` requires at capture time:
 
 ```json
 {
     "toolchain": {
-        "sysroot": "/opt/llvm-15",
-        "gcov": "bin/llvm-gcov-wrapper.sh",
-        "lcov": "bin/lcov"
+        "sysroot": "/usr/lib/llvm-18",
+        "gcov": "bin/llvm-cov",
+        "lcov": "/usr/bin/lcov"
     }
 }
 ```

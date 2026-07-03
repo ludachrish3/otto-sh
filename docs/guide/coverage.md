@@ -26,9 +26,12 @@ The following system packages must be installed on the **otto host**
 
 On **remote hosts** (the machines running the instrumented product):
 
-- The product must be compiled with `gcc --coverage` (or `-fprofile-arcs
-  -ftest-coverage`).
+- The product must be compiled with `gcc --coverage` or
+  `clang --coverage` (both spell `-fprofile-arcs -ftest-coverage`).
 - `.gcda` files must be written to a known directory.
+
+For clang-built products the otto host additionally needs `llvm-cov`
+(the `llvm` package) — see {ref}`coverage-clang` below.
 
 Install on Debian/Ubuntu:
 
@@ -128,12 +131,52 @@ When no explicit toolchain is configured, otto resolves tools in this
 order:
 
 1. **Explicit config** — ``toolchain`` object in ``hosts.json``.
-2. **Auto-discovery** — otto inspects ``.gcno`` files with ``strings``
-   to find the compiler path, then derives the matching ``gcov``.
-   Both GCC and Clang families are detected.  For Clang, a wrapper
-   script is generated automatically (``lcov`` requires a single-command
-   ``--gcov-tool``).
+2. **Auto-discovery** — otto reads the gcov *version stamp* from the
+   build's ``.gcno`` headers (a ``.gcno`` embeds no compiler path, but
+   every compiler stamps the format version it wrote).  A clang stamp
+   resolves to ``llvm-cov`` from ``PATH``; a GCC stamp means the default
+   ``gcov`` already applies — a *cross*-GCC toolchain cannot be located
+   from the ``.gcno`` alone and must be configured on the host.
 3. **System default** — ``/usr/bin/gcov`` and ``/usr/bin/lcov``.
+
+When the resolved tool cannot actually read the build's counters —
+classically a clang build captured with GNU ``gcov`` — the capture
+stops with a typed error naming both versions and the fix, instead of
+producing an empty or wrong report.
+
+(coverage-clang)=
+### Clang Builds
+
+Products compiled with ``clang --coverage`` emit gcov-*compatible*
+counters in the GCC 4.8-era file format (clang stamps ``408*``), which
+modern GNU ``gcov`` refuses.  They must be read by ``llvm-cov gcov``:
+
+- **Auto-discovery**: with ``llvm-cov`` (or a versioned
+  ``llvm-cov-<N>``) on ``PATH``, otto detects the clang stamp and uses
+  it automatically — no configuration needed.
+- **Explicit config**: point the host toolchain's ``gcov`` at an
+  ``llvm-cov`` binary; otto substitutes the required one-word
+  ``llvm-cov gcov`` wrapper for ``lcov --gcov-tool`` at capture time.
+
+```json
+{
+  "toolchain": {
+    "sysroot": "/usr/lib/llvm-18",
+    "gcov": "bin/llvm-cov"
+  }
+}
+```
+
+```{warning}
+Do not force clang to imitate a GCC version stamp
+(``-Xclang -coverage-version=…``): clang still writes its own record
+layout, and GNU gcov trusts the stamp — it crashes or silently emits
+empty data. Let otto route clang counters through ``llvm-cov`` instead.
+```
+
+Branch coverage (`BRDA` records) flows through the llvm path as well;
+note that ``llvm-cov``'s branch *counts* are coarser than GNU gcov's
+(hit/not-hit is reliable, exact execution counts may differ).
 
 ## Retrieving Coverage: `otto cov get`
 

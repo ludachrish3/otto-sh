@@ -97,7 +97,7 @@ from typing import TYPE_CHECKING, Annotated
 
 import typer
 
-from ..coverage.errors import CoverageDataMismatchError
+from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
 from ..coverage.reporter import TierSpec, run_coverage_report
 from ..coverage.store.model import TIER_SYSTEM
 from ..logger import get_logger
@@ -290,10 +290,11 @@ def report(
                 extra_markers=extra_markers,
             )
         )
-    except CoverageDataMismatchError as e:
-        # Polluted-tree error mode (product rebuilt after the test run):
-        # the message already names the cause and remedy — print it clean,
-        # never as a traceback.
+    except (CoverageDataMismatchError, CoverageToolVersionError) as e:
+        # Typed capture errors — polluted tree (product rebuilt after the
+        # test run) or a gcov tool that cannot read the build's format (e.g.
+        # clang build captured with GNU gcov): the message already names the
+        # cause and remedy — print it clean, never as a traceback.
         logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
         raise typer.Exit(1) from e
     except GitUnavailableError as e:
@@ -506,7 +507,7 @@ async def _do_get(
     from ..coverage.capture.model import Capture
     from ..coverage.capture.produce import produce_captures
     from ..coverage.capture.store_dir import write_manual_capture
-    from ..coverage.errors import CoverageDataMismatchError
+    from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
     from ..coverage.fetcher.embedded import collect_embedded_coverage
     from ..coverage.fetcher.remote import GcdaFetcher
     from ..coverage.tiers import load_tiers, resolve_get_tier
@@ -602,7 +603,7 @@ async def _do_get(
         )
     except GitUnavailableError as e:
         raise _GetError(str(e)) from e
-    except CoverageDataMismatchError as e:
+    except (CoverageDataMismatchError, CoverageToolVersionError) as e:
         raise _GetError(str(e)) from e
     except RuntimeError as e:
         raise _GetError(f"Coverage merge failed: {e}") from e

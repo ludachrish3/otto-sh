@@ -1,207 +1,159 @@
-"""Auto-discover the toolchain from ``.gcno`` files.
+"""Resolve the gcov tool family from ``.gcno`` files.
 
-When a host has no explicit :class:`~otto.host.toolchain.Toolchain`
-configured, the coverage pipeline can attempt to infer the correct
-``gcov`` (and by extension ``lcov``) from compiler paths embedded in
-``.gcno`` files produced by ``gcc --coverage`` or ``clang --coverage``.
+A ``.gcno`` embeds no compiler path, but its 8-byte header carries the gcov
+*format version stamp* the producing compiler wrote: GCC stamps its own
+release (``B33*`` for 13.3), while ``clang --coverage`` always stamps the
+GCC 4.8-era ``408*`` (``402*`` on old LLVM) it emulates. That stamp is the
+one reliable family signal:
 
-Both GCC and Clang families are supported:
+* **GCC stamp** — the default (or host-configured) ``gcov`` applies; a cross
+  toolchain cannot be *located* from the ``.gcno`` alone and must be named in
+  the host's ``toolchain`` configuration.
+* **LLVM stamp** — GNU gcov refuses (or worse, crashes on) clang's files;
+  the counters must be read by ``llvm-cov gcov``, which is resolved from
+  ``PATH`` here.
 
-* **GCC**: ``arm-linux-gnueabihf-gcc`` → ``arm-linux-gnueabihf-gcov``
-* **Clang**: ``clang`` → generates a wrapper script that invokes
-  ``llvm-cov gcov`` (required because ``lcov --gcov-tool`` takes a
-  single command).
+``lcov --gcov-tool`` takes a single command, but Clang's reader is the
+two-word ``llvm-cov gcov`` — :func:`ensure_gcov_tool` bridges that with a
+generated one-word wrapper script at capture time.
 """
 
+import itertools
 import logging
+import os
 import re
 import shutil
 import stat
 from pathlib import Path
 
-from ..host.local_host import LocalHost
 from ..host.toolchain import Toolchain
 
 logger = logging.getLogger(__name__)
 
-# Matches absolute paths to gcc/g++ or clang/clang++ inside a bin/ directory.
-_COMPILER_RE = re.compile(r"(/\S+/bin/\S*(?:gcc|g\+\+|clang\+\+|clang))\b")
+# Version stamps LLVM's gcov-compatible writer emits by default: clang
+# emulated GCC 4.2 historically and emulates 4.8 on every current release.
+# Real GCC builds of that vintage predate every supported bed; in practice a
+# .gcno carrying one of these stamps came from ``clang --coverage``.
+_LLVM_STAMPS = frozenset({"402*", "408*"})
+
+# llvm-cov binary names: plain, or Debian/Ubuntu's versioned `llvm-cov-18`.
+_LLVM_COV_NAME = re.compile(r"^llvm-cov(-\d+)?$")
+
+_GCNO_SAMPLE_LIMIT = 5
+
+# .gcno header: 4-byte magic + 4-byte version stamp.
+_GCNO_HEADER_LEN = 8
 
 
-async def discover_toolchain_from_gcno(
-    gcno_dir: Path,
-    localhost: LocalHost,
-    work_dir: Path | None = None,
-) -> Toolchain | None:
-    """Inspect ``.gcno`` files to discover the compiler toolchain.
+def read_gcno_version(gcno: Path) -> str | None:
+    """Return a ``.gcno``'s 4-char version stamp (e.g. ``'B33*'``, ``'408*'``).
 
-    Runs ``strings`` on a sample of ``.gcno`` files and looks for
-    absolute paths to ``gcc``, ``g++``, ``clang``, or ``clang++``.
-    From that path the matching ``gcov`` binary and sysroot are
-    derived.
+    Handles both byte orders: a little-endian target stores the magic as
+    ``oncg`` and the stamp characters reversed; a big-endian target stores
+    ``gcno`` and the stamp as-is. Returns ``None`` for anything unreadable
+    or not a ``.gcno``.
+    """
+    try:
+        with gcno.open("rb") as f:
+            header = f.read(_GCNO_HEADER_LEN)
+    except OSError:
+        return None
+    if len(header) < _GCNO_HEADER_LEN:
+        return None
+    magic, version = header[:4], header[4:8]
+    if magic == b"oncg":
+        return version[::-1].decode(errors="replace")
+    if magic == b"gcno":
+        return version.decode(errors="replace")
+    return None
+
+
+def discover_toolchain_from_gcno(gcno_dir: Path) -> Toolchain | None:
+    """Infer the gcov tool family from the ``.gcno`` files under *gcno_dir*.
+
+    Reads the version stamp of a small sample of ``.gcno`` files. A clang
+    stamp resolves to an ``llvm-cov`` from ``PATH``; a GCC stamp returns
+    ``None`` (the caller's default gcov already matches same-host GCC
+    builds, and a mismatched cross build fails loudly at capture with
+    :class:`~otto.coverage.errors.CoverageToolVersionError`).
 
     Args:
-        gcno_dir: Directory containing ``.gcno`` files from the build.
-        localhost: :class:`~otto.host.local_host.LocalHost` for running shell commands.
-        work_dir: Directory for writing wrapper scripts (Clang only).
-            If ``None``, defaults to ``gcno_dir / '_toolchain_work'``.
+        gcno_dir: Directory tree containing the build's ``.gcno`` files.
 
     Returns:
-        A :class:`~otto.host.toolchain.Toolchain` if discovery succeeds, ``None`` otherwise.
+        A :class:`~otto.host.toolchain.Toolchain` pointing at ``llvm-cov``
+        for clang builds, ``None`` otherwise.
     """
-    result = await localhost.oneshot(
-        f"find {gcno_dir} -name '*.gcno' -type f | head -5",
-        timeout=30,
-    )
-    if result.retcode != 0 or not result.value.strip():
-        logger.debug("No .gcno files found in %s", gcno_dir)
+    stamp: str | None = None
+    sample: Path | None = None
+    for gcno in itertools.islice(gcno_dir.rglob("*.gcno"), _GCNO_SAMPLE_LIMIT):
+        stamp = read_gcno_version(gcno)
+        if stamp is not None:
+            sample = gcno
+            break
+
+    if stamp is None or sample is None:
+        logger.debug("No readable .gcno files under %s", gcno_dir)
         return None
 
-    gcno_files = result.value.strip().splitlines()
+    if stamp not in _LLVM_STAMPS:
+        logger.debug(
+            "%s carries GCC-family gcov stamp %r; leaving the default gcov in place",
+            sample,
+            stamp,
+        )
+        return None
 
-    for gcno in gcno_files:
-        strings_result = await localhost.oneshot(f"strings {gcno}", timeout=30)
-        if strings_result.retcode != 0:
-            continue
+    llvm_cov = _find_llvm_cov()
+    if llvm_cov is None:
+        logger.warning(
+            "%s was produced by clang --coverage (gcov stamp %r), but no "
+            "llvm-cov executable is on PATH; install llvm or set the host "
+            "toolchain's gcov to an llvm-cov path.",
+            sample,
+            stamp,
+        )
+        return None
 
-        for line in strings_result.value.splitlines():
-            match = _COMPILER_RE.search(line.strip())
-            if match:
-                compiler_path = Path(match.group(1))
-                toolchain = _toolchain_from_compiler(
-                    compiler_path,
-                    work_dir or gcno_dir / "_toolchain_work",
-                )
-                if toolchain is not None:
-                    logger.info(
-                        "Auto-discovered toolchain from %s: sysroot=%s gcov=%s",
-                        gcno,
-                        toolchain.sysroot,
-                        toolchain.gcov,
-                    )
-                    return toolchain
-
-    logger.debug("Could not discover toolchain from .gcno files in %s", gcno_dir)
-    return None
-
-
-def toolchain_from_gcov(gcov: Path) -> Toolchain:
-    """Build a :class:`~otto.host.toolchain.Toolchain` from an explicitly-configured gcov binary.
-
-    A ``.gcno`` embeds no compiler path, and not every build system is CMake,
-    so a cross-toolchain is named directly in the repo config
-    (``[coverage.embedded].gcov``) — the same explicit shape as the Unix
-    coverage config. The sysroot is derived from the gcov's ``bin/`` directory.
-
-    Args:
-        gcov: Absolute path to the cross ``gcov`` binary.
-    """
-    sysroot = _derive_sysroot(gcov.parent)
-    try:
-        gcov_rel = gcov.relative_to(sysroot)
-    except ValueError:
-        gcov_rel = gcov
-    # ``lcov`` is a host-side Perl orchestrator that shells out to the gcov tool
-    # (``lcov --gcov-tool <gcov>``); it is NOT part of a *cross* toolchain, so a
-    # cross gcov's sysroot has no ``usr/bin/lcov`` (the dataclass default would
-    # point at a nonexistent path and the report's ``lcov --capture`` would fail
-    # with ``lcov: not found``). Resolve the host lcov instead. Stored absolute,
-    # so ``lcov_bin`` ignores the cross sysroot while ``gcov`` stays under it.
     host_lcov = shutil.which("lcov")
     lcov = Path(host_lcov) if host_lcov else Path("usr/bin/lcov")
-    return Toolchain(sysroot=sysroot, gcov=gcov_rel, lcov=lcov)
+    logger.info(
+        "Auto-discovered clang toolchain from %s (stamp %r): gcov=%s", sample, stamp, llvm_cov
+    )
+    return Toolchain(sysroot=Path("/"), gcov=llvm_cov, lcov=lcov)
 
 
-def _toolchain_from_compiler(compiler_path: Path, work_dir: Path) -> Toolchain | None:
-    """Derive a :class:`Toolchain` from a discovered compiler path.
+def ensure_gcov_tool(gcov: str, work_dir: Path) -> str:
+    """Return *gcov* as a single-command tool that ``lcov --gcov-tool`` can exec.
 
-    Args:
-        compiler_path: Absolute path to the compiler binary
-            (e.g. ``/opt/arm/bin/arm-linux-gnueabihf-gcc``).
-        work_dir: Directory for writing wrapper scripts (Clang only).
-
-    Returns:
-        A :class:`Toolchain` or ``None`` if the compiler family cannot
-        be identified.
+    ``llvm-cov`` is gcov-compatible only through its ``gcov`` subcommand,
+    and lcov rejects a two-word tool ("cannot access gcov tool"). When
+    *gcov* names an ``llvm-cov`` binary, write (idempotently) and return a
+    one-word wrapper script in *work_dir* that execs ``<llvm-cov> gcov``;
+    every other tool passes through unchanged.
     """
-    name = compiler_path.name
-    bin_dir = compiler_path.parent  # e.g. /opt/arm/bin
-
-    # Walk up from bin/ to find sysroot.
-    # Typical layout: <sysroot>/usr/bin/gcc  or  <sysroot>/bin/gcc
-    sysroot = _derive_sysroot(bin_dir)
-
-    if _is_clang(name):
-        return _clang_toolchain(bin_dir, sysroot, work_dir)
-
-    if _is_gcc(name):
-        return _gcc_toolchain(name, bin_dir, sysroot)
-
-    return None
-
-
-def _is_gcc(name: str) -> bool:
-    return bool(re.search(r"(?:^|-)gcc$|(?:^|-)g\+\+$", name))
-
-
-def _is_clang(name: str) -> bool:
-    return bool(re.search(r"(?:^|-)clang(?:\+\+)?$", name))
-
-
-def _derive_sysroot(bin_dir: Path) -> Path:
-    """Walk up from the ``bin/`` directory to find the sysroot.
-
-    Convention: if ``bin_dir`` ends in ``usr/bin``, sysroot is two
-    levels up. If it ends in just ``bin``, sysroot is one level up.
-    """
-    if bin_dir.parent.name == "usr":
-        return bin_dir.parent.parent  # /opt/arm/usr/bin → /opt/arm
-    return bin_dir.parent  # /opt/arm/bin → /opt/arm
-
-
-def _gcc_toolchain(compiler_name: str, bin_dir: Path, sysroot: Path) -> Toolchain:
-    """Build a :class:`Toolchain` for a GCC-family compiler."""
-    gcov_name = re.sub(r"g\+\+", "gcov", re.sub(r"gcc", "gcov", compiler_name))
-    gcov_abs = bin_dir / gcov_name
-
-    try:
-        gcov_rel = gcov_abs.relative_to(sysroot)
-    except ValueError:
-        gcov_rel = Path("usr/bin/gcov")
-
-    return Toolchain(sysroot=sysroot, gcov=gcov_rel)
-
-
-def _clang_toolchain(bin_dir: Path, sysroot: Path, work_dir: Path) -> Toolchain:
-    """Build a :class:`Toolchain` for a Clang/LLVM compiler.
-
-    ``lcov --gcov-tool`` requires a single command, but Clang's
-    equivalent is ``llvm-cov gcov`` (two words).  This function
-    generates a small wrapper script in *work_dir*.
-    """
-    llvm_cov = bin_dir / "llvm-cov"
-    wrapper = _create_llvm_cov_wrapper(llvm_cov, work_dir)
-
-    try:
-        gcov_rel = wrapper.relative_to(sysroot)
-    except ValueError:
-        # Wrapper lives outside sysroot — store as absolute in gcov field
-        # and use '/' as sysroot so gcov_bin resolves correctly.
-        return Toolchain(sysroot=Path("/"), gcov=wrapper)
-
-    return Toolchain(sysroot=sysroot, gcov=gcov_rel)
-
-
-def _create_llvm_cov_wrapper(llvm_cov: Path, work_dir: Path) -> Path:
-    """Write a wrapper script that invokes ``llvm-cov gcov``.
-
-    Returns the path to the wrapper.
-    """
+    if not _LLVM_COV_NAME.match(Path(gcov).name):
+        return gcov
     work_dir.mkdir(parents=True, exist_ok=True)
     wrapper = work_dir / "llvm-gcov-wrapper.sh"
-
     if not wrapper.exists():
-        wrapper.write_text(f'#!/bin/sh\nexec {llvm_cov} gcov "$@"\n')
+        wrapper.write_text(f'#!/bin/sh\nexec {gcov} gcov "$@"\n')
         wrapper.chmod(wrapper.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return str(wrapper)
 
-    return wrapper
+
+def _find_llvm_cov() -> Path | None:
+    """Find ``llvm-cov`` on ``PATH``: the plain name, else the highest ``llvm-cov-<N>``."""
+    plain = shutil.which("llvm-cov")
+    if plain:
+        return Path(plain)
+
+    candidates: list[tuple[int, Path]] = []
+    for path_dir in os.get_exec_path():
+        for exe in Path(path_dir).glob("llvm-cov-*"):
+            match = re.fullmatch(r"llvm-cov-(\d+)", exe.name)
+            if match and os.access(exe, os.X_OK):
+                candidates.append((int(match.group(1)), exe))
+    if not candidates:
+        return None
+    return max(candidates)[1]
