@@ -214,6 +214,7 @@ class MetricCollector:
         self,
         target: MonitorTarget,
         timeout: float,
+        commands: "list[str] | None" = None,
     ) -> "Results | list[tuple[str, MetricDataPoint, SnmpMetric]] | None":
         """Collect metrics from a single host with a per-tick timeout.
 
@@ -224,6 +225,12 @@ class MetricCollector:
         across all parser commands; when a command exceeds it, ``run``'s own
         ``wait_for`` fires and triggers Ctrl+C session recovery
         (see :meth:`ShellSession._recover_session`) so the session stays healthy.
+
+        *commands* restricts the batch to a subset of the target's parser
+        commands — used by :meth:`run` when a parser's own ``interval`` puts
+        its command on a different bucket than the rest of the target's
+        commands. ``None`` collects every one of the target's commands, as
+        before (SNMP targets ignore it — they have no per-command intervals).
         """
         if target.snmp is not None:
             values = await asyncio.wait_for(
@@ -232,9 +239,45 @@ class MetricCollector:
             )
             return points_from_values(values)
         return await target.host.run(
-            list(target.parsers.keys()),
+            commands if commands is not None else list(target.parsers.keys()),
             timeout=timeout,
         )
+
+    async def _collect_bucket(
+        self,
+        entries: "list[tuple[MonitorTarget, list[str] | None]]",
+        timeout: float,
+    ) -> None:
+        """Collect and process one tick for a single interval bucket.
+
+        Shared tick body for every bucket loop spawned by :meth:`run` —
+        parameterized by *entries* (the ``(target, commands)`` pairs riding
+        this bucket) so a parser's faster or slower ``interval`` only affects
+        its own bucket's cadence.
+        """
+        results = await asyncio.gather(
+            *(self._collect_one(target, timeout, commands) for target, commands in entries),
+            return_exceptions=True,
+        )
+        ts = datetime.now(tz=timezone.utc)
+        for (target, _commands), result in zip(entries, results, strict=True):
+            match result:
+                case Results() as res:
+                    await self._process_host_results(
+                        target.host.name,
+                        ts,
+                        list(res),
+                        target.parsers,
+                        ctx=ParseContext(core_count=target.core_count),
+                    )
+                case list():
+                    await self._process_snmp_results(target.host.name, ts, result)
+                case BaseException():
+                    logger.warning(
+                        "Monitor: error collecting from %s: %s", target.host.name, result
+                    )
+                case _:
+                    continue
 
     async def run(
         self,
@@ -248,6 +291,14 @@ class MetricCollector:
         respond in time, it is skipped for that tick and the session is
         recovered automatically.  This prevents a single slow host from
         blocking collection on all other hosts.
+
+        Commands are bucketed by effective interval (``parser.interval or
+        interval``) and each bucket runs its own collection loop concurrently,
+        so a parser that declares a faster interval ticks more often without
+        speeding up the rest of that host's commands. SNMP targets always ride
+        the global (*interval*) bucket. With no per-parser intervals set,
+        there is exactly one bucket and behavior is identical to a single
+        global loop.
 
         Runs inside the caller's event loop.  Cancel the task wrapping this
         coroutine (or cancel it directly) to stop collection gracefully.
@@ -286,62 +337,29 @@ class MetricCollector:
         secs = interval.total_seconds()
         start = datetime.now(tz=timezone.utc)
 
-        # Initial collection: no sleep, publishes first data as soon as commands return
-        initial_results = await asyncio.gather(
-            *[self._collect_one(target, secs) for target in self._targets],
-            return_exceptions=True,
-        )
-        ts = datetime.now(tz=timezone.utc)
-        for target, result in zip(self._targets, initial_results, strict=True):
-            match result:
-                case Results() as res:
-                    await self._process_host_results(
-                        target.host.name,
-                        ts,
-                        list(res),
-                        target.parsers,
-                        ctx=ParseContext(core_count=target.core_count),
-                    )
-                case list():
-                    await self._process_snmp_results(target.host.name, ts, result)
-                case BaseException():
-                    logger.warning(
-                        "Monitor: error collecting from %s: %s", target.host.name, result
-                    )
-                case _:
-                    continue
+        # Bucket each target's commands by effective interval. SNMP targets
+        # ride the global bucket (their source has no per-command intervals).
+        buckets: dict[float, list[tuple[MonitorTarget, list[str] | None]]] = {}
+        for target in self._targets:
+            if target.snmp is not None:
+                buckets.setdefault(secs, []).append((target, None))
+                continue
+            by_interval: dict[float, list[str]] = {}
+            for cmd, parser in target.parsers.items():
+                by_interval.setdefault(parser.interval or secs, []).append(cmd)
+            for bucket_secs, cmds in by_interval.items():
+                buckets.setdefault(bucket_secs, []).append((target, cmds))
 
-        # Sleep is first so results[0] is the sleep and results[1:] are host results
-        while duration is None or datetime.now(tz=timezone.utc) - start < duration:
-            results = await asyncio.gather(
-                asyncio.sleep(secs),
-                *[self._collect_one(target, secs) for target in self._targets],
-                return_exceptions=True,
-            )
-            ts = datetime.now(tz=timezone.utc)
+        async def _bucket_loop(
+            bucket_secs: float, entries: "list[tuple[MonitorTarget, list[str] | None]]"
+        ) -> None:
+            # Initial collection: no sleep, publish as soon as commands return.
+            await self._collect_bucket(entries, bucket_secs)
+            while duration is None or datetime.now(tz=timezone.utc) - start < duration:
+                await asyncio.sleep(bucket_secs)
+                await self._collect_bucket(entries, bucket_secs)
 
-            for target, result in zip(self._targets, results[1:], strict=True):
-                match result:
-                    case Results() as res:
-                        await self._process_host_results(
-                            target.host.name,
-                            ts,
-                            list(res),
-                            target.parsers,
-                            ctx=ParseContext(core_count=target.core_count),
-                        )
-
-                    case list():
-                        await self._process_snmp_results(target.host.name, ts, result)
-
-                    case BaseException():
-                        logger.warning(
-                            "Monitor: error collecting from %s: %s", target.host.name, result
-                        )
-                        continue
-
-                    case _:
-                        continue
+        await asyncio.gather(*(_bucket_loop(s, e) for s, e in buckets.items()))
 
     async def _record_point(
         self,

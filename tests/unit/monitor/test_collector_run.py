@@ -9,6 +9,7 @@ These tests verify that the collection loop:
 """
 
 import asyncio
+import contextlib
 from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -204,6 +205,62 @@ class TestCollectorRun:
 
         # Should complete in ~0.5-1.0s, not 5+s
         assert elapsed < 2.0, f"Run took {elapsed:.2f}s — slow host may be blocking fast host"
+
+
+def _batches_from(host: MagicMock) -> list[list[str]]:
+    """Extract the command list passed to each recorded ``host.run()`` call.
+
+    Drops the one-time core-count probe (a single ``grep -c ^processor ...``
+    call with no ``timeout`` kwarg) so callers only see collection ticks.
+    """
+    return [
+        list(call.args[0])
+        for call in host.run.call_args_list
+        if not (len(call.args[0]) == 1 and "processor" in call.args[0][0])
+    ]
+
+
+@pytest.mark.asyncio
+async def test_per_parser_interval_buckets_commands():
+    """A parser with a faster interval is collected more often than the global tick."""
+
+    class FastParser(MetricParser):
+        y_title = "Fast"
+        unit = ""
+        command = "echo fast"
+        chart = "Fast"
+        interval = 0.05
+
+        def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint] | None:
+            return {self.chart: MetricDataPoint(value=1.0)}
+
+    class SlowParser(MetricParser):
+        y_title = "Slow"
+        unit = ""
+        command = "echo slow"
+        chart = "Slow"
+
+        def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint] | None:
+            return {self.chart: MetricDataPoint(value=1.0)}
+
+    host = _make_mock_host("host")
+    parsers = {FastParser.command: FastParser(), SlowParser.command: SlowParser()}
+    collector = MetricCollector(targets=[MonitorTarget(host=host, parsers=parsers)])
+
+    task = asyncio.create_task(collector.run(interval=timedelta(seconds=0.2)))
+    await asyncio.sleep(0.55)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    batches = _batches_from(host)
+    fast_calls = sum(1 for b in batches if b == ["echo fast"])
+    slow_calls = sum(1 for b in batches if "echo slow" in b)
+    # ~11 fast ticks vs ~3 slow ticks in 0.55s; assert the ratio loosely (CI jitter)
+    assert fast_calls >= 2 * slow_calls
+    assert all(b == ["echo fast"] or "echo fast" not in b for b in batches), (
+        "fast command must never ride the slow batch"
+    )
 
 
 class _FakeSnmpClient:
