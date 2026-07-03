@@ -41,6 +41,46 @@ class MetricPoint(OttoModel):
     meta: dict[str, Any] | None = None
 
 
+class ChartSpec(OttoModel):
+    """One dashboard chart descriptor served by ``/api/meta``.
+
+    The declarative contract the frontend renders from; TS types are
+    generated from this schema in Phase 2.
+    """
+
+    label: str
+    y_title: str
+    unit: str
+    command: str
+    chart: str
+    interval: float | None = None
+
+
+class TabSpec(OttoModel):
+    """One dashboard tab descriptor served by ``/api/meta``.
+
+    The declarative contract the frontend renders from; TS types are
+    generated from this schema in Phase 2.
+    """
+
+    id: str
+    label: str
+    metrics: list[str]
+
+
+class MonitorMeta(OttoModel):
+    """The typed ``/api/meta`` payload: hosts, chart specs, and tab layout.
+
+    The declarative contract the frontend renders from; TS types are
+    generated from this schema in Phase 2.
+    """
+
+    hosts: list[str]
+    live: bool
+    metrics: list[ChartSpec]
+    tabs: list[TabSpec]
+
+
 class RowModel(BaseModel):
     """Lenient base for historical-data import/export rows.
 

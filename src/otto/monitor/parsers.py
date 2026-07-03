@@ -122,6 +122,11 @@ class MetricParser(ABC):
     :class:`~otto.monitor.collector.MetricCollector` before the first tick.
     Most parsers ignore this; :class:`TopCpuParser` uses it to normalize per-process CPU%."""
 
+    interval: float | None = None
+    """Collection interval override in seconds for this parser's command.
+    ``None`` means the collector's global ``--interval`` (the default).
+    Honored by :meth:`MetricCollector.run`'s per-interval scheduling."""
+
     @abstractmethod
     def parse(self, output: str) -> dict[str, MetricDataPoint]:
         """

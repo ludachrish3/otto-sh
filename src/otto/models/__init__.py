@@ -28,9 +28,12 @@ from .host import (
     UnixHostSpec,
 )
 from .monitor import (
+    ChartSpec,
     EventRecord,
     MetricPoint,
     MetricRecord,
+    MonitorMeta,
+    TabSpec,
 )
 from .options import (
     FtpOptionsSpec,
@@ -55,6 +58,7 @@ from .settings import (
 )
 
 __all__ = [
+    "ChartSpec",
     "DockerComposeSpec",
     "DockerImageSpec",
     "DockerSettingsSpec",
@@ -64,6 +68,7 @@ __all__ = [
     "HostSpec",
     "MetricPoint",
     "MetricRecord",
+    "MonitorMeta",
     "NcOptionsSpec",
     "OsProfileSpec",
     "OttoEnvSettings",
@@ -76,6 +81,7 @@ __all__ = [
     "SftpOptionsSpec",
     "SnmpOptionsSpec",
     "SshOptionsSpec",
+    "TabSpec",
     "TelnetOptionsSpec",
     "TftpOptionsSpec",
     "ToolchainSpec",

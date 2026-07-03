@@ -22,7 +22,8 @@ from tests._fixtures._fake_collector import FakeCollector
 pytestmark = [pytest.mark.hostless, pytest.mark.xdist_group("dashboard")]
 
 META_KEYS = {"hosts", "live", "metrics", "tabs"}
-META_METRIC_KEYS = {"label", "y_title", "unit", "command", "chart"}
+META_METRIC_KEYS = {"label", "y_title", "unit", "command", "chart", "interval"}
+# "interval" added in Phase 1 (per-parser collection intervals) — deliberate contract evolution.
 META_TAB_KEYS = {"id", "label", "metrics"}
 DATA_KEYS = {"series", "events", "chart_map"}
 EVENT_KEYS = {"id", "timestamp", "label", "source", "color", "dash", "end_timestamp"}

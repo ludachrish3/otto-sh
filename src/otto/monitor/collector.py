@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ..models import MetricPoint
+from ..models import ChartSpec, MetricPoint, MonitorMeta, TabSpec
 from ..result import CommandResult, Results
 from .broadcast import Broadcaster
 from .db import MetricDB
@@ -467,8 +467,8 @@ class MetricCollector:
         """Return all recorded events in chronological order."""
         return self._store.events()
 
-    def get_meta(self) -> dict[str, Any]:
-        """Return metadata for the dashboard (host names, metric labels/units, tabs)."""
+    def get_meta_model(self) -> MonitorMeta:
+        """Return the typed /api/meta payload (see get_meta for the dict form)."""
         # Derive host names from series keys (all series, including proc)
         hosts = self._store.hosts_from_series()
         # Fall back to the list of live hosts if no data has arrived yet
@@ -477,31 +477,36 @@ class MetricCollector:
 
         # Build ordered tabs list from all views (shell parsers + SNMP
         # descriptors), preserving first-encountered tab order.
-        tabs_map: dict[str, dict[str, Any]] = {}
+        tabs: dict[str, TabSpec] = {}
         for v in self._views:
             tab_id = getattr(v, "tab", "metrics")
             tab_label = getattr(v, "tab_label", "Metrics")
-            if tab_id not in tabs_map:
-                tabs_map[tab_id] = {"id": tab_id, "label": tab_label, "metrics": []}
-            tabs_map[tab_id]["metrics"].append(v.chart)
+            if tab_id not in tabs:
+                tabs[tab_id] = TabSpec(id=tab_id, label=tab_label, metrics=[])
+            tabs[tab_id].metrics.append(v.chart)
 
-        result: dict[str, Any] = {
-            "hosts": hosts,
-            "live": bool(self._hosts),  # False when loaded from --file (no live collection)
-            "metrics": [
-                {
-                    "label": v.chart,
-                    "y_title": v.y_title,
-                    "unit": v.unit,
-                    # Shell views key off the command; SNMP views off the OID.
-                    "command": getattr(v, "command", None) or getattr(v, "oid", ""),
-                    "chart": v.chart,
-                }
-                for v in self._views
-            ],
-            "tabs": list(tabs_map.values()),
-        }
-        return result
+        metrics = [
+            ChartSpec(
+                label=v.chart,
+                y_title=v.y_title,
+                unit=v.unit,
+                # Shell views key off the command; SNMP views off the OID.
+                command=getattr(v, "command", None) or getattr(v, "oid", ""),
+                chart=v.chart,
+                interval=getattr(v, "interval", None),
+            )
+            for v in self._views
+        ]
+        return MonitorMeta(
+            hosts=hosts,
+            live=bool(self._hosts),  # False when loaded from --file (no live collection)
+            metrics=metrics,
+            tabs=list(tabs.values()),
+        )
+
+    def get_meta(self) -> dict[str, Any]:
+        """Return metadata for the dashboard (host names, metric labels/units, tabs)."""
+        return self.get_meta_model().model_dump(mode="json")
 
     # ------------------------------------------------------------------
     # SSE pub/sub

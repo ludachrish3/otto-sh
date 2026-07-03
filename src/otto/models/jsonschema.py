@@ -24,6 +24,7 @@ from ..host.connections import TERM_BACKENDS
 from ..host.os_profile import registered_host_specs
 from ..host.transfer import TRANSFER_BACKENDS
 from .host import HostSpec
+from .monitor import MonitorMeta
 from .settings import ReservationFile, SettingsModel
 
 _SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -157,5 +158,10 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
     )
     docs["reservations"] = _decorate(
         ReservationFile.model_json_schema(), "reservations", "otto reservations"
+    )
+    docs["monitor-meta"] = _decorate(
+        MonitorMeta.model_json_schema(),
+        "monitor-meta",
+        "Monitor dashboard /api/meta payload",
     )
     return docs

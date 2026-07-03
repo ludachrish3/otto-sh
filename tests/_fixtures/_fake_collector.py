@@ -11,6 +11,7 @@ from typing import Any
 
 from typing_extensions import override
 
+from otto.models.monitor import MonitorMeta
 from otto.monitor.collector import MetricCollector
 from otto.monitor.parsers import DEFAULT_PARSERS, MetricDataPoint
 
@@ -37,11 +38,11 @@ class FakeCollector(MetricCollector):
         self._force_live = force_live
 
     @override
-    def get_meta(self) -> dict[str, Any]:
+    def get_meta_model(self) -> MonitorMeta:
         """Production meta, with ``live`` forced (hosts=[] would report historical)."""
-        meta = super().get_meta()
-        meta["live"] = self._force_live
-        return meta
+        model = super().get_meta_model()
+        model.live = self._force_live
+        return model
 
     async def push(
         self,
