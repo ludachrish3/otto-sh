@@ -199,24 +199,42 @@ class TestRunOptions:
 
 
 def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
-    """Completion source for ``--tests``: statically-discovered test names.
+    """Completion source for ``--tests``: static floor + pytest-collected names.
 
-    Prefers the completion-cache snapshot; falls back to a live source scan
-    (:func:`~otto.configmodule.completion_cache.collect_test_names`, ``ast``
-    only — never imports or collects, so no test code runs at tab time).
-    Comma-separated, so only the in-progress segment is completed. Names come
-    from ``def test_*`` / ``Test*`` methods in the source; parametrized-only or
-    dynamically-generated ids are not offered — those need ``--list-tests``.
+    The floor is the always-available ``ast`` scan
+    (:func:`~otto.configmodule.completion_cache.collect_test_names`, preferring
+    the cache snapshot) — every statically written ``def test_*`` / ``Test*``
+    method, no test code run.
+
+    On top of it, the *pytest-collected* set adds dynamically generated tests.
+    When that set is cold (never collected, or a test file changed), a single
+    bounded background collection warms it — so the first ``--tests`` TAB may be
+    slow, but subsequent ones (and every one after any real ``otto test`` run)
+    are fast and complete. Comma-separated, so only the in-progress segment is
+    completed. ``--tests`` matches by base name, so parametrizations collapse to
+    their base (``test_x`` runs every ``test_x[...]``).
     """
     from ..configmodule import get_completion_names, get_repos
-    from ..configmodule.completion_cache import collect_test_names
+    from ..configmodule.completion_cache import (
+        collect_test_names,
+        maybe_warm_collected_tests,
+        read_collected_tests,
+    )
     from ..utils import complete_comma_list
 
+    repos = get_repos()
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("tests"), list):
-        names = cached["tests"]
+        names = set(cached["tests"])
     else:
-        names = collect_test_names(get_repos())
+        names = set(collect_test_names(repos))
+
+    collected = read_collected_tests(repos)
+    if collected is None:
+        collected = maybe_warm_collected_tests(repos)
+    if collected:
+        names.update(collected)
+
     return complete_comma_list(sorted(names), incomplete)
 
 
@@ -885,11 +903,23 @@ def main(  # noqa: PLR0913 — CLI command params
 
     if list_tests:
         suite = ctx.invoked_subcommand
-        panels = [
-            repo.get_tests_panel(repo.collect_tests(markers=markers or None, suite=suite))
-            for repo in get_repos()
+        repos = get_repos()
+        per_repo = [
+            (repo, repo.collect_tests(markers=markers or None, suite=suite)) for repo in repos
         ]
-        _render_panels(panels)
+        _render_panels([repo.get_tests_panel(items) for repo, items in per_repo])
+        if not markers and suite is None:
+            # An unfiltered full collection just ran — warm the --tests
+            # completion cache for free (never from a marker/suite-narrowed
+            # list, which would cache an incomplete set).
+            import contextlib
+
+            from ..configmodule.completion_cache import record_collected_tests_from_items
+
+            with contextlib.suppress(Exception):
+                record_collected_tests_from_items(
+                    repos, [item for _, items in per_repo for item in items]
+                )
         raise typer.Exit
 
     if cov_dir is not None:

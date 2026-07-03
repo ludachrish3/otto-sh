@@ -33,6 +33,16 @@ def test_lab_completer_continues_after_comma(monkeypatch):
     assert _lab_completer(None, "tech1,tech") == ["tech1,tech2"]
 
 
+def _patch_no_collected(monkeypatch):
+    """Neutralize the collected-tests layer so a test exercises just the floor."""
+    import otto.configmodule as cm
+    import otto.configmodule.completion_cache as cc
+
+    monkeypatch.setattr(cm, "get_repos", list)
+    monkeypatch.setattr(cc, "read_collected_tests", lambda repos: None)
+    monkeypatch.setattr(cc, "maybe_warm_collected_tests", lambda repos: None)
+
+
 def test_tests_completer_prefers_cache(monkeypatch):
     import otto.configmodule as cm
 
@@ -41,6 +51,7 @@ def test_tests_completer_prefers_cache(monkeypatch):
         "get_completion_names",
         lambda: {"tests": ["test_a", "test_b", "TestX::test_a"]},
     )
+    _patch_no_collected(monkeypatch)
     from otto.cli.test import _tests_completer
 
     assert _tests_completer(None, "test_") == ["test_a", "test_b"]
@@ -51,8 +62,48 @@ def test_tests_completer_falls_back_to_live(monkeypatch):
     import otto.configmodule.completion_cache as cc
 
     monkeypatch.setattr(cm, "get_completion_names", lambda: None)
-    monkeypatch.setattr(cm, "get_repos", list)
     monkeypatch.setattr(cc, "collect_test_names", lambda repos: ["test_smoke", "test_boot"])
+    _patch_no_collected(monkeypatch)
     from otto.cli.test import _tests_completer
 
     assert _tests_completer(None, "test_") == ["test_boot", "test_smoke"]
+
+
+def test_tests_completer_unions_collected_over_floor(monkeypatch):
+    """A fresh collected set adds dynamic names on top of the static floor."""
+    import otto.configmodule as cm
+    import otto.configmodule.completion_cache as cc
+
+    monkeypatch.setattr(cm, "get_completion_names", lambda: {"tests": ["test_static"]})
+    monkeypatch.setattr(cm, "get_repos", list)
+    # Collected is fresh (not None) → the warmer must NOT be consulted.
+    monkeypatch.setattr(cc, "read_collected_tests", lambda repos: ["test_dynamic"])
+
+    def _boom(repos):
+        raise AssertionError("warmer must not run when the collected set is fresh")
+
+    monkeypatch.setattr(cc, "maybe_warm_collected_tests", _boom)
+    from otto.cli.test import _tests_completer
+
+    assert _tests_completer(None, "test_") == ["test_dynamic", "test_static"]
+
+
+def test_tests_completer_warms_on_cold_collected(monkeypatch):
+    """A cold collected set triggers one warm; its result enriches this completion."""
+    import otto.configmodule as cm
+    import otto.configmodule.completion_cache as cc
+
+    monkeypatch.setattr(cm, "get_completion_names", lambda: {"tests": ["test_static"]})
+    monkeypatch.setattr(cm, "get_repos", list)
+    monkeypatch.setattr(cc, "read_collected_tests", lambda repos: None)
+    warmed = []
+
+    def _warm(repos):
+        warmed.append(True)
+        return ["test_generated"]
+
+    monkeypatch.setattr(cc, "maybe_warm_collected_tests", _warm)
+    from otto.cli.test import _tests_completer
+
+    assert _tests_completer(None, "test_") == ["test_generated", "test_static"]
+    assert warmed == [True]

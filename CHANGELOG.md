@@ -10,8 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - tab completion for `--lab` (lab names from `hosts.json`) and `otto test
-  --tests` (test names from a static source scan; parametrized-only ids
-  still need `--list-tests`)
+  --tests` (test names, matched by base name)
+- `otto test --tests` completion now also offers *dynamically generated*
+  tests: on top of the instant static-source-scan floor, a pytest-collected
+  set is warmed by any real `otto test --list-tests` run, or by a single
+  timeout-bounded background collection on the first `--tests` TAB, then
+  cached (and re-warmed automatically when a test file changes). The process
+  answering the keystroke still never runs user code — collection happens in a
+  disposable subprocess.
 
 ### Changed
 

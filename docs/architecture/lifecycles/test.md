@@ -87,21 +87,27 @@ This is the deliberate second door into the same pipeline: plain pytest
 functions (no `OttoSuite` at all) are first-class here, which is what the
 {doc}`init <init>` scaffold demonstrates.
 
-`--tests` tab-completes, from a **static source scan** of `def test_*` /
-`Test*` methods — bare functions and suite methods alike, and never running
-your test code at tab time:
+`--tests` tab-completes test names — bare functions and suite methods alike,
+matched by base name (a bare `test_x` runs every `test_x[...]`
+parametrization):
 
 ```{raw} html
 :file: ../../_static/generated/termynal/complete-test-names.html
 ```
 
-The honest boundary: a source scan can't see what only exists after pytest
-collection — parametrized-only ids and dynamically generated tests
-(`pytest_generate_tests`, conftest fixtures) aren't offered. When you need
-the fully-expanded list, `otto test --list-tests` runs a real collection
-pass and prints it. This is the standing trade-off in otto's completion: it
-buys "never runs user code at tab time" by completing what's *statically or
-cache-visible*, not what a live collection would enumerate.
+Two layers feed it. The always-available **floor** is a static `ast` scan of
+`def test_*` / `Test*` methods — instant, never runs your test code. On top of
+it sits a **pytest-collected** set that also includes *dynamically generated*
+tests (`pytest_generate_tests`, conftest fixtures) that a source scan can't
+see. That set is warmed by any real collection: an `otto test --list-tests`
+run fills it for free, and otherwise the first `--tests` TAB spawns a single
+bounded collection in the background (a one-time slower TAB — capped, and it
+falls back to the floor if it can't finish in time) and caches the result, so
+every later TAB is fast and complete. A test-file edit invalidates the cache
+via the same fingerprint the rest of the cache uses, so the collected set
+never goes stale silently. The completer itself still **never runs user code**
+— the collection happens in a disposable subprocess, never in the process
+answering the keystroke.
 
 ## Non-fatal assertions
 

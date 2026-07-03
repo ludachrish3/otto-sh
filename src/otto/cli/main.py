@@ -569,7 +569,24 @@ def entry() -> None:
     import contextlib
 
     from .. import bootstrap as bs
-    from ..configmodule.completion_cache import is_completion_mode, read_cache
+    from ..configmodule.completion_cache import (
+        DUMP_TESTS_ENV_VAR,
+        dump_collected_test_names,
+        is_completion_mode,
+        read_cache,
+    )
+
+    if os.environ.get(DUMP_TESTS_ENV_VAR):
+        # One-shot "collect and print test names" subprocess, spawned by the
+        # --tests completer to warm its collected cache (collection never runs
+        # inside the completer itself). Any failure exits non-zero with no
+        # payload, so the parent treats it as a miss and keeps the static floor.
+        code = 1
+        with contextlib.suppress(Exception):
+            _env, repos = bs.discover()
+            dump_collected_test_names(repos)
+            code = 0
+        raise SystemExit(code)
 
     if is_completion_mode():
         # Completion must never traceback into the shell: any discovery

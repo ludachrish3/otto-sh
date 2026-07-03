@@ -107,10 +107,13 @@ More showcases live on the lifecycle pages: suite names and `--tests`
 per-class host verbs plus registry-backed option values
 ({doc}`../lifecycles/host`), and `--lab` ({doc}`../lifecycles/index`).
 
-The consistent rule behind all of them: a candidate source must be knowable
-**without running user code at tab time**. Registry names come from the
-cache the slow path already wrote; host ids and lab names are read from
-`hosts.json` data; `--tests` names come from a static `ast` scan of the test
-sources. Anything that would need live collection or an import (a
-parametrized-only test id) is deliberately out of scope — `otto test
---list-tests` is the tool that pays that cost on demand.
+The consistent rule behind all of them: the process answering the keystroke
+**never runs user code**. Registry names come from the cache the slow path
+already wrote; host ids and lab names are read from `hosts.json` data;
+`--tests` names come from a static `ast` scan of the test sources. The one
+case that genuinely needs a live pytest collection — dynamically generated
+tests — is handled without breaking that rule: the collection runs in a
+disposable, timeout-bounded *subprocess* (warmed for free by any real `otto
+test --list-tests`, or by a one-time slow first TAB), and its result is cached
+under a reserved key so later completions are a plain read. The static scan
+stays as the always-available floor, so `--tests` completion is never empty.

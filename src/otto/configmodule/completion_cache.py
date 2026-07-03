@@ -74,6 +74,28 @@ stale entries without trusting the mtimes on-disk::
         }
     }
 
+Collected test-name namespace
+-----------------------------
+
+Alongside the fingerprint entries, a single reserved key
+``"__collected_tests__"`` holds the *pytest-collected* ``--tests`` names
+(dynamically generated tests included), keyed by the same fingerprint::
+
+    {
+        "__collected_tests__": {
+            "<fingerprint>": {
+                "schema_version": 1,
+                "generated_at": 1745000000,
+                "names": ["test_x", "TestX::test_x", ...],
+            }
+        }
+    }
+
+It is written only by a deliberate collection (a real ``otto test --list-tests``
+run, or the bounded subprocess the ``--tests`` completer spawns at tab time) —
+never by the slow-path writer, which must not run a collection pass. Keeping it
+in its own key means the two writers touch disjoint data and can't clobber.
+
 Fingerprint
 -----------
 
@@ -118,6 +140,52 @@ HOSTS_FILENAME = "hosts.json"
 # slow path to run periodically so annotation / option changes that don't
 # move any tracked file's mtime still eventually refresh.
 CACHE_TTL_SECONDS = 24 * 60 * 60
+
+
+# --- Collected (pytest-accurate) test-name cache, for --tests completion -----
+#
+# The ``tests`` field above is an ``ast``-only *floor* — every statically
+# written ``def test_*`` / ``Test*`` method, discovered without importing a
+# thing. The *collected* set below comes from a real pytest collection, so it
+# also covers dynamically generated tests (``pytest_generate_tests`` /
+# fixture-driven parametrization) and matches the repo's actual pytest config.
+# It selects by *base* name — ``otto test --tests`` matches a bare name against
+# every parametrization — so per-parametrization ids are deliberately not part
+# of it.
+#
+# It lives under its own reserved top-level key (never a real fingerprint), so
+# writing it never disturbs the main fingerprint entries. That separation is
+# load-bearing: the slow-path writer rewrites a whole main entry on every real
+# command and must NEVER run a collection pass, while this set is warmed only
+# by a deliberate collection (a real ``otto test`` run, or a bounded subprocess
+# spawned at tab time). The two writers touch disjoint keys and can't clobber.
+COLLECTED_TESTS_KEY = "__collected_tests__"
+COLLECTED_SCHEMA_VERSION = 1
+
+# Env var that flips ``otto`` into the one-shot "collect and print test names"
+# subprocess the completer spawns to warm the collected cache. Handled as an
+# early exit in :func:`otto.cli.main.entry`, before the normal CLI runs.
+DUMP_TESTS_ENV_VAR = "_OTTO_DUMP_TEST_NAMES"
+
+# Hard cap on the tab-time collection subprocess: a cold ``--tests`` TAB blocks
+# at most this long before falling back to the static floor. "Slow on the first
+# attempt is better than no completion" — but bounded, never a wedged shell.
+COLLECT_TIMEOUT_SECONDS = 15
+
+# After a failed / timed-out tab-time collection, skip re-collecting at tab time
+# for this long. Keeps a repo that can't collect within the timeout from costing
+# a slow TAB on *every* keystroke — at most one per cooldown window.
+COLLECT_COOLDOWN_SECONDS = 60
+
+COLLECT_LOCK_FILENAME = ".completion_collect.lock"
+# A lock older than this is treated as orphaned (its holder died) and stolen,
+# so a crashed collector can't block warming forever.
+COLLECT_LOCK_STALE_SECONDS = COLLECT_TIMEOUT_SECONDS + 30
+
+# Frame the dumped payload so the parent can recover the names even if repo
+# discovery emits stray stdout before them.
+_DUMP_BEGIN = "__OTTO_TESTS_BEGIN__"
+_DUMP_END = "__OTTO_TESTS_END__"
 
 
 # Python type <-> serialized kind. Kept intentionally small: these are the
@@ -499,6 +567,15 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
         "tests": tests or [],
     }
 
+    _atomic_write_json(cache_path, existing)
+
+
+def _atomic_write_json(cache_path: Path, obj: dict[str, Any]) -> None:
+    """Write *obj* as JSON to *cache_path* atomically (tempfile + ``os.replace``).
+
+    A concurrent reader always sees either the old file or the complete new
+    one, never a half-written mix.
+    """
     with tempfile.NamedTemporaryFile(
         mode="w",
         dir=cache_path.parent,
@@ -507,7 +584,7 @@ def write_cache(  # noqa: PLR0913 — one keyword arg per cached name-set, by de
         suffix=".tmp",
     ) as tmp:
         tmp_name = tmp.name
-        json.dump(existing, tmp)
+        json.dump(obj, tmp)
     try:
         Path(tmp_name).replace(cache_path)
     except Exception:
@@ -867,3 +944,262 @@ def collect_test_names(repos: list["Repo"]) -> list[str]:
                                 names.add(method.name)
                                 names.add(f"{node.name}::{method.name}")
     return sorted(names)
+
+
+# ---------------------------------------------------------------------------
+# Collected (pytest-accurate) test names — real collection, cached separately
+# ---------------------------------------------------------------------------
+
+
+def _test_names_from_items(items: list[Any]) -> list[str]:
+    """Completion candidates from collected pytest items: base + ``Class::base``.
+
+    Collapses parametrizations to the base name (``test_x[a]`` → ``test_x``):
+    ``otto test --tests`` selects by base name (a bare name runs every
+    parametrization and per-parametrization ids are rejected), so this mirrors
+    :func:`collect_test_names`'s shape — only the *source* differs (real
+    collection vs. an ``ast`` scan). Duck-typed on ``.name`` / ``.cls_name`` so
+    it needn't import :class:`~otto.configmodule.repo.CollectedTest`.
+    """
+    names: set[str] = set()
+    for item in items:
+        base = str(item.name).partition("[")[0]
+        names.add(base)
+        cls_name = getattr(item, "cls_name", None)
+        if cls_name:
+            names.add(f"{cls_name}::{base}")
+    return sorted(names)
+
+
+def dump_collected_test_names(repos: list["Repo"]) -> None:
+    """Collect every repo's tests and print a framed name list to stdout.
+
+    The child side of the tab-time warm: run by :func:`otto.cli.main.entry`
+    when :data:`DUMP_TESTS_ENV_VAR` is set. Collection runs here — in a
+    disposable, timeout-bounded subprocess — never inside the completer itself
+    (whose stdout is the shell's completion channel). ``Repo.collect_tests``
+    already redirects the inner pytest run's stdout/stderr, so only the framed
+    payload below reaches the parent.
+    """
+    import sys
+
+    items: list[Any] = []
+    for repo in repos:
+        items.extend(repo.collect_tests())
+    names = _test_names_from_items(items)
+    sys.stdout.write("\n".join([_DUMP_BEGIN, *names, _DUMP_END]) + "\n")
+    sys.stdout.flush()
+
+
+def _parse_dumped_names(stdout: str) -> list[str] | None:
+    """Recover the framed name list from the dump subprocess's stdout."""
+    lines = stdout.splitlines()
+    try:
+        start = lines.index(_DUMP_BEGIN)
+        end = lines.index(_DUMP_END)
+    except ValueError:
+        return None
+    if end < start:
+        return None
+    return [ln for ln in lines[start + 1 : end] if ln.strip()]
+
+
+def _collected_cache_entry(repos: list["Repo"]) -> dict[str, Any] | None:
+    """Raw collected-cache entry (names + timestamp) for the current fingerprint."""
+    if not repos:
+        return None
+    cache_path = _cache_path()
+    if cache_path is None or not cache_path.is_file():
+        return None
+    try:
+        data = json.loads(cache_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    namespace = data.get(COLLECTED_TESTS_KEY)
+    if not isinstance(namespace, dict):
+        return None
+    entry = namespace.get(compute_fingerprint(repos))
+    return entry if isinstance(entry, dict) else None
+
+
+def read_collected_tests(repos: list["Repo"]) -> list[str] | None:
+    """Return the fresh pytest-collected test names for ``--tests``, or ``None``.
+
+    ``None`` means the collected set is cold for the completer: caching
+    disabled, no entry for this fingerprint, wrong schema, TTL-expired, a
+    recorded *failed* attempt (``names`` is ``null``), or malformed data. The
+    completer then falls back to the static floor and may warm the cache via
+    :func:`maybe_warm_collected_tests`. Fingerprint keying means any test-file
+    edit invalidates this automatically, exactly like the main cache.
+    """
+    entry = _collected_cache_entry(repos)
+    if entry is None:
+        return None
+    if entry.get("schema_version") != COLLECTED_SCHEMA_VERSION:
+        return None
+    generated_at = entry.get("generated_at")
+    if not isinstance(generated_at, (int, float)):
+        return None
+    if time.time() - generated_at > CACHE_TTL_SECONDS:
+        return None
+    names = entry.get("names")
+    if not isinstance(names, list):
+        return None
+    return names
+
+
+def _record_collected_tests(repos: list["Repo"], names: list[str] | None) -> None:
+    """Merge a collected-cache result for the current fingerprint.
+
+    ``names=None`` records a *failed* attempt; its timestamp drives the
+    tab-time retry cooldown. Only the reserved :data:`COLLECTED_TESTS_KEY`
+    namespace is touched — every main fingerprint entry is preserved — so this
+    warmer and the slow-path writer never clobber each other.
+    """
+    if not repos:
+        return
+    cache_path = _cache_path()
+    if cache_path is None:
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing: dict[str, Any] = {}
+    if cache_path.is_file():
+        try:
+            loaded = json.loads(cache_path.read_text())
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    namespace = existing.get(COLLECTED_TESTS_KEY)
+    if not isinstance(namespace, dict):
+        namespace = {}
+    namespace[compute_fingerprint(repos)] = {
+        "schema_version": COLLECTED_SCHEMA_VERSION,
+        "generated_at": int(time.time()),
+        "names": names,  # None => a failed attempt (cooldown marker only)
+    }
+    existing[COLLECTED_TESTS_KEY] = namespace
+    _atomic_write_json(cache_path, existing)
+
+
+def record_collected_tests_from_items(repos: list["Repo"], items: list[Any]) -> None:
+    """Warm the collected cache from an already-run *unfiltered* collection.
+
+    The free "Option B" path: when a real ``otto test --list-tests`` runs with
+    no marker/suite narrowing, it has already collected the full test set, so
+    cache it here rather than paying a separate collection later. Callers must
+    only pass an *unfiltered* item list — a marker/suite-narrowed collection
+    would cache an incomplete set.
+    """
+    _record_collected_tests(repos, _test_names_from_items(items))
+
+
+def _acquire_collect_lock(lock: Path) -> bool:
+    """Try to take the tab-time collection lock (atomic ``O_EXCL`` create).
+
+    Returns ``False`` when another process holds a fresh lock; steals and takes
+    a lock older than :data:`COLLECT_LOCK_STALE_SECONDS` (its holder died).
+    """
+    now = time.time()
+    try:
+        fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
+        try:
+            age = now - lock.stat().st_mtime
+        except OSError:
+            return False
+        if age <= COLLECT_LOCK_STALE_SECONDS:
+            return False
+        with contextlib.suppress(OSError):
+            lock.unlink()
+        try:
+            fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except OSError:
+            return False
+    except OSError:
+        return False
+    with contextlib.suppress(OSError):
+        os.write(fd, str(now).encode())
+    os.close(fd)
+    return True
+
+
+def _run_collect_subprocess() -> list[str] | None:
+    """Spawn the bounded ``DUMP_TESTS_ENV_VAR`` subprocess and parse its names.
+
+    Returns the collected names, or ``None`` on timeout / non-zero exit / spawn
+    failure. Runs the *venv* ``otto`` binary (so ``entry`` runs, unlike ``python
+    -m otto``) with the completion env vars stripped, so the child dumps names
+    instead of recursing into another completion.
+    """
+    import subprocess
+    import sys
+
+    otto_bin = Path(sys.executable).parent / "otto"
+    if not otto_bin.exists():
+        return None
+    env = dict(os.environ)
+    for var in (COMPLETION_ENV_VAR, "COMP_WORDS", "COMP_CWORD"):
+        env.pop(var, None)
+    env[DUMP_TESTS_ENV_VAR] = "1"
+    try:
+        proc = subprocess.run(  # noqa: S603 — venv otto binary, fixed argv, no shell
+            [str(otto_bin)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=COLLECT_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return _parse_dumped_names(proc.stdout)
+
+
+def maybe_warm_collected_tests(repos: list["Repo"]) -> list[str] | None:
+    """Best-effort: run one bounded collection to warm the collected cache.
+
+    Returns the collected names on success (so the triggering completion is
+    already enriched), else ``None`` — when warming is skipped (caching
+    disabled, cooldown active after a recent failure, another process already
+    collecting) or the collection times out / fails. Never raises: completion
+    must degrade to the static floor, never traceback into the shell.
+    """
+    if not repos:
+        return None
+    cache_path = _cache_path()
+    if cache_path is None:
+        return None
+    try:
+        return _warm_collected_tests(repos, cache_path)
+    except Exception:  # noqa: BLE001 — completion must never raise into the shell
+        return None
+
+
+def _warm_collected_tests(repos: list["Repo"], cache_path: Path) -> list[str] | None:
+    """Cooldown-gated, lock-guarded body of :func:`maybe_warm_collected_tests`."""
+    entry = _collected_cache_entry(repos)
+    if entry is not None:
+        at = entry.get("generated_at")
+        # read_collected_tests already returned a *fresh success* upstream, so a
+        # recent timestamp here means a recent failure → cooldown, skip.
+        if isinstance(at, (int, float)) and time.time() - at <= COLLECT_COOLDOWN_SECONDS:
+            return None
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = cache_path.parent / COLLECT_LOCK_FILENAME
+    if not _acquire_collect_lock(lock):
+        return None
+    try:
+        names = _run_collect_subprocess()
+    finally:
+        with contextlib.suppress(OSError):
+            lock.unlink()
+    with contextlib.suppress(OSError):
+        _record_collected_tests(repos, names)  # names=None stamps the cooldown
+    return names

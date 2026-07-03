@@ -150,15 +150,25 @@ otto test --tests test_login -m slow             # narrow a name selection by ma
 
 ### Tab-completing `--tests`
 
-`--tests` tab-completes test names, but with a deliberate, honest limit.
-The candidates are discovered by a **static source scan** — the `def test_*`
-functions and `Test*` class methods otto can see without importing your code
-— so completion never runs a test at tab time. That covers every
-statically-defined name (bare functions and suite methods alike), but it
-**cannot** see names that only exist after pytest collection:
-parametrized-only ids and tests generated dynamically (`pytest_generate_tests`,
-conftest fixtures) won't be offered. When you need the exact, fully-expanded
-list, `otto test --list-tests` runs a real collection pass and prints it.
+`--tests` tab-completes test names, matched by **base name** — a bare
+`test_login` selects every `test_login[...]` parametrization, and
+`TestClass::test_login` disambiguates. Two layers feed the candidates:
+
+- A **static source scan** (the `def test_*` functions and `Test*` class
+  methods otto can see without importing your code) is the always-available
+  floor — instant, and it never runs a test at tab time.
+- A **pytest-collected** set adds tests that only exist after collection —
+  dynamically generated ones (`pytest_generate_tests`, conftest fixtures) a
+  source scan can't see. It's warmed by any real collection: `otto test
+  --list-tests` fills it for free, and otherwise the first `--tests` TAB runs
+  one bounded background collection (a single, capped slow TAB; it falls back
+  to the floor if it can't finish in time) and caches the result — so later
+  completions are fast *and* complete. Editing a test file re-warms it
+  automatically. The collection runs in a throwaway subprocess, so the shell's
+  completion never runs your code directly.
+
+For the exact, fully-expanded per-parametrization list, `otto test
+--list-tests` still prints every collected id.
 - Multi-repo selection runs write one JUnit file per repo
   (`junit_<repo>.xml`) instead of the single-suite `junit.xml`. An explicit
   `--results PATH` fans out the same way: `PATH`'s stem gets `_<repo>`

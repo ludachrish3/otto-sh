@@ -47,10 +47,12 @@ After `otto --install-completion`, tab completion covers the dynamic,
 otto-specific values a static shell script couldn't know: suite and
 instruction names, host ids and their per-class verbs, transfer/term
 backends, reservation usernames, and — comma-separated lists included —
-`--lab` names and `--tests` names.  It is served from a per-repo cache so
-it never runs your init modules or test code at tab time; `--tests`
-completion in particular is a static source scan, so parametrized-only or
-dynamically-generated test ids need `otto test --list-tests` (see
+`--lab` names and `--tests` names.  It is served from a per-repo cache so the
+process answering the keystroke never runs your init modules or test code.
+`--tests` completes by base name and layers a static source scan (the instant
+floor) with a pytest-collected set that also includes dynamically-generated
+tests; that set warms itself from any real `otto test --list-tests` run, or
+from a one-time bounded collection on the first `--tests` TAB (see
 {doc}`test`).  `--clear-autocomplete-cache` drops the cache if it ever goes
 stale.
 
