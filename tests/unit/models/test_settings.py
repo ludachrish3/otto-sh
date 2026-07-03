@@ -252,7 +252,7 @@ def test_settings_version_allows_semver_suffix():
     assert m.version == "1.2.3-rc1"
 
 
-def test_settings_allows_legacy_lab_data_type_and_opaque_coverage():
+def test_settings_allows_legacy_lab_data_type_and_typed_coverage():
     m = SettingsModel.model_validate(
         {
             **_minimal(),
@@ -261,7 +261,8 @@ def test_settings_allows_legacy_lab_data_type_and_opaque_coverage():
         }
     )
     assert m.lab_data_type == "json"
-    assert m.coverage == {"gcda_remote_dir": "/var/cov", "embedded": {"extension": "cov"}}
+    assert m.coverage.gcda_remote_dir == "/var/cov"
+    assert m.coverage.embedded == {"extension": "cov"}
 
 
 def test_settings_forbids_unknown_top_level_key():

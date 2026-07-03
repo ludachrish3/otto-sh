@@ -1214,10 +1214,17 @@ async def _run_coverage(
     )
 
 
+def _has_cov_config(cov: dict[str, Any]) -> bool:
+    """Return True when the repo actually declared coverage settings."""
+    return bool(
+        cov.get("gcda_remote_dir") or cov.get("embedded") or cov.get("tiers") or cov.get("hosts")
+    )
+
+
 def _get_cov_repo(repos: list["Repo"]) -> "Repo | None":
     """Return the first repo with a ``[coverage]`` section in its settings."""
     for repo in repos:
-        if repo.settings.get("coverage"):
+        if _has_cov_config(repo.settings.get("coverage") or {}):
             return repo
     return None
 

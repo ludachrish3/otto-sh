@@ -1,0 +1,192 @@
+"""Tier/state color palette and validation for coverage rendering.
+
+Colors come from ``[coverage.tiers.<name>] color`` in settings.toml and
+may be a CSS named color or a ``#RRGGBB`` hex code.  Validation happens
+at settings load; the renderer consumes values verbatim.
+"""
+
+import re
+
+_HEX_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+# The CSS Color Module Level 4 extended named colors (lowercase).
+CSS_COLOR_NAMES: frozenset[str] = frozenset(
+    {
+        "aliceblue",
+        "antiquewhite",
+        "aqua",
+        "aquamarine",
+        "azure",
+        "beige",
+        "bisque",
+        "black",
+        "blanchedalmond",
+        "blue",
+        "blueviolet",
+        "brown",
+        "burlywood",
+        "cadetblue",
+        "chartreuse",
+        "chocolate",
+        "coral",
+        "cornflowerblue",
+        "cornsilk",
+        "crimson",
+        "cyan",
+        "darkblue",
+        "darkcyan",
+        "darkgoldenrod",
+        "darkgray",
+        "darkgreen",
+        "darkgrey",
+        "darkkhaki",
+        "darkmagenta",
+        "darkolivegreen",
+        "darkorange",
+        "darkorchid",
+        "darkred",
+        "darksalmon",
+        "darkseagreen",
+        "darkslateblue",
+        "darkslategray",
+        "darkslategrey",
+        "darkturquoise",
+        "darkviolet",
+        "deeppink",
+        "deepskyblue",
+        "dimgray",
+        "dimgrey",
+        "dodgerblue",
+        "firebrick",
+        "floralwhite",
+        "forestgreen",
+        "fuchsia",
+        "gainsboro",
+        "ghostwhite",
+        "gold",
+        "goldenrod",
+        "gray",
+        "green",
+        "greenyellow",
+        "grey",
+        "honeydew",
+        "hotpink",
+        "indianred",
+        "indigo",
+        "ivory",
+        "khaki",
+        "lavender",
+        "lavenderblush",
+        "lawngreen",
+        "lemonchiffon",
+        "lightblue",
+        "lightcoral",
+        "lightcyan",
+        "lightgoldenrodyellow",
+        "lightgray",
+        "lightgreen",
+        "lightgrey",
+        "lightpink",
+        "lightsalmon",
+        "lightseagreen",
+        "lightskyblue",
+        "lightslategray",
+        "lightslategrey",
+        "lightsteelblue",
+        "lightyellow",
+        "lime",
+        "limegreen",
+        "linen",
+        "magenta",
+        "maroon",
+        "mediumaquamarine",
+        "mediumblue",
+        "mediumorchid",
+        "mediumpurple",
+        "mediumseagreen",
+        "mediumslateblue",
+        "mediumspringgreen",
+        "mediumturquoise",
+        "mediumvioletred",
+        "midnightblue",
+        "mintcream",
+        "mistyrose",
+        "moccasin",
+        "navajowhite",
+        "navy",
+        "oldlace",
+        "olive",
+        "olivedrab",
+        "orange",
+        "orangered",
+        "orchid",
+        "palegoldenrod",
+        "palegreen",
+        "paleturquoise",
+        "palevioletred",
+        "papayawhip",
+        "peachpuff",
+        "peru",
+        "pink",
+        "plum",
+        "powderblue",
+        "purple",
+        "rebeccapurple",
+        "red",
+        "rosybrown",
+        "royalblue",
+        "saddlebrown",
+        "salmon",
+        "sandybrown",
+        "seagreen",
+        "seashell",
+        "sienna",
+        "silver",
+        "skyblue",
+        "slateblue",
+        "slategray",
+        "slategrey",
+        "snow",
+        "springgreen",
+        "steelblue",
+        "tan",
+        "teal",
+        "thistle",
+        "tomato",
+        "turquoise",
+        "violet",
+        "wheat",
+        "white",
+        "whitesmoke",
+        "yellow",
+        "yellowgreen",
+    }
+)
+
+# Per-kind defaults when a tier declares no explicit color (spec §9).
+DEFAULT_TIER_COLORS: dict[str, str] = {
+    "e2e": "green",
+    "unit": "yellow",
+    "manual": "orange",
+}
+
+# Non-tier line states (spec §9). "uncovered" is a light red.
+STATE_COLORS: dict[str, str] = {
+    "uncovered": "#f4a9a8",
+    "excluded": "grey",
+    "stale": "violet",
+    "aging": "tan",
+}
+
+
+def validate_color(value: str) -> str:
+    """Return *value* if it is a valid CSS named color or #RRGGBB hex.
+
+    Raises:
+        ValueError: if the value is neither.
+    """
+    if _HEX_RE.match(value):
+        return value
+    if value.lower() in CSS_COLOR_NAMES:
+        return value
+    raise ValueError(f"invalid color {value!r}: use a CSS color name or #RRGGBB hex")

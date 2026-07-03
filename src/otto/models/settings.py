@@ -236,6 +236,56 @@ _HOST_DEFAULT_OPTION_SPECS: dict[str, type[OttoModel]] = {
 # build time. Extend this set when a new menu-style capability gains a resolver.
 _HOST_PREFERENCE_CAPABILITIES: frozenset[str] = frozenset({"term", "transfer"})
 
+# max_age format: "<days>d", e.g. "180d". No months/weeks — keep the unit
+# unambiguous for the staleness calculation in the collection model.
+_MAX_AGE_RE = re.compile(r"^\d+d$")
+
+
+class CoverageTierSpec(OttoModel):
+    """One ``[coverage.tiers.<name>]`` block: a declared coverage tier."""
+
+    kind: Literal["e2e", "unit", "manual"]
+    precedence: int
+    color: str | None = None
+    harvest_dirs: list[Path] = Field(default_factory=list)
+    max_age: str | None = None
+
+    @field_validator("color")
+    @classmethod
+    def _validate_color(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from ..coverage.colors import validate_color
+
+        return validate_color(v)
+
+    @field_validator("max_age")
+    @classmethod
+    def _validate_max_age(cls, v: str | None) -> str | None:
+        if v is not None and _MAX_AGE_RE.match(v) is None:
+            raise ValueError(f"max_age {v!r} must be '<days>d', e.g. '180d'")
+        return v
+
+
+class CoverageExclusionsSpec(OttoModel):
+    """``[coverage.exclusions]`` — extra exclusion-marker strings."""
+
+    markers: list[str] = Field(default_factory=list)
+
+
+class CoverageSettingsSpec(OttoModel):
+    """Typed ``[coverage]`` table (was a free-form dict).
+
+    ``embedded`` stays a passthrough dict because its ``builds.<version>``
+    sub-tables carry dynamic version keys.
+    """
+
+    hosts: str | None = None
+    gcda_remote_dir: str = ""
+    embedded: dict[str, Any] = Field(default_factory=dict)
+    tiers: dict[str, CoverageTierSpec] = Field(default_factory=dict)
+    exclusions: CoverageExclusionsSpec = CoverageExclusionsSpec()
+
 
 class SettingsModel(OttoModel):
     """Boundary model for a repo's ``.otto/settings.toml`` (post ``${sut_dir}`` expansion).
@@ -250,7 +300,7 @@ class SettingsModel(OttoModel):
     # legacy / passthrough — present in every fixture, consumed by nobody in
     # parse_settings, but must be tolerated under extra='forbid'.
     lab_data_type: str = "json"
-    coverage: dict[str, Any] = Field(default_factory=dict)
+    coverage: CoverageSettingsSpec = CoverageSettingsSpec()
 
     # paths + module/name lists
     labs: list[Path] = Field(default_factory=list)
