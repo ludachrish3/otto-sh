@@ -127,13 +127,20 @@ def build_capture(
             logger.warning("Skipping source outside repo: %s", src)
             continue
         rel = src_path.relative_to(repo_root)
+        blob = gitio.blob_sha(repo_root, rel)
+        if blob is None:
+            logger.warning(
+                "Skipping source with no committed version at HEAD (untracked or generated): %s",
+                rel,
+            )
+            continue
         if dirty:
             hunks = parse_u0_hunks(gitio.diff_worktree_file_u0(repo_root, rel))
             lines, branches = _remap_file(raw_lines, raw_branches, LineRemapper(hunks))
         else:
             lines, branches = raw_lines, raw_branches
         files[rel.as_posix()] = CaptureFileCov(
-            blob=gitio.blob_sha(repo_root, rel),
+            blob=blob,
             lines=lines,
             branches=branches,
         )

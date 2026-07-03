@@ -87,6 +87,50 @@ def test_build_capture_dirty_remaps(repo: Path, tmp_path: Path) -> None:
     assert cap.files["f.c"].lines == {1: 0, 2: 7}
 
 
+def test_untracked_file_skipped(
+    repo: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (repo / "untracked.c").write_text("int z;\n")
+    info = tmp_path / "x.info"
+    info.write_text(INFO.format(src=repo / "f.c") + INFO.format(src=repo / "untracked.c"))
+    with caplog.at_level("WARNING"):
+        cap = build_capture(info_path=info, tier="system", repo_root=repo, board="b", labs=["lab1"])
+    assert "untracked.c" not in cap.files
+    assert "f.c" in cap.files
+    assert cap.dirty_remap is True
+    assert any("no committed version" in r.message for r in caplog.records)
+
+
+def test_gitignored_file_skipped(repo: Path, tmp_path: Path) -> None:
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env={
+                "GIT_AUTHOR_NAME": "t",
+                "GIT_AUTHOR_EMAIL": "t@x",
+                "GIT_COMMITTER_NAME": "t",
+                "GIT_COMMITTER_EMAIL": "t@x",
+                "HOME": str(tmp_path),
+                "PATH": "/usr/bin:/bin",
+            },
+        )
+
+    (repo / ".gitignore").write_text("gen.c\n")
+    git("add", ".gitignore")
+    git("commit", "-qm", "ignore gen.c")
+    (repo / "gen.c").write_text("int g;\n")
+
+    info = tmp_path / "x.info"
+    info.write_text(INFO.format(src=repo / "f.c") + INFO.format(src=repo / "gen.c"))
+    cap = build_capture(info_path=info, tier="system", repo_root=repo, board="b", labs=["lab1"])
+    assert "gen.c" not in cap.files
+    assert "f.c" in cap.files
+    assert cap.dirty_remap is False
+
+
 def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, repo / "f.c")
     cap = build_capture(info_path=info, tier="system", repo_root=repo, board="b", labs=[])
