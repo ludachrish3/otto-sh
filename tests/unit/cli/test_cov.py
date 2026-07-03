@@ -190,6 +190,13 @@ class TestCovReportMergeErrors:
         assert "Traceback" not in result.output
         assert "Coverage merge failed" in mock_err.call_args[0][0]
 
+    def test_prefix_option_forwards_to_reporter(self, cov_dir):
+        with patch.object(
+            cov_module, "run_coverage_report", new=AsyncMock(return_value=None)
+        ) as rcr:
+            runner.invoke(cov_app, ["report", str(cov_dir), "--prefix", "/repo"])
+        assert rcr.call_args.kwargs["prefix"] == Path("/repo")
+
 
 # ── report command — success ─────────────────────────────────────────────────
 

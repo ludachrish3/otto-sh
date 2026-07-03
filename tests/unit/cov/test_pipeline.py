@@ -165,9 +165,17 @@ class TestExclusionDisplayIsRenderTime:
         captured: dict[str, object] = {}
 
         class FakeRenderer:
-            def __init__(self, output_dir, *, project_name="Coverage Report", extra_markers=None):
+            def __init__(
+                self,
+                output_dir,
+                *,
+                project_name="Coverage Report",
+                extra_markers=None,
+                prefix=None,
+            ):
                 captured["output_dir"] = output_dir
                 captured["extra_markers"] = extra_markers
+                captured["prefix"] = prefix
 
             def render(self, store):
                 captured["rendered"] = store

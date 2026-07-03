@@ -77,6 +77,10 @@ class HtmlRenderer:
             forwarded from ``[coverage.exclusions].markers`` via the
             reporter.  Scanned alongside the built-in ``LCOV_EXCL_*``
             markers when annotating each file's source.
+        prefix: Strip this leading directory from file paths *shown* in
+            the report (display only, like ``genhtml --prefix``).  Files
+            outside the prefix display unchanged; links and store keys
+            always use the full path.
     """
 
     def __init__(
@@ -86,10 +90,12 @@ class HtmlRenderer:
         project_name: str = "Coverage Report",
         *,
         extra_markers: list[str] | None = None,
+        prefix: Path | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.project_name = project_name
         self.extra_markers: list[str] = list(extra_markers or [])
+        self.prefix = prefix
         # Deferred so importing the renderer module (and thus `otto.coverage`,
         # pulled onto the CLI startup path via cli.cov) does not load jinja2.
         from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -470,8 +476,12 @@ class HtmlRenderer:
             return "pct-mid"
         return "pct-low"
 
-    @staticmethod
-    def _display_path(record: FileRecord) -> str:
+    def _display_path(self, record: FileRecord) -> str:
+        if self.prefix is not None:
+            try:
+                return str(record.path.relative_to(self.prefix))
+            except ValueError:
+                return str(record.path)
         return str(record.path)
 
     @staticmethod

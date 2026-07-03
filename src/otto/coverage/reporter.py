@@ -210,6 +210,10 @@ class CoverageReporter:
             harvest, manual store, exclusion markers).  Omitted / an
             all-default :class:`CollectionInputs` selects the legacy,
             purely ``.gcda``-driven behavior — every new step is a no-op.
+        prefix: Strip this leading directory from file paths *shown* in
+            the report (display only, like ``genhtml --prefix``).  Files
+            outside the prefix display unchanged; links and store keys
+            always use the full path.
     """
 
     def __init__(
@@ -223,6 +227,7 @@ class CoverageReporter:
         source_roots: dict[str, Path] | None = None,
         *,
         collection: CollectionInputs | None = None,
+        prefix: Path | None = None,
     ) -> None:
         self.gcda_dirs = gcda_dirs
         self.source_root = source_root
@@ -236,6 +241,7 @@ class CoverageReporter:
         self.tier_configs: "list[TierConfig]" = list(coll.tier_configs)
         self.capture_paths: list[Path] = list(coll.capture_paths)
         self.extra_markers: list[str] = list(coll.extra_markers)
+        self.prefix = prefix
         self._validate_tiers()
 
     def _validate_tiers(self) -> None:
@@ -402,6 +408,7 @@ class CoverageReporter:
                 self.output_dir,
                 project_name=self.project_name,
                 extra_markers=self.extra_markers,
+                prefix=self.prefix,
             )
             renderer.render(store)
 
@@ -580,6 +587,7 @@ async def run_coverage_report(
     repo_root: Path | None = None,
     tier_configs: "list[TierConfig] | None" = None,
     extra_markers: list[str] | None = None,
+    prefix: Path | None = None,
 ) -> CoverageStore | None:
     """Render an HTML coverage report from one or more cov/ directories.
 
@@ -616,7 +624,9 @@ async def run_coverage_report(
         ``None`` when the legacy path found no coverage data.
     """
     if repo_root is None and tier_configs is None:
-        return await _run_legacy_report(cov_dirs, report_dir, project_name, tier_specs)
+        return await _run_legacy_report(
+            cov_dirs, report_dir, project_name, tier_specs, prefix=prefix
+        )
 
     return await _run_collection_report(
         cov_dirs,
@@ -626,6 +636,7 @@ async def run_coverage_report(
         repo_root=repo_root,
         tier_configs=tier_configs,
         extra_markers=extra_markers,
+        prefix=prefix,
     )
 
 
@@ -634,6 +645,8 @@ async def _run_legacy_report(
     report_dir: Path,
     project_name: str,
     tier_specs: list[TierSpec] | None,
+    *,
+    prefix: Path | None = None,
 ) -> CoverageStore | None:
     """Run the pre-collection-model path — byte-for-byte the historical behavior."""
     try:
@@ -661,6 +674,7 @@ async def _run_legacy_report(
         toolchains=toolchains,
         tiers=tier_specs,
         source_roots=source_roots,
+        prefix=prefix,
     )
     return await reporter.run()
 
@@ -674,6 +688,7 @@ async def _run_collection_report(
     repo_root: Path | None,
     tier_configs: "list[TierConfig] | None",
     extra_markers: list[str] | None,
+    prefix: Path | None = None,
 ) -> CoverageStore:
     """Run the collection-model path: captures + unit harvest + manual store.
 
@@ -710,5 +725,6 @@ async def _run_collection_report(
             capture_paths=capture_paths,
             extra_markers=list(extra_markers) if extra_markers else [],
         ),
+        prefix=prefix,
     )
     return await reporter.run()

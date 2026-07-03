@@ -231,6 +231,17 @@ def report(
             help="Title shown in the HTML report header.",
         ),
     ] = "Coverage Report",
+    prefix: Annotated[
+        Path | None,
+        typer.Option(
+            "--prefix",
+            help=(
+                "Strip this leading directory from file paths shown in "
+                "the report (display only, like genhtml --prefix). Files "
+                "outside the prefix display unchanged."
+            ),
+        ),
+    ] = None,
     tier: Annotated[
         list[str] | None,
         typer.Option(
@@ -288,6 +299,7 @@ def report(
                 repo_root=repo_root,
                 tier_configs=tier_configs,
                 extra_markers=extra_markers,
+                prefix=prefix,
             )
         )
     except (CoverageDataMismatchError, CoverageToolVersionError) as e:
