@@ -15,21 +15,36 @@ from tests._fixtures._fake_collector import FakeCollector
 HISTORICAL_JSON = Path(__file__).parent / "data" / "historical.json"
 
 
+# Every browser-marked test in this suite carries exactly these markers
+# (mirror of the ``pytestmark`` list atop each ``test_dashboard_*.py``). The
+# synthetic item below must carry all of them, not just ``browser``: an ``-m``
+# expression can select on any one — e.g. a positive ``-m hostless`` picks
+# these tests up too — and keying only off ``browser`` would wrongly evaluate
+# such an expression to "deselected" and stay silent, letting the browser
+# tests run straight into N missing-dist fixture errors (the exact noise this
+# guard exists to replace).
+_BROWSER_TEST_MARKERS = frozenset({"browser", "hostless", "xdist_group"})
+
+
 def _browser_tests_could_run(config: pytest.Config) -> bool:
-    """Would a bare ``browser``-marked item survive this session's ``-m`` filter?
+    """Would a browser-marked item survive this session's ``-m`` filter?
 
     ``pytest_configure`` fires before collection, so there's no item list to
     consult yet — evaluate the compiled ``-m`` expression (the same
     ``_pytest.mark.expression.Expression`` pytest itself uses for
-    ``-m``/``-k``) directly against a synthetic item that carries only the
-    ``browser`` marker, the one every test that needs the real build here
-    also carries. An empty expression means nothing is filtered, so browser
-    tests trivially survive.
+    ``-m``/``-k``) directly against a synthetic item carrying exactly the
+    markers every test that needs the real build here also carries
+    (``_BROWSER_TEST_MARKERS``). An empty expression means nothing is
+    filtered, so browser tests trivially survive.
     """
     markexpr = config.option.markexpr
     if not markexpr:
         return True
-    return Expression.compile(markexpr).evaluate(lambda name, **_kwargs: name == "browser")
+
+    def matches(name: str, **_kwargs: object) -> bool:
+        return name in _BROWSER_TEST_MARKERS
+
+    return Expression.compile(markexpr).evaluate(matches)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -45,11 +60,19 @@ def pytest_configure(config: pytest.Config) -> None:
     gives the same fix-it message as a single clear failure instead of N
     noisy fixture errors.
 
-    ``test_harness.py`` is unaffected either way: it's the one module in
-    this directory that is *not* ``browser``-marked (it hits ``/api/*``
-    only, never the rendered page) and carries its own fixture that
-    tolerates a missing build by standing in a marker page — it must keep
-    running in every hostless lane on a checkout that skipped ``make web``.
+    ``test_harness.py`` is unaffected in every real lane: it's the one module
+    in this directory that is *not* ``browser``-marked (it hits ``/api/*``
+    only, never the rendered page) and carries its own fixture that tolerates
+    a missing build by standing in a marker page — it must keep running in
+    every hostless lane on a checkout that skipped ``make web``. The check is
+    ``-m``-based, not path-based, so one niche invocation is a knowing false
+    positive: ``pytest .../test_harness.py`` by itself with no ``-m`` on a
+    dist-less checkout trips the guard even though that module is hermetic.
+    That's accepted over path/nodeid introspection (which would have to
+    re-derive "which files hold browser tests" that only collection knows):
+    the guard never lets browser tests fail confusingly, the false positive
+    is a single ``run make web`` message, and it self-remedies on the next
+    build.
 
     This must stay a plain ``config``-based check, not an item-based one
     (e.g. ``pytest_collection_modifyitems``/``pytest_collection_finish``
