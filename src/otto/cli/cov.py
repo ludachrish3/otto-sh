@@ -45,17 +45,18 @@ See the :doc:`/guide/coverage` and :doc:`/guide/host/index` documentation.
 
 ``otto cov get`` fetches ``.gcda`` counters straight from the lab (mirroring
 ``otto test --cov``'s collection step) and produces a pinned
-``capture.json`` per board under ``--output``. It is the single retrieval
-command for both automated (e2e-kind tier) and manual-session (manual-kind
-tier) capture production::
+``capture.json`` per board in its output directory. It is the single
+retrieval command for both automated (e2e-kind tier) and manual-session
+(manual-kind tier) capture production::
 
-    otto cov get --output ./cov_get --tier manual --ticket JIRA-123
+    otto cov get --tier manual --ticket JIRA-123
 
 **Options**
 
 ``--output PATH / -o PATH``
-    Where to write fetched coverage and per-board captures (default:
-    ``./cov_get``).
+    Where to write fetched coverage and per-board captures (default: the
+    standard per-invocation output directory under the xdir, same as every
+    other lab-touching command).
 
 ``--tier NAME``
     Coverage tier to stamp onto each capture. Defaults to the lab's sole
@@ -132,8 +133,9 @@ def cov_callback(ctx: typer.Context) -> None:
 
     ``cov report`` is purely local — it reads coverage artifacts and writes an
     HTML report. ``cov get`` and ``cov clean`` reach the lab's coverage hosts
-    (fetching or zeroing remote ``.gcda`` counters). None of the subcommands
-    creates a per-invocation output directory.
+    (fetching or zeroing remote ``.gcda`` counters). Only ``cov get`` creates
+    a per-invocation output directory (it is where its captures land by
+    default); ``report`` and ``clean`` opt out via their leaf markers.
     """
     if ctx.resilient_parsing:
         return
@@ -339,6 +341,13 @@ def report(
     logger.info("Report: %s", report_dir / "index.html")
 
 
+# `report` is purely local and must never create a per-invocation output dir
+# (reporting on yesterday's run leaves no trace of its own — e2e-pinned). The
+# leaf-invoke preamble reads this marker; `get` (which produces artifacts)
+# keeps the group's standard output-dir handling.
+report.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]
+
+
 # ---------------------------------------------------------------------------
 # get — single retrieval command (fetch + produce_captures)
 # ---------------------------------------------------------------------------
@@ -470,7 +479,7 @@ def _unix_only_pattern(unix_hosts: "list[UnixHost]") -> "re.Pattern[str]":
 
 
 async def _do_get(
-    output_dir: Path,
+    output_dir: Path | None,
     tier_name: str | None,
     ticket: str | None,
     note: str | None,
@@ -492,6 +501,7 @@ async def _do_get(
     single-line, user-facing message; the sync ``get`` command is the only
     place that turns either into ``typer.Exit(1)``.
     """
+    from ..context import get_context
     from ..coverage.capture.gitio import GitUnavailableError, head_commit
     from ..coverage.capture.model import Capture
     from ..coverage.capture.produce import produce_captures
@@ -529,6 +539,16 @@ async def _do_get(
         head_commit(cov_repo.sut_dir)
     except GitUnavailableError as e:
         raise _GetError(str(e)) from e
+
+    # Resolve the destination only now — after validation — so config/tier
+    # errors surface first. The CLI preamble records the standard
+    # per-invocation output dir on the context; --output overrides it; a
+    # bare programmatic call has neither and must say so.
+    if output_dir is None:
+        output_dir = get_context().output_dir
+        if output_dir is None:
+            raise _GetError("no output directory available: pass --output/-o")
+    output_dir = output_dir.resolve()
 
     cov_dir = output_dir / "cov"
     host_dirs: dict[str, Path] = {}
@@ -612,13 +632,16 @@ async def _do_get(
 @cov_app.command()
 def get(
     output_dir: Annotated[
-        Path,
+        Path | None,
         typer.Option(
             "--output",
             "-o",
-            help="Directory to write fetched coverage and per-board captures into.",
+            help=(
+                "Directory to write fetched coverage and per-board captures into. "
+                "Defaults to the command's standard per-invocation output directory."
+            ),
         ),
-    ] = Path("./cov_get"),
+    ] = None,
     tier: Annotated[
         str | None,
         typer.Option(
@@ -666,7 +689,7 @@ def get(
     try:
         asyncio.run(
             _do_get(
-                output_dir.resolve(),
+                output_dir,
                 tier,
                 ticket,
                 note,
@@ -766,3 +789,7 @@ def clean() -> None:
     except _CovError as e:
         logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
+
+
+# `clean` zeroes remote counters and writes nothing locally — no output dir.
+clean.__cli_output_dir__ = False  # ty: ignore[unresolved-attribute]

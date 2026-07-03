@@ -84,6 +84,14 @@ class TestCovHelp:
         result = runner.invoke(cov_app, ["clean", "--help"])
         assert result.exit_code == 0
 
+    def test_only_get_wants_the_per_invocation_output_dir(self):
+        """`get` produces artifacts, so it uses the standard per-invocation
+        output dir; `report` (e2e-pinned: creates no output dir) and `clean`
+        (no artifacts) opt out via the leaf marker the preamble reads."""
+        assert getattr(cov_module.get, "__cli_output_dir__", True) is True
+        assert cov_module.report.__cli_output_dir__ is False
+        assert cov_module.clean.__cli_output_dir__ is False
+
 
 # ── report command — validation errors ───────────────────────────────────────
 
@@ -682,7 +690,7 @@ class TestCovGetValidation:
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["get"])
+            result = runner.invoke(cov_app, ["get", "-o", str(git_sut.parent / "get_out")])
         assert result.exit_code == 1
         assert "no .gcda" in mock_err.call_args[0][0]
 
@@ -704,7 +712,7 @@ class TestCovGetValidation:
             ),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
-            result = runner.invoke(cov_app, ["get"])
+            result = runner.invoke(cov_app, ["get", "-o", str(git_sut.parent / "get_out")])
         assert result.exit_code == 1
         message = mock_err.call_args[0][0]
         assert "no .gcda" in message
@@ -826,6 +834,55 @@ class TestCovGetSuccess:
             return {"board1": board}
 
         return fake_collect
+
+    def test_get_defaults_to_the_per_invocation_output_dir(self, tmp_path, repo, monkeypatch):
+        """Without --output, `cov get` writes into the standard per-invocation
+        output directory the CLI preamble records on the context — the same
+        free output dir every other lab-touching command gets."""
+        from otto.configmodule.lab import Lab
+        from otto.context import OttoContext, reset_context, set_context
+
+        cov_repo = self._repo_mock(repo, {"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
+        monkeypatch.setattr("otto.configmodule.get_repos", lambda: [cov_repo])
+        monkeypatch.setattr("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr(
+            "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+            self._fake_collect_one_board(),
+        )
+        monkeypatch.setattr(produce_module.LcovMerger, "capture", self._fake_capture(repo))
+
+        invocation_dir = tmp_path / "xdir" / "cov" / "20260703_120000_000_get"
+        invocation_dir.mkdir(parents=True)
+        token = set_context(OttoContext(lab=Lab(name="t"), output_dir=invocation_dir))
+        try:
+            result = runner.invoke(cov_app, ["get"])
+        finally:
+            reset_context(token)
+
+        assert result.exit_code == 0, result.output
+        assert (invocation_dir / "cov" / "board1" / "capture.json").is_file()
+
+    def test_get_without_output_dir_anywhere_exits_1(self, repo, monkeypatch):
+        """No --output and no context output dir (e.g. a programmatic call
+        outside the CLI preamble) fails with a clean one-line error — after
+        config/tier validation, so a config problem is never masked by it."""
+        from otto.configmodule.lab import Lab
+        from otto.context import OttoContext, reset_context, set_context
+
+        cov_repo = self._repo_mock(repo, {"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
+        monkeypatch.setattr("otto.configmodule.get_repos", lambda: [cov_repo])
+        monkeypatch.setattr("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([]))
+
+        token = set_context(OttoContext(lab=Lab(name="t"), output_dir=None))
+        try:
+            with patch.object(cov_module.logger, "error") as mock_err:
+                result = runner.invoke(cov_app, ["get"])
+        finally:
+            reset_context(token)
+
+        assert result.exit_code == 1
+        assert "Traceback" not in result.output
+        assert "--output" in mock_err.call_args[0][0]
 
     def test_get_manual_tier_writes_capture_and_manual_store(self, tmp_path, repo, monkeypatch):
         cov_repo = self._repo_mock(
