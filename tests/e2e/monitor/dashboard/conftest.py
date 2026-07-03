@@ -5,46 +5,14 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from _pytest.mark.expression import Expression
 
 from otto.monitor.collector import MetricCollector
 from otto.monitor.server import _dist_index_path
+from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
 HISTORICAL_JSON = Path(__file__).parent / "data" / "historical.json"
-
-
-# Every browser-marked test in this suite carries exactly these markers
-# (mirror of the ``pytestmark`` list atop each ``test_dashboard_*.py``). The
-# synthetic item below must carry all of them, not just ``browser``: an ``-m``
-# expression can select on any one — e.g. a positive ``-m hostless`` picks
-# these tests up too — and keying only off ``browser`` would wrongly evaluate
-# such an expression to "deselected" and stay silent, letting the browser
-# tests run straight into N missing-dist fixture errors (the exact noise this
-# guard exists to replace).
-_BROWSER_TEST_MARKERS = frozenset({"browser", "hostless", "xdist_group"})
-
-
-def _browser_tests_could_run(config: pytest.Config) -> bool:
-    """Would a browser-marked item survive this session's ``-m`` filter?
-
-    ``pytest_configure`` fires before collection, so there's no item list to
-    consult yet — evaluate the compiled ``-m`` expression (the same
-    ``_pytest.mark.expression.Expression`` pytest itself uses for
-    ``-m``/``-k``) directly against a synthetic item carrying exactly the
-    markers every test that needs the real build here also carries
-    (``_BROWSER_TEST_MARKERS``). An empty expression means nothing is
-    filtered, so browser tests trivially survive.
-    """
-    markexpr = config.option.markexpr
-    if not markexpr:
-        return True
-
-    def matches(name: str, **_kwargs: object) -> bool:
-        return name in _BROWSER_TEST_MARKERS
-
-    return Expression.compile(markexpr).evaluate(matches)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -92,8 +60,12 @@ def pytest_configure(config: pytest.Config) -> None:
     expression at all" — computable from ``config`` alone, before
     collection exists, and evaluated with pytest's own expression engine
     rather than a hand-rolled string check.
+
+    The ``-m``-expression check itself now lives in
+    ``tests/_fixtures/_browser_guard.py``, shared with the coverage-report
+    browser suite.
     """
-    if not _browser_tests_could_run(config):
+    if not browser_tests_could_run(config):
         return
     try:
         _dist_index_path()
