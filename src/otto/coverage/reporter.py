@@ -456,7 +456,13 @@ class CoverageReporter:
         work_dir: Path,
         loader: LCOVLoader,
     ) -> None:
-        """Capture + load each unit tier's ``harvest_dirs`` (its own gcda == gcno root)."""
+        """Capture + load each unit tier's ``harvest_dirs`` (its own gcda == gcno root).
+
+        Per spec §4, ``harvest_dirs`` entries are repo-relative: a relative
+        entry is resolved against :attr:`repo_root`, not the process CWD
+        (``otto cov report`` may run from anywhere). Absolute entries pass
+        through unchanged.
+        """
         unit_tiers = [t for t in self.tier_configs if t.kind == "unit" and t.harvest_dirs]
         if not unit_tiers:
             return
@@ -464,7 +470,12 @@ class CoverageReporter:
 
         merger = LcovMerger(localhost)
         for tier in unit_tiers:
-            for idx, hdir in enumerate(tier.harvest_dirs):
+            for idx, raw_hdir in enumerate(tier.harvest_dirs):
+                hdir = (
+                    self.repo_root / raw_hdir
+                    if self.repo_root is not None and not raw_hdir.is_absolute()
+                    else raw_hdir
+                )
                 if not hdir.is_dir():
                     logger.warning(
                         "Unit tier %r: harvest dir does not exist: %s — skipping",

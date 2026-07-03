@@ -415,3 +415,47 @@ class TestUnitHarvest:
         # Still loaded despite the staleness warning — a warning, not a fatal error.
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
         assert frec.lines[1].hits.for_tier("unit") == 5
+
+    @pytest.mark.asyncio
+    async def test_relative_harvest_dir_resolves_against_repo_root(self, tmp_path, monkeypatch):
+        """A relative ``harvest_dirs`` entry is repo-relative (spec §4), not
+        CWD-relative — it must resolve even when ``otto cov report`` runs
+        from a directory other than the repo root."""
+        from otto.coverage.correlator import merger as merger_mod
+
+        repo = _init_repo(tmp_path)
+        hdir = repo / "unit_build"
+        hdir.mkdir()
+        (hdir / "f.gcda").write_bytes(b"")
+        (hdir / "f.gcno").write_bytes(b"")
+
+        src = repo / "f.c"
+
+        async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+            # Resolved against repo_root, matching the absolute harvest dir.
+            assert gcda_dir == hdir
+            assert gcno_dir == hdir
+            output.write_text(f"TN:\nSF:{src}\nDA:1,5\nend_of_record\n")
+            return output
+
+        monkeypatch.setattr(merger_mod.LcovMerger, "capture", fake_capture)
+
+        # CWD is a sibling of the repo, not the repo root itself.
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+
+        cov_config = {
+            "tiers": {
+                "unit": {"kind": "unit", "precedence": 1, "harvest_dirs": ["unit_build"]},
+            }
+        }
+        store = await run_coverage_report(
+            [],
+            tmp_path / "report",
+            repo_root=repo,
+            tier_configs=load_tiers(cov_config),
+        )
+        assert store is not None
+        (frec,) = [f for f in store.files() if f.path.name == "f.c"]
+        assert frec.lines[1].hits.for_tier("unit") == 5
