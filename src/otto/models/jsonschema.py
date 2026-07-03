@@ -12,7 +12,10 @@ Emitted documents (default):
 - ``hosts`` — the array schema for the whole ``hosts.json`` file, assembled from
   the registry with ``anyOf`` + an ``os_type`` discriminator hint,
 - ``settings`` — for ``settings.toml``,
-- ``reservations`` — for the reservations JSON file.
+- ``reservations`` — for the reservations JSON file,
+- ``monitor-meta`` — the monitor dashboard's ``/api/meta`` payload
+  (:class:`~otto.models.monitor.MonitorMeta`); not user-edited, it feeds the
+  web dashboard's generated TS types (``scripts/gen_web_types.sh``).
 """
 
 import re

@@ -3,8 +3,8 @@ MonitorServer — FastAPI web server for the otto monitoring dashboard.
 
 Endpoints
 ---------
-GET  /              Serves dashboard.html
-GET  /static/...    Serves static assets (plotly.min.js, etc.)
+GET  /              Serves the React dashboard's built index.html (``web/``, via ``make web``)
+GET  /static/...    Serves the built dist/ assets (JS/CSS bundles, etc.)
 GET  /api/meta      JSON metadata (host name, metric labels, units)
 GET  /api/data      JSON snapshot of all metric series and events
 GET  /api/stream    SSE stream — pushes metric updates and events in real time
@@ -37,6 +37,26 @@ _STATIC_DIR = Path(__file__).parent / "static"
 logger = get_logger()
 
 
+def _dist_index_path() -> Path:
+    """Return the built React dashboard's ``index.html``, or raise a fix-it error.
+
+    The Phase 2 React port (``web/``) is the only frontend as of the Task 9
+    cutover — the legacy static dashboard was deleted. ``make web`` (vite
+    build) writes the bundle to ``_STATIC_DIR / "dist"``, already covered by
+    the ``/static`` mount (so ``/static/dist/*`` resolves without a second
+    mount). A missing build here means a developer/CI environment skipped
+    that step, not a runtime condition users should ever see — fail fast
+    with a clear remedy rather than serving a 404 or an empty page.
+    """
+    dist_index = _STATIC_DIR / "dist" / "index.html"
+    if not dist_index.exists():
+        raise RuntimeError(
+            f"React dashboard build not found at {dist_index} — run `make web` "
+            "to build the web/ frontend before starting the monitor server."
+        )
+    return dist_index
+
+
 # Suppress the ASGI log from uvicorn because it clutters up the output on exit.
 class SuppressASGIWarning(Filter):
     """``logging.Filter`` that drops the uvicorn ASGI callable warning on shutdown."""
@@ -62,14 +82,16 @@ class _EventUpdateBody(OttoModel):
 
 
 def _build_app(collector: MetricCollector) -> FastAPI:  # noqa: C901 — FastAPI route-factory; complexity is route count, not branching
+    dist_index = _dist_index_path()
+
     app = FastAPI(title="Otto Monitor")
 
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:  # type: ignore[reportUnusedFunction]
-        html = (_STATIC_DIR / "dashboard.html").read_text()
-        return HTMLResponse(html)
+        """Serve the React dashboard's built ``index.html``."""
+        return HTMLResponse(dist_index.read_text())
 
     @app.get("/api/meta")
     async def meta() -> JSONResponse:  # type: ignore[reportUnusedFunction]

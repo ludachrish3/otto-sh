@@ -159,6 +159,18 @@ def dashboard(session: nox.Session) -> None:
 
     Kept out of the hostless gate (and its 5-Python CI matrix) so only this
     session needs a browser binary. Installs Chromium idempotently first.
+
+    This suite drives the built React dashboard (`src/otto/monitor/static/
+    dist/`) through a real `MonitorServer` — there's no legacy static
+    fallback since the Task 9 cutover, so `dist/` must already exist before
+    this session runs. Building it needs Node/npm (`make web-install` +
+    `make web`), which nox-uv's per-session venvs (Python-only, one per
+    `PYTHON_VERSIONS` entry) have no way to provision. Rather than bolt a
+    Node toolchain onto a nox session, that step lives directly in
+    `.github/workflows/ci.yml`'s `dashboard` job, ahead of `uv run nox -s
+    dashboard`; `make dashboard` (the local/dev entrypoint) carries the same
+    prerequisite. The WebKit-only pin (`make dashboard-webkit`) is likewise
+    invoked straight from the Makefile in CI, not as a nox session.
     """
     session.run("playwright", "install", "chromium")
     session.run(

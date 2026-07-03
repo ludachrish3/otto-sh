@@ -73,12 +73,18 @@ class MonitorMeta(OttoModel):
 
     The declarative contract the frontend renders from; TS types are
     generated from this schema in Phase 2.
+
+    ``interval`` is the global collection interval in seconds — ``None`` until
+    :meth:`~otto.monitor.collector.MetricCollector.run` has recorded one (a
+    collector that has not started live collection), or always for historical
+    (loaded from ``--file``/``--db``) data.
     """
 
     hosts: list[str]
     live: bool
     metrics: list[ChartSpec]
     tabs: list[TabSpec]
+    interval: float | None = None
 
 
 class RowModel(BaseModel):

@@ -8,6 +8,9 @@ build:
   os: ubuntu-24.04
   tools:
     python: "3.10"
+    # Builds the React monitor dashboard (see the `install`/`pre_build` jobs
+    # below) — version tracks the repo's .nvmrc.
+    nodejs: "24"
   # `dot` renders the architecture-docs diagrams (sphinx.ext.graphviz /
   # inheritance_diagram); without it the -W build fails.
   # The lib* set is headless Chromium's runtime for the build-time GUI media
@@ -37,6 +40,15 @@ build:
       # If this breaks on an RTD image change, OTTO_DOCS_MEDIA=placeholder in
       # the RTD environment variables ships degraded-but-green docs meanwhile.
       - uv run playwright install chromium
+      - cd web && npm ci
+    pre_build:
+      # capture_docs_media.py (hooked from docs/conf.py) drives a real
+      # MonitorServer to screenshot the dashboard — post-cutover that
+      # server refuses to start without a built React dashboard, so
+      # `dist/` must exist before Sphinx runs. `make web` also re-runs the
+      # type-drift gate (web/src/api/types.gen.ts vs. the live pydantic
+      # models) and the air-gap grep, same as CI (.github/workflows/ci.yml).
+      - make web
     build:
       html:
         - uv run sphinx-build -W -b html docs/ $READTHEDOCS_OUTPUT/html

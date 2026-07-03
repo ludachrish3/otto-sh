@@ -11,9 +11,11 @@ Covers:
 import asyncio
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
+from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
 from otto.monitor.server import MonitorServer, _build_app
 
@@ -164,3 +166,57 @@ def test_force_stop_before_serve_is_noop() -> None:
     server = MonitorServer(MetricCollector(hosts=[]))
     server.force_stop()  # must not raise: nothing started yet
     assert server.started is False
+
+
+class TestDashboardRoute:
+    """GET / — dist-required serving (Task 9 cutover: the React build at
+    ``web/`` is the only frontend; there is no legacy fallback anymore).
+
+    Builds a throwaway static directory under ``tmp_path`` (never the real
+    ``src/otto/monitor/static/``) and monkeypatches the module-level
+    ``_STATIC_DIR`` to point at it, so these tests can't be satisfied by (or
+    disturb) a real ``dist/`` build.
+    """
+
+    @staticmethod
+    def _write_static_dir(tmp_path: Path, *, with_dist: bool) -> Path:
+        static_dir = tmp_path / "static"
+        static_dir.mkdir()
+        if with_dist:
+            dist_dir = static_dir / "dist"
+            dist_dir.mkdir()
+            (dist_dir / "index.html").write_text("<html>DIST_MARKER</html>")
+        return static_dir
+
+    @pytest.mark.asyncio
+    async def test_serves_dist_index_when_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        static_dir = self._write_static_dir(tmp_path, with_dist=True)
+        monkeypatch.setattr(server_module, "_STATIC_DIR", static_dir)
+
+        server = MonitorServer(_empty_collector(), host="127.0.0.1", port=0)
+        task = asyncio.create_task(server.serve())
+        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
+            await asyncio.sleep(0.05)
+        try:
+            url = f"http://127.0.0.1:{server._port}/"
+            body = (await asyncio.to_thread(urllib.request.urlopen, url)).read()
+            assert b"DIST_MARKER" in body
+        finally:
+            server.stop()
+            await task
+
+    def test_raises_when_dist_absent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No React build means no server — fail fast at construction time.
+
+        Before this route can be hit at all, ``MonitorServer.__init__``
+        builds the app (``_build_app``), which must refuse to build when
+        ``dist/index.html`` is missing rather than serving nothing (or the
+        deleted legacy dashboard) at ``GET /``.
+        """
+        static_dir = self._write_static_dir(tmp_path, with_dist=False)
+        monkeypatch.setattr(server_module, "_STATIC_DIR", static_dir)
+
+        with pytest.raises(RuntimeError, match="make web"):
+            MonitorServer(_empty_collector(), host="127.0.0.1", port=0)

@@ -170,6 +170,12 @@ class MetricCollector:
         # Persistent DB store — opened by init_db(), closed by close_db().
         self._db: MetricDB | None = None
 
+        # Global collection interval in seconds, recorded by run() before the
+        # collection loop starts. None until a live run happens — historical
+        # collectors (from_json/from_sqlite) and scripted test collectors that
+        # never call run() report it as None via get_meta_model().
+        self._global_interval: float | None = None
+
     # ------------------------------------------------------------------
     # Database helpers
     # ------------------------------------------------------------------
@@ -335,6 +341,7 @@ class MetricCollector:
                     )
 
         secs = interval.total_seconds()
+        self._global_interval = secs
         start = datetime.now(tz=timezone.utc)
 
         # Bucket each target's commands by effective interval. SNMP targets
@@ -552,6 +559,7 @@ class MetricCollector:
             live=bool(self._hosts),  # False when loaded from --file (no live collection)
             metrics=metrics,
             tabs=list(tabs.values()),
+            interval=self._global_interval,
         )
 
     def get_meta(self) -> dict[str, Any]:

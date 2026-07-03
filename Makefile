@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-webkit web-install web web-dev web-test web-clean wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -113,6 +113,11 @@ changelog: export PATH := $(VENV_BIN):$(PATH)
 changelog: ## (Build & Release) Regenerate CHANGELOG.md from conventional commit history (Unreleased only — does not touch released sections)
 	git-cliff -o CHANGELOG.md
 
+# WARNING: `make -n release` is NOT side-effect-free — the recipe is one
+# backslash-continued line containing $(MAKE), so GNU make executes it under
+# -n; the $(MAKE) sub-calls inherit -n and no-op, but the plain
+# git-cliff/git-add/bump-my-version commands run for real (version bump +
+# CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
 release: ## (Build & Release) lint, typecheck, docs, nox, profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
 	@$(MAKE) clean-dist \
@@ -126,6 +131,7 @@ release: ## (Build & Release) lint, typecheck, docs, nox, profile, then changelo
 		&& git-cliff --tag "v$$NEW_VERSION" -o CHANGELOG.md \
 		&& git add CHANGELOG.md \
 		&& bump-my-version bump --verbose --allow-dirty --new-version "$$NEW_VERSION" $(BUMP) \
+		&& $(MAKE) wheel-check \
 		&& $(MAKE) build \
 		&& echo \
 		&& echo "Regenerated CHANGELOG.md, bumped version, tagged, and built dist/." \
@@ -179,8 +185,65 @@ hyperfine:
 		bash scripts/install_hyperfine.sh "$(HYPERFINE_VERSION)" "$(VENV_BIN)"; \
 	fi
 
-browsers: ## (Setup) Install the Playwright Chromium binary used by the dashboard e2e tests and the docs media pipeline
-	uv run playwright install chromium
+browsers: ## (Setup) Install the Playwright Chromium + WebKit binaries used by the dashboard e2e tests and the docs media pipeline (WebKit: Task 11's Safari-modebar pin; on a box missing WebKit's system libs, run `uv run playwright install-deps webkit` once — the Vagrantfile's dev-root provisioner carries the exact apt package list + how to regenerate it)
+	uv run playwright install chromium webkit
+
+# web/ (React+TS monitor dashboard) build lanes. `make web` produces the
+# dist/ that MonitorServer requires (see server.py's _dist_index_path()) —
+# the legacy static dashboard was deleted at the Task 9 cutover, so dist/ is
+# now the ONLY frontend and stays in place once built; the browser pin suite
+# (tests/e2e/monitor/dashboard) runs against it. (Pre-cutover, a stray dist/
+# left behind by a smoke build used to shadow the legacy dashboard.html —
+# that's why `make web-clean` exists, but it's no longer required after
+# every build.)
+web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfile (npm ci)
+	cd web && npm ci
+
+web: ## (Build & Release) Build the web/ React dashboard (vite build) into src/otto/monitor/static/dist/, then gate it against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh)
+	# Regenerate web/src/api/types.gen.ts from the live pydantic models and fail
+	# BEFORE the vite build if the committed file has drifted — a stale wire
+	# contract should be caught by its own diff, not surface later as a build
+	# or runtime type error with no clue which model changed.
+	scripts/gen_web_types.sh
+	git diff --exit-code web/src/api/types.gen.ts
+	cd web && npm run build
+	scripts/check_airgap.sh
+
+web-dev: ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to a running otto monitor (default target http://127.0.0.1:8080, override with VITE_OTTO_TARGET=http://host:port)
+	cd web && npm run dev
+
+web-test: ## (Dev) Run the web/ vitest suite once (store reducers, etc.) — no watch mode
+	cd web && npm run test
+
+web-clean: ## (Dev) Remove the built web/ dist/ output (src/otto/monitor/static/dist/)
+	rm -rf src/otto/monitor/static/dist
+
+# uv_build embeds the ENTIRE module tree (src/otto/**) into both the sdist and
+# the wheel by default — unlike hatchling, it is not VCS-aware, so it doesn't
+# care that static/dist/ is .gitignore'd (see the [tool.uv.build-backend]
+# comment in pyproject.toml). That makes the embedding implicit rather than
+# explicit config, so this target exists to pin it with a real assertion:
+# build the dashboard, build the wheel, and fail loudly if the dashboard ever
+# stops making it in (e.g. a future wheel-exclude, or a uv_build default
+# change). Deliberately NOT wired into `coverage` — it rebuilds the frontend
+# and a real wheel, which is release-flow overhead, not a per-commit gate.
+# Prerequisite composition (clean-dist web build), not $(MAKE) calls in the
+# recipe: `make -n wheel-check` must stay dry-run-safe, and GNU make only
+# honors -n for prerequisite recursion, not for $(MAKE) invoked from inside a
+# recipe line (see the release: warning above for what happens when that rule
+# is violated).
+# NOTE: prerequisites assume serial execution; do not run wheel-check under make -j.
+wheel-check: clean-dist web build ## (Build & Release) Rebuild the dashboard + wheel and assert the wheel embeds src/otto/monitor/static/dist/ (air-gap requirement)
+	@count=$$(unzip -l dist/*.whl | grep -c "otto/monitor/static/dist/" || true); \
+	if [ "$$count" -eq 0 ]; then \
+		echo "wheel-check: FAIL — no otto/monitor/static/dist/ entries in dist/*.whl; an air-gapped install would ship without the dashboard." >&2; \
+		exit 1; \
+	fi; \
+	if ! unzip -p dist/*.whl otto/monitor/static/dist/index.html > /dev/null; then \
+		echo "wheel-check: FAIL — index.html missing from the wheel's static/dist." >&2; exit 1; \
+	fi; \
+	echo "wheel-check: OK — $$count otto/monitor/static/dist/ entries embedded in the wheel (incl. index.html)."; \
+	scripts/check_airgap.sh
 
 docs-media: ## (Docs) Force-regenerate the build-time GUI media (screenshots, clips, termynal blocks) in docs/_static/generated/
 	uv run python scripts/capture_docs_media.py --mode force
@@ -220,6 +283,24 @@ coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage r
 # report.
 dashboard: ## Run the browser e2e suite for the monitor dashboard (needs `make browsers` once). Writes coverage data for `coverage` to append. JUnit XML in reports/junit/dashboard/.
 	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard -m browser -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+
+# Task 11's WebKit lane. Design choice, in full:
+# pytest-playwright parametrizes the `browser_name` fixture from
+# `--browser` at the SESSION level, so `--browser webkit` alone would attempt
+# EVERY test in the dashboard suite under WebKit, not just the Safari-specific
+# one — nearly all of those tests assert engine-agnostic DOM/behavior parity
+# already covered by the default chromium `dashboard` target above, so running
+# them twice would just double runtime for zero new coverage. Instead: the one
+# genuinely Safari-specific test is marked `@pytest.mark.only_browser("webkit")`
+# (a built-in pytest-playwright marker) — a no-op skip under every OTHER
+# `--browser` (including the default chromium `dashboard` run above, where it
+# shows up as 1 skipped, not silently absent) — and this target additionally
+# narrows to just that test via `-k`, so the WebKit lane's runtime is one
+# browser launch, not the whole suite. `--no-cov`: a single-test lane like
+# this isn't meant to feed the aggregate coverage gate (unlike `dashboard`,
+# it's not chained into `coverage`); CI wiring for this target is Task 13's.
+dashboard-webkit: ## Run Task 11's WebKit-only Safari modebar-containment pin (needs `make browsers` once, incl. WebKit's system deps — see the `browsers` target and the Vagrantfile's dev-root provisioner)
+	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard -m browser --browser webkit -k test_safari_modebar_contained_after_resize -n 1 --no-cov --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard-webkit)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead

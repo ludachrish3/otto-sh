@@ -89,6 +89,24 @@ build-backend = "uv_build"
 [tool.uv.build-backend]
 module-name = "otto"
 
+# NOTE on air-gapped installs (no extra config needed here, on purpose):
+# otto labs are air-gapped, so `otto monitor`'s React dashboard must ship
+# INSIDE the wheel — it can't be fetched post-install. The built dashboard
+# lands in src/otto/monitor/static/dist/ (via `make web`), which is
+# .gitignore'd like any other build output.
+#
+# Unlike hatchling (whose default wheel contents come from the VCS file list
+# and would silently drop anything .gitignore'd), uv_build's default file
+# selection is NOT git-aware: per its docs, a sdist/wheel build includes the
+# entire directory tree under `module-root` (src/otto/) from disk, minus only
+# __pycache__/*.pyc/*.pyo. So src/otto/monitor/static/dist/ is embedded
+# automatically once `make web` has populated it before `uv build` runs — no
+# [tool.uv.build-backend] include/data config is required. Verified via
+# `make wheel-check` (builds web + wheel, then asserts dist/index.html + its
+# assets are present in the .whl); do not add a `wheel-exclude`/
+# `source-exclude` pattern that would match `static/dist/**`, or air-gapped
+# installs break silently.
+
 [dependency-groups]
 dev = [
     "bump-my-version>=1.3.0",

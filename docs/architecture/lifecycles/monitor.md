@@ -5,19 +5,19 @@ pipeline that observes the lab rather than commanding it, careful about two
 hazards: polluting the logs it observes through, and writing a database onto
 a filesystem that can't take it.
 
-```{admonition} Revamp in flight — treat details below as provisional
-:class: warning
+```{admonition} Frontend: React, not vanilla JS
+:class: note
 
-The monitor backend is being reworked (see the monitor-revamp roadmap in
-`docs/superpowers/`). What this page says is true of the code **today**, but
-the roadmap moves pieces around: the collector decomposes into store /
-database / broadcast / history modules (the WAL-vs-DELETE choice moves into
-a dedicated `MetricDB`), per-parser polling intervals replace the single
-"one gather per tick" loop, dashboard metadata becomes typed
-`TabSpec`/`ChartSpec` models served at `/api/meta`, and a project-level
-`register_parsers()` joins the per-host registry. Update this page as those
-land; the *shape* — targets, parsers-or-SNMP, silenced polling, dashboard,
-replay — is expected to survive.
+The monitor backend was reworked behind a stable
+{class}`~otto.monitor.collector.MetricCollector` facade: the collector
+decomposes into `store`/`db`/`broadcast`/`history` modules, dashboard
+metadata is typed `TabSpec`/`ChartSpec` models served at `/api/meta`, and a
+project-level `register_parsers()` joins the per-host registry. The
+dashboard itself was ported from a single vanilla-JS file to a React + Vite
++ TypeScript single-page app (`web/`, built to `static/dist/`) behind the
+same observable surface. See {doc}`../../guide/monitor` for the frontend dev
+workflow (`make web-dev`) — `tests/e2e/monitor/dashboard/` pins the exact
+ids/classes/behaviors that must survive any further change to either side.
 ```
 
 ```{graphviz}
@@ -70,10 +70,10 @@ so "CPU spiked" and "test_load started" correlate.
 
 **Serving and persistence.** A live dashboard
 ({class}`~otto.monitor.server.MonitorServer`) binds an OS-assigned port and
-serves the collector's buffer. With `--db`, samples persist to SQLite — WAL
-journaling on local disks, DELETE on network filesystems
-({doc}`../subsystems/data-boundary`) — and `--file` replays a saved run
-without touching any host.
+serves the collector's buffer to the built React frontend. With `--db`,
+samples persist to SQLite — WAL journaling on local disks, DELETE on network
+filesystems ({doc}`../subsystems/data-boundary`) — and `--file` replays a
+saved run without touching any host.
 
 **Gating.** `otto monitor` gates itself per branch rather than in the
 preamble: live collection runs the reservation gate; `--file` replay reads a

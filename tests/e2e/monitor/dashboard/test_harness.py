@@ -15,13 +15,41 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
 pytestmark = [pytest.mark.hostless, pytest.mark.xdist_group("dashboard")]
 
-META_KEYS = {"hosts", "live", "metrics", "tabs"}
+
+@pytest.fixture(autouse=True)
+def _tolerate_missing_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let these wire-contract pins run on a checkout that hasn't run ``make web``.
+
+    Unlike its siblings in this directory, this module is *not*
+    ``browser``-marked, so it isn't deselected by the hostless lanes'
+    ``-m "not browser"`` filter — by design (see the module docstring: "these
+    run everywhere the hostless gate runs"). Every test here hits ``/api/*``
+    only, never ``/`` or the built JS/CSS, so a real React build buys
+    nothing. When ``dist/index.html`` already exists (the real ``dashboard``
+    e2e lane, which runs ``make web`` first), leave ``_STATIC_DIR`` alone so
+    that lane still exercises the real build end to end. When it's missing
+    (every hostless lane on a checkout that skipped ``make web``), stand in
+    a throwaway marker page instead of letting ``MonitorServer.__init__``
+    refuse to construct at all.
+    """
+    if (server_module._STATIC_DIR / "dist" / "index.html").exists():
+        return
+    static_dir = tmp_path / "_hermetic_static"
+    dist_dir = static_dir / "dist"
+    dist_dir.mkdir(parents=True)
+    (dist_dir / "index.html").write_text("<html>HERMETIC_TEST_DIST_MARKER</html>")
+    monkeypatch.setattr(server_module, "_STATIC_DIR", static_dir)
+
+
+META_KEYS = {"hosts", "live", "metrics", "tabs", "interval"}
+# "interval" (global cadence) added in Phase 2 — deliberate contract evolution.
 META_METRIC_KEYS = {"label", "y_title", "unit", "command", "chart", "interval"}
 # "interval" added in Phase 1 (per-parser collection intervals) — deliberate contract evolution.
 META_TAB_KEYS = {"id", "label", "metrics"}

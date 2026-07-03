@@ -9,7 +9,14 @@ from otto.models.jsonschema import build_schemas
 
 def test_default_set_of_documents():
     docs = build_schemas()
-    assert set(docs) >= {"unix-host", "embedded-host", "hosts", "settings", "reservations"}
+    assert set(docs) >= {
+        "unix-host",
+        "embedded-host",
+        "hosts",
+        "settings",
+        "reservations",
+        "monitor-meta",
+    }
 
 
 def test_each_doc_is_a_self_describing_json_schema():

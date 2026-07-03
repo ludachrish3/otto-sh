@@ -148,6 +148,18 @@ Vagrant.configure("2") do |config|
             # Chromium's runtime for the Playwright dashboard e2e suite (the
             # set `playwright install-deps chromium` reports missing on this
             # box); the browser binary itself comes from `make browsers`.
+            # The gstreamer/libwoff/xvfb/fonts block below it is WebKit's
+            # runtime for the same suite's `make dashboard-webkit` lane
+            # (Task 11's Safari modebar pin): the package list is verbatim
+            # what `playwright install-deps --dry-run webkit` resolves to on
+            # ubuntu-24.04 (Playwright 1.61.0's native-deps registry — its
+            # `webkit` + `tools` dependency groups), minus the two packages
+            # the Chromium block above already installs (libatk1.0-0t64,
+            # libgbm1) and one upstream-duplicated entry (libicu74). On a
+            # Playwright bump, regenerate with that --dry-run command (on a
+            # box without the deps — it prints "All system dependencies are
+            # installed" once satisfied). Browser binaries still come from
+            # `make browsers`, never from provisioning.
             apt install -y  gcc                   \
                             gh                    \
                             graphviz              \
@@ -174,10 +186,76 @@ Vagrant.configure("2") do |config|
                             libgbm1               \
                             libasound2t64         \
                             libatspi2.0-0t64      \
+                            gstreamer1.0-libav             \
+                            gstreamer1.0-plugins-bad       \
+                            gstreamer1.0-plugins-base      \
+                            gstreamer1.0-plugins-good      \
+                            libicu74                       \
+                            libatomic1                     \
+                            libatk-bridge2.0-0t64          \
+                            libcairo-gobject2              \
+                            libcairo2                      \
+                            libdbus-1-3                    \
+                            libdrm2                        \
+                            libenchant-2-2                 \
+                            libepoxy0                      \
+                            libevent-2.1-7t64              \
+                            libflite1                      \
+                            libfontconfig1                 \
+                            libfreetype6                   \
+                            libgdk-pixbuf-2.0-0            \
+                            libgles2                       \
+                            libglib2.0-0t64                \
+                            libgstreamer-gl1.0-0           \
+                            libgstreamer-plugins-bad1.0-0  \
+                            libgstreamer-plugins-base1.0-0 \
+                            libgstreamer1.0-0              \
+                            libgtk-4-1                     \
+                            libharfbuzz-icu0               \
+                            libharfbuzz0b                  \
+                            libhyphen0                     \
+                            libjpeg-turbo8                 \
+                            liblcms2-2                     \
+                            libmanette-0.2-0               \
+                            libopus0                       \
+                            libpango-1.0-0                 \
+                            libpangocairo-1.0-0            \
+                            libpng16-16t64                 \
+                            libsecret-1-0                  \
+                            libvpx9                        \
+                            libwayland-client0             \
+                            libwayland-egl1                \
+                            libwayland-server0             \
+                            libwebp7                       \
+                            libwebpdemux2                  \
+                            libwoff1                       \
+                            libx11-6                       \
+                            libxkbcommon0                  \
+                            libxml2                        \
+                            libxslt1.1                     \
+                            libx264-164                    \
+                            libavif16                      \
+                            xvfb                           \
+                            fonts-noto-color-emoji         \
+                            fonts-unifont                  \
+                            xfonts-cyrillic                \
+                            xfonts-scalable                \
+                            fonts-liberation               \
+                            fonts-ipafont-gothic           \
+                            fonts-wqy-zenhei               \
+                            fonts-tlwg-loma-otf            \
+                            fonts-freefont-ttf             \
 
             # Set MTU to 1350 on all ethernet interfaces to support mobile
             # connections that have a smaller MTU size
             printf '[Match]\\nType=ether\\n\\n[Link]\\nMTUBytes=1350\\n' > /etc/systemd/network/10-mtu.link
+        SHELL
+
+        # Node.js 24 for web-lane toolchain only (make web*, CI dashboard job).
+        # Python gates never need Node. Install from NodeSource for LTS support.
+        dev.vm.provision "shell", name: "dev-node", keep_color: true, inline: <<-SHELL
+            curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+            sudo apt-get install -y nodejs
         SHELL
 
         dev.vm.provision "shell", name: "dev", privileged: false, keep_color: true, inline: <<-SHELL

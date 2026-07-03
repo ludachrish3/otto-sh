@@ -49,14 +49,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
+      - name: Set up Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version-file: .nvmrc
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
       - run: uv python install 3.12
-      - name: Install Chromium with system dependencies
-        run: uv run --group dev playwright install --with-deps chromium
-      - name: Run dashboard browser e2e
+      # Post-cutover, the browser suite exercises the built React dashboard
+      # (src/otto/monitor/static/dist/) through a real MonitorServer — there
+      # is no legacy static fallback anymore, so `dist/` must exist before
+      # the pytest steps below run. `make web` also re-runs the type-drift
+      # gate (web/src/api/types.gen.ts vs. the live pydantic models) and the
+      # air-gap grep, so a wire-contract or CDN-URL regression fails here
+      # rather than surfacing later as a flaky e2e test.
+      - name: Install web/ dependencies (npm ci)
+        run: make web-install
+      - name: Build the React dashboard (type-drift + air-gap gates)
+        run: make web
+      - name: Run the web/ vitest suite
+        run: make web-test
+      - name: Install Chromium + WebKit with system dependencies
+        run: uv run --group dev playwright install --with-deps chromium webkit
+      - name: Run dashboard browser e2e (Chromium)
         run: uv run nox -s dashboard
+      # WebKit lane: Task 11's Safari-modebar pin is the one genuinely
+      # engine-specific test in the suite (see the Makefile's
+      # `dashboard-webkit` target for the full `-k` rationale); this is not
+      # a nox session (see noxfile.py's `dashboard` docstring) so it's
+      # invoked directly via the Makefile.
+      - name: Run the WebKit-only Safari modebar pin
+        run: make dashboard-webkit
 
   lint:
     runs-on: ubuntu-latest
@@ -82,6 +106,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.0
+      - name: Set up Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version-file: .nvmrc
       - uses: astral-sh/setup-uv@v8.2.0
         with:
           enable-cache: true
@@ -90,6 +118,19 @@ jobs:
       # install explicitly so the docs gate never depends on image contents.
       - run: sudo apt-get install -y graphviz
       - run: uv python install 3.10
+      # scripts/capture_docs_media.py (hooked from docs/conf.py, every HTML
+      # build) drives a real MonitorServer to screenshot the dashboard —
+      # post-cutover that server refuses to start without a built React
+      # dashboard, so `dist/` must exist before `nox -s docs` runs. Building
+      # it here (rather than falling back to OTTO_DOCS_MEDIA=placeholder)
+      # keeps this gate an honest rehearsal of what Read the Docs' own build
+      # does (see .readthedocs.yaml) — placeholder mode stays reserved for
+      # its documented emergency case (e.g. a broken Chromium install), not
+      # routine CI.
+      - name: Install web/ dependencies (npm ci)
+        run: make web-install
+      - name: Build the React dashboard (needed by capture_docs_media.py)
+        run: make web
       # Headless Chromium captures the build-time GUI media (screenshots +
       # clips) via scripts/capture_docs_media.py, hooked from docs/conf.py.
       # --with-deps also apt-installs the browser's runtime libraries.

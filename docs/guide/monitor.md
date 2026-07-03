@@ -105,6 +105,39 @@ dashboard shows:
 - Timeline with events
 - Per-host breakdowns
 
+### Frontend development
+
+The dashboard's frontend is a React + Vite + TypeScript single-page app in
+`web/`. Vite builds it into `src/otto/monitor/static/dist/`, the *only*
+frontend {class}`~otto.monitor.server.MonitorServer` serves — there is no
+legacy fallback, so a checkout without a build fails loudly with a
+`make web` pointer rather than silently serving something stale.
+
+```bash
+make web-install   # npm ci, from web/package-lock.json
+make web-dev       # Vite dev server with hot reload; proxies /api to a
+                    # running `otto monitor` (default http://127.0.0.1:8080,
+                    # override with VITE_OTTO_TARGET=http://host:port)
+make web           # production build: regenerates + diffs the generated
+                    # wire types against the live pydantic models, builds,
+                    # then gates the output against absolute http(s) URLs
+                    # (labs are air-gapped)
+make web-test      # vitest — store reducers, SSE handling, chart-series
+                    # grouping, PID-trace retirement, etc.
+```
+
+Point `make web-dev` at a live `otto monitor` (or a `--file` replay) for the
+fast edit/reload loop; `make web` is what actually ships in the wheel.
+
+**DOM-parity contract.** `tests/e2e/monitor/dashboard/` is a Playwright suite
+that pins the dashboard's observable surface — element ids and classes,
+Plotly trace/layout internals, status text, `localStorage` keys — the
+contract the frontend was ported to React against. Those pins adjudicate,
+not this page or the source: if a doc description and a pin ever disagree,
+fix the doc. Run them locally with `make dashboard` (Chromium; needs
+`make browsers` once) and `make dashboard-webkit` (the WebKit-only Safari
+modebar pin).
+
 ## Monitoring during a test run
 
 Pass `--monitor` to `otto test` to collect metrics for the entire run.

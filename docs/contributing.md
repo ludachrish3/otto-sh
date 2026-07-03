@@ -133,6 +133,16 @@ uv run pytest         # run the test suite
 
 `make dev` places `otto` at `otto-sh/.venv/bin/otto`.
 
+### Node (only for the monitor dashboard's web lane)
+
+The monitor dashboard's frontend (`web/`) is a separate React + Vite +
+TypeScript project built with Node, pinned via `.nvmrc`
+([nvm](https://github.com/nvm-sh/nvm) users: `nvm use`). It's needed only for
+the `make web*` targets (`web-install`, `web`, `web-dev`, `web-test`) —
+everything else, including the Python test suite and every other `make`
+target, works from a checkout with the dashboard already built and never
+needs Node. See {doc}`guide/monitor` for the frontend dev workflow.
+
 ## Branching and commits
 
 All work branches off `main`. `main` is protected — direct pushes are
