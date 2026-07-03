@@ -1,5 +1,6 @@
 """Tests for the coverage data model."""
 
+import json
 from pathlib import Path
 
 from otto.coverage.store.model import (
@@ -182,7 +183,7 @@ class TestCoverageStore:
         fr = store.get_or_create_file(Path("/a.c"))
         lr = fr.get_or_create_line(1)
         lr.hits.add("system", 5)
-        lr.commit_hash = "abc123"
+        lr.state = "stale"
         bh = BranchHits(block=0, branch=0, hits=LineHits(counts={"system": 2}))
         bh.set_reachable("system", True)
         lr.branches.append(bh)
@@ -196,7 +197,7 @@ class TestCoverageStore:
         loaded_files = list(loaded.files())
         loaded_lr = loaded_files[0].lines[1]
         assert loaded_lr.hits.for_tier("system") == 5
-        assert loaded_lr.commit_hash == "abc123"
+        assert loaded_lr.state == "stale"
         assert len(loaded_lr.branches) == 1
         assert loaded_lr.branches[0].is_reachable("system") is True
 
@@ -214,3 +215,62 @@ class TestCoverageStore:
         merged = next(iter(store.files()))
         assert merged.lines[1].hits.for_tier("system") == 3
         assert merged.lines[1].hits.for_tier("unit") == 2
+
+    def test_provenance_and_tier_colors_roundtrip(self, tmp_path):
+        store = CoverageStore(tier_order=["system", "manual"])
+        store.provenance.append(
+            {
+                "tier": "manual",
+                "board": "b",
+                "labs": ["lab1"],
+                "date": "2026-07-01T00:00:00Z",
+                "tester": None,
+                "ticket": "T-1",
+                "note": None,
+                "dirty_remap": False,
+                "pin": "deadbeef",
+            }
+        )
+        store.tier_colors = {"system": "#00ff00", "manual": "#ff0000"}
+
+        save_path = tmp_path / "store.json"
+        store.save(save_path)
+
+        loaded = CoverageStore.load(save_path)
+        assert loaded.provenance == store.provenance
+        assert loaded.tier_colors == {"system": "#00ff00", "manual": "#ff0000"}
+
+    def test_load_defaults_state_provenance_tier_colors_for_legacy_file(self, tmp_path):
+        # Older store.json files predate "state"/"provenance"/"tier_colors".
+        legacy = {
+            "tier_order": ["system"],
+            "files": [
+                {
+                    "path": "/a.c",
+                    "lines": {"1": {"hits": {"system": 1}, "branches": []}},
+                }
+            ],
+        }
+        save_path = tmp_path / "legacy.json"
+        save_path.write_text(json.dumps(legacy))
+
+        loaded = CoverageStore.load(save_path)
+        assert loaded.provenance == []
+        assert loaded.tier_colors == {}
+        loaded_lr = next(iter(loaded.files())).lines[1]
+        assert loaded_lr.state is None
+
+    def test_save_omits_removed_commit_keys(self, tmp_path):
+        store = CoverageStore()
+        fr = store.get_or_create_file(Path("/a.c"))
+        fr.get_or_create_line(1).hits.add("system", 1)
+
+        save_path = tmp_path / "store.json"
+        store.save(save_path)
+
+        raw = json.loads(save_path.read_text())
+        line_dict = raw["files"][0]["lines"]["1"]
+        assert "commit" not in line_dict
+        assert "author" not in line_dict
+        assert "summary" not in line_dict
+        assert line_dict["state"] is None

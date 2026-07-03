@@ -143,10 +143,10 @@ class LineRecord:
     hits: LineHits = field(default_factory=LineHits)
     branches: list[BranchHits] = field(default_factory=list)
 
-    # Populated by the blame correlator (not rendered by the HTML report).
-    commit_hash: str | None = None
-    commit_author: str | None = None
-    commit_summary: str | None = None
+    # Set by the manual-capture validity pass (spec §7): "stale" (pinned
+    # evidence no longer matches the current source), "aging" (valid but
+    # older than the configured max age), or None (normal).
+    state: str | None = None
 
     def merge(self, other: "LineRecord") -> None:
         """Merge *other* into this line record, accumulating hits and branch data."""
@@ -238,9 +238,7 @@ class FileRecord:
                 str(lineno): {
                     "hits": rec.hits.to_dict(),
                     "branches": [b.to_dict() for b in rec.branches],
-                    "commit": rec.commit_hash,
-                    "author": rec.commit_author,
-                    "summary": rec.commit_summary,
+                    "state": rec.state,
                 }
                 for lineno, rec in self.lines.items()
             },
@@ -259,6 +257,8 @@ class CoverageStore:
     def __init__(self, tier_order: list[str] | None = None) -> None:
         self._files: dict[Path, FileRecord] = {}
         self.tier_order: list[str] = list(tier_order) if tier_order else []
+        self.provenance: list[dict[str, Any]] = []
+        self.tier_colors: dict[str, str] = {}
 
     def register_tier(self, tier: str) -> None:
         """Append *tier* to the tier order if not already present.
@@ -330,6 +330,8 @@ class CoverageStore:
         data = {
             "tier_order": list(self.tier_order),
             "files": [f.to_dict() for f in self.files()],
+            "provenance": list(self.provenance),
+            "tier_colors": dict(self.tier_colors),
         }
         path.write_text(json.dumps(data, indent=2))
 
@@ -342,11 +344,17 @@ class CoverageStore:
         if isinstance(data, dict):
             tier_order = data.get("tier_order") or []
             files_data = data.get("files", [])
+            provenance = data.get("provenance") or []
+            tier_colors = data.get("tier_colors") or {}
         else:
             tier_order = []
             files_data = data
+            provenance = []
+            tier_colors = {}
 
         store = cls(tier_order=tier_order)
+        store.provenance = list(provenance)
+        store.tier_colors = dict(tier_colors)
         for fd in files_data:
             record = FileRecord(path=Path(fd["path"]))
             for lineno_str, ld in fd["lines"].items():
@@ -364,9 +372,7 @@ class CoverageStore:
                     line_number=int(lineno_str),
                     hits=hits,
                     branches=branches,
-                    commit_hash=ld.get("commit"),
-                    commit_author=ld.get("author"),
-                    commit_summary=ld.get("summary"),
+                    state=ld.get("state"),
                 )
                 record.lines[int(lineno_str)] = lr
                 for tier in hits.counts:
