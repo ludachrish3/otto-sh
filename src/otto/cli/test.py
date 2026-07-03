@@ -635,6 +635,13 @@ suite_app = typer.Typer(
     name="test",
     invoke_without_command=True,
     cls=make_registry_group(SUITES),
+    # Explicit user-facing help: without it, typer falls back to the group
+    # callback's docstring — an internal note about ctx.meta plumbing that
+    # `otto test --help` (and the docs' captured terminal blocks) would show.
+    help=(
+        "Run a registered test suite by name, or select tests directly with"
+        " --tests / -m — no suite required."
+    ),
     context_settings={
         "help_option_names": ["-h", "--help"],
     },
