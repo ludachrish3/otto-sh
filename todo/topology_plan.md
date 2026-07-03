@@ -1,5 +1,15 @@
 # Network Topology Visualization — Design Plan
 
+> **2026-07-02 — re-plan against the monitor revamp before executing.** This
+> plan targets the old vanilla-JS dashboard (`static/dashboard.js` etc.). The
+> monitor revamp roadmap
+> (`docs/superpowers/specs/2026-07-02-monitor-revamp-roadmap-design.md`, §3)
+> replaces that frontend with React + Vite + TypeScript. The data model, API
+> shape, and UX decisions below still hold; the frontend implementation
+> section should be re-specced as a React component after the frontend phase
+> lands. Note the naming sweep also renamed `ne`/`neId` → `element`/
+> `element_id` since this was written.
+
 ## Context
 
 Otto needs a graphical view of the lab's network topology: hosts grouped by NE, connections between NEs showing protocols on hover, and the ability to click a host node to select it for monitoring. This replaces the current host ID dropdown in the monitor dashboard with a richer, always-accessible topology sidebar.

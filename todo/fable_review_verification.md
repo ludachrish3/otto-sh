@@ -39,7 +39,7 @@ refactor wave itself. Ranked list at the bottom.
 | #1 Naming sweep (API/files/JSON) | ✅ Implemented well | `suiteDir`/`testDir` camelCase island; `snmp` reclassified not renamed |
 | #2 Pydantic Phase A (boundary) | ✅ Implemented well | No "did-you-mean" suggestions; coverage-store records still stdlib dataclasses |
 | #2 Pydantic Phase B (options→Typer) | ✅ Implemented well | — |
-| #2-adjacent: return-type consistency | ❌ **Not implemented** | `run`→`RunResult`, `oneshot`→`CommandStatus`, `get/put`→`tuple[Status, str]` still mixed |
+| #2-adjacent: return-type consistency | ✅ **Done post-verification** | Unified into the `Result`/`CommandResult`/`Results` family (`51a8015`, on main 2026-07-02) |
 | #3 Context object (OttoContext) | ✅ Implemented well | Non-`--cov` suite path closes hosts only at process exit |
 | Lifecycle: `async with` + delete `__del__` | ✅ Implemented well | `HostScope.__aexit__` swallows close failures silently |
 | #3-coupled: Typer/Click triage | ✅ Done | Typer 0.26.8; vendored-click coupling handled explicitly |
@@ -52,7 +52,7 @@ refactor wave itself. Ranked list at the bottom.
 | Quick hit: contributor/architecture docs | ✅ Done | `docs/architecture/` tree (12 pages: layer map, lifecycle, registries, hosts, principles, …) added 2026-07-02 |
 | Quick hit: startup profiling | ✅ Done | Import-budget guard + `make profile` (hyperfine, not pyinstrument) |
 | Quick hit: automated VM tier | ❌ Absent | Nightly CI exists but is hostless-only, GitHub-hosted |
-| Gap 1: `otto init` | ❌ Absent | Docs mitigate; no scaffold command |
+| Gap 1: `otto init` | ✅ **Done post-verification** | Scaffold + lab doctor + onboarding docs on main 2026-07-02 (`5e55caa` wave) |
 | Gap 2: power/reset control | ✅ **Exists** | `PowerController` registry wired into embedded hosts |
 | Gap 3: secrets indirection | ❌ Absent | Plaintext creds in lab JSON — biggest open gap |
 | Gap 4: host groups/labels | ❌ Absent | Regex-over-IDs workaround only |
@@ -376,32 +376,45 @@ session/connection code (close-before-propagate on half-built sessions,
 
 ## Ranked follow-ups
 
-Combining residual review items and fresh findings, in recommended order:
+Combining residual review items and fresh findings, in recommended order.
+**Status re-verified against main 2026-07-02** — landed items are ticked, the
+rest re-confirmed still open on that date:
 
-1. **Fix SSH `oneshot` timeout (F1)** — real correctness bug on the most
-   common transport; small, well-scoped fix.
-2. **Contain import-time exec of user code (F3)** — robustness/UX; minimum fix
-   is cheap, `bootstrap()` refactor is the right end state.
-3. **Settle return-type consistency (`run`/`oneshot`/`get`/`put`)** — the one
-   review finding never addressed; belongs **before the contract freeze**, same
-   reasoning as the naming sweep ("cheap now, impossible later").
-4. **Secrets indirection in lab JSON** — top open feature gap; plaintext creds
-   block sharing the host database; env-var interpolation at ingest is small.
-5. **`ProtocolOverrides` bundle (F2)** — removes the 9-signature duplication
+1. ⬜ **Fix SSH `oneshot` timeout (F1)** — real correctness bug on the most
+   common transport; small, well-scoped fix. *(Re-verified open: the ssh
+   branch of `SessionManager.oneshot` still has no timeout wrap and the dead
+   `except asyncio.TimeoutError`.)*
+2. ✅ **Contain import-time exec of user code (F3)** — done: `bootstrap()`
+   composition root (`src/otto/bootstrap.py`), CLI-registry unification merge
+   (`2f311a8`).
+3. ✅ **Settle return-type consistency (`run`/`oneshot`/`get`/`put`)** — done:
+   unified `Result` family (`51a8015`).
+4. ⬜ **Secrets indirection in lab JSON** — top open feature gap; plaintext
+   creds block sharing the host database; env-var interpolation at ingest is
+   small.
+5. ⬜ **`ProtocolOverrides` bundle (F2)** — removes the 9-signature duplication
    and unifies the two fan-out signature styles.
-6. **`Lab.__add__` fix (F4)** + **`Arg`/`Opt` dead `name` knob (F5)** +
-   **`HostScope` close logging (F6)** — three small footgun removals, could be
-   one polish PR.
-7. **Public API tidy (F7)** — export `load_lab`, deprecate one logger alias,
-   fix cookbook inner-path imports.
-8. **`otto init` scaffolding** — biggest remaining learning-curve lever.
-9. **`suiteDir`/`testDir` decision + `SnmpOptions` naming story** — last
+6. 🟡 **`Lab.__add__` fix (F4)** + **`HostScope` close logging (F6)** — still
+   open (re-verified: `__add__` still mutates `self`; `__aexit__` still drops
+   `gather` exceptions). ~~`Arg`/`Opt` dead `name` knob (F5)~~ ✅ done —
+   `param_synth.py` now honors `opt.name`/`arg.name`.
+7. ✅ **Public API tidy (F7)** — done: single `get_logger` name, `load_lab`
+   exported from `otto` top level.
+8. ✅ **`otto init` scaffolding** — done, merged 2026-07-02 (`5e55caa` wave).
+9. ⬜ **`suiteDir`/`testDir` decision + `SnmpOptions` naming story** — last
    naming-sweep stragglers; decide before the freeze locks them in.
-10. **NFS adaptations → WARNING level** — one-line visibility fix.
-11. **`session.py` package split (F8)** — maintenance investment, no urgency.
-12. **VM-tier nightly on a self-hosted runner** — infra exists (nightly +
-    auto-issue); marginal work is the runner.
-13. Small stuff batched: coverage-store pydantic models + typed `[coverage]`
-    table; `from __future__ import annotations` in four model files vs the
-    ban; conformance samples for transfer/term seams; TODO.md aioftp line;
-    stale `.pyc` ghosts; docs/design architecture page.
+   *(Re-verified: both still present.)*
+10. ⬜ **NFS adaptations → WARNING level** — one-line visibility fix.
+    *(Re-verified: `collector.py` still logs both at DEBUG.)*
+11. ⬜ **`session.py` package split (F8)** — maintenance investment, no
+    urgency. *(Still 1,546 lines.)*
+12. ⬜ **VM-tier nightly on a self-hosted runner** — infra exists (nightly +
+    auto-issue); marginal work is the runner. *(Still all
+    `runs-on: ubuntu-latest`.)*
+13. 🟡 Small stuff batched: coverage-store pydantic models + typed `[coverage]`
+    table *(typed settings table is in-flight in the 2026-07-02 coverage-tier
+    plan; store models still stdlib)*; ~~`from __future__ import annotations`
+    in four model files~~ ✅ fixed (zero hits in src); conformance samples for
+    transfer/term seams; ~~TODO.md aioftp line~~ ✅ fixed 2026-07-02; stale
+    `.pyc` ghosts; ~~docs/design architecture page~~ ✅ done
+    (`docs/architecture/` tree).

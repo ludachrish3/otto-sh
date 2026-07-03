@@ -1,5 +1,9 @@
 # Monitor-DB test flakes under COUNT=10 (3.12, full-suite contention)
 
+> **2026-07-02:** the monitor revamp Phase 1 plan extracts all DB handling
+> into a new `src/otto/monitor/db.py` (`MetricDB`) — re-check both flakes
+> against that module when Phase 1 lands and fold the suggested fixes there.
+
 Discovered during the merge-readiness stability campaign (Stage 3, `--count=10`)
 on `feature/embedded-host`, 2026-06-06. Two **test-context** flakes in the
 branch-new SNMP monitor code. Both are rare (~1-in-6,870 test executions),

@@ -1,7 +1,10 @@
 # Flaky nc transfer through SSH hop
 
-`tests/unit/host/test_hop_integration.py::TestFileTransferThroughHop::test_nc_put_through_hop`
-and `::test_nc_get_through_hop` intermittently hang for the full 30 s budget
+`tests/integration/host/test_hop_integration.py::TestFileTransferThroughHop::test_nc_put_through_hop`
+and `::test_nc_get_through_hop` (paths updated 2026-07-02 for the test-tree
+restructure; the transfer code moved to `src/otto/host/transfer/nc.py` in the
+per-backend split — line references below are pre-split) intermittently hang
+for the full 30 s budget
 enforced by `_transfer_retry.transfer_with_retry`, surfacing as
 `asyncio.exceptions.TimeoutError`. None of the other transfer modes through a
 hop (scp / sftp / ftp) flake — only nc.

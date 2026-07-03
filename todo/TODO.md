@@ -13,11 +13,10 @@
 - Clang coverage
 - Beef up monitoring metrics
   - Make sure they work with zephyr
-- Look into hyperfine <https://github.com/sharkdp/hyperfine> to help with profiling
 - Integration tests for all new functionality except power on/off
   - A soft reboot stability test should be added. Possibly with a different marker and makefile target just because it's such a lengthy test.
 - Add TFTP to one of the zephyr hosts
-- Consider <https://pypi.org/project/pyftpdlib/> to replace aioftp. It's much faster in all benchmarks.
+- Evaluate faster FTP *client* alternatives to aioftp if FTP transfer speed ever matters. (Original note suggested pyftpdlib, but that is a **server** library — otto uses aioftp as a client; the roles were conflated.)
 - Add other Zephyr configs and versions so that the embedded OS support is hardened.
 - Add REPL sessions that can live within an active shell session and has a special prompt. The session can be recognized as ending when a REPL end sentinel is seen maybe?
 - Have one of the projects define a custom stat collector beyond the default definitions. This helps prove out the workflow for defining custom parsers and graphs.
@@ -47,9 +46,18 @@
 
 - Projects need to have more control over customizing host usage.
   - Specify custom monitor commands and objects. This probably required a pretty big refactor to allow out-of-band commands at custom frequencies. And to allow custom commands.
+  - **In flight:** the monitor revamp Phase 1 plan (`docs/superpowers/plans/2026-07-02-monitor-phase1-backend-contract.md`) covers the monitor half — project-level parser registration, per-parser collection intervals, parser API v2 (`ParseContext`).
+- No fleet-level connection cap: each host lazily opens its own connections, but nothing bounds the total. A 100+ host lab could exhaust target `MaxSessions`/`MaxStartups` or local fd limits. (Carried from the retired expert-feedback reassessment.)
+- The `resources` field on hosts/labs is declared but nothing consumes or enforces it — either implement lease/locking semantics or document it as purely user-facing metadata. (Carried from the retired expert-feedback reassessment.)
 
 ## Performance Monitoring
 
+> Most items below are sequenced by the monitor revamp roadmap
+> (`docs/superpowers/specs/2026-07-02-monitor-revamp-roadmap-design.md`);
+> frontend/UX items belong to the React rewrite phase, backend items to Phase 1.
+
+- Bound the SSE subscriber queues (`asyncio.Queue(maxsize=N)` + drop-oldest) so a slow dashboard client can't grow memory unbounded. Natural home: `broadcast.py` in the Phase 1 backend decomposition. (Carried from the retired expert-feedback reassessment.)
+- Batch metric DB writes per collection tick instead of per-point `INSERT`+`commit`. Natural home: `db.py` in the Phase 1 backend decomposition. (Carried from the retired expert-feedback reassessment.)
 - Add an import button and a clear data button so that users can launch a server once and keep viewing different data sets.
 - Anomoly detection
   - See <https://claude.ai/chat/2f1b6165-1325-482c-b430-f788ea80d691>

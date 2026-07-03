@@ -35,4 +35,10 @@ def parse(self, output: str, *, core_count: int = 1) -> dict[str, MetricDataPoin
 
 ## Status
 
-Deferred. The lower-effort fix (promote `core_count: int = 1` to base class and drop the `hasattr` guard) is already in place. Revisit if more per-host parser configuration gets added and the mutation pattern becomes untenable.
+**Absorbed into the monitor revamp (2026-07-02).** Phase 1's parser API v2
+(`docs/superpowers/plans/2026-07-02-monitor-phase1-backend-contract.md`)
+replaces `parse(output)` with `parse(output, *, ctx: ParseContext)` — the
+context carries per-host inputs like `core_count`, which is exactly this
+proposal generalized. Delete this file once Phase 1 lands.
+
+Previously: deferred. The lower-effort fix (promote `core_count: int = 1` to base class and drop the `hasattr` guard) is already in place.

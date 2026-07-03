@@ -1,5 +1,14 @@
 # Improve `.gcno` mismatch error handling in `otto cov`
 
+> **Status 2026-07-02 — partially done.** The *stamp mismatch* variant now has
+> a typed friendly error: `LcovMerger` detects `"stamp mismatch"` in lcov
+> output and raises `CoverageDataMismatchError`
+> (`src/otto/coverage/errors.py`, `correlator/merger.py:104`). The
+> **function-count** variant below (`reports 'X' functions … mismatch with
+> notes file`, which does *not* contain the "stamp mismatch" substring) is
+> still unhandled — extend the same detection to cover it. Candidate to fold
+> into the in-flight coverage-tier capture work.
+
 ## The error
 
 When running `otto cov report <log_dir> --report <out>`, lcov/geninfo can fail with:

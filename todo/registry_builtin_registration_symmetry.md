@@ -80,3 +80,10 @@ Partially resolved (WS#4): the three `register_X(type_name, cls)` class
 registries (command frames, embedded filesystems, binary loaders) now register
 built-ins through their public path; only the host-scoped monitor-parser case
 remains.
+
+**2026-07-02:** the remaining monitor-parser case should be settled by the
+monitor revamp Phase 1 plan
+(`docs/superpowers/plans/2026-07-02-monitor-phase1-backend-contract.md`),
+which introduces project-level `register_parsers()` — check whether built-in
+`DEFAULT_PARSERS` travel that same path when Phase 1 lands, then close this
+file.
