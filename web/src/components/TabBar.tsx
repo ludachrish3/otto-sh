@@ -25,7 +25,9 @@ function TabBar() {
   const activeTab = useMonitorStore((s) => s.activeTab);
   const { selectTab } = useMonitorActions();
 
-  const visibleTabs = tabs.filter((tab) => hasResolvedMetrics(tab, metrics));
+  const visibleTabs = tabs.filter(
+    (tab) => tab.kind === "table" || hasResolvedMetrics(tab, metrics),
+  );
 
   return (
     <nav id="tab-bar">

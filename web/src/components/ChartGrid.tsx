@@ -13,6 +13,7 @@ import { isProcMetric } from "../retirement";
 import { useMonitorStore } from "../store";
 import { onThemeChange } from "../theme";
 import ChartPanel from "./ChartPanel";
+import EventTable from "./EventTable";
 
 function ChartGrid() {
   const meta = useMonitorStore((s) => s.meta);
@@ -69,7 +70,8 @@ function ChartGrid() {
     // `clear-events-btn.disabled = false` — fires whether or not there
     // turned out to be a first tab to activate.
     chartsReady();
-    if (firstTabId) selectTab(firstTabId);
+    const initialTab = firstTabId ?? meta.tabs.find((t) => t.kind === "table")?.id;
+    if (initialTab) selectTab(initialTab);
   }, [meta, selectedHost, chartMap, series, selectTab, chartsReady]);
 
   // dashboard.js's host-select change handler's `else refreshPlot();`
@@ -222,6 +224,17 @@ function ChartGrid() {
           </div>
         );
       })}
+      {meta.tabs
+        .filter((t) => t.kind === "table")
+        .map((tab) => (
+          <div
+            key={tab.id}
+            id={`tab-${tab.id}`}
+            className={activeTab === tab.id ? "tab-panel active" : "tab-panel"}
+          >
+            <EventTable tab={tab} />
+          </div>
+        ))}
     </>
   );
 }

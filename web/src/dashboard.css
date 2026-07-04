@@ -404,3 +404,41 @@ body.plot-expanded .metric-plot { display: none; }
 body.plot-expanded .metric-plot.expanded-plot { display: block; }
 body.plot-expanded #proc-charts { display: none; }
 body.plot-expanded #proc-charts.expanded-plot { display: block; }
+
+/* --- Event tables (kind="table" tabs) --------------------------------- */
+.event-table { padding: 12px 16px; }
+.event-table-filter {
+  width: 260px;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border-ctrl);
+  border-radius: 6px;
+}
+.event-table-filter:focus { outline: none; border-color: var(--border-focus); }
+.event-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.event-table th {
+  text-align: left;
+  padding: 8px 12px;
+  color: var(--text-head);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+}
+.event-table td {
+  padding: 6px 12px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  font-family: ui-monospace, monospace;
+  word-break: break-word;
+}
+.event-table-time { white-space: nowrap; color: var(--text-muted); }
