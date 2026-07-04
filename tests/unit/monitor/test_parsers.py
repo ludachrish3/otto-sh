@@ -18,6 +18,7 @@ from otto.monitor.parsers import (
     ProcCountParser,
     SocketsParser,
     TopCpuParser,
+    default_catalog,
     get_host_parsers,
     human_readable,
     register_host_parsers,
@@ -712,6 +713,71 @@ class TestHostParserRegistry:
         register_host_parsers("gpu-03", {"free -b": MemParser()})
         register_host_parsers("gpu-03", {"df -h": DiskParser()})
         assert set(get_host_parsers("gpu-03")) == {"df -h"}
+
+
+class TestHostPatternRegistry:
+    """register_host_parsers with re.Pattern: fullmatch scoping + loud ambiguity."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_host_and_pattern_parser_registries(self):
+        from otto.monitor import parsers as parsers_mod
+
+        host_before = set(parsers_mod.HOST_PARSERS.names())
+        pattern_before = set(parsers_mod.HOST_PATTERN_PARSERS.names())
+        try:
+            yield
+        finally:
+            for host_id in set(parsers_mod.HOST_PARSERS.names()) - host_before:
+                parsers_mod.HOST_PARSERS.unregister(host_id)
+            for pattern_str in set(parsers_mod.HOST_PATTERN_PARSERS.names()) - pattern_before:
+                parsers_mod.HOST_PATTERN_PARSERS.unregister(pattern_str)
+
+    def _parsers(self) -> dict[str, MetricParser]:
+        return {_UptimeParser.command: _UptimeParser()}
+
+    def test_pattern_matches_family_of_hosts(self):
+        import re
+
+        register_host_parsers(re.compile(r"pat-family-.*"), self._parsers())
+        assert _UptimeParser.command in get_host_parsers("pat-family-01")
+        assert _UptimeParser.command in get_host_parsers("pat-family-02")
+
+    def test_fullmatch_not_search(self):
+        import re
+
+        register_host_parsers(re.compile("pat-exact"), self._parsers())
+        assert _UptimeParser.command in get_host_parsers("pat-exact")
+        assert _UptimeParser.command not in get_host_parsers("my-pat-exact-2")
+
+    def test_exact_registration_shadows_pattern(self):
+        import re
+
+        register_host_parsers(re.compile(r"pat-shadow-.*"), self._parsers())
+        register_host_parsers("pat-shadow-1", dict(DEFAULT_PARSERS))
+        assert _UptimeParser.command not in get_host_parsers("pat-shadow-1")
+        assert _UptimeParser.command in get_host_parsers("pat-shadow-2")
+
+    def test_two_matching_patterns_raise(self):
+        import re
+
+        register_host_parsers(re.compile(r"pat-ambig-.*"), self._parsers())
+        register_host_parsers(re.compile(r"pat-ambig-0\d"), self._parsers())
+        with pytest.raises(ValueError, match="matches multiple parser patterns"):
+            get_host_parsers("pat-ambig-01")
+
+    def test_no_match_falls_through_to_defaults(self):
+        import re
+
+        register_host_parsers(re.compile(r"pat-nomatch-.*"), self._parsers())
+        assert get_host_parsers("unrelated-host").keys() == default_catalog().keys()
+
+    def test_pattern_result_is_a_deep_copy(self):
+        import re
+
+        register_host_parsers(re.compile(r"pat-copy-.*"), self._parsers())
+        a = get_host_parsers("pat-copy-1")
+        b = get_host_parsers("pat-copy-2")
+        assert a[_UptimeParser.command] is not b[_UptimeParser.command]
 
 
 # ---------------------------------------------------------------------------

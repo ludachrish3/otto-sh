@@ -619,15 +619,32 @@ HOST_PARSERS: Registry[dict[str, "MetricParser"]] = Registry(
 )
 
 
-def register_host_parsers(host_id: str, parsers: dict[str, "MetricParser"]) -> None:
-    """Associate a custom parser dict with a host ID.
+# Pattern-scoped parser sets, keyed by pattern.pattern. Unlike HOST_PARSERS
+# (re-registering a host_id is normal usage), registering the same pattern
+# string twice is a config bug and raises loudly.
+HOST_PATTERN_PARSERS: Registry[tuple[re.Pattern[str], dict[str, "MetricParser"]]] = Registry(
+    "host-pattern parser set", register_hint="otto.monitor.parsers.register_host_parsers()"
+)
 
-    Call this from an init module (listed in ``.otto/settings.toml``) to override
-    or extend the default parsers for a specific host.  The *host_id* string must
-    match the ID used to look up the host (i.e. the key in ``lab.hosts``).
+
+def register_host_parsers(
+    host_id: str | re.Pattern[str], parsers: dict[str, "MetricParser"]
+) -> None:
+    """Associate a custom parser dict with a host ID or a host-ID pattern.
+
+    A plain string is an exact host ID (the key in ``lab.hosts``) — this is a
+    total replacement for that host and may be re-registered freely. A compiled
+    ``re.Pattern`` scopes the dict to every host whose id ``fullmatch``es —
+    one registration covers a family of hosts (e.g.
+    ``re.compile(r"busybox-.*")``). Precedence: exact id > pattern >
+    project-level > defaults; two patterns matching the same host raise at
+    resolution time. Call from an init module listed in ``.otto/settings.toml``.
 
     Hosts with no registered parsers automatically fall back to DEFAULT_PARSERS.
     """
+    if isinstance(host_id, re.Pattern):
+        HOST_PATTERN_PARSERS.register(host_id.pattern, (host_id, parsers), origin=caller_module())
+        return
     HOST_PARSERS.register(host_id, parsers, overwrite=True, origin=caller_module())
 
 
@@ -669,14 +686,29 @@ def default_catalog() -> dict[str, "MetricParser"]:
 
 
 def get_host_parsers(host_id: str) -> dict[str, "MetricParser"]:
-    """Return the parser dict for *host_id*: per-host > project-level > defaults.
+    """Return the parser dict for *host_id*: exact > pattern > project-level > defaults.
 
-    A per-host registration (see :func:`register_host_parsers`) wins outright
-    for its host_id — it is a total replacement, not merged with anything else.
-    Otherwise, project-level parsers (see :func:`register_parsers`) are merged
-    over DEFAULT_PARSERS. Non-raising by design: a host with no registrations
-    at all is normal (it just uses the defaults), not an error.
+    An exact registration wins outright for its host_id — it is a total
+    replacement, not merged with anything else, and shadows any pattern.
+    Otherwise a single ``fullmatch``ing pattern registration wins the same
+    way; two or more matching patterns raise (no import-order-dependent
+    silent winner). With neither, project-level parsers (see
+    :func:`register_parsers`) are merged over DEFAULT_PARSERS. Non-raising
+    for unregistered hosts by design: no registration at all is normal.
     """
     if host_id in HOST_PARSERS:
         return copy.deepcopy(HOST_PARSERS.get(host_id))
+    matches = [
+        (key, parsers)
+        for key, (pattern, parsers) in HOST_PATTERN_PARSERS.items()
+        if pattern.fullmatch(host_id)
+    ]
+    if len(matches) > 1:
+        patterns = ", ".join(repr(key) for key, _ in matches)
+        raise ValueError(
+            f"Host {host_id!r} matches multiple parser patterns ({patterns}); "
+            "register an exact host id to disambiguate"
+        )
+    if matches:
+        return copy.deepcopy(matches[0][1])
     return copy.deepcopy(default_catalog())
