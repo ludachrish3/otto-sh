@@ -24,14 +24,14 @@ def _hosts_file(path: Path) -> None:
                 {
                     "ip": "10.0.0.1",
                     "element": "a",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "resources": ["a"],
                     "labs": ["alpha"],
                 },
                 {
                     "ip": "10.0.0.2",
                     "element": "b",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "resources": ["b"],
                     "labs": ["beta"],
                 },

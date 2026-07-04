@@ -398,7 +398,7 @@ through its `labs` field, and `--lab <name>` selects the matching hosts:
         "element": "router1",
         "os_type": "unix",
         "valid_terms": ["ssh"],
-        "creds": { "admin": "secret" },
+        "creds": [{ "login": "admin", "password": "secret" }],
         "labs": ["my_lab"]
     },
     {
@@ -406,7 +406,7 @@ through its `labs` field, and `--lab <name>` selects the matching hosts:
         "element": "switch1",
         "os_type": "unix",
         "valid_terms": ["telnet"],
-        "creds": { "admin": "secret" },
+        "creds": [{ "login": "admin", "password": "secret" }],
         "labs": ["my_lab"]
     }
 ]
@@ -419,9 +419,11 @@ otto loads each entry into a host object — the same dicts build the
 >>> from otto.storage.factory import create_host_from_dict
 >>> hosts = [create_host_from_dict(h) for h in [
 ...     {"ip": "192.168.1.1", "element": "router1", "os_type": "unix",
-...      "valid_terms": ["ssh"], "creds": {"admin": "secret"}, "labs": ["my_lab"]},
+...      "valid_terms": ["ssh"], "creds": [{"login": "admin", "password": "secret"}],
+...      "labs": ["my_lab"]},
 ...     {"ip": "192.168.1.2", "element": "switch1", "os_type": "unix",
-...      "valid_terms": ["telnet"], "creds": {"admin": "secret"}, "labs": ["my_lab"]}]]
+...      "valid_terms": ["telnet"], "creds": [{"login": "admin", "password": "secret"}],
+...      "labs": ["my_lab"]}]]
 >>> [h.element for h in hosts]
 ['router1', 'switch1']
 ```

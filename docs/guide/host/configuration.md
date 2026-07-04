@@ -55,7 +55,7 @@ connect timeout:
 {
     "ip": "10.10.200.12",
     "element": "target",
-    "creds": { "admin": "secret" },
+    "creds": [{ "login": "admin", "password": "secret" }],
     "ssh_options": {
         "port": 2222,
         "known_hosts": "/home/user/.ssh/known_hosts",
@@ -206,7 +206,7 @@ Add an optional ``toolchain`` object to the host entry in ``hosts.json``:
     "ip": "10.10.200.12",
     "element": "target",
     "board": "arm-board",
-    "creds": { "admin": "secret" },
+    "creds": [{ "login": "admin", "password": "secret" }],
     "toolchain": {
         "sysroot": "/opt/arm-toolchain"
     }

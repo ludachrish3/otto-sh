@@ -72,7 +72,7 @@ schema's `extra="forbid"` check:
     "element": "example-device",
     "os_type": "unix",
     "valid_terms": ["ssh"],
-    "creds": { "admin": "CHANGE_ME" },
+    "creds": [{ "login": "admin", "password": "CHANGE_ME" }],
     "labs": ["example_lab"]
 }
 ```

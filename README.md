@@ -65,13 +65,13 @@ the monitor. Multiple labs can be merged by passing several names.
         "ne": "router1",
         "osType": "unix",
         "term": "ssh",
-        "creds": { "admin": "secret" }
+        "creds": [{ "login": "admin", "password": "secret" }]
     },
     {
         "ip": "192.168.1.2",
         "ne": "switch1",
         "term": "telnet",
-        "creds": { "admin": "secret" }
+        "creds": [{ "login": "admin", "password": "secret" }]
     }
 ]
 ```

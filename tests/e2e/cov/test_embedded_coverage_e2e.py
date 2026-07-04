@@ -72,6 +72,7 @@ def clean_sprout_cov():
 
     from otto.configmodule.lab import Lab
     from otto.context import OttoContext, set_context
+    from otto.host.login_proxy import Cred
     from otto.host.unix_host import UnixHost
     from otto.storage.factory import create_host_from_dict
     from otto.utils import Status
@@ -83,7 +84,7 @@ def clean_sprout_cov():
         UnixHost(
             ip=basil["ip"],
             element=basil["element"],
-            creds=basil["creds"],
+            creds=[Cred(**c) for c in basil["creds"]],
             board=basil.get("board"),
             is_virtual=True,
             term="ssh",

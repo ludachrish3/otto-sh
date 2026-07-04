@@ -3,10 +3,10 @@
         "ip": "10.10.200.11",
         "element": "orange",
         "board": "seed",
-        "creds": {
-            "vagrant": "vagrant",
-            "test": "Password1"
-        },
+        "creds": [
+            {"login": "vagrant", "password": "vagrant"},
+            {"login": "test", "password": "Password1"}
+        ],
         "resources": [
             "orange"
         ],
@@ -18,10 +18,10 @@
         "ip": "10.10.200.12",
         "element": "apple",
         "board": "seed",
-        "creds": {
-            "vagrant": "vagrant",
-            "test": "Password1"
-        },
+        "creds": [
+            {"login": "vagrant", "password": "vagrant"},
+            {"login": "test", "password": "Password1"}
+        ],
         "resources": [
             "apple"
         ],
@@ -34,10 +34,10 @@
         "element": "grape",
         "board": "seed",
         "docker_capable": true,
-        "creds": {
-            "vagrant": "vagrant",
-            "test": "Password1"
-        },
+        "creds": [
+            {"login": "vagrant", "password": "vagrant"},
+            {"login": "test", "password": "Password1"}
+        ],
         "resources": [
             "grape"
         ],

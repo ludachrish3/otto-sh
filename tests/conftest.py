@@ -94,6 +94,7 @@ import pytest_asyncio
 from otto.configmodule.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.host.local_host import LocalHost
+from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger import get_logger
 from otto.storage.factory import create_host_from_dict
@@ -621,7 +622,7 @@ async def hop_host(request):
     h = UnixHost(
         ip=target_data["ip"],
         element=target_data["element"],
-        creds=target_data["creds"],
+        creds=[Cred(**c) for c in target_data["creds"]],
         board=target_data.get("board"),
         is_virtual=target_data.get("is_virtual", False),
         term=term,

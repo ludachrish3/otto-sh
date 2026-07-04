@@ -49,7 +49,7 @@ _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
         {
             "ip": "10.0.0.1",
             "element": "router1",
-            "creds": {"admin": "admin"},
+            "creds": [{"login": "admin", "password": "admin"}],
             "resources": ["router1"],
         },
     ],
@@ -57,7 +57,7 @@ _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
         {
             "ip": "10.0.1.1",
             "element": "router2",
-            "creds": {"admin": "admin"},
+            "creds": [{"login": "admin", "password": "admin"}],
             "resources": ["router2"],
         },
     ],

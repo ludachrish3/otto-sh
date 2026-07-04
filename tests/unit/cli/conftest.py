@@ -74,14 +74,24 @@ def no_logger_output_dir():
 # ── Helpers for real filesystem fixtures ─────────────────────────────────────
 
 HOSTS_DATA = [
-    {"ip": "10.0.0.1", "element": "host1", "labs": ["test_lab"], "creds": {"admin": "pass"}},
+    {
+        "ip": "10.0.0.1",
+        "element": "host1",
+        "labs": ["test_lab"],
+        "creds": [{"login": "admin", "password": "pass"}],
+    },
     {
         "ip": "10.0.0.2",
         "element": "host2",
         "labs": ["test_lab", "lab2"],
-        "creds": {"admin": "pass"},
+        "creds": [{"login": "admin", "password": "pass"}],
     },
-    {"ip": "10.0.0.3", "element": "host3", "labs": ["lab2"], "creds": {"admin": "pass"}},
+    {
+        "ip": "10.0.0.3",
+        "element": "host3",
+        "labs": ["lab2"],
+        "creds": [{"login": "admin", "password": "pass"}],
+    },
 ]
 
 

@@ -196,7 +196,7 @@ class TestCreateHostFromDict:
     def _minimal(self, **extra):
         data = {
             "ip": "10.0.0.1",
-            "creds": {"admin": "secret"},
+            "creds": [{"login": "admin", "password": "secret"}],
             "element": "lab",
         }
         data.update(extra)

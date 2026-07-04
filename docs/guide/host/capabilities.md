@@ -106,7 +106,7 @@ the project-specific halves:
 
 ### Injecting products
 
-    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"},
+    host = UnixHost(ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")],
                     products=[MyApp(artifact=Path("dist/myapp.tgz"), dest_dir=Path("/opt"))])
 
 ### Lifecycle verbs

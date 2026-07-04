@@ -101,12 +101,13 @@ def _load_hosts(path: Path) -> list[dict]:
     return json.loads(path.read_text())
 
 
-def _ssh_user_pass(creds: dict[str, str]) -> tuple[str, str]:
-    """Pick the SSH login. Prefer ``vagrant``; otherwise the first cred."""
-    if "vagrant" in creds:
-        return "vagrant", creds["vagrant"]
-    user = next(iter(creds))
-    return user, creds[user]
+def _ssh_user_pass(creds: list[dict]) -> tuple[str, str]:
+    """Pick the SSH login. Prefer ``vagrant``; otherwise the first cred entry."""
+    by_login = {c["login"]: c["password"] for c in creds}
+    if "vagrant" in by_login:
+        return "vagrant", by_login["vagrant"]
+    first = creds[0]
+    return first["login"], first["password"]
 
 
 def _run_ssh(

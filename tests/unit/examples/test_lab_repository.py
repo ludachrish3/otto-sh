@@ -31,7 +31,12 @@ def test_custom_dataset_overrides_demo():
     repo = ExampleLabRepository(
         labs={
             "only": [
-                {"ip": "10.9.9.9", "element": "node", "creds": {"u": "p"}, "resources": ["node"]}
+                {
+                    "ip": "10.9.9.9",
+                    "element": "node",
+                    "creds": [{"login": "u", "password": "p"}],
+                    "resources": ["node"],
+                }
             ],
         }
     )

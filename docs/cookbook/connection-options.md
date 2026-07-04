@@ -75,7 +75,7 @@ picks up `connect_timeout` from the product preference:
 {
     "ip": "10.10.200.20",
     "element": "router",
-    "creds": { "admin": "secret" },
+    "creds": [{ "login": "admin", "password": "secret" }],
     "labs": ["wan"],
     "ssh_options": { "port": 2222 }
 }
@@ -94,10 +94,11 @@ repo a "base" for shared conventions and others its overlays.
 
 ```{doctest}
 >>> from otto.host import UnixHost
+>>> from otto.host.login_proxy import Cred
 >>> from otto.host.options import SshOptions
 >>> host = UnixHost(
 ...     ip='10.10.200.12',
-...     creds={'admin': 'secret'},
+...     creds=[Cred(login='admin', password='secret')],
 ...     element='lab',
 ...     ssh_options=SshOptions(port=2222),
 ... )
@@ -111,7 +112,7 @@ Equivalent `hosts.json` entry:
 {
     "ip": "10.10.200.12",
     "element": "lab",
-    "creds": { "admin": "secret" },
+    "creds": [{ "login": "admin", "password": "secret" }],
     "ssh_options": { "port": 2222 }
 }
 ```
@@ -166,7 +167,7 @@ keys mirror the dataclass fields:
 {
     "ip": "10.10.200.12",
     "element": "lab",
-    "creds": { "admin": "secret" },
+    "creds": [{ "login": "admin", "password": "secret" }],
     "ssh_options": {
         "local_forwards": [
             {

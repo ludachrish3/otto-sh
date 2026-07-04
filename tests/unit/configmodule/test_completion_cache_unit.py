@@ -579,7 +579,7 @@ _DOCKER_HOST = {
     "os_type": "unix",
     "board": "seed",
     "docker_capable": True,
-    "creds": {"user": "pass"},
+    "creds": [{"login": "user", "password": "pass"}],
     "resources": ["b"],
     "labs": ["lab"],
 }
@@ -589,7 +589,7 @@ _NON_DOCKER_HOST = {
     "os_type": "unix",
     "board": "seed",
     "docker_capable": False,
-    "creds": {"user": "pass"},
+    "creds": [{"login": "user", "password": "pass"}],
     "resources": ["a"],
     "labs": ["lab"],
 }

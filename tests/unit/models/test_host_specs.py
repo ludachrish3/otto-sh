@@ -23,7 +23,7 @@ from otto.storage.factory import create_host_from_dict
 
 def _minimal_unix_kwargs() -> dict:
     """Smallest kwargs that build a valid ``UnixHostSpec``."""
-    return {"ip": "10.0.0.1", "element": "lab", "creds": {"u": "p"}}
+    return {"ip": "10.0.0.1", "element": "lab", "creds": [{"login": "u", "password": "p"}]}
 
 
 def test_toolchain_spec_defaults_match_runtime():
@@ -98,7 +98,7 @@ def test_unix_spec_requires_creds():
 
 
 def test_unix_spec_builds_unix_host_with_defaults():
-    spec = UnixHostSpec(ip="10.0.0.1", element="lab", creds={"u": "p"})
+    spec = UnixHostSpec(ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}])
     host = spec.to_host()
     assert isinstance(host, UnixHost)
     assert host.ip == "10.0.0.1"
@@ -133,7 +133,7 @@ def test_unix_spec_builds_nested_options_and_snmp():
     spec = UnixHostSpec(
         ip="10.0.0.1",
         element="lab",
-        creds={"u": "p"},
+        creds=[{"login": "u", "password": "p"}],
         ssh_options={"port": 2222, "extra": {"x": 1}},
         snmp={"oids": ["1.3.6.1.2.1.1.3.0"], "port": 16101},
         resources=["r1"],
@@ -149,7 +149,12 @@ def test_unix_spec_builds_nested_options_and_snmp():
 
 def test_unix_spec_rejects_embedded_only_field():
     with pytest.raises(ValidationError):
-        UnixHostSpec(ip="1.1.1.1", element="lab", creds={"u": "p"}, filesystem="littlefs")
+        UnixHostSpec(
+            ip="1.1.1.1",
+            element="lab",
+            creds=[{"login": "u", "password": "p"}],
+            filesystem="littlefs",
+        )
 
 
 def test_embedded_spec_builds_with_command_frame():
@@ -191,7 +196,7 @@ def test_hostspec_rejects_unregistered_command_frame():
         UnixHostSpec(
             ip="10.0.0.1",
             element="lab",
-            creds={"u": "p"},
+            creds=[{"login": "u", "password": "p"}],
             command_frame="nonesuch",
         )
     assert "nonesuch" in str(exc.value)
@@ -228,7 +233,7 @@ def test_host_spec_fields_match_runtime_init(spec_cls, runtime_cls):
 
 
 def test_hostspec_interfaces_default_empty_and_passes_to_host():
-    spec = UnixHostSpec(ip="10.0.0.1", element="lab", creds={"u": "p"})
+    spec = UnixHostSpec(ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}])
     assert spec.interfaces == {}
     assert spec.to_host().interfaces == {}
 
@@ -237,7 +242,7 @@ def test_hostspec_interfaces_resolve_on_built_host():
     spec = UnixHostSpec(
         ip="10.0.0.1",
         element="lab",
-        creds={"u": "p"},
+        creds=[{"login": "u", "password": "p"}],
         interfaces={"mgmt": "10.9.9.9"},
     )
     host = spec.to_host()
@@ -265,7 +270,7 @@ def test_unix_to_host_matches_factory():
         "term": "ssh",
         "transfer": "scp",
         "is_virtual": True,
-        "creds": {"vagrant": "vagrant"},
+        "creds": [{"login": "vagrant", "password": "vagrant"}],
         "resources": ["carrot"],
         "labs": ["veggies"],
         "ssh_options": {"port": 2200},
@@ -313,7 +318,7 @@ def test_unix_spec_accepts_command_frame_string():
     spec = UnixHostSpec(
         ip="10.0.0.1",
         element="lab",
-        creds={"u": "p"},
+        creds=[{"login": "u", "password": "p"}],
         command_frame="bash",
     )
     host = spec.to_host()
@@ -321,7 +326,7 @@ def test_unix_spec_accepts_command_frame_string():
 
 
 def test_unix_spec_omits_command_frame_when_unset():
-    spec = UnixHostSpec(ip="10.0.0.1", element="lab", creds={"u": "p"})
+    spec = UnixHostSpec(ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}])
     # unset -> not passed -> UnixHost default (None -> SessionManager BashFrame)
     assert "command_frame" not in spec._common_host_kwargs()
     assert spec.to_host().command_frame is None
@@ -334,7 +339,7 @@ def test_spec_power_control_coerces_through_to_host():
     spec = UnixHostSpec(
         ip="10.0.0.1",
         element="lab",
-        creds={"u": "p"},
+        creds=[{"login": "u", "password": "p"}],
         power_control={
             "type": "command",
             "on_cmd": "on {name}",
@@ -351,7 +356,9 @@ def test_spec_unset_power_control_defaults_none():
     """Unset power_control falls through to the runtime host default; products is
     not a spec field, so the host keeps its own empty default.
     """
-    host = UnixHostSpec(ip="10.0.0.1", element="lab", creds={"u": "p"}).to_host()
+    host = UnixHostSpec(
+        ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}]
+    ).to_host()
     assert host.power_control is None
     assert host.products == []
 
@@ -361,7 +368,9 @@ def test_spec_rejects_products_as_lab_data():
     declare it (extra='forbid' rejects the key).
     """
     with pytest.raises(ValidationError):
-        UnixHostSpec(ip="10.0.0.1", element="lab", creds={"u": "p"}, products=[])
+        UnixHostSpec(
+            ip="10.0.0.1", element="lab", creds=[{"login": "u", "password": "p"}], products=[]
+        )
 
 
 def test_registered_pairs_drift_guard():
@@ -386,7 +395,7 @@ def test_registered_pairs_drift_guard():
 
 class TestMenuValidation:
     def test_unix_default_menus(self):
-        spec = UnixHostSpec(ip="10.0.0.1", element="x", creds={"u": "p"})
+        spec = UnixHostSpec(ip="10.0.0.1", element="x", creds=[{"login": "u", "password": "p"}])
         assert spec.valid_terms == ["ssh", "telnet"]
         assert spec.valid_transfers == ["scp", "sftp", "ftp", "nc"]
         assert spec.term is None
@@ -401,7 +410,7 @@ class TestMenuValidation:
         spec = UnixHostSpec(
             ip="10.0.0.1",
             element="x",
-            creds={"u": "p"},
+            creds=[{"login": "u", "password": "p"}],
             valid_terms="ssh",
             valid_transfers="scp",
         )
@@ -412,22 +421,37 @@ class TestMenuValidation:
         spec = UnixHostSpec(
             ip="10.0.0.1",
             element="x",
-            creds={"u": "p"},
+            creds=[{"login": "u", "password": "p"}],
             valid_transfers=["nc", "scp"],
         )
         assert spec.valid_transfers == ["nc", "scp"]
 
     def test_unknown_term_in_menu_raises(self):
         with pytest.raises(ValueError, match="not a registered term backend"):
-            UnixHostSpec(ip="1.1.1.1", element="x", creds={"u": "p"}, valid_terms=["bogus"])
+            UnixHostSpec(
+                ip="1.1.1.1",
+                element="x",
+                creds=[{"login": "u", "password": "p"}],
+                valid_terms=["bogus"],
+            )
 
     def test_unknown_unix_transfer_in_menu_raises(self):
         with pytest.raises(ValueError, match="not a registered transfer backend"):
-            UnixHostSpec(ip="1.1.1.1", element="x", creds={"u": "p"}, valid_transfers=["bogus"])
+            UnixHostSpec(
+                ip="1.1.1.1",
+                element="x",
+                creds=[{"login": "u", "password": "p"}],
+                valid_transfers=["bogus"],
+            )
 
     def test_unix_rejects_embedded_only_transfer_in_menu(self):
         with pytest.raises(ValueError, match="not valid on a unix host"):
-            UnixHostSpec(ip="1.1.1.1", element="x", creds={"u": "p"}, valid_transfers=["console"])
+            UnixHostSpec(
+                ip="1.1.1.1",
+                element="x",
+                creds=[{"login": "u", "password": "p"}],
+                valid_transfers=["console"],
+            )
 
     def test_embedded_rejects_unix_only_transfer_in_menu(self):
         with pytest.raises(ValueError, match="not valid on an embedded host"):
@@ -435,14 +459,24 @@ class TestMenuValidation:
 
     def test_empty_menu_rejected(self):
         with pytest.raises(ValueError, match="must be a non-empty"):
-            UnixHostSpec(ip="1.1.1.1", element="x", creds={"u": "p"}, valid_transfers=[])
+            UnixHostSpec(
+                ip="1.1.1.1",
+                element="x",
+                creds=[{"login": "u", "password": "p"}],
+                valid_transfers=[],
+            )
 
     def test_embedded_rejects_unix_only_term_in_menu(self):
         with pytest.raises(ValueError, match=r"term 'ssh' is not valid on an embedded host"):
             EmbeddedHostSpec(ip="1.1.1.1", element="e", command_frame="zephyr", valid_terms=["ssh"])
 
     def test_unix_accepts_telnet_term(self):
-        spec = UnixHostSpec(ip="1.1.1.1", element="e", creds={"root": "x"}, valid_terms=["telnet"])
+        spec = UnixHostSpec(
+            ip="1.1.1.1",
+            element="e",
+            creds=[{"login": "root", "password": "x"}],
+            valid_terms=["telnet"],
+        )
         assert spec.valid_terms == ["telnet"]
 
     def test_embedded_accepts_telnet_term(self):
@@ -455,14 +489,20 @@ class TestMenuValidation:
 class TestPreferenceResolution:
     def test_preference_in_menu_becomes_active(self):
         spec = UnixHostSpec(
-            ip="1.1.1.1", element="e", creds={"root": "x"}, valid_transfers=["scp", "sftp"]
+            ip="1.1.1.1",
+            element="e",
+            creds=[{"login": "root", "password": "x"}],
+            valid_transfers=["scp", "sftp"],
         )
         host = spec.to_host(preferences={"transfer": ["sftp"]})
         assert host.transfer == "sftp"
 
     def test_preference_out_of_menu_is_skipped(self):
         spec = UnixHostSpec(
-            ip="1.1.1.1", element="e", creds={"root": "x"}, valid_transfers=["scp", "nc"]
+            ip="1.1.1.1",
+            element="e",
+            creds=[{"login": "root", "password": "x"}],
+            valid_transfers=["scp", "nc"],
         )
         host = spec.to_host(preferences={"transfer": ["sftp", "nc"]})
         # sftp not in menu -> skipped; nc is the first preference in the menu
@@ -473,7 +513,7 @@ class TestPreferenceResolution:
         spec = UnixHostSpec(
             ip="1.1.1.1",
             element="e",
-            creds={"root": "x"},
+            creds=[{"login": "root", "password": "x"}],
             valid_transfers=["scp", "sftp"],
             transfer="scp",
         )
@@ -485,7 +525,7 @@ class TestPreferenceResolution:
         spec = UnixHostSpec(
             ip="1.1.1.1",
             element="e",
-            creds={"root": "x"},
+            creds=[{"login": "root", "password": "x"}],
             valid_transfers=["scp", "sftp"],
             transfer="nc",
         )
@@ -496,7 +536,10 @@ class TestPreferenceResolution:
 
     def test_no_preference_uses_menu_first(self):
         spec = UnixHostSpec(
-            ip="1.1.1.1", element="e", creds={"root": "x"}, valid_terms=["telnet", "ssh"]
+            ip="1.1.1.1",
+            element="e",
+            creds=[{"login": "root", "password": "x"}],
+            valid_terms=["telnet", "ssh"],
         )
         host = spec.to_host()
         assert host.term == "telnet"

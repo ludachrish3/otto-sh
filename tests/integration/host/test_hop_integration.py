@@ -29,6 +29,7 @@ import pytest_asyncio
 from otto.configmodule.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host import UnixHost
+from otto.host.login_proxy import Cred
 from otto.logger.mode import LogMode
 from otto.utils import Status
 from tests.conftest import host_data
@@ -48,7 +49,7 @@ def _build_host(ne: str, **overrides) -> UnixHost:
     return UnixHost(
         ip=data["ip"],
         element=data["element"],
-        creds=data["creds"],
+        creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=data.get("is_virtual", False),
         term=overrides.get("term", data.get("term", "ssh")),
@@ -88,7 +89,7 @@ async def single_hop_ssh():
     h = UnixHost(
         ip=data["ip"],
         element=data["element"],
-        creds=data["creds"],
+        creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=True,
         term="ssh",
@@ -107,7 +108,7 @@ async def single_hop_telnet():
     h = UnixHost(
         ip=data["ip"],
         element=data["element"],
-        creds=data["creds"],
+        creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=True,
         term="telnet",
@@ -133,7 +134,7 @@ async def two_hop_ssh():
     tomato_with_hop = UnixHost(
         ip=tomato_data["ip"],
         element=tomato_data["element"],
-        creds=tomato_data["creds"],
+        creds=[Cred(**c) for c in tomato_data["creds"]],
         board=tomato_data.get("board"),
         is_virtual=True,
         term="ssh",
@@ -149,7 +150,7 @@ async def two_hop_ssh():
     h = UnixHost(
         ip=pepper_data["ip"],
         element=pepper_data["element"],
-        creds=pepper_data["creds"],
+        creds=[Cred(**c) for c in pepper_data["creds"]],
         board=pepper_data.get("board"),
         is_virtual=True,
         term="ssh",
@@ -276,7 +277,7 @@ class TestFileTransferThroughHop:
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
-            creds=data["creds"],
+            creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
             term="ssh",
@@ -302,7 +303,7 @@ class TestFileTransferThroughHop:
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
-            creds=data["creds"],
+            creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
             term="ssh",
@@ -333,7 +334,7 @@ class TestFileTransferThroughHop:
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
-            creds=data["creds"],
+            creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
             term="ssh",
@@ -360,7 +361,7 @@ class TestFileTransferThroughHop:
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
-            creds=data["creds"],
+            creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
             term="ssh",
@@ -393,7 +394,7 @@ class TestFileTransferThroughHop:
         h = UnixHost(
             ip=data["ip"],
             element=data["element"],
-            creds=data["creds"],
+            creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
             is_virtual=True,
             term="ssh",

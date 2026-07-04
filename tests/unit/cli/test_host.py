@@ -19,6 +19,7 @@ from typer.testing import CliRunner
 
 from otto.cli import host as host_module
 from otto.cli.host import _host_id_completer, _resolve_host, host_app
+from otto.host.login_proxy import Cred
 from otto.host.session import SessionManager, ShellSession
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
@@ -33,7 +34,12 @@ runner = CliRunner()
 
 def _make_host(name: str = "router1") -> UnixHost:
     """Return a real UnixHost (no connection is made on construction)."""
-    return UnixHost(ip="10.0.0.1", element=name, creds={"admin": "secret"}, log=LogMode.NORMAL)
+    return UnixHost(
+        ip="10.0.0.1",
+        element=name,
+        creds=[Cred(login="admin", password="secret")],
+        log=LogMode.NORMAL,
+    )
 
 
 class FakeSession(ShellSession):
@@ -91,7 +97,12 @@ def _make_host_with_session(
     Logging callbacks are suppressed to avoid interfering with CliRunner's
     stdout capture.
     """
-    host = UnixHost(ip="10.0.0.1", element=name, creds={"admin": "secret"}, log=LogMode.NORMAL)
+    host = UnixHost(
+        ip="10.0.0.1",
+        element=name,
+        creds=[Cred(login="admin", password="secret")],
+        log=LogMode.NORMAL,
+    )
     fake = FakeSession(responses)
     host._session_mgr = SessionManager(
         session_factory=lambda: fake,
@@ -446,14 +457,14 @@ class TestHostIdCompleter:
                     "ip": "1.1.1.1",
                     "element": "carrot",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["veggies"],
                 },
                 {
                     "ip": "1.1.1.2",
                     "element": "tomato",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["veggies"],
                 },
             ],
@@ -473,14 +484,14 @@ class TestHostIdCompleter:
                     "ip": "1.1.1.1",
                     "element": "carrot",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["veggies"],
                 },
                 {
                     "ip": "1.1.1.2",
                     "element": "tomato",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["veggies"],
                 },
             ],
@@ -499,7 +510,7 @@ class TestHostIdCompleter:
                     "ip": "1.1.1.1",
                     "element": "carrot",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["veggies"],
                 },
             ],
@@ -511,7 +522,7 @@ class TestHostIdCompleter:
                     "ip": "2.2.2.2",
                     "element": "beet",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["roots"],
                 },
             ],
@@ -528,7 +539,7 @@ class TestHostIdCompleter:
             "ip": "1.1.1.1",
             "element": "carrot",
             "board": "seed",
-            "creds": {"u": "p"},
+            "creds": [{"login": "u", "password": "p"}],
             "labs": ["veggies"],
         }
         _write_hosts_json(lab1, [dup])
@@ -562,7 +573,7 @@ class TestHostIdCompleter:
                     "ip": "1.1.1.1",
                     "element": "carrot",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["veggies"],
                 },
             ],
@@ -605,7 +616,7 @@ class TestHostIdCompleter:
                     "ip": "1.1.1.1",
                     "element": "carrot",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["veggies"],
                 },
             ],
@@ -660,14 +671,14 @@ class TestHostIdCompleterLabFilter:
                     "ip": "1.1.1.1",
                     "element": "carrot",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["veggies"],
                 },
                 {
                     "ip": "1.1.1.2",
                     "element": "apple",
                     "board": "seed",
-                    "creds": {"u": "p"},
+                    "creds": [{"login": "u", "password": "p"}],
                     "labs": ["fruits"],
                 },
             ],

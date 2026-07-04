@@ -16,6 +16,7 @@ import pytest
 from otto.configmodule.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host.command_frame import FRAME_CLASSES, register_command_frame
+from otto.host.login_proxy import Cred
 from otto.host.telnet import abort_console_transports
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
@@ -76,7 +77,7 @@ def _install_integration_lab() -> None:
             UnixHost(
                 ip=data["ip"],
                 element=data["element"],
-                creds=data["creds"],
+                creds=[Cred(**c) for c in data["creds"]],
                 board=data.get("board"),
                 is_virtual=data.get("is_virtual", False),
                 term=data.get("term", "ssh"),

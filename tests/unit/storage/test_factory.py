@@ -7,6 +7,7 @@ from otto.host import os_profile
 from otto.host.command_frame import ZephyrFrame
 from otto.host.embedded_filesystem import FatRamFileSystem
 from otto.host.embedded_host import EmbeddedHost, ZephyrHost
+from otto.host.login_proxy import Cred
 from otto.host.options import SnmpOptions
 from otto.host.os_profile import register_os_profile
 from otto.host.toolchain import Toolchain
@@ -40,7 +41,7 @@ class TestCreateHostFromDict:
             "ip": "10.10.200.11",
             "element": "orange",
             "board": "seed",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
             "resources": ["orange"],
         }
         host = create_host_from_dict(host_data)
@@ -49,7 +50,7 @@ class TestCreateHostFromDict:
         assert host.ip == "10.10.200.11"
         assert host.element == "orange"
         assert host.board == "seed"
-        assert host.creds == {"vagrant": "vagrant"}
+        assert host.creds == [Cred(login="vagrant", password="vagrant")]
         assert host.resources == {"orange"}
 
     def test_resources_list_converted_to_set(self):
@@ -57,7 +58,7 @@ class TestCreateHostFromDict:
         host_data = {
             "ip": "10.10.200.11",
             "element": "orange",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
             "resources": ["orange", "tomato"],
         }
         host = create_host_from_dict(host_data)
@@ -70,7 +71,7 @@ class TestCreateHostFromDict:
         host_data = {
             "ip": "10.10.200.11",
             "element": "orange",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
             "resources": {"orange", "tomato"},
         }
         host = create_host_from_dict(host_data)
@@ -82,7 +83,7 @@ class TestCreateHostFromDict:
         """Missing required ``ip`` field is caught by the spec validator."""
         host_data = {
             "element": "orange",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         with pytest.raises(ValidationError) as exc_info:
             create_host_from_dict(host_data)
@@ -106,7 +107,7 @@ class TestCreateHostFromDict:
         """Missing required ``element`` field is caught by the spec validator."""
         host_data = {
             "ip": "10.10.200.11",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         with pytest.raises(ValidationError) as exc_info:
             create_host_from_dict(host_data)
@@ -120,7 +121,7 @@ class TestCreateHostFromDict:
             "ip": "10.10.200.11",
             "element": "orange",
             "user": "vagrant",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
             "board": "seed",
             "slot": 0,
             "element_id": 1,
@@ -142,7 +143,7 @@ class TestValidateHostDict:
         host_data = {
             "ip": "10.10.200.11",
             "element": "orange",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         # Should not raise any exception
         validate_host_dict(host_data)
@@ -163,7 +164,7 @@ class TestValidateHostDict:
         host_data = {
             "ip": 123,
             "element": "orange",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         with pytest.raises(ValueError, match="ip") as exc_info:
             validate_host_dict(host_data)
@@ -171,25 +172,25 @@ class TestValidateHostDict:
         assert "ip" in str(exc_info.value)
         assert "str" in str(exc_info.value)
 
-    def test_validate_creds_not_dict(self):
-        """Test validation fails when creds is not a dict."""
+    def test_validate_creds_not_list(self):
+        """Test validation fails when creds is not a list."""
         host_data = {
             "ip": "10.10.200.11",
             "element": "orange",
-            "creds": "not_a_dict",
+            "creds": "not_a_list",
         }
         with pytest.raises(ValueError, match="creds") as exc_info:
             validate_host_dict(host_data)
 
         assert "creds" in str(exc_info.value)
-        assert "dict" in str(exc_info.value)
+        assert "list" in str(exc_info.value)
 
     def test_validate_ne_not_string(self):
         """Test validation fails when ne is not a string."""
         host_data = {
             "ip": "10.10.200.11",
             "element": 123,
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         with pytest.raises(ValueError, match="element") as exc_info:
             validate_host_dict(host_data)
@@ -205,7 +206,7 @@ class TestToolchainDeserialization:
         data = {
             "ip": "10.10.200.11",
             "element": "orange",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         data.update(extra)
         return data
@@ -256,7 +257,7 @@ class TestRepoLevelOptionDefaults:
         data = {
             "ip": "10.10.200.11",
             "element": "orange",
-            "creds": {"vagrant": "vagrant"},
+            "creds": [{"login": "vagrant", "password": "vagrant"}],
         }
         data.update(extra)
         return data
@@ -338,7 +339,7 @@ class TestOsTypeDispatch:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"v": "v"},
+                "creds": [{"login": "v", "password": "v"}],
             }
         )
         assert isinstance(host, UnixHost)
@@ -349,7 +350,7 @@ class TestOsTypeDispatch:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"v": "v"},
+                "creds": [{"login": "v", "password": "v"}],
                 "os_type": "unix",
             }
         )
@@ -522,7 +523,7 @@ class TestOsProfileDispatch:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"v": "v"},
+                "creds": [{"login": "v", "password": "v"}],
                 "os_type": "custom-nix",
             }
         )
@@ -536,7 +537,7 @@ class TestOsProfileDispatch:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"v": "v"},
+                "creds": [{"login": "v", "password": "v"}],
                 "os_type": "custom-nix",
                 "os_name": "HostWins",
             }
@@ -549,7 +550,7 @@ class TestOsProfileDispatch:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"v": "v"},
+                "creds": [{"login": "v", "password": "v"}],
                 "os_type": "custom-nix",
             }
         )
@@ -573,7 +574,7 @@ class TestOsProfileDispatch:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"v": "v"},
+                "creds": [{"login": "v", "password": "v"}],
                 "os_type": "nix-ssh",
                 "ssh_options": {"port": 9000},
             },
@@ -846,7 +847,7 @@ class TestSnmpBlock:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"v": "v"},
+                "creds": [{"login": "v", "password": "v"}],
             }
         )
         assert host.snmp is None
@@ -879,7 +880,7 @@ class TestSnmpBlock:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"v": "v"},
+                "creds": [{"login": "v", "password": "v"}],
                 "snmp": {"oids": ["1.3.6.1.2.1.1.3.0"]},
             }
         )
@@ -901,7 +902,7 @@ class TestMergeAndValidation:
             {
                 "ip": "10.0.0.1",
                 "element": "carrot",
-                "creds": {"u": "p"},
+                "creds": [{"login": "u", "password": "p"}],
                 "ssh_options": {"port": 2222, "connect_timeout": 1.0},
             },
             preferences={".*": {"ssh_options": {"connect_timeout": 9.0}}},
@@ -910,13 +911,20 @@ class TestMergeAndValidation:
         assert host.ssh_options.connect_timeout == 9.0  # preferences win over host
 
     def test_create_stamps_os_type_selector(self):
-        host = create_host_from_dict({"ip": "10.0.0.1", "element": "c", "creds": {"u": "p"}})
+        host = create_host_from_dict(
+            {"ip": "10.0.0.1", "element": "c", "creds": [{"login": "u", "password": "p"}]}
+        )
         assert host.os_type == "unix"  # absent os_type -> default selector stamped
 
     def test_validate_rejects_typo_with_pydantic_error(self):
         with pytest.raises(ValidationError):
             validate_host_dict(
-                {"ip": "10.0.0.1", "element": "c", "creds": {"u": "p"}, "lab": ["x"]}
+                {
+                    "ip": "10.0.0.1",
+                    "element": "c",
+                    "creds": [{"login": "u", "password": "p"}],
+                    "lab": ["x"],
+                }
             )  # 'lab' is a typo for 'labs'
 
     def test_validate_rejects_misplaced_ssh_options_on_embedded(self):
@@ -939,7 +947,7 @@ def test_create_host_from_dict_applies_selector_scoped_preference():
         {
             "ip": "1.1.1.1",
             "element": "e",
-            "creds": {"root": "x"},
+            "creds": [{"login": "root", "password": "x"}],
             "valid_transfers": ["scp", "sftp"],
         },
         preferences={".*": {"transfer": ["sftp"]}},
@@ -951,7 +959,12 @@ def test_create_host_from_dict_preference_out_of_menu_skipped():
     from otto.storage.factory import create_host_from_dict
 
     host = create_host_from_dict(
-        {"ip": "1.1.1.1", "element": "e", "creds": {"root": "x"}, "valid_transfers": ["scp"]},
+        {
+            "ip": "1.1.1.1",
+            "element": "e",
+            "creds": [{"login": "root", "password": "x"}],
+            "valid_transfers": ["scp"],
+        },
         preferences={".*": {"transfer": ["sftp"]}},
     )
     assert host.transfer == "scp"  # sftp not in menu -> menu[0]
@@ -964,7 +977,7 @@ def test_create_host_from_dict_selector_not_matching_is_inert():
         {
             "ip": "1.1.1.1",
             "element": "e",
-            "creds": {"root": "x"},
+            "creds": [{"login": "root", "password": "x"}],
             "valid_transfers": ["scp", "sftp"],
         },
         preferences={"zephyr.*": {"transfer": ["sftp"]}},  # id "e" not matched
@@ -1015,7 +1028,7 @@ class TestProductProviders:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"vagrant": "vagrant"},
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
             }
         )
         assert [p.name for p in host.products] == ["myapp"]
@@ -1025,7 +1038,7 @@ class TestProductProviders:
             {
                 "ip": "10.10.200.12",
                 "element": "lemon",
-                "creds": {"vagrant": "vagrant"},
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
             }
         )
         assert host.products == []
@@ -1042,7 +1055,7 @@ def test_value_default_applied_from_preferences():
             "os_type": "unix",
             "element": "carrot",
             "ip": "1.1.1.1",
-            "creds": {"u": "p"},
+            "creds": [{"login": "u", "password": "p"}],
             "valid_terms": ["ssh"],
             "valid_transfers": ["scp"],
         },
@@ -1058,7 +1071,7 @@ def test_product_value_overrides_host_value_per_key():
             "os_type": "unix",
             "element": "carrot",
             "ip": "1.1.1.1",
-            "creds": {"u": "p"},
+            "creds": [{"login": "u", "password": "p"}],
             "valid_terms": ["ssh"],
             "valid_transfers": ["scp"],
             "ssh_options": {"connect_timeout": 1.0, "port": 2222},
@@ -1076,7 +1089,7 @@ def test_selection_preference_overrides_lab_pin():
             "os_type": "unix",
             "element": "carrot",
             "ip": "1.1.1.1",
-            "creds": {"u": "p"},
+            "creds": [{"login": "u", "password": "p"}],
             "term": "ssh",
             "valid_terms": ["ssh", "telnet"],
             "valid_transfers": ["scp"],

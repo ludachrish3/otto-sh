@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 
 _LAB_DATA_DIR = Path(__file__).parent / "lab_data"
@@ -42,7 +43,7 @@ def make_host(ne: str, **kwargs: Any) -> UnixHost:
     return UnixHost(
         ip=data["ip"],
         element=data["element"],
-        creds=data["creds"],
+        creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=data.get("is_virtual", False),
         **kwargs,

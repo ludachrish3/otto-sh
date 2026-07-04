@@ -28,6 +28,7 @@ from otto.docker.compose import (
     register_declared_container_hosts,
 )
 from otto.host.docker_host import DockerContainerHost
+from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult, Result
 from otto.utils import Status
@@ -88,7 +89,7 @@ def _capable_host(host_id: str = "pepper_seed", ne: str = "pepper") -> UnixHost:
     return UnixHost(
         ip="10.10.200.13",
         element=ne,
-        creds={"vagrant": "vagrant"},
+        creds=[Cred(login="vagrant", password="vagrant")],
         board="seed",
         docker_capable=True,
     )
@@ -154,7 +155,7 @@ def test_resolve_parent_rejects_non_capable(tmp_path):
         UnixHost(
             ip="1.2.3.4",
             element="other",
-            creds={"u": "p"},
+            creds=[Cred(login="u", password="p")],
             board="seed",
             docker_capable=False,
         )

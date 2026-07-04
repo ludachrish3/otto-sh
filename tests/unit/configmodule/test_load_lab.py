@@ -21,7 +21,7 @@ def test_load_lab_default_repository_uses_search_paths(tmp_path):
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"vagrant": "vagrant"},
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
                 "resources": ["orange"],
                 "labs": ["testlab"],
             },
@@ -42,7 +42,7 @@ def test_load_lab_uses_injected_repository(tmp_path):
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"vagrant": "vagrant"},
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
                 "resources": ["orange"],
                 "labs": ["injected"],
             },
@@ -62,14 +62,14 @@ def test_load_lab_merges_multiple_names(tmp_path):
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"vagrant": "vagrant"},
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
                 "resources": ["orange"],
                 "labs": ["lab_a"],
             },
             {
                 "ip": "10.10.200.12",
                 "element": "tomato",
-                "creds": {"vagrant": "vagrant"},
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
                 "resources": ["tomato"],
                 "labs": ["lab_b"],
             },

@@ -48,7 +48,7 @@ HOSTS_JSON_ENTRY = {
     "os_type": "unix",
     "valid_terms": ["ssh"],
     "valid_transfers": ["scp", "sftp"],
-    "creds": {"admin": "CHANGE_ME"},
+    "creds": [{"login": "admin", "password": "CHANGE_ME"}],
     "resources": ["example-device"],
     "labs": ["example_lab"],
 }
@@ -78,7 +78,8 @@ entry; edit or replace it, and add as many more entries as your lab needs.
 - **`valid_transfers`** — the ordered menu of file-transfer backends this
   host supports (e.g. `"scp"`, `"sftp"`, `"ftp"`, `"nc"`). Same
   first-entry-is-default rule as `valid_terms`.
-- **`creds`** — a dict of username to password/secret, keyed by login user.
+- **`creds`** — an ordered list of `{"login": ..., "password": ...}` objects;
+  the first entry is the default login unless `user` pins another one.
   Replace `"CHANGE_ME"` with a real credential (or point it at your secrets
   manager per your repo's convention) before connecting to a real host.
 - **`resources`** — a set of resource names this host claims, used by

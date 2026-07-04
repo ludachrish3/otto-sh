@@ -10,7 +10,7 @@ from otto.models.host import EmbeddedHostSpec, UnixHostSpec
 
 
 def _unix_spec(**kw):
-    return UnixHostSpec(ip="10.0.0.1", element="x", creds={"u": "p"}, **kw)
+    return UnixHostSpec(ip="10.0.0.1", element="x", creds=[{"login": "u", "password": "p"}], **kw)
 
 
 def test_unix_defaults_active_is_menu_first():

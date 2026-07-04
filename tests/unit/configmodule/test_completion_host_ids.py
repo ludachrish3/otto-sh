@@ -24,21 +24,21 @@ _CARROT = {
     "ip": "1.1.1.1",
     "element": "carrot",
     "board": "seed",
-    "creds": {"u": "p"},
+    "creds": [{"login": "u", "password": "p"}],
     "labs": ["veggies"],
 }
 _TOMATO = {
     "ip": "1.1.1.2",
     "element": "tomato",
     "board": "seed",
-    "creds": {"u": "p"},
+    "creds": [{"login": "u", "password": "p"}],
     "labs": ["veggies"],
 }
 _APPLE = {
     "ip": "1.1.1.3",
     "element": "apple",
     "board": "seed",
-    "creds": {"u": "p"},
+    "creds": [{"login": "u", "password": "p"}],
     "labs": ["fruits"],
 }
 
@@ -117,7 +117,7 @@ def test_collect_host_ids_by_lab_host_in_two_labs(tmp_path: Path) -> None:
         "ip": "9.9.9.9",
         "element": "shared",
         "board": "seed",
-        "creds": {"u": "p"},
+        "creds": [{"login": "u", "password": "p"}],
         "labs": ["veggies", "fruits"],
     }
     repo = _repo_with_hosts(tmp_path, [shared])

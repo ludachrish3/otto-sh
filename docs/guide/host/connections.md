@@ -39,7 +39,7 @@ For persistent hop configuration, set the `hop` field in `hosts.json`
     "element": "target",
     "board": "seed",
     "hop": "jumpbox_seed",
-    "creds": { "admin": "secret" }
+    "creds": [{ "login": "admin", "password": "secret" }]
 }
 ```
 

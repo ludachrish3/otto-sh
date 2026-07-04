@@ -88,7 +88,7 @@ class TestBuildMonitorCollector:
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"v": "v"},
+                "creds": [{"login": "v", "password": "v"}],
             }
         )
         collector = build_monitor_collector([host])

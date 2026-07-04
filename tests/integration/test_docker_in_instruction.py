@@ -15,6 +15,7 @@ import pytest_asyncio
 from otto.configmodule.lab import Lab
 from otto.configmodule.repo import Repo
 from otto.docker import build_images, composed
+from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
 from tests._fixtures._host_pool import lease_unix_host
@@ -41,7 +42,7 @@ async def parent_lab(pepper_lease):
     parent = UnixHost(
         ip="10.10.200.13",
         element="pepper",
-        creds={"vagrant": "vagrant"},
+        creds=[Cred(login="vagrant", password="vagrant")],
         board="seed",
         is_virtual=True,
         term="ssh",

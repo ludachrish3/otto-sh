@@ -18,7 +18,7 @@ contain a `hosts.json` file.  The file is a JSON **array** of host objects:
         "ip": "10.10.200.11",
         "element": "carrot",
         "board": "seed",
-        "creds": { "vagrant": "vagrant" },
+        "creds": [{ "login": "vagrant", "password": "vagrant" }],
         "labs": ["veggies"]
     },
     {
@@ -48,7 +48,7 @@ becomes `carrot_seed_2`.
 |-------|------|-------------|
 | `ip` | string | IP address or DNS name otto will connect to. |
 | `element` | string | Network-element name.  Combined with `board` and `element_id` to form the host id. |
-| `creds` | object | Map of username → password.  At least one entry required for Unix hosts; optional for embedded hosts (RTOS telnet shells typically have no login step). |
+| `creds` | array of objects | Ordered list of `{"login": ..., "password": ...}` entries (the first is the default login unless `user` pins another one).  At least one entry required for Unix hosts; optional for embedded hosts (RTOS telnet shells typically have no login step).  An entry may also carry `proxy`/`via`/`params` to describe a login-proxy hop. |
 | `labs` | array of strings | Lab names this host belongs to.  Without this the host is invisible to `--lab`. |
 
 ### Common optional
@@ -211,10 +211,10 @@ Two real entries from the test fixture — one Unix host and one Zephyr host:
         "term": "ssh",
         "transfer": "scp",
         "is_virtual": true,
-        "creds": {
-            "vagrant": "vagrant",
-            "test": "Password1"
-        },
+        "creds": [
+            {"login": "vagrant", "password": "vagrant"},
+            {"login": "test", "password": "Password1"}
+        ],
         "resources": [
             "carrot"
         ],

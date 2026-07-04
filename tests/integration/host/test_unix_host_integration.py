@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from otto.host.host import Host
+from otto.host.login_proxy import Cred
 from otto.host.session import ShellSession
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
@@ -332,12 +333,12 @@ class TestCredentials:
     async def test_second_credential_works(self):
         """Verify the non-default (test) user can log in and run commands."""
         data = host_data("tomato")
-        second_user, _second_password = list(data["creds"].items())[1]
+        second_user = data["creds"][1]["login"]
         host = UnixHost(
             ip=data["ip"],
             user=second_user,
             element=data["element"],
-            creds=data["creds"],
+            creds=[Cred(**c) for c in data["creds"]],
             board=data.get("board"),
         )
         try:
@@ -360,12 +361,12 @@ class TestCredentials:
         monkeypatch.setattr(ShellSession, "_init_timeout", 3.0)
 
         data = host_data("carrot")
-        user = next(iter(data["creds"].keys()))
+        user = data["creds"][0]["login"]
         host = UnixHost(
             ip=data["ip"],
             user=user,
             element=data["element"],
-            creds={user: "definitely-the-wrong-password"},
+            creds=[Cred(login=user, password="definitely-the-wrong-password")],
             board=data.get("board"),
             term="telnet",
             transfer="ftp",

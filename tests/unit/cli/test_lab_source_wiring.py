@@ -33,7 +33,7 @@ def test_no_lab_block_defaults_to_json_over_merged_paths(tmp_path):
             {
                 "ip": "10.10.200.11",
                 "element": "orange",
-                "creds": {"vagrant": "vagrant"},
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
                 "resources": ["orange"],
                 "labs": ["merged"],
             },
@@ -45,7 +45,7 @@ def test_no_lab_block_defaults_to_json_over_merged_paths(tmp_path):
             {
                 "ip": "10.10.200.12",
                 "element": "tomato",
-                "creds": {"vagrant": "vagrant"},
+                "creds": [{"login": "vagrant", "password": "vagrant"}],
                 "resources": ["tomato"],
                 "labs": ["merged"],
             },

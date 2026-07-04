@@ -39,6 +39,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 
+from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from tests._fixtures.labdata import lab_data_path
 
@@ -63,7 +64,7 @@ async def _reap_orphan_docker_stacks() -> None:
     host = UnixHost(
         ip=_DOCKER_HOST_IP,
         element="pepper",
-        creds={"vagrant": "vagrant"},
+        creds=[Cred(login="vagrant", password="vagrant")],
         board="seed",
         is_virtual=True,
         term="ssh",
@@ -114,7 +115,7 @@ async def carrot():
     h = UnixHost(
         ip=data["ip"],
         element=data["element"],
-        creds=data["creds"],
+        creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=True,
         term="ssh",
@@ -131,7 +132,7 @@ async def tomato():
     h = UnixHost(
         ip=data["ip"],
         element=data["element"],
-        creds=data["creds"],
+        creds=[Cred(**c) for c in data["creds"]],
         board=data.get("board"),
         is_virtual=True,
         term="ssh",

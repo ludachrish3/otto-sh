@@ -26,6 +26,7 @@ otto.host.file_ops
 otto.host.host
 otto.host.interact
 otto.host.local_host
+otto.host.login_proxy
 otto.host.options
 otto.host.os_profile
 otto.host.power
