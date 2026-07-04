@@ -274,7 +274,7 @@ class MetricCollector:
                         ts,
                         list(res),
                         target.parsers,
-                        ctx=ParseContext(core_count=target.core_count),
+                        ctx=ParseContext(core_count=target.core_count, ts=ts),
                     )
                 case list():
                     await self._process_snmp_results(target.host.name, ts, result)

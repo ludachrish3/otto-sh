@@ -234,6 +234,14 @@ def test_parse_context_is_frozen():
         ctx.core_count = 8  # type: ignore[misc]
 
 
+def test_parse_context_carries_optional_ts():
+    from datetime import datetime, timezone
+
+    assert ParseContext().ts is None
+    ts = datetime(2026, 7, 3, tzinfo=timezone.utc)
+    assert ParseContext(core_count=2, ts=ts).ts == ts
+
+
 # ---------------------------------------------------------------------------
 # MemParser
 # ---------------------------------------------------------------------------

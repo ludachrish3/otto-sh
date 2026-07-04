@@ -45,6 +45,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, NamedTuple
 
 from typing_extensions import override
@@ -74,6 +75,11 @@ class ParseContext:
     core_count: int = 1
     """Number of CPU cores on the target host for this tick. Most parsers ignore
     this; :class:`TopCpuParser` uses it to normalize per-process CPU%."""
+
+    ts: datetime | None = None
+    """Collection timestamp for this tick. Rate parsers feed it to their
+    :class:`~otto.monitor.rates.RateTracker`; ``None`` (bare construction in
+    tests) means the parser falls back to ``datetime.now(tz=timezone.utc)``."""
 
 
 _BYTES_PER_UNIT = 1024.0  # binary prefix divisor used by human_readable
