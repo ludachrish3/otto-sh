@@ -17,7 +17,6 @@ import pytest
 
 from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
-from otto.monitor.parsers import LogEvent
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
@@ -53,7 +52,8 @@ META_KEYS = {"hosts", "live", "metrics", "tabs", "interval"}
 # "interval" (global cadence) added in Phase 2 — deliberate contract evolution.
 META_METRIC_KEYS = {"label", "y_title", "unit", "command", "chart", "interval"}
 # "interval" added in Phase 1 (per-parser collection intervals) — deliberate contract evolution.
-META_TAB_KEYS = {"id", "label", "metrics"}
+META_TAB_KEYS = {"id", "label", "metrics", "kind", "columns"}
+# "kind"/"columns" added in Phase 3 Plan B (table tabs) — deliberate contract evolution.
 DATA_KEYS = {"series", "events", "chart_map", "log_events"}
 # "log_events" added in Phase 3 Plan B (log-sourced data) — deliberate contract evolution.
 LOG_EVENT_ROW_KEYS = {"timestamp", "host", "tab", "fields"}
@@ -101,8 +101,8 @@ def test_data_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
 def test_data_log_events_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
     ts = datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc)
     live_dash.run(
-        live_dash.collector._record_log_events(
-            "host1", "syslog", [LogEvent(ts=ts, fields={"message": "pinned"})]
+        live_dash.collector.push_log_events(
+            "host1", tab="syslog", rows=[(ts, {"message": "pinned"})]
         )
     )
     data = _get_json(live_dash.url + "/api/data")
@@ -127,12 +127,12 @@ def test_sse_stream_delivers_batched_log_events(
         resp = conn.getresponse()
         ts = datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc)
         live_dash.run(
-            live_dash.collector._record_log_events(
+            live_dash.collector.push_log_events(
                 "host1",
-                "syslog",
-                [
-                    LogEvent(ts=ts, fields={"message": "a"}),
-                    LogEvent(ts=ts, fields={"message": "b"}),
+                tab="syslog",
+                rows=[
+                    (ts, {"message": "a"}),
+                    (ts, {"message": "b"}),
                 ],
             )
         )

@@ -23,7 +23,7 @@ the models package.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
@@ -61,12 +61,16 @@ class TabSpec(OttoModel):
     """One dashboard tab descriptor served by ``/api/meta``.
 
     The declarative contract the frontend renders from; TS types are
-    generated from this schema in Phase 2.
+    generated from this schema in Phase 2. ``kind="table"`` tabs render an
+    event table (schema in ``columns``) instead of charts, and carry
+    ``metrics=[]``.
     """
 
     id: str
     label: str
     metrics: list[str]
+    kind: Literal["charts", "table"] = "charts"
+    columns: list[str] | None = None
 
 
 class MonitorMeta(OttoModel):

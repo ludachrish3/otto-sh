@@ -663,13 +663,36 @@ class MetricCollector:
             hosts = [h.name for h in self._hosts]
 
         # Build ordered tabs list from all views (shell parsers + SNMP
-        # descriptors), preserving first-encountered tab order.
+        # descriptors), preserving first-encountered tab order. A table
+        # parser (table_columns set) contributes a kind="table" tab and no
+        # ChartSpec; tables own their tab outright, so an id collision with
+        # any other view is a config bug worth failing loudly on.
         tabs: dict[str, TabSpec] = {}
         for v in self._views:
             tab_id = getattr(v, "tab", "metrics")
             tab_label = getattr(v, "tab_label", "Metrics")
+            table_columns = getattr(v, "table_columns", None)
+            if table_columns is not None:
+                if tab_id in tabs:
+                    raise ValueError(
+                        f"table parser tab {tab_id!r} collides with another tab; "
+                        "table parsers must declare their own tab id"
+                    )
+                tabs[tab_id] = TabSpec(
+                    id=tab_id,
+                    label=tab_label,
+                    metrics=[],
+                    kind="table",
+                    columns=list(table_columns),
+                )
+                continue
             if tab_id not in tabs:
                 tabs[tab_id] = TabSpec(id=tab_id, label=tab_label, metrics=[])
+            elif tabs[tab_id].kind == "table":
+                raise ValueError(
+                    f"chart parser tab {tab_id!r} collides with a table tab; "
+                    "table parsers must have their own tab id"
+                )
             tabs[tab_id].metrics.append(v.chart)
 
         metrics = [
@@ -683,6 +706,7 @@ class MetricCollector:
                 interval=getattr(v, "interval", None),
             )
             for v in self._views
+            if getattr(v, "table_columns", None) is None
         ]
         return MonitorMeta(
             hosts=hosts,

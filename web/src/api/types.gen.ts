@@ -12,6 +12,8 @@ export type Metrics = ChartSpec[];
 export type Id = string;
 export type Label1 = string;
 export type Metrics1 = string[];
+export type Kind = "charts" | "table";
+export type Columns = string[] | null;
 export type Tabs = TabSpec[];
 export type Interval1 = number | null;
 
@@ -51,10 +53,14 @@ export interface ChartSpec {
  * One dashboard tab descriptor served by ``/api/meta``.
  *
  * The declarative contract the frontend renders from; TS types are
- * generated from this schema in Phase 2.
+ * generated from this schema in Phase 2. ``kind="table"`` tabs render an
+ * event table (schema in ``columns``) instead of charts, and carry
+ * ``metrics=[]``.
  */
 export interface TabSpec {
   id: Id;
   label: Label1;
   metrics: Metrics1;
+  kind?: Kind;
+  columns?: Columns;
 }

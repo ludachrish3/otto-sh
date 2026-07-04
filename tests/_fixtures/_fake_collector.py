@@ -6,6 +6,7 @@ are the production ones — only the "poll a host" step is replaced by
 :meth:`FakeCollector.push`.
 """
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,7 +14,7 @@ from typing_extensions import override
 
 from otto.models.monitor import MonitorMeta
 from otto.monitor.collector import MetricCollector
-from otto.monitor.parsers import MetricDataPoint
+from otto.monitor.parsers import LogEvent, MetricDataPoint, MetricParser, default_catalog
 
 # Friendly chart name → DEFAULT_PARSERS key (the dict key IS the shell command).
 CHART_COMMANDS: dict[str, str] = {
@@ -34,8 +35,14 @@ class FakeCollector(MetricCollector):
     live single-host collector would.
     """
 
-    def __init__(self, *, force_live: bool = True) -> None:
-        super().__init__(hosts=[])
+    def __init__(
+        self,
+        *,
+        force_live: bool = True,
+        extra_parsers: "Sequence[MetricParser] | None" = None,
+    ) -> None:
+        parsers = [*default_catalog().values(), *extra_parsers] if extra_parsers else None
+        super().__init__(hosts=[], parsers=parsers)
         self._force_live = force_live
 
     @override
@@ -44,6 +51,14 @@ class FakeCollector(MetricCollector):
         model = super().get_meta_model()
         model.live = self._force_live
         return model
+
+    async def push_log_events(
+        self, host: str, *, tab: str, rows: "list[tuple[datetime, dict[str, str]]]"
+    ) -> None:
+        """Record a batch of log-event rows exactly as a live tick would (ring + one SSE frame)."""
+        await self._record_log_events(
+            host, tab, [LogEvent(ts=ts, fields=fields) for ts, fields in rows]
+        )
 
     async def push(
         self,
