@@ -6,6 +6,7 @@ import pytest
 
 from otto.monitor.parsers import (
     DEFAULT_PARSERS,
+    DiskIoParser,
     DiskParser,
     LoadParser,
     MemParser,
@@ -83,6 +84,21 @@ def _net_dev_output(eth0: tuple, wlan0: tuple | None = None) -> str:
     if wlan0 is not None:
         out += line("wlan0", wlan0)
     return out
+
+
+def _diskstats_output(sda_sectors: tuple[int, int], with_noise: bool = True) -> str:
+    """Build /proc/diskstats output; sda_sectors = (sectors_read, sectors_written)."""
+    rows = [
+        f"   8       0 sda 5000 100 {sda_sectors[0]} 400 3000 200 {sda_sectors[1]} 800 0 900 1200",
+        "   8       1 sda1 4000 90 90000 350 2500 150 60000 700 0 800 1000",
+    ]
+    if with_noise:
+        rows += [
+            "   7       0 loop0 10 0 80 5 0 0 0 0 0 5 5",
+            " 253       0 dm-0 100 0 800 50 100 0 800 50 0 50 100",
+            "  11       0 sr0 2 0 8 1 0 0 0 0 0 1 1",
+        ]
+    return "\n".join(rows) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +505,39 @@ class TestSocketsParser:
 
     def test_in_default_parsers(self):
         assert "ss -s" in DEFAULT_PARSERS
+
+
+# ---------------------------------------------------------------------------
+# DiskIoParser
+# ---------------------------------------------------------------------------
+
+
+class TestDiskIoParser:
+    def _ctx(self, seconds: int) -> ParseContext:
+        from datetime import datetime, timedelta, timezone
+
+        t0 = datetime(2026, 7, 3, 12, 0, 0, tzinfo=timezone.utc)
+        return ParseContext(ts=t0 + timedelta(seconds=seconds))
+
+    def test_second_tick_emits_byte_rates(self):
+        parser = DiskIoParser()
+        parser.parse(_diskstats_output((100000, 50000)), ctx=self._ctx(0))
+        points = parser.parse(_diskstats_output((100100, 50200)), ctx=self._ctx(5))
+        assert points["read sda"].value == 100 * 512 / 5  # sector delta x 512 / dt
+        assert points["write sda"].value == 200 * 512 / 5
+
+    def test_partitions_and_virtual_devices_skipped(self):
+        parser = DiskIoParser()
+        parser.parse(_diskstats_output((0, 0)), ctx=self._ctx(0))
+        points = parser.parse(_diskstats_output((512, 512)), ctx=self._ctx(5))
+        devices = {k.split()[-1] for k in points}
+        assert devices == {"sda"}  # no sda1, loop0, dm-0, sr0
+
+    def test_first_tick_is_baseline_empty(self):
+        assert DiskIoParser().parse(_diskstats_output((1, 1)), ctx=self._ctx(0)) == {}
+
+    def test_in_default_parsers(self):
+        assert "cat /proc/diskstats" in DEFAULT_PARSERS
 
 
 # ---------------------------------------------------------------------------

@@ -456,6 +456,57 @@ class SocketsParser(MetricParser):
         return {}
 
 
+_SECTOR_BYTES = 512  # /proc/diskstats counts 512-byte sectors regardless of device geometry
+
+
+class DiskIoParser(MetricParser):
+    """Per-device read/write throughput from ``/proc/diskstats`` sector deltas.
+
+    Whole devices only: partitions (``sda1``, ``nvme0n1p2``, ``mmcblk0p1``)
+    and virtual/noise devices (``loop*``, ``ram*``, ``dm-*``, ``zram*``,
+    ``sr*``) are skipped so charts show physical disk activity once.
+    """
+
+    y_title = "Disk I/O"
+    unit = "B/s"
+    command = "cat /proc/diskstats"
+    tab = "disk"
+    tab_label = "Disk"
+    chart = "Disk I/O"
+
+    _skip = re.compile(r"^(?:loop|ram|dm-|zram|sr)")
+    _partition = re.compile(r"^(?:[shv]d[a-z]+\d+|nvme\d+n\d+p\d+|mmcblk\d+p\d+)$")
+
+    def __init__(self) -> None:
+        self._rates = RateTracker()
+
+    @override
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        ts = ctx.ts or datetime.now(tz=timezone.utc)
+        result: dict[str, MetricDataPoint] = {}
+        active: set[str] = set()
+        for line in output.splitlines():
+            fields = line.split()
+            if len(fields) < 10:  # noqa: PLR2004 — device rows carry >= 10 stat fields
+                continue
+            name = fields[2]
+            if self._skip.match(name) or self._partition.match(name):
+                continue
+            try:
+                sectors_read, sectors_written = float(fields[5]), float(fields[9])
+            except ValueError:
+                continue
+            active.update((f"{name}/r", f"{name}/w"))
+            read_rate = self._rates.update(f"{name}/r", sectors_read * _SECTOR_BYTES, ts)
+            write_rate = self._rates.update(f"{name}/w", sectors_written * _SECTOR_BYTES, ts)
+            if read_rate is not None:
+                result[f"read {name}"] = MetricDataPoint(round(read_rate, 2))
+            if write_rate is not None:
+                result[f"write {name}"] = MetricDataPoint(round(write_rate, 2))
+        self._rates.prune(active)
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Default parser registry — maps command string → parser instance
 # ---------------------------------------------------------------------------
@@ -469,6 +520,7 @@ DEFAULT_PARSERS: dict[str, MetricParser] = {
         LoadParser(),
         NetDevParser(),
         SocketsParser(),
+        DiskIoParser(),
     ]
 }
 
