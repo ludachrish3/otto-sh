@@ -500,3 +500,75 @@ class TestPreferenceResolution:
         )
         host = spec.to_host()
         assert host.term == "telnet"
+
+
+CRED_BASE = {"ip": "10.0.0.1", "element": "e1"}
+
+
+def _cred_spec(creds, **extra):
+    return UnixHostSpec.model_validate({**CRED_BASE, "creds": creds, **extra})
+
+
+class TestCredSpec:
+    def test_creds_list_minimal(self):
+        spec = _cred_spec([{"login": "admin", "password": "pw"}])
+        host = spec.to_host()
+        assert host.creds[0].login == "admin"
+        assert host.creds[0].password == "pw"
+
+    def test_creds_proxied_entry_roundtrip(self):
+        spec = _cred_spec(
+            [
+                {"login": "admin", "password": "pw"},
+                {"login": "mysql", "proxy": "su", "via": "admin", "params": {"svc": "db"}},
+            ]
+        )
+        mysql = spec.to_host().creds[1]
+        assert (mysql.proxy, mysql.via, mysql.params) == ("su", "admin", {"svc": "db"})
+
+    def test_creds_legacy_dict_rejected_with_migration_hint(self):
+        with pytest.raises(ValidationError, match="list of cred objects"):
+            _cred_spec({"admin": "pw"})
+
+    def test_creds_duplicate_login_rejected(self):
+        with pytest.raises(ValidationError, match="duplicate"):
+            _cred_spec([{"login": "a", "password": "x"}, {"login": "a", "password": "y"}])
+
+    def test_creds_via_requires_proxy(self):
+        with pytest.raises(ValidationError, match="require 'proxy'"):
+            _cred_spec([{"login": "a", "password": "x"}, {"login": "b", "via": "a"}])
+
+    def test_creds_via_must_name_listed_login(self):
+        with pytest.raises(ValidationError, match="unknown 'via'"):
+            _cred_spec(
+                [
+                    {"login": "a", "password": "x"},
+                    {"login": "b", "proxy": "su", "via": "ghost"},
+                ]
+            )
+
+    def test_creds_via_cycle_rejected(self):
+        with pytest.raises(ValidationError, match="chain"):
+            _cred_spec(
+                [
+                    {"login": "a", "proxy": "su", "via": "b"},
+                    {"login": "b", "proxy": "su", "via": "a"},
+                ]
+            )
+
+    def test_creds_proxy_name_checked_against_registry(self):
+        with pytest.raises(ValidationError, match="not a registered login proxy"):
+            _cred_spec(
+                [
+                    {"login": "a", "password": "x"},
+                    {"login": "b", "proxy": "nope", "via": "a"},
+                ]
+            )
+
+    def test_user_must_be_listed_login(self):
+        with pytest.raises(ValidationError, match="user"):
+            _cred_spec([{"login": "a", "password": "x"}], user="ghost")
+
+    def test_creds_required_on_unix_host(self):
+        with pytest.raises(ValidationError):
+            UnixHostSpec.model_validate(CRED_BASE)

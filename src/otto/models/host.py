@@ -21,6 +21,7 @@ from ..host.command_frame import FRAME_CLASSES, build_command_frame
 from ..host.connections import TERM_BACKENDS
 from ..host.embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
 from ..host.embedded_host import EmbeddedHost
+from ..host.login_proxy import LOGIN_PROXIES, Cred, LoginProxyError, resolve_chain
 from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain
 from ..host.transfer import TRANSFER_BACKENDS
@@ -56,7 +57,6 @@ class ToolchainSpec(OttoModel):
 _COMMON_PLAIN_FIELDS = (
     "ip",
     "element",
-    "creds",
     "name",
     "os_type",
     "os_name",
@@ -115,6 +115,34 @@ def _validate_transfer_menu(v: list[str], family: str, label: str) -> list[str]:
     return [_validate_transfer_for_family(t, family, label) for t in v]
 
 
+class CredSpec(OttoModel):
+    """One ``creds`` entry: a login plus (optionally) how to become it."""
+
+    login: str
+    password: str | None = None
+    proxy: str | None = None
+    via: str | None = None
+    params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _proxy_field_rules(self) -> "CredSpec":
+        if self.proxy is None and (self.via is not None or self.params):
+            raise ValueError(f"cred {self.login!r}: 'via' and 'params' require 'proxy'")
+        if self.via is not None and self.via == self.login:
+            raise ValueError(f"cred {self.login!r}: 'via' cannot reference itself")
+        return self
+
+    def to_cred(self) -> Cred:
+        """Build the runtime ``Cred`` dataclass from the validated fields."""
+        return Cred(
+            login=self.login,
+            password=self.password,
+            proxy=self.proxy,
+            via=self.via,
+            params=dict(self.params),
+        )
+
+
 class HostSpec(OttoModel):
     """Abstract boundary spec for a ``hosts.json`` host entry.
 
@@ -130,7 +158,7 @@ class HostSpec(OttoModel):
     element: str
 
     # --- common optional fields ---
-    creds: dict[str, str] = Field(default_factory=dict)
+    creds: list[CredSpec] = Field(default_factory=list)
     name: str | None = None
     os_type: str = "unix"
     os_name: str | None = None
@@ -179,6 +207,17 @@ class HostSpec(OttoModel):
             return {k: v for k, v in data.items() if not (isinstance(k, str) and k.startswith("_"))}
         return data
 
+    @field_validator("creds", mode="before")
+    @classmethod
+    def _reject_legacy_creds_dict(cls, v: object) -> object:
+        if isinstance(v, dict):
+            raise ValueError(  # noqa: TRY004 — existing API contract; test suite expects ValueError
+                "creds is now a list of cred objects: "
+                '[{"login": "user", "password": "pw"}, ...] '
+                "(was: {user: password}). See the host-database guide."
+            )
+        return v
+
     @field_validator("interfaces")
     @classmethod
     def _validate_interface_addresses(cls, v: dict[str, str]) -> dict[str, str]:
@@ -207,6 +246,32 @@ class HostSpec(OttoModel):
             return LogMode.QUIET if v is False else LogMode.NORMAL
         return v
 
+    @model_validator(mode="after")
+    def _validate_cred_entries(self) -> "HostSpec":
+        logins = [c.login for c in self.creds]
+        dupes = {n for n in logins if logins.count(n) > 1}
+        if dupes:
+            raise ValueError(f"duplicate cred logins: {sorted(dupes)}")
+        by = set(logins)
+        for c in self.creds:
+            if c.via is not None and c.via not in by:
+                raise ValueError(f"cred {c.login!r}: unknown 'via' {c.via!r}")
+            if c.proxy is not None and c.proxy not in LOGIN_PROXIES:
+                known = ", ".join(sorted(LOGIN_PROXIES.names()))
+                raise ValueError(
+                    f"cred {c.login!r}: {c.proxy!r} is not a registered login proxy. Known: {known}"
+                )
+        runtime = [c.to_cred() for c in self.creds]
+        for c in runtime:
+            if c.proxy is not None:
+                try:
+                    resolve_chain(runtime, c.login)
+                except LoginProxyError as e:
+                    raise ValueError(f"cred {c.login!r}: unresolvable via-chain: {e}") from None
+        if self.user is not None and self.creds and self.user not in by:
+            raise ValueError(f"user {self.user!r} is not a cred login: {sorted(by)}")
+        return self
+
     def _common_host_kwargs(self) -> dict[str, Any]:
         """Build constructor kwargs for the common fields the spec *explicitly set*.
 
@@ -218,6 +283,8 @@ class HostSpec(OttoModel):
         """
         s = self.model_fields_set
         kw: dict[str, Any] = {n: getattr(self, n) for n in _COMMON_PLAIN_FIELDS if n in s}
+        if "creds" in s:
+            kw["creds"] = [c.to_cred() for c in self.creds]
         if "default_dest_dir" in s:
             kw["default_dest_dir"] = Path(self.default_dest_dir)
         if "resources" in s:
@@ -259,7 +326,7 @@ class UnixHostSpec(HostSpec):
     and builds a ``UnixHost`` (or a custom subclass passed as ``cls``).
     """
 
-    creds: dict[str, str]  # override: required for a Unix host (SSH/telnet login)
+    creds: list[CredSpec] = Field(min_length=1)  # required for a Unix host (SSH/telnet login)
     hw_version: str | None = None
     sw_version: str | None = None
     valid_terms: list[str] = Field(default_factory=lambda: ["ssh", "telnet"])
