@@ -26,7 +26,14 @@ from .db import MetricDB
 from .events import MonitorEvent
 from .history import load_json_into, load_sqlite_into
 from .history import to_json as history_to_json
-from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser, ParseContext, default_catalog
+from .parsers import (
+    DEFAULT_PARSERS,
+    LogEvent,
+    MetricDataPoint,
+    MetricParser,
+    ParseContext,
+    default_catalog,
+)
 from .snmp import SnmpMetric, SnmpSource, process_snmp_values, resolve_snmp_metric
 from .store import MetricStore
 
@@ -436,6 +443,11 @@ class MetricCollector:
             msg["meta"] = dp.meta
         self._publish(msg)
 
+    async def _record_log_events(self, host_name: str, tab: str, events: "list[LogEvent]") -> None:
+        """Store one tick's log-event rows for *host_name* (per-(host, tab) ring)."""
+        for ev in events:
+            self._store.append_log_event(host_name, tab, ev)
+
     async def _process_host_results(
         self,
         host_name: str,
@@ -479,16 +491,23 @@ class MetricCollector:
             # exit nonzero while their (partial) output still carries series.
             # `or ""` defends against value=None the same way the log line
             # above does — parsers expect str, not str | None.
-            points = parser.parse(cmd_result.value or "", ctx=ctx)
+            tick = parser.parse_tick(cmd_result.value or "", ctx=ctx)
             # The never-produced backstop only counts SUCCEEDING ticks — a
             # failing command is layer 1's job above; double-warning one root
-            # cause helps nobody.
+            # cause helps nobody. Samples OR events count as production, so
+            # table-only parsers don't false-positive the silent warning.
             if cmd_result.retcode == 0:
-                self._note_health(key, produced=bool(points), what=type(parser).__name__)
-            if not points:
-                continue
-            for label, dp in points.items():
-                await self._record_point(host_name, ts, label, dp, parser)
+                self._note_health(
+                    key,
+                    produced=bool(tick.samples or tick.events),
+                    what=type(parser).__name__,
+                )
+            for sample in tick.samples:
+                sample_ts = sample.ts or ts
+                for label, dp in sample.series.items():
+                    await self._record_point(host_name, sample_ts, label, dp, parser)
+            if tick.events:
+                await self._record_log_events(host_name, parser.tab, tick.events)
 
     def _note_health(self, key: tuple[str, str], *, produced: bool, what: str) -> None:
         """Track never-produced-by-tick-K per (host, command/oid); warn once."""

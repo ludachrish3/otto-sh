@@ -17,6 +17,7 @@ from otto.monitor.parsers import (
     PerCoreCpuParser,
     ProcCountParser,
     SocketsParser,
+    TickResult,
     TopCpuParser,
     default_catalog,
     get_host_parsers,
@@ -778,6 +779,34 @@ class TestHostPatternRegistry:
         a = get_host_parsers("pat-copy-1")
         b = get_host_parsers("pat-copy-2")
         assert a[_UptimeParser.command] is not b[_UptimeParser.command]
+
+
+# ---------------------------------------------------------------------------
+# parse_tick() contract
+# ---------------------------------------------------------------------------
+
+
+class TestParseTickDefaultAdapter:
+    """parse_tick() default: wraps parse() as one untimed sample—existing parsers bit-identical."""
+
+    _FREE_B = (
+        "               total        used        free\n"
+        "Mem:     16000000000  4000000000  12000000000\n"
+        "Swap:     2000000000   500000000   1500000000\n"
+    )
+
+    def test_wraps_parse_as_one_untimed_sample(self) -> None:
+        parser = MemParser()
+        tick = parser.parse_tick(self._FREE_B, ctx=ParseContext())
+        assert tick.events == []
+        assert len(tick.samples) == 1
+        assert tick.samples[0].ts is None
+        assert tick.samples[0].series == parser.parse(self._FREE_B, ctx=ParseContext())
+
+    def test_empty_parse_yields_no_samples(self) -> None:
+        assert MemParser().parse_tick("garbage", ctx=ParseContext()) == TickResult(
+            samples=[], events=[]
+        )
 
 
 # ---------------------------------------------------------------------------

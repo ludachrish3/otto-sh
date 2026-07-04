@@ -7,12 +7,13 @@ sustained outage logs once — not once per tick. The never-produced backstop
 stays warn-once."""
 
 from datetime import datetime, timedelta, timezone
+from typing import ClassVar
 
 import pytest
 
 from otto.monitor import snmp
 from otto.monitor.collector import MetricCollector
-from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
+from otto.monitor.parsers import LogEvent, MetricDataPoint, MetricParser, ParseContext, TickResult
 from otto.result import CommandResult
 from otto.utils import Status
 
@@ -297,3 +298,38 @@ class TestSnmpRatePlumbing:
 
         points = collector._store.series["zeph3/rate-plumb test"]
         assert [p.value for p in points] == [1000.0]
+
+
+class _EventsOnlyParser(MetricParser):
+    """parse_tick emits only log events — must count as production."""
+
+    y_title = ""
+    unit = ""
+    command = "tail -n 5 /var/log/app.log"
+    tab = "applog"
+    tab_label = "App log"
+    chart = "App log"
+    table_columns: ClassVar = ["message"]
+
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        return {}
+
+    def parse_tick(self, output: str, *, ctx: ParseContext) -> TickResult:
+        return TickResult(
+            samples=[],
+            events=[
+                LogEvent(ts=datetime(2026, 7, 4, tzinfo=timezone.utc), fields={"message": "x"})
+            ],
+        )
+
+
+class TestEventsCountAsProduction:
+    @pytest.mark.asyncio
+    async def test_events_only_parser_never_trips_silent_backstop(self, collector, caplog):
+        """The silent-parser backstop counts samples OR events as production."""
+        parser = _EventsOnlyParser()
+        parsers = {parser.command: parser}
+        with caplog.at_level("WARNING", logger="otto"):
+            for _ in range(4):
+                await _tick(collector, parsers, [_ok(parser.command)])
+        assert not [r for r in caplog.records if "has produced no data" in r.message]

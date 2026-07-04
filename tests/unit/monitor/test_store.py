@@ -1,9 +1,10 @@
 """MetricStore — in-memory series/chart-map/event bookkeeping."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from otto.models import MetricPoint
 from otto.monitor.events import MonitorEvent
+from otto.monitor.parsers import LogEvent
 from otto.monitor.store import MetricStore
 
 TS = datetime(2026, 7, 2, 12, 0, 0, tzinfo=timezone.utc)
@@ -55,3 +56,38 @@ def test_remove_and_find_event() -> None:
     assert store.remove_event(ev.id) is True
     assert store.remove_event(ev.id) is False
     assert store.find_event(ev.id) is None
+
+
+def _ev(second: int) -> LogEvent:
+    return LogEvent(
+        ts=datetime(2026, 7, 4, 12, 0, second, tzinfo=timezone.utc),
+        fields={"message": f"row {second}"},
+    )
+
+
+class TestLogEventRing:
+    def test_append_and_snapshot_roundtrip(self) -> None:
+        store = MetricStore()
+        store.append_log_event("host1", "syslog", _ev(1))
+        store.append_log_event("host1", "syslog", _ev(2))
+        store.append_log_event("host2", "syslog", _ev(3))
+        assert store.snapshot_log_events() == [
+            ("host1", "syslog", _ev(1)),
+            ("host1", "syslog", _ev(2)),
+            ("host2", "syslog", _ev(3)),
+        ]
+
+    def test_ring_caps_at_1000_dropping_oldest(self) -> None:
+        store = MetricStore()
+        for i in range(1001):
+            store.append_log_event(
+                "h",
+                "t",
+                LogEvent(
+                    ts=datetime(2026, 7, 4, tzinfo=timezone.utc) + timedelta(seconds=i),
+                    fields={"i": str(i)},
+                ),
+            )
+        rows = [ev for _, _, ev in store.snapshot_log_events()]
+        assert len(rows) == 1000
+        assert rows[0].fields["i"] == "1"  # row 0 dropped

@@ -9,6 +9,10 @@ from collections import deque
 
 from ..models import MetricPoint
 from .events import MonitorEvent
+from .parsers import LogEvent
+
+# Rows kept in memory per (host, tab) table — the DB keeps everything.
+_LOG_RING_MAX = 1000
 
 
 class MetricStore:
@@ -19,6 +23,7 @@ class MetricStore:
         self.chart_map: dict[str, str] = {}
         self._events: list[MonitorEvent] = []
         self._next_event_id: int = 1
+        self.log_events: dict[tuple[str, str], deque[LogEvent]] = {}
 
     def append_point(self, key: str, point: MetricPoint, *, label: str, chart: str) -> None:
         """Store one point, creating the series lazily, and record its chart group."""
@@ -26,6 +31,17 @@ class MetricStore:
             self.series[key] = deque()
         self.series[key].append(point)
         self.chart_map[label] = chart
+
+    def append_log_event(self, host: str, tab: str, event: LogEvent) -> None:
+        """Store one log-event row in the per-(host, tab) ring (oldest drop at capacity)."""
+        ring = self.log_events.setdefault((host, tab), deque(maxlen=_LOG_RING_MAX))
+        ring.append(event)
+
+    def snapshot_log_events(self) -> list[tuple[str, str, LogEvent]]:
+        """Return every ring's rows as (host, tab, event) triples, insertion-ordered per ring."""
+        return [
+            (host, tab, event) for (host, tab), ring in self.log_events.items() for event in ring
+        ]
 
     def snapshot_series(self) -> dict[str, list[MetricPoint]]:
         """Return a copy of every series, safe for a caller to mutate."""

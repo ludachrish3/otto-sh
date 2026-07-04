@@ -84,6 +84,40 @@ class ParseContext:
     tests) means the parser falls back to ``datetime.now(tz=timezone.utc)``."""
 
 
+class TimedSample(NamedTuple):
+    """One timestamped batch of series points produced by :meth:`MetricParser.parse_tick`."""
+
+    ts: datetime | None
+    """Data-carried timestamp for every point in ``series``; ``None`` means
+    "stamp with the collector's tick time" (what plain ``parse()`` output gets)."""
+
+    series: dict[str, MetricDataPoint]
+    """Series label → data point, exactly as ``parse()`` returns."""
+
+
+class LogEvent(NamedTuple):
+    """One columnar log-event row produced by :meth:`MetricParser.parse_tick`.
+
+    A table row, not a chart point — rendered by ``kind="table"`` dashboard
+    tabs. Deliberately separate from :class:`~otto.monitor.events.MonitorEvent`
+    (the global, low-volume chart-marker annotation system): log events are
+    per-host, high-volume, columnar data.
+    """
+
+    ts: datetime
+    """Data-carried timestamp of the row."""
+
+    fields: dict[str, str]
+    """Column → value; the schema is declared by the parser's ``table_columns``."""
+
+
+class TickResult(NamedTuple):
+    """Everything a parser produced for one tick: timed samples and/or log events."""
+
+    samples: list[TimedSample]
+    events: list[LogEvent]
+
+
 _BYTES_PER_UNIT = 1024.0  # binary prefix divisor used by human_readable
 
 
@@ -149,6 +183,12 @@ class MetricParser(ABC):
     Honored by :meth:`~otto.monitor.collector.MetricCollector.run`'s per-interval
     scheduling."""
 
+    table_columns: list[str] | None = None
+    """Table columns for log-event parsers — their tab renders as a table
+    (``TabSpec.kind == "table"``) instead of charts. ``None`` (the default)
+    for chart parsers. Table parsers must declare their own ``tab`` id;
+    sharing a tab with chart parsers raises in ``get_meta_model()``."""
+
     @abstractmethod
     def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
         """
@@ -163,8 +203,25 @@ class MetricParser(ABC):
             point produced this tick.  Return an empty dict if parsing fails.
             Single-series parsers return ``{self.chart: MetricDataPoint(value)}``.
             Multi-series parsers may return multiple entries in the dict.
+            Log-sourced parsers — which override :meth:`parse_tick` — implement
+            this as a trivial ``return {}``.
         """
         ...
+
+    def parse_tick(self, output: str, *, ctx: ParseContext) -> TickResult:
+        """Convert one tick's command output into timed samples and/or log events.
+
+        The collector always calls this, never :meth:`parse` directly. The
+        default wraps :meth:`parse` as a single untimed sample, so existing
+        parsers behave exactly as before. Log-sourced parsers (see
+        :mod:`otto.monitor.log_sourced`) override this to emit data-carried
+        timestamps — multiple samples per read, ascending — and/or columnar
+        :class:`LogEvent` rows.
+        """
+        series = self.parse(output, ctx=ctx)
+        return TickResult(
+            samples=[TimedSample(ts=None, series=series)] if series else [], events=[]
+        )
 
 
 # ---------------------------------------------------------------------------
