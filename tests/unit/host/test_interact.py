@@ -32,6 +32,7 @@ from otto.host.login_proxy import (
     LOGIN_PROXIES,
     Cred,
     LoginProxyError,
+    _resync_shell,
     register_login_proxy,
     run_proxy,
 )
@@ -949,6 +950,83 @@ class TestReplayProxyHops:
         finally:
             LOGIN_PROXIES.unregister("track-via-test")
         assert seen_vias == ["admin", "mysql"]
+
+
+# ---------------------------------------------------------------------------
+# The engine resync (_resync_shell) must be sound in BOTH pty echo modes.
+# _BridgeProxyIO does a REAL unanchored regex.search, so these two tests
+# exercise the actual matching _resync_shell relies on (the negative
+# lookbehind for its own "echo " probe prefix):
+#
+# - echo-ON (the interact bridge leaves the pty echoing): the resync's own
+#   `echo <marker>` probe is echoed back on the read stream. A BARE marker
+#   would match inside that echoed probe (before the shell ran anything) and
+#   vacuously "succeed"; the lookbehind must reject it and wait for the real
+#   output line.
+# - echo-OFF (framed switch_user/as_user/establishment run `stty -echo`, which
+#   persists across su/sudo): the probe is NOT echoed, so the shell's marker
+#   output glues onto the prior prompt with no leading newline. A pure
+#   line-anchor would (wrongly) reject THAT — verified on the live bed to hang
+#   the framed path — so the lookbehind (not an anchor) is what's used.
+# ---------------------------------------------------------------------------
+
+
+class TestResyncSoundInBothEchoModes:
+    @pytest.mark.asyncio
+    async def test_echo_on_ignores_its_own_echoed_probe_and_waits_for_real_line(self):
+        """Echo-ON bridge: the resync must skip the marker inside its OWN echoed
+        `echo <marker>` command (marker preceded by "echo ") and only accept the
+        shell's real output line. Proven by feeding the echoed command back
+        FIRST, then the real line, and asserting the resync had to read PAST its
+        own echo (2 reads). With a bare/unanchored marker this would match on
+        read 1 and stop — reads==1."""
+        sent: list[bytes] = []
+        reads = 0
+
+        async def write_remote(data: bytes) -> None:
+            sent.append(data)
+
+        async def read_remote() -> bytes:
+            nonlocal reads
+            reads += 1
+            probe = sent[-1].decode("utf-8")  # "echo <marker>\n"
+            marker = probe.removeprefix("echo ").rstrip("\r\n")
+            if reads == 1:
+                # Only the echoed command comes back — marker follows "echo ".
+                # The lookbehind must reject it.
+                return probe.encode()
+            # The shell's real output line: marker at line start.
+            return f"{marker}\n".encode()
+
+        io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
+        await _resync_shell(io, host_id="h1", hop_login="mysql")
+
+        # Had to read past its own echo (read 1) to the real output (read 2).
+        assert reads == 2
+
+    @pytest.mark.asyncio
+    async def test_echo_off_matches_marker_glued_to_prompt(self):
+        """Echo-OFF framed path: with `stty -echo` the probe is NOT echoed, so
+        the shell's marker output glues directly after the prior prompt with no
+        leading newline (e.g. `test@host:~$ <marker>`). The resync must still
+        match it — a pure line-start anchor would reject this (marker preceded by
+        `$ `, not `^`/`\\r`/`\\n`) and the framed switch_user/as_user path would
+        hang, which is exactly what was observed on the live bed. The lookbehind
+        matches because the marker is not preceded by `echo `."""
+        sent: list[bytes] = []
+
+        async def write_remote(data: bytes) -> None:
+            sent.append(data)
+
+        async def read_remote() -> bytes:
+            probe = sent[-1].decode("utf-8")
+            marker = probe.removeprefix("echo ").rstrip("\r\n")
+            # Echo-off: no echoed command; marker glued onto a fake prompt.
+            return f"test@test1:/home/vagrant$ {marker}\r\n".encode()
+
+        io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
+        # Must NOT raise (a line-anchor would time out all 5 attempts and raise).
+        await _resync_shell(io, host_id="h1", hop_login="mysql")
 
 
 # ---------------------------------------------------------------------------

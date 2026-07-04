@@ -180,13 +180,37 @@ _RESYNC_TIMEOUT = 2.0
 
 
 async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
-    """Resync with the shell after a su/sudo/exit transition.
+    r"""Resync with the shell after a su/sudo/exit transition.
 
-    Sends a fresh, unique marker and waits for it to echo back, retrying up
-    to :data:`_RESYNC_ATTEMPTS` times. The bare marker (no line-anchor) is
-    the bed-verified form: framed command paths run ``stty -echo`` first, so
-    there is no risk of the marker matching inside its own echoed probe the
-    way an anchor-less READY marker could during a failed telnet login.
+    Sends a fresh, unique marker via ``echo <marker>`` and waits for it to
+    come back, retrying up to :data:`_RESYNC_ATTEMPTS` times.
+
+    The wait matches the marker **only when it is NOT immediately preceded by
+    this function's own ``"echo "`` probe prefix** (a negative lookbehind).
+    That discriminator is what makes the resync sound across both echo modes
+    a login proxy can run in:
+
+    - **echo-ON** (the ``interact --as-user`` bridge replays hops over
+      ``_BridgeProxyIO`` on a PTY that still echoes input): the outgoing
+      ``echo <marker>`` probe is echoed back on the same read stream, and
+      ``_BridgeProxyIO.expect()`` does an unanchored ``regex.search``. A bare
+      marker would match inside that echoed *command* — before the shell ran
+      anything — and vacuously "succeed" without confirming a round-trip. The
+      lookbehind rejects the echoed occurrence (preceded by ``"echo "``) and
+      matches only the shell's real output line (preceded by a newline).
+    - **echo-OFF** (framed ``switch_user``/``as_user``/session establishment,
+      which run ``stty -echo`` — and ``stty`` state persists across ``su``/
+      ``sudo`` since it lives on the PTY): the probe command is NOT echoed,
+      so the shell's marker output glues directly onto the prior prompt with
+      no leading newline (e.g. ``test@host:~$ <marker>``). A pure line-anchor
+      (``(?:^|\r|\n)``) would *reject* that — verified on the live bed to hang
+      the framed path — whereas the lookbehind matches it (preceded by the
+      prompt, not ``"echo "``).
+
+    In both modes the only occurrence the resync must ignore is the marker
+    inside its own ``echo <marker>`` probe; the lookbehind targets exactly
+    that and nothing else, so it is correct regardless of echo state or
+    whether a prompt precedes the output.
 
     Raises :class:`LoginProxyError` if the shell never resyncs — the caller
     (:func:`run_proxy`/:func:`run_undo`) wraps this with hop context like any
@@ -196,11 +220,14 @@ async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
         marker = f"__OTTO_LP_SYNC_{uuid.uuid4().hex}__"
         await io.send(f"echo {marker}\n")
         with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
-            await io.expect(marker, timeout=_RESYNC_TIMEOUT)
+            # Negative lookbehind for our own "echo " probe prefix: match the
+            # shell's real echo of the marker, never the marker inside the
+            # echoed command on an echo-ON pty. See docstring.
+            await io.expect(rf"(?<!echo ){re.escape(marker)}", timeout=_RESYNC_TIMEOUT)
             return
     raise LoginProxyError(
-        f"{host_id}: shell did not resync after becoming {hop_login!r} "
-        f"(su/sudo transition flushed the next command)"
+        f"{host_id}: shell did not resync after a login-proxy transition "
+        f"({hop_login!r}) — su/sudo/exit flushed the next command"
     )
 
 
