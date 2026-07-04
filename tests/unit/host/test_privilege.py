@@ -20,37 +20,41 @@ def _mock_session_mgr():
 
 
 @pytest.mark.asyncio
-async def test_perform_su_builds_command_and_returns_target():
-    from otto.host.privilege import _perform_su
+async def test_perform_switch_builds_command_and_returns_target():
+    from otto.host.login_proxy import perform_switch
 
     sent = []
 
-    async def send(text, log=LogMode.NORMAL):
-        sent.append((text, log))
+    class _Io:
+        async def send(self, text, log=LogMode.NORMAL):
+            sent.append((text, log))
 
-    async def expect(pat, timeout=10.0):
-        return "Password:"
+        async def expect(self, pat, timeout=10.0):
+            return "Password:"
 
-    target = await _perform_su(send, expect, "root", None, lambda u: "rootpw")
-    assert target == "root"
+    applied = await perform_switch(
+        _Io(), [Cred(login="root", password="rootpw")], "root", None, "", "h"
+    )
+    assert applied[-1].login == "root"
     assert ("su root\n", LogMode.NORMAL) in sent
     assert ("rootpw\n", LogMode.NEVER) in sent
 
 
 @pytest.mark.asyncio
-async def test_perform_su_no_user_means_root_no_quote():
-    from otto.host.privilege import _perform_su
+async def test_perform_switch_no_user_means_root_no_quote():
+    from otto.host.login_proxy import perform_switch
 
     sent = []
 
-    async def send(text, log=LogMode.NORMAL):
-        sent.append(text)
+    class _Io:
+        async def send(self, text, log=LogMode.NORMAL):
+            sent.append(text)
 
-    async def expect(pat, timeout=10.0):
-        return "Password:"
+        async def expect(self, pat, timeout=10.0):
+            return "Password:"
 
-    target = await _perform_su(send, expect, "", None, lambda u: None)
-    assert target == "root"
+    applied = await perform_switch(_Io(), [], "", None, "", "h")
+    assert (applied[-1].login or "root") == "root"
     assert "su\n" in sent  # bare `su`, no username, no password sent
 
 
@@ -274,6 +278,7 @@ async def test_switch_user_password_not_logged(caplog):
     # is attempted. send/expect on the transport are AsyncMocks.
     mock_transport = MagicMock(spec=ShellSession)
     mock_transport.alive = True
+    mock_transport.current_user = "admin"
     mock_transport.send = AsyncMock()
     mock_transport.expect = AsyncMock(return_value="Password:")
     host._session_mgr._session = mock_transport
@@ -315,3 +320,134 @@ async def test_embedded_current_user_is_empty_loginless():
 
     host = ZephyrHost(ip="192.0.2.1", element="sprout", log=LogMode.QUIET)
     assert host.current_user == ""  # loginless embedded shell
+
+
+# ---------------------------------------------------------------------------
+# Task 6: switch_user/as_user routed through the login-proxy engine
+# ---------------------------------------------------------------------------
+
+_MULTI_HOP_CREDS = [
+    Cred(login="root", password="rootpw"),
+    Cred(login="admin", password="adminpw", via="root"),
+    Cred(login="mysql", password="mysqlpw", via="admin"),
+]
+
+
+@pytest.mark.asyncio
+async def test_as_user_multi_hop_undoes_in_reverse():
+    """as_user to a cred reached via a chain (root -> admin -> mysql) applies
+
+    both hops on entry and undoes both (2 exits) on exit, in reverse order.
+    """
+    from otto.host.unix_host import UnixHost
+
+    host = UnixHost(
+        ip="10.0.0.1", element="box", creds=_MULTI_HOP_CREDS, user="root", log=LogMode.QUIET
+    )
+    mgr = _mock_session_mgr()
+    mgr.current_user = "root"
+    host._session_mgr = mgr
+
+    async with host.as_user("mysql"):
+        sent_inside = [c.args[0] for c in mgr.send.await_args_list]
+        assert "su admin\n" in sent_inside
+        assert "su mysql\n" in sent_inside
+        assert sent_inside.index("su admin\n") < sent_inside.index("su mysql\n")
+
+    sent = [c.args[0] for c in mgr.send.await_args_list]
+    assert sent.count("exit\n") == 2  # one exit per hop, undone in reverse
+
+    set_user_calls = [c.args[0] for c in mgr._set_current_user.call_args_list]
+    assert set_user_calls == ["mysql", "root"]  # entered as mysql, restored to root
+
+
+@pytest.mark.asyncio
+async def test_switch_user_from_via_user_runs_only_final_hop():
+    """switch_user to a proxied cred, already logged in as its `via` user,
+
+    applies only the final hop — no redundant re-switch to the via account.
+    """
+    from otto.host.unix_host import UnixHost
+
+    host = UnixHost(
+        ip="10.0.0.1", element="box", creds=_MULTI_HOP_CREDS, user="root", log=LogMode.QUIET
+    )
+    mgr = _mock_session_mgr()
+    mgr.current_user = "admin"  # already at mysql's `via` user
+    host._session_mgr = mgr
+
+    await host.switch_user("mysql")
+
+    sent = [c.args[0] for c in mgr.send.await_args_list]
+    assert sent == ["su mysql\n", "mysqlpw\n"]  # no "su admin" hop re-run
+    mgr._set_current_user.assert_called_once_with("mysql")
+
+
+@pytest.mark.asyncio
+async def test_host_session_switch_user_on_proxied_cred_stamps_current_user():
+    """HostSession.switch_user on a proxied cred (reached via another login)
+
+    resolves the chain and stamps current_user with the final hop's login.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from otto.host.session import HostSession, ShellSession
+
+    shell = MagicMock(spec=ShellSession)
+    shell.current_user = "admin"  # already at mysql's `via` user
+    shell.send = AsyncMock()
+    shell.expect = AsyncMock(return_value="Password:")
+    hs = HostSession(
+        "n",
+        shell,
+        lambda *_: None,
+        lambda *_: None,
+        lambda _: None,
+        creds=_MULTI_HOP_CREDS,
+        host_id="n",
+    )
+
+    await hs.switch_user("mysql")
+
+    assert hs.current_user == "mysql"
+    sent = [c.args[0] for c in shell.send.await_args_list]
+    assert sent == ["su mysql\n", "mysqlpw\n"]  # only the final hop ran
+
+
+@pytest.mark.asyncio
+async def test_sudo_password_reflects_current_user_after_switch():
+    """Regression (Task 4 review fold-in): _sudo_password must key off the
+
+    CURRENT user's password after switch_user, not the login user's — proven
+    through the real SessionManager/switch_user path (not a stub that skips
+    the current_user bookkeeping).
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from otto.host.session import ShellSession
+    from otto.host.unix_host import UnixHost
+
+    host = UnixHost(
+        ip="10.0.0.1",
+        element="box",
+        creds=[Cred(login="admin", password="adminpw"), Cred(login="root", password="rootpw")],
+        user="admin",
+        log=LogMode.NORMAL,
+    )
+
+    mock_transport = MagicMock(spec=ShellSession)
+    mock_transport.alive = True
+    mock_transport.current_user = "admin"
+    mock_transport.send = AsyncMock()
+    mock_transport.expect = AsyncMock(return_value="Password:")
+    host._session_mgr._session = mock_transport
+
+    # Before any switch: sudo uses the login user's (admin's) password.
+    assert host._sudo_password() == "adminpw"
+
+    await host.switch_user("root")
+
+    # After switching: current_user is root, and sudo must use ROOT's
+    # password — not admin's (the login user's) — for the *current* user.
+    assert host.current_user == "root"
+    assert host._sudo_password() == "rootpw"

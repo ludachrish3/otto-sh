@@ -838,11 +838,13 @@ def test_session_manager_set_current_user_updates_default_session():
     assert mgr.current_user == "root"
 
 
-def test_session_manager_accepts_user_password_arg():
+def test_session_manager_accepts_creds_arg():
+    from otto.host.login_proxy import Cred
     from otto.host.session import SessionManager
 
-    mgr = SessionManager(name="h", user_password=lambda u: "pw")
-    assert mgr._user_password("anyone") == "pw"
+    mgr = SessionManager(name="h", creds=[Cred(login="root", password="pw")], host_id="h")
+    assert mgr._creds == [Cred(login="root", password="pw")]
+    assert mgr._host_id == "h"
 
 
 @pytest.mark.asyncio
@@ -867,6 +869,7 @@ async def test_host_session_switch_user_without_resolver_raises():
 
 @pytest.mark.asyncio
 async def test_host_session_switch_user_elevates_and_stamps():
+    from otto.host.login_proxy import Cred
     from otto.host.session import HostSession
 
     shell = AsyncMock(spec=ShellSession)
@@ -878,7 +881,8 @@ async def test_host_session_switch_user_elevates_and_stamps():
         lambda *_: None,
         lambda *_: None,
         lambda _: None,
-        user_password=lambda u: "rootpw",
+        creds=[Cred(login="root", password="rootpw")],
+        host_id="n",
     )
     await hs.switch_user("root")
     assert shell.current_user == "root"
@@ -889,6 +893,7 @@ async def test_host_session_switch_user_elevates_and_stamps():
 
 @pytest.mark.asyncio
 async def test_host_session_as_user_restores_previous():
+    from otto.host.login_proxy import Cred
     from otto.host.session import HostSession
 
     shell = AsyncMock(spec=ShellSession)
@@ -900,7 +905,8 @@ async def test_host_session_as_user_restores_previous():
         lambda *_: None,
         lambda *_: None,
         lambda _: None,
-        user_password=lambda u: "rootpw",
+        creds=[Cred(login="root", password="rootpw")],
+        host_id="n",
     )
     async with hs.as_user("root"):
         assert shell.current_user == "root"
@@ -958,6 +964,7 @@ async def test_open_session_seeds_named_session_current_user_from_login():
 @pytest.mark.asyncio
 async def test_named_session_elevation_does_not_touch_default():
     """Elevating a named session leaves another (default) session untouched."""
+    from otto.host.login_proxy import Cred
     from otto.host.session import HostSession
 
     default_shell = MockSession()
@@ -971,7 +978,8 @@ async def test_named_session_elevation_does_not_touch_default():
         lambda *_: None,
         lambda *_: None,
         lambda _: None,
-        user_password=lambda u: "rootpw",
+        creds=[Cred(login="root", password="rootpw")],
+        host_id="mon",
     )
     await hs.switch_user("root")
     assert named_shell.current_user == "root"  # named session elevated
@@ -981,13 +989,20 @@ async def test_named_session_elevation_does_not_touch_default():
 @pytest.mark.asyncio
 async def test_host_session_as_user_nested_restores_each_level():
     """Nested as_user blocks restore the prior user at each level."""
+    from otto.host.login_proxy import Cred
     from otto.host.session import HostSession
 
     shell = AsyncMock(spec=ShellSession)
     shell.current_user = "alice"
     shell.expect.return_value = "Password:"
     hs = HostSession(
-        "mon", shell, lambda *_: None, lambda *_: None, lambda _: None, user_password=lambda u: "pw"
+        "mon",
+        shell,
+        lambda *_: None,
+        lambda *_: None,
+        lambda _: None,
+        creds=[Cred(login="bob", password="pw"), Cred(login="root", password="pw")],
+        host_id="mon",
     )
     async with hs.as_user("bob"):
         assert shell.current_user == "bob"

@@ -6,7 +6,8 @@ account (``via``) and replays the named proxy's send/expect steps. Proxies
 are async callables registered by libraries from ``init`` modules via
 :func:`register_login_proxy`, mirroring the term/transfer registries. The
 built-in ``"su"`` proxy is the default user-switch mechanism (it replaces
-the old hardcoded ``_perform_su``).
+the old hardcoded su-switch helper that ``switch_user``/``as_user`` used to
+call directly).
 """
 
 import re

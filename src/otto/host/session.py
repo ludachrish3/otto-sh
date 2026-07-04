@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import Self, override
 
 from .command_frame import BashFrame, CommandFrame, SessionMarkers
+from .login_proxy import Cred, perform_switch, run_undo
 from .telnet import TelnetClient
 
 if TYPE_CHECKING:
@@ -927,16 +928,20 @@ class HostSession:
         log_command: Callable[[str, LogMode], None],
         log_output: Callable[[str, LogMode], None],
         deregister: Callable[[str], None],
-        user_password: "Callable[[str], str | None] | None" = None,
+        creds: "list[Cred] | None" = None,
+        host_id: str = "",
     ) -> None:
         self._name = name
         self._session = session
         self._log_command = log_command
         self._log_output = log_output
         self._deregister = deregister
-        # Resolver for su-target passwords (creds-based). None on non-posix
-        # hosts → this session cannot elevate. Set by SessionManager.
-        self._user_password = user_password
+        # Creds this session's switch_user/as_user resolve targets against
+        # (via otto.host.login_proxy.perform_switch). None on non-posix
+        # hosts → this session cannot elevate; [] means supported but
+        # passwordless / ad-hoc. Set by SessionManager.
+        self._creds = creds
+        self._host_id = host_id
 
     @property
     def alive(self) -> bool:
@@ -956,26 +961,36 @@ class HostSession:
         """``su`` *this* session to *user* (default root), tracking :attr:`current_user`.
 
         Posix-only — raises ``NotImplementedError`` on
-        hosts whose sessions do not support elevation (no password resolver).
+        hosts whose sessions do not support elevation (no creds).
         """
-        if self._user_password is None:
+        if self._creds is None:
             raise NotImplementedError("switch_user is not supported on this host's sessions")
-        from .privilege import _perform_su
-
-        target = await _perform_su(self.send, self.expect, user, password, self._user_password)
-        self._session.current_user = target
+        applied = await perform_switch(
+            self, self._creds, user, password, self.current_user, self._host_id
+        )
+        self._session.current_user = applied[-1].login or "root"
 
     @asynccontextmanager
     async def as_user(
         self, user: str = "root", password: str | None = None
     ) -> "AsyncIterator[HostSession]":
-        """Run a block as *user* on this session, restoring the prior user on exit."""
+        """Run a block as *user* on this session, restoring the prior user on exit.
+
+        Undoes each applied hop in reverse (innermost first) so a multi-hop
+        ``via`` chain unwinds correctly, mirroring
+        :meth:`~otto.host.privilege.PosixPrivilege.as_user`.
+        """
+        if self._creds is None:
+            raise NotImplementedError("as_user is not supported on this host's sessions")
         prev = self.current_user
-        await self.switch_user(user, password)
+        applied = await perform_switch(self, self._creds, user, password, prev, self._host_id)
+        self._session.current_user = applied[-1].login or "root"
         try:
             yield self
         finally:
-            await self.send("exit\n")
+            for i, hop in enumerate(reversed(applied)):
+                via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
+                await run_undo(self, hop, Cred(login=via_login), self._host_id)
             self._session.current_user = prev
 
     async def run(
@@ -1064,7 +1079,7 @@ class SessionManager:
     target's readiness ceiling is raised via ``init_timeout``.
     """
 
-    def __init__(
+    def __init__(  # noqa: PLR0913 — wide session-construction API (transport/dialect/elevation seams)
         self,
         connections: "ConnectionManager | None" = None,
         name: str = "",
@@ -1075,7 +1090,8 @@ class SessionManager:
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         retry_backoff: float | None = None,
-        user_password: "Callable[[str], str | None] | None" = None,
+        creds: "list[Cred] | None" = None,
+        host_id: str = "",
     ) -> None:
         self._connections = connections
         self._name = name
@@ -1083,10 +1099,12 @@ class SessionManager:
         self._log_output = log_output
         self._session_factory = session_factory
         self._oneshot_factory = oneshot_factory
-        # Resolver for su-target passwords, forwarded to HostSessions so named
-        # sessions can elevate. None on non-posix hosts → named-session
-        # elevation is unsupported there.
-        self._user_password = user_password
+        # Creds forwarded to HostSessions so named sessions can elevate via
+        # otto.host.login_proxy.perform_switch. None on non-posix hosts →
+        # named-session elevation is unsupported there; [] means supported
+        # but passwordless / ad-hoc.
+        self._creds = creds
+        self._host_id = host_id
         # Shell dialect handed to every session built on the ConnectionManager
         # dispatch path (SSH or telnet alike). ``None`` resolves to bash inside
         # ``ShellSession``; an embedded host passes a ZephyrFrame so its
@@ -1506,7 +1524,8 @@ class SessionManager:
                 log_command=self._log_command,
                 log_output=self._log_output,
                 deregister=lambda n: (self._named_sessions.pop(n, None), None)[1],
-                user_password=self._user_password,
+                creds=self._creds,
+                host_id=self._host_id,
             )
             self._named_sessions[name] = host_session
             return host_session

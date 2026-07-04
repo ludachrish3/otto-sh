@@ -297,12 +297,6 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         c = cred_for(self.creds, self.current_user)
         return c.password if c else None
 
-    @override
-    def _user_password(self, user: str) -> str | None:
-        """Password for ``su <user>`` from this host's creds, if present."""
-        c = cred_for(self.creds, user)
-        return c.password if c else None
-
     def cred(self, login: str) -> Cred:
         """Return the cred entry for *login*; loud lookup listing known logins."""
         found = cred_for(self.creds, login)
@@ -344,7 +338,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             log_command=self._log_command,
             log_output=self._log_output,
             command_frame=self.command_frame,
-            user_password=self._user_password,
+            creds=self.creds,
+            host_id=self.name,
         )
         self._file_transfer = self._build_file_transfer()
 
@@ -371,7 +366,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             log_command=self._log_command,
             log_output=self._log_output,
             command_frame=self.command_frame,
-            user_password=self._user_password,
+            creds=self.creds,
+            host_id=self.name,
         )
         self._file_transfer = self._build_file_transfer()
 

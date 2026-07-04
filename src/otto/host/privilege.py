@@ -10,22 +10,30 @@ Shared by the posix-shell hosts (:class:`~otto.host.unix_host.UnixHost`,
 ``Expect`` channel (``run(expects=[...])``) — the
 response is written directly by the session machinery and is never logged.
 
-**su** sends the password via ``send(..., log=LogMode.NEVER)`` so it is delivered
-to stdin without being emitted to any sink (console, ``console.log``, or
-``verbose.log``).
+**su** (and any other registered login proxy) sends its password via
+``send(..., log=LogMode.NEVER)`` so it is delivered to stdin without being
+emitted to any sink (console, ``console.log``, or ``verbose.log``).
+``switch_user``/``as_user`` route through
+:func:`~otto.host.login_proxy.perform_switch`, which recursively resolves
+``via``-chains and drives whichever proxy the target cred names (defaulting
+to the built-in ``"su"``).
 
 The mixin carries no fields and declares ``__slots__ = ()`` so it composes with
 the ``@dataclass(slots=True)`` hosts. Password sourcing is host-specific:
-``_sudo_password`` / ``_user_password`` default to ``None`` (passwordless) and
-:class:`~otto.host.unix_host.UnixHost` overrides them from ``creds``.
+``_sudo_password`` defaults to ``None`` (passwordless) and
+:class:`~otto.host.unix_host.UnixHost` overrides it from ``creds``.
+``_switch_creds`` defaults to ``self.creds`` (or ``[]`` when the host has no
+``creds`` field), so ``switch_user``/``as_user`` targets resolve against the
+same cred list ``_sudo_password`` does.
 """
 
-import shlex
-from collections.abc import AsyncIterator, Awaitable, Callable
+import re
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from ..logger.mode import LogMode
+from .login_proxy import Cred, perform_switch, run_undo
 
 if TYPE_CHECKING:
     from .session import Expect
@@ -34,28 +42,26 @@ if TYPE_CHECKING:
 _SUDO_PROMPT = "otto-sudo:"
 
 
-async def _perform_su(
-    send: "Callable[..., Awaitable[None]]",
-    expect: "Callable[..., Awaitable[str]]",
-    user: str,
-    password: str | None,
-    user_password: "Callable[[str], str | None]",
-) -> str:
-    """Run the ``su`` exchange against a session's ``send``/``expect`` and return the resolved user.
+class _HostProxyIO:
+    """Adapts a host's ``send``/``expect`` to :class:`~otto.host.login_proxy.ProxyIO`.
 
-    Does **no** ``current_user`` bookkeeping —
-    the caller stamps the session it elevated. Shared by
-    :meth:`PosixPrivilege.switch_user` (default session) and
-    :meth:`~otto.host.session.HostSession.switch_user` (named session).
+    ``PosixPrivilege`` is a mixin — it has no ``send``/``expect`` of its own,
+    only what the concrete host it's composed into supplies at runtime.
+    Wrapping that access here (rather than in ``switch_user``/``as_user``
+    directly) keeps the unavoidable ``ty: ignore`` confined to one small
+    adapter instead of scattered through the elevation flow.
     """
-    target = user or "root"
-    cmd = "su" if not user else f"su {shlex.quote(user)}"
-    pw = password if password is not None else user_password(target)
-    await send(cmd + "\n")
-    if pw is not None:
-        await expect(r"[Pp]assword:")
-        await send(pw + "\n", log=LogMode.NEVER)
-    return target
+
+    __slots__ = ("_host",)
+
+    def __init__(self, host: "PosixPrivilege") -> None:
+        self._host = host
+
+    async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
+        await self._host.send(text, log=log)  # ty: ignore[unresolved-attribute]
+
+    async def expect(self, pattern: str | re.Pattern[str], timeout: float = 10.0) -> str:
+        return await self._host.expect(pattern, timeout)  # ty: ignore[unresolved-attribute]
 
 
 class PosixPrivilege:
@@ -67,9 +73,16 @@ class PosixPrivilege:
         """Password for ``sudo -S``, or None when sudo is passwordless here."""
         return None
 
-    def _user_password(self, user: str) -> str | None:  # noqa: ARG002 — required by PosixPrivilege override seam; subclasses use user to look up credential
-        """Password for ``su <user>``, or None when none is known."""
-        return None
+    def _switch_creds(self) -> list[Cred]:
+        """Creds used to resolve ``switch_user``/``as_user`` targets.
+
+        Default ``getattr(self, "creds", [])`` — hosts with a ``creds`` field
+        (:class:`~otto.host.unix_host.UnixHost`) get real cred-chain
+        resolution for free; hosts without one (:class:`~otto.host.local_host.LocalHost`,
+        :class:`~otto.host.docker_host.DockerContainerHost`) fall back to an
+        empty list (ad-hoc, passwordless ``su`` targets).
+        """
+        return getattr(self, "creds", [])
 
     def _elevate(self, cmd: str) -> tuple[str, list["Expect"]]:
         wrapped = f"sudo -S -p '{_SUDO_PROMPT}' {cmd}"
@@ -80,18 +93,21 @@ class PosixPrivilege:
     async def switch_user(self, user: str = "", password: str | None = None) -> None:
         """``su`` the persistent (default) session to *user* (default root).
 
-        Performs the real ``su`` and then records the new user so
-        ``current_user`` reflects it. Mutates session state — affects
-        subsequent ``run`` calls until the user exits back.
+        Performs the real switch (recursively hopping through any ``via``
+        chain via :func:`~otto.host.login_proxy.perform_switch`) and then
+        records the new user so ``current_user`` reflects it. Mutates
+        session state — affects subsequent ``run`` calls until the user
+        exits back.
         """
-        target = await _perform_su(
-            self.send,  # ty: ignore[unresolved-attribute]
-            self.expect,  # ty: ignore[unresolved-attribute]
+        applied = await perform_switch(
+            _HostProxyIO(self),
+            self._switch_creds(),
             user,
             password,
-            self._user_password,
+            self._session_mgr.current_user,  # ty: ignore[unresolved-attribute]
+            getattr(self, "name", ""),
         )
-        self._session_mgr._set_current_user(target)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
+        self._session_mgr._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
 
     @asynccontextmanager
     async def as_user(
@@ -103,12 +119,25 @@ class PosixPrivilege:
                 await host.run("systemctl restart foo")
 
         Tracks ``current_user`` across the switch and restores the prior
-        user when the block exits.
+        user when the block exits, undoing each applied hop in reverse
+        (innermost first) so a multi-hop ``via`` chain unwinds correctly.
         """
         prev = self._session_mgr.current_user  # ty: ignore[unresolved-attribute]
-        await self.switch_user(user, password)
+        applied = await perform_switch(
+            _HostProxyIO(self),
+            self._switch_creds(),
+            user,
+            password,
+            prev,
+            getattr(self, "name", ""),
+        )
+        self._session_mgr._set_current_user(applied[-1].login or "root")  # noqa: SLF001 — intra-package access to SessionManager._set_current_user for user elevation  # ty: ignore[unresolved-attribute]
         try:
             yield self
         finally:
-            await self.send("exit\n")  # ty: ignore[unresolved-attribute]
+            for i, hop in enumerate(reversed(applied)):
+                via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
+                await run_undo(
+                    _HostProxyIO(self), hop, Cred(login=via_login), getattr(self, "name", "")
+                )
             self._session_mgr._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[unresolved-attribute]
