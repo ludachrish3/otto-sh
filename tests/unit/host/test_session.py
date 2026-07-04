@@ -1226,25 +1226,45 @@ class TestLoginProxyAtSessionEstablishment:
 
     @pytest.mark.asyncio
     async def test_ensure_session_multi_hop_via_chain_ordering(self):
-        """Each hop after the first receives the PREVIOUS hop's login as `via`."""
-        captured: list[tuple[str, str]] = []
+        """Each hop after the first receives the PREVIOUS hop's login as `via`.
+
+        Also pins that `via` is the FULL cred (password intact), resolved from
+        ``self._creds`` via ``cred_for`` — a regression back to a bare
+        ``Cred(login=via_login)`` would capture ``None`` for the via password
+        and fail. Mirrors Task 6's undo-ordering observability test.
+        """
+        captured: list[tuple[str, str, str | None]] = []
 
         async def _record_via(io, ctx) -> None:
-            captured.append((ctx.target.login, ctx.via.login))
+            captured.append((ctx.target.login, ctx.via.login, ctx.via.password))
             await io.send(f"become {ctx.target.login}\n")
 
         register_login_proxy("task7-record-via", _record_via, overwrite=True)
         hops = [
-            Cred(login="admin", proxy="task7-record-via", via="root"),
-            Cred(login="mysql", proxy="task7-record-via", via="admin"),
+            Cred(login="admin", password="adminpw", proxy="task7-record-via", via="root"),
+            Cred(login="mysql", password="mysqlpw", proxy="task7-record-via", via="admin"),
         ]
         conn = _proxy_connections(hops, login_target="mysql", credentials=("root", "rootpw"))
+        # SessionManager._creds is the list _apply_login_proxy resolves `via`
+        # against (the full cred, incl. password) — the same list HostSession
+        # elevation uses. The via accounts must carry passwords here so a bare
+        # Cred(login=...) regression is observable.
         mgr = SessionManager(
-            connections=conn, name="h", session_factory=_ImmediateSession, host_id="h"
+            connections=conn,
+            name="h",
+            session_factory=_ImmediateSession,
+            host_id="h",
+            creds=[
+                Cred(login="root", password="rootpw"),
+                *hops,
+            ],
         )
         await mgr._ensure_session()
 
-        assert captured == [("admin", "root"), ("mysql", "admin")]
+        assert captured == [
+            ("admin", "root", "rootpw"),  # hop #1: via = full root cred (password intact)
+            ("mysql", "admin", "adminpw"),  # hop #2: via = full admin cred (password intact)
+        ]
         assert mgr._session.current_user == "mysql"
 
     @pytest.mark.asyncio

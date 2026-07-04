@@ -1213,10 +1213,12 @@ class SessionManager:
 
         Each hop's ``via`` is the previous hop's login — or, for the first
         hop, the resolved direct cred's login (the account the transport
-        actually authenticated as). Only the login matters here: no
-        registered proxy reads a hop's own password off its ``via`` (the
-        built-in ``su`` ignores ``via`` entirely), so a bare ``Cred(login=...)``
-        is the simplest correct source.
+        actually authenticated as). The via login is resolved to its FULL
+        cred (``cred_for(self._creds, via_login) or Cred(login=via_login)``),
+        symmetric with ``perform_switch`` and the Task 6 undo path: no
+        registered proxy reads ``ctx.via.password`` today (the built-in
+        ``su`` ignores ``via`` entirely), but a future custom proxy that
+        needs the via account's password gets it rather than a silent None.
 
         Raises :class:`~otto.host.login_proxy.LoginProxyError` on a failed
         hop; the caller is responsible for tearing the session down (a proxy
@@ -1228,9 +1230,11 @@ class SessionManager:
         target = getattr(self._connections, "login_target", "")
         creds = getattr(self._connections, "credentials", None)
         via_login = creds[0] if creds else ""
+        switch_creds = self._creds or []
         io = _SessionProxyIO(session, self)
         for hop in hops:
-            await run_proxy(io, hop, via=Cred(login=via_login), host_id=self._host_id)
+            via = cred_for(switch_creds, via_login) or Cred(login=via_login)
+            await run_proxy(io, hop, via=via, host_id=self._host_id)
             via_login = hop.login
         session.current_user = target
 
