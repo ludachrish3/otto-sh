@@ -8,13 +8,14 @@ Two seams:
   only thing that builds it: the live append path uses ``model_construct`` (no
   validation, hot loop) and the import path uses ``model_validate``.
 
-* :class:`MetricRecord` / :class:`EventRecord` — flat records at the JSON
-  ``--file`` and SQLite import/export boundary. These read *historical,
-  external* data, so they are deliberately **lenient** (``extra='ignore'``,
-  via :class:`RowModel`): an unknown column from a newer schema is dropped, not
-  rejected, exactly as the old ``.get()``/``[]`` parsing did. Field names follow
-  the JSON spelling; a ``validation_alias`` also accepts the SQLite column
-  spelling (``ts``/``end_ts``) so one model validates both seams.
+* :class:`MetricRecord` / :class:`EventRecord` / :class:`LogEventRecord` —
+  flat records at the JSON ``--file`` and SQLite import/export boundary.
+  These read *historical, external* data, so they are deliberately
+  **lenient** (``extra='ignore'``, via :class:`RowModel`): an unknown column
+  from a newer schema is dropped, not rejected, exactly as the old
+  ``.get()``/``[]`` parsing did. Field names follow the JSON spelling; a
+  ``validation_alias`` also accepts the SQLite column spelling
+  (``ts``/``end_ts``) so one model validates both seams.
 
 Leaf isolation: this module imports only :mod:`otto.models.base`, pydantic, and
 the stdlib — no runtime or ``otto.monitor`` edge — so it stays a pure leaf inside
@@ -138,3 +139,18 @@ class EventRecord(RowModel):
     source: str = "manual"
     color: str = "#888888"
     dash: str = "dash"
+
+
+class LogEventRecord(RowModel):
+    """One ``log_events`` row at the JSON / SQLite import-export boundary.
+
+    Mirrors the parser-emitted ``LogEvent`` plus the host/tab the collector
+    attaches. The JSON ``--file`` format spells the time key ``timestamp``;
+    the SQLite column is ``ts`` (its ``fields`` column is JSON-decoded by the
+    loader before validation).
+    """
+
+    timestamp: datetime = Field(validation_alias=AliasChoices("timestamp", "ts"))
+    host: str = ""
+    tab: str = ""
+    fields: dict[str, str] = Field(default_factory=dict)

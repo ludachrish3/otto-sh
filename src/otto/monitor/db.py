@@ -7,6 +7,7 @@ identical.
 """
 
 import fcntl
+import json
 import logging
 import os
 from datetime import datetime
@@ -34,6 +35,13 @@ CREATE TABLE IF NOT EXISTS events (
     source    TEXT    NOT NULL DEFAULT 'manual',
     color     TEXT    NOT NULL DEFAULT '#888888',
     dash      TEXT    NOT NULL DEFAULT 'dash'
+);
+CREATE TABLE IF NOT EXISTS log_events (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts        TEXT    NOT NULL,
+    host      TEXT    NOT NULL DEFAULT '',
+    tab       TEXT    NOT NULL DEFAULT '',
+    fields    TEXT    NOT NULL DEFAULT '{}'
 );
 """
 
@@ -115,6 +123,18 @@ class MetricDB:
         await self._conn.execute(
             "INSERT INTO metrics (ts, host, label, value) VALUES (?, ?, ?, ?)",
             (ts.isoformat(), host, label, value),
+        )
+        await self._conn.commit()
+
+    async def write_log_event(
+        self, ts: datetime, host: str, tab: str, fields: dict[str, str]
+    ) -> None:
+        """Insert one log-event row (fields JSON-encoded). No-op if not open."""
+        if not self._conn:
+            return
+        await self._conn.execute(
+            "INSERT INTO log_events (ts, host, tab, fields) VALUES (?, ?, ?, ?)",
+            (ts.isoformat(), host, tab, json.dumps(fields)),
         )
         await self._conn.commit()
 

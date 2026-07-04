@@ -8,7 +8,7 @@ contract the Phase 1 backend refactor and Phase 2 React port build against.
 import http.client
 import json
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -17,6 +17,7 @@ import pytest
 
 from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
+from otto.monitor.parsers import LogEvent
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
@@ -53,7 +54,10 @@ META_KEYS = {"hosts", "live", "metrics", "tabs", "interval"}
 META_METRIC_KEYS = {"label", "y_title", "unit", "command", "chart", "interval"}
 # "interval" added in Phase 1 (per-parser collection intervals) — deliberate contract evolution.
 META_TAB_KEYS = {"id", "label", "metrics"}
-DATA_KEYS = {"series", "events", "chart_map"}
+DATA_KEYS = {"series", "events", "chart_map", "log_events"}
+# "log_events" added in Phase 3 Plan B (log-sourced data) — deliberate contract evolution.
+LOG_EVENT_ROW_KEYS = {"timestamp", "host", "tab", "fields"}
+SSE_LOG_EVENT_KEYS = {"type", "host", "tab", "rows"}
 EVENT_KEYS = {"id", "timestamp", "label", "source", "color", "dash", "end_timestamp"}
 SSE_METRIC_KEYS = {"type", "host", "label", "chart", "y_title", "unit", "key", "ts", "value"}
 SSE_EVENT_KEYS = {"type", *EVENT_KEYS}
@@ -92,6 +96,61 @@ def test_data_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
     first_point = next(p for pts in data["series"].values() for p in pts)
     datetime.fromisoformat(first_point["ts"].replace("Z", "+00:00"))
     assert all(set(e) == EVENT_KEYS for e in data["events"])
+
+
+def test_data_log_events_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
+    ts = datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc)
+    live_dash.run(
+        live_dash.collector._record_log_events(
+            "host1", "syslog", [LogEvent(ts=ts, fields={"message": "pinned"})]
+        )
+    )
+    data = _get_json(live_dash.url + "/api/data")
+    assert all(set(row) == LOG_EVENT_ROW_KEYS for row in data["log_events"])
+    row = data["log_events"][0]
+    assert row == {
+        "timestamp": ts.isoformat(),
+        "host": "host1",
+        "tab": "syslog",
+        "fields": {"message": "pinned"},
+    }
+
+
+def test_sse_stream_delivers_batched_log_events(
+    live_dash: DashboardHarness[FakeCollector],
+) -> None:
+    port = urlsplit(live_dash.url).port
+    assert port is not None
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        conn.request("GET", "/api/stream", headers={"Accept": "text/event-stream"})
+        resp = conn.getresponse()
+        ts = datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc)
+        live_dash.run(
+            live_dash.collector._record_log_events(
+                "host1",
+                "syslog",
+                [
+                    LogEvent(ts=ts, fields={"message": "a"}),
+                    LogEvent(ts=ts, fields={"message": "b"}),
+                ],
+            )
+        )
+        payload: dict[str, Any] | None = None
+        while payload is None:
+            line = resp.readline().decode()
+            assert line, "SSE stream closed before a log_event message arrived"
+            if line.startswith("data:"):
+                candidate = json.loads(line[len("data:") :])
+                if candidate["type"] == "log_event":
+                    payload = candidate
+    finally:
+        conn.close()
+    assert set(payload) == SSE_LOG_EVENT_KEYS
+    assert payload["host"] == "host1"
+    assert payload["tab"] == "syslog"
+    assert [r["fields"]["message"] for r in payload["rows"]] == ["a", "b"]
+    assert all(set(r) == {"ts", "fields"} for r in payload["rows"])
 
 
 def test_sse_stream_delivers_metric_messages(

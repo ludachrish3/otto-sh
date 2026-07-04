@@ -30,6 +30,7 @@ from .host import (
 from .monitor import (
     ChartSpec,
     EventRecord,
+    LogEventRecord,
     MetricPoint,
     MetricRecord,
     MonitorMeta,
@@ -66,6 +67,7 @@ __all__ = [
     "EventRecord",
     "FtpOptionsSpec",
     "HostSpec",
+    "LogEventRecord",
     "MetricPoint",
     "MetricRecord",
     "MonitorMeta",

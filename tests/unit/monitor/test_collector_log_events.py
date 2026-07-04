@@ -132,3 +132,34 @@ async def test_csv_parser_backfills_store_with_data_timestamps() -> None:
     )
     pts = collector.get_series()["host1/v"]
     assert [(p.ts, p.value) for p in pts] == [(TS1, 1.0), (TS2, 2.0)]
+
+
+@pytest.mark.asyncio
+async def test_record_log_events_publishes_one_batched_sse_message() -> None:
+    collector = MetricCollector(hosts=[])
+    q = collector.subscribe()
+    events = [
+        LogEvent(ts=TS1, fields={"message": "a"}),
+        LogEvent(ts=TS2, fields={"message": "b"}),
+    ]
+    await collector._record_log_events("host1", "syslog", events)
+    msg = q.get_nowait()
+    assert msg == {
+        "type": "log_event",
+        "host": "host1",
+        "tab": "syslog",
+        "rows": [
+            {"ts": TS1.isoformat(), "fields": {"message": "a"}},
+            {"ts": TS2.isoformat(), "fields": {"message": "b"}},
+        ],
+    }
+    assert q.empty()  # batched: exactly one message for the tick
+
+
+@pytest.mark.asyncio
+async def test_get_log_events_shape() -> None:
+    collector = MetricCollector(hosts=[])
+    await collector._record_log_events("host1", "syslog", [LogEvent(ts=TS1, fields={"m": "x"})])
+    assert collector.get_log_events() == [
+        {"timestamp": TS1.isoformat(), "host": "host1", "tab": "syslog", "fields": {"m": "x"}}
+    ]

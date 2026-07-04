@@ -444,9 +444,23 @@ class MetricCollector:
         self._publish(msg)
 
     async def _record_log_events(self, host_name: str, tab: str, events: "list[LogEvent]") -> None:
-        """Store one tick's log-event rows for *host_name* (per-(host, tab) ring)."""
+        """Store, persist, and publish one tick's log-event rows.
+
+        SSE is batched: one ``log_event`` message per (host, parser, tick),
+        not one per row — a ``tail -n 200`` backfill is one frame.
+        """
         for ev in events:
             self._store.append_log_event(host_name, tab, ev)
+            if self._db:
+                await self._db.write_log_event(ev.ts, host_name, tab, ev.fields)
+        self._publish(
+            {
+                "type": "log_event",
+                "host": host_name,
+                "tab": tab,
+                "rows": [{"ts": ev.ts.isoformat(), "fields": dict(ev.fields)} for ev in events],
+            }
+        )
 
     async def _process_host_results(
         self,
@@ -628,6 +642,17 @@ class MetricCollector:
     def get_events(self) -> list[MonitorEvent]:
         """Return all recorded events in chronological order."""
         return self._store.events()
+
+    def get_log_events(self) -> "list[dict[str, Any]]":
+        """JSON-safe log-event rows for ``/api/data`` and export.
+
+        Shape per row: ``{"timestamp", "host", "tab", "fields"}`` —
+        the ``LogEventRecord`` spelling, insertion-ordered per (host, tab) ring.
+        """
+        return [
+            {"timestamp": ev.ts.isoformat(), "host": host, "tab": tab, "fields": dict(ev.fields)}
+            for host, tab, ev in self._store.snapshot_log_events()
+        ]
 
     def get_meta_model(self) -> MonitorMeta:
         """Return the typed /api/meta payload (see get_meta for the dict form)."""

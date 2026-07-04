@@ -23,6 +23,7 @@ from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
 from otto.monitor.parsers import (
     LoadParser,
+    LogEvent,
     MetricDataPoint,
     MetricParser,
     ParseContext,
@@ -390,6 +391,19 @@ class TestImportValidation:
         loaded = MetricCollector.from_json(path)
         evs = loaded.get_events()
         assert [e.label for e in evs] == ["ok"]
+
+
+async def test_log_events_json_export_import_roundtrip(tmp_path: Path) -> None:
+    collector = MetricCollector(hosts=[])
+    ts = datetime(2026, 7, 4, 12, 0, tzinfo=_UTC)
+    await collector._record_log_events("host1", "syslog", [LogEvent(ts=ts, fields={"m": "x"})])
+    path = tmp_path / "export.json"
+    collector.export_json(str(path))
+
+    loaded = MetricCollector.from_json(str(path))
+    assert loaded._store.snapshot_log_events() == [
+        ("host1", "syslog", LogEvent(ts=ts, fields={"m": "x"}))
+    ]
 
 
 class TestHistoricalCatalogIncludesProjectParsers:

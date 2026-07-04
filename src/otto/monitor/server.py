@@ -106,6 +106,7 @@ def _build_app(collector: MetricCollector) -> FastAPI:  # noqa: C901 — FastAPI
             },
             "events": [e.to_dict() for e in collector.get_events()],
             "chart_map": collector.get_chart_map(),
+            "log_events": collector.get_log_events(),
         }
         return JSONResponse(payload)
 

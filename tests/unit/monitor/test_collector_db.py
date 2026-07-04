@@ -25,11 +25,15 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
-from otto.monitor.parsers import MemParser, TopCpuParser
+from otto.monitor.db import MetricDB
+from otto.monitor.history import load_sqlite_into
+from otto.monitor.parsers import LogEvent, MemParser, TopCpuParser
+from otto.monitor.store import MetricStore
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -329,6 +333,44 @@ class TestSchemaMigration:
         with closing(sqlite3.connect(db_path)) as conn, conn:
             cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
         assert "end_ts" in cols
+
+
+# ── Log-event persistence ─────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_log_events_persist_and_reload(tmp_path: Path) -> None:
+    db_path = tmp_path / "m.db"
+    db = MetricDB(str(db_path))
+    await db.open()
+    ts = datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc)
+    await db.write_log_event(ts, "host1", "syslog", {"message": "hello"})
+    await db.close()
+
+    store = MetricStore()
+    await load_sqlite_into(store, str(db_path))
+    assert store.snapshot_log_events() == [
+        ("host1", "syslog", LogEvent(ts=ts, fields={"message": "hello"}))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_pre_log_events_db_loads_without_the_table(tmp_path: Path) -> None:
+    """A DB written before this feature (no log_events table) still loads."""
+    db_path = tmp_path / "old.db"
+    conn = await aiosqlite.connect(str(db_path))
+    await conn.execute(
+        "CREATE TABLE metrics (id INTEGER PRIMARY KEY, ts TEXT, host TEXT, label TEXT, value REAL)"
+    )
+    await conn.execute(
+        "CREATE TABLE events (id INTEGER PRIMARY KEY, ts TEXT, end_ts TEXT, label TEXT, "
+        "source TEXT, color TEXT, dash TEXT)"
+    )
+    await conn.commit()
+    await conn.close()
+    store = MetricStore()
+    await load_sqlite_into(store, str(db_path))  # must not raise
+    assert store.snapshot_log_events() == []
 
 
 # ── from_sqlite() class method ────────────────────────────────────────────────

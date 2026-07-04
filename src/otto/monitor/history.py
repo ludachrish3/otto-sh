@@ -13,8 +13,9 @@ from typing import Any
 import aiosqlite
 from pydantic import ValidationError
 
-from ..models import EventRecord, MetricPoint, MetricRecord
+from ..models import EventRecord, LogEventRecord, MetricPoint, MetricRecord
 from .events import MonitorEvent
+from .parsers import LogEvent
 from .store import MetricStore
 
 
@@ -66,6 +67,12 @@ def load_json_into(store: MetricStore, path: str) -> None:
             store.note_imported_event(event)
         else:
             store.add_event(event, rowid=0)
+    for row in data.get("log_events", []):
+        try:
+            rec = LogEventRecord.model_validate(row)
+        except ValidationError:
+            continue
+        store.append_log_event(rec.host, rec.tab, LogEvent(ts=rec.timestamp, fields=rec.fields))
 
 
 async def load_sqlite_into(store: MetricStore, path: str) -> None:
@@ -120,6 +127,23 @@ async def load_sqlite_into(store: MetricStore, path: str) -> None:
                 store.note_imported_event(event)
             else:
                 store.add_event(event, rowid=0)
+        # Older DBs predate the log_events table; probe before selecting.
+        cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='log_events'"
+        )
+        if await cursor.fetchone() is not None:
+            async for row in await conn.execute(
+                "SELECT ts, host, tab, fields FROM log_events ORDER BY ts"
+            ):
+                data_row = dict(row)
+                try:
+                    data_row["fields"] = json.loads(data_row.get("fields") or "{}")
+                    rec = LogEventRecord.model_validate(data_row)
+                except (ValidationError, json.JSONDecodeError):
+                    continue
+                store.append_log_event(
+                    rec.host, rec.tab, LogEvent(ts=rec.timestamp, fields=rec.fields)
+                )
 
 
 def to_json(store: MetricStore) -> str:
@@ -139,6 +163,12 @@ def to_json(store: MetricStore) -> str:
             "metrics": metrics,
             "events": [e.to_dict() for e in store.events()],
             "chart_map": dict(store.chart_map),
+            "log_events": [
+                LogEventRecord(
+                    timestamp=ev.ts, host=host, tab=tab, fields=dict(ev.fields)
+                ).model_dump(mode="json")
+                for host, tab, ev in store.snapshot_log_events()
+            ],
         },
         indent=2,
     )
