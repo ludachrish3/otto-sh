@@ -1,18 +1,44 @@
 """Dashboard e2e fixtures: a scripted live server and a historical server."""
 
-from collections.abc import Iterator
+import asyncio
+from collections.abc import Coroutine, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any, TypeVar
 
 import pytest
 
 from otto.monitor.collector import MetricCollector
+from otto.monitor.db import MetricDB
+from otto.monitor.log_sourced import RegexLogEventParser
+from otto.monitor.parsers import default_catalog
 from otto.monitor.server import _dist_index_path
 from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
 HISTORICAL_JSON = Path(__file__).parent / "data" / "historical.json"
+
+_T = TypeVar("_T")
+
+
+def _run_isolated(coro: "Coroutine[Any, Any, _T]") -> _T:
+    """Run *coro* to completion via ``asyncio.run`` on a throwaway thread.
+
+    Playwright's sync API (used by the ``page`` fixture) marks *this worker's
+    main thread* as having a permanently "running" event loop: its dispatcher
+    pumps a real loop through ``loop.run_until_complete()`` but cedes control
+    back to the test via a greenlet switch rather than returning, so asyncio's
+    thread-local running-loop flag never clears for the rest of the session.
+    Once any earlier test in this worker has touched ``page``/``browser``, a
+    plain ``asyncio.run()`` here raises "cannot be called from a running
+    event loop" even though nothing in *this* fixture is actually
+    concurrent. A fresh OS thread has its own independent running-loop flag,
+    sidestepping the poisoned shared state entirely.
+    """
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -108,5 +134,76 @@ def live_dash() -> Iterator[DashboardHarness[FakeCollector]]:
 @pytest.fixture
 def historical_dash() -> Iterator[DashboardHarness[MetricCollector]]:
     harness = DashboardHarness(MetricCollector.from_json(str(HISTORICAL_JSON))).start()
+    yield harness
+    harness.stop()
+
+
+SYSLOG_PATTERN = r"^(?P<ts>\S+) (?P<loghost>\S+) (?P<proc>[^:\[]+)(?:\[\d+\])?: (?P<message>.*)$"
+
+
+def _table_parser() -> RegexLogEventParser:
+    return RegexLogEventParser(
+        "tail -n 200 /var/log/syslog",
+        SYSLOG_PATTERN,
+        tab="syslog",
+        tab_label="Syslog",
+    )
+
+
+def _preload_table(harness: DashboardHarness[FakeCollector]) -> None:
+    """Three syslog rows for host1 plus one for host2 (host-scoping pin)."""
+    t0 = datetime.now(tz=timezone.utc) - timedelta(seconds=15)
+    rows = [
+        (
+            t0 + timedelta(seconds=5 * i),
+            {"loghost": "vm1", "proc": "sshd", "message": f"session {i} opened"},
+        )
+        for i in range(3)
+    ]
+    harness.run(harness.collector.push_log_events("host1", tab="syslog", rows=rows))
+    harness.run(
+        harness.collector.push_log_events(
+            "host2",
+            tab="syslog",
+            rows=[(t0, {"loghost": "vm2", "proc": "cron", "message": "job ran"})],
+        )
+    )
+
+
+@pytest.fixture
+def table_dash() -> Iterator[DashboardHarness[FakeCollector]]:
+    harness = DashboardHarness(FakeCollector(extra_parsers=[_table_parser()])).start()
+    _preload(harness)
+    _preload_table(harness)
+    yield harness
+    harness.stop()
+
+
+@pytest.fixture
+def historical_table_dash(tmp_path: Path) -> Iterator[DashboardHarness[MetricCollector]]:
+    """A --db-mode server whose SQLite file carries log events."""
+    db_path = tmp_path / "metrics.db"
+
+    async def _seed() -> None:
+        db = MetricDB(str(db_path))
+        await db.open()
+        t0 = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+        await db.write_point(t0, "host1", "Overall CPU", 42.0)
+        for i in range(3):
+            await db.write_log_event(
+                t0 + timedelta(seconds=i),
+                "host1",
+                "syslog",
+                {"loghost": "vm1", "proc": "sshd", "message": f"historical row {i}"},
+            )
+        await db.close()
+
+    _run_isolated(_seed())
+    collector = _run_isolated(
+        MetricCollector.from_sqlite(
+            str(db_path), parsers=[*default_catalog().values(), _table_parser()]
+        )
+    )
+    harness = DashboardHarness(collector).start()
     yield harness
     harness.stop()
