@@ -52,6 +52,13 @@ class MetricView(Protocol):
 
 logger = logging.getLogger("otto")
 
+# Ticks a parser may produce nothing before the "silent parser" warning fires.
+# Deliberately "never produced by tick K", not "K consecutive empties": rate
+# parsers legitimately return {} on their baseline tick and sparse log-sourced
+# parsers go quiet between writes — only a source that has NEVER produced is
+# suspect. K=3 clears the baseline tick with margin.
+_SILENT_PARSER_TICKS = 3
+
 
 @dataclass
 class MonitorTarget:
@@ -175,6 +182,16 @@ class MetricCollector:
         # collectors (from_json/from_sqlite) and scripted test collectors that
         # never call run() report it as None via get_meta_model().
         self._global_interval: float | None = None
+
+        # Parser-health state, keyed (host_name, command) — or (host_name, oid)
+        # for the SNMP layer. Command failures are edge-triggered: _failing
+        # counts consecutive failed ticks per key; the 0->1 transition warns,
+        # the pop-on-success warns the recovery with the outage length. The
+        # never-produced backstop below stays warn-once per run.
+        self._failing: dict[tuple[str, str], int] = {}
+        self._warned_silent: set[tuple[str, str]] = set()
+        self._health_ticks: dict[tuple[str, str], int] = {}
+        self._health_produced: set[tuple[str, str]] = set()
 
     # ------------------------------------------------------------------
     # Database helpers
@@ -426,12 +443,59 @@ class MetricCollector:
     ) -> None:
         for cmd_result in cmd_results:
             parser = parsers.get(cmd_result.command)
-            if parser is not None:
-                points = parser.parse(cmd_result.value, ctx=ctx)
-                if not points:
-                    continue
-                for label, dp in points.items():
-                    await self._record_point(host_name, ts, label, dp, parser)
+            if parser is None:
+                continue
+            key = (host_name, cmd_result.command)
+            if cmd_result.retcode != 0:
+                # Edge-triggered: warn on each ok->failed transition so
+                # transient failures stay visible whenever they happen; a
+                # sustained outage logs once (plus its recovery below).
+                failed_ticks = self._failing.get(key, 0)
+                if failed_ticks == 0:
+                    first_line = str(cmd_result.value).strip().splitlines()[:1]
+                    logger.warning(
+                        "Monitor: '%s' failed on %s (exit %d): %s — %s metrics will be missing",
+                        cmd_result.command,
+                        host_name,
+                        cmd_result.retcode,
+                        first_line[0] if first_line else "",
+                        parser.chart,
+                    )
+                self._failing[key] = failed_ticks + 1
+            else:
+                failed_ticks = self._failing.pop(key, 0)
+                if failed_ticks:
+                    logger.warning(
+                        "Monitor: '%s' recovered on %s after %d failed tick(s)",
+                        cmd_result.command,
+                        host_name,
+                        failed_ticks,
+                    )
+            points = parser.parse(cmd_result.value, ctx=ctx)
+            self._note_health(key, produced=bool(points), what=type(parser).__name__)
+            if not points:
+                continue
+            for label, dp in points.items():
+                await self._record_point(host_name, ts, label, dp, parser)
+
+    def _note_health(self, key: tuple[str, str], *, produced: bool, what: str) -> None:
+        """Track never-produced-by-tick-K per (host, command/oid); warn once."""
+        if produced:
+            self._health_produced.add(key)
+            return
+        if key in self._health_produced or key in self._warned_silent:
+            return
+        ticks = self._health_ticks.get(key, 0) + 1
+        self._health_ticks[key] = ticks
+        if ticks >= _SILENT_PARSER_TICKS:
+            self._warned_silent.add(key)
+            logger.warning(
+                "Monitor: parser %s ('%s') has produced no data on %s after %d ticks",
+                what,
+                key[1],
+                key[0],
+                _SILENT_PARSER_TICKS,
+            )
 
     async def _process_snmp_results(
         self,
