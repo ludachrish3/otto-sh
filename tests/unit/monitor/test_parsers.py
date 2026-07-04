@@ -11,6 +11,7 @@ from otto.monitor.parsers import (
     MemParser,
     MetricDataPoint,
     MetricParser,
+    NetDevParser,
     ParseContext,
     TopCpuParser,
     get_host_parsers,
@@ -56,6 +57,31 @@ def _top_output(
         return header.format(idle=idle) + rows
 
     return block(idle1, procs1) + block(idle2, procs2)
+
+
+def _net_dev_output(eth0: tuple, wlan0: tuple | None = None) -> str:
+    """Build /proc/net/dev output. Each tuple: (rx_bytes, rx_pkts, rx_errs,
+    rx_drop, tx_bytes, tx_pkts, tx_errs, tx_drop)."""
+
+    def line(name: str, v: tuple) -> str:
+        rx = f"{v[0]:>8} {v[1]:>7} {v[2]:>4} {v[3]:>4}    0     0          0         0"
+        tx = f"{v[4]:>8} {v[5]:>7} {v[6]:>4} {v[7]:>4}    0     0       0          0"
+        return f"{name:>6}: {rx} {tx}\n"
+
+    header_line1 = "Inter-|   Receive                                                |  Transmit\n"
+    header_line2 = (
+        " face |bytes    packets errs drop fifo frame compressed multicast|"
+        "bytes    packets errs drop fifo colls carrier compressed\n"
+    )
+    out = (
+        header_line1
+        + header_line2
+        + line("lo", (999, 9, 0, 0, 999, 9, 0, 0))
+        + line("eth0", eth0)
+    )
+    if wlan0 is not None:
+        out += line("wlan0", wlan0)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +403,64 @@ class TestLoadParser:
 
     def test_non_numeric_returns_empty_dict(self):
         assert self.parser.parse("error: permission denied", ctx=ParseContext()) == {}
+
+
+# ---------------------------------------------------------------------------
+# NetDevParser
+# ---------------------------------------------------------------------------
+
+
+class TestNetDevParser:
+    def _ctx(self, seconds: int) -> ParseContext:
+        from datetime import datetime, timedelta, timezone
+
+        t0 = datetime(2026, 7, 3, 12, 0, 0, tzinfo=timezone.utc)
+        return ParseContext(ts=t0 + timedelta(seconds=seconds))
+
+    def test_first_tick_is_baseline_empty(self):
+        parser = NetDevParser()
+        result = parser.parse(_net_dev_output((1000, 10, 0, 0, 2000, 20, 0, 0)), ctx=self._ctx(0))
+        assert result == {}
+
+    def test_second_tick_emits_byte_rates(self):
+        parser = NetDevParser()
+        parser.parse(_net_dev_output((1000, 10, 0, 0, 2000, 20, 0, 0)), ctx=self._ctx(0))
+        points = parser.parse(_net_dev_output((6000, 60, 5, 10, 4000, 40, 0, 0)), ctx=self._ctx(5))
+        assert points["rx eth0"].value == 1000.0  # (6000-1000)/5
+        assert points["tx eth0"].value == 400.0  # (4000-2000)/5
+        assert points["rx eth0"].meta == {"Packets": "10.0/s", "Errors": "1.0/s", "Drops": "2.0/s"}
+
+    def test_loopback_is_skipped(self):
+        parser = NetDevParser()
+        parser.parse(_net_dev_output((0, 0, 0, 0, 0, 0, 0, 0)), ctx=self._ctx(0))
+        points = parser.parse(_net_dev_output((500, 5, 0, 0, 500, 5, 0, 0)), ctx=self._ctx(5))
+        assert not any(k.split()[-1] == "lo" for k in points)
+
+    def test_new_interface_baselines_silently(self):
+        parser = NetDevParser()
+        parser.parse(_net_dev_output((0, 0, 0, 0, 0, 0, 0, 0)), ctx=self._ctx(0))
+        points = parser.parse(
+            _net_dev_output((100, 1, 0, 0, 100, 1, 0, 0), wlan0=(50, 1, 0, 0, 50, 1, 0, 0)),
+            ctx=self._ctx(5),
+        )
+        assert "rx wlan0" not in points  # first sighting = baseline
+        points = parser.parse(
+            _net_dev_output((200, 2, 0, 0, 200, 2, 0, 0), wlan0=(100, 2, 0, 0, 100, 2, 0, 0)),
+            ctx=self._ctx(10),
+        )
+        assert points["rx wlan0"].value == 10.0
+
+    def test_counter_reset_skips_tick(self):
+        parser = NetDevParser()
+        parser.parse(_net_dev_output((9000, 90, 0, 0, 9000, 90, 0, 0)), ctx=self._ctx(0))
+        points = parser.parse(_net_dev_output((10, 1, 0, 0, 10, 1, 0, 0)), ctx=self._ctx(5))
+        assert "rx eth0" not in points
+
+    def test_garbage_output_is_empty(self):
+        assert NetDevParser().parse("cat: /proc/net/dev: No such file", ctx=self._ctx(0)) == {}
+
+    def test_in_default_parsers(self):
+        assert "cat /proc/net/dev" in DEFAULT_PARSERS
 
 
 # ---------------------------------------------------------------------------

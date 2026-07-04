@@ -45,12 +45,13 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
 from typing_extensions import override
 
 from ..registry import Registry, caller_module
+from .rates import RateTracker
 
 _float_re_str = r"[\d]+(\.\d+)?"
 _mem_size_re_str = rf"{_float_re_str}(?:\s*[KMGT]B?)?"
@@ -359,12 +360,78 @@ class LoadParser(MetricParser):
             return {}
 
 
+def _rate_meta(rates: dict[str, float | None]) -> dict[str, Any] | None:
+    """Format auxiliary counter rates as hover meta; None when nothing rated yet."""
+    meta = {label: f"{rate:.1f}/s" for label, rate in rates.items() if rate is not None}
+    return meta or None
+
+
+class NetDevParser(MetricParser):
+    """Per-interface network throughput from ``/proc/net/dev`` counter deltas.
+
+    Emits ``rx <iface>`` / ``tx <iface>`` byte rates; packet/error/drop rates
+    ride each series' hover meta. The loopback interface is skipped. First
+    tick per interface is the rate baseline and emits nothing; a counter
+    reset (reboot) skips one tick and re-baselines (see
+    :mod:`otto.monitor.rates`).
+    """
+
+    y_title = "Throughput"
+    unit = "B/s"
+    command = "cat /proc/net/dev"
+    tab = "network"
+    tab_label = "Network"
+    chart = "Network I/O"
+
+    def __init__(self) -> None:
+        self._rates = RateTracker()
+
+    @override
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        ts = ctx.ts or datetime.now(tz=timezone.utc)
+        result: dict[str, MetricDataPoint] = {}
+        active: set[str] = set()
+        for line in output.splitlines():
+            if ":" not in line:
+                continue  # header lines
+            iface, _, rest = line.partition(":")
+            iface = iface.strip()
+            fields = rest.split()
+            if iface == "lo" or len(fields) < 16:  # noqa: PLR2004 — /proc/net/dev rows carry 8 rx + 8 tx counters
+                continue
+            try:
+                counters = [float(fields[i]) for i in (0, 1, 2, 3, 8, 9, 10, 11)]
+            except ValueError:
+                continue
+            rx_bytes, rx_pkts, rx_errs, rx_drop, tx_bytes, tx_pkts, tx_errs, tx_drop = counters
+            keys = ("rx", "rxp", "rxe", "rxd", "tx", "txp", "txe", "txd")
+            active.update(f"{iface}/{c}" for c in keys)
+            rx_rate = self._rates.update(f"{iface}/rx", rx_bytes, ts)
+            rx_aux = {
+                "Packets": self._rates.update(f"{iface}/rxp", rx_pkts, ts),
+                "Errors": self._rates.update(f"{iface}/rxe", rx_errs, ts),
+                "Drops": self._rates.update(f"{iface}/rxd", rx_drop, ts),
+            }
+            tx_rate = self._rates.update(f"{iface}/tx", tx_bytes, ts)
+            tx_aux = {
+                "Packets": self._rates.update(f"{iface}/txp", tx_pkts, ts),
+                "Errors": self._rates.update(f"{iface}/txe", tx_errs, ts),
+                "Drops": self._rates.update(f"{iface}/txd", tx_drop, ts),
+            }
+            if rx_rate is not None:
+                result[f"rx {iface}"] = MetricDataPoint(round(rx_rate, 2), meta=_rate_meta(rx_aux))
+            if tx_rate is not None:
+                result[f"tx {iface}"] = MetricDataPoint(round(tx_rate, 2), meta=_rate_meta(tx_aux))
+        self._rates.prune(active)
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Default parser registry — maps command string → parser instance
 # ---------------------------------------------------------------------------
 
 DEFAULT_PARSERS: dict[str, MetricParser] = {
-    p.command: p for p in [TopCpuParser(), MemParser(), DiskParser(), LoadParser()]
+    p.command: p for p in [TopCpuParser(), MemParser(), DiskParser(), LoadParser(), NetDevParser()]
 }
 
 

@@ -37,7 +37,7 @@ async def test_meta_serves_production_catalog_with_forced_live() -> None:
         if p.tab not in expected_tabs:
             expected_tabs.append(p.tab)
     assert [t["id"] for t in meta["tabs"]] == expected_tabs
-    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk"]
+    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk", "network"]
     assert meta["tabs"][0]["metrics"] == ["CPU", "Load"]  # Load shares the cpu tab
 
 
