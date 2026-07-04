@@ -6,8 +6,31 @@ account with a restricted shell (``/bin/false``) and ``DenyUsers mysql`` in
 ``mysql`` is a root-mediated ``sudo su -s /bin/bash mysql``: ``vagrant`` has
 passwordless sudo, and util-linux's ``su -s`` is silently ignored for a
 non-root caller against a restricted-shell target, so the switch must go
-through sudo. This module proves the login-proxy machinery (Tasks 1-9) does
-exactly that, end to end, against the real bed.
+through sudo.
+
+What this module proves, end to end against the real bed, using a CUSTOM
+``sudo-su-shell`` login proxy (registered here — see below):
+
+- direct auth as ``mysql`` is denied (only the proxy path works);
+- proxied session *establishment* (``user='mysql'`` → default session runs
+  as mysql);
+- ``switch_user`` / ``as_user`` roundtrip (become mysql, then restore);
+- ``oneshot`` routing through the proxied pool (Task 8);
+- ``nc`` transfer ownership under the proxied user;
+- ``interact --as-user`` over the real PTY bridge (Task 9);
+
+plus cred-chain resolution (``via``/``proxy`` validated at ingest by
+``CredSpec`` when the proxy is registered).
+
+NOTE — coverage gap tracked as a follow-up: every user-switch test here uses
+the custom ``sudo-su-shell`` proxy, which bakes in a post-transition *resync*
+(``_wait_for_shell_ready``, see below). The BUILT-IN ``"su"`` proxy and the
+default ``"exit"`` undo in ``otto.host.login_proxy`` lack that resync and were
+confirmed on this same live bed to race a pty typeahead flush (a 100%-reliable
+hang on the next command after the switch/undo). This module deliberately does
+NOT exercise the built-in ``"su"`` path — its fix plus positive live-bed
+coverage are a separate follow-up task (no live-bed xfail here: a 100%-hang
+xfail would risk wedging the shared bed).
 
 Containment
 -----------
@@ -183,16 +206,43 @@ async def _attempt_direct_mysql_login(ip: str) -> None:
         pass
 
 
+async def _assert_sshd_reachable(element: str, ip: str) -> None:
+    """Fail LOUD (host-named) if sshd isn't reachable on :22 — never skip.
+
+    ``lease_unix_host`` is a pure local flock with no liveness check, so a
+    DOWN VM leases fine. Without this probe, a connection-level ``OSError`` /
+    ``TimeoutError`` from an unreachable host would be indistinguishable from
+    a genuine auth denial and the deny-assertion would false-positive-PASS.
+    A bounded raw TCP connect isolates "bed down" from "sshd up and denied".
+    """
+    try:
+        _reader, writer = await asyncio.wait_for(asyncio.open_connection(ip, 22), timeout=10)
+    except (OSError, asyncio.TimeoutError) as exc:
+        raise RuntimeError(
+            f"{element}_seed ({ip}) unreachable on :22 — bed down? "
+            f"(login-proxy e2e must fail loud on host-down, never skip): {exc!r}"
+        ) from exc
+    writer.close()
+    with contextlib.suppress(OSError):
+        await writer.wait_closed()
+
+
 @pytest.mark.asyncio
 async def test_direct_ssh_as_mysql_is_denied(leased_host: tuple[str, str]) -> None:
-    """A raw asyncssh connection as ``mysql``/``Password1`` must fail.
+    """A raw asyncssh connection as ``mysql``/``Password1`` must be AUTH-denied.
 
     ``sshd_config`` on every bed VM carries ``DenyUsers mysql`` and the
     account's shell is ``/bin/false`` — direct authentication as ``mysql``
     must never succeed, proving the only path in is the root-mediated proxy.
+
+    Fails loud on host-down first (``_assert_sshd_reachable``), then asserts
+    the auth is specifically rejected with :class:`asyncssh.PermissionDenied`
+    — NOT any connection-level ``OSError`` / ``TimeoutError``, which would
+    mean "bed unreachable" masquerading as "denied".
     """
-    ip = leased_host[1]
-    with pytest.raises((asyncssh.Error, OSError, asyncio.TimeoutError)):
+    element, ip = leased_host
+    await _assert_sshd_reachable(element, ip)
+    with pytest.raises(asyncssh.PermissionDenied):
         await _attempt_direct_mysql_login(ip)
 
 
