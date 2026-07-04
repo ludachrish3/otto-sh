@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
     from otto.cli import app
     from otto.cli.registry import cli_command, register_cli_command
+    from otto.host.login_proxy import Cred, register_login_proxy
     from otto.logger import get_logger
     from otto.result import CommandResult, Result, Results
 
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CommandResult",
+    "Cred",
     "OttoContext",
     "Result",
     "Results",
@@ -37,6 +39,7 @@ __all__ = [
     "open_context",
     "options",
     "register_cli_command",
+    "register_login_proxy",
     "run_on_all_hosts",
     "try_get_context",
 ]
@@ -60,6 +63,8 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "Results": ("otto.result", "Results"),
     "register_cli_command": ("otto.cli.registry", "register_cli_command"),
     "cli_command": ("otto.cli.registry", "cli_command"),
+    "Cred": ("otto.host.login_proxy", "Cred"),
+    "register_login_proxy": ("otto.host.login_proxy", "register_login_proxy"),
 }
 
 
