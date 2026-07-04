@@ -202,6 +202,26 @@ class TestSilentParserWarning:
         assert "None" not in failure_warnings[0].message
 
     @pytest.mark.asyncio
+    async def test_failed_command_with_parseable_output_still_records_points(
+        self, collector, caplog
+    ):
+        """Parsing is NOT success-gated: grep-style commands legitimately exit
+        nonzero while their partial output still carries series. Only the
+        health bookkeeping (never-produced backstop) is success-gated."""
+        parsers = {"echo 42": _ParsesFine()}
+        failed = _failed("echo 42", 1, "42\n")
+        with caplog.at_level("WARNING", logger="otto"):
+            for _ in range(3):
+                await _tick(collector, parsers, [failed])
+        points = collector._store.series.get("test1/Test")
+        assert points is not None
+        assert len(points) == 3  # every failed tick still recorded
+        failure_warnings = [r for r in caplog.records if "failed on" in r.message]
+        silent_warnings = [r for r in caplog.records if "has produced no data" in r.message]
+        assert len(failure_warnings) == 1  # edge-triggered
+        assert len(silent_warnings) == 0  # health must not tick on failures
+
+    @pytest.mark.asyncio
     async def test_never_produced_sanity_check(self, collector, caplog):
         """Existing test: succeeding command with empty parse should still warn
         by tick 3."""

@@ -471,12 +471,18 @@ class MetricCollector:
                         host_name,
                         failed_ticks,
                     )
-                points = parser.parse(cmd_result.value, ctx=ctx)
+            # Parsing is NOT success-gated: grep-style commands legitimately
+            # exit nonzero while their (partial) output still carries series.
+            points = parser.parse(cmd_result.value, ctx=ctx)
+            # The never-produced backstop only counts SUCCEEDING ticks — a
+            # failing command is layer 1's job above; double-warning one root
+            # cause helps nobody.
+            if cmd_result.retcode == 0:
                 self._note_health(key, produced=bool(points), what=type(parser).__name__)
-                if not points:
-                    continue
-                for label, dp in points.items():
-                    await self._record_point(host_name, ts, label, dp, parser)
+            if not points:
+                continue
+            for label, dp in points.items():
+                await self._record_point(host_name, ts, label, dp, parser)
 
     def _note_health(self, key: tuple[str, str], *, produced: bool, what: str) -> None:
         """Track never-produced-by-tick-K per (host, command/oid); warn once."""
