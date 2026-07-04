@@ -13,6 +13,7 @@ function resetStore(): void {
     series: {},
     events: [],
     chartMap: {},
+    logEvents: {},
     activeTab: null,
     selectedHost: null,
     paused: false,
@@ -253,6 +254,41 @@ describe("sseOpened (dashboard.js src.onopen)", () => {
     useMonitorStore.setState({ everLive: true, meta: makeMeta({ live: false }) });
     useMonitorStore.getState().actions.sseOpened();
     expect(useMonitorStore.getState().everLive).toBe(true);
+  });
+});
+
+describe("logEventMsg", () => {
+  it("appends batch rows under host/tab, tagging each row", () => {
+    const { actions } = useMonitorStore.getState();
+    actions.logEventMsg({
+      type: "log_event",
+      host: "host1",
+      tab: "syslog",
+      rows: [{ ts: "2026-07-04T12:00:00+00:00", fields: { message: "hi" } }],
+    });
+    const rows = useMonitorStore.getState().logEvents["host1/syslog"];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toEqual({
+      timestamp: "2026-07-04T12:00:00+00:00",
+      host: "host1",
+      tab: "syslog",
+      fields: { message: "hi" },
+    });
+  });
+});
+
+describe("applyData with log_events", () => {
+  it("hydrates the logEvents slice from the snapshot", () => {
+    const { actions } = useMonitorStore.getState();
+    actions.applyData({
+      series: {},
+      events: [],
+      chart_map: {},
+      log_events: [
+        { timestamp: "2026-07-04T12:00:00+00:00", host: "h", tab: "t", fields: { m: "x" } },
+      ],
+    });
+    expect(useMonitorStore.getState().logEvents["h/t"]).toHaveLength(1);
   });
 });
 

@@ -5,8 +5,9 @@
 // while both exist (Phase 2 cutover deletes the legacy one — Task 9).
 import { create } from "zustand";
 
-import type { DataPayload, MonitorEvent, Point } from "./api/client";
+import type { DataPayload, LogEventRow, MonitorEvent, Point } from "./api/client";
 import type { MonitorDashboardApiMetaPayload } from "./api/types.gen";
+import { appendRows, groupRowsFromData } from "./logevents";
 
 export type ConnectionState = "connecting" | "live" | "historical" | "disconnected";
 
@@ -24,10 +25,19 @@ export interface MetricMessage {
   meta?: Record<string, unknown>;
 }
 
+/** The `/api/stream` "log_event" message — mirrors collector.py's `_record_log_events()` batch. */
+export interface LogEventMessage {
+  type: "log_event";
+  host: string;
+  tab: string;
+  rows: { ts: string; fields: Record<string, string> }[];
+}
+
 interface MonitorActions {
   applyMeta: (meta: MonitorDashboardApiMetaPayload) => void;
   applyData: (data: DataPayload) => void;
   metricMsg: (msg: MetricMessage) => void;
+  logEventMsg: (msg: LogEventMessage) => void;
   eventMsg: (event: MonitorEvent) => void;
   eventUpdated: (event: MonitorEvent) => void;
   eventDeleted: (id: number) => void;
@@ -54,6 +64,8 @@ export interface MonitorState {
   events: MonitorEvent[];
   /** bare metric label -> chart key, hydrated from `/api/data`'s `chart_map`. */
   chartMap: Record<string, string>;
+  /** `"host/tab"` -> that table's rows (newest last; capped at MAX_TABLE_ROWS). */
+  logEvents: Record<string, LogEventRow[]>;
   activeTab: string | null;
   selectedHost: string | null;
   paused: boolean;
@@ -134,6 +146,7 @@ export const useMonitorStore = create<MonitorState>()((set, get) => ({
   series: {},
   events: [],
   chartMap: {},
+  logEvents: {},
   activeTab: null,
   selectedHost: null,
   paused: false,
@@ -148,7 +161,12 @@ export const useMonitorStore = create<MonitorState>()((set, get) => ({
     applyMeta: (meta) => set({ meta }),
 
     applyData: (data) =>
-      set({ series: data.series, events: data.events, chartMap: data.chart_map }),
+      set({
+        series: data.series,
+        events: data.events,
+        chartMap: data.chart_map,
+        logEvents: groupRowsFromData(data.log_events ?? []),
+      }),
 
     // dashboard.js's appendMetricPoint(): the point is pushed to state.series
     // unconditionally, THEN (only) chart-rendering is skipped while paused —
@@ -165,6 +183,24 @@ export const useMonitorStore = create<MonitorState>()((set, get) => ({
           ],
         },
         lastMetric: msg,
+      })),
+
+    // Batched log_event frames append under their (host, tab) key. Not
+    // pause-gated: pause freezes chart *rendering*; the table renders
+    // straight from this slice, and v1 deliberately keeps it live.
+    logEventMsg: (msg) =>
+      set((state) => ({
+        logEvents: appendRows(
+          state.logEvents,
+          msg.host,
+          msg.tab,
+          msg.rows.map((r) => ({
+            timestamp: r.ts,
+            host: msg.host,
+            tab: msg.tab,
+            fields: r.fields,
+          })),
+        ),
       })),
 
     // dashboard.js's addEventToPlot(): always pushes; the paused-gated half

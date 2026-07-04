@@ -26,11 +26,20 @@ export interface MonitorEvent {
   end_timestamp: string | null;
 }
 
+/** One log-event row — mirrors `LogEventRecord` / `collector.get_log_events()`. */
+export interface LogEventRow {
+  timestamp: string;
+  host: string;
+  tab: string;
+  fields: Record<string, string>;
+}
+
 /** The `/api/data` snapshot payload — mirrors server.py's `data()` route. */
 export interface DataPayload {
   series: Record<string, Point[]>;
   events: MonitorEvent[];
   chart_map: Record<string, string>;
+  log_events: LogEventRow[];
 }
 
 export async function fetchMeta(): Promise<MonitorDashboardApiMetaPayload> {

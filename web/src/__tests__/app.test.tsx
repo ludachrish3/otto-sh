@@ -26,7 +26,7 @@ const META: MonitorDashboardApiMetaPayload = {
   interval: null,
 };
 
-const DATA: DataPayload = { series: {}, events: [], chart_map: {} };
+const DATA: DataPayload = { series: {}, events: [], chart_map: {}, log_events: [] };
 
 function jsonResponse(body: unknown): Response {
   return { ok: true, json: () => Promise.resolve(body) } as Response;
@@ -59,6 +59,7 @@ function resetStore(): void {
     series: {},
     events: [],
     chartMap: {},
+    logEvents: {},
     activeTab: null,
     selectedHost: null,
     paused: false,

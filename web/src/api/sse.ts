@@ -3,7 +3,7 @@
 // message, and an onerror handler that transitions to disconnected/historical
 // and closes the source (no auto-retry — same as the legacy dashboard).
 import type { MonitorEvent } from "./client";
-import { type MetricMessage, useMonitorStore } from "../store";
+import { type LogEventMessage, type MetricMessage, useMonitorStore } from "../store";
 
 interface EventDeletedMessage {
   type: "event_deleted";
@@ -12,6 +12,7 @@ interface EventDeletedMessage {
 
 type StreamMessage =
   | MetricMessage
+  | LogEventMessage
   | (MonitorEvent & { type: "event" })
   | (MonitorEvent & { type: "event_updated" })
   | EventDeletedMessage;
@@ -29,6 +30,9 @@ export function startSse(url = "/api/stream"): EventSource {
     switch (msg.type) {
       case "metric":
         actions.metricMsg(msg);
+        break;
+      case "log_event":
+        actions.logEventMsg(msg);
         break;
       case "event":
         actions.eventMsg(msg);
