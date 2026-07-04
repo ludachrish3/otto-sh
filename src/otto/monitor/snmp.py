@@ -225,16 +225,24 @@ def _register_net_metrics(index: int) -> None:
     """Register descriptors for interface *index* (idempotent — always overwrites)."""
     rx, tx, rx_p, tx_p, errs, drops = net_oids(index)
 
-    def _m(oid: str, label: str, chart: str, unit: str, **kw: object) -> SnmpMetric:
+    def _m(
+        oid: str,
+        label: str,
+        chart: str,
+        unit: str,
+        y_title: str = "",
+        meta_of: str | None = None,
+    ) -> SnmpMetric:
         return SnmpMetric(
             oid=oid,
             label=label,
             chart=chart,
             unit=unit,
+            y_title=y_title,
             kind="counter",
             tab="network",
             tab_label="Network",
-            **kw,
+            meta_of=meta_of,
         )
 
     for metric in (
