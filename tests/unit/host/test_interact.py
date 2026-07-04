@@ -26,6 +26,7 @@ from otto.host.interact import (
     _SessionLogFile,
     _strip_ansi,
 )
+from otto.host.login_proxy import Cred
 from otto.logger.mode import LogMode
 
 # ---------------------------------------------------------------------------
@@ -301,7 +302,7 @@ class TestUnixHostInteractDispatch:
         host = UnixHost(
             ip="10.0.0.1",
             element="router",
-            creds={"u": "p"},
+            creds=[Cred(login="u", password="p")],
             term="ssh",
             log=LogMode.QUIET,
         )
@@ -325,7 +326,7 @@ class TestUnixHostInteractDispatch:
         host = UnixHost(
             ip="10.0.0.1",
             element="router",
-            creds={"u": "p"},
+            creds=[Cred(login="u", password="p")],
             term="telnet",
             log=LogMode.QUIET,
         )

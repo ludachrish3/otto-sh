@@ -30,6 +30,7 @@ from typing_extensions import override
 
 from ..logger import get_logger
 from ..registry import Registry, caller_module
+from .login_proxy import Cred, resolve_chain
 from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from .telnet import TelnetClient
 
@@ -49,7 +50,7 @@ class TermContext:
     """
 
     ip: str
-    creds: dict[str, str]
+    creds: list[Cred]
     user: str | None
     term: str
     name: str
@@ -187,7 +188,7 @@ class ConnectionManager:
     def __init__(
         self,
         ip: str,
-        creds: dict[str, str],
+        creds: list[Cred],
         user: str | None,
         term: str,
         name: str,
@@ -198,7 +199,7 @@ class ConnectionManager:
         ftp_options: FtpOptions | None = None,
     ) -> None:
         self._ip = ip
-        self._creds_dict = creds
+        self._creds = creds
         self._user = user
         self._term = term
         self._name = name
@@ -252,18 +253,32 @@ class ConnectionManager:
         return self._telnet_options
 
     @property
-    def credentials(self) -> tuple[str, str]:
-        """Return the active (username, password) pair.
+    def login_target(self) -> str:
+        """The login the session should end up as (host.user or first entry)."""
+        if self._user is not None:
+            return self._user
+        return self._creds[0].login if self._creds else ""
 
-        Returns ``('', '')`` when no credentials are configured — valid for a
-        loginless shell (e.g. an RTOS telnet shell reached with
-        ``TelnetOptions.login = False``), where the empty pair is never used.
+    @property
+    def credentials(self) -> tuple[str, str | None]:
+        """(username, password) for TRANSPORT auth — the resolved direct cred.
+
+        For a proxied ``login_target`` this is the via-chain's directly
+        loginable end; the hops are applied post-handshake (see
+        ``proxy_hops``). ``('', '')`` when no creds are configured.
         """
-        if self._user is None:
-            if not self._creds_dict:
-                return ("", "")
-            return next(iter(self._creds_dict.items()))
-        return self._user, self._creds_dict[self._user]
+        if not self._creds:
+            return ("", "")
+        direct, _ = resolve_chain(self._creds, self.login_target)
+        return direct.login, direct.password
+
+    @property
+    def proxy_hops(self) -> list[Cred]:
+        """Proxied creds to apply after the marker handshake, outermost first."""
+        if not self._creds:
+            return []
+        _, hops = resolve_chain(self._creds, self.login_target)
+        return hops
 
     @property
     def ip(self) -> str:
@@ -372,7 +387,7 @@ class ConnectionManager:
                 client = aioftp.Client(**client_kwargs)
                 logger.debug(f"Connecting to {self._name} via FTP")
                 await client.connect(self._ip, ftp_port)
-            await client.login(user, password)
+            await client.login(user, password or "")
             self._ftp_conn = client
             logger.debug(f"FTP connected to {self._name}")
             return client
@@ -412,7 +427,7 @@ class ConnectionManager:
             client = TelnetClient(
                 connect_host,
                 user=user,
-                password=password,
+                password=password or "",
                 options=self._telnet_options,
                 connect_port=connect_port,
             )

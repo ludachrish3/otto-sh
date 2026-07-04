@@ -12,6 +12,7 @@ import pytest
 from asyncssh import SSHClientConnection
 
 from otto.host.connections import ConnectionManager
+from otto.host.login_proxy import Cred
 from otto.host.options import NcOptions
 from otto.host.transport import SshHopTransport
 from otto.host.unix_host import UnixHost
@@ -40,7 +41,12 @@ def _cs(
 @pytest.fixture
 def host() -> UnixHost:
     """A simple host with no hop."""
-    return UnixHost(ip="10.0.0.1", element="target", creds={"user": "pass"}, log=LogMode.QUIET)
+    return UnixHost(
+        ip="10.0.0.1",
+        element="target",
+        creds=[Cred(login="user", password="pass")],
+        log=LogMode.QUIET,
+    )
 
 
 @pytest.fixture
@@ -49,7 +55,7 @@ def hop_host() -> UnixHost:
     return UnixHost(
         ip="10.0.0.2",
         element="target",
-        creds={"user": "pass"},
+        creds=[Cred(login="user", password="pass")],
         hop="jumpbox",
         log=LogMode.QUIET,
     )
@@ -83,7 +89,7 @@ class TestConnectionManagerTunnel:
     def test_no_tunnel_factory_by_default(self):
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -94,7 +100,7 @@ class TestConnectionManagerTunnel:
         factory = AsyncMock(return_value=MagicMock(spec=SSHClientConnection))
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -108,7 +114,7 @@ class TestConnectionManagerTunnel:
         factory = AsyncMock(return_value=mock_conn)
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -125,7 +131,7 @@ class TestConnectionManagerTunnel:
         factory = AsyncMock(return_value=mock_tunnel)
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -149,7 +155,7 @@ class TestConnectionManagerTunnel:
     async def test_ssh_no_tunnel_when_not_configured(self):
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -177,7 +183,7 @@ class TestConnectionManagerTunnel:
 
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="telnet",
             name="test",
@@ -209,7 +215,7 @@ class TestConnectionManagerTunnel:
         hop = SshHopTransport(factory)
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -234,7 +240,7 @@ class TestConnectionManagerTunnel:
 
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -248,7 +254,7 @@ class TestConnectionManagerTunnel:
     async def test_forward_port_raises_without_tunnel(self):
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -336,7 +342,7 @@ class TestTunnelCleanup:
 
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -361,7 +367,7 @@ class TestTunnelCleanup:
 
         cm = ConnectionManager(
             ip="10.0.0.1",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             user=None,
             term="ssh",
             name="test",
@@ -379,7 +385,12 @@ class TestTunnelCleanup:
 
 class TestRebuildConnections:
     def test_rebuild_adds_tunnel(self):
-        host = UnixHost(ip="10.0.0.1", element="target", creds={"user": "pass"}, log=LogMode.QUIET)
+        host = UnixHost(
+            ip="10.0.0.1",
+            element="target",
+            creds=[Cred(login="user", password="pass")],
+            log=LogMode.QUIET,
+        )
         assert not host._connections.has_tunnel
 
         host.hop = "some_hop"
@@ -390,7 +401,7 @@ class TestRebuildConnections:
         host = UnixHost(
             ip="10.0.0.1",
             element="target",
-            creds={"user": "pass"},
+            creds=[Cred(login="user", password="pass")],
             hop="some_hop",
             log=LogMode.QUIET,
         )
@@ -705,10 +716,18 @@ class TestCycleDetection:
         from otto.configmodule.lab import Lab
 
         host_a = UnixHost(
-            ip="10.0.0.1", element="hostA", creds={"user": "pass"}, hop="hostb", log=LogMode.QUIET
+            ip="10.0.0.1",
+            element="hostA",
+            creds=[Cred(login="user", password="pass")],
+            hop="hostb",
+            log=LogMode.QUIET,
         )
         host_b = UnixHost(
-            ip="10.0.0.2", element="hostB", creds={"user": "pass"}, hop="hosta", log=LogMode.QUIET
+            ip="10.0.0.2",
+            element="hostB",
+            creds=[Cred(login="user", password="pass")],
+            hop="hosta",
+            log=LogMode.QUIET,
         )
 
         # Capture the transport built at construction time (with _lab=None).
@@ -743,12 +762,15 @@ class TestCycleDetection:
         # at call time — patching asyncssh.connect makes the import pick up the mock.
         with patch("asyncssh.connect", AsyncMock(return_value=mock_ssh_conn)):
             jumpbox = UnixHost(
-                ip="10.10.0.1", element="jumpbox", creds={"admin": "secret"}, log=LogMode.QUIET
+                ip="10.10.0.1",
+                element="jumpbox",
+                creds=[Cred(login="admin", password="secret")],
+                log=LogMode.QUIET,
             )
             target = UnixHost(
                 ip="10.10.0.2",
                 element="target",
-                creds={"user": "pass"},
+                creds=[Cred(login="user", password="pass")],
                 hop="jumpbox",
                 log=LogMode.QUIET,
             )
@@ -791,7 +813,10 @@ class TestStandaloneHostHopResolution:
         with patch("asyncssh.connect", AsyncMock(return_value=mock_ssh_conn)):
             # Build the hop TARGET and add it to a Lab.
             jumpbox = UnixHost(
-                ip="10.20.0.1", element="jumpbox", creds={"admin": "secret"}, log=LogMode.QUIET
+                ip="10.20.0.1",
+                element="jumpbox",
+                creds=[Cred(login="admin", password="secret")],
+                log=LogMode.QUIET,
             )
             lab = Lab(name="fd_model_test")
             lab.add_host(jumpbox)
@@ -805,7 +830,7 @@ class TestStandaloneHostHopResolution:
                 standalone = UnixHost(
                     ip="10.20.0.2",
                     element="target",
-                    creds={"user": "pass"},
+                    creds=[Cred(login="user", password="pass")],
                     hop="jumpbox",
                     log=LogMode.QUIET,
                 )

@@ -82,6 +82,7 @@ from .host import (
     is_dry_run,
 )
 from .interact import run_ssh_login, run_telnet_login
+from .login_proxy import Cred, LoginProxyError, cred_for
 from .options import (
     FtpOptions,
     NcOptions,
@@ -116,8 +117,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     ip: str
     """IP address of the host."""
 
-    creds: dict[str, str]
-    """Users and their respective passwords for this host."""
+    creds: list[Cred]
+    """Login credentials for this host — one :class:`~otto.host.login_proxy.Cred`
+    entry per account, in priority order (the first entry is the default
+    login when ``user`` is unset). A proxied entry (``Cred.proxy`` set)
+    cannot be reached by direct authentication; :meth:`cred` /
+    :attr:`default_cred` and the connection-layer chain resolution
+    (:func:`~otto.host.login_proxy.resolve_chain`) handle that."""
 
     element: str = field(repr=False)
     """Network element to which this host belongs."""
@@ -136,7 +142,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     """Human readable name to represent the host. Automatically generated if not provided."""
 
     user: str | None = None
-    """User with which to log in. If not provided, the first user in the `creds` dict will be used."""  # noqa: E501 — long field docstring
+    """User with which to log in. If not provided, the first entry in `creds` will be used."""
 
     element_id: int | None = field(default=None, repr=False)
     """Network element identifier to which this host belongs.
@@ -287,14 +293,28 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     @override
     def _sudo_password(self) -> str | None:
-        """Return the login user's password, used for ``sudo -S``."""
-        _user, password = self._connections.credentials
-        return password or None
+        """Return the current user's password, used for ``sudo -S``."""
+        c = cred_for(self.creds, self.current_user)
+        return c.password if c else None
 
     @override
     def _user_password(self, user: str) -> str | None:
         """Password for ``su <user>`` from this host's creds, if present."""
-        return self.creds.get(user)
+        c = cred_for(self.creds, user)
+        return c.password if c else None
+
+    def cred(self, login: str) -> Cred:
+        """Return the cred entry for *login*; loud lookup listing known logins."""
+        found = cred_for(self.creds, login)
+        if found is None:
+            known = ", ".join(c.login for c in self.creds) or "<none>"
+            raise LoginProxyError(f"{self.name}: no cred for login {login!r}. Known: {known}")
+        return found
+
+    @property
+    def default_cred(self) -> Cred | None:
+        """First cred entry — the default login user."""
+        return self.creds[0] if self.creds else None
 
     def __post_init__(self) -> None:
 
@@ -329,7 +349,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         self._file_transfer = self._build_file_transfer()
 
     @property
-    def _creds(self) -> tuple[str, str]:
+    def _creds(self) -> tuple[str, str | None]:
         """Provide the (username, password) pair from creds. Delegates to ConnectionManager."""
         return self._connections.credentials
 
@@ -483,7 +503,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         client = TelnetClient(
             host=connect_host,
             user=user,
-            password=password,
+            password=password or "",
             options=interactive_options,
             connect_port=connect_port,
             prompt=None,

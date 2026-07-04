@@ -391,7 +391,7 @@ class TestOsTypeDispatch:
                 "command_frame": "zephyr",
             }
         )
-        assert host.creds == {}
+        assert host.creds == []
 
     def test_embedded_osname_and_version(self):
         host = create_host_from_dict(

@@ -365,12 +365,13 @@ def test_console_suppress_filter_passes_non_command_records():
 # Host + command mode composition (Task 4)
 # ---------------------------------------------------------------------------
 
+from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import effective_mode
 
 
 def _make_unix_host(log=LogMode.NORMAL) -> UnixHost:
-    return UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=log)
+    return UnixHost(ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=log)
 
 
 def test_effective_log_composes_host_and_command():

@@ -785,7 +785,7 @@ class TestEnsureInitializedTimeout:
 def test_session_manager_current_user_falls_back_to_login():
     from otto.host.session import SessionManager
 
-    conn = MagicMock()
+    conn = MagicMock(spec=["credentials"])
     conn.credentials = ("alice", "pw")
     mgr = SessionManager(connections=conn, name="h")
     assert mgr.current_user == "alice"  # no default session built yet
@@ -817,7 +817,7 @@ def test_session_manager_current_user_tolerates_connections_without_credentials(
 def test_session_manager_seed_user_stamps_login_user():
     from otto.host.session import SessionManager
 
-    conn = MagicMock()
+    conn = MagicMock(spec=["credentials"])
     conn.credentials = ("alice", "pw")
     mgr = SessionManager(connections=conn, name="h")
     s = MockSession()
@@ -828,7 +828,7 @@ def test_session_manager_seed_user_stamps_login_user():
 def test_session_manager_set_current_user_updates_default_session():
     from otto.host.session import SessionManager
 
-    conn = MagicMock()
+    conn = MagicMock(spec=["credentials"])
     conn.credentials = ("alice", "pw")
     mgr = SessionManager(connections=conn, name="h")
     s = MockSession()

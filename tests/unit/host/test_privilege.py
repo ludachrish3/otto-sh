@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from otto.host.login_proxy import Cred
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
@@ -60,7 +61,7 @@ async def test_switch_user_records_current_user():
     host = UnixHost(
         ip="10.0.0.1",
         element="box",
-        creds={"admin": "secret", "root": "rootpw"},
+        creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         user="admin",
         log=LogMode.QUIET,
     )
@@ -76,7 +77,7 @@ async def test_as_user_restores_previous_user():
     host = UnixHost(
         ip="10.0.0.1",
         element="box",
-        creds={"admin": "secret", "root": "rootpw"},
+        creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         user="admin",
         log=LogMode.QUIET,
     )
@@ -130,7 +131,11 @@ async def test_unix_run_sudo_wraps_and_injects_password_expect():
     from otto.host.unix_host import UnixHost
 
     host = UnixHost(
-        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=LogMode.QUIET
+        ip="10.0.0.1",
+        element="box",
+        creds=[Cred(login="admin", password="secret")],
+        user="admin",
+        log=LogMode.QUIET,
     )
     captured, fake = _capture_run_one(host)
     with patch.object(host, "_run_one", new=fake):
@@ -156,7 +161,11 @@ async def test_sudo_preserves_caller_expects():
     from otto.host.unix_host import UnixHost
 
     host = UnixHost(
-        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=LogMode.QUIET
+        ip="10.0.0.1",
+        element="box",
+        creds=[Cred(login="admin", password="secret")],
+        user="admin",
+        log=LogMode.QUIET,
     )
     captured, fake = _capture_run_one(host)
     with patch.object(host, "_run_one", new=fake):
@@ -173,7 +182,7 @@ async def test_switch_user_sends_su_and_password():
     host = UnixHost(
         ip="10.0.0.1",
         element="box",
-        creds={"admin": "secret", "root": "rootpw"},
+        creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         user="admin",
         log=LogMode.NORMAL,  # NORMAL host so the su exchange's per-command modes pass through
     )
@@ -188,7 +197,11 @@ async def test_switch_user_default_is_root_no_user_arg():
     from otto.host.unix_host import UnixHost
 
     host = UnixHost(
-        ip="10.0.0.1", element="box", creds={"admin": "secret"}, user="admin", log=LogMode.NORMAL
+        ip="10.0.0.1",
+        element="box",
+        creds=[Cred(login="admin", password="secret")],
+        user="admin",
+        log=LogMode.NORMAL,
     )
     host._session_mgr = _mock_session_mgr()
     host._session_mgr.expect.return_value = "Password:"
@@ -212,7 +225,7 @@ async def test_as_user_switches_then_exits():
     host = UnixHost(
         ip="10.0.0.1",
         element="box",
-        creds={"admin": "secret", "root": "rootpw"},
+        creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         user="admin",
         log=LogMode.QUIET,
     )
@@ -251,7 +264,7 @@ async def test_switch_user_password_not_logged(caplog):
     host = UnixHost(
         ip="10.0.0.1",
         element="box",
-        creds={"admin": "secret", "root": "rootpw"},
+        creds=[Cred(login="admin", password="secret"), Cred(login="root", password="rootpw")],
         user="admin",
         log=LogMode.NORMAL,
     )
@@ -282,7 +295,7 @@ async def test_switch_user_quotes_special_char_username():
     host = UnixHost(
         ip="10.0.0.1",
         element="box",
-        creds={"admin": "secret"},
+        creds=[Cred(login="admin", password="secret")],
         user="admin",
         log=LogMode.QUIET,
     )

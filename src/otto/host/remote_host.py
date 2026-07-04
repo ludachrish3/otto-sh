@@ -32,6 +32,7 @@ from typing_extensions import override
 from ..logger import get_logger
 from ..logger.mode import LogMode
 from .host import BaseHost
+from .login_proxy import Cred
 
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
@@ -113,8 +114,9 @@ class RemoteHost(BaseHost):
     name: str
     """Human-readable name; auto-generated from ``element``/``board`` if not given."""
 
-    creds: dict[str, str]
-    """Users and their respective passwords for this host."""
+    creds: list[Cred]
+    """Login credentials for this host — see
+    :attr:`~otto.host.unix_host.UnixHost.creds`."""
 
     resources: set[str]
     """Names of resources required to use this host."""
@@ -385,11 +387,12 @@ class RemoteHost(BaseHost):
                     outer._parent = hop_host._build_hop_transport()  # noqa: SLF001 — intra-package access to RemoteHost._build_hop_transport
                 parent_tunnel = await outer._parent.get_tunnel(_visited=visited)  # noqa: SLF001 — intra-package access to SshHopTransport._parent
 
-            user, password = (
-                next(iter(hop_host.creds.items()))
-                if hop_host.user is None
-                else (hop_host.user, hop_host.creds[hop_host.user])
-            )
+            # Same login_target/direct-cred resolution the hop host's own
+            # ConnectionManager uses for its transport auth — a proxied
+            # login_target resolves to its via-chain's directly-loginable
+            # end (the proxy hops themselves are applied post-handshake by
+            # the hop host's own session, not here).
+            user, password = hop_host._connections.credentials  # noqa: SLF001 — intra-package access to RemoteHost._connections for hop-auth resolution
             logger.debug(f"Opening SSH tunnel through {hop_id} for {host_name}")
             return await _ssh_connect(
                 hop_host.ip,

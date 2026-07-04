@@ -64,6 +64,7 @@ from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .host import Host, SuppressCommandOutput, is_dry_run
+from .login_proxy import Cred
 from .options import SnmpOptions, TelnetOptions
 from .power import PowerController, power_control_from_spec
 from .product import Product
@@ -122,9 +123,12 @@ class EmbeddedHost(RemoteHost):
     name: str = ""
     """Human readable name to represent the host. Automatically generated if not provided."""
 
-    creds: dict[str, str] = field(default_factory=dict)
-    """Users and their respective passwords. Optional — the Zephyr telnet shell
-    backend has no login step, so this is empty for a stock Zephyr target."""
+    creds: list[Cred] = field(default_factory=list)
+    """Login credentials, one :class:`~otto.host.login_proxy.Cred` entry per
+    account. Optional — the Zephyr telnet shell backend has no login step, so
+    this is empty for a stock Zephyr target. Rides the same
+    :class:`~otto.host.connections.ConnectionManager` path as
+    :attr:`~otto.host.unix_host.UnixHost.creds`."""
 
     user: str | None = None
     """User with which to log in, if the shell requires one. Usually unset."""

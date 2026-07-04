@@ -3,6 +3,7 @@
 import pytest
 
 from otto.host.embedded_host import ZephyrHost
+from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.models.host import EmbeddedHostSpec, UnixHostSpec
@@ -41,7 +42,7 @@ def test_directly_built_unix_host_validates_active_against_menu():
         UnixHost(
             ip="1.1.1.1",
             element="x",
-            creds={"u": "p"},
+            creds=[Cred(login="u", password="p")],
             transfer="sftp",
             valid_transfers=["scp"],
             log=LogMode.QUIET,
@@ -70,12 +71,17 @@ def test_host_id_and_name_render_element_id():
     from otto.host.unix_host import UnixHost
 
     h = UnixHost(
-        ip="1.1.1.1", creds={"root": "x"}, element="Test", element_id=5, board="BoardX", slot=2
+        ip="1.1.1.1",
+        creds=[Cred(login="root", password="x")],
+        element="Test",
+        element_id=5,
+        board="BoardX",
+        slot=2,
     )
     assert h.id == "test5_boardx2"  # element_id is the NUMBER; id is lower-cased
     assert h.name == "Test5 BoardX2"  # original case, space-joined name
 
-    h2 = UnixHost(ip="1.1.1.1", creds={"root": "x"}, element="solo")
+    h2 = UnixHost(ip="1.1.1.1", creds=[Cred(login="root", password="x")], element="solo")
     assert h2.id == "solo"
     assert h2.name == "solo"
 
@@ -88,6 +94,11 @@ def test_make_host_id_matches_built_host_id():
     assert make_host_id("solo", None, None, None) == "solo"
 
     h = UnixHost(
-        ip="1.1.1.1", creds={"root": "x"}, element="Test", element_id=5, board="BoardX", slot=2
+        ip="1.1.1.1",
+        creds=[Cred(login="root", password="x")],
+        element="Test",
+        element_id=5,
+        board="BoardX",
+        slot=2,
     )
     assert make_host_id("Test", 5, "BoardX", 2) == h.id

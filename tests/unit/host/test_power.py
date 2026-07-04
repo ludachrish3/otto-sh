@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from otto.host.login_proxy import Cred
 from otto.host.power import (
     CommandPowerController,
     PowerController,
@@ -24,7 +25,13 @@ def _target_with_controller(runner):
     """Build a UnixHost whose lab resolves controller id 'hyp' to *runner*."""
     from otto.host.unix_host import UnixHost
 
-    target = UnixHost(ip="10.0.0.9", element="vm", creds={"u": "p"}, name="vm1", log=LogMode.QUIET)
+    target = UnixHost(
+        ip="10.0.0.9",
+        element="vm",
+        creds=[Cred(login="u", password="p")],
+        name="vm1",
+        log=LogMode.QUIET,
+    )
 
     class _FakeLab:
         hosts: ClassVar = {"hyp": runner}
@@ -108,7 +115,7 @@ def test_unix_power_control_coerced_from_dict():
     host = UnixHost(
         ip="10.0.0.1",
         element="box",
-        creds={"u": "p"},
+        creds=[Cred(login="u", password="p")],
         log=LogMode.QUIET,
         power_control={"type": "command", "on_cmd": "o", "off_cmd": "f"},
     )
@@ -199,7 +206,9 @@ from otto.result import Results
 async def test_unix_soft_reboot_issues_reboot_sudo():
     from otto.host.unix_host import UnixHost
 
-    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
+    host = UnixHost(
+        ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+    )
     with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = Results.collect([])
         result = await host.reboot()
@@ -248,7 +257,9 @@ async def test_localhost_shutdown_raises():
 async def test_unix_shutdown_issues_shutdown_sudo():
     from otto.host.unix_host import UnixHost
 
-    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
+    host = UnixHost(
+        ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+    )
     with patch.object(UnixHost, "run", new_callable=AsyncMock) as mock_run:
         mock_run.return_value = Results.collect([])
         result = await host.shutdown()
@@ -267,7 +278,9 @@ async def test_localhost_is_reachable_true():
 async def test_remote_is_reachable_reflects_verify_connection(monkeypatch):
     from otto.host.unix_host import UnixHost
 
-    host = UnixHost(ip="10.0.0.1", element="box", creds={"u": "p"}, log=LogMode.QUIET)
+    host = UnixHost(
+        ip="10.0.0.1", element="box", creds=[Cred(login="u", password="p")], log=LogMode.QUIET
+    )
     monkeypatch.setattr(
         host,
         "verify_connection",

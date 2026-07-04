@@ -1133,10 +1133,16 @@ class SessionManager:
     def _login_user(self) -> str:
         """Return the host's login username, or '' when loginless / no creds.
 
+        Prefers ``login_target`` (the *requested* login — may be a proxied
+        account reached via a hop rather than the transport's direct-auth
+        user). Falls back to the resolved direct cred's username, then to ''.
         Best-effort: session seeding runs this on every build, so it tolerates
-        a connection manager that exposes no ``credentials`` (e.g. minimal test
-        fakes or a loginless transport) by falling back to ''.
+        a connection manager that exposes neither attribute (e.g. minimal test
+        fakes or a loginless transport).
         """
+        login_target = getattr(self._connections, "login_target", None)
+        if login_target:
+            return login_target
         creds = getattr(self._connections, "credentials", None)
         if not creds:
             return ""
@@ -1450,7 +1456,7 @@ class SessionManager:
                         client = TelnetClient(
                             self._connections.ip,
                             user=user,
-                            password=password,
+                            password=password or "",
                             options=self._connections.telnet_options,
                         )
                         # A caller-side ``wait_for`` cancellation can land

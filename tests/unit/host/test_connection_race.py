@@ -21,6 +21,7 @@ import pytest
 from asyncssh import SFTPClient, SSHClientConnection
 
 from otto.host.connections import ConnectionManager
+from otto.host.login_proxy import Cred
 from otto.host.options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
 from otto.host.telnet import TelnetClient
 from otto.host.transport import SshHopTransport
@@ -50,7 +51,7 @@ async def test_concurrent_ssh_opens_one_connection(monkeypatch):
 
     cm = ConnectionManager(
         ip="1.2.3.4",
-        creds={"u": "p"},
+        creds=[Cred(login="u", password="p")],
         user=None,
         term="ssh",
         name="t",
@@ -89,7 +90,7 @@ async def test_concurrent_sftp_opens_one_client(monkeypatch):
 
     cm = ConnectionManager(
         ip="1.2.3.4",
-        creds={"u": "p"},
+        creds=[Cred(login="u", password="p")],
         user=None,
         term="ssh",
         name="t",
@@ -123,7 +124,7 @@ async def test_concurrent_ftp_opens_one_client(monkeypatch):
 
     cm = ConnectionManager(
         ip="1.2.3.4",
-        creds={"u": "p"},
+        creds=[Cred(login="u", password="p")],
         user=None,
         term="ssh",
         name="t",
@@ -158,7 +159,7 @@ async def test_concurrent_telnet_opens_one_client(monkeypatch):
 
     cm = ConnectionManager(
         ip="1.2.3.4",
-        creds={"u": "p"},
+        creds=[Cred(login="u", password="p")],
         user=None,
         term="telnet",
         name="t",

@@ -9,6 +9,7 @@ from otto.host.connections import (
     build_term_backend,
     register_term_backend,
 )
+from otto.host.login_proxy import Cred
 
 
 @pytest.fixture(autouse=True)
@@ -67,7 +68,7 @@ class TestCreate:
     def test_create_constructs_connection_manager(self):
         ctx = TermContext(
             ip="10.0.0.5",
-            creds={"root": "x"},
+            creds=[Cred(login="root", password="x")],
             user="root",
             term="ssh",
             name="h1",

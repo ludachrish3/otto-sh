@@ -1,10 +1,11 @@
 from otto.host.command_frame import ZephyrFrame
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 
 
 def _unix(**kw):
-    return UnixHost(ip="10.0.0.1", creds={"u": "p"}, element="e", **kw)
+    return UnixHost(ip="10.0.0.1", creds=[Cred(login="u", password="p")], element="e", **kw)
 
 
 def test_unix_interfaces_default_empty():

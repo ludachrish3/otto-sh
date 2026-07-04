@@ -65,7 +65,7 @@ class TestInit:
     def test_default_values(self, host: EmbeddedHost):
         assert host.ip == "192.0.2.1"
         assert host.element == "sprout"
-        assert host.creds == {}
+        assert host.creds == []
         assert host.hop is None
         assert host.resources == set()
         assert host.is_virtual is False
