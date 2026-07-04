@@ -55,7 +55,9 @@ def test_export_json_reimports_losslessly(
     resp = page.request.get(live_dash.url + "/api/export/json")
     assert resp.ok
     exported = resp.json()
-    assert set(exported) == {"metrics", "events", "chart_map"}
+    # log_events joined the wire format in 6283108 (log-event persistence);
+    # this key set fell stale then — round-trip still tested below.
+    assert set(exported) == {"metrics", "events", "chart_map", "log_events"}
 
     out = tmp_path / "exported.json"
     out.write_text(json.dumps(exported))
