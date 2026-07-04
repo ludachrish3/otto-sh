@@ -4,6 +4,7 @@ from otto.host.login_proxy import (
     LOGIN_PROXIES,
     Cred,
     LoginProxyError,
+    perform_switch,
     register_login_proxy,
     resolve_chain,
     run_proxy,
@@ -152,3 +153,53 @@ def test_duplicate_registration_is_loud():
             register_login_proxy("dup-test", p)
     finally:
         LOGIN_PROXIES.unregister("dup-test")
+
+
+@pytest.mark.asyncio
+async def test_perform_switch_plain_su_known_cred():
+    io = RecorderIO(replies=["Password:"])
+    applied = await perform_switch(
+        io, [ADMIN], user="admin", password=None, current_user="root", host_id="h1"
+    )
+    assert [c.login for c in applied] == ["admin"]
+    assert io.sent[0] == ("su admin\n", LogMode.NORMAL)
+    assert io.sent[1] == ("hunter2\n", LogMode.NEVER)
+
+
+@pytest.mark.asyncio
+async def test_perform_switch_unknown_user_ad_hoc():
+    io = RecorderIO()
+    applied = await perform_switch(
+        io, [ADMIN], user="ghost", password=None, current_user="admin", host_id="h1"
+    )
+    assert [c.login for c in applied] == ["ghost"]
+    assert io.sent == [("su ghost\n", LogMode.NORMAL)]  # no password known
+
+
+@pytest.mark.asyncio
+async def test_perform_switch_explicit_password_overrides():
+    io = RecorderIO(replies=["Password:"])
+    await perform_switch(
+        io, [ADMIN], user="admin", password="other", current_user="root", host_id="h1"
+    )
+    assert io.sent[1] == ("other\n", LogMode.NEVER)
+
+
+@pytest.mark.asyncio
+async def test_perform_switch_recurses_through_via():
+    io = RecorderIO(replies=["Password:", "Password:"])
+    applied = await perform_switch(
+        io, [ADMIN, MYSQL], user="mysql", password=None, current_user="root", host_id="h1"
+    )
+    assert [c.login for c in applied] == ["admin", "mysql"]
+    assert io.sent[0][0] == "su admin\n"  # via first
+    assert io.sent[2][0] == "su mysql\n"  # then the proxy
+
+
+@pytest.mark.asyncio
+async def test_perform_switch_skips_via_when_already_there():
+    io = RecorderIO(replies=["Password:"])
+    applied = await perform_switch(
+        io, [ADMIN, MYSQL], user="mysql", password=None, current_user="admin", host_id="h1"
+    )
+    assert [c.login for c in applied] == ["mysql"]

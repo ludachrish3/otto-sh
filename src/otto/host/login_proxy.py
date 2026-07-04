@@ -12,7 +12,7 @@ the old hardcoded ``_perform_su``).
 import re
 import shlex
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, runtime_checkable
 
 from ..logger.mode import LogMode
@@ -194,3 +194,35 @@ async def run_undo(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
         raise LoginProxyError(
             f"{host_id}: login-proxy undo failed leaving {hop.login!r} via proxy {name!r}: {e}"
         ) from e
+
+
+async def perform_switch(
+    io: ProxyIO,
+    creds: list[Cred],
+    user: str,
+    password: str | None,
+    current_user: str,
+    host_id: str,
+) -> list[Cred]:
+    """Become *user* from *current_user*; return the hops applied, in order.
+
+    Semantics preserved from the pre-proxy ``switch_user``: ``user=""``
+    targets root via bare ``su``; an explicit *password* overrides the
+    creds entry; a user with no creds entry is an ad-hoc ``su`` target.
+    A cred whose ``via`` differs from *current_user* first switches to the
+    via account (recursively), so ``as_user`` can undo hop-by-hop.
+    """
+    cred = cred_for(creds, user) if user else None
+    if cred is None:
+        cred = Cred(login=user)
+    if password is not None:
+        cred = replace(cred, password=password)
+
+    applied: list[Cred] = []
+    if cred.via is not None and cred.via != current_user:
+        applied += await perform_switch(io, creds, cred.via, None, current_user, host_id)
+        current_user = applied[-1].login
+    via = cred_for(creds, current_user) or Cred(login=current_user)
+    await run_proxy(io, cred, via=via, host_id=host_id)
+    applied.append(cred)
+    return applied
