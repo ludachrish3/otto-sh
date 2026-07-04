@@ -14,7 +14,7 @@ from ..host.remote_host import RemoteHost
 from ..logger.mode import LogMode
 from .collector import MetricCollector, MonitorTarget
 from .parsers import get_host_parsers
-from .snmp import SnmpClient, SnmpSource, SnmpVersion
+from .snmp import SnmpClient, SnmpSource, SnmpVersion, expand_oid_bundles
 
 
 def build_monitor_collector(
@@ -53,7 +53,7 @@ def build_monitor_collector(
                 MonitorTarget(
                     host=host,
                     parsers={},
-                    snmp=SnmpSource(client=client, oids=list(snmp.oids)),
+                    snmp=SnmpSource(client=client, oids=expand_oid_bundles(snmp.oids)),
                 )
             )
         else:

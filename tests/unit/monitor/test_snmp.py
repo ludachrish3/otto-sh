@@ -10,10 +10,14 @@ from pydantic import ValidationError
 from otto.monitor import snmp
 from otto.monitor.rates import RateTracker
 from otto.monitor.snmp import (
+    CORE_OIDS,
     OID_SYS_UPTIME,
     SnmpClient,
     SnmpMetric,
+    expand_oid_bundles,
+    fs_oids,
     get_snmp_metric,
+    net_oids,
     process_snmp_values,
     register_snmp_metric,
     resolve_snmp_metric,
@@ -253,3 +257,53 @@ class TestSnmpClient:
         fake.CommunityData = lambda *a, **k: captured.update(k) or orig(*a, **k)
         await SnmpClient("10.0.0.1", version="1").get([OID_SYS_UPTIME])
         assert captured.get("mpModel") == 0
+
+
+# ---------------------------------------------------------------------------
+# OID bundle expansion
+# ---------------------------------------------------------------------------
+
+
+class TestOidBundles:
+    def test_raw_oids_pass_through_untouched(self):
+        assert expand_oid_bundles(["1.3.6.1.2.1.1.3.0"]) == ["1.3.6.1.2.1.1.3.0"]
+
+    def test_otto_core_expands_to_existing_scalars(self):
+        expanded = expand_oid_bundles(["otto-core"])
+        assert expanded == list(CORE_OIDS)
+        assert OID_SYS_UPTIME in expanded
+        assert len(expanded) == 5  # uptime, cpu, heap used/free, threads
+
+    def test_otto_net_default_is_one_interface(self):
+        assert expand_oid_bundles(["otto-net"]) == net_oids(0)
+        assert len(net_oids(0)) == 6  # rx/tx bytes+packets, errors, drops
+
+    def test_otto_net_count_expands_indices(self):
+        assert expand_oid_bundles(["otto-net:2"]) == net_oids(0) + net_oids(1)
+
+    def test_otto_fs_expands(self):
+        assert expand_oid_bundles(["otto-fs:1"]) == fs_oids(0)
+        assert len(fs_oids(0)) == 2  # used, total
+
+    def test_bundles_and_raw_mix(self):
+        expanded = expand_oid_bundles(["otto-core", "1.2.3.4.0"])
+        assert expanded == [*CORE_OIDS, "1.2.3.4.0"]
+
+    def test_unknown_bundle_raises_with_known_names(self):
+        with pytest.raises(ValueError, match=r"otto-typo.*otto-core.*otto-fs.*otto-net"):
+            expand_oid_bundles(["otto-typo"])
+
+    def test_expansion_registers_descriptors(self, clean_registry):
+        expand_oid_bundles(["otto-net:1", "otto-fs:1"])
+        rx_bytes = get_snmp_metric(net_oids(0)[0])
+        assert rx_bytes is not None
+        assert rx_bytes.kind == "counter"
+        assert rx_bytes.label == "rx if0"
+        assert rx_bytes.tab == "network"
+        rx_packets = get_snmp_metric(net_oids(0)[2])
+        assert rx_packets.meta_of == net_oids(0)[0]  # packets ride the byte series
+        fs_used = get_snmp_metric(fs_oids(0)[0])
+        assert fs_used.kind == "gauge"
+        assert fs_used.tab == "storage"
+        fs_total = get_snmp_metric(fs_oids(0)[1])
+        assert fs_total.meta_of == fs_oids(0)[0]

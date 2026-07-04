@@ -96,3 +96,23 @@ class TestBuildMonitorCollector:
 
         assert target.snmp is None
         assert target.parsers  # shell parsers resolved from the registry
+
+    def test_bundle_names_expand_at_target_construction(self):
+        from otto.monitor.snmp import CORE_OIDS
+
+        host = create_host_from_dict(
+            {
+                "ip": "192.0.2.1",
+                "element": "sprout",
+                "os_type": "embedded",
+                "command_frame": "zephyr",
+                "snmp": {
+                    "port": 161,
+                    "oids": ("otto-core",),
+                    "community": "public",
+                    "version": "2c",
+                },
+            }
+        )
+        collector = build_monitor_collector([host])
+        assert collector._targets[0].snmp.oids == list(CORE_OIDS)

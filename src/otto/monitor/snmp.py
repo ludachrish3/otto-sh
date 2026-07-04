@@ -28,6 +28,8 @@ boundary rather than against pysnmp internals.
 """
 
 import logging
+import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal, SupportsInt
@@ -189,6 +191,125 @@ def _register_builtin_metrics() -> None:
 
 
 _register_builtin_metrics()
+
+
+# ---------------------------------------------------------------------------
+# Enterprise subtrees for indexed per-interface / per-filesystem scalars
+# ---------------------------------------------------------------------------
+# The firmware agent serves these as plain scalars (one OID per value, indexed
+# by a small integer the agent assigns, 0-based, stable per build). No table
+# walk: a small agent has a known, fixed set of interfaces/filesystems, and
+# plain GET keeps both sides trivial. This table IS the manager<->agent
+# contract, exactly as the .1 subtree comment above is for the core scalars.
+
+CORE_OIDS: tuple[str, ...] = (
+    OID_SYS_UPTIME,
+    f"{_OTTO_BASE}.1.1.0",  # overall CPU
+    f"{_OTTO_BASE}.1.2.0",  # heap used
+    f"{_OTTO_BASE}.1.3.0",  # heap free
+    f"{_OTTO_BASE}.1.4.0",  # threads
+)
+
+
+def net_oids(index: int) -> list[str]:
+    """Return six network OIDs for interface *index*: rx/tx bytes, rx/tx packets, errors, drops."""
+    return [f"{_OTTO_BASE}.2.{index}.{leaf}.0" for leaf in range(1, 7)]
+
+
+def fs_oids(index: int) -> list[str]:
+    """Return two filesystem OIDs for filesystem *index*: bytes used, bytes total."""
+    return [f"{_OTTO_BASE}.3.{index}.{leaf}.0" for leaf in (1, 2)]
+
+
+def _register_net_metrics(index: int) -> None:
+    """Register descriptors for interface *index* (idempotent — always overwrites)."""
+    rx, tx, rx_p, tx_p, errs, drops = net_oids(index)
+
+    def _m(oid: str, label: str, chart: str, unit: str, **kw: object) -> SnmpMetric:
+        return SnmpMetric(
+            oid=oid,
+            label=label,
+            chart=chart,
+            unit=unit,
+            kind="counter",
+            tab="network",
+            tab_label="Network",
+            **kw,
+        )
+
+    for metric in (
+        _m(rx, f"rx if{index}", "Network I/O", "B/s", y_title="Throughput"),
+        _m(tx, f"tx if{index}", "Network I/O", "B/s", y_title="Throughput"),
+        _m(rx_p, "Packets", "Network I/O", "pkt/s", meta_of=rx),
+        _m(tx_p, "Packets", "Network I/O", "pkt/s", meta_of=tx),
+        _m(errs, f"errors if{index}", "Net errors", "err/s", y_title="Rate"),
+        _m(drops, f"drops if{index}", "Net errors", "drop/s", y_title="Rate"),
+    ):
+        register_snmp_metric(metric)
+
+
+def _register_fs_metrics(index: int) -> None:
+    """Register descriptors for filesystem *index* (idempotent — always overwrites)."""
+    used, total = fs_oids(index)
+    for metric in (
+        SnmpMetric(
+            oid=used,
+            label=f"fs{index} used",
+            chart="Filesystem",
+            y_title="Bytes",
+            unit="B",
+            tab="storage",
+            tab_label="Storage",
+        ),
+        SnmpMetric(
+            oid=total,
+            label="Total",
+            chart="Filesystem",
+            unit="B",
+            tab="storage",
+            tab_label="Storage",
+            meta_of=used,
+        ),
+    ):
+        register_snmp_metric(metric)
+
+
+_BUNDLE_RE = re.compile(r"^(?P<name>[a-z-]+)(?::(?P<count>[1-9]\d*))?$")
+_BUNDLE_NAMES = ("otto-core", "otto-fs[:N]", "otto-net[:N]")
+
+
+def expand_oid_bundles(oids: Sequence[str]) -> list[str]:
+    """Expand named OID bundles in a host's ``snmp.oids`` list into raw OIDs.
+
+    Raw OIDs (anything starting with a digit) pass through untouched, so
+    existing lab data keeps working. ``otto-net:N`` / ``otto-fs:N`` expand to
+    interfaces / filesystems ``0..N-1`` (``:N`` defaults to 1) and register
+    the matching descriptors as a side effect — expansion is the moment the
+    set of live indices is known. Unknown bundle names raise loudly.
+    """
+    out: list[str] = []
+    for entry in oids:
+        if entry[:1].isdigit():
+            out.append(entry)
+            continue
+        m = _BUNDLE_RE.match(entry)
+        name = m["name"] if m else entry
+        count = int(m["count"]) if m and m["count"] else 1
+        if name == "otto-core":
+            out.extend(CORE_OIDS)
+        elif name == "otto-net":
+            for i in range(count):
+                _register_net_metrics(i)
+                out.extend(net_oids(i))
+        elif name == "otto-fs":
+            for i in range(count):
+                _register_fs_metrics(i)
+                out.extend(fs_oids(i))
+        else:
+            raise ValueError(
+                f"Unknown SNMP OID bundle {entry!r}; known bundles: {', '.join(_BUNDLE_NAMES)}"
+            )
+    return out
 
 
 def get_snmp_metric(oid: str) -> SnmpMetric | None:
