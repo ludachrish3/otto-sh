@@ -1433,14 +1433,38 @@ class SessionManager:
         exec primitive) an idle session is pulled from an internal free-list or
         a new one is opened, preserving the independence contract without the
         overhead of a fresh TCP + auth round-trip per call.
+
+        When the login is proxied (:attr:`~otto.host.connections.ConnectionManager.proxy_hops`
+        non-empty), both raw-exec fast paths below — the ``_oneshot_factory``
+        callable and the inline ``ssh_conn.create_process`` — are skipped in
+        favor of the pooled named-session path (the same one Telnet always
+        uses). Neither raw exec channel can replay proxy hops: they
+        authenticate as the resolved DIRECT cred, so a proxied oneshot on
+        either fast path would silently run as the via-user rather than the
+        target. Only a full shell session (built via ``open_session``, which
+        replays hops through ``_apply_login_proxy``) ends up as the effective
+        user — which is what makes nc transfers (whose ``exec_cmd`` is
+        ``UnixHost.oneshot``) land files owned by the proxied target.
         """
-        if self._oneshot_factory is not None:
+        hops = getattr(self._connections, "proxy_hops", []) if self._connections is not None else []
+        if self._oneshot_factory is not None and not hops:
             return await self._oneshot_factory(cmd, timeout)
 
-        assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no oneshot_factory
+        assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no oneshot_factory (or hops force the pool path)
         mode = log
         if mode is not LogMode.NEVER:
             self._log_command(cmd, mode)
+        if hops:
+            # A proxied login can only be reached through a full shell session
+            # (the raw SSH exec channel authenticates as the direct cred and
+            # cannot replay the proxy steps). Route through the proxied pool —
+            # the same path telnet always uses — so oneshot/nc run as the
+            # effective user. Files land owned by the proxied target.
+            oneshot_session = await self._acquire_oneshot_session()
+            try:
+                return (await oneshot_session.run(cmd, timeout=timeout, log=log)).only
+            finally:
+                self._oneshot_pool.append(oneshot_session)
         match self._connections.term:
             case "ssh":
                 import asyncssh

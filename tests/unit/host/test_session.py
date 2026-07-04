@@ -1345,3 +1345,141 @@ class TestLoginProxyAtSessionEstablishment:
         await mgr._apply_login_proxy(s)
         assert s.current_user == "alice"  # untouched
         assert s.writes == []
+
+
+# ---------------------------------------------------------------------------
+# Proxied oneshot routing (Task 8)
+# ---------------------------------------------------------------------------
+
+from otto.result import CommandResult
+
+
+class _StubOneshotSession(ShellSession):
+    """Immediate-handshake session with a canned, call-recording ``run_cmd``.
+
+    Mirrors ``_AliveStubSession`` in test_session_logging.py — these tests
+    only care about *which path* ``oneshot()`` takes (raw exec factory vs.
+    pooled named session), not real transport/frame parsing.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.run_cmd_calls: list[str] = []
+
+    async def _open(self) -> None: ...
+
+    async def _write(self, data: str) -> None: ...
+
+    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+        raise AssertionError("stub does not read")
+
+    async def close(self) -> None:
+        self._alive = False
+        self._initialized = False
+
+    async def _ensure_initialized(self) -> None:
+        self._initialized = True
+        self._alive = True
+
+    async def run_cmd(
+        self,
+        cmd: str,
+        expects=None,
+        timeout: float | None = None,
+        on_output=None,
+        redact: bool = False,
+        write_progress=None,
+    ) -> CommandResult:
+        self.run_cmd_calls.append(cmd)
+        return CommandResult(status=Status.Success, value="OUT", command=cmd, retcode=0)
+
+
+class TestOneshotProxyRouting:
+    """Task 8: ``oneshot()`` must route through the proxied pool — not a raw
+    SSH exec channel — whenever the login is proxied (non-empty ``proxy_hops``).
+
+    Both raw-exec fast paths (the ``_oneshot_factory`` callable, and the
+    inline ``ssh_conn.create_process`` in the ``case "ssh":`` branch)
+    authenticate as the resolved DIRECT cred and cannot replay proxy hops —
+    so a proxied oneshot on either fast path would silently run as the
+    via-user instead of the target. Only the pooled named-session path
+    (``_acquire_oneshot_session`` -> ``open_session``) replays hops, via
+    ``_apply_login_proxy`` (Task 7).
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_hops_uses_factory_fast_path(self):
+        """Existing fast path preserved: no proxy_hops -> factory IS called."""
+        factory_calls: list[str] = []
+
+        async def fake_factory(cmd: str, timeout: float | None) -> CommandResult:
+            factory_calls.append(cmd)
+            return CommandResult(status=Status.Success, value="factory", command=cmd, retcode=0)
+
+        conn = _proxy_connections([], login_target="alice", credentials=("alice", "alicepw"))
+        mgr = SessionManager(
+            connections=conn,
+            session_factory=_StubOneshotSession,
+            oneshot_factory=fake_factory,
+            host_id="h",
+        )
+
+        result = await mgr.oneshot("id")
+
+        assert factory_calls == ["id"]
+        assert result.value == "factory"
+        assert mgr._oneshot_pool == []  # pool never touched
+
+    @pytest.mark.asyncio
+    async def test_hops_present_skips_factory_uses_pool(self):
+        """A proxied login (non-empty proxy_hops) bypasses the factory entirely."""
+        factory_calls: list[str] = []
+
+        async def fake_factory(cmd: str, timeout: float | None) -> CommandResult:
+            factory_calls.append(cmd)
+            return CommandResult(status=Status.Success, value="factory", command=cmd, retcode=0)
+
+        hop = Cred(login="mysql", proxy="su", via="admin")
+        conn = _proxy_connections([hop], login_target="mysql", credentials=("admin", "adminpw"))
+        mgr = SessionManager(
+            connections=conn,
+            session_factory=_StubOneshotSession,
+            oneshot_factory=fake_factory,
+            host_id="h",
+        )
+
+        result = await mgr.oneshot("id")
+
+        assert factory_calls == []  # the raw exec factory must NOT run
+        assert result.value == "OUT"
+        # the pooled session actually ran the command and ended up stamped
+        # as the proxied target, not the direct-auth via-user
+        assert len(mgr._oneshot_pool) == 1
+        pooled = mgr._oneshot_pool[0]
+        assert pooled.current_user == "mysql"
+        assert pooled._session.run_cmd_calls == ["id"]
+
+    @pytest.mark.asyncio
+    async def test_ssh_term_with_hops_skips_inline_create_process(self):
+        """Even with ``term='ssh'`` configured, hops route through the pool —
+        never the inline ``ssh_conn.create_process`` exec channel (which
+        can't replay proxy hops).
+        """
+        conn = SimpleNamespace(
+            credentials=("admin", "adminpw"),
+            login_target="mysql",
+            proxy_hops=[Cred(login="mysql", proxy="su", via="admin")],
+            term="ssh",
+            ssh=AsyncMock(),
+        )
+        mgr = SessionManager(
+            connections=conn,
+            session_factory=_StubOneshotSession,
+            host_id="h",
+        )
+
+        result = await mgr.oneshot("id")
+
+        conn.ssh.assert_not_awaited()  # the raw exec channel must NOT be opened
+        assert result.value == "OUT"
+        assert mgr._oneshot_pool[0].current_user == "mysql"
