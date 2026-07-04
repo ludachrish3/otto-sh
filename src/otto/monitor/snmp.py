@@ -28,14 +28,16 @@ boundary rather than against pysnmp internals.
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Literal, SupportsInt
 
 from pydantic import ConfigDict
 
 from ..models.base import OttoModel
 from ..registry import Registry, caller_module
-from .parsers import MetricDataPoint
+from .parsers import MetricDataPoint, human_readable
+from .rates import RateTracker
 
 logger = logging.getLogger("otto")
 
@@ -91,6 +93,18 @@ class SnmpMetric(OttoModel):
     tab: str = "metrics"
     tab_label: str = "Metrics"
     scale: float = 1.0
+
+    kind: Literal["gauge", "counter"] = "gauge"
+    """How the varbind is interpreted: a ``gauge`` charts its (scaled) value
+    directly; a ``counter`` is monotonic and is converted to a per-second rate
+    via the target's :class:`~otto.monitor.rates.RateTracker` (negative delta
+    -> re-baseline, skip the tick — see :mod:`otto.monitor.rates`)."""
+
+    meta_of: str | None = None
+    """When set to another OID, this descriptor's value is not charted as its
+    own series — it is attached to the hover-meta dict of the series produced
+    by the ``meta_of`` OID, under this descriptor's ``label``. A ``meta_of``
+    target absent this tick simply drops the meta; never an error."""
 
     def to_point(self, raw: float) -> MetricDataPoint:
         """Apply ``scale`` to a raw numeric varbind, returning a chartable point."""
@@ -195,20 +209,48 @@ def resolve_snmp_metric(oid: str) -> SnmpMetric:
     return SnmpMetric(oid=oid, label=oid, chart=oid)
 
 
-def points_from_values(
+def process_snmp_values(
     values: dict[str, float | None],
+    *,
+    rates: RateTracker,
+    ts: datetime,
 ) -> list[tuple[str, MetricDataPoint, SnmpMetric]]:
-    """Map ``{oid: raw_value}`` to ``(label, point, descriptor)`` triples.
+    """Turn one GET's ``{oid: raw_value}`` into chartable ``(label, point, view)`` triples.
 
-    Each raw varbind is scaled by its descriptor and labelled for charting.
-    OIDs with a ``None`` value (no such instance / error) are skipped.
+    Applies each descriptor's ``scale``; converts ``kind="counter"`` values to
+    per-second rates via *rates* (first sighting / reset ticks emit nothing);
+    routes ``meta_of`` descriptors into their target series' hover meta instead
+    of their own series. OIDs with a ``None`` value are skipped.
     """
-    triples: list[tuple[str, MetricDataPoint, SnmpMetric]] = []
+    resolved = {oid: resolve_snmp_metric(oid) for oid in values}
+    scaled: dict[str, float] = {}
     for oid, raw in values.items():
         if raw is None:
             continue
-        metric = resolve_snmp_metric(oid)
-        triples.append((metric.label, metric.to_point(raw), metric))
+        metric = resolved[oid]
+        value = raw * metric.scale
+        if metric.kind == "counter":
+            rate = rates.update(oid, value, ts)
+            if rate is None:
+                continue
+            value = rate
+        scaled[oid] = round(value, 2)
+
+    meta_map: dict[str, dict[str, str]] = {}
+    for oid, value in scaled.items():
+        metric = resolved[oid]
+        if metric.meta_of is not None:
+            formatted = (
+                human_readable(value) if metric.unit == "B" else f"{value} {metric.unit}".strip()
+            )
+            meta_map.setdefault(metric.meta_of, {})[metric.label] = formatted
+
+    triples: list[tuple[str, MetricDataPoint, SnmpMetric]] = []
+    for oid, value in scaled.items():
+        metric = resolved[oid]
+        if metric.meta_of is not None:
+            continue
+        triples.append((metric.label, MetricDataPoint(value=value, meta=meta_map.get(oid)), metric))
     return triples
 
 
@@ -315,6 +357,8 @@ class SnmpSource:
 
     client: SnmpClient
     oids: list[str]
+    rates: RateTracker = field(default_factory=RateTracker)
+    """Per-target counter->rate state for ``kind="counter"`` descriptors."""
 
 
 def _coerce_numeric(value: object) -> float | None:

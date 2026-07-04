@@ -2,20 +2,24 @@
 
 import sys
 import types
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
 
 from otto.monitor import snmp
+from otto.monitor.rates import RateTracker
 from otto.monitor.snmp import (
     OID_SYS_UPTIME,
     SnmpClient,
     SnmpMetric,
     get_snmp_metric,
-    points_from_values,
+    process_snmp_values,
     register_snmp_metric,
     resolve_snmp_metric,
 )
+
+T0 = datetime(2026, 7, 3, 12, 0, 0, tzinfo=timezone.utc)
 
 
 @pytest.fixture
@@ -109,30 +113,74 @@ class TestRegistry:
 
 
 # ---------------------------------------------------------------------------
-# points_from_values — OID → (label, point, descriptor)
+# process_snmp_values — OID → (label, point, descriptor)
 # ---------------------------------------------------------------------------
 
 
-class TestPointsFromValues:
-    def test_maps_and_scales(self):
-        triples = points_from_values({OID_SYS_UPTIME: 12345})
+class TestProcessSnmpValues:
+    def test_gauge_known_oid_is_scaled_and_labelled(self):
+        triples = process_snmp_values({OID_SYS_UPTIME: 12345}, rates=RateTracker(), ts=T0)
         assert len(triples) == 1
-        label, dp, metric = triples[0]
+        label, point, metric = triples[0]
         assert label == "Uptime"
-        assert dp.value == 123.45
-        assert metric.unit == "s"
+        assert point.value == 123.45  # sysUpTime is 1/100 s
+        assert metric.oid == OID_SYS_UPTIME
 
-    def test_skips_none_values(self):
-        triples = points_from_values({OID_SYS_UPTIME: 12345, "1.2.3.4": None})
-        labels = {t[0] for t in triples}
-        assert labels == {"Uptime"}
+    def test_none_values_skipped(self):
+        triples = process_snmp_values(
+            {OID_SYS_UPTIME: 12345, "1.2.3.4": None}, rates=RateTracker(), ts=T0
+        )
+        assert [t[0] for t in triples] == ["Uptime"]
 
-    def test_unknown_oid_gets_default_descriptor(self):
-        triples = points_from_values({"1.2.3.4": 7})
-        label, dp, metric = triples[0]
+    def test_unknown_oid_gets_fallback_descriptor(self):
+        triples = process_snmp_values({"1.2.3.4": 7}, rates=RateTracker(), ts=T0)
+        label, point, _metric = triples[0]
         assert label == "1.2.3.4"
-        assert dp.value == 7.0
-        assert metric.tab == "metrics"
+        assert point.value == 7.0
+
+    def test_counter_first_tick_baselines_and_emits_nothing(self):
+        register_snmp_metric(
+            SnmpMetric(oid="1.2.3.9.1", label="rx test", chart="Net", kind="counter", unit="B/s")
+        )
+        rates = RateTracker()
+        assert process_snmp_values({"1.2.3.9.1": 1000}, rates=rates, ts=T0) == []
+        triples = process_snmp_values(
+            {"1.2.3.9.1": 6000}, rates=rates, ts=T0 + timedelta(seconds=5)
+        )
+        assert triples[0][1].value == 1000.0  # (6000-1000)/5
+
+    def test_counter_reset_skips_tick(self):
+        register_snmp_metric(SnmpMetric(oid="1.2.3.9.2", label="rx r", chart="Net", kind="counter"))
+        rates = RateTracker()
+        process_snmp_values({"1.2.3.9.2": 9000}, rates=rates, ts=T0)
+        assert (
+            process_snmp_values({"1.2.3.9.2": 10}, rates=rates, ts=T0 + timedelta(seconds=5)) == []
+        )
+
+    def test_meta_of_attaches_to_target_series_not_own(self):
+        register_snmp_metric(
+            SnmpMetric(oid="1.2.3.9.3", label="fs0 used", chart="Filesystem", unit="B")
+        )
+        register_snmp_metric(
+            SnmpMetric(
+                oid="1.2.3.9.4", label="Total", chart="Filesystem", unit="B", meta_of="1.2.3.9.3"
+            )
+        )
+        triples = process_snmp_values(
+            {"1.2.3.9.3": 1048576, "1.2.3.9.4": 2097152}, rates=RateTracker(), ts=T0
+        )
+        assert [t[0] for t in triples] == ["fs0 used"]  # meta_of OID charts no series
+        assert triples[0][1].meta == {"Total": "2 M"}  # human-readable for unit "B"
+
+    def test_meta_of_target_absent_drops_meta_never_errors(self):
+        register_snmp_metric(
+            SnmpMetric(oid="1.2.3.9.5", label="Orphan", chart="X", meta_of="1.2.3.9.99")
+        )
+        assert process_snmp_values({"1.2.3.9.5": 5}, rates=RateTracker(), ts=T0) == []
+
+    def test_gauge_default_kind_unchanged(self):
+        assert SnmpMetric(oid="1.2.3", label="x", chart="x").kind == "gauge"
+        assert SnmpMetric(oid="1.2.3", label="x", chart="x").meta_of is None
 
 
 # ---------------------------------------------------------------------------

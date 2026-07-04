@@ -192,9 +192,7 @@ class TestSilentParserWarning:
         """When CommandResult.value is None (command never ran), the failure
         warning should not contain the literal string 'None'."""
         parsers = {"ss -s": _NeverParses()}
-        never_ran = CommandResult(
-            Status.Error, value=None, command="ss -s", retcode=-1
-        )
+        never_ran = CommandResult(Status.Error, value=None, command="ss -s", retcode=-1)
         with caplog.at_level("WARNING", logger="otto"):
             await _tick(collector, parsers, [never_ran])
         failure_warnings = [r for r in caplog.records if "failed on test1" in r.message]
@@ -232,3 +230,26 @@ class TestSilentParserWarning:
         warnings = [r for r in caplog.records if "has produced no data" in r.message]
         assert len(warnings) == 1
         assert "_NeverParses" in warnings[0].message
+
+
+class TestSnmpSilentOidWarning:
+    @pytest.mark.asyncio
+    async def test_never_served_oid_warns_once_by_tick_3(self, collector, caplog):
+        from unittest.mock import MagicMock
+
+        from otto.monitor.collector import MonitorTarget
+        from otto.monitor.snmp import SnmpClient, SnmpSource
+
+        host = MagicMock()
+        host.name = "zeph1"
+        target = MonitorTarget(
+            host=host,
+            snmp=SnmpSource(client=SnmpClient(address="10.0.0.1"), oids=["1.2.3.4.0"]),
+        )
+        with caplog.at_level("WARNING", logger="otto"):
+            for _ in range(5):
+                await collector._process_snmp_results(target, TS, {"1.2.3.4.0": None})
+        warnings = [r for r in caplog.records if "has produced no data" in r.message]
+        assert len(warnings) == 1
+        assert "1.2.3.4.0" in warnings[0].message
+        assert "zeph1" in warnings[0].message

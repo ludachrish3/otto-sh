@@ -27,7 +27,7 @@ from .events import MonitorEvent
 from .history import load_json_into, load_sqlite_into
 from .history import to_json as history_to_json
 from .parsers import DEFAULT_PARSERS, MetricDataPoint, MetricParser, ParseContext, default_catalog
-from .snmp import SnmpMetric, SnmpSource, points_from_values, resolve_snmp_metric
+from .snmp import SnmpMetric, SnmpSource, process_snmp_values, resolve_snmp_metric
 from .store import MetricStore
 
 if TYPE_CHECKING:
@@ -135,7 +135,9 @@ class MetricCollector:
                 for oid in t.snmp.oids:
                     if oid not in seen_oids:
                         seen_oids.add(oid)
-                        snmp_views.append(resolve_snmp_metric(oid))
+                        view = resolve_snmp_metric(oid)
+                        if view.meta_of is None:
+                            snmp_views.append(view)
             else:
                 for p in t.parsers.values():
                     if p.command not in seen_commands:
@@ -238,16 +240,19 @@ class MetricCollector:
         target: MonitorTarget,
         timeout: float,
         commands: "list[str] | None" = None,
-    ) -> "Results | list[tuple[str, MetricDataPoint, SnmpMetric]] | None":
+    ) -> "Results | dict[str, float | None] | None":
         """Collect metrics from a single host with a per-tick timeout.
 
         SNMP targets GET their OIDs (bounded by ``timeout`` so a stuck relay is
-        skipped for the tick, mirroring the shell path) and return normalized
-        ``(label, point, view)`` triples. Shell targets pass *timeout* to
-        :meth:`~otto.host.host.BaseHost.run` as a deadline-based budget shared
-        across all parser commands; when a command exceeds it, ``run``'s own
-        ``wait_for`` fires and triggers Ctrl+C session recovery
-        (see :meth:`ShellSession._recover_session`) so the session stays healthy.
+        skipped for the tick, mirroring the shell path) and return the raw
+        ``{oid: value}`` dict — descriptor resolution, rate conversion, and
+        ``meta_of`` routing happen downstream in :meth:`_process_snmp_results`,
+        which needs the target for its per-target ``RateTracker``. Shell
+        targets pass *timeout* to :meth:`~otto.host.host.BaseHost.run` as a
+        deadline-based budget shared across all parser commands; when a
+        command exceeds it, ``run``'s own ``wait_for`` fires and triggers
+        Ctrl+C session recovery (see :meth:`ShellSession._recover_session`) so
+        the session stays healthy.
 
         *commands* restricts the batch to a subset of the target's parser
         commands — used by :meth:`run` when a parser's own ``interval`` puts
@@ -256,11 +261,10 @@ class MetricCollector:
         before (SNMP targets ignore it — they have no per-command intervals).
         """
         if target.snmp is not None:
-            values = await asyncio.wait_for(
+            return await asyncio.wait_for(
                 target.snmp.client.get(target.snmp.oids),
                 timeout,
             )
-            return points_from_values(values)
         return await target.host.run(
             commands if commands is not None else list(target.parsers.keys()),
             timeout=timeout,
@@ -293,8 +297,8 @@ class MetricCollector:
                         target.parsers,
                         ctx=ParseContext(core_count=target.core_count, ts=ts),
                     )
-                case list():
-                    await self._process_snmp_results(target.host.name, ts, result)
+                case dict() as values:
+                    await self._process_snmp_results(target, ts, values)
                 case BaseException():
                     logger.warning(
                         "Monitor: error collecting from %s: %s", target.host.name, result
@@ -505,11 +509,17 @@ class MetricCollector:
 
     async def _process_snmp_results(
         self,
-        host_name: str,
+        target: MonitorTarget,
         ts: datetime,
-        points: "list[tuple[str, MetricDataPoint, SnmpMetric]]",
+        values: dict[str, float | None],
     ) -> None:
-        for label, dp, view in points:
+        if target.snmp is None:  # routing invariant from _collect_bucket; keeps ty narrow
+            return
+        host_name = target.host.name
+        for oid, raw in values.items():
+            self._note_health((host_name, oid), produced=raw is not None, what="SNMP OID")
+        triples = process_snmp_values(values, rates=target.snmp.rates, ts=ts)
+        for label, dp, view in triples:
             await self._record_point(host_name, ts, label, dp, view)
 
     # ------------------------------------------------------------------
