@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import Self, override
 
 from .command_frame import BashFrame, CommandFrame, SessionMarkers
-from .login_proxy import Cred, cred_for, perform_switch, run_undo
+from .login_proxy import Cred, LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
 from .telnet import TelnetClient
 
 if TYPE_CHECKING:
@@ -1066,6 +1066,33 @@ class HostSession:
         await self.close()
 
 
+class _SessionProxyIO:
+    """Adapts a raw :class:`ShellSession` to the :class:`~otto.host.login_proxy.ProxyIO` protocol.
+
+    Used only at session establishment, before a :class:`HostSession` wrapper
+    exists — the raw session has no logging of its own (that lives at the
+    manager layer, mirroring ``HostSession.send``/``expect``), so this adapter
+    routes through the manager's ``_log_command``/``_log_output`` sinks. A
+    hop's password send arrives with ``log=LogMode.NEVER`` (see
+    ``login_proxy._su_proxy``) and is never logged — the same redaction
+    real command traffic gets.
+    """
+
+    def __init__(self, session: "ShellSession", mgr: "SessionManager") -> None:
+        self._session = session
+        self._mgr = mgr
+
+    async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
+        if log is not LogMode.NEVER:
+            self._mgr._log_command(text.rstrip(), log)  # noqa: SLF001 — intra-package access to SessionManager's log sink
+        await self._session.send(text)
+
+    async def expect(self, pattern: str | re.Pattern[str], timeout: float = 10.0) -> str:
+        out = await self._session.expect(pattern, timeout)
+        self._mgr._log_output(out, LogMode.NORMAL)  # noqa: SLF001 — intra-package access to SessionManager's log sink
+        return out
+
+
 class SessionManager:
     """Manages persistent shell sessions for any host type.
 
@@ -1173,6 +1200,40 @@ class SessionManager:
         """Stamp a freshly built session with the login user."""
         session.current_user = self._login_user()
 
+    async def _apply_login_proxy(self, session: "ShellSession") -> None:
+        """Replay the connection manager's proxy hops over *session*.
+
+        Runs immediately after a fresh session's marker handshake succeeds
+        (both the default-session path in ``_ensure_session`` and the
+        named-session build in ``open_session``) so the shell ends up as
+        ``login_target`` rather than the transport's directly-authenticated
+        user. Reads ``proxy_hops``/``login_target``/``credentials`` off
+        ``self._connections``, tolerating fakes that expose none of them (no
+        hops -> no-op, matching a plain direct login).
+
+        Each hop's ``via`` is the previous hop's login — or, for the first
+        hop, the resolved direct cred's login (the account the transport
+        actually authenticated as). Only the login matters here: no
+        registered proxy reads a hop's own password off its ``via`` (the
+        built-in ``su`` ignores ``via`` entirely), so a bare ``Cred(login=...)``
+        is the simplest correct source.
+
+        Raises :class:`~otto.host.login_proxy.LoginProxyError` on a failed
+        hop; the caller is responsible for tearing the session down (a proxy
+        failure is not a handshake race — it must not consume a retry).
+        """
+        hops = getattr(self._connections, "proxy_hops", [])
+        if not hops:
+            return
+        target = getattr(self._connections, "login_target", "")
+        creds = getattr(self._connections, "credentials", None)
+        via_login = creds[0] if creds else ""
+        io = _SessionProxyIO(session, self)
+        for hop in hops:
+            await run_proxy(io, hop, via=Cred(login=via_login), host_id=self._host_id)
+            via_login = hop.login
+        session.current_user = target
+
     @property
     def current_user(self) -> str:
         """User the default session is currently running as.
@@ -1251,6 +1312,16 @@ class SessionManager:
                 # exception propagates.
                 try:
                     await new_session._ensure_initialized()  # noqa: SLF001 — intra-package access to ShellSession._ensure_initialized for handshake
+                    await self._apply_login_proxy(new_session)
+                except LoginProxyError:
+                    # A proxy failure is not a handshake race — the transport
+                    # came up fine, so retrying it would just repeat the same
+                    # failed hop. Tear down and propagate on the first try,
+                    # without falling into the ConnectionError retry below
+                    # (LoginProxyError subclasses it).
+                    with suppress(Exception):  # pragma: no cover - best-effort cleanup
+                        await new_session.close()
+                    raise
                 except ConnectionError as exc:
                     with suppress(Exception):  # pragma: no cover - best-effort cleanup
                         await new_session.close()
@@ -1516,6 +1587,19 @@ class SessionManager:
             # owned client's socket and skip the session's cleanup duties.
             try:
                 await shell_session._ensure_initialized()  # noqa: SLF001 — intra-package access to ShellSession._ensure_initialized for handshake
+            except BaseException:
+                with suppress(Exception):  # pragma: no cover - best-effort cleanup
+                    await shell_session.close()
+                raise
+
+            # Replay proxy hops (if any) so this named session ends up as
+            # login_target too — this is also the oneshot-pool path
+            # (_acquire_oneshot_session -> open_session), so pooled sessions
+            # get proxied for free. A failed hop tears the session down and
+            # propagates, leaving no entry in _named_sessions (mirrors the
+            # handshake-failure cleanup just above).
+            try:
+                await self._apply_login_proxy(shell_session)
             except BaseException:
                 with suppress(Exception):  # pragma: no cover - best-effort cleanup
                     await shell_session.close()

@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
-from otto.host.session import LocalSession, ShellSession
+from otto.host.session import LocalSession, SessionManager, ShellSession
 from otto.utils import Status
 
 
@@ -1060,3 +1060,268 @@ async def test_host_session_as_user_undo_via_ordering_observable():
         ("mysql", "admin", "adminpw"),  # undo #1: reverse-innermost, via = admin cred
         ("admin", "root", "rootpw"),  # undo #2: via = root cred (the prior user)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Login-proxy hop replay at session establishment (Task 7)
+# ---------------------------------------------------------------------------
+
+from types import SimpleNamespace
+
+from otto.host.login_proxy import Cred, LoginProxyError, register_login_proxy
+from otto.logger.mode import LogMode
+
+
+class _ImmediateSession(ShellSession):
+    """A ``ShellSession`` whose handshake succeeds instantly.
+
+    Mirrors ``_AliveStubSession`` in test_session_logging.py — no async
+    orchestration is needed to drive it past readiness, so these tests can
+    call ``_ensure_session``/``open_session`` directly and assert on the
+    raw writes a login-proxy hop produces. ``expect()`` only returns a
+    canned response (``expect_response``) rather than driving a real
+    read loop — most hops here send a password directly (log=NEVER)
+    without waiting on a prompt, since that interplay is already covered
+    by the built-in ``su`` proxy's own tests (test_login_proxy.py) and
+    Task 6's switch_user/as_user tests; the one test that does exercise
+    the built-in ``su`` proxy's ``expect()`` call supplies a response.
+    """
+
+    def __init__(self, expect_response: str | None = None) -> None:
+        super().__init__()
+        self.writes: list[str] = []
+        self.closed = False
+        self._expect_response = expect_response
+
+    async def _open(self) -> None: ...
+
+    async def _write(self, data: str) -> None:
+        self.writes.append(data)
+
+    async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+        if self._expect_response is not None:
+            return self._expect_response
+        raise AssertionError("this fake does not support expect(); pass expect_response=...")
+
+    async def close(self) -> None:
+        self.closed = True
+        self._alive = False
+        self._initialized = False
+
+    async def _ensure_initialized(self) -> None:
+        self._initialized = True
+        self._alive = True
+
+
+def _proxy_connections(
+    hops: list[Cred],
+    login_target: str = "mysql",
+    credentials: tuple[str, str | None] = ("admin", "adminpw"),
+) -> SimpleNamespace:
+    """Minimal connections fake exposing exactly what ``_apply_login_proxy`` reads."""
+    return SimpleNamespace(credentials=credentials, login_target=login_target, proxy_hops=hops)
+
+
+async def _task7_hop_with_password(io, ctx) -> None:
+    """Fake registered proxy: send + a redacted password line — no expect() needed."""
+    await io.send(f"su {ctx.target.login}\n")
+    if ctx.target.password is not None:
+        await io.send(ctx.target.password + "\n", log=LogMode.NEVER)
+
+
+class TestLoginProxyAtSessionEstablishment:
+    """Task 7: ``_apply_login_proxy`` replay in both session-establishment paths."""
+
+    @pytest.mark.asyncio
+    async def test_ensure_session_applies_proxy_hop_default_session(self):
+        """Default session: a passwordless hop via the built-in su proxy replays + stamps user."""
+        hop = Cred(login="mysql", proxy="su", via="admin")
+        conn = _proxy_connections([hop])
+        built: list[_ImmediateSession] = []
+
+        def factory() -> _ImmediateSession:
+            s = _ImmediateSession()
+            built.append(s)
+            return s
+
+        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+        await mgr._ensure_session()
+
+        assert mgr._session is built[0]
+        assert mgr._session.current_user == "mysql"
+        assert "su mysql\n" in built[0].writes
+        assert len(built) == 1  # a proxy success must not trigger a rebuild
+
+    @pytest.mark.asyncio
+    async def test_ensure_session_no_hops_stamps_login_target_only(self):
+        """No proxy_hops -> plain direct login: existing behavior intact, no proxy sends."""
+        conn = _proxy_connections([], login_target="alice", credentials=("alice", "pw"))
+        built: list[_ImmediateSession] = []
+
+        def factory() -> _ImmediateSession:
+            s = _ImmediateSession()
+            built.append(s)
+            return s
+
+        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+        await mgr._ensure_session()
+
+        assert mgr._session.current_user == "alice"
+        assert built[0].writes == []
+
+    @pytest.mark.asyncio
+    async def test_ensure_session_password_hop_redacted_in_log(self):
+        """A hop's password send arrives with log=NEVER — never reaches the command-log sink."""
+        register_login_proxy("task7-hop-pw", _task7_hop_with_password, overwrite=True)
+        hop = Cred(login="mysql", password="mysqlpw", proxy="task7-hop-pw", via="admin")
+        conn = _proxy_connections([hop])
+        logged_cmds: list[tuple[str, LogMode]] = []
+
+        mgr = SessionManager(
+            connections=conn,
+            name="h",
+            session_factory=_ImmediateSession,
+            log_command=lambda cmd, mode: logged_cmds.append((cmd, mode)),
+            host_id="h",
+        )
+        await mgr._ensure_session()
+
+        assert mgr._session.current_user == "mysql"
+        assert mgr._session.writes == ["su mysql\n", "mysqlpw\n"]
+        assert ("su mysql", LogMode.NORMAL) in logged_cmds
+        assert not any(cmd == "mysqlpw" for cmd, _ in logged_cmds)
+
+    @pytest.mark.asyncio
+    async def test_ensure_session_builtin_su_hop_drives_expect(self):
+        """The built-in su proxy's expect()-driven password prompt, end to end.
+
+        Covers ``_SessionProxyIO.expect()`` (the redirect-based hop-with-password
+        test above uses a fake proxy that never calls ``expect()``): asserts the
+        matched prompt is logged via ``_log_output`` and the password itself
+        still never reaches ``_log_command``.
+        """
+        hop = Cred(login="mysql", password="mysqlpw", proxy="su", via="admin")
+        conn = _proxy_connections([hop])
+        logged_cmds: list[tuple[str, LogMode]] = []
+        logged_out: list[tuple[str, LogMode]] = []
+
+        def factory() -> _ImmediateSession:
+            return _ImmediateSession(expect_response="Password: ")
+
+        mgr = SessionManager(
+            connections=conn,
+            name="h",
+            session_factory=factory,
+            log_command=lambda cmd, mode: logged_cmds.append((cmd, mode)),
+            log_output=lambda out, mode: logged_out.append((out, mode)),
+            host_id="h",
+        )
+        await mgr._ensure_session()
+
+        assert mgr._session.current_user == "mysql"
+        assert mgr._session.writes == ["su mysql\n", "mysqlpw\n"]
+        assert ("su mysql", LogMode.NORMAL) in logged_cmds
+        assert not any(cmd == "mysqlpw" for cmd, _ in logged_cmds)
+        assert ("Password: ", LogMode.NORMAL) in logged_out
+
+    @pytest.mark.asyncio
+    async def test_ensure_session_multi_hop_via_chain_ordering(self):
+        """Each hop after the first receives the PREVIOUS hop's login as `via`."""
+        captured: list[tuple[str, str]] = []
+
+        async def _record_via(io, ctx) -> None:
+            captured.append((ctx.target.login, ctx.via.login))
+            await io.send(f"become {ctx.target.login}\n")
+
+        register_login_proxy("task7-record-via", _record_via, overwrite=True)
+        hops = [
+            Cred(login="admin", proxy="task7-record-via", via="root"),
+            Cred(login="mysql", proxy="task7-record-via", via="admin"),
+        ]
+        conn = _proxy_connections(hops, login_target="mysql", credentials=("root", "rootpw"))
+        mgr = SessionManager(
+            connections=conn, name="h", session_factory=_ImmediateSession, host_id="h"
+        )
+        await mgr._ensure_session()
+
+        assert captured == [("admin", "root"), ("mysql", "admin")]
+        assert mgr._session.current_user == "mysql"
+
+    @pytest.mark.asyncio
+    async def test_ensure_session_failed_hop_raises_and_tears_down(self):
+        """A hop whose proxy raises tears the session down; the failure is not retried."""
+
+        async def _boom(io, ctx) -> None:
+            raise RuntimeError("boom")
+
+        register_login_proxy("task7-boom", _boom, overwrite=True)
+        hop = Cred(login="mysql", proxy="task7-boom", via="admin")
+        conn = _proxy_connections([hop])
+        built: list[_ImmediateSession] = []
+
+        def factory() -> _ImmediateSession:
+            s = _ImmediateSession()
+            built.append(s)
+            return s
+
+        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+
+        with pytest.raises(LoginProxyError):
+            await mgr._ensure_session()
+
+        assert mgr._session is None
+        assert len(built) == 1  # the one-retry was NOT consumed by a proxy failure
+        assert built[0].closed  # torn down, not left dangling
+
+    @pytest.mark.asyncio
+    async def test_open_session_applies_proxy_hop(self):
+        """Named session (open_session): same hop replay + current_user stamp."""
+        hop = Cred(login="mysql", proxy="su", via="admin")
+        conn = _proxy_connections([hop])
+        built: list[_ImmediateSession] = []
+
+        def factory() -> _ImmediateSession:
+            s = _ImmediateSession()
+            built.append(s)
+            return s
+
+        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+        hs = await mgr.open_session("mon")
+
+        assert hs.current_user == "mysql"
+        assert "su mysql\n" in built[0].writes
+
+    @pytest.mark.asyncio
+    async def test_open_session_failed_hop_leaves_no_named_session(self):
+        """A failed hop tears the named session down and leaves no dict entry."""
+
+        async def _boom(io, ctx) -> None:
+            raise RuntimeError("boom")
+
+        register_login_proxy("task7-boom-named", _boom, overwrite=True)
+        hop = Cred(login="mysql", proxy="task7-boom-named", via="admin")
+        conn = _proxy_connections([hop])
+        built: list[_ImmediateSession] = []
+
+        def factory() -> _ImmediateSession:
+            s = _ImmediateSession()
+            built.append(s)
+            return s
+
+        mgr = SessionManager(connections=conn, name="h", session_factory=factory, host_id="h")
+
+        with pytest.raises(LoginProxyError):
+            await mgr.open_session("mon")
+
+        assert "mon" not in mgr._named_sessions
+        assert built[0].closed
+
+    @pytest.mark.asyncio
+    async def test_apply_login_proxy_tolerates_connections_without_proxy_hops(self):
+        """A minimal connections fake with no proxy_hops/login_target attrs is a no-op."""
+        mgr = SessionManager(connections=SimpleNamespace(), name="h")
+        s = _ImmediateSession()
+        s.current_user = "alice"
+        await mgr._apply_login_proxy(s)
+        assert s.current_user == "alice"  # untouched
+        assert s.writes == []
