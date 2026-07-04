@@ -12,6 +12,7 @@ and serves an interactive web dashboard.
    events
    factory
    history
+   log_sourced
    parsers
    rates
    server

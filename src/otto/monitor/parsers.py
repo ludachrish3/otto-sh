@@ -203,7 +203,8 @@ class MetricParser(ABC):
             point produced this tick.  Return an empty dict if parsing fails.
             Single-series parsers return ``{self.chart: MetricDataPoint(value)}``.
             Multi-series parsers may return multiple entries in the dict.
-            Log-sourced parsers — which override :meth:`parse_tick` — implement
+            Log-sourced parsers — which override
+            :meth:`~otto.monitor.parsers.MetricParser.parse_tick` — implement
             this as a trivial ``return {}``.
         """
         ...
@@ -216,7 +217,7 @@ class MetricParser(ABC):
         parsers behave exactly as before. Log-sourced parsers (see
         :mod:`otto.monitor.log_sourced`) override this to emit data-carried
         timestamps — multiple samples per read, ascending — and/or columnar
-        :class:`LogEvent` rows.
+        :class:`~otto.monitor.parsers.LogEvent` rows.
         """
         series = self.parse(output, ctx=ctx)
         return TickResult(

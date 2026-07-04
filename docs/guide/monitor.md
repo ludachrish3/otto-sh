@@ -336,6 +336,164 @@ Either way, a missing tool or unreachable metric is not an error otto tries
 to recover from: the affected series is simply absent from the dashboard,
 same as any other tick that produced no data.
 
+## Log-sourced data
+
+Some systems don't expose live values through a poll-able command: a cron
+job digests performance counters into a timestamped file every few
+minutes, or the interesting record is a log file's event stream rather
+than a number. Both ride the same shell acquisition path as every other
+parser — the command *is* the reduction step (`cat`/`tail`/`awk`/`grep`/`jq`
+on the host ships back only the lines otto needs) — but instead of one
+untimed value per tick, each row or line carries its own timestamp. The
+design assumes source data is textually reducible on the host; binary or
+otherwise irreducible formats are out of scope.
+
+### CSV metric files
+
+{class}`~otto.monitor.log_sourced.CsvMetricParser` charts a cron-digested
+CSV file. Register it like any other parser (see [Custom parsers](#custom-parsers)):
+
+```python
+from otto.monitor.log_sourced import CsvMetricParser
+from otto.monitor.parsers import register_parsers
+
+register_parsers([
+    CsvMetricParser(
+        "cat /var/log/perf/net.csv",
+        columns=["rx_kbps", "tx_kbps"],
+        chart="Cron net digest",
+        tab="network",
+        tab_label="Network",
+        unit="kb/s",
+        interval=60,
+    ),
+])
+```
+
+Line format: the first column is an ISO-8601 or epoch-seconds timestamp
+(naive values are treated as UTC); the remaining columns are numeric
+values matching `columns`, comma-separated, in file order. Header, torn
+(mid-write), and otherwise malformed lines are skipped — a mid-write read
+self-heals on the next tick because the high-water mark (see
+[Timestamps](#timestamps) below) never advances past a skipped line.
+
+Because points carry their own data-carried timestamps rather than the
+collector's tick time, a file already holding the last hour of digests
+backfills the dashboard and DB with a full hour of real history the moment
+monitor starts, not just whatever arrives after that.
+
+One instance per file: the command string is the parser registry key, so
+monitoring "a couple of CSV files" means two registered instances. Give a
+slow-cadence file its own `interval` (seconds; see
+[Per-parser collection intervals](#per-parser-collection-intervals)) so
+otto doesn't re-read an unchanged file on every tick.
+
+A cron job maintaining such a file might look like this:
+
+```sh
+#!/bin/sh
+# Example cron digest: append "epoch,val1,val2", prune to the last hour.
+# Cron entry (every 5 minutes):  */5 * * * *  root  /usr/local/bin/perf_digest.sh
+FILE=/var/log/perf/net.csv
+printf '%s,%s,%s\n' "$(date -u +%s)" "$(cat /sys/class/net/eth0/statistics/rx_bytes)" \
+    "$(cat /sys/class/net/eth0/statistics/tx_bytes)" >> "$FILE"
+tail -n 12 "$FILE" > "$FILE.tmp" && mv "$FILE.tmp" "$FILE"   # 12 lines = 1 h at 5-min cadence
+```
+
+Provisioning a script like this on a bed is a manual demo step — otto's own
+test suite exercises `CsvMetricParser` entirely against fixture-written
+files, never a live cron job.
+
+### Log-event tables
+
+{class}`~otto.monitor.log_sourced.RegexLogEventParser` turns matching log
+lines into table rows instead of chart points. A worked syslog example,
+using the same pattern otto's own test suite registers:
+
+```python
+from otto.monitor.log_sourced import RegexLogEventParser
+from otto.monitor.parsers import register_parsers
+
+SYSLOG_PATTERN = r"^(?P<ts>\S+) (?P<loghost>\S+) (?P<proc>[^:\[]+)(?:\[\d+\])?: (?P<message>.*)$"
+
+register_parsers([
+    RegexLogEventParser(
+        "tail -n 200 /var/log/syslog",
+        SYSLOG_PATTERN,
+        tab="syslog",
+        tab_label="Syslog",
+    ),
+])
+```
+
+Every named group in `pattern` besides the timestamp group becomes a table
+column, in pattern order (`loghost`, `proc`, `message` above). A line that
+doesn't match is skipped entirely — a wrong pattern therefore produces zero
+rows ever, which the [Parser health](#parser-health) silent-command
+backstop surfaces by the third tick.
+
+`ts_group` (default `"ts"`) names the group holding the timestamp;
+`ts_format` (default `"iso"`) tells `parse_timestamp` how to read it:
+`"iso"` for ISO-8601, `"epoch"` for Unix epoch seconds, or anything else as
+a `strptime` format. Classic syslog timestamps (`Jan  2 15:04:05`, no year)
+need a `strptime` format — otto injects the current UTC year before
+parsing those, so they parse correctly instead of rejecting outright.
+
+Each `RegexLogEventParser` contributes one `kind="table"` tab on the
+dashboard and no chart. Rows render newest-first with a client-side,
+case-insensitive substring filter; the browser keeps roughly the last 500
+rows on screen even though the database keeps every row ever collected —
+reload that database with `--db` (see [Historical mode](#historical-mode))
+and the full history replays as a table too, not just as charts.
+
+Table parsers must declare their own `tab` id: a table tab can't share an
+id with a chart tab, or with another table tab (see
+{class}`~otto.models.monitor.TabSpec`). Registering a colliding tab id is a
+configuration error that otto raises loudly rather than silently picking a
+winner.
+
+{class}`~otto.monitor.parsers.LogEvent` rows are a deliberately separate
+data path from {class}`~otto.monitor.events.MonitorEvent` markers: log
+events are per-host, high-volume, columnar table data, while
+`MonitorEvent`s are the global, low-volume annotations that mark moments
+on the chart timeline (see
+[Monitoring from test suites](#monitoring-from-test-suites)).
+
+### Timestamps
+
+Every log-sourced row carries its own data-carried timestamp instead of
+the collector's tick time; a naive value (no timezone) is always treated
+as UTC, whether it comes from a CSV's first column or a regex's timestamp
+group. A row with no parseable timestamp is dropped — log-sourced parsers
+have no tick-time fallback, so an empty or unrecognized timestamp field
+means that row never appears at all.
+
+Each parser instance keeps a high-water mark: the newest row timestamp it
+has emitted so far. Re-reading a rolling window (the usual `tail -n N`)
+drops everything at or below the mark, so ticks that overlap the previous
+read are deduplicated rather than double-counted. The mark is keyed on the
+row's own timestamp, not a file offset or byte count, so log rotation and
+truncation need no special handling — a rotated file's new rows are still
+newer than the mark and come straight through.
+
+### Large files
+
+An append-only log fits at any size: a fixed `tail -n N` window bounds
+what one tick reads, and the high-water mark discards whatever overlaps
+the previous read, so `N` only needs to comfortably cover one poll
+interval's worth of new lines, not the file's total size.
+
+Because a parser's `command` string is a static registry key, one parser
+can't vary its command per tick — reading from a byte offset that grows
+over time, for example, is unsupported by design; size `tail -n N` to the
+interval instead. A large *regenerated* file (a digest script that
+rewrites the whole thing on every run rather than appending) fits the same
+way any verbose command output does: reduce at the source with
+`awk`/`jq`/a product CLI, and give the parser its own slower `interval`
+(see [Per-parser collection intervals](#per-parser-collection-intervals))
+if the file itself only changes infrequently — each parser rides its own
+bucket, so a slow file never blocks faster ones.
+
 ## SNMP monitoring
 
 Some targets expose performance metrics over SNMP rather than via a shell
