@@ -385,6 +385,7 @@ VERS
             node.vm.network "private_network", ip: ip
             provision_test_vm(node, name)
             provision_docker(node, name)
+            provision_mysql(node, name)
         end
     end
 
@@ -1276,6 +1277,51 @@ EOF
             usermod -aG docker vagrant
 
             systemctl enable --now docker
+        SHELL
+    end
+
+    # MySQL server + the login-proxy e2e target account (see
+    # docs/superpowers/specs/2026-07-04-login-proxy-and-app-shell-design.md §14).
+    # The packaged `mysql` Unix user is the proxy target: it keeps its
+    # restricted shell (/bin/false) and is DenyUsers-blocked in sshd, so direct
+    # SSH must FAIL — the only way to become it is a login proxy. NB: the proxy
+    # must be root-mediated (`sudo su -s /bin/bash mysql`): util-linux `su`
+    # silently ignores `-s` for NON-root callers when the target's shell is not
+    # in /etc/shells, so a plain `su -s ... mysql` + password lands in
+    # /bin/false and exits.
+    # A socket-auth MySQL account for that Unix user plus an `otto_test`
+    # database completes the REPL path for the AppShell e2e (become mysql ->
+    # `mysql` -> REPL). All three Unix test VMs get it, matching provision_docker,
+    # so the suite can lease whichever is free.
+    def provision_mysql(vm, name)
+        vm.vm.provision "shell", name: "#{name} mysql", keep_color: true, inline: <<-SHELL
+
+            apt -y install mysql-server
+
+            # Known password so a `su mysql` proxy step can exercise the
+            # password expect/send path (su prompts for the TARGET user's
+            # password). The nologin shell is left in place deliberately —
+            # proxies must supply a shell (`su -s /bin/bash`), and the plain
+            # built-in `su` proxy must NOT be able to reach this user.
+            echo 'mysql:Password1' | chpasswd
+
+            # Hard-deny remote logins: nologin already ends any session
+            # immediately, but DenyUsers rejects the auth itself so the e2e
+            # can assert that direct SSH login fails outright.
+            grep -q '^DenyUsers mysql' /etc/ssh/sshd_config || echo 'DenyUsers mysql' >> /etc/ssh/sshd_config
+            systemctl restart ssh
+
+            # Socket-auth MySQL account for the mysql Unix user + a test
+            # database it owns. auth_socket maps the connecting Unix user to
+            # the same-named MySQL account, so once proxied to `mysql` the
+            # bare `mysql` command drops straight into the REPL.
+            systemctl enable --now mysql
+            mysql <<'SQL'
+CREATE USER IF NOT EXISTS 'mysql'@'localhost' IDENTIFIED WITH auth_socket;
+CREATE DATABASE IF NOT EXISTS otto_test;
+GRANT ALL PRIVILEGES ON otto_test.* TO 'mysql'@'localhost';
+FLUSH PRIVILEGES;
+SQL
         SHELL
     end
 
