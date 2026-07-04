@@ -80,5 +80,7 @@ class MetricStore:
         return False
 
     def hosts_from_series(self) -> list[str]:
-        """Return sorted unique hostnames derived from ``"host/label"`` series keys."""
-        return sorted({key.split("/")[0] for key in self.series if "/" in key})
+        """Return sorted unique hostnames from series keys and log-event rings."""
+        hosts = {key.split("/")[0] for key in self.series if "/" in key}
+        hosts.update(host for host, _tab in self.log_events)
+        return sorted(hosts)

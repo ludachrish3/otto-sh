@@ -91,3 +91,16 @@ class TestLogEventRing:
         rows = [ev for _, _, ev in store.snapshot_log_events()]
         assert len(rows) == 1000
         assert rows[0].fields["i"] == "1"  # row 0 dropped
+
+    def test_hosts_from_series_includes_log_events_only_host(self) -> None:
+        """A host that produced only log events (no chart series) is still visible."""
+        store = MetricStore()
+        store.append_log_event("host9", "syslog", _ev(1))
+        assert store.hosts_from_series() == ["host9"]
+
+    def test_hosts_from_series_unions_series_and_log_event_hosts(self) -> None:
+        store = MetricStore()
+        store.append_point("host1/CPU", _point(1.0), label="CPU", chart="CPU")
+        store.append_log_event("host2", "syslog", _ev(1))
+        store.append_log_event("host1", "syslog", _ev(2))  # already in series hosts
+        assert store.hosts_from_series() == ["host1", "host2"]

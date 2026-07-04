@@ -58,6 +58,27 @@ class TestParseTimestamp:
         # regex-compile time — must degrade to None, never raise.
         assert parse_timestamp("Sun Jul  4 12:00:00 2026", "%c") is None
 
+    def test_yearless_format_never_lands_more_than_two_days_future(self) -> None:
+        """Rollover guard invariant: a "Dec 31" line read just after New Year would,
+        without the guard, parse to ~a year in the future via the injected current
+        year. No matter what day-of-year is fed in, the guard must pull the result
+        back within 2 days of now — deterministic, no clock mocking needed."""
+        now = datetime.now(tz=timezone.utc)
+        future = now + timedelta(days=30)
+        text = future.strftime("%b %d %H:%M:%S")
+        parsed = parse_timestamp(text, "%b %d %H:%M:%S")
+        assert parsed is not None
+        assert parsed - now <= timedelta(days=2)
+
+    def test_yearless_format_today_parses_fresh_with_current_year(self) -> None:
+        """The common case (no rollover in play) is untouched by the guard."""
+        now = datetime.now(tz=timezone.utc)
+        text = now.strftime("%b %d %H:%M:%S")
+        parsed = parse_timestamp(text, "%b %d %H:%M:%S")
+        assert parsed is not None
+        assert parsed.year == now.year
+        assert abs((parsed - now).total_seconds()) < timedelta(days=1).total_seconds()
+
 
 class TestHighWaterMark:
     def test_first_pass_emits_all_sorted(self) -> None:
@@ -149,6 +170,18 @@ class TestRegexLogEventParser:
         tick = _syslog().parse_tick("garbage vm1 a: hi\n", ctx=ParseContext())
         assert tick.events == []
 
+    def test_missing_trailing_newline_drops_truncated_message(self) -> None:
+        """A mid-write read can torn-truncate the greedy message group and still match;
+        without a trailing newline the line is untrusted and dropped, so the completed
+        line emits whole next tick instead of poisoning the mark with a truncated row."""
+        p = _syslog()
+        torn = "2026-07-04T12:00:00Z vm1 sshd[142]: session op"  # no trailing \n
+        tick = p.parse_tick(torn, ctx=ParseContext())
+        assert tick.events == []
+        completed = "2026-07-04T12:00:00Z vm1 sshd[142]: session opened\n"
+        fresh = p.parse_tick(completed, ctx=ParseContext()).events
+        assert [e.fields["message"] for e in fresh] == ["session opened"]
+
     def test_ts_group_must_exist(self) -> None:
         with pytest.raises(ValueError, match="no named group 'ts'"):
             RegexLogEventParser("tail x", r"(?P<message>.*)", tab="t", tab_label="T")
@@ -231,6 +264,20 @@ class TestCsvMetricParser:
             "2026-07-04T12:00:00,10,20\n2026-07-04T12:00:05,11,21\n", ctx=ParseContext()
         ).samples
         assert [s.ts for s in fresh] == [datetime(2026, 7, 4, 12, 0, 5, tzinfo=timezone.utc)]
+
+    def test_missing_trailing_newline_drops_last_line_even_if_parseable(self) -> None:
+        """A mid-write read can torn-truncate the last value and still parse (right
+        column count, valid float); without a trailing newline the line is untrusted
+        and dropped, so the completed line emits whole next tick instead of poisoning
+        the mark with a wrong value."""
+        p = _csv()
+        torn = "2026-07-04T12:00:00,10,20\n2026-07-04T12:00:05,11,2"  # no trailing \n
+        tick = p.parse_tick(torn, ctx=ParseContext())
+        assert [s.ts for s in tick.samples] == [datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)]
+        completed = "2026-07-04T12:00:00,10,20\n2026-07-04T12:00:05,11,21\n"
+        fresh = p.parse_tick(completed, ctx=ParseContext()).samples
+        assert [s.ts for s in fresh] == [datetime(2026, 7, 4, 12, 0, 5, tzinfo=timezone.utc)]
+        assert fresh[0].series["tx_kbps"].value == 21.0
 
     def test_requires_at_least_one_column(self) -> None:
         with pytest.raises(ValueError, match="at least one value column"):

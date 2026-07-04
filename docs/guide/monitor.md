@@ -437,7 +437,12 @@ backstop surfaces by the third tick.
 `"iso"` for ISO-8601, `"epoch"` for Unix epoch seconds, or anything else as
 a `strptime` format. Classic syslog timestamps (`Jan  2 15:04:05`, no year)
 need a `strptime` format — otto injects the current UTC year before
-parsing those, so they parse correctly instead of rejecting outright.
+parsing those, so they parse correctly instead of rejecting outright. If
+that injected year would land the row more than 2 days in the future (a
+`Dec 31` line read just after New Year rolls over to next year's `Jan 1`
+under the current-year injection), otto subtracts one year — the standard
+syslog-consumer rollover guard, so a New Year boundary can't wedge the
+high-water mark a year ahead of every real row.
 
 Each `RegexLogEventParser` contributes one `kind="table"` tab on the
 dashboard and no chart. Rows render newest-first with a client-side,

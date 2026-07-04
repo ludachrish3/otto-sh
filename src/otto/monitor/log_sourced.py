@@ -36,7 +36,7 @@ guard) — import it explicitly from init modules or test code.
 
 import re
 from collections.abc import Iterable, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TypeVar
 
 from typing_extensions import override
@@ -58,6 +58,21 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
+def _complete_lines(output: str) -> list[str]:
+    """Split into lines, dropping a final unterminated segment.
+
+    A read that races a mid-write append can capture a torn last line that
+    still parses (and would poison the high-water mark); only
+    newline-terminated lines are trusted. The dropped segment re-emits whole
+    on the next tick. Consequence: a source that never terminates its final
+    line never emits that row.
+    """
+    lines = output.splitlines()
+    if output and not output.endswith("\n") and lines:
+        del lines[-1]
+    return lines
+
+
 def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
     """Parse a data-carried timestamp; ``None`` (skip the row) when it doesn't parse.
 
@@ -68,7 +83,8 @@ def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
     - ``"iso"``: ISO-8601 (a ``Z`` suffix is accepted on Python 3.10);
     - anything else: a ``strptime`` format. For a format without a year
       directive (classic syslog), the current UTC year is injected before
-      parsing.
+      parsing; if that lands the result more than 2 days in the future
+      (a "Dec 31" line read just after New Year), one year is subtracted.
 
     Naive results are treated as UTC in every mode.
     """
@@ -84,16 +100,26 @@ def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
             return _as_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
         except ValueError:
             return None
+    injected = False
     if "%Y" not in fmt and "%y" not in fmt:
         # Year-less formats (classic syslog): inject the current UTC year
         # BEFORE parsing — strptime defaults to 1900, a non-leap year, which
         # would reject Feb 29 rows outright instead of reaching a fix-up.
         text = f"{datetime.now(tz=timezone.utc).year} {text}"
         fmt = f"%Y {fmt}"
+        injected = True
     try:
-        return _as_utc(datetime.strptime(text, fmt))  # noqa: DTZ007 — naive-means-UTC applied by _as_utc
+        parsed = _as_utc(datetime.strptime(text, fmt))  # noqa: DTZ007 — naive-means-UTC applied by _as_utc
     except (ValueError, re.error):
         return None
+    if injected and parsed - datetime.now(tz=timezone.utc) > timedelta(days=2):
+        # Rollover guard: a "Dec 31" line read just after New Year would
+        # otherwise land ~a year in the future and wedge the high-water mark.
+        try:
+            parsed = parsed.replace(year=parsed.year - 1)
+        except ValueError:
+            return None  # Feb 29 with no such day the year before
+    return parsed
 
 
 class HighWaterMark:
@@ -187,7 +213,7 @@ class CsvMetricParser(MetricParser):
     @override
     def parse_tick(self, output: str, *, ctx: ParseContext) -> TickResult:
         rows: list[tuple[datetime, dict[str, MetricDataPoint]]] = []
-        for line in output.splitlines():
+        for line in _complete_lines(output):
             parts = [part.strip() for part in line.split(",")]
             if len(parts) != len(self._columns) + 1:
                 continue  # header/torn/partial line — self-heals next tick
@@ -275,7 +301,7 @@ class RegexLogEventParser(MetricParser):
     @override
     def parse_tick(self, output: str, *, ctx: ParseContext) -> TickResult:
         rows: list[tuple[datetime, dict[str, str]]] = []
-        for line in output.splitlines():
+        for line in _complete_lines(output):
             m = self._pattern.search(line)
             if m is None:
                 continue

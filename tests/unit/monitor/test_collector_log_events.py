@@ -157,6 +157,14 @@ async def test_record_log_events_publishes_one_batched_sse_message() -> None:
 
 
 @pytest.mark.asyncio
+async def test_log_events_only_host_appears_in_meta_hosts() -> None:
+    """A host that only ever produced log events is still selectable on the dashboard."""
+    collector = MetricCollector(hosts=[])
+    await collector._record_log_events("host9", "syslog", [LogEvent(ts=TS1, fields={"m": "x"})])
+    assert "host9" in collector.get_meta_model().hosts
+
+
+@pytest.mark.asyncio
 async def test_get_log_events_shape() -> None:
     collector = MetricCollector(hosts=[])
     await collector._record_log_events("host1", "syslog", [LogEvent(ts=TS1, fields={"m": "x"})])
