@@ -174,6 +174,30 @@ the per-suite collector takes precedence for that test.  Events appear as
 markers on the dashboard timeline, making it easy to correlate metric
 changes with test actions.
 
+## Built-in metrics
+
+Every Unix host in the monitored set runs `DEFAULT_PARSERS` unless a custom
+registration says otherwise (see [Custom parsers](#custom-parsers) below):
+
+| Command | Series | Chart | Tab | Notes |
+| --- | --- | --- | --- | --- |
+| `top -d 0.5 -bn2` | Overall CPU; `proc/<pid>` for the top 5 processes by CPU% | CPU | CPU | Runs two `top` iterations per tick and discards the first, so %CPU reflects the tick interval rather than the process's lifetime average. |
+| `free -b` | Memory Usage; Swap | Memory Usage | Memory | The Swap series only appears when the host has swap configured — it is omitted, not charted as a flat 0. |
+| `df -h` | one series per mounted filesystem, labelled by mount point | Disk Usage | Disk | |
+| `cat /proc/loadavg` | Load (1m), Load (5m), Load (15m) | Load | CPU | |
+| `cat /proc/net/dev` | `rx <iface>`, `tx <iface>` (B/s) per interface | Network I/O | Network | Loopback (`lo`) is skipped. Packet counts and error/drop rates ride along in each series' hover meta rather than charting separately. |
+| `ss -s` | Established, Time-wait | Sockets | Network | A host without `ss` simply has no Sockets series — see [Parser health](#parser-health). |
+| `cat /proc/diskstats` | `read <device>`, `write <device>` (B/s) per device | Disk I/O | Disk | Whole devices only — partitions (`sda1`, `nvme0n1p2`, …) and virtual/noise devices (`loop*`, `ram*`, `dm-*`, `zram*`, `sr*`) are skipped. |
+| `cat /proc/stat` | `core <N>` (%) per CPU core | Per-core CPU | CPU | The aggregate line is skipped; overall CPU is already charted by the top-CPU parser above. |
+| `cat /proc/loadavg /proc/stat` | Runnable, Total procs, Blocked | Processes | CPU | |
+
+Network I/O and Disk I/O are rate metrics: computed from monotonic counter
+deltas, they need two samples before they can chart anything, so the first
+tick for a given interface or device emits no point.  A host reboot resets
+those counters; otto detects the resulting negative delta, skips one tick,
+and re-baselines from the new counters — a reboot never shows up as a
+spike.
+
 ## Custom parsers
 
 The monitor uses parsers to extract metrics from command output.  By default,
@@ -210,6 +234,49 @@ input such as the target host's core count; most parsers ignore it.  See
 {mod}`otto.monitor.parsers` for the built-in parsers and the
 {class}`~otto.monitor.parsers.MetricParser` protocol.
 
+### Per-host parsers
+
+Register a custom parser dict for one host — or a family of hosts matched by
+a compiled regex — from an init module listed in `.otto/settings.toml`.
+Registration matches on the host **id** (the unique key, as in `lab.hosts`),
+not the human-readable display name shown in the dashboard:
+
+```python
+from otto.examples.monitor import UptimeParser
+from otto.monitor.parsers import DEFAULT_PARSERS, register_host_parsers
+
+register_host_parsers(
+    "router1",
+    {**DEFAULT_PARSERS, UptimeParser().command: UptimeParser()},
+)
+```
+
+`UptimeParser` (in `otto.examples.monitor`) is a complete, runnable example:
+it charts `cat /proc/uptime` as a single "Uptime" series in seconds, and
+otto's own test suite registers it exactly this way.
+
+A compiled pattern instead of a host id scopes the same registration to
+every host whose id matches — for example, giving a family of `busybox-*`
+hosts (whose `ss` doesn't support `-s`) a `netstat`-based sockets parser in
+place of the default `ss -s` one:
+
+```python
+import re
+
+from otto.monitor.parsers import DEFAULT_PARSERS, register_host_parsers
+from my_repo.parsers import NetstatSocketsParser  # your own ss-free implementation
+
+parsers = {k: v for k, v in DEFAULT_PARSERS.items() if k != "ss -s"}
+parsers[NetstatSocketsParser.command] = NetstatSocketsParser()
+register_host_parsers(re.compile(r"busybox-.*"), parsers)
+```
+
+Patterns are matched with `re.fullmatch` against the host id.  Precedence is
+exact id > pattern > project-level > `DEFAULT_PARSERS`: an exact-id
+registration always wins outright for that host, and a host matched by two
+different patterns raises at resolution time rather than picking a silent,
+import-order-dependent winner.
+
 ### Project-level parsers
 
 Register parsers that apply to every monitored host from an init module
@@ -237,6 +304,37 @@ class SocketParser(MetricParser):
     interval = 30.0  # poll sockets every 30s regardless of --interval
     ...
 ```
+
+## Parser health
+
+The collector watches each parser's command for two kinds of trouble and
+logs a warning — edge-triggered, so a flapping command logs every
+transition while a steady outage logs only once.
+
+**Failing command.** The first tick a command starts failing (nonzero exit)
+logs a warning naming the metrics that will be missing; recovery logs once
+more when the command starts succeeding again:
+
+```text
+Monitor: 'ss -s' failed on test1 (exit 127): ss: command not found — Sockets metrics will be missing
+Monitor: 'ss -s' recovered on test1 after 4 failed tick(s)
+```
+
+**Silent command.** A command that keeps exiting 0 but never yields a data
+point — a bad regex, an unfamiliar output format, nothing to report — gets a
+one-time backstop warning after three succeeding ticks with no output:
+
+```text
+Monitor: parser SocketsParser ('ss -s') has produced no data on test1 after 3 ticks
+```
+
+Only succeeding ticks count toward those three; a failing command is already
+covered by the warning above and isn't double-counted here.  The same
+backstop watches SNMP OIDs that never return a value.
+
+Either way, a missing tool or unreachable metric is not an error otto tries
+to recover from: the affected series is simply absent from the dashboard,
+same as any other tick that produced no data.
 
 ## SNMP monitoring
 
@@ -280,9 +378,11 @@ for that host:
 The `address` and `port` are the endpoint reachable from the otto host — for
 an embedded device behind a hop this is typically the local end of a UDP relay
 on the hop host, not the device's own address.  `community` defaults to
-`"public"`.  `oids` is the bare list of OIDs to poll each tick; presentation
-(label, chart group, unit) is supplied by the descriptor registry, not by lab
-data.
+`"public"`.  `oids` is the list of OIDs to poll each tick — raw dotted OIDs,
+otto's named bundles (`otto-core`, `otto-net:N`, `otto-fs:N`), or a mix of
+both; see the `snmp.oids` field reference in {doc}`lab-config` for the full
+bundle syntax.  Presentation (label, chart group, unit) is supplied by the
+descriptor registry, not by lab data.
 
 ### How otto reads SNMP data
 
@@ -309,6 +409,41 @@ that converts the raw integer varbind to a real value.
 The enterprise OIDs are served by otto's Zephyr test-bed agent.  The enterprise
 base is `1.3.6.1.4.1.63245` (PEN 63245, a placeholder — a real IANA PEN has not
 yet been assigned).
+
+`kind` governs how a raw varbind becomes a chart point: `gauge` (the
+default, e.g. Heap Used above) charts `raw * scale` directly; `counter`
+treats the varbind as a monotonic counter and converts it to a per-second
+rate — first sighting and post-reboot re-baselining emit nothing, the same
+rule the Unix `Network I/O`/`Disk I/O` parsers follow (see
+[Built-in metrics](#built-in-metrics)).
+
+### Per-interface and per-filesystem OIDs
+
+Network and filesystem metrics live in an **indexed** subtree rather than a
+handful of fixed leaves: a small agent has a known, fixed set of interfaces
+and filesystems, 0-indexed by the firmware, and otto polls one scalar per
+value with a plain GET — no table walk.  This layout is the
+**firmware/manager contract**: the agent and otto must agree on it exactly,
+the same way both sides agree on the core `.1` scalars above.
+
+| OID | Leaf | Kind | Notes |
+| --- | ---- | ---- | ----- |
+| `1.3.6.1.4.1.63245.2.<i>.1.0` | rx bytes | counter | Charted as `rx if<i>` (B/s) on the Network tab. |
+| `1.3.6.1.4.1.63245.2.<i>.2.0` | tx bytes | counter | Charted as `tx if<i>` (B/s) on the Network tab. |
+| `1.3.6.1.4.1.63245.2.<i>.3.0` | rx packets | counter | Rides the rx-bytes series' hover meta, not its own chart. |
+| `1.3.6.1.4.1.63245.2.<i>.4.0` | tx packets | counter | Rides the tx-bytes series' hover meta. |
+| `1.3.6.1.4.1.63245.2.<i>.5.0` | errors | counter | Charted as `errors if<i>` on the "Net errors" chart. |
+| `1.3.6.1.4.1.63245.2.<i>.6.0` | drops | counter | Charted as `drops if<i>` on the "Net errors" chart. |
+| `1.3.6.1.4.1.63245.3.<i>.1.0` | filesystem used bytes | gauge | Charted as `fs<i> used` on the Storage tab. |
+| `1.3.6.1.4.1.63245.3.<i>.2.0` | filesystem total bytes | gauge | Rides the used-bytes series' hover meta as a human-readable total, not its own chart. |
+
+`<i>` is the interface or filesystem index (`0`, `1`, …).  The generated
+labels above (`rx if0`, `fs1 used`, …) come from the same descriptor
+registry as the core scalars, so they can be renamed per device — see
+[Extending: registering custom descriptors](#extending-registering-custom-descriptors)
+below.  Lab data never spells out these OIDs directly; the `otto-net:N` /
+`otto-fs:N` bundles (see {doc}`lab-config`) expand them and register their
+descriptors together.
 
 An OID present in `oids` but without a registered descriptor falls back to
 default styling via `resolve_snmp_metric`: the OID string is used as the label
@@ -351,3 +486,9 @@ after `chart` has a default, so a private OID only needs the first three:
 >>> SnmpMetric(oid='1.2.3', label='X', chart='C').tab
 'metrics'
 ```
+
+`register_snmp_metric` always overwrites, so the same call renames a
+built-in descriptor too — including the auto-generated per-index labels
+from [Per-interface and per-filesystem OIDs](#per-interface-and-per-filesystem-oids)
+(`rx if0`, `fs1 used`, …): register a new `SnmpMetric` for that exact OID
+with a more meaningful `label` (e.g. `rx wan0`) and it replaces the default.

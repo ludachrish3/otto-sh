@@ -136,7 +136,38 @@ the SNMP section of {doc}`monitor`.
 | `snmp.address` | string | SNMP agent IP address. |
 | `snmp.port` | integer | SNMP UDP port. |
 | `snmp.community` | string | SNMP community string. |
-| `snmp.oids` | array of strings | OIDs to poll. |
+| `snmp.oids` | array of strings | OIDs to poll — raw dotted OIDs, named bundles (below), or a mix of both. |
+
+Each entry in `oids` is either a raw dotted OID or one of otto's built-in
+**named bundles**, which expand to a group of related OIDs and register
+their descriptors as a side effect.  Bundles and raw OIDs mix freely in the
+same list:
+
+- `otto-core` — the five core scalars (uptime, overall CPU, heap used, heap
+  free, thread count).
+- `otto-net:N` — network OIDs for interfaces `0..N-1`.  `otto-net` alone
+  (no `:N`) means `otto-net:1`, i.e. just interface `0`.
+- `otto-fs:N` — filesystem OIDs for filesystems `0..N-1`, same `:N` default.
+
+```json
+{
+    "snmp": {
+        "address": "10.10.200.14",
+        "port": 16101,
+        "oids": [
+            "otto-core",
+            "otto-net:2",
+            "otto-fs:1",
+            "1.3.6.1.4.1.99999.1.5.0"
+        ]
+    }
+}
+```
+
+`N` must be a positive integer.  An unknown bundle name fails fast at
+monitor startup rather than silently polling nothing.  See
+[Per-interface and per-filesystem OIDs](monitor.md#per-interface-and-per-filesystem-oids)
+in {doc}`monitor` for what each expanded OID charts.
 
 ### Per-protocol option tables
 
