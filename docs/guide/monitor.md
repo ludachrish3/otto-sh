@@ -372,10 +372,13 @@ register_parsers([
 
 Line format: the first column is an ISO-8601 or epoch-seconds timestamp
 (naive values are treated as UTC); the remaining columns are numeric
-values matching `columns`, comma-separated, in file order. Header, torn
-(mid-write), and otherwise malformed lines are skipped — a mid-write read
-self-heals on the next tick because the high-water mark (see
-[Timestamps](#timestamps) below) never advances past a skipped line.
+values matching `columns`, comma-separated, in file order. Header and
+otherwise malformed lines are skipped outright. The final line of each
+read is provisional rather than trusted immediately — a mid-write read
+can torn-truncate it into something that still parses — so it only emits
+once a later read shows it unchanged; worst case this delays the newest
+row by one poll interval, and a torn line itself never emits (see
+[Timestamps](#timestamps) below for the high-water mark this protects).
 
 Because points carry their own data-carried timestamps rather than the
 collector's tick time, a file already holding the last hour of digests

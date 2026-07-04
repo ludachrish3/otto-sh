@@ -8,6 +8,7 @@ import pytest
 from otto.monitor.log_sourced import (
     CsvMetricParser,
     HighWaterMark,
+    ProvisionalTail,
     RegexLogEventParser,
     parse_timestamp,
 )
@@ -106,6 +107,38 @@ class TestHighWaterMark:
         assert hwm.advance([fresh]) == [fresh]
 
 
+class TestProvisionalTail:
+    """Direct unit tests of the hold-until-confirmed mechanism, independent of
+    any parser's line format."""
+
+    def test_trailing_newline_emits_final_line_immediately(self) -> None:
+        tail = ProvisionalTail()
+        assert tail.lines("A\nB\n") == ["A", "B"]
+
+    def test_no_trailing_newline_holds_final_line(self) -> None:
+        tail = ProvisionalTail()
+        assert tail.lines("A\nB") == ["A"]
+
+    def test_unchanged_reread_emits_the_pending_line(self) -> None:
+        # Every read carries the whole window (like a real `tail -n N`), so
+        # already-confirmed lines like "A" reappear on every read; only the
+        # final line's hold status is at issue.
+        tail = ProvisionalTail()
+        assert tail.lines("A\nB") == ["A"]  # B held
+        assert tail.lines("A\nB") == ["A", "B"]  # unchanged — B confirmed, emits
+
+    def test_changed_reread_holds_the_new_pending_and_drops_the_old(self) -> None:
+        tail = ProvisionalTail()
+        assert tail.lines("A\nB") == ["A"]  # B held
+        assert tail.lines("A\nBX") == ["A"]  # "BX" != pending "B" — held, "B" never emits
+        assert tail.lines("A\nBX") == ["A", "BX"]  # confirmed unchanged this time
+
+    def test_new_lines_after_pending_emit_and_pending_advances(self) -> None:
+        tail = ProvisionalTail()
+        assert tail.lines("A\nB") == ["A"]  # B held
+        assert tail.lines("A\nB\nC") == ["A", "B"]  # B confirmed unchanged; C is the new pending
+
+
 SYSLOG_PATTERN = r"^(?P<ts>\S+) (?P<loghost>\S+) (?P<proc>[^:\[]+)(?:\[\d+\])?: (?P<message>.*)$"
 
 
@@ -170,17 +203,30 @@ class TestRegexLogEventParser:
         tick = _syslog().parse_tick("garbage vm1 a: hi\n", ctx=ParseContext())
         assert tick.events == []
 
-    def test_missing_trailing_newline_drops_truncated_message(self) -> None:
-        """A mid-write read can torn-truncate the greedy message group and still match;
-        without a trailing newline the line is untrusted and dropped, so the completed
-        line emits whole next tick instead of poisoning the mark with a truncated row."""
+    def test_final_line_held_until_reread_confirms_it_unchanged(self) -> None:
+        """No trailing newline: the final line is provisional, not dropped — it
+        emits once a subsequent read shows it byte-identical (worst case one poll
+        interval of latency for the newest row)."""
+        p = _syslog()
+        line = "2026-07-04T12:00:00Z vm1 sshd[142]: session opened"  # no trailing \n
+        first = p.parse_tick(line, ctx=ParseContext())
+        assert first.events == []
+        second = p.parse_tick(line, ctx=ParseContext())
+        assert [e.fields["message"] for e in second.events] == ["session opened"]
+
+    def test_torn_then_completed_emits_once_with_the_correct_message(self) -> None:
+        """A mid-write read can torn-truncate the greedy message group and still
+        match. The torn line is held; its completed successor (also without a
+        trailing newline) differs and is held in turn; only the stabilized,
+        correct line ever emits."""
         p = _syslog()
         torn = "2026-07-04T12:00:00Z vm1 sshd[142]: session op"  # no trailing \n
-        tick = p.parse_tick(torn, ctx=ParseContext())
-        assert tick.events == []
-        completed = "2026-07-04T12:00:00Z vm1 sshd[142]: session opened\n"
-        fresh = p.parse_tick(completed, ctx=ParseContext()).events
-        assert [e.fields["message"] for e in fresh] == ["session opened"]
+        assert p.parse_tick(torn, ctx=ParseContext()).events == []
+        completed = "2026-07-04T12:00:00Z vm1 sshd[142]: session opened"  # still no \n
+        second = p.parse_tick(completed, ctx=ParseContext())
+        assert second.events == []  # differs from the torn pending — held again
+        third = p.parse_tick(completed, ctx=ParseContext())
+        assert [e.fields["message"] for e in third.events] == ["session opened"]
 
     def test_ts_group_must_exist(self) -> None:
         with pytest.raises(ValueError, match="no named group 'ts'"):
@@ -265,19 +311,39 @@ class TestCsvMetricParser:
         ).samples
         assert [s.ts for s in fresh] == [datetime(2026, 7, 4, 12, 0, 5, tzinfo=timezone.utc)]
 
-    def test_missing_trailing_newline_drops_last_line_even_if_parseable(self) -> None:
+    def test_final_line_held_until_reread_confirms_it_unchanged(self) -> None:
+        """No trailing newline: the final line is provisional, not dropped — it
+        emits once a subsequent read shows it byte-identical."""
+        p = _csv()
+        out = "2026-07-04T12:00:00,10,20\n2026-07-04T12:00:05,11,21"  # no trailing \n
+        first = p.parse_tick(out, ctx=ParseContext())
+        assert [s.ts for s in first.samples] == [
+            datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+        ]
+        second = p.parse_tick(out, ctx=ParseContext())
+        assert [s.ts for s in second.samples] == [
+            datetime(2026, 7, 4, 12, 0, 5, tzinfo=timezone.utc)
+        ]
+
+    def test_torn_then_completed_emits_once_with_the_correct_value(self) -> None:
         """A mid-write read can torn-truncate the last value and still parse (right
-        column count, valid float); without a trailing newline the line is untrusted
-        and dropped, so the completed line emits whole next tick instead of poisoning
-        the mark with a wrong value."""
+        column count, valid float). The torn line is held; its completed successor
+        (also without a trailing newline) differs and is held in turn; only the
+        stabilized, correct value ever emits."""
         p = _csv()
         torn = "2026-07-04T12:00:00,10,20\n2026-07-04T12:00:05,11,2"  # no trailing \n
-        tick = p.parse_tick(torn, ctx=ParseContext())
-        assert [s.ts for s in tick.samples] == [datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)]
-        completed = "2026-07-04T12:00:00,10,20\n2026-07-04T12:00:05,11,21\n"
-        fresh = p.parse_tick(completed, ctx=ParseContext()).samples
-        assert [s.ts for s in fresh] == [datetime(2026, 7, 4, 12, 0, 5, tzinfo=timezone.utc)]
-        assert fresh[0].series["tx_kbps"].value == 21.0
+        first = p.parse_tick(torn, ctx=ParseContext())
+        assert [s.ts for s in first.samples] == [
+            datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
+        ]
+        completed = "2026-07-04T12:00:00,10,20\n2026-07-04T12:00:05,11,21"  # still no \n
+        second = p.parse_tick(completed, ctx=ParseContext())
+        assert second.samples == []  # differs from the torn pending — held again
+        third = p.parse_tick(completed, ctx=ParseContext())
+        assert [s.ts for s in third.samples] == [
+            datetime(2026, 7, 4, 12, 0, 5, tzinfo=timezone.utc)
+        ]
+        assert third.samples[0].series["tx_kbps"].value == 21.0
 
     def test_requires_at_least_one_column(self) -> None:
         with pytest.raises(ValueError, match="at least one value column"):

@@ -58,19 +58,34 @@ def _as_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
 
-def _complete_lines(output: str) -> list[str]:
-    """Split into lines, dropping a final unterminated segment.
+class ProvisionalTail:
+    """Hold back the final line of each read until a later read confirms it.
 
-    A read that races a mid-write append can capture a torn last line that
-    still parses (and would poison the high-water mark); only
-    newline-terminated lines are trusted. The dropped segment re-emits whole
-    on the next tick. Consequence: a source that never terminates its final
-    line never emits that row.
+    The shell transport strips trailing newlines before parsers see output,
+    so a torn (mid-write) final line is indistinguishable from a complete
+    one by text alone — and a torn line can still parse, which would poison
+    the high-water mark and persist a wrong row. Unless the output still
+    carries its final newline (then the last line is provably complete),
+    the final line is provisional: it emits once a subsequent read shows it
+    unchanged, with or without newer lines after it. Worst-case latency for
+    the newest row is one poll interval; a torn line never emits (its
+    completed form replaces it and emits after stabilizing in turn).
     """
-    lines = output.splitlines()
-    if output and not output.endswith("\n") and lines:
-        del lines[-1]
-    return lines
+
+    def __init__(self) -> None:
+        self._pending: str | None = None
+
+    def lines(self, output: str) -> list[str]:
+        """Split *output* into lines, holding back an unconfirmed final line."""
+        lines = output.splitlines()
+        if not lines or output.endswith("\n"):
+            self._pending = None
+            return lines
+        if lines[-1] != self._pending:
+            # First sighting of this final line: hold it for one read.
+            self._pending = lines[-1]
+            del lines[-1]
+        return lines
 
 
 def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
@@ -133,11 +148,13 @@ class HighWaterMark:
     offsets, so log rotation/truncation needs no special handling — new
     rows are still newer.
 
-    A torn last line (read mid-write) is skipped by the parser BEFORE this
-    filter, so the mark never passes it — the completed line re-emits whole
-    on the next tick. Boundary rule: a new row bearing exactly the mark's
-    timestamp is dropped as already-seen (accepted trade-off; real sources
-    have per-row-unique or sub-second timestamps).
+    The final line of each read is held back by the parser BEFORE this
+    filter (see :class:`ProvisionalTail`) until a later read confirms it
+    unchanged, so a torn (mid-write) last line never reaches the mark —
+    only its stabilized, completed form does. Boundary rule: a new row
+    bearing exactly the mark's timestamp is dropped as already-seen
+    (accepted trade-off; real sources have per-row-unique or sub-second
+    timestamps).
     """
 
     def __init__(self) -> None:
@@ -204,6 +221,7 @@ class CsvMetricParser(MetricParser):
         self.interval = interval
         self._columns = list(columns)
         self._hwm = HighWaterMark()
+        self._tail = ProvisionalTail()
 
     @override
     def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
@@ -213,7 +231,7 @@ class CsvMetricParser(MetricParser):
     @override
     def parse_tick(self, output: str, *, ctx: ParseContext) -> TickResult:
         rows: list[tuple[datetime, dict[str, MetricDataPoint]]] = []
-        for line in _complete_lines(output):
+        for line in self._tail.lines(output):
             parts = [part.strip() for part in line.split(",")]
             if len(parts) != len(self._columns) + 1:
                 continue  # header/torn/partial line — self-heals next tick
@@ -292,6 +310,7 @@ class RegexLogEventParser(MetricParser):
         self.unit = ""
         self.interval = interval
         self._hwm = HighWaterMark()
+        self._tail = ProvisionalTail()
 
     @override
     def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
@@ -301,7 +320,7 @@ class RegexLogEventParser(MetricParser):
     @override
     def parse_tick(self, output: str, *, ctx: ParseContext) -> TickResult:
         rows: list[tuple[datetime, dict[str, str]]] = []
-        for line in _complete_lines(output):
+        for line in self._tail.lines(output):
             m = self._pattern.search(line)
             if m is None:
                 continue
