@@ -13,6 +13,7 @@ from otto.monitor.parsers import (
     MetricParser,
     NetDevParser,
     ParseContext,
+    SocketsParser,
     TopCpuParser,
     get_host_parsers,
     human_readable,
@@ -464,6 +465,33 @@ class TestNetDevParser:
 
 
 # ---------------------------------------------------------------------------
+# SocketsParser
+# ---------------------------------------------------------------------------
+
+_SS_OUTPUT = """Total: 201
+TCP:   9 (estab 2, closed 3, orphaned 0, timewait 4)
+
+Transport Total     IP        IPv6
+RAW       0         0         0
+UDP       5         4         1
+TCP       6         5         1
+"""
+
+
+class TestSocketsParser:
+    def test_parses_estab_and_timewait(self):
+        points = SocketsParser().parse(_SS_OUTPUT, ctx=ParseContext())
+        assert points["Established"].value == 2.0
+        assert points["Time-wait"].value == 4.0
+
+    def test_missing_tool_output_is_empty(self):
+        assert SocketsParser().parse("sh: ss: command not found", ctx=ParseContext()) == {}
+
+    def test_in_default_parsers(self):
+        assert "ss -s" in DEFAULT_PARSERS
+
+
+# ---------------------------------------------------------------------------
 # MetricParser extensibility
 # ---------------------------------------------------------------------------
 
@@ -547,11 +575,13 @@ class TestHostParserRegistry:
 # ---------------------------------------------------------------------------
 
 
-class _SocketParser(MetricParser):
-    y_title = "Sockets"
-    unit = ""
-    command = "ss -s"
-    chart = "Sockets"
+class _UptimeParser(MetricParser):
+    """Test fixture parser with a command not in DEFAULT_PARSERS."""
+
+    y_title = "Uptime"
+    unit = "days"
+    command = "uptime -p"
+    chart = "Uptime"
 
     def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
         return {}
@@ -575,7 +605,7 @@ class TestProjectParserRegistry:
                 parsers_mod.PROJECT_PARSERS.unregister(command)
 
     def test_register_parsers_extends_defaults_for_all_hosts(self):
-        register_parsers([_SocketParser()])
+        register_parsers([_UptimeParser()])
         merged = get_host_parsers("any-host-without-per-host-registration")
         assert "ss -s" in merged
         assert set(DEFAULT_PARSERS) <= set(merged)
@@ -589,11 +619,11 @@ class TestProjectParserRegistry:
         assert merged["free -b"].chart == "My Memory"
 
     def test_per_host_registration_beats_project_level(self):
-        register_parsers([_SocketParser()])
+        register_parsers([_UptimeParser()])
         register_host_parsers("special", dict(DEFAULT_PARSERS))
-        assert "ss -s" not in get_host_parsers("special")  # per-host dict is total
+        assert "uptime -p" not in get_host_parsers("special")  # per-host dict is total
 
     def test_duplicate_project_registration_is_loud(self):
-        register_parsers([_SocketParser()])
-        with pytest.raises(ValueError, match="ss -s"):
-            register_parsers([_SocketParser()])
+        register_parsers([_UptimeParser()])
+        with pytest.raises(ValueError, match="uptime -p"):
+            register_parsers([_UptimeParser()])

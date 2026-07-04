@@ -426,12 +426,50 @@ class NetDevParser(MetricParser):
         return result
 
 
+class SocketsParser(MetricParser):
+    """TCP socket-state counts from the ``TCP:`` summary line of ``ss -s``.
+
+    Hosts without ``ss`` produce a shell error the parser cannot match — the
+    series simply never appears (and the collector warns once; see
+    parser-health warnings). Swap in a ``netstat``-based parser per host via
+    :func:`register_host_parsers` if needed.
+    """
+
+    y_title = "Sockets"
+    unit = ""
+    command = "ss -s"
+    tab = "network"
+    tab_label = "Network"
+    chart = "Sockets"
+
+    _regex = re.compile(r"^TCP:\s+\d+\s+\(estab (?P<estab>\d+),.*timewait (?P<timewait>\d+)")
+
+    @override
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        for line in output.splitlines():
+            m = self._regex.match(line.strip())
+            if m:
+                return {
+                    "Established": MetricDataPoint(float(m["estab"])),
+                    "Time-wait": MetricDataPoint(float(m["timewait"])),
+                }
+        return {}
+
+
 # ---------------------------------------------------------------------------
 # Default parser registry — maps command string → parser instance
 # ---------------------------------------------------------------------------
 
 DEFAULT_PARSERS: dict[str, MetricParser] = {
-    p.command: p for p in [TopCpuParser(), MemParser(), DiskParser(), LoadParser(), NetDevParser()]
+    p.command: p
+    for p in [
+        TopCpuParser(),
+        MemParser(),
+        DiskParser(),
+        LoadParser(),
+        NetDevParser(),
+        SocketsParser(),
+    ]
 }
 
 
