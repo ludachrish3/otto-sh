@@ -171,3 +171,44 @@ class TestSilentParserWarning:
                     )
         warnings = [r for r in caplog.records if "has produced no data" in r.message]
         assert len(warnings) == 2  # one per host
+
+    @pytest.mark.asyncio
+    async def test_sustained_failure_does_not_trip_silent_backstop(self, collector, caplog):
+        """5 ticks of a failing command should warn exactly once about the failure
+        (layer 1) and zero times about never-produced (layer 2). Failed ticks
+        must not advance the silent-parser backstop counter."""
+        parsers = {"ss -s": _NeverParses()}
+        failed = _failed("ss -s", 127, "sh: ss: command not found")
+        with caplog.at_level("WARNING", logger="otto"):
+            for _ in range(5):
+                await _tick(collector, parsers, [failed])
+        failure_warnings = [r for r in caplog.records if "failed on test1" in r.message]
+        silent_warnings = [r for r in caplog.records if "has produced no data" in r.message]
+        assert len(failure_warnings) == 1  # edge-triggered, so exactly 1
+        assert len(silent_warnings) == 0  # no silent-parser warning
+
+    @pytest.mark.asyncio
+    async def test_failure_message_omits_none_output(self, collector, caplog):
+        """When CommandResult.value is None (command never ran), the failure
+        warning should not contain the literal string 'None'."""
+        parsers = {"ss -s": _NeverParses()}
+        never_ran = CommandResult(
+            Status.Error, value=None, command="ss -s", retcode=-1
+        )
+        with caplog.at_level("WARNING", logger="otto"):
+            await _tick(collector, parsers, [never_ran])
+        failure_warnings = [r for r in caplog.records if "failed on test1" in r.message]
+        assert len(failure_warnings) == 1
+        assert "None" not in failure_warnings[0].message
+
+    @pytest.mark.asyncio
+    async def test_never_produced_sanity_check(self, collector, caplog):
+        """Existing test: succeeding command with empty parse should still warn
+        by tick 3."""
+        parsers = {"ss -s": _NeverParses()}
+        with caplog.at_level("WARNING", logger="otto"):
+            for _ in range(5):
+                await _tick(collector, parsers, [_ok("ss -s", "unparseable")])
+        warnings = [r for r in caplog.records if "has produced no data" in r.message]
+        assert len(warnings) == 1
+        assert "_NeverParses" in warnings[0].message

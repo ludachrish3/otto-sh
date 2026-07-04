@@ -452,7 +452,7 @@ class MetricCollector:
                 # sustained outage logs once (plus its recovery below).
                 failed_ticks = self._failing.get(key, 0)
                 if failed_ticks == 0:
-                    first_line = str(cmd_result.value).strip().splitlines()[:1]
+                    first_line = str(cmd_result.value or "").strip().splitlines()[:1]
                     logger.warning(
                         "Monitor: '%s' failed on %s (exit %d): %s — %s metrics will be missing",
                         cmd_result.command,
@@ -471,12 +471,12 @@ class MetricCollector:
                         host_name,
                         failed_ticks,
                     )
-            points = parser.parse(cmd_result.value, ctx=ctx)
-            self._note_health(key, produced=bool(points), what=type(parser).__name__)
-            if not points:
-                continue
-            for label, dp in points.items():
-                await self._record_point(host_name, ts, label, dp, parser)
+                points = parser.parse(cmd_result.value, ctx=ctx)
+                self._note_health(key, produced=bool(points), what=type(parser).__name__)
+                if not points:
+                    continue
+                for label, dp in points.items():
+                    await self._record_point(host_name, ts, label, dp, parser)
 
     def _note_health(self, key: tuple[str, str], *, produced: bool, what: str) -> None:
         """Track never-produced-by-tick-K per (host, command/oid); warn once."""
