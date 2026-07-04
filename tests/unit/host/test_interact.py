@@ -702,6 +702,42 @@ class TestBridgeProxyIOExpect:
         with pytest.raises(ConnectionError):
             await io.expect(r"[Pp]assword:", timeout=1.0)
 
+    @pytest.mark.asyncio
+    async def test_consumes_matched_bytes_so_next_expect_reads_fresh(self):
+        """A second expect() on the SAME instance for the same pattern must NOT
+        re-match the first call's already-consumed bytes — it has to read fresh
+        input. Otherwise a 2+-hop replay would fire hop 2's password blind
+        against hop 1's leftover prompt. Proven by counting read_remote calls:
+        the second expect must trigger at least one additional read."""
+        read_calls = 0
+        # Read 1 satisfies expect #1; read 2 (only reached if the buffer was
+        # correctly trimmed) satisfies expect #2. A leftover-buffer bug would
+        # let expect #2 return without ever reaching read 2.
+        chunks = [b"first Password:", b"second Password:"]
+
+        async def read() -> bytes:
+            nonlocal read_calls
+            read_calls += 1
+            if not chunks:
+                # If expect #2 (incorrectly) consumed nothing and looped for a
+                # 3rd read, surface it as EOF rather than hanging.
+                return b""
+            return chunks.pop(0)
+
+        async def write(data: bytes) -> None:
+            pass
+
+        io = _BridgeProxyIO(write, read, newline=b"\n")
+
+        first = await io.expect(r"[Pp]assword:")
+        assert first == "first Password:"
+        assert read_calls == 1
+
+        second = await io.expect(r"[Pp]assword:")
+        # The second match came from the SECOND read, not the stale buffer.
+        assert second == "second Password:"
+        assert read_calls == 2
+
 
 # ---------------------------------------------------------------------------
 # Task 9: replaying the built-in `su` hop over _BridgeProxyIO via run_proxy
@@ -802,6 +838,40 @@ class TestReplayProxyHops:
             host_id="h1",
         )
         assert sent == [b"su mysql\n", b"pw1\n", b"su app\n", b"pw2\n"]
+
+    @pytest.mark.asyncio
+    async def test_each_hop_waits_for_its_own_fresh_prompt(self):
+        """Regression: the shared _BridgeProxyIO must consume matched bytes so
+        hop 2 waits for a NEWLY read prompt instead of re-matching hop 1's
+        leftover "Password:". Proven by counting read_remote calls — a 2-hop
+        chain must read the prompt twice (once per hop), not once."""
+        read_calls = 0
+        # One prompt per hop; each only becomes visible on its own read.
+        prompts = [b"Password:", b"Password:"]
+
+        async def write_remote(data: bytes) -> None:
+            pass
+
+        async def read_remote() -> bytes:
+            nonlocal read_calls
+            read_calls += 1
+            return prompts.pop(0) if prompts else b""
+
+        hops = [
+            Cred(login="mysql", password="pw1", proxy="su", via="admin"),
+            Cred(login="app", password="pw2", proxy="su", via="mysql"),
+        ]
+        await _replay_proxy_hops(
+            write_remote=write_remote,
+            read_remote=read_remote,
+            newline=b"\n",
+            proxy_hops=hops,
+            via_login="admin",
+            host_id="h1",
+        )
+        # Two hops → two password prompts consumed → two reads. A leftover
+        # buffer would let hop 2 re-match hop 1's prompt, leaving read_calls==1.
+        assert read_calls == 2
 
     @pytest.mark.asyncio
     async def test_via_is_sourced_from_the_previous_hops_login(self):

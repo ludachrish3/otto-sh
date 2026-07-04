@@ -375,7 +375,13 @@ class _BridgeProxyIO:
             while True:
                 match = regex.search(self._buffer)
                 if match is not None:
-                    return self._buffer[: match.end()]
+                    # Consume the matched prefix (like StreamReader.readuntil)
+                    # so a later expect() on this reused instance only sees data
+                    # received AFTER this match — otherwise hop N+1 re-matches
+                    # hop N's leftover prompt and sends its password blind.
+                    matched = self._buffer[: match.end()]
+                    self._buffer = self._buffer[match.end() :]
+                    return matched
                 chunk = await self._read_remote()
                 if not chunk:
                     raise ConnectionError("remote closed before the expected pattern arrived")
