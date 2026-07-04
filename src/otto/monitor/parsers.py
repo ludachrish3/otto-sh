@@ -40,6 +40,7 @@ matching a default overrides it; a new command extends the set), and yield to
 any per-host registration for that host.
 """
 
+import contextlib
 import copy
 import re
 from abc import ABC, abstractmethod
@@ -550,6 +551,38 @@ class PerCoreCpuParser(MetricParser):
         return result
 
 
+class ProcCountParser(MetricParser):
+    """Process counts: runnable/total from loadavg field 4, blocked from /proc/stat.
+
+    Cats both files in one command — the command string doubles as the parser
+    registry key, so it must differ from ``LoadParser``'s ``cat /proc/loadavg``
+    and ``PerCoreCpuParser``'s ``cat /proc/stat``; reading both also gets
+    ``procs_blocked`` for free.
+    """
+
+    y_title = "Count"
+    unit = ""
+    command = "cat /proc/loadavg /proc/stat"
+    tab = "cpu"
+    tab_label = "CPU"
+    chart = "Processes"
+
+    _loadavg = re.compile(r"^[\d.]+ [\d.]+ [\d.]+ (?P<run>\d+)/(?P<total>\d+) \d+$")
+
+    @override
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        result: dict[str, MetricDataPoint] = {}
+        for line in output.splitlines():
+            m = self._loadavg.match(line.strip())
+            if m:
+                result["Runnable"] = MetricDataPoint(float(m["run"]))
+                result["Total procs"] = MetricDataPoint(float(m["total"]))
+            elif line.startswith("procs_blocked"):
+                with contextlib.suppress(ValueError, IndexError):
+                    result["Blocked"] = MetricDataPoint(float(line.split()[1]))
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Default parser registry — maps command string → parser instance
 # ---------------------------------------------------------------------------
@@ -565,6 +598,7 @@ DEFAULT_PARSERS: dict[str, MetricParser] = {
         SocketsParser(),
         DiskIoParser(),
         PerCoreCpuParser(),
+        ProcCountParser(),
     ]
 }
 

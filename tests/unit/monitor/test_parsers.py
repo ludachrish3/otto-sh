@@ -15,6 +15,7 @@ from otto.monitor.parsers import (
     NetDevParser,
     ParseContext,
     PerCoreCpuParser,
+    ProcCountParser,
     SocketsParser,
     TopCpuParser,
     get_host_parsers,
@@ -585,6 +586,31 @@ class TestPerCoreCpuParser:
 
     def test_in_default_parsers(self):
         assert "cat /proc/stat" in DEFAULT_PARSERS
+
+
+# ---------------------------------------------------------------------------
+# ProcCountParser
+# ---------------------------------------------------------------------------
+
+_LOADAVG_STAT = """0.52 0.58 0.59 3/432 12345
+cpu  100 0 100 800 0 0 0 0 0 0
+procs_running 3
+procs_blocked 2
+"""
+
+
+class TestProcCountParser:
+    def test_parses_all_three_series(self):
+        points = ProcCountParser().parse(_LOADAVG_STAT, ctx=ParseContext())
+        assert points["Runnable"].value == 3.0
+        assert points["Blocked"].value == 2.0
+        assert points["Total procs"].value == 432.0
+
+    def test_garbage_is_empty(self):
+        assert ProcCountParser().parse("cat: /proc/loadavg: error", ctx=ParseContext()) == {}
+
+    def test_in_default_parsers(self):
+        assert "cat /proc/loadavg /proc/stat" in DEFAULT_PARSERS
 
 
 # ---------------------------------------------------------------------------
