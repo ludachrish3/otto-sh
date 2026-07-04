@@ -363,8 +363,17 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @override
-    async def _interact(self) -> None:
-        """Open an interactive shell inside the container via the parent's SSH conn."""
+    async def _interact(self, as_user: str | None = None) -> None:
+        """Open an interactive shell inside the container via the parent's SSH conn.
+
+        ``as_user`` (Task 9) is not supported here — a container exec has no
+        login-proxy chain of its own; passing it raises loudly rather than
+        being silently ignored.
+        """
+        if as_user is not None:
+            raise NotImplementedError(
+                f"{self.name}: --as-user is not supported on DockerContainerHost"
+            ) from None
         # Importing here to keep this module importable without asyncssh.
         from .interact import run_ssh_login
         from .unix_host import UnixHost

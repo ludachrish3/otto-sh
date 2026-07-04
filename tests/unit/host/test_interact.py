@@ -19,14 +19,22 @@ import pytest
 from otto.host import interact
 from otto.host.interact import (
     _ESCAPE_BYTE,
+    _BridgeProxyIO,
     _LineBuffer,
     _pump_remote_to_stdout,
     _pump_stdin_to_remote,
+    _replay_proxy_hops,
     _run_bridge,
     _SessionLogFile,
     _strip_ansi,
 )
-from otto.host.login_proxy import Cred
+from otto.host.login_proxy import (
+    LOGIN_PROXIES,
+    Cred,
+    LoginProxyError,
+    register_login_proxy,
+    run_proxy,
+)
 from otto.logger.mode import LogMode
 
 # ---------------------------------------------------------------------------
@@ -354,6 +362,137 @@ class TestUnixHostInteractDispatch:
 
 
 # ---------------------------------------------------------------------------
+# Task 9: UnixHost._interact(as_user=...) — resolve_chain + direct-cred guard
+# ---------------------------------------------------------------------------
+
+
+class TestUnixHostInteractAsUser:
+    @pytest.mark.asyncio
+    async def test_ssh_as_user_passes_resolved_hops_and_via_login(self):
+        from otto.host.unix_host import UnixHost
+
+        # login_target defaults to the first cred ("admin"); --as-user mysql
+        # resolves through admin via a single su hop.
+        host = UnixHost(
+            ip="10.0.0.1",
+            element="router",
+            creds=[
+                Cred(login="admin", password="hunter2"),
+                Cred(login="mysql", password="sqlpw", proxy="su", via="admin"),
+            ],
+            term="ssh",
+            log=LogMode.QUIET,
+        )
+        fake_conn = object()
+        host._connections.ssh = AsyncMock(return_value=fake_conn)  # type: ignore[method-assign]
+
+        with patch("otto.host.unix_host.run_ssh_login", new=AsyncMock()) as mock_ssh_login:
+            await host._interact(as_user="mysql")
+
+        mock_ssh_login.assert_awaited_once()
+        kwargs = mock_ssh_login.await_args.kwargs
+        assert kwargs["conn"] is fake_conn
+        assert kwargs["proxy_hops"] == [
+            Cred(login="mysql", password="sqlpw", proxy="su", via="admin")
+        ]
+        assert kwargs["via_login"] == "admin"
+        assert kwargs["host_id"] == host.name
+        await host.close()
+
+    @pytest.mark.asyncio
+    async def test_ssh_as_user_mismatched_direct_login_raises(self):
+        """--as-user resolving to a DIFFERENT direct login than the one the
+        cached connection already authenticated as is out of scope — the
+        connection can't be re-authenticated mid-session, so this must raise
+        a clear LoginProxyError rather than silently proxying as the wrong
+        account."""
+        from otto.host.unix_host import UnixHost
+
+        host = UnixHost(
+            ip="10.0.0.1",
+            element="router",
+            creds=[
+                Cred(login="other", password="op"),
+                Cred(login="admin", password="ap"),
+            ],
+            user="other",  # login_target -> "other"; connection authenticates as "other"
+            term="ssh",
+            log=LogMode.QUIET,
+        )
+        host._connections.ssh = AsyncMock(return_value=object())  # type: ignore[method-assign]
+
+        with (
+            patch("otto.host.unix_host.run_ssh_login", new=AsyncMock()) as mock_ssh_login,
+            pytest.raises(LoginProxyError, match=r"other.*admin"),
+        ):
+            await host._interact(as_user="admin")
+
+        mock_ssh_login.assert_not_awaited()
+        await host.close()
+
+    @pytest.mark.asyncio
+    async def test_telnet_as_user_passes_resolved_hops_and_via_login(self):
+        from otto.host.unix_host import UnixHost
+
+        host = UnixHost(
+            ip="10.0.0.1",
+            element="router",
+            creds=[
+                Cred(login="admin", password="hunter2"),
+                Cred(login="mysql", password="sqlpw", proxy="su", via="admin"),
+            ],
+            term="telnet",
+            log=LogMode.QUIET,
+        )
+        fake_client = AsyncMock()
+        fake_client.connect = AsyncMock()
+        fake_client.close = AsyncMock()
+        with (
+            patch("otto.host.unix_host.TelnetClient", return_value=fake_client),
+            patch("otto.host.unix_host.run_telnet_login", new=AsyncMock()) as mock_login,
+        ):
+            await host._interact(as_user="mysql")
+
+        mock_login.assert_awaited_once()
+        kwargs = mock_login.await_args.kwargs
+        assert kwargs["proxy_hops"] == [
+            Cred(login="mysql", password="sqlpw", proxy="su", via="admin")
+        ]
+        assert kwargs["via_login"] == "admin"
+        assert kwargs["host_id"] == host.name
+        fake_client.close.assert_awaited_once()
+        await host.close()
+
+    @pytest.mark.asyncio
+    async def test_telnet_as_user_mismatched_direct_login_raises_before_connecting(self):
+        from otto.host.unix_host import UnixHost
+
+        host = UnixHost(
+            ip="10.0.0.1",
+            element="router",
+            creds=[
+                Cred(login="other", password="op"),
+                Cred(login="admin", password="ap"),
+            ],
+            user="other",
+            term="telnet",
+            log=LogMode.QUIET,
+        )
+
+        with (
+            patch("otto.host.unix_host.TelnetClient") as mock_cls,
+            patch("otto.host.unix_host.run_telnet_login", new=AsyncMock()) as mock_login,
+            pytest.raises(LoginProxyError, match=r"other.*admin"),
+        ):
+            await host._interact(as_user="admin")
+
+        # Failed before ever building a dedicated telnet client/connection.
+        mock_cls.assert_not_called()
+        mock_login.assert_not_awaited()
+        await host.close()
+
+
+# ---------------------------------------------------------------------------
 # run_ssh_login — command= branch (container docker exec login)
 # ---------------------------------------------------------------------------
 
@@ -441,3 +580,379 @@ class TestRunSshLoginCommandBranch:
         kwargs = conn.create_process.await_args.kwargs
         assert "command" not in kwargs
         bridge.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# Task 9: _BridgeProxyIO — send() newline translation, expect() buffering
+# ---------------------------------------------------------------------------
+
+
+class TestBridgeProxyIOSend:
+    @pytest.mark.asyncio
+    async def test_ssh_newline_keeps_lf(self):
+        sent: list[bytes] = []
+
+        async def write(data: bytes) -> None:
+            sent.append(data)
+
+        async def read() -> bytes:
+            return b""
+
+        io = _BridgeProxyIO(write, read, newline=b"\n")
+        await io.send("su mysql\n")
+        assert sent == [b"su mysql\n"]
+
+    @pytest.mark.asyncio
+    async def test_telnet_newline_translates_lf_to_cr(self):
+        sent: list[bytes] = []
+
+        async def write(data: bytes) -> None:
+            sent.append(data)
+
+        async def read() -> bytes:
+            return b""
+
+        io = _BridgeProxyIO(write, read, newline=b"\r")
+        await io.send("su mysql\n")
+        assert sent == [b"su mysql\r"]
+
+    @pytest.mark.asyncio
+    async def test_no_trailing_newline_is_unchanged(self):
+        sent: list[bytes] = []
+
+        async def write(data: bytes) -> None:
+            sent.append(data)
+
+        async def read() -> bytes:
+            return b""
+
+        io = _BridgeProxyIO(write, read, newline=b"\r")
+        await io.send("no newline here")
+        assert sent == [b"no newline here"]
+
+    @pytest.mark.asyncio
+    async def test_send_never_logs_regardless_of_log_arg(self):
+        # `log` exists only to satisfy the ProxyIO protocol — this adapter has
+        # no sink to leak a password to either way. Passing NEVER (as a
+        # password hop does) must not raise or change behavior.
+        sent: list[bytes] = []
+
+        async def write(data: bytes) -> None:
+            sent.append(data)
+
+        async def read() -> bytes:
+            return b""
+
+        io = _BridgeProxyIO(write, read, newline=b"\n")
+        await io.send("hunter2\n", log=LogMode.NEVER)
+        assert sent == [b"hunter2\n"]
+
+
+class TestBridgeProxyIOExpect:
+    @pytest.mark.asyncio
+    async def test_accumulates_across_reads_until_match(self):
+        chunks = [b"foo", b"bar", b"Password:"]
+
+        async def read() -> bytes:
+            return chunks.pop(0)
+
+        async def write(data: bytes) -> None:
+            pass
+
+        io = _BridgeProxyIO(write, read, newline=b"\n")
+        out = await io.expect(r"[Pp]assword:")
+        assert out == "foobarPassword:"
+
+    @pytest.mark.asyncio
+    async def test_str_pattern_is_compiled(self):
+        async def read() -> bytes:
+            return b"login: "
+
+        async def write(data: bytes) -> None:
+            pass
+
+        io = _BridgeProxyIO(write, read, newline=b"\n")
+        out = await io.expect("login:")
+        assert out == "login:"
+
+    @pytest.mark.asyncio
+    async def test_times_out_when_pattern_never_arrives(self):
+        async def read() -> bytes:
+            # Blocks well past the short timeout below; asyncio.wait_for
+            # cancels it rather than the test actually waiting this long.
+            await asyncio.sleep(10)
+            return b""  # pragma: no cover — unreachable, cancelled first
+
+        async def write(data: bytes) -> None:
+            pass
+
+        io = _BridgeProxyIO(write, read, newline=b"\n")
+        with pytest.raises(asyncio.TimeoutError):
+            await io.expect(r"[Pp]assword:", timeout=0.05)
+
+    @pytest.mark.asyncio
+    async def test_raises_connection_error_on_remote_eof(self):
+        async def read() -> bytes:
+            return b""
+
+        async def write(data: bytes) -> None:
+            pass
+
+        io = _BridgeProxyIO(write, read, newline=b"\n")
+        with pytest.raises(ConnectionError):
+            await io.expect(r"[Pp]assword:", timeout=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Task 9: replaying the built-in `su` hop over _BridgeProxyIO via run_proxy
+# ---------------------------------------------------------------------------
+
+
+class TestReplaySuHopOverBridge:
+    @pytest.mark.asyncio
+    async def test_sends_su_command_then_password_on_prompt(self):
+        sent: list[bytes] = []
+        chunks = [b"Password:"]
+
+        async def write_remote(data: bytes) -> None:
+            sent.append(data)
+
+        async def read_remote() -> bytes:
+            return chunks.pop(0) if chunks else b""
+
+        io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
+        hop = Cred(login="mysql", password="sqlpw", proxy="su", via="admin")
+        await run_proxy(io, hop, via=Cred(login="admin"), host_id="h1")
+
+        assert sent == [b"su mysql\n", b"sqlpw\n"]
+
+    @pytest.mark.asyncio
+    async def test_timeout_surfaces_as_login_proxy_error_with_context(self):
+        """A hop whose prompt never arrives times out inside `expect`; `run_proxy`
+        wraps that into a `LoginProxyError` naming the host, login, and proxy."""
+
+        async def slow_proxy(io: object, ctx: object) -> None:
+            await io.expect("this-never-arrives", timeout=0.05)  # type: ignore[attr-defined]
+
+        register_login_proxy("slow-test-proxy", slow_proxy)
+        try:
+
+            async def write_remote(data: bytes) -> None:
+                pass
+
+            async def read_remote() -> bytes:
+                await asyncio.sleep(10)
+                return b""  # pragma: no cover — unreachable, cancelled first
+
+            io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
+            hop = Cred(login="mysql", proxy="slow-test-proxy")
+            with pytest.raises(LoginProxyError, match=r"h1.*mysql.*slow-test-proxy"):
+                await run_proxy(io, hop, via=Cred(login="admin"), host_id="h1")
+        finally:
+            LOGIN_PROXIES.unregister("slow-test-proxy")
+
+
+# ---------------------------------------------------------------------------
+# Task 9: _replay_proxy_hops — via-chain sourcing across multiple hops
+# ---------------------------------------------------------------------------
+
+
+class TestReplayProxyHops:
+    @pytest.mark.asyncio
+    async def test_noop_when_no_hops(self):
+        sent: list[bytes] = []
+
+        async def write_remote(data: bytes) -> None:
+            sent.append(data)
+
+        async def read_remote() -> bytes:
+            return b""
+
+        await _replay_proxy_hops(
+            write_remote=write_remote,
+            read_remote=read_remote,
+            newline=b"\n",
+            proxy_hops=[],
+            via_login="root",
+            host_id="h1",
+        )
+        assert sent == []
+
+    @pytest.mark.asyncio
+    async def test_multi_hop_sends_each_hop_in_order(self):
+        sent: list[bytes] = []
+        replies = [b"Password:", b"Password:"]
+
+        async def write_remote(data: bytes) -> None:
+            sent.append(data)
+
+        async def read_remote() -> bytes:
+            return replies.pop(0) if replies else b""
+
+        hops = [
+            Cred(login="mysql", password="pw1", proxy="su", via="admin"),
+            Cred(login="app", password="pw2", proxy="su", via="mysql"),
+        ]
+        await _replay_proxy_hops(
+            write_remote=write_remote,
+            read_remote=read_remote,
+            newline=b"\n",
+            proxy_hops=hops,
+            via_login="admin",
+            host_id="h1",
+        )
+        assert sent == [b"su mysql\n", b"pw1\n", b"su app\n", b"pw2\n"]
+
+    @pytest.mark.asyncio
+    async def test_via_is_sourced_from_the_previous_hops_login(self):
+        """Mirrors SessionManager._apply_login_proxy: hop N's `via` is hop
+        N-1's login, not the original transport login repeated for every hop."""
+        seen_vias: list[str] = []
+
+        async def track_via(io: object, ctx: object) -> None:
+            seen_vias.append(ctx.via.login)  # type: ignore[attr-defined]
+
+        register_login_proxy("track-via-test", track_via)
+        try:
+
+            async def write_remote(data: bytes) -> None:
+                pass
+
+            async def read_remote() -> bytes:
+                return b""
+
+            hops = [
+                Cred(login="mysql", proxy="track-via-test"),
+                Cred(login="app", proxy="track-via-test"),
+            ]
+            await _replay_proxy_hops(
+                write_remote=write_remote,
+                read_remote=read_remote,
+                newline=b"\n",
+                proxy_hops=hops,
+                via_login="admin",
+                host_id="h1",
+            )
+        finally:
+            LOGIN_PROXIES.unregister("track-via-test")
+        assert seen_vias == ["admin", "mysql"]
+
+
+# ---------------------------------------------------------------------------
+# Task 9: run_ssh_login / run_telnet_login wire proxy_hops through before
+# the bridge pumps start
+# ---------------------------------------------------------------------------
+
+
+class TestRunLoginProxyHopWiring:
+    @pytest.mark.asyncio
+    async def test_run_ssh_login_replays_hops_before_bridge_with_lf_newline(self):
+        proc = _fake_process()
+        conn = MagicMock()
+        conn.create_process = AsyncMock(return_value=proc)
+        fake_asyncssh = _make_fake_asyncssh()
+        hop = Cred(login="mysql", proxy="su")
+
+        calls: list[tuple] = []
+
+        async def fake_replay(**kwargs: object) -> None:
+            calls.append(
+                (
+                    "replay",
+                    kwargs["newline"],
+                    kwargs["proxy_hops"],
+                    kwargs["via_login"],
+                    kwargs["host_id"],
+                )
+            )
+
+        async def fake_bridge(**kwargs: object) -> None:
+            calls.append(("bridge",))
+
+        with (
+            patch.dict(sys.modules, {"asyncssh": fake_asyncssh}),
+            patch.object(interact, "_replay_proxy_hops", new=AsyncMock(side_effect=fake_replay)),
+            patch.object(interact, "_run_bridge", new=AsyncMock(side_effect=fake_bridge)),
+            patch.object(interact, "_setup_raw_mode", return_value=None),
+            patch.object(interact, "_restore_terminal"),
+            patch.object(interact.sys, "stdin"),
+            patch.object(interact.os, "write"),
+        ):
+            interact.sys.stdin.isatty = lambda: False
+            interact.sys.stdin.fileno = lambda: 0
+            await interact.run_ssh_login(
+                conn=conn,
+                host_name="h",
+                proxy_hops=[hop],
+                via_login="admin",
+                host_id="h1",
+            )
+
+        assert calls == [("replay", b"\n", [hop], "admin", "h1"), ("bridge",)]
+
+    @pytest.mark.asyncio
+    async def test_run_ssh_login_no_hops_still_calls_replay_as_noop(self):
+        """No proxy_hops: _replay_proxy_hops is still called (it no-ops on empty)."""
+        proc = _fake_process()
+        conn = MagicMock()
+        conn.create_process = AsyncMock(return_value=proc)
+        fake_asyncssh = _make_fake_asyncssh()
+
+        with (
+            patch.dict(sys.modules, {"asyncssh": fake_asyncssh}),
+            patch.object(interact, "_run_bridge", new=AsyncMock()) as bridge,
+            patch.object(interact, "_setup_raw_mode", return_value=None),
+            patch.object(interact, "_restore_terminal"),
+            patch.object(interact.sys, "stdin"),
+            patch.object(interact.os, "write"),
+        ):
+            interact.sys.stdin.isatty = lambda: False
+            interact.sys.stdin.fileno = lambda: 0
+            await interact.run_ssh_login(conn=conn, host_name="h")
+
+        bridge.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_run_telnet_login_replays_hops_before_bridge_with_cr_newline(self):
+        reader = AsyncMock()
+        writer = MagicMock()
+        client = MagicMock()
+        client.reader = reader
+        client.writer = writer
+        hop = Cred(login="mysql", proxy="su")
+
+        calls: list[tuple] = []
+
+        async def fake_replay(**kwargs: object) -> None:
+            calls.append(
+                (
+                    "replay",
+                    kwargs["newline"],
+                    kwargs["proxy_hops"],
+                    kwargs["via_login"],
+                    kwargs["host_id"],
+                )
+            )
+
+        async def fake_bridge(**kwargs: object) -> None:
+            calls.append(("bridge",))
+
+        with (
+            patch.object(interact, "_replay_proxy_hops", new=AsyncMock(side_effect=fake_replay)),
+            patch.object(interact, "_run_bridge", new=AsyncMock(side_effect=fake_bridge)),
+            patch.object(interact, "_setup_raw_mode", return_value=None),
+            patch.object(interact, "_restore_terminal"),
+            patch.object(interact.sys, "stdin"),
+            patch.object(interact.os, "write"),
+        ):
+            interact.sys.stdin.isatty = lambda: False
+            interact.sys.stdin.fileno = lambda: 0
+            await interact.run_telnet_login(
+                client=client,
+                host_name="h",
+                proxy_hops=[hop],
+                via_login="admin",
+                host_id="h1",
+            )
+
+        assert calls == [("replay", b"\r", [hop], "admin", "h1"), ("bridge",)]

@@ -37,13 +37,15 @@ import re
 import signal
 import sys
 import threading
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from ..context import try_get_context
 from ..logger import get_logger
+from ..logger.mode import LogMode
+from .login_proxy import Cred, run_proxy
 
 logger = get_logger()
 
@@ -319,6 +321,95 @@ def _print_stderr(msg: str) -> None:
         pass
 
 
+class _BridgeProxyIO:
+    r"""Adapts a login driver's ``write_remote``/``read_remote`` closures.
+
+    Satisfies :class:`~otto.host.login_proxy.ProxyIO`. Used by
+    :func:`run_ssh_login`/:func:`run_telnet_login` to replay ``--as-user``
+    login-proxy hops after the transport/login is ready but *before*
+    :func:`_run_bridge` starts the stdin/stdout pumps, so the human lands on
+    an already-proxied terminal rather than seeing the hop exchange race the
+    pumps.
+
+    *newline* is the transport-appropriate line terminator substituted for a
+    trailing ``"\n"`` in text passed to :meth:`send` (SSH PTYs want
+    ``b"\n"``; telnet wants ``b"\r"``).
+    """
+
+    def __init__(
+        self,
+        write_remote: Callable[[bytes], Awaitable[None]],
+        read_remote: Callable[[], Awaitable[bytes]],
+        newline: bytes,
+    ) -> None:
+        self._write_remote = write_remote
+        self._read_remote = read_remote
+        self._newline = newline
+        self._buffer = ""
+
+    async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:  # noqa: ARG002 — `log` is part of the ProxyIO protocol; this adapter has no sink to leak a password to either way
+        r"""Send *text*, translating a trailing ``"\n"`` to the transport newline.
+
+        Never logs or echoes anything itself — ``log`` is accepted only to
+        satisfy :class:`~otto.host.login_proxy.ProxyIO`; a password hop sends
+        with ``log=LogMode.NEVER`` and this adapter has no sink to leak it to.
+        """
+        if text.endswith("\n"):
+            data = text[:-1].encode("utf-8") + self._newline
+        else:
+            data = text.encode("utf-8")
+        await self._write_remote(data)
+
+    async def expect(self, pattern: "str | re.Pattern[str]", timeout: float = 10.0) -> str:
+        """Accumulate ``read_remote()`` chunks until *pattern* matches.
+
+        Raises ``asyncio.TimeoutError`` if *timeout* elapses first (surfaced
+        by :func:`~otto.host.login_proxy.run_proxy` as a
+        :class:`~otto.host.login_proxy.LoginProxyError` with host/proxy
+        context), or ``ConnectionError`` if the remote closes before the
+        pattern arrives.
+        """
+        regex = re.compile(pattern) if isinstance(pattern, str) else pattern
+
+        async def _until_match() -> str:
+            while True:
+                match = regex.search(self._buffer)
+                if match is not None:
+                    return self._buffer[: match.end()]
+                chunk = await self._read_remote()
+                if not chunk:
+                    raise ConnectionError("remote closed before the expected pattern arrived")
+                self._buffer += chunk.decode("utf-8", errors="replace")
+
+        return await asyncio.wait_for(_until_match(), timeout)
+
+
+async def _replay_proxy_hops(
+    *,
+    write_remote: Callable[[bytes], Awaitable[None]],
+    read_remote: Callable[[], Awaitable[bytes]],
+    newline: bytes,
+    proxy_hops: Sequence[Cred],
+    via_login: str,
+    host_id: str,
+) -> None:
+    """Replay *proxy_hops* over a fresh :class:`_BridgeProxyIO`, outermost hop first.
+
+    Each hop's ``via`` is the previous hop's login — or, for the first hop,
+    *via_login* (the direct cred the transport actually authenticated as).
+    Mirrors :meth:`~otto.host.session.SessionManager._apply_login_proxy`'s
+    via-sourcing. No-ops when *proxy_hops* is empty.
+    """
+    if not proxy_hops:
+        return
+    _print_stderr(f"[otto] proxying to {proxy_hops[-1].login}...")
+    bridge_io = _BridgeProxyIO(write_remote, read_remote, newline)
+    via = via_login
+    for hop in proxy_hops:
+        await run_proxy(bridge_io, hop, via=Cred(login=via), host_id=host_id)
+        via = hop.login
+
+
 async def _run_bridge(
     *,
     write_remote: Callable[[bytes], Awaitable[None]],
@@ -402,6 +493,9 @@ async def run_ssh_login(
     conn: Any,
     host_name: str,
     command: str | None = None,
+    proxy_hops: Sequence[Cred] = (),
+    via_login: str = "",
+    host_id: str = "",
 ) -> None:
     """Open a PTY-backed SSH shell on ``conn`` and bridge it to the terminal.
 
@@ -415,6 +509,14 @@ async def run_ssh_login(
     the default login shell — used by container hosts to wrap
     ``docker exec -it <container> /bin/sh`` over the parent's existing
     SSH connection.
+
+    When *proxy_hops* is non-empty (Task 9's ``--as-user``), each hop is
+    replayed over the bridge (via :func:`_replay_proxy_hops`) after the PTY
+    shell is ready but before :func:`_run_bridge` starts the pumps, so the
+    human lands directly on the proxied account. *via_login* is the login
+    ``conn`` actually authenticated as (the first hop's ``via``); *host_id*
+    is passed through to :func:`~otto.host.login_proxy.run_proxy` for error
+    context.
     """
     import asyncssh
 
@@ -467,6 +569,14 @@ async def run_ssh_login(
     log_file_effective.write_marker("Entering interactive session")
 
     try:
+        await _replay_proxy_hops(
+            write_remote=write_remote,
+            read_remote=read_remote,
+            newline=b"\n",
+            proxy_hops=proxy_hops,
+            via_login=via_login,
+            host_id=host_id,
+        )
         await _run_bridge(
             write_remote=write_remote,
             read_remote=read_remote,
@@ -486,14 +596,22 @@ async def run_telnet_login(
     *,
     client: Any,
     host_name: str,
+    proxy_hops: Sequence[Cred] = (),
+    via_login: str = "",
+    host_id: str = "",
 ) -> None:
-    """Bridge an already-connected interactive ``TelnetClient`` to the terminal.
+    r"""Bridge an already-connected interactive ``TelnetClient`` to the terminal.
 
     The client must have been opened with ``interactive=True`` so the
     remote is left in its default echo mode (otto's non-interactive
     connect flow sends ``DONT ECHO`` to silence command echo — not
     what we want here). Local ``SIGWINCH`` is forwarded as a NAWS
     subnegotiation via ``TelnetClient._send_naws``.
+
+    *proxy_hops*/*via_login*/*host_id* mirror :func:`run_ssh_login` (Task 9's
+    ``--as-user``): non-empty hops are replayed over the bridge after login
+    but before :func:`_run_bridge` starts the pumps, using ``b"\\r"`` as the
+    line terminator (telnet's convention, vs. SSH PTY's ``b"\\n"``).
     """
     reader = client.reader
     writer = client.writer
@@ -539,6 +657,14 @@ async def run_telnet_login(
     log_file.write_marker("Entering interactive session")
 
     try:
+        await _replay_proxy_hops(
+            write_remote=write_remote,
+            read_remote=read_remote,
+            newline=b"\r",
+            proxy_hops=proxy_hops,
+            via_login=via_login,
+            host_id=host_id,
+        )
         await _run_bridge(
             write_remote=write_remote,
             read_remote=read_remote,

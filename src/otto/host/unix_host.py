@@ -82,7 +82,7 @@ from .host import (
     is_dry_run,
 )
 from .interact import run_ssh_login, run_telnet_login
-from .login_proxy import Cred, LoginProxyError, cred_for
+from .login_proxy import Cred, LoginProxyError, cred_for, resolve_chain
 from .options import (
     FtpOptions,
     NcOptions,
@@ -460,7 +460,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     # TODO: Make sync versions of cmd and file methods that just wraps the async def
 
     @override
-    async def _interact(self) -> None:
+    async def _interact(self, as_user: str | None = None) -> None:
         """Open an interactive shell on this host, bridged to the local terminal.
 
         Dispatches on ``self.term``:
@@ -478,14 +478,48 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
           already be in non-echo mode. Hop tunnels are honored via the
           same port-forward helper the regular telnet path uses.
 
-        See :mod:`otto.host.interact` for the bridge details.
+        ``as_user`` (Task 9): land the interactive session on this login
+        instead of ``self._connections.login_target``, replaying any
+        login-proxy hops (:func:`~otto.host.login_proxy.resolve_chain`)
+        over the bridge after authentication but before the stdin/stdout
+        pumps start (see :mod:`otto.host.interact`). Both transports
+        authenticate as the resolved DIRECT cred, which must match the
+        login the cached SSH connection (or the login_target-derived
+        telnet client) already authenticates as — building a fresh
+        connection under a different direct login is out of scope, so a
+        mismatch raises :class:`~otto.host.login_proxy.LoginProxyError`
+        rather than silently proxying from the wrong account.
         """
+        target = as_user if as_user is not None else self._connections.login_target
+        direct, hops = resolve_chain(self.creds, target)
+
         if self.term == "ssh":
+            via_login, _ = self._connections.credentials
+            if direct.login != via_login:
+                raise LoginProxyError(
+                    f"{self.name}: interact is authenticated as {via_login!r}, "
+                    f"but --as-user {target!r} resolves to a direct login of "
+                    f"{direct.login!r}; starting a fresh connection as "
+                    f"{direct.login!r} is not supported."
+                )
             conn = await self._connections.ssh()
-            await run_ssh_login(conn=conn, host_name=self.name)
+            await run_ssh_login(
+                conn=conn,
+                host_name=self.name,
+                proxy_hops=hops,
+                via_login=via_login,
+                host_id=self.name,
+            )
             return
 
         user, password = self._connections.credentials
+        if direct.login != user:
+            raise LoginProxyError(
+                f"{self.name}: interact is authenticated as {user!r}, but "
+                f"--as-user {target!r} resolves to a direct login of "
+                f"{direct.login!r}; starting a fresh connection as "
+                f"{direct.login!r} is not supported."
+            )
         interactive_options = replace(self.telnet_options, auto_window_resize=True)
         remote_port = interactive_options.port
         if self._connections.has_tunnel:
@@ -506,7 +540,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         )
         try:
             await client.connect(interactive=True)
-            await run_telnet_login(client=client, host_name=self.name)
+            await run_telnet_login(
+                client=client,
+                host_name=self.name,
+                proxy_hops=hops,
+                via_login=user,
+                host_id=self.name,
+            )
         finally:
             await client.close()
 

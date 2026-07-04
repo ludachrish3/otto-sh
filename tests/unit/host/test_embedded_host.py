@@ -171,6 +171,13 @@ class TestNotImplemented:
         with pytest.raises(NotImplementedError):
             await host.interact()
 
+    @pytest.mark.asyncio
+    async def test_interact_as_user_raises(self, host: EmbeddedHost):
+        """Task 9: embedded hosts accept `as_user` for signature parity but
+        still raise — a login-less RTOS shell has nothing to proxy."""
+        with pytest.raises(NotImplementedError):
+            await host.interact(as_user="root")
+
 
 # ---------------------------------------------------------------------------
 # File transfer

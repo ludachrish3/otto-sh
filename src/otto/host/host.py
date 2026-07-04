@@ -197,9 +197,9 @@ class Host(Protocol):
     power_control: "PowerController | None"
     """Pluggable power backend, or None when this host can't be power-controlled."""
 
-    async def _interact(self) -> None: ...
+    async def _interact(self, as_user: str | None = None) -> None: ...
 
-    async def interact(self) -> None:
+    async def interact(self, as_user: str | None = None) -> None:
         """Open an interactive shell bridged to the local terminal."""
         ...
 
@@ -529,13 +529,13 @@ class BaseHost(ABC):
     #  Command execution
     ####################
 
-    async def _interact(self) -> None:
+    async def _interact(self, as_user: str | None = None) -> None:
         raise NotImplementedError(
             f"The '{self.__class__.__name__}' class does not support interactive sessions"
         ) from None
 
     @cli_exposed(name="login")
-    async def interact(self) -> None:
+    async def interact(self, as_user: str | None = None) -> None:
         """Open an interactive shell bridged to the local terminal.
 
         Subclasses implement ``_interact`` to do the actual protocol
@@ -546,8 +546,14 @@ class BaseHost(ABC):
         session is recorded to the otto log. Press ``Ctrl+]`` to disconnect
         locally without ending the remote session; type ``exit`` or ``logout``
         to end the session normally.
+
+        Args:
+            as_user: Land the session on this login instead of the
+                connection's configured default, replaying any login-proxy
+                hops needed to reach it (see :mod:`otto.host.login_proxy`).
+                Hosts that cannot proxy raise :exc:`NotImplementedError`.
         """
-        await self._interact()
+        await self._interact(as_user)
 
     @cli_exposed
     async def run(

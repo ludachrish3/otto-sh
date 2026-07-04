@@ -413,6 +413,16 @@ async def test_interact_requires_remote_ssh_parent():
         await h._interact()
 
 
+@pytest.mark.asyncio
+async def test_interact_as_user_raises_not_implemented():
+    """Task 9: DockerContainerHost has no login-proxy chain of its own —
+    passing --as-user must raise loudly rather than being silently ignored
+    or (worse) silently forwarded to the container's default shell."""
+    h = _make_container()
+    with pytest.raises(NotImplementedError, match="--as-user"):
+        await h._interact(as_user="mysql")
+
+
 # ---------------------------------------------------------------------------
 # Dry-run behavior
 # ---------------------------------------------------------------------------

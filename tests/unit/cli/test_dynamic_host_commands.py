@@ -411,6 +411,58 @@ def test_run_and_login_exposed_on_base_host():
     assert base["run"] == "run"
 
 
+# ---------------------------------------------------------------------------
+# Task 9: `otto host <id> login --as-user <target>`
+# ---------------------------------------------------------------------------
+
+
+def test_login_as_user_flag_renders_in_help(monkeypatch):
+    """A bare `as_user: str | None = None` param (no Opt/Annotated overlay,
+    matching the `timeout`/`state` precedent elsewhere in host.py) is enough
+    for the synthesizer to render a `--as-user` option."""
+    app = _make_app(monkeypatch, {"u1": UnixHost})
+    r = CliRunner().invoke(app, ["u1", "login", "--help"])
+    assert r.exit_code == 0, r.output
+    assert "--as-user" in r.output
+
+
+def test_login_as_user_flag_dispatches_end_to_end(monkeypatch):
+    """The parsed --as-user value reaches the bound host method unchanged,
+    and omitting the flag defaults cleanly to None (existing behavior)."""
+    captured: dict = {}
+
+    class _Host:
+        id = "h1"
+
+        @cli_exposed(name="login")
+        async def interact(self, as_user: str | None = None) -> None:
+            captured["as_user"] = as_user
+
+        async def close(self) -> None:
+            pass
+
+    import otto.host.os_profile as op
+
+    monkeypatch.setattr(op, "HOST_CLASSES", {"h": _Host})
+    monkeypatch.setattr("otto.cli.expose.host_class_for_id", lambda hid: _Host)
+    app = typer.Typer(name="host", cls=HostGroup)
+    host = _Host()
+
+    @app.callback(invoke_without_command=True)
+    def main(ctx: typer.Context, host_id: str = typer.Argument("")):
+        if ctx.resilient_parsing:
+            return
+        ctx.obj = host
+
+    r = CliRunner().invoke(app, ["h1", "login", "--as-user", "mysql"])
+    assert r.exit_code == 0, r.output
+    assert captured["as_user"] == "mysql"
+
+    r2 = CliRunner().invoke(app, ["h1", "login"])
+    assert r2.exit_code == 0, r2.output
+    assert captured["as_user"] is None
+
+
 def test_run_cli_binding_markers():
     """build_cli_binding resolves the @cli_exposed markers on BaseHost.run.
 

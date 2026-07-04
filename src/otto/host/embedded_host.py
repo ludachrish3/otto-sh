@@ -393,11 +393,13 @@ class EmbeddedHost(RemoteHost):
     ####################
 
     @override
-    async def _interact(self) -> None:
+    async def _interact(self, as_user: str | None = None) -> None:
         """Open an interactive shell bridged to the local terminal.
 
         Not yet implemented for embedded hosts — the telnet bridge for a
-        login-less RTOS shell lands in a later phase.
+        login-less RTOS shell lands in a later phase. ``as_user`` is accepted
+        for signature parity with :meth:`~otto.host.host.BaseHost._interact`
+        but embedded hosts have no login-proxy chain to replay.
         """
         raise NotImplementedError(
             "Interactive sessions for embedded hosts are not yet implemented"
