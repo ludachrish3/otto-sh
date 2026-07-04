@@ -64,7 +64,7 @@ def test_repo_settings_tests_sut_dir_variable(default_mock_repo):
 
 def test_repo_settings_init_sut_dir_variable(default_mock_repo):
 
-    assert mock_repo.init == ["repo1_instructions", "custom_hosts"]
+    assert mock_repo.init == ["repo1_instructions", "custom_hosts", "repo1_monitor_uptime"]
 
 
 def test_bootstrap_registers_repo1_instructions_and_suites(monkeypatch):

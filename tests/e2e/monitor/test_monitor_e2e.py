@@ -33,6 +33,7 @@ import sqlite3
 import subprocess
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
@@ -64,11 +65,14 @@ def _start_monitor(
     lab: str = "veggies",
     xdir: Path,
     sut_dirs: Path = REPO1,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.Popen[str]:
     """Start ``otto --lab <lab> monitor <argv>`` as a non-blocking Popen.
 
     Mirrors the subprocess-coverage env from ``_run_otto`` in the docker e2e
     test so monitor subprocess runs contribute to the combined coverage report.
+    ``extra_env`` overlays additional variables (e.g. an init-module toggle
+    like ``OTTO_E2E_UPTIME_HOST``) onto the subprocess environment.
     """
     env: dict[str, str] = {
         "PATH": os.environ.get("PATH", ""),
@@ -80,6 +84,8 @@ def _start_monitor(
             [str(COVERAGE_BOOTSTRAP), os.environ.get("PYTHONPATH", "")]
         ).rstrip(os.pathsep),
     }
+    if extra_env:
+        env.update(extra_env)
 
     cmd: list[str] = [str(OTTO_BIN), "--lab", lab, "monitor", *argv]
     return subprocess.Popen(
@@ -110,6 +116,100 @@ def _has_metric_rows(db_path: Path) -> bool:
     except sqlite3.OperationalError:
         # Table doesn't exist yet — DB file created but schema not written.
         return False
+
+
+class _MonitorRunResult(NamedTuple):
+    """Outcome of one :func:`_run_monitor_briefly` run."""
+
+    returncode: int
+    """Exit code (or negative signal number) reported by the subprocess."""
+
+    stdout: str
+    """Captured stdout, for diagnostics on assertion failure."""
+
+    stderr: str
+    """Captured stderr, for diagnostics on assertion failure."""
+
+    rows_found: bool
+    """Whether ``metrics`` had any rows by the time polling stopped."""
+
+
+def _run_monitor_briefly(
+    host: str,
+    db_path: Path,
+    extra_env: dict[str, str] | None = None,
+) -> _MonitorRunResult:
+    """Start, tick, and cleanly stop ``otto monitor`` against *host*.
+
+    Shared choreography for the monitor e2e tests: start the subprocess with
+    ``--hosts <host> --interval 1 --db <db_path>``, poll the DB for up to 6 s
+    waiting for the first collection tick, send SIGINT, and wait up to 30 s
+    for a clean exit — failing loudly (never skipping) if the live-bed
+    process wedges. Returns the process's exit status and captured output so
+    callers apply their own assertions.
+    """
+    proc = _start_monitor(
+        [
+            "--hosts",
+            host,
+            "--interval",
+            "1",
+            "--db",
+            str(db_path),
+        ],
+        xdir=db_path.parent,
+        extra_env=extra_env,
+    )
+
+    # Poll for up to 6 s, checking every 0.5 s — give the first collection tick
+    # time to complete (SSH connect + shell commands + DB write).
+    deadline = time.monotonic() + 6.0
+    rows_found = False
+    while time.monotonic() < deadline:
+        if _has_metric_rows(db_path):
+            rows_found = True
+            break
+        # Also check whether the process has already exited unexpectedly.
+        if proc.poll() is not None:
+            break
+        time.sleep(0.5)
+
+    # ── Stop the monitor ────────────────────────────────────────────────────
+    if proc.poll() is None:
+        proc.send_signal(signal.SIGINT)
+
+    try:
+        returncode = proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        stdout_buf = ""
+        stderr_buf = ""
+        with contextlib.suppress(subprocess.TimeoutExpired, OSError):
+            stdout_buf, stderr_buf = proc.communicate(timeout=1)
+        proc.kill()
+        # Bounded wait after SIGKILL — never block the run indefinitely even if
+        # the pipes somehow stay open (pipes were drained by communicate() above).
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+        pytest.fail(
+            f"otto monitor did not exit within 30 s after SIGINT — this is a real bug.\n"
+            f"host={host!r}, db={db_path}\n"
+            f"stdout:\n{stdout_buf}\nstderr:\n{stderr_buf}"
+        )
+
+    # Capture remaining output for diagnostics.
+    try:
+        stdout_out, stderr_out = proc.communicate()
+    except ValueError:
+        # communicate() called after wait() — stdout/stderr already consumed.
+        stdout_out = ""
+        stderr_out = ""
+
+    return _MonitorRunResult(
+        returncode=returncode,
+        stdout=stdout_out,
+        stderr=stderr_out,
+        rows_found=rows_found,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -149,60 +249,7 @@ def test_monitor_collects_and_persists(monitor_host: str, tmp_path: Path) -> Non
     db_path = tmp_path / "monitor.db"
     element = monitor_host  # e.g. "carrot" — matches "carrot_seed" via re.search
 
-    proc = _start_monitor(
-        [
-            "--hosts",
-            element,
-            "--interval",
-            "1",
-            "--db",
-            str(db_path),
-        ],
-        xdir=tmp_path,
-    )
-
-    # Poll for up to 6 s, checking every 0.5 s — give the first collection tick
-    # time to complete (SSH connect + shell commands + DB write).
-    deadline = time.monotonic() + 6.0
-    rows_found = False
-    while time.monotonic() < deadline:
-        if _has_metric_rows(db_path):
-            rows_found = True
-            break
-        # Also check whether the process has already exited unexpectedly.
-        if proc.poll() is not None:
-            break
-        time.sleep(0.5)
-
-    # ── Stop the monitor ────────────────────────────────────────────────────
-    if proc.poll() is None:
-        proc.send_signal(signal.SIGINT)
-
-    try:
-        returncode = proc.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        stdout_buf = ""
-        stderr_buf = ""
-        with contextlib.suppress(subprocess.TimeoutExpired, OSError):
-            stdout_buf, stderr_buf = proc.communicate(timeout=1)
-        proc.kill()
-        # Bounded wait after SIGKILL — never block the run indefinitely even if
-        # the pipes somehow stay open (pipes were drained by communicate() above).
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proc.wait(timeout=5)
-        pytest.fail(
-            f"otto monitor did not exit within 30 s after SIGINT — this is a real bug.\n"
-            f"host={element!r}, db={db_path}\n"
-            f"stdout:\n{stdout_buf}\nstderr:\n{stderr_buf}"
-        )
-
-    # Capture remaining output for diagnostics.
-    try:
-        stdout_out, stderr_out = proc.communicate()
-    except ValueError:
-        # communicate() called after wait() — stdout/stderr already consumed.
-        stdout_out = ""
-        stderr_out = ""
+    result = _run_monitor_briefly(element, db_path, extra_env=None)
 
     # ── Exit code ───────────────────────────────────────────────────────────
     # SIGINT handling by otto monitor / typer / asyncio produces one of:
@@ -213,15 +260,15 @@ def test_monitor_collects_and_persists(monitor_host: str, tmp_path: Path) -> Non
     # Any other code is an unexpected failure.
     _sigint_negative = -int(signal.SIGINT)  # -2
     _sigint_shell = 128 + int(signal.SIGINT)  # 130
-    assert returncode in (0, _sigint_negative, _sigint_shell), (
-        f"otto monitor exited with unexpected returncode {returncode}\n"
+    assert result.returncode in (0, _sigint_negative, _sigint_shell), (
+        f"otto monitor exited with unexpected returncode {result.returncode}\n"
         f"(expected 0, {_sigint_negative}, or {_sigint_shell} for SIGINT)\n"
-        f"stdout:\n{stdout_out}\nstderr:\n{stderr_out}"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
 
     # ── Row count ───────────────────────────────────────────────────────────
     assert db_path.exists(), (
-        f"DB file was not created at {db_path}\nstdout:\n{stdout_out}\nstderr:\n{stderr_out}"
+        f"DB file was not created at {db_path}\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
 
     conn = sqlite3.connect(str(db_path))
@@ -232,8 +279,8 @@ def test_monitor_collects_and_persists(monitor_host: str, tmp_path: Path) -> Non
 
     assert all_rows, (
         f"metrics table has no rows after monitor ran for up to 6 s against host {element!r}.\n"
-        f"rows_found_during_poll={rows_found}\n"
-        f"stdout:\n{stdout_out}\nstderr:\n{stderr_out}"
+        f"rows_found_during_poll={result.rows_found}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
 
     # Assert at least one row's host column contains the element name
@@ -242,8 +289,61 @@ def test_monitor_collects_and_persists(monitor_host: str, tmp_path: Path) -> Non
     assert matching, (
         f"No metrics row has host containing {element!r}.\n"
         f"Rows found: {all_rows[:10]!r}\n"
-        f"stdout:\n{stdout_out}\nstderr:\n{stderr_out}"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
 
     # monitor collects host metrics → output dir created
     assert_output_dir(tmp_path, "monitor")
+
+
+def _uptime_rows(db_path: Path, host: str) -> int:
+    """Count persisted Uptime points for *host* (schema per ``_has_metric_rows``).
+
+    Matches ``host`` by substring rather than equality, mirroring
+    ``test_monitor_collects_and_persists``'s own ``element in r[0]`` check:
+    the ``metrics.host`` column holds ``RemoteHost.name`` — the
+    auto-generated, space-joined *name* (e.g. ``"carrot seed"``), which is
+    neither the leased pool element (``"carrot"``) nor the underscore-joined
+    ``.id`` (``"carrot_seed"``) used to key parser registration — but all
+    three share the element as a substring.
+    """
+    with contextlib.closing(sqlite3.connect(db_path)) as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM metrics WHERE host LIKE ? AND label = 'Uptime'",
+            (f"%{host}%",),
+        ).fetchone()[0]
+
+
+def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Path) -> None:
+    """UptimeParser registered (via repo1's init module) for the leased host id
+    produces Uptime rows; registered for a non-existent id, the same host gets
+    only defaults. Two runs = both halves of the scoping guarantee through the
+    real subprocess path (settings.toml init -> registry -> collector -> DB).
+    """
+    # repo1_monitor_uptime.py's register_host_parsers() call keys on the exact
+    # host *id* (otto/monitor/factory.py: get_host_parsers(host.id)), not the
+    # short pool element --hosts matches by regex. The tech1 lab fixture (see
+    # tests/_fixtures/lab_data/tech1/hosts.json) gives every veggies-pool host
+    # board="seed", so RemoteHost._generate_id() composes "<element>_seed" —
+    # e.g. "carrot_seed" for the leased element "carrot" (verified against
+    # UnixHost directly; also assumed elsewhere, e.g.
+    # tests/e2e/configmodule/test_completion_cache.py's host-id tuple).
+    host_id = f"{monitor_host}_seed"
+
+    # Run 1: registration targets the leased host -> Uptime present.
+    db_registered = tmp_path / "registered.db"
+    _run_monitor_briefly(  # same Popen->ticks->SIGINT choreography as the existing test
+        monitor_host, db_registered, extra_env={"OTTO_E2E_UPTIME_HOST": host_id}
+    )
+    assert _uptime_rows(db_registered, monitor_host) > 0, (
+        f"host {monitor_host} registered UptimeParser but produced no Uptime rows"
+    )
+
+    # Run 2: registration targets a host id that matches nothing -> no Uptime,
+    # defaults intact.
+    db_unregistered = tmp_path / "unregistered.db"
+    _run_monitor_briefly(monitor_host, db_unregistered, extra_env=None)
+    assert _uptime_rows(db_unregistered, monitor_host) == 0, (
+        "unregistered host must NOT get the custom parser"
+    )
+    assert _has_metric_rows(db_unregistered), "default parsers must still produce rows"

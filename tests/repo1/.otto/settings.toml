@@ -16,6 +16,7 @@ tests = [
 init = [
     'repo1_instructions',
     'custom_hosts',
+    'repo1_monitor_uptime',
 ]
 
 # Named OS profiles: bundle each Zephyr version's common attributes once so a
