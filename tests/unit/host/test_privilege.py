@@ -10,6 +10,16 @@ from otto.result import CommandResult
 from otto.utils import Status
 
 
+def _without_resync(sent: list[str]) -> list[str]:
+    """Drop the login-proxy engine's post-transition "echo <marker>" resync probes.
+
+    ``run_proxy``/``run_undo`` now end every hop with a resync (see
+    ``otto.host.login_proxy._resync_shell``) — filter its noise out before
+    asserting on the exact send sequence a test cares about.
+    """
+    return [s for s in sent if not s.startswith("echo __OTTO_LP_SYNC_")]
+
+
 def _mock_session_mgr():
     """AsyncMock session-mgr whose send/expect are awaitable but whose
     current_user bookkeeping is synchronous (no un-awaited coroutines)."""
@@ -379,7 +389,7 @@ async def test_switch_user_from_via_user_runs_only_final_hop():
     await host.switch_user("mysql")
 
     sent = [c.args[0] for c in mgr.send.await_args_list]
-    assert sent == ["su mysql\n", "mysqlpw\n"]  # no "su admin" hop re-run
+    assert _without_resync(sent) == ["su mysql\n", "mysqlpw\n"]  # no "su admin" hop re-run
     mgr._set_current_user.assert_called_once_with("mysql")
 
 
@@ -411,7 +421,7 @@ async def test_host_session_switch_user_on_proxied_cred_stamps_current_user():
 
     assert hs.current_user == "mysql"
     sent = [c.args[0] for c in shell.send.await_args_list]
-    assert sent == ["su mysql\n", "mysqlpw\n"]  # only the final hop ran
+    assert _without_resync(sent) == ["su mysql\n", "mysqlpw\n"]  # only the final hop ran
 
 
 @pytest.mark.asyncio

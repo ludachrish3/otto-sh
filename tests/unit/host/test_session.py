@@ -1099,6 +1099,13 @@ class _ImmediateSession(ShellSession):
         self.writes.append(data)
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+        # Resync-aware: otto.host.login_proxy.run_proxy/run_undo now end every
+        # hop with a post-transition "echo <marker>"/expect(marker) resync —
+        # answer that transparently (most hops here never call expect()
+        # themselves, so without this every hop replay would raise below).
+        if self.writes and self.writes[-1].startswith("echo __OTTO_LP_SYNC_"):
+            marker = self.writes[-1].removeprefix("echo ").rstrip("\n")
+            return f"\n{marker}\n"
         if self._expect_response is not None:
             return self._expect_response
         raise AssertionError("this fake does not support expect(); pass expect_response=...")
@@ -1127,6 +1134,16 @@ async def _task7_hop_with_password(io, ctx) -> None:
     await io.send(f"su {ctx.target.login}\n")
     if ctx.target.password is not None:
         await io.send(ctx.target.password + "\n", log=LogMode.NEVER)
+
+
+def _without_resync_writes(writes: list[str]) -> list[str]:
+    """Drop the engine's post-transition "echo <marker>" resync probes.
+
+    ``run_proxy``/``run_undo`` now end every hop with a resync (see
+    ``otto.host.login_proxy._resync_shell``) — filter its noise out before
+    asserting on the exact write sequence a test cares about.
+    """
+    return [w for w in writes if not w.startswith("echo __OTTO_LP_SYNC_")]
 
 
 class TestLoginProxyAtSessionEstablishment:
@@ -1187,7 +1204,7 @@ class TestLoginProxyAtSessionEstablishment:
         await mgr._ensure_session()
 
         assert mgr._session.current_user == "mysql"
-        assert mgr._session.writes == ["su mysql\n", "mysqlpw\n"]
+        assert _without_resync_writes(mgr._session.writes) == ["su mysql\n", "mysqlpw\n"]
         assert ("su mysql", LogMode.NORMAL) in logged_cmds
         assert not any(cmd == "mysqlpw" for cmd, _ in logged_cmds)
 
@@ -1219,7 +1236,7 @@ class TestLoginProxyAtSessionEstablishment:
         await mgr._ensure_session()
 
         assert mgr._session.current_user == "mysql"
-        assert mgr._session.writes == ["su mysql\n", "mysqlpw\n"]
+        assert _without_resync_writes(mgr._session.writes) == ["su mysql\n", "mysqlpw\n"]
         assert ("su mysql", LogMode.NORMAL) in logged_cmds
         assert not any(cmd == "mysqlpw" for cmd, _ in logged_cmds)
         assert ("Password: ", LogMode.NORMAL) in logged_out
@@ -1365,12 +1382,20 @@ class _StubOneshotSession(ShellSession):
     def __init__(self) -> None:
         super().__init__()
         self.run_cmd_calls: list[str] = []
+        self.writes: list[str] = []
 
     async def _open(self) -> None: ...
 
-    async def _write(self, data: str) -> None: ...
+    async def _write(self, data: str) -> None:
+        self.writes.append(data)
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
+        # Resync-aware (see _ImmediateSession): the proxied-oneshot tests
+        # below use a passwordless built-in `su` hop, so the only expect()
+        # call this stub ever sees is the engine's post-transition resync.
+        if self.writes and self.writes[-1].startswith("echo __OTTO_LP_SYNC_"):
+            marker = self.writes[-1].removeprefix("echo ").rstrip("\n")
+            return f"\n{marker}\n"
         raise AssertionError("stub does not read")
 
     async def close(self) -> None:

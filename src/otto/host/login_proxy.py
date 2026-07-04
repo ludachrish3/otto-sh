@@ -10,8 +10,11 @@ the old hardcoded su-switch helper that ``switch_user``/``as_user`` used to
 call directly).
 """
 
+import asyncio
+import contextlib
 import re
 import shlex
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from typing import Any, Protocol, runtime_checkable
@@ -162,12 +165,59 @@ def _get_proxy(hop: Cred) -> LoginProxy:
     return LOGIN_PROXIES.get(hop.proxy or "su")
 
 
+# Ceiling on one resync attempt and the number of attempts _resync_shell makes
+# before giving up. A su/sudo/exit transition is a foreground-process handoff
+# on the pty: su/login/sudo traditionally flush pending terminal input across
+# a privilege boundary (a typeahead-attack defense), so bytes written the
+# instant control changes hands can be silently dropped. Confirmed on the live
+# bed with otto's built-in "su" proxy: a fire-and-forget send after the
+# transition reproduced a 100%-reliable hang on the very next sentinel-wrapped
+# command. Resending a fresh, unique marker (retried a bounded number of times)
+# closes the race — mirrors the connection-level READY handshake in
+# otto.host.session._ensure_initialized.
+_RESYNC_ATTEMPTS = 5
+_RESYNC_TIMEOUT = 2.0
+
+
+async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
+    """Resync with the shell after a su/sudo/exit transition.
+
+    Sends a fresh, unique marker and waits for it to echo back, retrying up
+    to :data:`_RESYNC_ATTEMPTS` times. The bare marker (no line-anchor) is
+    the bed-verified form: framed command paths run ``stty -echo`` first, so
+    there is no risk of the marker matching inside its own echoed probe the
+    way an anchor-less READY marker could during a failed telnet login.
+
+    Raises :class:`LoginProxyError` if the shell never resyncs — the caller
+    (:func:`run_proxy`/:func:`run_undo`) wraps this with hop context like any
+    other proxy-step failure.
+    """
+    for _ in range(_RESYNC_ATTEMPTS):
+        marker = f"__OTTO_LP_SYNC_{uuid.uuid4().hex}__"
+        await io.send(f"echo {marker}\n")
+        with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
+            await io.expect(marker, timeout=_RESYNC_TIMEOUT)
+            return
+    raise LoginProxyError(
+        f"{host_id}: shell did not resync after becoming {hop_login!r} "
+        f"(su/sudo transition flushed the next command)"
+    )
+
+
 async def run_proxy(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
-    """Run *hop*'s proxy steps over *io*, wrapping failures with context."""
+    """Run *hop*'s proxy steps over *io*, wrapping failures with context.
+
+    Ends with a post-transition shell resync (:func:`_resync_shell`) so the
+    next sentinel-wrapped command otto writes can't land in the transition's
+    tty-flush window and be silently discarded (see that function's
+    docstring). A resync failure surfaces through the same wrapping as any
+    other proxy-step failure below.
+    """
     name = hop.proxy or "su"
     try:
         proxy = _get_proxy(hop)
         await proxy.fn(io, ProxyContext(target=hop, via=via, host_id=host_id))
+        await _resync_shell(io, host_id, hop.login)
     except LoginProxyError:
         raise
     except Exception as e:
@@ -179,6 +229,9 @@ async def run_proxy(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
 async def run_undo(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
     """Reverse *hop*: the registered undo, or the default ``exit``.
 
+    Also ends with a post-transition shell resync, like :func:`run_proxy` —
+    the ``exit`` back to the prior shell is the same kind of foreground
+    handoff a su/sudo switch is, and races the next command the same way.
     Failures are wrapped in :class:`LoginProxyError` with context, like
     :func:`run_proxy`.
     """
@@ -187,8 +240,9 @@ async def run_undo(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
         proxy = _get_proxy(hop)
         if proxy.undo is None:
             await io.send("exit\n")
-            return
-        await proxy.undo(io, ProxyContext(target=hop, via=via, host_id=host_id))
+        else:
+            await proxy.undo(io, ProxyContext(target=hop, via=via, host_id=host_id))
+        await _resync_shell(io, host_id, hop.login)
     except LoginProxyError:
         raise
     except Exception as e:

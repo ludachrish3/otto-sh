@@ -18,19 +18,31 @@ What this module proves, end to end against the real bed, using a CUSTOM
 - ``oneshot`` routing through the proxied pool (Task 8);
 - ``nc`` transfer ownership under the proxied user;
 - ``interact --as-user`` over the real PTY bridge (Task 9);
+- the BUILT-IN ``"su"`` proxy's ``switch_user``/``as_user`` path with the
+  ``test`` account, with no custom proxy code at all
+  (``test_builtin_su_proxy_switch_user_does_not_hang``);
 
 plus cred-chain resolution (``via``/``proxy`` validated at ingest by
 ``CredSpec`` when the proxy is registered).
 
-NOTE — coverage gap tracked as a follow-up: every user-switch test here uses
-the custom ``sudo-su-shell`` proxy, which bakes in a post-transition *resync*
-(``_wait_for_shell_ready``, see below). The BUILT-IN ``"su"`` proxy and the
-default ``"exit"`` undo in ``otto.host.login_proxy`` lack that resync and were
-confirmed on this same live bed to race a pty typeahead flush (a 100%-reliable
-hang on the next command after the switch/undo). This module deliberately does
-NOT exercise the built-in ``"su"`` path — its fix plus positive live-bed
-coverage are a separate follow-up task (no live-bed xfail here: a 100%-hang
-xfail would risk wedging the shared bed).
+NOTE — the post-transition *resync* this module used to bake into its own
+``sudo-su-shell`` proxy (``_wait_for_shell_ready``, see git history) has been
+REMOVED. A su/sudo/exit transition is a foreground-process handoff on the
+pty: su/login/sudo traditionally flush pending terminal input across a
+privilege boundary (a typeahead-attack defense), so the very next
+sentinel-wrapped command otto writes can land in that flush window and be
+silently discarded. This was confirmed on this same live bed to race 100%
+reliably — including with the BUILT-IN ``"su"`` proxy and the default
+``"exit"`` undo, i.e. the gap was in the shared engine, not this module's
+proxy. The fix now lives in the chokepoint every hop passes through
+regardless of which proxy is registered: ``otto.host.login_proxy._resync_shell``,
+called from the end of ``run_proxy``/``run_undo``. Every switch/undo in this
+module (still exercised via the custom ``sudo-su-shell`` proxy, since
+``mysql``'s restricted shell needs root-mediated ``sudo su``) is therefore
+exercising the ENGINE's resync end to end, with no per-proxy workaround left
+to mask a regression. ``test_builtin_su_proxy_switch_user_does_not_hang``
+additionally drives the built-in ``"su"`` proxy directly — the path that was
+previously untested here and confirmed 100% reliably hanging pre-fix.
 
 Containment
 -----------
@@ -88,58 +100,21 @@ pytestmark = [pytest.mark.integration, pytest.mark.xdist_group("login_proxy_e2e"
 # ---------------------------------------------------------------------------
 # Module-scope login-proxy registration (containment: see module docstring)
 #
-# ``_wait_for_shell_ready`` post-transition sync: a ``su``/``sudo`` switch is
-# a foreground-process handoff on the pty, and real hardware exhibits a
-# narrow but very real race there — bytes written the instant control
-# changes hands can be silently dropped (su/login/sudo traditionally flush
-# pending terminal input across a privilege boundary as a defense against
-# typeahead attacks). A naive fire-and-forget ``await io.send(...)`` proxy
-# (matching the task brief's illustrative snippet) reproduced a 100%
-# reliable hang (0/8 trials) on the very next sentinel-wrapped
-# ``host.run()`` after the switch/undo — confirmed against the live bed with
-# both this custom proxy AND the built-in ``"su"`` proxy, so the gap is in
-# the shared no-sync-after-transition contract, not this proxy specifically.
-# Resyncing with a fresh, unique marker (retried a few times with a bounded
-# per-attempt wait — mirroring the connection-level READY handshake in
-# ``otto.host.session``) made it 8/8 reliable. Scoped to this test module's
-# own proxy (via the public ``undo=`` extension point) rather than patching
-# the shared built-in ``"su"`` proxy / default ``"exit"`` undo in
-# ``otto.host.login_proxy`` — that shared code has wide blast radius (used by
-# ``switch_user``/``as_user`` generally) and deserves its own properly
-# reviewed fix + regression coverage; flagged in the task report as a
-# follow-up finding.
+# No per-proxy resync here anymore — the post-transition marker-echo resync
+# lives in the shared engine (``otto.host.login_proxy._resync_shell``, called
+# from the end of ``run_proxy``/``run_undo``) and applies to every hop
+# automatically. See the module docstring NOTE for the history/rationale.
 # ---------------------------------------------------------------------------
-
-_READY_MARKER_ATTEMPTS = 5
-_READY_MARKER_TIMEOUT = 2.0
-
-
-async def _wait_for_shell_ready(io) -> None:
-    """Resync with the shell after a su/sudo transition before returning control.
-
-    See the module-scope comment above for why this is needed. Raises
-    ``TimeoutError`` (wrapped by ``otto.host.login_proxy`` into a
-    ``LoginProxyError`` with hop context) if the shell never resyncs.
-    """
-    for _ in range(_READY_MARKER_ATTEMPTS):
-        marker = f"__OTTO_LP_READY_{uuid.uuid4().hex}__"
-        await io.send(f"echo {marker}\n")
-        with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
-            await io.expect(marker, timeout=_READY_MARKER_TIMEOUT)
-            return
-    raise TimeoutError("shell did not resync after su/sudo transition")
 
 
 async def _sudo_su_shell(io, ctx):
     # Root-mediated: non-root `su -s` is silently ignored for restricted-shell
     # targets (util-linux). vagrant is passwordless sudo on the test VMs.
     await io.send(f"sudo su -s /bin/bash {ctx.target.login}\n")
-    await _wait_for_shell_ready(io)
 
 
 async def _sudo_su_shell_undo(io, ctx):
     await io.send("exit\n")
-    await _wait_for_shell_ready(io)
 
 
 register_login_proxy("sudo-su-shell", _sudo_su_shell, undo=_sudo_su_shell_undo, overwrite=True)
@@ -344,39 +319,20 @@ async def test_nc_put_owned_by_proxied_user(leased_host: tuple[str, str], tmp_pa
 _LP_E2E_LAB = "lp_e2e_lab"
 
 _INIT_MODULE_SOURCE = """\
-import asyncio
-import contextlib
-import uuid
-
 from otto import register_login_proxy
-
-_READY_MARKER_ATTEMPTS = 5
-_READY_MARKER_TIMEOUT = 2.0
-
-
-async def _wait_for_shell_ready(io):
-    # Resync after a su/sudo transition — see test_login_proxy_e2e.py's
-    # module-scope comment for why this matters (a naive fire-and-forget
-    # send reproduced a 100%-reliable hang against the live bed).
-    for _ in range(_READY_MARKER_ATTEMPTS):
-        marker = f"__OTTO_LP_READY_{uuid.uuid4().hex}__"
-        await io.send(f"echo {marker}\\n")
-        with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
-            await io.expect(marker, timeout=_READY_MARKER_TIMEOUT)
-            return
-    raise TimeoutError("shell did not resync after su/sudo transition")
 
 
 async def _sudo_su_shell(io, ctx):
     # Root-mediated: non-root `su -s` is silently ignored for restricted-shell
     # targets (util-linux). vagrant is passwordless sudo on the test VMs.
+    # No per-proxy resync needed — the engine (otto.host.login_proxy.run_proxy
+    # /run_undo) resyncs after every hop now. See test_login_proxy_e2e.py's
+    # module docstring NOTE.
     await io.send(f"sudo su -s /bin/bash {ctx.target.login}\\n")
-    await _wait_for_shell_ready(io)
 
 
 async def _sudo_su_shell_undo(io, ctx):
     await io.send("exit\\n")
-    await _wait_for_shell_ready(io)
 
 
 register_login_proxy("sudo-su-shell", _sudo_su_shell, undo=_sudo_su_shell_undo, overwrite=True)
@@ -446,3 +402,70 @@ def test_interact_as_user_over_bridge(leased_host: tuple[str, str], tmp_path: Pa
         sess.disconnect()
         sess.expect(b"disconnected from", timeout=10)
         assert sess.wait(timeout=10) == 0
+
+
+# ---------------------------------------------------------------------------
+# Test 7: the BUILT-IN "su" proxy — the previously-broken, un-resynced path
+# ---------------------------------------------------------------------------
+
+_BUILTIN_SU_CREDS: list[dict[str, str]] = [
+    {"login": "vagrant", "password": "vagrant"},
+    {"login": "test", "password": "Password1"},
+]
+
+
+def _builtin_su_host_dict(ip: str, element: str, **overrides: object) -> dict[str, object]:
+    """Build an inline host dict with NO custom proxy — pure built-in ``su``.
+
+    Neither cred here names a ``proxy``, so ``switch_user``/``as_user`` fall
+    through to ``otto.host.login_proxy``'s built-in ``"su"`` registration
+    (:func:`otto.host.login_proxy._su_proxy`) with no custom code involved at
+    all — the exact path the module docstring's NOTE describes as previously
+    untested and confirmed 100% reliably hanging pre-fix. ``test`` is a plain
+    bash account with a real password on every bed VM (``provision_test_vm``),
+    so a non-root ``su test`` prompts for and accepts it directly.
+    """
+    data: dict[str, object] = {
+        "ip": ip,
+        "element": element,
+        "board": "seed",
+        "creds": [dict(c) for c in _BUILTIN_SU_CREDS],
+    }
+    data.update(overrides)
+    return data
+
+
+@pytest.mark.asyncio
+async def test_builtin_su_proxy_switch_user_does_not_hang(leased_host: tuple[str, str]) -> None:
+    """Regression: the engine resync, not any proxy's own workaround, fixes the race.
+
+    Exercises the BUILT-IN ``"su"`` proxy directly (no custom proxy code
+    anywhere in this test) via ``as_user("test")``: enters as ``test``, runs
+    TWO commands back to back (the second one is the load-bearing part — it
+    proves the switch didn't just get lucky once), then exits the block
+    (default ``"exit"`` undo) and runs a further command to prove the
+    restore-to-``vagrant`` transition didn't drop anything either.
+
+    Pre-fix, this hung 100% of the time waiting for the begin-marker of the
+    first command after the switch (the su tty-flush ate it); see the module
+    docstring NOTE and the resync-fix report for the RED (reverted-fix, timed
+    out) vs GREEN (this test, passing) evidence.
+    """
+    element, ip = leased_host
+    host = create_host_from_dict(_builtin_su_host_dict(ip, element))  # default user: vagrant
+    try:
+        before = (await host.run("whoami")).only.value.strip()
+        assert before == "vagrant"
+
+        async with host.as_user("test"):
+            during = (await host.run("whoami")).only.value.strip()
+            assert during == "test"
+            # Nothing was dropped by the switch: a second command right after it.
+            still_alive = (await host.run("echo still-alive")).only.value.strip()
+            assert still_alive == "still-alive"
+
+        # The default "exit" undo's own resync must not drop the next command.
+        after = (await host.run("whoami")).only.value.strip()
+        assert after == "vagrant"
+    finally:
+        await host.close()

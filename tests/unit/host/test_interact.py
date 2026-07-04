@@ -741,7 +741,36 @@ class TestBridgeProxyIOExpect:
 
 # ---------------------------------------------------------------------------
 # Task 9: replaying the built-in `su` hop over _BridgeProxyIO via run_proxy
+#
+# ``run_proxy``/``run_undo`` now end every hop with a post-transition
+# "echo <marker>"/expect(marker) resync (see
+# ``otto.host.login_proxy._resync_shell``) — a real, bed-confirmed fix for a
+# su/sudo/exit tty-flush race. ``_BridgeProxyIO.expect()`` does REAL regex
+# matching against accumulated ``read_remote()`` chunks (unlike the simpler
+# record-and-replay fakes elsewhere), so a fake `read_remote` that doesn't
+# recognize the resync's echo probe and answer it would time out / hit EOF —
+# breaking every test below. ``_is_resync_probe``/``_resync_reply`` make the
+# fakes resync-aware; ``_drop_resync_probes`` keeps sent-sequence assertions
+# meaningful by filtering the probe's own noise back out.
 # ---------------------------------------------------------------------------
+
+_RESYNC_ECHO_PREFIX = b"echo __OTTO_LP_SYNC_"
+
+
+def _is_resync_probe(write: bytes) -> bool:
+    """Whether *write* is the login-proxy engine's post-transition resync probe."""
+    return write.startswith(_RESYNC_ECHO_PREFIX)
+
+
+def _resync_reply(write: bytes) -> bytes:
+    """Build a read_remote() reply that satisfies expect() for the marker in *write*."""
+    marker = write.decode("utf-8").removeprefix("echo ").rstrip("\r\n")
+    return f"\n{marker}\n".encode()
+
+
+def _drop_resync_probes(writes: list[bytes]) -> list[bytes]:
+    """Filter the resync's own echo probes out of a `sent`/write log."""
+    return [w for w in writes if not _is_resync_probe(w)]
 
 
 class TestReplaySuHopOverBridge:
@@ -754,13 +783,15 @@ class TestReplaySuHopOverBridge:
             sent.append(data)
 
         async def read_remote() -> bytes:
+            if sent and _is_resync_probe(sent[-1]):
+                return _resync_reply(sent[-1])
             return chunks.pop(0) if chunks else b""
 
         io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
         hop = Cred(login="mysql", password="sqlpw", proxy="su", via="admin")
         await run_proxy(io, hop, via=Cred(login="admin"), host_id="h1")
 
-        assert sent == [b"su mysql\n", b"sqlpw\n"]
+        assert _drop_resync_probes(sent) == [b"su mysql\n", b"sqlpw\n"]
 
     @pytest.mark.asyncio
     async def test_timeout_surfaces_as_login_proxy_error_with_context(self):
@@ -823,6 +854,8 @@ class TestReplayProxyHops:
             sent.append(data)
 
         async def read_remote() -> bytes:
+            if sent and _is_resync_probe(sent[-1]):
+                return _resync_reply(sent[-1])
             return replies.pop(0) if replies else b""
 
         hops = [
@@ -837,24 +870,31 @@ class TestReplayProxyHops:
             via_login="admin",
             host_id="h1",
         )
-        assert sent == [b"su mysql\n", b"pw1\n", b"su app\n", b"pw2\n"]
+        assert _drop_resync_probes(sent) == [b"su mysql\n", b"pw1\n", b"su app\n", b"pw2\n"]
 
     @pytest.mark.asyncio
     async def test_each_hop_waits_for_its_own_fresh_prompt(self):
         """Regression: the shared _BridgeProxyIO must consume matched bytes so
         hop 2 waits for a NEWLY read prompt instead of re-matching hop 1's
         leftover "Password:". Proven by counting read_remote calls — a 2-hop
-        chain must read the prompt twice (once per hop), not once."""
+        chain must read the prompt twice (once per hop) for its password, plus
+        once more per hop for the engine's post-transition resync (Task: resync
+        fix) — 4 reads total. A leftover buffer would let a later expect()
+        re-match stale bytes instead of reading fresh, undershooting this
+        count."""
         read_calls = 0
+        sent: list[bytes] = []
         # One prompt per hop; each only becomes visible on its own read.
         prompts = [b"Password:", b"Password:"]
 
         async def write_remote(data: bytes) -> None:
-            pass
+            sent.append(data)
 
         async def read_remote() -> bytes:
             nonlocal read_calls
             read_calls += 1
+            if sent and _is_resync_probe(sent[-1]):
+                return _resync_reply(sent[-1])
             return prompts.pop(0) if prompts else b""
 
         hops = [
@@ -869,15 +909,16 @@ class TestReplayProxyHops:
             via_login="admin",
             host_id="h1",
         )
-        # Two hops → two password prompts consumed → two reads. A leftover
-        # buffer would let hop 2 re-match hop 1's prompt, leaving read_calls==1.
-        assert read_calls == 2
+        # 2 hops x (1 password prompt + 1 resync marker) = 4 reads. A leftover
+        # buffer would let a later expect() re-match stale bytes, undershooting.
+        assert read_calls == 4
 
     @pytest.mark.asyncio
     async def test_via_is_sourced_from_the_previous_hops_login(self):
         """Mirrors SessionManager._apply_login_proxy: hop N's `via` is hop
         N-1's login, not the original transport login repeated for every hop."""
         seen_vias: list[str] = []
+        sent: list[bytes] = []
 
         async def track_via(io: object, ctx: object) -> None:
             seen_vias.append(ctx.via.login)  # type: ignore[attr-defined]
@@ -886,9 +927,11 @@ class TestReplayProxyHops:
         try:
 
             async def write_remote(data: bytes) -> None:
-                pass
+                sent.append(data)
 
             async def read_remote() -> bytes:
+                if sent and _is_resync_probe(sent[-1]):
+                    return _resync_reply(sent[-1])
                 return b""
 
             hops = [
