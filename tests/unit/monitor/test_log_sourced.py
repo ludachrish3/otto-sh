@@ -5,8 +5,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from otto.monitor.log_sourced import CsvMetricParser, HighWaterMark, parse_timestamp
-from otto.monitor.parsers import ParseContext
+from otto.monitor.log_sourced import (
+    CsvMetricParser,
+    HighWaterMark,
+    RegexLogEventParser,
+    parse_timestamp,
+)
+from otto.monitor.parsers import LogEvent, ParseContext
 
 T0 = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -50,6 +55,11 @@ class TestParseTimestamp:
     def test_garbage_is_none(self) -> None:
         assert parse_timestamp("not a time") is None
 
+    def test_composite_year_directive_returns_none_not_raise(self) -> None:
+        # %c carries its own year, colliding with the injected %Y at
+        # regex-compile time — must degrade to None, never raise.
+        assert parse_timestamp("Sun Jul  4 12:00:00 2026", "%c") is None
+
 
 class TestHighWaterMark:
     def test_first_pass_emits_all_sorted(self) -> None:
@@ -75,6 +85,82 @@ class TestHighWaterMark:
         hwm.advance([(T0, "old")])
         fresh = (T0 + timedelta(seconds=1), "post-rotate")
         assert hwm.advance([fresh]) == [fresh]
+
+
+SYSLOG_PATTERN = r"^(?P<ts>\S+) (?P<loghost>\S+) (?P<proc>[^:\[]+)(?:\[\d+\])?: (?P<message>.*)$"
+
+
+def _syslog() -> RegexLogEventParser:
+    return RegexLogEventParser(
+        "tail -n 200 /var/log/syslog",
+        SYSLOG_PATTERN,
+        tab="syslog",
+        tab_label="Syslog",
+    )
+
+
+class TestRegexLogEventParser:
+    def test_declares_table_columns_in_pattern_order(self) -> None:
+        p = _syslog()
+        assert p.table_columns == ["loghost", "proc", "message"]
+        assert p.tab == "syslog"
+        assert p.chart == "Syslog"
+        assert p.parse("anything", ctx=ParseContext()) == {}
+
+    def test_named_groups_become_fields(self) -> None:
+        line = "2026-07-04T12:00:00+00:00 vm1 sshd[142]: session opened\n"
+        tick = _syslog().parse_tick(line, ctx=ParseContext())
+        assert tick.samples == []
+        assert tick.events == [
+            LogEvent(
+                ts=T0,
+                fields={"loghost": "vm1", "proc": "sshd", "message": "session opened"},
+            )
+        ]
+
+    def test_nonmatching_lines_skipped(self) -> None:
+        out = "not a syslog line\n2026-07-04T12:00:00Z vm1 cron: job ran\n"
+        tick = _syslog().parse_tick(out, ctx=ParseContext())
+        assert len(tick.events) == 1
+        assert tick.events[0].fields["proc"] == "cron"
+
+    def test_events_sorted_ascending_and_hwm_dedups_rereads(self) -> None:
+        p = _syslog()
+        out = (
+            "2026-07-04T12:00:05Z vm1 a: second\n"
+            "2026-07-04T12:00:00Z vm1 a: first\n"
+        )
+        first = p.parse_tick(out, ctx=ParseContext()).events
+        assert [e.fields["message"] for e in first] == ["first", "second"]
+        assert p.parse_tick(out, ctx=ParseContext()).events == []
+        grown = out + "2026-07-04T12:00:10Z vm1 a: third\n"
+        assert [e.fields["message"] for e in p.parse_tick(grown, ctx=ParseContext()).events] == [
+            "third"
+        ]
+
+    def test_strptime_ts_format(self) -> None:
+        p = RegexLogEventParser(
+            "tail -n 200 /var/log/messages",
+            r"^(?P<ts>\w+ +\d+ [\d:]+) (?P<message>.*)$",
+            tab="messages",
+            tab_label="Messages",
+            ts_format="%b %d %H:%M:%S",
+        )
+        tick = p.parse_tick("Jul  4 12:00:00 classic syslog body\n", ctx=ParseContext())
+        assert len(tick.events) == 1
+        assert tick.events[0].ts.year == datetime.now(tz=timezone.utc).year
+
+    def test_unparsable_timestamp_skips_line(self) -> None:
+        tick = _syslog().parse_tick("garbage vm1 a: hi\n", ctx=ParseContext())
+        assert tick.events == []
+
+    def test_ts_group_must_exist(self) -> None:
+        with pytest.raises(ValueError, match="no named group 'ts'"):
+            RegexLogEventParser("tail x", r"(?P<message>.*)", tab="t", tab_label="T")
+
+    def test_needs_a_column_besides_the_timestamp(self) -> None:
+        with pytest.raises(ValueError, match="at least one named group besides"):
+            RegexLogEventParser("tail x", r"(?P<ts>\S+)", tab="t", tab_label="T")
 
 
 def _csv() -> CsvMetricParser:

@@ -32,6 +32,7 @@ This module is never imported by otto's eager import chain (import-budget
 guard) — import it explicitly from init modules or test code.
 """
 
+import re
 from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from typing import TypeVar
@@ -39,6 +40,7 @@ from typing import TypeVar
 from typing_extensions import override
 
 from .parsers import (
+    LogEvent,
     MetricDataPoint,
     MetricParser,
     ParseContext,
@@ -88,7 +90,7 @@ def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
         fmt = f"%Y {fmt}"
     try:
         return _as_utc(datetime.strptime(text, fmt))  # noqa: DTZ007 — naive-means-UTC applied by _as_utc
-    except ValueError:
+    except (ValueError, re.error):
         return None
 
 
@@ -203,4 +205,79 @@ class CsvMetricParser(MetricParser):
         return TickResult(
             samples=[TimedSample(ts=ts, series=series) for ts, series in fresh],
             events=[],
+        )
+
+
+class RegexLogEventParser(MetricParser):
+    r"""Columnar log-event rows from a log file read over the shell.
+
+    Each line matching *pattern* becomes a table row: the named groups
+    become the columns (``table_columns``, in pattern order), except
+    *ts_group*, which carries the row timestamp. Non-matching lines are
+    skipped — a wrong pattern therefore produces zero rows ever, which the
+    collector's silent-parser warning surfaces by tick 3. Re-reads of the
+    ``tail -n N`` window dedup on the row-timestamp high-water mark, so an
+    append-only log of any size fits: the window bounds every read, the
+    mark discards overlap.
+
+    This parser contributes a ``kind="table"`` dashboard tab (its own —
+    table parsers must not share a tab id with chart parsers) and no chart.
+
+    Args:
+        command: Shell command printing the log window (e.g. ``tail -n 200 /var/log/syslog``).
+        pattern: Line regex with named groups; ``search``\ ed per line.
+        tab: Dashboard tab id for the table.
+        tab_label: Human-readable tab button label.
+        ts_group: Name of the group holding the timestamp.
+        ts_format: ``"iso"``, ``"epoch"``, or a ``strptime`` format (see :func:`parse_timestamp`).
+        interval: Poll cadence override in seconds.
+    """
+
+    def __init__(
+        self,
+        command: str,
+        pattern: "str | re.Pattern[str]",
+        *,
+        tab: str,
+        tab_label: str,
+        ts_group: str = "ts",
+        ts_format: str = "iso",
+        interval: float | None = None,
+    ) -> None:
+        self.command = command
+        self._pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
+        if ts_group not in self._pattern.groupindex:
+            raise ValueError(f"pattern has no named group {ts_group!r} for the timestamp")
+        self.table_columns = [g for g in self._pattern.groupindex if g != ts_group]
+        if not self.table_columns:
+            raise ValueError("pattern needs at least one named group besides the timestamp")
+        self._ts_group = ts_group
+        self._ts_format = ts_format
+        self.tab = tab
+        self.tab_label = tab_label
+        self.chart = tab_label  # never charted; names the parser in health warnings
+        self.y_title = ""
+        self.unit = ""
+        self.interval = interval
+        self._hwm = HighWaterMark()
+
+    @override
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        """Unused — this parser produces log events via :meth:`parse_tick`."""
+        return {}
+
+    @override
+    def parse_tick(self, output: str, *, ctx: ParseContext) -> TickResult:
+        rows: list[tuple[datetime, dict[str, str]]] = []
+        for line in output.splitlines():
+            m = self._pattern.search(line)
+            if m is None:
+                continue
+            ts = parse_timestamp(m.group(self._ts_group) or "", self._ts_format)
+            if ts is None:
+                continue
+            rows.append((ts, {g: m.group(g) or "" for g in self.table_columns}))
+        fresh = self._hwm.advance(rows)
+        return TickResult(
+            samples=[], events=[LogEvent(ts=ts, fields=fields) for ts, fields in fresh]
         )
