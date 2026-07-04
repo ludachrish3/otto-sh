@@ -1010,3 +1010,53 @@ async def test_host_session_as_user_nested_restores_each_level():
             assert shell.current_user == "root"
         assert shell.current_user == "bob"  # inner block restored to bob
     assert shell.current_user == "alice"  # outer block restored to alice
+
+
+@pytest.mark.asyncio
+async def test_host_session_as_user_undo_via_ordering_observable():
+    """HostSession path (its own separate undo loop): a proxy with a CUSTOM
+
+    undo makes the ``via`` handed to each reverse hop observable. Undo #1
+    (mysql) must see via=admin and undo #2 (admin) must see via=root, each
+    carrying the FULL via cred (password intact). Guards the ``applied[-i-2]``
+    reverse index + full-cred lookup in ``HostSession.as_user``, which the only
+    built-in proxy (``su``, no custom undo) can never exercise.
+    """
+    from otto.host.login_proxy import Cred, register_login_proxy
+    from otto.host.session import HostSession
+
+    captured: list[tuple[str, str, str | None]] = []
+
+    async def fake_fn(io, ctx):
+        await io.send(f"become {ctx.target.login}\n")
+
+    async def fake_undo(io, ctx):
+        captured.append((ctx.target.login, ctx.via.login, ctx.via.password))
+        await io.send("leave\n")
+
+    register_login_proxy("task6-fake-undo-session", fake_fn, undo=fake_undo, overwrite=True)
+
+    shell = AsyncMock(spec=ShellSession)
+    shell.current_user = "root"
+    shell.expect.return_value = "Password:"
+    hs = HostSession(
+        "mon",
+        shell,
+        lambda *_: None,
+        lambda *_: None,
+        lambda _: None,
+        creds=[
+            Cred(login="root", password="rootpw"),
+            Cred(login="admin", password="adminpw", proxy="task6-fake-undo-session", via="root"),
+            Cred(login="mysql", password="mysqlpw", proxy="task6-fake-undo-session", via="admin"),
+        ],
+        host_id="mon",
+    )
+
+    async with hs.as_user("mysql"):
+        assert captured == []  # nothing undone until the block exits
+
+    assert captured == [
+        ("mysql", "admin", "adminpw"),  # undo #1: reverse-innermost, via = admin cred
+        ("admin", "root", "rootpw"),  # undo #2: via = root cred (the prior user)
+    ]

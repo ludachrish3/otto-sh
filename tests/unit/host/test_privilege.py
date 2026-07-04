@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.host.login_proxy import Cred
+from otto.host.login_proxy import Cred, register_login_proxy
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.utils import Status
@@ -451,3 +451,60 @@ async def test_sudo_password_reflects_current_user_after_switch():
     # password — not admin's (the login user's) — for the *current* user.
     assert host.current_user == "root"
     assert host._sudo_password() == "rootpw"
+
+
+# Chain used by the undo-observability tests: root (direct) -> admin -> mysql,
+# where BOTH hops use a fake proxy WITH a custom undo, so run_undo drives the
+# custom-undo branch (which reads ctx.via) instead of the default `exit` branch
+# (which never reads via). This is what makes the reverse-undo `via` ordering
+# — the trickiest line in the task — actually observable.
+def _fake_undo_chain(proxy_name: str) -> list[Cred]:
+    return [
+        Cred(login="root", password="rootpw"),
+        Cred(login="admin", password="adminpw", proxy=proxy_name, via="root"),
+        Cred(login="mysql", password="mysqlpw", proxy=proxy_name, via="admin"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_as_user_undo_via_ordering_observable_host():
+    """Host path (PosixPrivilege.as_user): a proxy with a CUSTOM undo lets us
+
+    observe the ``via`` the undo loop passes for each hop. Undo runs in reverse
+    (innermost first), so undo #1 (mysql) must see via=admin and undo #2 (admin)
+    must see via=root — with the FULL via cred (password intact), not a bare
+    ``Cred(login=...)``. Guards the ``applied[-i-2]`` reverse index + the
+    full-cred-lookup fix; with the wrong index or a bare cred this fails.
+    """
+    from otto.host.unix_host import UnixHost
+
+    captured: list[tuple[str, str, str | None]] = []
+
+    async def fake_fn(io, ctx):
+        await io.send(f"become {ctx.target.login}\n")
+
+    async def fake_undo(io, ctx):
+        captured.append((ctx.target.login, ctx.via.login, ctx.via.password))
+        await io.send("leave\n")
+
+    register_login_proxy("task6-fake-undo-host", fake_fn, undo=fake_undo, overwrite=True)
+
+    host = UnixHost(
+        ip="10.0.0.1",
+        element="box",
+        creds=_fake_undo_chain("task6-fake-undo-host"),
+        user="root",
+        log=LogMode.QUIET,
+    )
+    mgr = _mock_session_mgr()
+    mgr.current_user = "root"
+    host._session_mgr = mgr
+
+    async with host.as_user("mysql"):
+        assert captured == []  # nothing undone until the block exits
+
+    # (target, via.login, via.password), in the order run_undo fired them.
+    assert captured == [
+        ("mysql", "admin", "adminpw"),  # undo #1: reverse-innermost, via = admin cred
+        ("admin", "root", "rootpw"),  # undo #2: via = root cred (the prior user)
+    ]

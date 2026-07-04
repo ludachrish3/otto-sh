@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import Self, override
 
 from .command_frame import BashFrame, CommandFrame, SessionMarkers
-from .login_proxy import Cred, perform_switch, run_undo
+from .login_proxy import Cred, cred_for, perform_switch, run_undo
 from .telnet import TelnetClient
 
 if TYPE_CHECKING:
@@ -990,7 +990,10 @@ class HostSession:
         finally:
             for i, hop in enumerate(reversed(applied)):
                 via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
-                await run_undo(self, hop, Cred(login=via_login), self._host_id)
+                # Full via cred (password/params intact), mirroring the forward
+                # path — keeps forward/undo symmetric for custom undo callables.
+                via = cred_for(self._creds, via_login) or Cred(login=via_login)
+                await run_undo(self, hop, via, self._host_id)
             self._session.current_user = prev
 
     async def run(

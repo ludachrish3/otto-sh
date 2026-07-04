@@ -33,7 +33,7 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from ..logger.mode import LogMode
-from .login_proxy import Cred, perform_switch, run_undo
+from .login_proxy import Cred, cred_for, perform_switch, run_undo
 
 if TYPE_CHECKING:
     from .session import Expect
@@ -135,9 +135,12 @@ class PosixPrivilege:
         try:
             yield self
         finally:
+            creds = self._switch_creds()
             for i, hop in enumerate(reversed(applied)):
                 via_login = applied[-i - 2].login if i + 1 < len(applied) else prev
-                await run_undo(
-                    _HostProxyIO(self), hop, Cred(login=via_login), getattr(self, "name", "")
-                )
+                # Look up the full via cred (password/params intact), mirroring
+                # perform_switch's forward path — so a custom undo that needs
+                # the via user's password sees it, and forward/undo stay symmetric.
+                via = cred_for(creds, via_login) or Cred(login=via_login)
+                await run_undo(_HostProxyIO(self), hop, via, getattr(self, "name", ""))
             self._session_mgr._set_current_user(prev)  # noqa: SLF001 — intra-package access to SessionManager._set_current_user to restore prior user  # ty: ignore[unresolved-attribute]
