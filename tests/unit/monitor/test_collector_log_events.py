@@ -114,3 +114,21 @@ async def test_events_land_in_store_ring_tagged_with_parser_tab() -> None:
     assert collector._store.snapshot_log_events() == [
         ("host1", "applog", LogEvent(ts=TS1, fields={"message": "hello"}))
     ]
+
+
+@pytest.mark.asyncio
+async def test_csv_parser_backfills_store_with_data_timestamps() -> None:
+    from otto.monitor.log_sourced import CsvMetricParser
+
+    parser = CsvMetricParser("cat /var/log/perf.csv", columns=["v"], chart="Perf")
+    out = "2026-07-04T11:00:00,1\n2026-07-04T11:05:00,2\n"
+    collector = MetricCollector(hosts=[])
+    await collector._process_host_results(
+        "host1",
+        TICK,
+        [CommandResult(Status.Success, value=out, command=parser.command, retcode=0)],
+        {parser.command: parser},
+        ctx=ParseContext(ts=TICK),
+    )
+    pts = collector.get_series()["host1/v"]
+    assert [(p.ts, p.value) for p in pts] == [(TS1, 1.0), (TS2, 2.0)]

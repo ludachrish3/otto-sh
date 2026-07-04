@@ -1,0 +1,204 @@
+"""Log-sourced metric parsers — data-carried timestamps from files on the host.
+
+Some systems don't expose live values: a cron job digests performance numbers
+into a timestamped CSV file every few minutes, or the interesting record is a
+log file's event stream. Both ride the existing shell acquisition path via
+:meth:`~otto.monitor.parsers.MetricParser.parse_tick` — the command IS the
+reduction step (``cat``/``tail``/``awk``/``grep``/``jq`` on the host ships
+back only the lines otto needs; the design assumes source data is always
+textually reducible on the host).
+
+Register instances exactly like any other parser (one instance per file;
+distinct commands are distinct registry keys)::
+
+    from otto.monitor.log_sourced import CsvMetricParser
+    from otto.monitor.parsers import register_parsers
+
+    register_parsers([
+        CsvMetricParser(
+            "cat /var/log/perf/net.csv",
+            columns=["rx_kbps", "tx_kbps"],
+            chart="Cron net digest",
+            tab="network",
+            tab_label="Network",
+            unit="kb/s",
+            interval=60,
+        ),
+    ])
+
+Timestamp convention: naive values are treated as UTC.
+
+This module is never imported by otto's eager import chain (import-budget
+guard) — import it explicitly from init modules or test code.
+"""
+
+from collections.abc import Iterable, Sequence
+from datetime import datetime, timezone
+from typing import TypeVar
+
+from typing_extensions import override
+
+from .parsers import (
+    MetricDataPoint,
+    MetricParser,
+    ParseContext,
+    TickResult,
+    TimedSample,
+)
+
+T = TypeVar("T")
+
+_MISSING_YEAR = 1900  # strptime's default year when the format lacks %Y (classic syslog)
+
+
+def _as_utc(dt: datetime) -> datetime:
+    """Apply the naive-means-UTC convention."""
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
+    """Parse a data-carried timestamp; ``None`` (skip the row) when it doesn't parse.
+
+    ``fmt``:
+
+    - ``"auto"``: epoch seconds, else ISO-8601 (the CSV first-column convention);
+    - ``"epoch"``: Unix epoch seconds (int or float);
+    - ``"iso"``: ISO-8601 (a ``Z`` suffix is accepted on Python 3.10);
+    - anything else: a ``strptime`` format. A format without a year directive
+      (classic syslog) yields year 1900 — the current UTC year is substituted.
+
+    Naive results are treated as UTC in every mode.
+    """
+    text = text.strip()
+    if fmt in ("auto", "epoch"):
+        try:
+            return datetime.fromtimestamp(float(text), tz=timezone.utc)
+        except (ValueError, OverflowError, OSError):
+            if fmt == "epoch":
+                return None
+    if fmt in ("auto", "iso"):
+        try:
+            return _as_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        except ValueError:
+            return None
+    try:
+        parsed = datetime.strptime(text, fmt)  # noqa: DTZ007 — naive-means-UTC applied below
+    except ValueError:
+        return None
+    if parsed.year == _MISSING_YEAR and "%Y" not in fmt and "%y" not in fmt:
+        parsed = parsed.replace(year=datetime.now(tz=timezone.utc).year)
+    return _as_utc(parsed)
+
+
+class HighWaterMark:
+    """Timestamp high-water mark: makes re-reads of rolling files idempotent.
+
+    Tracks the newest emitted row timestamp per parser instance (parser
+    instances are per-target deep copies, so state never leaks across
+    hosts). Rows at or below the mark were already emitted on a previous
+    tick and are dropped; survivors come back sorted ascending and the mark
+    advances to the newest survivor. Keyed on row timestamps, not file
+    offsets, so log rotation/truncation needs no special handling — new
+    rows are still newer.
+
+    A torn last line (read mid-write) is skipped by the parser BEFORE this
+    filter, so the mark never passes it — the completed line re-emits whole
+    on the next tick. Boundary rule: a new row bearing exactly the mark's
+    timestamp is dropped as already-seen (accepted trade-off; real sources
+    have per-row-unique or sub-second timestamps).
+    """
+
+    def __init__(self) -> None:
+        self._mark: datetime | None = None
+
+    def advance(self, rows: Iterable[tuple[datetime, T]]) -> list[tuple[datetime, T]]:
+        """Return only the rows newer than the mark, ascending; advance the mark."""
+        fresh = sorted(
+            (row for row in rows if self._mark is None or row[0] > self._mark),
+            key=lambda row: row[0],
+        )
+        if fresh:
+            self._mark = fresh[-1][0]
+        return fresh
+
+
+class CsvMetricParser(MetricParser):
+    """Chart metrics from a cron-digested CSV file read over the shell.
+
+    Line format: first column an ISO-8601 or epoch-seconds timestamp (naive
+    = UTC), remaining columns numeric values matching *columns* (the series
+    labels), comma-separated. Header, torn, and otherwise malformed lines
+    are skipped — a mid-write read self-heals next tick because the
+    high-water mark never passes a skipped line. Points carry their
+    data-carried timestamps, so a file holding the last hour backfills the
+    dashboard and DB with an hour of real history on monitor start.
+
+    One instance per file: the command string is the parser registry key
+    ("a couple of CSV files" = two registered instances). Register via
+    :func:`~otto.monitor.parsers.register_parsers` or
+    :func:`~otto.monitor.parsers.register_host_parsers`.
+
+    Args:
+        command: Shell command printing the CSV content (e.g. ``cat /var/log/perf/net.csv``).
+        columns: Series label per value column, in file order (timestamp column excluded).
+        chart: Chart group id the series render on (one chart per parser).
+        tab: Dashboard tab id.
+        tab_label: Human-readable tab button label.
+        y_title: Y-axis title shown left of the chart.
+        unit: Unit suffix for chart annotations.
+        interval: Poll cadence override in seconds (e.g. 60 for a file written every 5 minutes).
+    """
+
+    def __init__(
+        self,
+        command: str,
+        columns: Sequence[str],
+        *,
+        chart: str,
+        tab: str = "metrics",
+        tab_label: str = "Metrics",
+        y_title: str = "",
+        unit: str = "",
+        interval: float | None = None,
+    ) -> None:
+        if not columns:
+            raise ValueError("CsvMetricParser needs at least one value column")
+        self.command = command
+        self.chart = chart
+        self.tab = tab
+        self.tab_label = tab_label
+        self.y_title = y_title
+        self.unit = unit
+        self.interval = interval
+        self._columns = list(columns)
+        self._hwm = HighWaterMark()
+
+    @override
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        """Unused — this parser produces timed samples via :meth:`parse_tick`."""
+        return {}
+
+    @override
+    def parse_tick(self, output: str, *, ctx: ParseContext) -> TickResult:
+        rows: list[tuple[datetime, dict[str, MetricDataPoint]]] = []
+        for line in output.splitlines():
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) != len(self._columns) + 1:
+                continue  # header/torn/partial line — self-heals next tick
+            ts = parse_timestamp(parts[0])
+            if ts is None:
+                continue  # header line: first column isn't a timestamp
+            try:
+                values = [float(part) for part in parts[1:]]
+            except ValueError:
+                continue
+            series = {
+                label: MetricDataPoint(value)
+                for label, value in zip(self._columns, values, strict=True)
+            }
+            rows.append((ts, series))
+        fresh = self._hwm.advance(rows)
+        return TickResult(
+            samples=[TimedSample(ts=ts, series=series) for ts, series in fresh],
+            events=[],
+        )
