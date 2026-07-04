@@ -607,7 +607,7 @@ class TestProjectParserRegistry:
     def test_register_parsers_extends_defaults_for_all_hosts(self):
         register_parsers([_UptimeParser()])
         merged = get_host_parsers("any-host-without-per-host-registration")
-        assert "ss -s" in merged
+        assert "uptime -p" in merged
         assert set(DEFAULT_PARSERS) <= set(merged)
 
     def test_register_parsers_overrides_default_command(self):
