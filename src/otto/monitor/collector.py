@@ -477,7 +477,9 @@ class MetricCollector:
                     )
             # Parsing is NOT success-gated: grep-style commands legitimately
             # exit nonzero while their (partial) output still carries series.
-            points = parser.parse(cmd_result.value, ctx=ctx)
+            # `or ""` defends against value=None the same way the log line
+            # above does — parsers expect str, not str | None.
+            points = parser.parse(cmd_result.value or "", ctx=ctx)
             # The never-produced backstop only counts SUCCEEDING ticks — a
             # failing command is layer 1's job above; double-warning one root
             # cause helps nobody.
@@ -517,6 +519,10 @@ class MetricCollector:
             return
         host_name = target.host.name
         for oid, raw in values.items():
+            # Not success-gated by design (unlike the shell path above): SNMP
+            # has no retcode concept, and transport/PDU failures already warn
+            # per batch inside SnmpClient.get, so there is no separate
+            # failure layer to avoid double-warning here.
             self._note_health((host_name, oid), produced=raw is not None, what="SNMP OID")
         triples = process_snmp_values(values, rates=target.snmp.rates, ts=ts)
         for label, dp, view in triples:

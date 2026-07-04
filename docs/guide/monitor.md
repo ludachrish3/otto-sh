@@ -432,7 +432,7 @@ the same way both sides agree on the core `.1` scalars above.
 | `1.3.6.1.4.1.63245.2.<i>.2.0` | tx bytes | counter | Charted as `tx if<i>` (B/s) on the Network tab. |
 | `1.3.6.1.4.1.63245.2.<i>.3.0` | rx packets | counter | Rides the rx-bytes series' hover meta, not its own chart. |
 | `1.3.6.1.4.1.63245.2.<i>.4.0` | tx packets | counter | Rides the tx-bytes series' hover meta. |
-| `1.3.6.1.4.1.63245.2.<i>.5.0` | errors | counter | Charted as `errors if<i>` on the "Net errors" chart. |
+| `1.3.6.1.4.1.63245.2.<i>.5.0` | rx+tx errors (combined) | counter | Charted as `errors if<i>` on the "Net errors" chart. |
 | `1.3.6.1.4.1.63245.2.<i>.6.0` | drops | counter | Charted as `drops if<i>` on the "Net errors" chart. |
 | `1.3.6.1.4.1.63245.3.<i>.1.0` | filesystem used bytes | gauge | Charted as `fs<i> used` on the Storage tab. |
 | `1.3.6.1.4.1.63245.3.<i>.2.0` | filesystem total bytes | gauge | Rides the used-bytes series' hover meta as a human-readable total, not its own chart. |

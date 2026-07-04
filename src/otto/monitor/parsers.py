@@ -511,9 +511,9 @@ class DiskIoParser(MetricParser):
 
 
 class PerCoreCpuParser(MetricParser):
-    """Per-core busy %% from ``/proc/stat`` jiffies deltas.
+    """Per-core busy % from ``/proc/stat`` jiffies deltas.
 
-    Far cheaper than a second ``top`` run: busy%% = 100 x (1 - Δ(idle+iowait)
+    Far cheaper than a second ``top`` run: busy% = 100 x (1 - Δ(idle+iowait)
     / Δtotal) per ``cpuN`` line. The aggregate ``cpu`` line is skipped —
     :class:`TopCpuParser` already charts overall CPU. Jiffies ratios need no
     wall clock (time cancels), so state is plain previous counters.

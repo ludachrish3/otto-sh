@@ -274,18 +274,18 @@ class TestOidBundles:
         assert OID_SYS_UPTIME in expanded
         assert len(expanded) == 5  # uptime, cpu, heap used/free, threads
 
-    def test_otto_net_default_is_one_interface(self):
+    def test_otto_net_default_is_one_interface(self, clean_registry):
         assert expand_oid_bundles(["otto-net"]) == net_oids(0)
         assert len(net_oids(0)) == 6  # rx/tx bytes+packets, errors, drops
 
-    def test_otto_net_count_expands_indices(self):
+    def test_otto_net_count_expands_indices(self, clean_registry):
         assert expand_oid_bundles(["otto-net:2"]) == net_oids(0) + net_oids(1)
 
-    def test_otto_fs_expands(self):
+    def test_otto_fs_expands(self, clean_registry):
         assert expand_oid_bundles(["otto-fs:1"]) == fs_oids(0)
         assert len(fs_oids(0)) == 2  # used, total
 
-    def test_bundles_and_raw_mix(self):
+    def test_bundles_and_raw_mix(self, clean_registry):
         expanded = expand_oid_bundles(["otto-core", "1.2.3.4.0"])
         assert expanded == [*CORE_OIDS, "1.2.3.4.0"]
 

@@ -6,10 +6,11 @@ failed->ok transition warns the recovery with the outage length, and a
 sustained outage logs once — not once per tick. The never-produced backstop
 stays warn-once."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from otto.monitor import snmp
 from otto.monitor.collector import MetricCollector
 from otto.monitor.parsers import MetricDataPoint, MetricParser, ParseContext
 from otto.result import CommandResult
@@ -219,18 +220,6 @@ class TestSilentParserWarning:
         assert len(failure_warnings) == 1  # edge-triggered
         assert len(silent_warnings) == 0  # health must not tick on failures
 
-    @pytest.mark.asyncio
-    async def test_never_produced_sanity_check(self, collector, caplog):
-        """Existing test: succeeding command with empty parse should still warn
-        by tick 3."""
-        parsers = {"ss -s": _NeverParses()}
-        with caplog.at_level("WARNING", logger="otto"):
-            for _ in range(5):
-                await _tick(collector, parsers, [_ok("ss -s", "unparseable")])
-        warnings = [r for r in caplog.records if "has produced no data" in r.message]
-        assert len(warnings) == 1
-        assert "_NeverParses" in warnings[0].message
-
 
 class TestSnmpSilentOidWarning:
     @pytest.mark.asyncio
@@ -253,3 +242,58 @@ class TestSnmpSilentOidWarning:
         assert len(warnings) == 1
         assert "1.2.3.4.0" in warnings[0].message
         assert "zeph1" in warnings[0].message
+
+
+class TestSnmpRatePlumbing:
+    """Guards collector.py's ``rates=target.snmp.rates`` plumbing in
+    _process_snmp_results.
+
+    Each :class:`~otto.monitor.snmp.SnmpSource` owns exactly one
+    :class:`~otto.monitor.rates.RateTracker`, reused across ticks. If that
+    ever regressed to a fresh ``RateTracker()`` built per call instead of the
+    target's own, every ``kind="counter"`` OID would re-baseline every tick
+    and no SNMP counter chart (network/disk throughput, etc.) would ever
+    emit a point — silently, since baselining looks identical to a healthy
+    first tick.
+    """
+
+    @pytest.fixture
+    def clean_registry(self):
+        """Unregister any test-added SNMP descriptor after the test.
+
+        Mirrors test_snmp.py's fixture of the same name (diff-based cleanup
+        is sufficient since this test only ever registers a *new* oid).
+        """
+        before = set(snmp.SNMP_METRICS.names())
+        yield
+        for oid in set(snmp.SNMP_METRICS.names()) - before:
+            snmp.SNMP_METRICS.unregister(oid)
+
+    @pytest.mark.asyncio
+    async def test_counter_rate_uses_per_target_tracker_across_ticks(
+        self, collector, clean_registry
+    ):
+        from unittest.mock import MagicMock
+
+        from otto.monitor.collector import MonitorTarget
+        from otto.monitor.snmp import SnmpClient, SnmpMetric, SnmpSource, register_snmp_metric
+
+        oid = "1.2.3.9.100"  # unique test OID, not used by any other test
+        register_snmp_metric(
+            SnmpMetric(oid=oid, label="rate-plumb test", chart="Net", kind="counter", unit="B/s")
+        )
+        host = MagicMock()
+        host.name = "zeph3"
+        target = MonitorTarget(
+            host=host,
+            snmp=SnmpSource(client=SnmpClient(address="10.0.0.1"), oids=[oid]),
+        )
+
+        # Baseline tick: emits nothing, but must seed target.snmp.rates.
+        await collector._process_snmp_results(target, TS, {oid: 1000})
+        # Second tick, 5s later: rate = (6000-1000)/5 = 1000.0/s. This only
+        # comes out non-None if the SAME RateTracker saw both ticks.
+        await collector._process_snmp_results(target, TS + timedelta(seconds=5), {oid: 6000})
+
+        points = collector._store.series["zeph3/rate-plumb test"]
+        assert [p.value for p in points] == [1000.0]

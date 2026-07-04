@@ -37,9 +37,9 @@ RETIREMENT_K = 3
 CHURN_PID_COUNT = 100
 
 # `document.querySelector` (not a locator) matches dashboard_live.py's own
-# `_overall_cpu_len` convention: '#tab-cpu .metric-plot' has two divs (the
-# CPU/proc chart and the Load chart) and querySelector always resolves the
-# FIRST — the CPU/proc chart, the one under test here.
+# `_overall_cpu_len` convention: '#tab-cpu .metric-plot' has four divs (CPU,
+# Load, Per-core CPU, and Processes charts) and querySelector always resolves
+# the FIRST — the CPU/proc chart, the one under test here.
 _CPU_CHART_JS = "document.querySelector('#tab-cpu .metric-plot')"
 
 

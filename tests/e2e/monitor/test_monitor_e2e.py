@@ -118,6 +118,11 @@ def _has_metric_rows(db_path: Path) -> bool:
         return False
 
 
+def _tail(text: str, n: int = 20) -> str:
+    """Return the last *n* lines of *text*, for compact failure diagnostics."""
+    return "\n".join(text.splitlines()[-n:])
+
+
 class _MonitorRunResult(NamedTuple):
     """Outcome of one :func:`_run_monitor_briefly` run."""
 
@@ -331,19 +336,31 @@ def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Pa
     host_id = f"{monitor_host}_seed"
 
     # Run 1: registration targets the leased host -> Uptime present.
+    # Same Popen->ticks->SIGINT choreography as the existing test.
     db_registered = tmp_path / "registered.db"
-    _run_monitor_briefly(  # same Popen->ticks->SIGINT choreography as the existing test
+    result_registered = _run_monitor_briefly(
         monitor_host, db_registered, extra_env={"OTTO_E2E_UPTIME_HOST": host_id}
     )
     assert _uptime_rows(db_registered, monitor_host) > 0, (
-        f"host {monitor_host} registered UptimeParser but produced no Uptime rows"
+        f"host {monitor_host} registered UptimeParser but produced no Uptime rows\n"
+        f"rows_found_during_poll={result_registered.rows_found}\n"
+        f"stdout(tail):\n{_tail(result_registered.stdout)}\n"
+        f"stderr(tail):\n{_tail(result_registered.stderr)}"
     )
 
     # Run 2: registration targets a host id that matches nothing -> no Uptime,
     # defaults intact.
     db_unregistered = tmp_path / "unregistered.db"
-    _run_monitor_briefly(monitor_host, db_unregistered, extra_env=None)
+    result_unregistered = _run_monitor_briefly(monitor_host, db_unregistered, extra_env=None)
     assert _uptime_rows(db_unregistered, monitor_host) == 0, (
-        "unregistered host must NOT get the custom parser"
+        "unregistered host must NOT get the custom parser\n"
+        f"rows_found_during_poll={result_unregistered.rows_found}\n"
+        f"stdout(tail):\n{_tail(result_unregistered.stdout)}\n"
+        f"stderr(tail):\n{_tail(result_unregistered.stderr)}"
     )
-    assert _has_metric_rows(db_unregistered), "default parsers must still produce rows"
+    assert _has_metric_rows(db_unregistered), (
+        "default parsers must still produce rows\n"
+        f"rows_found_during_poll={result_unregistered.rows_found}\n"
+        f"stdout(tail):\n{_tail(result_unregistered.stdout)}\n"
+        f"stderr(tail):\n{_tail(result_unregistered.stderr)}"
+    )
