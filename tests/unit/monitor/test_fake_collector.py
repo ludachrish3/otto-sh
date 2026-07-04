@@ -38,7 +38,8 @@ async def test_meta_serves_production_catalog_with_forced_live() -> None:
             expected_tabs.append(p.tab)
     assert [t["id"] for t in meta["tabs"]] == expected_tabs
     assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk", "network"]
-    assert meta["tabs"][0]["metrics"] == ["CPU", "Load"]  # Load shares the cpu tab
+    # Load and Per-core CPU share the cpu tab
+    assert meta["tabs"][0]["metrics"] == ["CPU", "Load", "Per-core CPU"]
 
 
 @pytest.mark.asyncio

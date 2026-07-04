@@ -507,6 +507,49 @@ class DiskIoParser(MetricParser):
         return result
 
 
+class PerCoreCpuParser(MetricParser):
+    """Per-core busy %% from ``/proc/stat`` jiffies deltas.
+
+    Far cheaper than a second ``top`` run: busy%% = 100 x (1 - Δ(idle+iowait)
+    / Δtotal) per ``cpuN`` line. The aggregate ``cpu`` line is skipped —
+    :class:`TopCpuParser` already charts overall CPU. Jiffies ratios need no
+    wall clock (time cancels), so state is plain previous counters.
+    """
+
+    y_title = "Usage %"
+    unit = "%"
+    command = "cat /proc/stat"
+    tab = "cpu"
+    tab_label = "CPU"
+    chart = "Per-core CPU"
+
+    def __init__(self) -> None:
+        self._prev: dict[str, tuple[float, float]] = {}  # core -> (total, idle_all)
+
+    @override
+    def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        result: dict[str, MetricDataPoint] = {}
+        for line in output.splitlines():
+            fields = line.split()
+            if not fields or not re.fullmatch(r"cpu\d+", fields[0]) or len(fields) < 9:  # noqa: PLR2004 — cpuN rows carry 8 jiffies fields
+                continue
+            try:
+                jiffies = [float(f) for f in fields[1:9]]
+            except ValueError:
+                continue
+            total, idle_all = sum(jiffies), jiffies[3] + jiffies[4]
+            core = fields[0].removeprefix("cpu")
+            prev = self._prev.get(core)
+            self._prev[core] = (total, idle_all)
+            if prev is None:
+                continue
+            d_total, d_idle = total - prev[0], idle_all - prev[1]
+            if d_total <= 0 or d_idle < 0:
+                continue  # counter reset — re-baseline, skip the tick
+            result[f"core {core}"] = MetricDataPoint(round(100.0 * (1 - d_idle / d_total), 2))
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Default parser registry — maps command string → parser instance
 # ---------------------------------------------------------------------------
@@ -521,6 +564,7 @@ DEFAULT_PARSERS: dict[str, MetricParser] = {
         NetDevParser(),
         SocketsParser(),
         DiskIoParser(),
+        PerCoreCpuParser(),
     ]
 }
 

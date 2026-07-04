@@ -14,6 +14,7 @@ from otto.monitor.parsers import (
     MetricParser,
     NetDevParser,
     ParseContext,
+    PerCoreCpuParser,
     SocketsParser,
     TopCpuParser,
     get_host_parsers,
@@ -76,10 +77,7 @@ def _net_dev_output(eth0: tuple, wlan0: tuple | None = None) -> str:
         "bytes    packets errs drop fifo colls carrier compressed\n"
     )
     out = (
-        header_line1
-        + header_line2
-        + line("lo", (999, 9, 0, 0, 999, 9, 0, 0))
-        + line("eth0", eth0)
+        header_line1 + header_line2 + line("lo", (999, 9, 0, 0, 999, 9, 0, 0)) + line("eth0", eth0)
     )
     if wlan0 is not None:
         out += line("wlan0", wlan0)
@@ -99,6 +97,21 @@ def _diskstats_output(sda_sectors: tuple[int, int], with_noise: bool = True) -> 
             "  11       0 sr0 2 0 8 1 0 0 0 0 0 1 1",
         ]
     return "\n".join(rows) + "\n"
+
+
+def _proc_stat_output(cores: list[tuple[int, int]]) -> str:
+    """cores = [(busy_jiffies_excluding_idle, idle_plus_iowait_jiffies), ...].
+
+    Emits the aggregate 'cpu' line (skipped by the parser) plus one cpuN line
+    per core: user nice system idle iowait irq softirq steal.
+    """
+    lines = ["cpu  99999 0 99999 999999 9999 0 0 0 0 0"]
+    for n, (busy, idle) in enumerate(cores):
+        user, system = busy // 2, busy - busy // 2
+        idle_j, iowait = idle // 2, idle - idle // 2
+        lines.append(f"cpu{n} {user} 0 {system} {idle_j} {iowait} 0 0 0 0 0")
+    lines += ["intr 12345", "ctxt 6789", "procs_running 3", "procs_blocked 1"]
+    return "\n".join(lines) + "\n"
 
 
 # ---------------------------------------------------------------------------
@@ -538,6 +551,40 @@ class TestDiskIoParser:
 
     def test_in_default_parsers(self):
         assert "cat /proc/diskstats" in DEFAULT_PARSERS
+
+
+# ---------------------------------------------------------------------------
+# PerCoreCpuParser
+# ---------------------------------------------------------------------------
+
+
+class TestPerCoreCpuParser:
+    def test_first_tick_is_baseline_empty(self):
+        assert PerCoreCpuParser().parse(_proc_stat_output([(100, 900)]), ctx=ParseContext()) == {}
+
+    def test_busy_percent_from_deltas(self):
+        parser = PerCoreCpuParser()
+        parser.parse(_proc_stat_output([(100, 900), (100, 900)]), ctx=ParseContext())
+        # core0: +30 busy / +100 total = 30%; core1: +80 busy / +100 total = 80%
+        points = parser.parse(_proc_stat_output([(130, 970), (180, 920)]), ctx=ParseContext())
+        assert points["core 0"].value == 30.0
+        assert points["core 1"].value == 80.0
+
+    def test_aggregate_cpu_line_skipped(self):
+        parser = PerCoreCpuParser()
+        parser.parse(_proc_stat_output([(100, 900)]), ctx=ParseContext())
+        points = parser.parse(_proc_stat_output([(150, 950)]), ctx=ParseContext())
+        assert set(points) == {"core 0"}
+
+    def test_counter_reset_rebaselines(self):
+        parser = PerCoreCpuParser()
+        parser.parse(_proc_stat_output([(10000, 90000)]), ctx=ParseContext())
+        assert parser.parse(_proc_stat_output([(10, 90)]), ctx=ParseContext()) == {}
+        points = parser.parse(_proc_stat_output([(60, 140)]), ctx=ParseContext())
+        assert points["core 0"].value == 50.0
+
+    def test_in_default_parsers(self):
+        assert "cat /proc/stat" in DEFAULT_PARSERS
 
 
 # ---------------------------------------------------------------------------
