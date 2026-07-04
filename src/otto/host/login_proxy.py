@@ -163,9 +163,9 @@ def _get_proxy(hop: Cred) -> LoginProxy:
 
 async def run_proxy(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
     """Run *hop*'s proxy steps over *io*, wrapping failures with context."""
-    proxy = _get_proxy(hop)
     name = hop.proxy or "su"
     try:
+        proxy = _get_proxy(hop)
         await proxy.fn(io, ProxyContext(target=hop, via=via, host_id=host_id))
     except LoginProxyError:
         raise
@@ -176,9 +176,21 @@ async def run_proxy(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
 
 
 async def run_undo(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
-    """Reverse *hop*: the registered undo, or the default ``exit``."""
-    proxy = _get_proxy(hop)
-    if proxy.undo is None:
-        await io.send("exit\n")
-        return
-    await proxy.undo(io, ProxyContext(target=hop, via=via, host_id=host_id))
+    """Reverse *hop*: the registered undo, or the default ``exit``.
+
+    Failures are wrapped in :class:`LoginProxyError` with context, like
+    :func:`run_proxy`.
+    """
+    name = hop.proxy or "su"
+    try:
+        proxy = _get_proxy(hop)
+        if proxy.undo is None:
+            await io.send("exit\n")
+            return
+        await proxy.undo(io, ProxyContext(target=hop, via=via, host_id=host_id))
+    except LoginProxyError:
+        raise
+    except Exception as e:
+        raise LoginProxyError(
+            f"{host_id}: login-proxy undo failed leaving {hop.login!r} via proxy {name!r}: {e}"
+        ) from e

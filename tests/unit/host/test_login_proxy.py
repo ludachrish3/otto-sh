@@ -92,6 +92,31 @@ async def test_run_proxy_wraps_failure_with_context():
 
 
 @pytest.mark.asyncio
+async def test_run_proxy_unknown_proxy_name_raises_login_proxy_error():
+    with pytest.raises(LoginProxyError, match=r"h1.*no-such-proxy"):
+        await run_proxy(
+            RecorderIO(), Cred(login="mysql", proxy="no-such-proxy"), via=ADMIN, host_id="h1"
+        )
+
+
+@pytest.mark.asyncio
+async def test_run_undo_failure_wrapped_with_context():
+    async def enter(io, ctx): ...
+
+    async def bad_leave(io, ctx):
+        raise RuntimeError("undo went sideways")
+
+    register_login_proxy("bad-undo", enter, undo=bad_leave)
+    try:
+        with pytest.raises(LoginProxyError, match=r"h1.*mysql.*bad-undo"):
+            await run_undo(
+                RecorderIO(), Cred(login="mysql", proxy="bad-undo"), via=ADMIN, host_id="h1"
+            )
+    finally:
+        LOGIN_PROXIES.unregister("bad-undo")
+
+
+@pytest.mark.asyncio
 async def test_default_undo_sends_exit():
     io = RecorderIO()
     await run_undo(io, MYSQL, via=ADMIN, host_id="h1")
