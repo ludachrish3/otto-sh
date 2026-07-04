@@ -97,7 +97,7 @@ class SnmpMetric(OttoModel):
     scale: float = 1.0
 
     kind: Literal["gauge", "counter"] = "gauge"
-    """How the varbind is interpreted: a ``gauge`` charts its (scaled) value
+    """How the varbind is interpreted — a ``gauge`` charts its (scaled) value
     directly; a ``counter`` is monotonic and is converted to a per-second rate
     via the target's :class:`~otto.monitor.rates.RateTracker` (negative delta
     -> re-baseline, skip the tick — see :mod:`otto.monitor.rates`)."""

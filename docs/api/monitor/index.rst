@@ -13,6 +13,7 @@ and serves an interactive web dashboard.
    factory
    history
    parsers
+   rates
    server
    snmp
    store

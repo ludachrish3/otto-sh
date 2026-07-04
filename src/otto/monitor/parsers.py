@@ -690,8 +690,8 @@ def get_host_parsers(host_id: str) -> dict[str, "MetricParser"]:
 
     An exact registration wins outright for its host_id — it is a total
     replacement, not merged with anything else, and shadows any pattern.
-    Otherwise a single ``fullmatch``ing pattern registration wins the same
-    way; two or more matching patterns raise (no import-order-dependent
+    Otherwise a single pattern registration whose ``fullmatch`` matches wins
+    the same way; two or more matching patterns raise (no import-order-dependent
     silent winner). With neither, project-level parsers (see
     :func:`register_parsers`) are merged over DEFAULT_PARSERS. Non-raising
     for unregistered hosts by design: no registration at all is normal.
