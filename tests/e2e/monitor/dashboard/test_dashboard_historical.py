@@ -27,7 +27,7 @@ def test_historical_mode_chrome(
     # Historical collectors declare the DEFAULT_PARSERS catalog, so tabs and
     # charts render immediately without host selection (fixed Phase 1 —
     # previously /api/meta had no tabs and nothing rendered).
-    expect(page.locator(".tab-btn")).to_have_text(["CPU", "Memory", "Disk"])
+    expect(page.locator(".tab-btn")).to_have_text(["CPU", "Memory", "Disk", "Network"])
     expect(page.locator("#tab-cpu .metric-plot").first).to_be_visible()
     expect(page.locator("#host-select option")).to_have_text(["historical"])
     expect(page.locator("#pause-btn")).to_be_disabled()

@@ -78,7 +78,7 @@ def test_meta_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
     assert set(meta) == META_KEYS
     assert all(set(m) == META_METRIC_KEYS for m in meta["metrics"])
     assert all(set(t) == META_TAB_KEYS for t in meta["tabs"])
-    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk"]
+    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk", "network"]
 
 
 def test_data_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
@@ -148,7 +148,7 @@ def test_historical_fixture_loads(historical_dash: DashboardHarness[MetricCollec
     meta = _get_json(historical_dash.url + "/api/meta")
     assert meta["live"] is False
     assert meta["hosts"] == []  # bare labels → no host derived → historical UI
-    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk"]
+    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk", "network"]
     data = _get_json(historical_dash.url + "/api/data")
     assert set(data["series"]) == {"Overall CPU", "Load (1m)", "Memory Usage"}
     assert len(data["events"]) == 2

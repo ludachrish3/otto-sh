@@ -69,6 +69,7 @@ otto.monitor.events
 otto.monitor.factory
 otto.monitor.history
 otto.monitor.parsers
+otto.monitor.rates
 otto.monitor.snmp
 otto.monitor.store
 otto.params

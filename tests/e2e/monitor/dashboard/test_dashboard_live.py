@@ -41,9 +41,10 @@ def test_loads_live_and_renders_after_host_selection(
     expect(page.locator(".metric-plot")).to_have_count(0)
 
     page.select_option("#host-select", "host1")
-    expect(page.locator(".tab-btn")).to_have_text(["CPU", "Memory", "Disk"])
-    # CPU tab holds two chart groups: CPU (overall+procs) and Load.
-    expect(page.locator("#tab-cpu .metric-plot")).to_have_count(2)
+    expect(page.locator(".tab-btn")).to_have_text(["CPU", "Memory", "Disk", "Network"])
+    # CPU tab holds four chart groups: CPU (overall+procs), Load, Per-core
+    # CPU, and Processes.
+    expect(page.locator("#tab-cpu .metric-plot")).to_have_count(4)
     assert _overall_cpu_len(page) == 3  # the three preloaded ticks
 
 
