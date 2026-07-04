@@ -1,5 +1,6 @@
 """Log-sourced parsers: timestamp parsing, high-water dedup, CSV metrics."""
 
+import calendar
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -36,6 +37,15 @@ class TestParseTimestamp:
         assert parsed is not None
         assert parsed.year == datetime.now(tz=timezone.utc).year
         assert (parsed.month, parsed.day, parsed.hour) == (7, 4, 12)
+
+    def test_leap_day_with_yearless_format(self) -> None:
+        parsed = parse_timestamp("Feb 29 06:00:00", "%b %d %H:%M:%S")
+        if calendar.isleap(datetime.now(tz=timezone.utc).year):
+            assert parsed is not None
+            assert (parsed.month, parsed.day) == (2, 29)
+        else:
+            # Feb 29 doesn't exist this year — the ambiguous row is dropped.
+            assert parsed is None
 
     def test_garbage_is_none(self) -> None:
         assert parse_timestamp("not a time") is None

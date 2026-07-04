@@ -48,8 +48,6 @@ from .parsers import (
 
 T = TypeVar("T")
 
-_MISSING_YEAR = 1900  # strptime's default year when the format lacks %Y (classic syslog)
-
 
 def _as_utc(dt: datetime) -> datetime:
     """Apply the naive-means-UTC convention."""
@@ -64,8 +62,9 @@ def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
     - ``"auto"``: epoch seconds, else ISO-8601 (the CSV first-column convention);
     - ``"epoch"``: Unix epoch seconds (int or float);
     - ``"iso"``: ISO-8601 (a ``Z`` suffix is accepted on Python 3.10);
-    - anything else: a ``strptime`` format. A format without a year directive
-      (classic syslog) yields year 1900 — the current UTC year is substituted.
+    - anything else: a ``strptime`` format. For a format without a year
+      directive (classic syslog), the current UTC year is injected before
+      parsing.
 
     Naive results are treated as UTC in every mode.
     """
@@ -81,13 +80,16 @@ def parse_timestamp(text: str, fmt: str = "auto") -> datetime | None:
             return _as_utc(datetime.fromisoformat(text.replace("Z", "+00:00")))
         except ValueError:
             return None
+    if "%Y" not in fmt and "%y" not in fmt:
+        # Year-less formats (classic syslog): inject the current UTC year
+        # BEFORE parsing — strptime defaults to 1900, a non-leap year, which
+        # would reject Feb 29 rows outright instead of reaching a fix-up.
+        text = f"{datetime.now(tz=timezone.utc).year} {text}"
+        fmt = f"%Y {fmt}"
     try:
-        parsed = datetime.strptime(text, fmt)  # noqa: DTZ007 — naive-means-UTC applied below
+        return _as_utc(datetime.strptime(text, fmt))  # noqa: DTZ007 — naive-means-UTC applied by _as_utc
     except ValueError:
         return None
-    if parsed.year == _MISSING_YEAR and "%Y" not in fmt and "%y" not in fmt:
-        parsed = parsed.replace(year=datetime.now(tz=timezone.utc).year)
-    return _as_utc(parsed)
 
 
 class HighWaterMark:
