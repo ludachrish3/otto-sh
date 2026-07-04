@@ -348,6 +348,28 @@ class TestMemParser:
     def test_empty_output_returns_empty_dict(self):
         assert self.parser.parse("", ctx=ParseContext()) == {}
 
+    _FREE_WITH_SWAP = (
+        "              total        used        free      shared  buff/cache   available\n"
+        "Mem:     16000000000  4000000000  8000000000   100000000  4000000000 11000000000\n"
+        "Swap:     2000000000   500000000  1500000000\n"
+    )
+    _FREE_NO_SWAP = (
+        "              total        used        free      shared  buff/cache   available\n"
+        "Mem:     16000000000  4000000000  8000000000   100000000  4000000000 11000000000\n"
+        "Swap:              0           0           0\n"
+    )
+
+    def test_swap_series_present_with_swap(self):
+        points = MemParser().parse(self._FREE_WITH_SWAP, ctx=ParseContext())
+        assert points["Swap"].value == 25.0  # 0.5G / 2G
+        assert points["Swap"].meta == {"Used": "476.8 M", "Total": "1.9 G"}
+        assert points["Memory Usage"].value == 25.0  # unchanged existing series
+
+    def test_swap_series_omitted_without_swap(self):
+        points = MemParser().parse(self._FREE_NO_SWAP, ctx=ParseContext())
+        assert "Swap" not in points  # no flat-0 line for swapless hosts
+        assert "Memory Usage" in points
+
 
 # ---------------------------------------------------------------------------
 # DiskParser

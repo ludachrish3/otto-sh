@@ -256,9 +256,9 @@ class TopCpuParser(MetricParser):
 
 class MemParser(MetricParser):
     """
-    Parse memory usage % from `free -b` output.
+    Parse memory and swap usage % from `free -b` output.
 
-    Reads the 'Mem:' line and computes used/total as a percentage.
+    Reads the 'Mem:' and 'Swap:' lines and computes used/total as percentages.
     """
 
     y_title = "Memory"
@@ -270,25 +270,27 @@ class MemParser(MetricParser):
 
     @override
     def parse(self, output: str, *, ctx: ParseContext) -> dict[str, MetricDataPoint]:
+        result: dict[str, MetricDataPoint] = {}
         for line in output.splitlines():
-            if line.lower().startswith("mem:"):
-                parts = line.split()
-                # free -b: Mem: total used free shared buff/cache available
-                if len(parts) >= 3:  # noqa: PLR2004 — free -b Mem: line has at least 3 fields (label, total, used)
-                    try:
-                        total = float(parts[1])
-                        used = float(parts[2])
-                        if total > 0:
-                            meta = {"Used": human_readable(used), "Total": human_readable(total)}
-                            return {
-                                self.chart: MetricDataPoint(
-                                    value=round(used / total * 100.0, 2),
-                                    meta=meta,
-                                )
-                            }
-                    except ValueError:
-                        pass
-        return {}
+            lowered = line.lower()
+            if not (lowered.startswith(("mem:", "swap:"))):
+                continue
+            parts = line.split()
+            # free -b: <label> total used free [shared buff/cache available]
+            if len(parts) < 3:  # noqa: PLR2004 — need at least label, total, used
+                continue
+            try:
+                total, used = float(parts[1]), float(parts[2])
+            except ValueError:
+                continue
+            if total <= 0:
+                continue  # swapless host: omit the series, no flat-0 line
+            label = "Memory Usage" if lowered.startswith("mem:") else "Swap"
+            result[label] = MetricDataPoint(
+                value=round(used / total * 100.0, 2),
+                meta={"Used": human_readable(used), "Total": human_readable(total)},
+            )
+        return result
 
 
 class DiskParser(MetricParser):
