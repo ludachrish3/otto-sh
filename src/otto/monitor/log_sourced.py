@@ -14,17 +14,19 @@ distinct commands are distinct registry keys)::
     from otto.monitor.log_sourced import CsvMetricParser
     from otto.monitor.parsers import register_parsers
 
-    register_parsers([
-        CsvMetricParser(
-            "cat /var/log/perf/net.csv",
-            columns=["rx_kbps", "tx_kbps"],
-            chart="Cron net digest",
-            tab="network",
-            tab_label="Network",
-            unit="kb/s",
-            interval=60,
-        ),
-    ])
+    register_parsers(
+        [
+            CsvMetricParser(
+                "cat /var/log/perf/net.csv",
+                columns=["rx_kbps", "tx_kbps"],
+                chart="Cron net digest",
+                tab="network",
+                tab_label="Network",
+                unit="kb/s",
+                interval=60,
+            ),
+        ]
+    )
 
 Timestamp convention: naive values are treated as UTC.
 
@@ -248,9 +250,13 @@ class RegexLogEventParser(MetricParser):
         self._pattern = re.compile(pattern) if isinstance(pattern, str) else pattern
         if ts_group not in self._pattern.groupindex:
             raise ValueError(f"pattern has no named group {ts_group!r} for the timestamp")
-        self.table_columns = [g for g in self._pattern.groupindex if g != ts_group]
-        if not self.table_columns:
+        # Narrowed alias: the base class declares table_columns as
+        # `list[str] | None`; iterating through self._columns keeps the
+        # non-None type visible to the type checker.
+        self._columns = [g for g in self._pattern.groupindex if g != ts_group]
+        if not self._columns:
             raise ValueError("pattern needs at least one named group besides the timestamp")
+        self.table_columns = self._columns
         self._ts_group = ts_group
         self._ts_format = ts_format
         self.tab = tab
@@ -276,7 +282,7 @@ class RegexLogEventParser(MetricParser):
             ts = parse_timestamp(m.group(self._ts_group) or "", self._ts_format)
             if ts is None:
                 continue
-            rows.append((ts, {g: m.group(g) or "" for g in self.table_columns}))
+            rows.append((ts, {g: m.group(g) or "" for g in self._columns}))
         fresh = self._hwm.advance(rows)
         return TickResult(
             samples=[], events=[LogEvent(ts=ts, fields=fields) for ts, fields in fresh]

@@ -18,9 +18,7 @@ T0 = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
 
 class TestParseTimestamp:
     def test_auto_epoch(self) -> None:
-        assert parse_timestamp("1751630400") == datetime.fromtimestamp(
-            1751630400, tz=timezone.utc
-        )
+        assert parse_timestamp("1751630400") == datetime.fromtimestamp(1751630400, tz=timezone.utc)
 
     def test_auto_iso_aware(self) -> None:
         assert parse_timestamp("2026-07-04T12:00:00+00:00") == T0
@@ -126,10 +124,7 @@ class TestRegexLogEventParser:
 
     def test_events_sorted_ascending_and_hwm_dedups_rereads(self) -> None:
         p = _syslog()
-        out = (
-            "2026-07-04T12:00:05Z vm1 a: second\n"
-            "2026-07-04T12:00:00Z vm1 a: first\n"
-        )
+        out = "2026-07-04T12:00:05Z vm1 a: second\n2026-07-04T12:00:00Z vm1 a: first\n"
         first = p.parse_tick(out, ctx=ParseContext()).events
         assert [e.fields["message"] for e in first] == ["first", "second"]
         assert p.parse_tick(out, ctx=ParseContext()).events == []
@@ -218,10 +213,10 @@ class TestCsvMetricParser:
 
     def test_header_torn_and_malformed_lines_skipped(self) -> None:
         out = (
-            "timestamp,rx_kbps,tx_kbps\n"        # header: first col not a timestamp
-            "2026-07-04T12:00:00,10,20\n"        # good
-            "2026-07-04T12:00:05,11\n"           # column mismatch (torn/partial)
-            "2026-07-04T12:00:10,eleven,21\n"    # non-numeric value
+            "timestamp,rx_kbps,tx_kbps\n"  # header: first col not a timestamp
+            "2026-07-04T12:00:00,10,20\n"  # good
+            "2026-07-04T12:00:05,11\n"  # column mismatch (torn/partial)
+            "2026-07-04T12:00:10,eleven,21\n"  # non-numeric value
             "garbage\n"
         )
         tick = _csv().parse_tick(out, ctx=ParseContext())
