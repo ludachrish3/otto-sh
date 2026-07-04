@@ -203,15 +203,19 @@ Raw OIDs pass through untouched, so existing lab data keeps working unchanged.
 
 ## Parser-health warnings
 
-Silent-missing metrics become visible. Two detection layers on the shell path, both
-**warn-once per (host, command) per run** (a 5 s tick must not repeat the same line
-forever):
+Silent-missing metrics become visible. Two detection layers on the shell path:
 
-1. **Command failed** (primary, immediate): in `_process_host_results`, first
-   occurrence of `cmd_result.retcode != 0` warns —
-   `Monitor: 'ss -s' failed on test1 (exit 127): sh: ss: command not found — Sockets metrics will be missing`.
-   Names the host, the command, and what the user loses. Exit 127/126 is exactly the
-   missing-tool case, but any non-zero retcode warns.
+1. **Command failed** (primary, immediate, **edge-triggered**): in
+   `_process_host_results`, every **ok→failed transition** of a command warns —
+   `Monitor: 'ss -s' failed on test1 (exit 127): sh: ss: command not found — Sockets metrics will be missing`
+   — and the matching **failed→ok transition** warns the recovery with the outage
+   length — `Monitor: 'ss -s' recovered on test1 after 3 failed tick(s)`.
+   Edge triggering is what makes *transient* failures (network blips, intermittent
+   errors) visible whenever they occur — including long after collection started —
+   while a *sustained* outage logs once plus its recovery, not once per 5 s tick.
+   Exit 127/126 is exactly the missing-tool case, but any non-zero retcode counts.
+   Whole-host collection errors already warn on every failed tick via the existing
+   per-tick error path (unchanged).
 2. **Parser silent** (backstop): the command succeeds but the parser has produced
    **nothing at all — no samples and no events — by its 3rd tick** → warn once —
    `Monitor: parser NetDevParser ('cat /proc/net/dev') has produced no data on test1 after 3 ticks`.
@@ -225,15 +229,18 @@ forever):
 **SNMP symmetry:** an OID that has yielded only `None` (noSuchInstance / not served)
 through its first 3 ticks warns once per (host, oid) — old firmware + new
 descriptors says so instead of silently showing nothing. Transport-level SNMP
-failures already warn per batch in `SnmpClient.get`; unchanged.
+failures already warn per batch **on every failed tick** in `SnmpClient.get`
+(unchanged), so transient SNMP outages are always visible.
 
 Warnings go to the `otto` logger at WARNING. Per the three-sink logging design,
 warnings are never gated by `LogMode` — so they reach the console even though the
 monitor sets hosts to `LogMode.NEVER` (which silences command I/O only). No new
 logging machinery.
 
-Not doing: recovery notifications ("parser started working again"), per-tick repeat
-warnings, automatic fallback to alternative commands.
+Not doing: per-tick repeat warnings for a *sustained* command outage (the
+failure-transition + recovery pair bounds it in the log), warnings on parse-empty
+droughts after data has flowed (sparse sources are legitimate — only
+`retcode != 0` counts as failure), automatic fallback to alternative commands.
 
 ## Host-pattern parser registration
 
@@ -380,7 +387,8 @@ provisioning at all: it points `RegexLogEventParser` at the VM's real syslog.
 
 | Situation | Behavior |
 | --- | --- |
-| Host lacks `ss` (or any parser command) | retcode ≠ 0 → warn-once; series never appears; no empty chart (charts materialize from data, not catalog) |
+| Host lacks `ss` (or any parser command) | retcode ≠ 0 → failure-transition warning; series never appears; no empty chart (charts materialize from data, not catalog) |
+| Transient command failure mid-run (network blip, intermittent error) | every ok→failed transition warns, every recovery warns with outage length — intermittent issues are always logged |
 | Parser output format drift | parse returns `{}` → K=3 warn-once; series absent |
 | Host without swap | `Swap` series omitted (total = 0 guard), no warning — absence is correct, and `free -b` succeeded |
 | First tick of any rate parser / counter OID | no point (baseline); covered by K = 3 margin |
@@ -388,7 +396,7 @@ provisioning at all: it points `RegexLogEventParser` at the VM's real syslog.
 | Device reboot or counter wrap | negative delta → skip tick, re-baseline |
 | Agent doesn't serve a new OID | noSuchInstance → `None` → skipped + K=3 warn-once |
 | Stuck SNMP relay / unreachable agent | existing per-tick timeout + batch warning; unchanged |
-| Log/CSV file absent | command exits non-zero (`cat`/`tail`: no such file) → retcode warn-once |
+| Log/CSV file absent | command exits non-zero (`cat`/`tail`: no such file) → failure-transition warning |
 | No new rows between cron writes | legitimately empty tick — never warns once data has flowed |
 | Torn/partial line (read mid-write) | line skipped; high-water mark hasn't passed it → re-emitted whole next tick |
 | Log rotation / file truncated | high-water mark keyed on row timestamps, not offsets → new rows still newer, emitted normally |
@@ -427,8 +435,9 @@ Existing tiers, no new machinery:
   first-tick `{}`. `compute_rate`: normal, negative delta, zero/near-zero dt.
   `SnmpRateState`: counter sequence → rates, reset mid-stream, gauge descriptors
   bypass untouched. Bundle expansion: each bundle, `:N` counts, mixed raw OIDs,
-  unknown-bundle error. Warning layers: retcode warn-once (no repeat on tick 2),
-  K=3 silent-parser warn, counter reset on data, SNMP `None`-OID warn. Pattern
+  unknown-bundle error. Warning layers: failure-transition warn (no repeat on a
+  sustained outage), recovery warn with outage length, fail→ok→fail warns again
+  (transients stay visible), K=3 silent-parser warn, SNMP `None`-OID warn. Pattern
   registration: exact-beats-pattern shadowing, `fullmatch` (no substring hits),
   two-patterns-match ambiguity error, plain-string behavior unchanged.
 - **Integration (collector-level)** — fake SNMP client scripted with counter
