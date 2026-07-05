@@ -115,6 +115,15 @@ def _build_app(collector: MetricCollector) -> FastAPI:  # noqa: C901 — FastAPI
         q = collector.subscribe()
 
         async def generator() -> AsyncGenerator[dict[str, str], None]:
+            # Prime the connection with an immediate comment. Firefox's
+            # EventSource only fires `onopen` after the first *body* byte
+            # arrives, whereas Chromium fires it on the response headers; with
+            # no initial byte, an idle bed leaves Firefox stuck showing
+            # "Connecting…" until the first metric or the 15s keepalive below.
+            # A kickoff comment (the standard SSE priming trick, also friendly
+            # to buffering proxies) makes every engine reach the live state at
+            # once.
+            yield {"comment": "connected"}
             try:
                 while True:
                     if await request.is_disconnected():
