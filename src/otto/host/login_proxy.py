@@ -176,8 +176,24 @@ def _get_proxy(hop: Cred) -> LoginProxy:
 # command. Resending a fresh, unique marker (retried a bounded number of times)
 # closes the race — mirrors the connection-level READY handshake in
 # otto.host.session._ensure_initialized.
+#
+# INTERIM HARDENING (issue: `make release` 3.13 flake on the mysql bed): the
+# very first probe after the transition is *deterministically* eaten by the
+# flush (verified 40/40 on the live bed — the `exit` and the `echo <marker>`
+# are written back-to-back, so the marker lands in the flush window). Recovery
+# then depends on the remaining attempts each completing a round-trip within
+# _RESYNC_TIMEOUT; under heavy `make release` load (nox x3 + subprocess-coverage
+# saturating the client VM) those round-trips slow down and all attempts are
+# exhausted. Two cheap knobs close the gap until the unified redesign lands
+# (spec: docs/superpowers/specs/2026-07-05-shell-liveness-probe-unification-design.md):
+#   * _RESYNC_SETTLE — a short settle so the first probe is NOT written into
+#     the flush window (live-bed: a 0.3 s settle makes attempt 1 land ~7 ms,
+#     eliminating the always-wasted first attempt);
+#   * a larger _RESYNC_TIMEOUT — tolerate a slow probe round-trip under load
+#     (only paid when a probe is genuinely slow, which the settle makes rare).
 _RESYNC_ATTEMPTS = 5
-_RESYNC_TIMEOUT = 2.0
+_RESYNC_TIMEOUT = 6.0
+_RESYNC_SETTLE = 0.3
 
 
 async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
@@ -217,6 +233,11 @@ async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
     (:func:`run_proxy`/:func:`run_undo`) wraps this with hop context like any
     other proxy-step failure.
     """
+    # Let the su/sudo/exit foreground handoff settle before probing so the first
+    # marker is not written into the transition's tty-flush window and silently
+    # dropped (see the _RESYNC_* constants' note). Interim hardening for the
+    # `make release` 3.13 flake, superseded by the unified liveness-probe redesign.
+    await asyncio.sleep(_RESYNC_SETTLE)
     for _ in range(_RESYNC_ATTEMPTS):
         marker = f"__OTTO_LP_SYNC_{uuid.uuid4().hex}__"
         await io.send(f"echo {marker}\n")

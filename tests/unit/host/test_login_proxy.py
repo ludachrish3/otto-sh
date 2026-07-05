@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 
+from otto.host import login_proxy
 from otto.host.login_proxy import (
     LOGIN_PROXIES,
     Cred,
@@ -14,6 +15,19 @@ from otto.host.login_proxy import (
     run_undo,
 )
 from otto.logger.mode import LogMode
+
+
+@pytest.fixture(autouse=True)
+def _fast_resync_settle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Zero the post-transition resync settle so unit tests don't pay its wall-clock.
+
+    ``_resync_shell`` sleeps ``_RESYNC_SETTLE`` before its first probe (interim
+    hardening for the 3.13 flush flake); every ``perform_switch``/``run_undo``
+    test would otherwise add that real delay. The dedicated settle test overrides
+    this back to a known value.
+    """
+    monkeypatch.setattr(login_proxy, "_RESYNC_SETTLE", 0.0)
+
 
 # Every run_proxy/run_undo call now ends with a post-transition resync (an
 # "echo <marker>\n" send + expect(marker) pair) — see
@@ -278,3 +292,30 @@ async def test_resync_shell_raises_login_proxy_error_after_exhausting_attempts()
     with pytest.raises(LoginProxyError, match=r"h1.*resync.*mysql"):
         await _resync_shell(io, host_id="h1", hop_login="mysql")
     assert io._calls == 5  # _RESYNC_ATTEMPTS, no more and no fewer
+
+
+@pytest.mark.asyncio
+async def test_resync_shell_settles_before_first_probe(monkeypatch: pytest.MonkeyPatch):
+    """The first probe is preceded by a _RESYNC_SETTLE sleep (flush-window guard).
+
+    Interim hardening for the 3.13 flake: the first marker after a su/sudo/exit
+    transition is deterministically eaten by the tty flush, so _resync_shell
+    settles before probing. Pin that the settle happens (with the production
+    value), before any probe is sent.
+    """
+    monkeypatch.setattr(login_proxy, "_RESYNC_SETTLE", 0.25)
+    slept: list[float] = []
+    sent_at_first_sleep: list[int] = []
+
+    async def _record_sleep(duration: float) -> None:
+        slept.append(duration)
+        sent_at_first_sleep.append(len(io.sent))
+
+    monkeypatch.setattr(login_proxy.asyncio, "sleep", _record_sleep)
+
+    io = _FlakyResyncIO(fail_times=0)  # first real probe lands
+    await _resync_shell(io, host_id="h1", hop_login="mysql")
+
+    assert slept == [0.25]  # settled once, with the configured value
+    assert sent_at_first_sleep[0] == 0  # settle happened BEFORE the first probe
+    assert io._calls == 1  # then a single probe landed
