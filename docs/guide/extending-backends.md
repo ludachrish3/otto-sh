@@ -186,9 +186,103 @@ register_term_backend("my_term", MyTerm, host_families=frozenset({"unix"}))
 # host_families is required (no default) — omitting it raises TypeError
 ```
 
+## Login proxies
+
+Some accounts can't be reached by direct authentication — the classic case is
+a service user with no login shell. A `creds` entry for one of these names a
+**login proxy**: {func}`~otto.host.login_proxy.register_login_proxy` registers
+a small async callable, from an `init` module, that drives whatever steps
+*become* that user (`su`, `sudo -u`, entering a container, ...) after otto has
+already authenticated as a different, directly-loginable account. It is the
+same named-registry seam as the term/transfer backends above — registration
+runs before any lab data loads, duplicate names fail loud unless
+`overwrite=True`, and an unknown name at lookup time lists what's registered —
+just keyed by proxy name instead of `term`/`transfer`, and selected from a
+cred entry instead of a host entry.
+
+### The callable contract
+
+```python
+async def proxy(io: ProxyIO, ctx: ProxyContext) -> None: ...
+```
+
+{class}`~otto.host.login_proxy.ProxyIO` is the minimal handle a proxy drives —
+`send`/`expect` — satisfied alike by the raw session used at session
+establishment, the `interact --as-user` bridge, and the `switch_user`/`as_user`
+elevation path, so one proxy function runs unmodified over all three.
+{class}`~otto.host.login_proxy.ProxyContext` carries `target` (the
+{class}`~otto.host.login_proxy.Cred` being become — its `login`/`password`/`params`), `via`
+(the cred currently in control), and `host_id` (for error messages) —
+deliberately **not** the host object itself: calling `run()` mid-proxy on the
+very session being established would deadlock. Host-specific data rides in
+`target.params`.
+
+The built-in `"su"` proxy — the default for any cred with no `proxy` field —
+is a proxy like any other, registered the same way:
+
+```python
+async def _su_proxy(io: ProxyIO, ctx: ProxyContext) -> None:
+    login = ctx.target.login
+    cmd = "su" if not login else f"su {shlex.quote(login)}"
+    await io.send(cmd + "\n")
+    if ctx.target.password is not None:
+        await io.expect(r"[Pp]assword:")
+        await io.send(ctx.target.password + "\n", log=LogMode.NEVER)
+```
+
+Note the `log=LogMode.NEVER` on the password send — otto's password-hygiene
+convention for logged output applies inside a proxy step exactly as it does
+everywhere else a credential is sent.
+
+Register your own the same way, with an optional `undo=` that reverses the
+steps for `as_user` restore. The default reversal (used by `"su"`) sends a
+bare `exit`, correct for any su/sudo-style nested shell; only an exotic proxy
+needs to override it:
+
+```python
+# .otto/init.py — registered via [init] in .otto/settings.toml
+from otto.host.login_proxy import ProxyContext, ProxyIO, register_login_proxy
+
+
+async def enter_container(io: ProxyIO, ctx: ProxyContext) -> None:
+    container = ctx.target.params["container"]
+    await io.send(f"docker exec -it {container} sh\n")
+
+
+register_login_proxy("docker-shell", enter_container)
+```
+
+A runnable version of this pattern — construction, registration, and
+{func}`~otto.host.login_proxy.resolve_chain` resolving the directly-loginable
+cred a proxied one becomes — lives in `otto.examples.login_proxy`
+(`src/otto/examples/login_proxy.py`).
+
+### Selecting a proxy from `creds`
+
+A cred entry's `proxy` field names the registered proxy; `via` names another
+entry in the same host's `creds` list to authenticate as first (omit it to
+default to the first directly-loginable entry):
+
+```json
+"creds": [
+    {"login": "admin", "password": "hunter2"},
+    {"login": "appuser", "proxy": "docker-shell", "via": "admin",
+     "params": {"container": "app1"}}
+]
+```
+
+`proxy` names are validated against the registry at lab-load time, in the same
+place and the same way as `term`/`transfer` selectors — a typo'd proxy name
+fails loud at load, listing the registered proxies, rather than failing later
+mid-connection. See {doc}`host-database` for the full `creds` field reference,
+including the ownership consequences of proxying (which transfer paths land
+files owned by the via-user vs. the proxied target user).
+
 ## See also
 
 - {doc}`extending-embedded` — custom command frames and embedded filesystems
 - {doc}`os-profiles` — registering a custom host class that bundles these
 - {doc}`lab-config` — the `term` / `transfer` lab-data fields
+- {doc}`host-database` — the `creds` field reference and login-proxy ownership
+  consequences
 - {doc}`editor-schemas` — `otto schema export` for editor autocompletion

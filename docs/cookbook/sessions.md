@@ -64,6 +64,69 @@ await host.send("exit()\n")
 `send` writes raw text to the session; `expect` blocks until the given
 regex pattern appears in the output stream (or the timeout expires).
 
+### AppShell: a higher-level REPL wrapper
+
+Hand-rolling `send`/`expect` works, but for a REPL you drive more than
+once — mysql, a vendor CLI, `python3` — wrapping the same loop in an
+{class}`~otto.host.app_shell.AppShell` subclass is more ergonomic: declare
+the launch command and the prompt once, then call
+{meth}`~otto.host.app_shell.AppShell.cmd` for each line and get back a
+{class}`~otto.result.ShellResult` instead of a raw string:
+
+```{doctest}
+>>> import re
+>>> from otto import AppShell
+>>> class PyRepl(AppShell):
+...     """The stock CPython REPL as an AppShell."""
+...     launch = "python3 -u -i"
+...     prompt = re.compile(r">>> \Z")
+...     quit_cmd = "exit()"
+>>> async def repl_demo():
+...     appshell_host = LocalHost()
+...     try:
+...         async with appshell_host.app_shell(PyRepl) as py:
+...             result = await py.cmd("print('otto_test')")
+...             return result.value.strip()
+...     finally:
+...         await appshell_host.close()
+>>> run(repl_demo())
+'otto_test'
+```
+
+`cmd()` also takes a `parse=` argument — a {class}`~otto.host.app_shell.Parsed`
+subclass, a `list[Parsed]`, or a plain callable — that turns the answer into a
+typed object (`result.value` becomes that object instead of a string), with
+composite REPL output ("a bordered table *and* its trailing stats line", say)
+parsed recursively into nested objects. See `otto.examples.app_shell`
+(`src/otto/examples/app_shell.py`) for a full worked example, including
+nested parsing.
+
+Two entry points reach the same shell state machine:
+
+- {meth}`~otto.host.host.BaseHost.app_shell` (used above) — provisions a
+  dedicated, auto-named session, optionally switches user first (`user=`,
+  login-proxying if that cred is proxied — see
+  {doc}`Login proxies <../guide/extending-backends>`), launches the shell, and
+  tears the session down again on exit.
+- {meth}`~otto.host.app_shell.AppShell.attach` — a classmethod that layers onto
+  a `HostSession` you already have open (e.g. one from
+  {meth}`~otto.host.host.Host.open_session`), leaving it open for reuse once
+  the shell exits:
+
+  ```python
+  session = await host.open_session("db")
+  async with PyRepl.attach(session) as py:
+      ...
+  # session is still open here — attach() doesn't close what it didn't open
+  ```
+
+While a shell is attached (either entry point), the session's sentinel-framed
+{meth}`~otto.host.session.HostSession.run` raises
+{class}`~otto.host.app_shell.AppShellActiveError` — the command frame must
+never be typed into the app itself. Raw `send`/`expect` stay available for
+power users (`cmd()` is built on them), so the low-level pattern above is
+still there when a REPL's quirks don't fit the `AppShell` mold.
+
 ## Periodic tasks
 
 To run a command at a fixed interval, pair `host.run(...)` with

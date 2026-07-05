@@ -517,8 +517,8 @@ async def run_ssh_login(
     SSH connection.
 
     When *proxy_hops* is non-empty (Task 9's ``--as-user``), each hop is
-    replayed over the bridge (via :func:`_replay_proxy_hops`) after the PTY
-    shell is ready but before :func:`_run_bridge` starts the pumps, so the
+    replayed over the bridge (via ``_replay_proxy_hops``) after the PTY
+    shell is ready but before ``_run_bridge`` starts the pumps, so the
     human lands directly on the proxied account. *via_login* is the login
     ``conn`` actually authenticated as (the first hop's ``via``); *host_id*
     is passed through to :func:`~otto.host.login_proxy.run_proxy` for error
@@ -616,7 +616,7 @@ async def run_telnet_login(
 
     *proxy_hops*/*via_login*/*host_id* mirror :func:`run_ssh_login` (Task 9's
     ``--as-user``): non-empty hops are replayed over the bridge after login
-    but before :func:`_run_bridge` starts the pumps, using ``b"\\r"`` as the
+    but before ``_run_bridge`` starts the pumps, using ``b"\\r"`` as the
     line terminator (telnet's convention, vs. SSH PTY's ``b"\\n"``).
     """
     reader = client.reader

@@ -50,8 +50,8 @@ class Cred:
 class ProxyIO(Protocol):
     """Minimal I/O handle a proxy drives.
 
-    Satisfied by hosts, ``HostSession``s, the raw-session adapter used at
-    session establishment, and the interact bridge adapter.
+    Satisfied by hosts, ``HostSession`` instances, the raw-session adapter
+    used at session establishment, and the interact bridge adapter.
     """
 
     async def send(self, text: str, *, log: LogMode = LogMode.NORMAL) -> None:
@@ -77,6 +77,7 @@ class ProxyContext:
 
 
 LoginProxyFn = Callable[[ProxyIO, ProxyContext], Awaitable[None]]
+"""An async callable that drives one proxy's steps: ``async def proxy(io, ctx)``."""
 
 
 @dataclass(frozen=True)
@@ -234,7 +235,7 @@ async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
 async def run_proxy(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
     """Run *hop*'s proxy steps over *io*, wrapping failures with context.
 
-    Ends with a post-transition shell resync (:func:`_resync_shell`) so the
+    Ends with a post-transition shell resync (``_resync_shell``) so the
     next sentinel-wrapped command otto writes can't land in the transition's
     tty-flush window and be silently discarded (see that function's
     docstring). A resync failure surfaces through the same wrapping as any

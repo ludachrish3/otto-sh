@@ -80,6 +80,75 @@ schema's `extra="forbid"` check:
 This idiom is scoped to host entries only — it is not a general convention
 elsewhere in otto's JSON/TOML configuration.
 
+## Credentials and login proxies
+
+A host's `creds` field is an **ordered list** of cred entries, each with a
+required `login` and four optional fields:
+
+| Field | Type | Description |
+|-------|------|--------------|
+| `login` | string | The account name (required). |
+| `password` | string or `null` | Password, or omit/`null` for key/agent auth on SSH (an empty line on telnet). |
+| `proxy` | string | Name of a registered login proxy (see {doc}`extending-backends`) that drives the steps to *become* this login, after authenticating as `via`. Omit for a directly-loginable account — a proxy-less entry still uses the built-in `"su"` proxy when `switch_user`/`as_user` switches to it. |
+| `via` | string | The `login` of another entry in this same list to authenticate as first. Only valid alongside `proxy`. Omit to default to the first proxy-less (directly-loginable) entry. |
+| `params` | object | Free-form data handed to the proxy callable (e.g. a container name, a service name) — otto itself never interprets it. |
+
+**The first entry is the default login** — the user otto authenticates as
+unless `user` names a different entry:
+
+```json
+"creds": [
+    {"login": "admin", "password": "hunter2"},
+    {"login": "mysql", "proxy": "mysql-su", "via": "admin",
+     "params": {"service": "mysqld"}}
+]
+```
+
+Here otto logs in as `admin` by default. Setting `"user": "mysql"` on the
+host entry (or calling `switch_user("mysql")` at runtime) authenticates as
+`admin` first, then runs the `mysql-su` proxy to become `mysql`.
+
+Validated at load, alongside the usual schema checks: every `login` is
+unique; `via`/`params` are only allowed alongside `proxy`; `via` must name
+another entry in the same list, never itself; a chain of `via` links must
+terminate at a proxy-less entry (a cycle is rejected at load, not discovered
+mid-connection); and `proxy` names are checked against the live login-proxy
+registry the same way `term`/`transfer` selectors are checked against theirs
+— an unregistered name fails loud, listing what's registered, instead of
+failing later mid-connection.
+
+### Ownership when a login is proxied
+
+Every *command* surface (`run`, `oneshot`, named sessions) executes as the
+proxied user once a session has switched to it — but file **transfer** is not
+uniform, because not every transfer protocol rides a shell:
+
+- `nc` transfers ride pooled, already-proxied shell sessions, so a file it
+  puts lands owned by the **target** (proxied) user.
+- `scp` / `sftp` / `ftp` authenticate at the transport layer directly as the
+  resolved *direct* (`via`) cred — they cannot replay proxy steps, since they
+  are not interactive shells — so a file they put lands owned by the **via**
+  user, not the proxied target.
+
+Pick `nc` (`"transfer": "nc"`, or include it in `valid_transfers`) when a
+proxied host's file ownership needs to match the target account rather than
+the account otto authenticated as.
+
+### Breaking change: `creds` was a dict, now a list
+
+`creds` used to be a flat `{"login": "password"}` mapping; it is now the
+ordered list described above (`feat(host)!`). A `hosts.json` still written in
+the old dict shape is rejected loudly at load:
+
+```text
+ValueError: creds is now a list of cred objects: [{"login": "user", "password": "pw"}, ...]
+(was: {user: password}). See the host-database guide.
+```
+
+Update every entry to `[{"login": ..., "password": ...}, ...]`. The first
+entry keeps the old "first dict entry is the default login" behavior — now
+explicit and ordered, rather than relying on dict insertion order.
+
 ## Selecting a different source
 
 `[lab] backend` selects any **registered** backend by name. Register your

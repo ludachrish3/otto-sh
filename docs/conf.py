@@ -222,6 +222,15 @@ _INTERNAL_ALIASES = {
     "rt.LocalPortForward": "otto.host.options.LocalPortForward",
     "rt.RemotePortForward": "otto.host.options.RemotePortForward",
     "rt.SocksForward": "otto.host.options.SocksForward",
+    # otto.host.login_proxy.Cred: dataclass field annotations on an inherited
+    # attribute (EmbeddedHost.creds -> ZephyrHost.creds) render the bare name
+    # instead of the fully-qualified one autodoc uses everywhere else.
+    "Cred": "otto.host.login_proxy.Cred",
+    # AppShellT is a TYPE_CHECKING-only TypeVar (bound=AppShell) in host.py —
+    # kept out of the runtime module namespace to protect the import-budget
+    # guard, so autodoc can never document it directly. Point the signature
+    # xref at its bound type instead.
+    "AppShellT": "otto.host.app_shell.AppShell",
 }
 
 
@@ -254,6 +263,13 @@ _EXTERNAL_DOC_LINKS = {
     # groups — see cli/invoke.py's RegistryBackedGroup / cli/expose.py's
     # HostGroup) documented on typer's own API reference page.
     "TyperGroup": "https://typer.tiangolo.com/reference/typer/#typer.core.TyperGroup",
+    # typing_extensions.Self backport (used pre-3.11): intersphinx's python
+    # inventory does carry typing.Self, but as a py:data object, while the
+    # annotation is referenced via the py:class role (a TypeVar-like special
+    # form, not a class) — role/objtype mismatch means intersphinx's own
+    # role-scoped lookup (missing_reference) never matches it even after
+    # retargeting. A direct link sidesteps that mismatch instead of fighting it.
+    "Self": "https://docs.python.org/3/library/typing.html#typing.Self",
 }
 
 

@@ -16,7 +16,9 @@ local and remote machines.
    transfer_base
    embedded_filesystem
    session
+   app_shell
    connections
+   login_proxy
    transport
    telnet
    os_profile
