@@ -215,6 +215,10 @@ class AppShellTimeoutError(TimeoutError):
     *data* mismatch: :meth:`AppShell.cmd` marks the shell broken and the
     attaching context manager, on unwind, skips ``quit_cmd`` and goes straight
     to the command-frame recovery handshake.
+
+    On the caller-owned :meth:`AppShell.attach` path that recovery cannot
+    always confirm the POSIX shell is back; discard the session after this
+    error rather than reusing it (see :meth:`AppShell.attach`).
     """
 
 
@@ -316,6 +320,16 @@ class AppShell:
         governs the launch wait below and is used by :meth:`cmd` for every call
         in the session that doesn't pass its own ``timeout=``. Falls back to
         :attr:`cmd_timeout` when omitted.
+
+        .. note::
+           After an :class:`AppShellTimeoutError`, treat this session as spent:
+           discard it and open a fresh one rather than reusing it. On this
+           caller-owned ``attach`` path the shell may be left parked inside the
+           application REPL, and the recovery handshake cannot always confirm
+           the POSIX shell is back — a REPL that ignores Ctrl+C and echoes the
+           recovery marker back can spoof a successful recovery.
+           :meth:`~otto.host.host.BaseHost.app_shell` is unaffected: it owns and
+           closes the session for you.
         """
         shell = cls(session, timeout=timeout)
         await shell._enter()
