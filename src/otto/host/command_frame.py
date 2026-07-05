@@ -143,6 +143,19 @@ class CommandFrame(ABC):
         """Recover the command's exit code; ``-1`` when none can be read."""
         ...
 
+    # --- liveness confirmation (concrete default; dialects may strengthen) ---
+
+    def recover_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
+        r"""Pattern that PROVES the shell executed the recover probe.
+
+        Default: the bare ``RECOVER`` token, matching the convention where
+        ``recover`` echoes it back (Zephyr rejects it as an unknown command and
+        its error handler prints it; a third-party frame inherits this). Bash
+        strengthens it to the exit-code form an echo/REPL cannot fake — see
+        :meth:`BashFrame.recover_pattern`.
+        """
+        return re.compile(re.escape(m.recover))
+
 
 class BashFrame(CommandFrame):
     """POSIX bash dialect: ``echo`` brackets and ``$?`` baked into the END marker.
@@ -167,7 +180,14 @@ class BashFrame(CommandFrame):
 
     @override
     def recover(self, m: SessionMarkers) -> str:
-        return f"echo {m.recover}\n"
+        # Echo-proof liveness probe: the END sentinel bakes in $?, so a real
+        # shell emits `..._END__<digits>__` while an echo/REPL can only reproduce
+        # the literal `$?`. recover_pattern matches only the digit form.
+        return f'echo "{m.end_prefix}$?__"\n'
+
+    @override
+    def recover_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
+        return self.end_pattern(m)
 
     @override
     def end_pattern(self, m: SessionMarkers) -> re.Pattern[str]:

@@ -53,8 +53,8 @@ class TestBashFrame:
             f'echo "{M.begin}"; ls /tmp; echo "{M.end_prefix}$?__"\n'
         )
 
-    def test_recover_echoes_recover_marker(self):
-        assert self.frame.recover(M) == f"echo {M.recover}\n"
+    def test_recover_is_exit_code_probe(self):
+        assert self.frame.recover(M) == f'echo "{M.end_prefix}$?__"\n'
 
     def test_end_pattern_captures_retcode_digits(self):
         pat = self.frame.end_pattern(M)
@@ -168,6 +168,32 @@ class TestZephyrSerialFrame:
 
     def test_inherits_buffered_streaming(self):
         assert ZephyrSerialFrame.streams_output_live is False
+
+
+class TestRecoverProbe:
+    bash = BashFrame()
+    zephyr = ZephyrFrame()
+
+    def test_bash_recover_is_exit_code_probe(self):
+        assert self.bash.recover(M) == f'echo "{M.end_prefix}$?__"\n'
+
+    def test_bash_recover_pattern_matches_digit_form(self):
+        pat = self.bash.recover_pattern(M)
+        assert pat.search(f"{M.end_prefix}0__")
+        assert pat.search(f"prompt$ {M.end_prefix}130__")
+
+    def test_bash_recover_pattern_rejects_echoed_literal_probe(self):
+        # An echo/REPL reflects the probe text verbatim: literal "$?", no digits.
+        pat = self.bash.recover_pattern(M)
+        assert pat.search(f'echo "{M.end_prefix}$?__"') is None
+
+    def test_zephyr_recover_pattern_matches_bare_token(self):
+        pat = self.zephyr.recover_pattern(M)
+        assert pat.search(f"{M.recover}")
+        assert pat.search(f"{M.recover}: command not found")
+
+    def test_zephyr_serial_inherits_recover_pattern(self):
+        assert ZephyrSerialFrame().recover_pattern(M).pattern == re.escape(M.recover)
 
 
 class TestRegistry:
