@@ -669,16 +669,26 @@ class BaseHost(ABC):
 
     @asynccontextmanager
     async def app_shell(
-        self, shell_cls: "type[AppShellT]", *, user: str | None = None
+        self,
+        shell_cls: "type[AppShellT]",
+        *,
+        user: str | None = None,
+        timeout: float | None = None,
     ) -> "AsyncIterator[AppShellT]":
-        """Run *shell_cls* on a dedicated session; see the sessions cookbook."""
+        """Run *shell_cls* on a dedicated session; see the sessions cookbook.
+
+        ``timeout``, if given, becomes this session's default prompt-wait
+        (governs the launch wait and every :meth:`~otto.host.app_shell.AppShell.cmd`
+        call that doesn't pass its own ``timeout=``); falls back to the shell
+        class's :attr:`~otto.host.app_shell.AppShell.cmd_timeout` when omitted.
+        """
         name = f"__appshell_{shell_cls.__name__.lower()}_{uuid.uuid4().hex[:6]}__"
         session = await self.open_session(name)
         try:
             target = user if user is not None else shell_cls.user
             if target is not None:
                 await session.switch_user(target)
-            async with shell_cls.attach(session) as shell:
+            async with shell_cls.attach(session, timeout=timeout) as shell:
                 yield shell
         finally:
             await session.close()

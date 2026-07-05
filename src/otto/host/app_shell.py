@@ -231,10 +231,17 @@ class AppShell:
     keeps the session's current user."""
 
     cmd_timeout: ClassVar[float] = 30.0
-    """Default seconds to wait for the prompt on launch, quit, and :meth:`cmd`."""
+    """Class-level default seconds to wait for the prompt on launch and
+    :meth:`cmd`. Overridable per-session via ``timeout=`` on :meth:`attach` /
+    :meth:`~otto.host.host.BaseHost.app_shell` (governs the launch wait and
+    becomes the default for every :meth:`cmd` in that session), and per-command
+    via ``cmd(timeout=)`` (wins over both)."""
 
-    def __init__(self, session: "HostSession") -> None:
+    def __init__(self, session: "HostSession", timeout: float | None = None) -> None:
         self._session = session
+        # This session's effective default prompt-wait: the per-session
+        # override if one was given at attach() time, else the class default.
+        self._timeout = timeout if timeout is not None else self.cmd_timeout
         # Set when a prompt wait times out: the REPL state is unknown, so exit
         # skips quit_cmd and goes straight to POSIX-shell recovery.
         self._broken = False
@@ -263,7 +270,9 @@ class AppShell:
 
     @classmethod
     @asynccontextmanager
-    async def attach(cls, session: "HostSession") -> "AsyncIterator[Self]":
+    async def attach(
+        cls, session: "HostSession", *, timeout: float | None = None
+    ) -> "AsyncIterator[Self]":
         r"""Attach the shell to an already-open session (async context manager).
 
         Takes the session's app-shell lock, sends :attr:`launch`, waits for
@@ -274,8 +283,13 @@ class AppShell:
         session itself is left open. Raises :class:`AppShellActiveError` if the
         session already has a shell attached, or :class:`AppShellTimeoutError`
         if the launch prompt never arrives.
+
+        ``timeout``, if given, becomes this session's default prompt-wait: it
+        governs the launch wait below and is used by :meth:`cmd` for every call
+        in the session that doesn't pass its own ``timeout=``. Falls back to
+        :attr:`cmd_timeout` when omitted.
         """
-        shell = cls(session)
+        shell = cls(session, timeout=timeout)
         await shell._enter()
         try:
             yield shell
@@ -302,12 +316,12 @@ class AppShell:
         inner._app_shell = self  # noqa: SLF001 — intra-package write taking the ShellSession app-shell lock
         try:
             await self._session.send(self.launch + "\n")
-            await self._session.expect(self.prompt, timeout=self.cmd_timeout)
+            await self._session.expect(self.prompt, timeout=self._timeout)
         except (TimeoutError, asyncio.TimeoutError) as exc:
             inner._app_shell = None  # noqa: SLF001 — release the lock: the app never reached its prompt
             raise AppShellTimeoutError(
                 f"{type(self).__name__}: prompt {self.prompt.pattern!r} not seen "
-                f"within {self.cmd_timeout}s of launch {self.launch!r}"
+                f"within {self._timeout}s of launch {self.launch!r}"
             ) from exc
         except BaseException:
             # Non-timeout launch failure (dead transport, cancellation): the
@@ -334,9 +348,13 @@ class AppShell:
         output preserved, not an exception. A prompt timeout is a *state*
         problem — the shell is marked broken and :class:`AppShellTimeoutError`
         is raised.
+
+        ``timeout``, if given, overrides this session's default prompt-wait for
+        this call only; otherwise the session default set at :meth:`attach`
+        time is used (which itself falls back to :attr:`cmd_timeout`).
         """
         await self._session.send(text + "\n")
-        wait = timeout if timeout is not None else self.cmd_timeout
+        wait = timeout if timeout is not None else self._timeout
         try:
             out = await self._session.expect(self.prompt, wait)
         except (TimeoutError, asyncio.TimeoutError) as exc:

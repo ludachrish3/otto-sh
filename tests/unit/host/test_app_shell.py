@@ -628,3 +628,53 @@ async def test_app_shell_closes_session_even_if_attach_raises():
         async with host.app_shell(DemoShell):
             pytest.fail("body must not run when launch times out")
     assert session.closed is True
+
+
+# =========================================================================== #
+# per-session timeout override — attach(timeout=)/app_shell(timeout=) (Task 18)
+# =========================================================================== #
+#
+# Three-tier timeout model: cmd_timeout (ClassVar default) < attach/app_shell
+# timeout= (per-session default) < cmd(timeout=) (per-command override, wins).
+# These tests assert the actual timeout VALUE that reached ``expect``, not just
+# that a call happened.
+
+
+@pytest.mark.asyncio
+async def test_attach_timeout_overrides_launch_expect():
+    session, _inner = _demo(["\nmysql> "])
+    async with DemoShell.attach(session, timeout=90.0):
+        pass
+    # The launch `expect` (first call) used the session override, not cmd_timeout.
+    assert session.expected[0] == (DemoShell.prompt, 90.0)
+
+
+@pytest.mark.asyncio
+async def test_host_app_shell_timeout_threads_through_to_attach():
+    host, session = _recording_demo()
+    async with host.app_shell(DemoShell, timeout=45.0):
+        pass
+    assert session.expected[0] == (DemoShell.prompt, 45.0)
+
+
+@pytest.mark.asyncio
+async def test_cmd_uses_session_timeout_but_per_command_wins():
+    session, _inner = _demo(["\nmysql> ", "1\nmysql> ", "1\nmysql> "])
+    async with DemoShell.attach(session, timeout=50.0) as shell:
+        await shell.cmd("SELECT 1")
+        # No per-command timeout -> falls back to the session default (50.0).
+        assert session.expected[-1] == (DemoShell.prompt, 50.0)
+        await shell.cmd("SELECT 1", timeout=5.0)
+        # Per-command timeout still wins over the session default.
+        assert session.expected[-1] == (DemoShell.prompt, 5.0)
+
+
+@pytest.mark.asyncio
+async def test_cmd_default_unchanged_without_session_override():
+    # Regression guard: with no session timeout and no per-command timeout,
+    # the ClassVar cmd_timeout (30.0) still governs both launch and cmd.
+    session, _inner = _demo(["\nmysql> ", "1\nmysql> "])
+    async with DemoShell.attach(session) as shell:
+        await shell.cmd("SELECT 1")
+    assert session.expected[0] == (DemoShell.prompt, 30.0)
+    assert session.expected[1] == (DemoShell.prompt, 30.0)
