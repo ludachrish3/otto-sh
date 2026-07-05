@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck lint format schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-webkit web-install web web-dev web-test web-clean wheel-check
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-webkit web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -161,21 +161,26 @@ nox-hostless: ## Run the no-testbed CI gate (tests/unit + no-VM e2e) across all 
 nox: ## Run the FULL test suite (all environments) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 
-validate: ## (Build & Release) Run validation (clean-dist, lint, typecheck, coverage, docs) without building dist
+validate: validate-python validate-ts ## (Build & Release) Validate ALL code (Python + TS): sub-targets validate-python + validate-ts
+
+validate-python: ## (Build & Release) Python validation (clean-dist, lint, typecheck, coverage, docs) without building dist
 	@$(MAKE) clean-dist \
-		&& $(MAKE) lint \
-		&& $(MAKE) typecheck \
+		&& $(MAKE) lint-python \
+		&& $(MAKE) typecheck-python \
 		&& $(MAKE) $(COVERAGE_TARGET) \
 		&& $(MAKE) docs
+
+validate-ts: web-check ## (Build & Release) TypeScript validation: Biome lint + format-check, tsc, vitest coverage (see web-check)
 
 clean-dist:
 	@rm -rf dist
 
-dev: ## (Dev) Set up the dev environment (uv sync, git hooks, hyperfine, Chromium)
+dev: ## (Dev) Set up the dev environment (uv sync, git hooks, hyperfine, Chromium, web/ deps)
 	uv sync
 	git config core.hooksPath .githooks
 	$(MAKE) hyperfine
 	$(MAKE) browsers
+	$(MAKE) web-install
 	@echo "Dev environment ready"
 
 hyperfine:
@@ -216,6 +221,29 @@ web-dev: ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to 
 
 web-test: ## (Dev) Run the web/ vitest suite once (store reducers, etc.) — no watch mode
 	cd web && npm run test
+
+# web/ quality lanes (Biome + tsc + vitest coverage) — the TS analogue of the
+# ruff/ty/pytest-cov Python gates. All assume `make web-install` (or `make dev`)
+# has populated web/node_modules. `web-check` is the umbrella the CI web-quality
+# job and `make validate-ts` run.
+web-lint: ## (Quality) Lint web/ (TS + CSS) with Biome
+	cd web && npm run lint
+
+web-format: ## (Quality) Apply the Biome formatter to web/ (writes changes)
+	cd web && npm run format
+
+web-format-check: ## (Quality) Check web/ formatting with Biome (no writes)
+	cd web && npm run format:check
+
+web-typecheck: ## (Quality) Type-check web/ with tsc --noEmit (no build)
+	cd web && npm run typecheck
+
+web-coverage: ## (Quality) Run the web/ vitest suite with v8 coverage and enforce the floor
+	cd web && npm run test:coverage
+
+web-check: web-lint web-format-check web-typecheck web-coverage ## (Quality) All web/ gates: lint + format-check + typecheck + coverage (= validate-ts)
+
+coverage-ts: web-coverage ## (Quality) Alias of web-coverage (TS coverage; the Python `coverage` gate stays separate)
 
 web-clean: ## (Dev) Remove the built web/ dist outputs (monitor dashboard + covreport)
 	rm -rf src/otto/monitor/static/dist
@@ -380,15 +408,27 @@ vm-health: ## (Lab) Probe every lab VM + Zephyr QEMU instance; prints per-host t
 qemu-restart: ## (Lab) Restart the Zephyr QEMU + SNMP-relay units on the hop VM(s), then health-check. Use to recover a wedged embedded bed.
 	uv run python scripts/lab_health.py --restart-qemu
 
-lint: ## (Quality) Run ruff lint + format checks (part of validate/ci/all)
+lint: lint-python lint-ts ## (Quality) Lint ALL code (Python + TS): sub-targets lint-python + lint-ts
+
+lint-python: ## (Quality) Run ruff lint + format checks (part of validate/ci/all)
 	uv run ruff check .
 	uv run ruff format --check .
 
-format: ## (Quality) Apply ruff autoformat to the tree
+lint-ts: web-lint ## (Quality) Lint web/ (TS + CSS) with Biome (alias of web-lint)
+
+format: format-python format-ts ## (Quality) Autoformat ALL code (Python + TS): sub-targets format-python + format-ts
+
+format-python: ## (Quality) Apply ruff autoformat to the tree
 	uv run ruff format .
 
-typecheck: ## (Quality) Run ty type checker (advisory during trial; not wired into all)
+format-ts: web-format ## (Quality) Apply the Biome formatter to web/ (alias of web-format)
+
+typecheck: typecheck-python typecheck-ts ## (Quality) Type-check ALL code (Python + TS): sub-targets typecheck-python + typecheck-ts
+
+typecheck-python: ## (Quality) Run ty type checker (advisory during trial; not wired into all)
 	uv run ty check
+
+typecheck-ts: web-typecheck ## (Quality) Type-check web/ with tsc --noEmit (alias of web-typecheck)
 
 schema: ## (Dev) Generate JSON Schema for hosts.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
 	uv run otto schema export --out schemas
