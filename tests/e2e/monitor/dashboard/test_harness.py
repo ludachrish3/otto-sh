@@ -5,8 +5,12 @@ the exact JSON shapes of /api/meta, /api/data, and SSE metric messages — the
 contract the Phase 1 backend refactor and Phase 2 React port build against.
 """
 
+import contextlib
 import http.client
 import json
+import socket
+import threading
+import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -216,6 +220,83 @@ def test_historical_fixture_loads(historical_dash: DashboardHarness[MetricCollec
 def test_stop_joins_server_thread(live_dash: DashboardHarness[FakeCollector]) -> None:
     live_dash.stop()  # idempotent with the fixture finalizer
     assert not live_dash.thread_alive
+
+
+def _open_held_sse(port: int) -> socket.socket | None:
+    """Open a raw /api/stream SSE and return the socket *without* closing it.
+
+    Held open, it stands in for a live browser EventSource. Returns ``None`` if
+    the connect is refused — i.e. the server has already stopped accepting,
+    which is exactly the state force_stop should reach.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(2.0)
+    try:
+        sock.connect(("127.0.0.1", port))
+    except OSError:
+        sock.close()
+        return None
+    with contextlib.suppress(OSError):
+        sock.sendall(
+            b"GET /api/stream HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n"
+        )
+    return sock
+
+
+def test_force_stop_survives_sse_opened_during_shutdown(
+    live_dash: DashboardHarness[FakeCollector],
+) -> None:
+    """A fresh SSE connecting *while the server shuts down* must not wedge it.
+
+    Regression for the WebKit dashboard flake (issue #106). The theme-toggle
+    test reloads the page, so the browser drops its EventSource and immediately
+    opens a new one. If that new /api/stream is accepted in the window after
+    force_stop aborted its one-shot snapshot of connections but before uvicorn
+    closes the listening socket, the un-aborted mid-stream h11 transport keeps
+    the server task alive (``asyncio.Server.wait_closed()`` waits on it on
+    3.12+) and the harness thread never exits — surfacing as the teardown
+    ``RuntimeError: dashboard harness thread did not exit within 10s``.
+
+    We reproduce it by hammering the port with held-open SSE connections from a
+    background thread across the shutdown, so some land in that window. The fix
+    closes the listening sockets and aborts in one loop callback, so nothing can
+    slip in: post-abort connects are refused, and the thread exits promptly.
+    """
+    port = urlsplit(live_dash.url).port
+    assert port is not None
+
+    held: list[socket.socket] = []
+    keep_opening = threading.Event()
+    keep_opening.set()
+
+    def _hammer() -> None:
+        # Open (and hold) fresh SSE connections continuously. Running across the
+        # stop() below, some land in the shutdown window; a refused connect
+        # (None) just means the sockets have closed — the state we want.
+        while keep_opening.is_set():
+            sock = _open_held_sse(port)
+            if sock is not None:
+                held.append(sock)
+            time.sleep(0.004)
+
+    hammer = threading.Thread(target=_hammer, name="sse-hammer", daemon=True)
+    hammer.start()
+    try:
+        time.sleep(0.03)  # let a few EventSources establish before shutting down
+        # stop() force-aborts and joins the server thread (raising if it doesn't
+        # exit within 10s). The hammer keeps opening SSEs throughout, so the fix
+        # is exercised against connections arriving mid-shutdown. Held open, an
+        # un-aborted one would wedge the join the way a live browser reload does.
+        try:
+            live_dash.stop()
+        except RuntimeError as exc:  # "thread did not exit within 10s"
+            pytest.fail(f"force_stop failed to converge with SSEs opening mid-shutdown: {exc}")
+        assert not live_dash.thread_alive
+    finally:
+        keep_opening.clear()
+        hammer.join(timeout=2.0)
+        for sock in held:
+            sock.close()
 
 
 def _next_sse_payload(resp: http.client.HTTPResponse) -> dict[str, Any]:

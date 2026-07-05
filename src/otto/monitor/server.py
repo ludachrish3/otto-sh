@@ -333,17 +333,33 @@ class MonitorServer:
         (h11 never closes a mid-stream transport, so clients would otherwise
         not see the connection die). Used by test harnesses and Ctrl+C paths;
         prefer ``stop()`` when clients should finish cleanly.
+
+        The listening sockets are closed *first, in the same loop callback* as
+        the abort. Aborting only a one-shot snapshot of ``state.connections``
+        left a race: uvicorn keeps accepting until its own shutdown closes the
+        sockets (~one 0.1s tick later), so a connection established in that
+        window — e.g. the fresh EventSource a browser opens right after a page
+        reload — was never aborted, and an un-aborted mid-stream h11 SSE keeps
+        the server task alive (``asyncio.Server.wait_closed()`` waits on it on
+        3.12+), hanging shutdown indefinitely. Because an asyncio callback runs
+        to completion before the loop can accept another connection, closing the
+        sockets and aborting the live transports in one callback guarantees the
+        snapshot is complete: nothing new can slip in between the two steps.
         """
         server, loop = self._server, self._loop
         if server is not None and loop is not None:
             server.force_exit = True
             state = server.server_state
 
-            def _abort_connections() -> None:
+            def _stop_accepting_and_abort() -> None:
+                # Stop accepting new connections first so the abort snapshot
+                # below is exhaustive, then abort every open transport.
+                for listener in getattr(server, "servers", []):
+                    listener.close()
                 for conn in list(state.connections):
                     transport = getattr(conn, "transport", None)
                     if transport is not None:
                         transport.abort()
 
-            loop.call_soon_threadsafe(_abort_connections)
+            loop.call_soon_threadsafe(_stop_accepting_and_abort)
         self.stop()
