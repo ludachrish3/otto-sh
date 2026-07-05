@@ -251,7 +251,12 @@ Vagrant.configure("2") do |config|
             printf '[Match]\\nType=ether\\n\\n[Link]\\nMTUBytes=1350\\n' > /etc/systemd/network/10-mtu.link
         SHELL
 
-        # Node.js 24 for web-lane toolchain only (make web*, CI dashboard job).
+        # Node.js 24 (matches .nvmrc) for the web/ toolchain: dashboard/covreport
+        # builds (make web*, CI dashboard job) AND the TS quality gates
+        # (make web-check / validate-ts -> Biome lint+format, tsc, vitest v8
+        # coverage; CI web-quality job). Biome and vitest are npm devDependencies
+        # pulled in by `make web-install` (Biome's native binary rides in as an
+        # npm optionalDependency), so no extra system package is needed here.
         # Python gates never need Node. Install from NodeSource for LTS support.
         dev.vm.provision "shell", name: "dev-node", keep_color: true, inline: <<-SHELL
             curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -

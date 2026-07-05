@@ -126,22 +126,49 @@ Otto uses [uv](https://docs.astral.sh/uv/) for dependency management. Once
 the repo is cloned in the dev VM:
 
 ```bash
-make dev              # runs `uv sync` and sets up git hooks
+make dev              # uv sync, git hooks, hyperfine, browsers, and web/ deps
 source project_env    # optional: sets up usage with test repos
 uv run pytest         # run the test suite
 ```
 
 `make dev` places `otto` at `otto-sh/.venv/bin/otto`.
 
-### Node (only for the monitor dashboard's web lane)
+### Node (the monitor dashboard's web lane)
 
 The monitor dashboard's frontend (`web/`) is a separate React + Vite +
 TypeScript project built with Node, pinned via `.nvmrc`
-([nvm](https://github.com/nvm-sh/nvm) users: `nvm use`). It's needed only for
-the `make web*` targets (`web-install`, `web`, `web-dev`, `web-test`) —
-everything else, including the Python test suite and every other `make`
-target, works from a checkout with the dashboard already built and never
-needs Node. See {doc}`guide/monitor` for the frontend dev workflow.
+([nvm](https://github.com/nvm-sh/nvm) users: `nvm use`). The dev VM
+provisions Node 24, and `make dev` runs `make web-install` (`npm ci`) so
+`web/node_modules` is ready. Node backs both the dashboard build (`make
+web`, `web-dev`) and the TypeScript quality gates below. Everything else —
+the Python test suite and every other non-`web`/non-quality `make` target —
+works from a checkout with the dashboard already built and never needs Node.
+See {doc}`guide/monitor` for the frontend dev workflow.
+
+#### Web quality gates
+
+`web/` carries the same lint / format / type-check / coverage discipline as
+the Python side, via [Biome](https://biomejs.dev/) (lint + format), `tsc`,
+and [vitest](https://vitest.dev/) with v8 coverage:
+
+| Task | web/ lane | combined (Python + TS) |
+|------|-----------|------------------------|
+| Lint | `make web-lint` | `make lint` |
+| Format (write) | `make web-format` | `make format` |
+| Format check | `make web-format-check` | — (run by `web-check`) |
+| Type-check | `make web-typecheck` | `make typecheck` |
+| Unit tests + coverage floor | `make web-coverage` (alias `make coverage-ts`) | — |
+| All web gates | `make web-check` | `make validate-ts` |
+
+The umbrella targets `make validate`, `lint`, `format`, and `typecheck` each
+run **both** languages via their `-python` / `-ts` sub-targets (so `make
+validate` == `make validate-python` + `make validate-ts`). The Python
+coverage gate (`make coverage`) stays separate; `make coverage-ts` is the
+TypeScript counterpart. CI runs the web gates in a dedicated `web-quality`
+job. Biome config lives in `web/biome.json`; the vitest coverage floor lives
+in `web/vite.config.ts` (raise it as component test coverage grows). Install
+the recommended "Biome" and "Vitest" VS Code extensions (see
+`.vscode/extensions.json`) for format-on-save and an inline test runner.
 
 ## Branching and commits
 
@@ -483,3 +510,11 @@ AI coding tools (e.g., GitHub Copilot, Claude, Cursor) are permitted for
 contributions to otto. If your PR contains AI-assisted code, please note it
 in the PR description. Regardless of how code was generated, contributors
 are responsible for understanding, testing, and owning what they submit.
+
+`make dev` installs a `prepare-commit-msg` hook (from `.githooks/`) that
+prompts for the AI model used and records it as an `Assisted-by:` commit
+trailer. On a non-interactive commit (no terminal — e.g. an agent or CI
+job), the hook can't prompt, so it stamps a sentinel `Assisted-by: Claude
+Opus 4.8 (unverified)` — grep for `(unverified)` and confirm or correct the
+model when you squash/merge. If the message already carries an `Assisted-by:`
+trailer, the hook leaves it as-is.
