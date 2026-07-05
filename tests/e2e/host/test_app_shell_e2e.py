@@ -3,11 +3,14 @@
 Two application REPLs are driven for real, end to end:
 
 - ``python3 -u -i`` on the local machine (:class:`~otto.host.local_host.LocalHost`,
-  no bed) — proves the whole AppShell lifecycle (launch, prompt-framed
-  :meth:`~otto.AppShell.cmd`, typed :class:`~otto.Parsed` result, clean quit +
-  POSIX-shell recovery) works with zero network transport, and that the
-  session's sentinel-framed ``run`` is locked out while a shell is attached
-  (``test_run_blocked_while_attached``);
+  no bed) — proves the AppShell lifecycle end to end with zero network
+  transport. ``test_python_repl_roundtrip`` drives the ``host.app_shell()``
+  entry point (launch, prompt-framed :meth:`~otto.AppShell.cmd`, typed
+  :class:`~otto.Parsed` result, clean quit) and confirms the host stays usable
+  afterwards; ``test_run_blocked_while_attached`` is the recovery proof — it
+  shows the attached session's sentinel-framed ``run`` is locked out while a
+  shell is attached AND that the SAME session's POSIX shell is usable again
+  after the shell detaches;
 - ``mysql`` on the live mysql-provisioned Unix bed, reached only through a
   root-mediated ``sudo su -s /bin/bash mysql`` login proxy (the same proxy the
   login-proxy e2e uses) — the full story: proxy in, launch the client, CREATE a
@@ -87,13 +90,21 @@ async def local_host() -> AsyncIterator[LocalHost]:
 @pytest.mark.hostless
 @pytest.mark.asyncio
 async def test_python_repl_roundtrip(local_host: LocalHost) -> None:
-    """Drive python3 through an app shell, parse a typed result, and recover.
+    """Drive python3 end to end through ``host.app_shell()`` and parse a typed result.
 
-    Launches ``python3 -u -i`` on the local machine, runs one line that prints
-    the interpreter's ``major.minor`` version, and parses it into a typed
-    :class:`Version`. After the shell exits, the host's ordinary
-    sentinel-framed ``run`` must work again — proving the POSIX shell was
-    cleanly recovered.
+    Exercises the primary user-facing entry point: ``async with
+    local_host.app_shell(PyRepl)`` launches ``python3 -u -i`` on the local
+    machine, runs one line printing the interpreter's ``major.minor`` version,
+    and parses it into a typed :class:`Version`.
+
+    ``host.app_shell`` opens — and on exit closes — its OWN dedicated session for
+    the REPL, so this test cannot observe that session's post-quit shell recovery
+    (the session is gone by the time the block exits); that same-session recovery
+    proof lives in :func:`test_run_blocked_while_attached`. What the closing
+    ``host.run`` assertion adds here is that the *host* stays usable after a full
+    app-shell lifecycle — ``host.run`` uses the host's SEPARATE default session,
+    so its success shows the app-shell round trip did not globally corrupt the
+    host, not that the REPL's own session recovered.
     """
     async with local_host.app_shell(PyRepl) as py:
         result = await py.cmd(
@@ -103,28 +114,51 @@ async def test_python_repl_roundtrip(local_host: LocalHost) -> None:
         assert result, f"parse failed: {result.msg} (output={result.output!r})"
         assert result.value.major == 3
 
-    # The session is back to a working POSIX shell after the app shell exits.
+    # host.run uses the host's default session — a DIFFERENT shell process from
+    # the dedicated session app_shell opened (and closed) for the REPL. Its
+    # success proves the app-shell lifecycle left the host uncorrupted, NOT that
+    # the REPL's own session recovered (see test_run_blocked_while_attached).
     assert (await local_host.run("echo back")).only.value.strip() == "back"
 
 
 @pytest.mark.hostless
 @pytest.mark.asyncio
 async def test_run_blocked_while_attached(local_host: LocalHost) -> None:
-    """A session's sentinel-framed ``run`` is locked out while a shell is attached.
+    """Lock-out while attached AND the POSIX-shell recovery proof after detach.
 
-    ``app_shell`` isolates the REPL on its own dedicated session; the lock lives
-    on *that* session, so this test attaches directly to an explicitly-opened
-    session (:meth:`AppShell.attach`, the documented public API) and asserts
-    that session's ``run`` raises :class:`AppShellActiveError` — the command
-    frame must never be typed into the app. Once the shell exits, the lock is
-    gone and the session is usable again.
+    Two guarantees, both asserted on ONE explicitly-opened session. Unlike
+    ``host.app_shell`` — which hides its dedicated session — ``open_session`` +
+    :meth:`AppShell.attach` (the documented public API) keeps a handle on the
+    exact session the REPL runs in, so the after-detach check lands on the SAME
+    shell process the app was driven in:
+
+    1. While ``PyRepl`` is attached, that session's sentinel-framed ``run``
+       raises :class:`AppShellActiveError` — the command frame must never be
+       typed into the app.
+    2. After the block exits (``AppShell._exit`` sends ``quit_cmd``, then runs
+       the command-frame recovery handshake), the SAME session's ``run``
+       succeeds again — proving the underlying POSIX shell was restored.
+
+    This is the suite's recovery proof, and a genuine one rather than an
+    incidental pass: a :class:`~otto.host.session.HostSession` holds a fixed
+    underlying ``ShellSession`` and never transparently re-establishes it
+    (auto-rebuild-on-dead lives only in ``SessionManager._ensure_session``, on
+    the host's default/named-build path, not on an already-obtained session). So
+    a broken recovery cannot hide behind a fresh session: ``_recover_session``
+    swallows its own failure (sets ``_alive=False`` and returns silently, and
+    ``_exit`` ignores that), so if it had left the shell wedged inside python3,
+    the ``echo ok`` command frame would be typed into the dead REPL, the bash end
+    sentinel would never return, and this ``run`` would TIME OUT and fail the
+    assertion — not pass.
     """
     session = await local_host.open_session("appshell_lock_probe")
     try:
         async with PyRepl.attach(session):
+            # (1) run is locked out while the app shell holds the session.
             with pytest.raises(AppShellActiveError):
                 await session.run("echo nope")
-        # Lock released on exit: the same session runs normally again.
+        # (2) Recovery proof: the SAME session's run works after detach. A broken
+        # _recover_session would leave the shell wedged, timing this run out.
         assert (await session.run("echo ok")).only.value.strip() == "ok"
     finally:
         await session.close()
