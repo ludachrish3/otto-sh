@@ -38,10 +38,14 @@ The dashboard e2e now runs the full suite on all three engines (Chromium/Blink,
 Firefox/Gecko, WebKit/Safari); the one Safari-specific test stays
 `@only_browser("webkit")`. This surfaced and fixed a real SSE bug (Firefox sat
 at "Connecting…" until the first byte — `server.py` now sends an immediate
-prelude). Left as a future note: `make dashboard` runs three engines serially
-(`-n 1`), so it's ~3× the browser wall-clock; if that becomes a drag on `make
-coverage`, consider parallelizing engines across CI jobs or trimming the
-coverage-feeding lane to one engine while keeping all three in CI.
+prelude). **CI is parallelized:** the nox `dashboard` session is parametrized
+by browser and the CI `dashboard` job is a `browser: [chromium, firefox,
+webkit]` matrix (fail-fast off), so each engine runs on its own runner —
+wall-clock is one engine's runtime, not three. Remaining local-only note:
+`make dashboard` (which feeds `make coverage`) still runs three engines
+serially (`-n 1`); if that drags the local coverage gate, trim the
+coverage-feeding lane to one engine (Python coverage is engine-independent)
+while keeping all three in CI + the standalone `make dashboard`.
 
 ## 4. TypeScript performance tooling
 

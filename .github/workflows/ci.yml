@@ -44,9 +44,20 @@ jobs:
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_hostless-${{ matrix.python }}
 
+  # One parallel job per browser engine (Blink/Gecko/Safari) — the nox
+  # `dashboard` session is parametrized by browser, and this matrix runs each
+  # variant on its own runner so wall-clock is a single engine's runtime, not
+  # three back-to-back. fail-fast: false so one engine's failure doesn't cancel
+  # the others (you want to see all engine results). The Safari-specific test
+  # is @only_browser("webkit"), so it runs only in the webkit leg and skips on
+  # the others.
   dashboard:
-    name: dashboard-e2e
+    name: dashboard-e2e (${{ matrix.browser }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Set up Node
@@ -68,15 +79,13 @@ jobs:
         run: make web-install
       - name: Build the React dashboard (type-drift + air-gap gates)
         run: make web
-      # Unit tests + coverage now run in the dedicated web-quality job below;
-      # this job builds the dashboard purely for the browser e2e that follows.
-      - name: Install Chromium + Firefox + WebKit with system dependencies
-        run: uv run --group dev playwright install --with-deps chromium firefox webkit
-      # The dashboard suite runs on all three engines (Blink/Gecko/Safari) —
-      # the Safari-specific test is @only_browser("webkit"), so it runs on
-      # WebKit only and skips on the others. See noxfile.py's `dashboard`.
-      - name: Run dashboard browser e2e (Chromium + Firefox + WebKit)
-        run: uv run nox -s dashboard
+      # Unit tests + coverage run in the dedicated web-quality job; this job
+      # builds the dashboard purely for the browser e2e that follows. Install
+      # only this leg's engine (+ its system libs).
+      - name: Install ${{ matrix.browser }} with system dependencies
+        run: uv run --group dev playwright install --with-deps ${{ matrix.browser }}
+      - name: Run dashboard browser e2e (${{ matrix.browser }})
+        run: uv run nox -k ${{ matrix.browser }}
 
   # web/ TypeScript quality gates (Biome lint + format, tsc, vitest v8
   # coverage) — the TS analogue of the lint/typecheck jobs. Node-only: no

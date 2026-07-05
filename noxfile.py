@@ -154,14 +154,19 @@ def tests_all(session: nox.Session) -> None:
 
 
 @nox_uv.session(python=["3.12"], uv_groups=["dev"])
-def dashboard(session: nox.Session) -> None:
-    """Run the monitor-dashboard browser e2e suite on all three engines.
+@nox.parametrize("browser", ["chromium", "firefox", "webkit"])
+def dashboard(session: nox.Session, browser: str) -> None:
+    """Run the monitor-dashboard browser e2e suite for one engine.
 
-    Runs every test on Chromium (Blink), Firefox (Gecko), and WebKit (Safari)
-    via Playwright; the one Safari-specific test is `@only_browser("webkit")`,
-    so it runs on WebKit only and skips (not silently) elsewhere. Kept out of
-    the hostless gate (and its 5-Python CI matrix) so only this session needs
-    browser binaries. Installs all three idempotently first.
+    Parametrized over Chromium (Blink), Firefox (Gecko), and WebKit (Safari):
+    `nox -s dashboard` runs all three (serially — nox has no in-process
+    session parallelism), while CI's `dashboard` matrix runs each variant in
+    its OWN parallel job (see `.github/workflows/ci.yml`), so wall-clock is one
+    engine's runtime, not three. Select one locally with `nox -k <browser>`.
+    The one Safari-specific test is `@only_browser("webkit")`, so it runs only
+    in the webkit variant and skips (not silently) in the others. Kept out of
+    the hostless gate (and its 5-Python CI matrix) so only this session needs a
+    browser binary; installs just this variant's engine.
 
     This suite drives the built React dashboard (`src/otto/monitor/static/
     dist/`) through a real `MonitorServer` — there's no legacy static
@@ -170,29 +175,24 @@ def dashboard(session: nox.Session) -> None:
     `make web`), which nox-uv's per-session venvs (Python-only, one per
     `PYTHON_VERSIONS` entry) have no way to provision. Rather than bolt a
     Node toolchain onto a nox session, that step lives directly in
-    `.github/workflows/ci.yml`'s `dashboard` job, ahead of `uv run nox -s
-    dashboard`; `make dashboard` (the local/dev entrypoint) carries the same
-    prerequisite. The browser system libraries (for all three engines) are
-    installed by `.github/workflows/ci.yml`'s `dashboard` job via `playwright
-    install --with-deps` ahead of this session.
+    `.github/workflows/ci.yml`'s `dashboard` job, ahead of the nox call;
+    `make dashboard` (the local/dev entrypoint) carries the same prerequisite.
+    Each engine's browser system libraries are installed by that job via
+    `playwright install --with-deps <browser>` ahead of this session.
     """
-    session.run("playwright", "install", "chromium", "firefox", "webkit")
+    session.run("playwright", "install", browser)
     session.run(
         "pytest",
         "tests/e2e/monitor/dashboard",
         "-m",
         "browser",
         "--browser",
-        "chromium",
-        "--browser",
-        "firefox",
-        "--browser",
-        "webkit",
+        browser,
         # CI-only lane: unlike `make dashboard` (which writes coverage data for
         # `make coverage` to fold in via --cov-append), this job stands alone
         # with nothing to combine into, so coverage stays off entirely.
         "--no-cov",
-        _junitxml(session, "dashboard"),
+        _junitxml(session, f"dashboard-{browser}"),
         *session.posargs,
     )
 
