@@ -42,38 +42,45 @@ Two responsibilities, cleanly split:
 - **`CommandFrame` (dialect knowledge)** renders the probe payload and supplies its confirmation pattern. The echo-proofness is a *property the dialect provides*, not something the loop knows about.
 - **A new `otto/host/shell_liveness.py` (I/O orchestration)** owns the resend-until-deadline loop, working over plain `send` / `expect` callables so it is agnostic to whether the caller is a `ShellSession`, a `ProxyIO`, or the interact bridge.
 
+The loop is generic over *which* probe to render and *which* pattern proves it landed — passed as callables so all three call sites (recover, resync, **and the handshake**) reuse it. It never sees a `frame` or a session; it builds fresh markers and delegates render/pattern to the caller.
+
 ```python
 # otto/host/shell_liveness.py  (sketch — final API in the plan)
 async def confirm_live(
     send: Callable[[str], Awaitable[None]],
     expect: Callable[[re.Pattern[str], float], Awaitable[str]],
-    frame: CommandFrame,
+    render: Callable[[SessionMarkers], str],            # e.g. frame.recover / frame.handshake
+    pattern: Callable[[SessionMarkers], re.Pattern[str]],  # e.g. frame.recover_pattern / ready-pattern
+    new_markers: Callable[[], SessionMarkers],          # per-probe marker source (see below)
     *,
     settle: float,
     probe_timeout: float,
     deadline: float,
 ) -> bool:
-    """Prove a real shell is at its prompt. Resend a fresh framed probe on a
-    short interval until confirmed or the deadline passes."""
-    await asyncio.sleep(settle)                      # absorb the transition flush
+    """Prove a real shell is at its prompt. Resend a framed probe on a short
+    interval until confirmed or the deadline passes. Returns whether it
+    confirmed; the caller owns the failure side effects (ConnectionError /
+    LoginProxyError / mark-dead)."""
+    await asyncio.sleep(settle)                      # absorb a transition flush (0 for handshake)
     loop = asyncio.get_running_loop()
     stop = loop.time() + deadline
     while loop.time() < stop:
-        m = SessionMarkers.for_session(uuid.uuid4().hex[:12])   # fresh per probe
-        await send(frame.recover(m))                            # dialect probe payload
+        m = new_markers()
+        await send(render(m))
         remaining = stop - loop.time()
         if remaining <= 0:
             break
         with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
-            await expect(frame.recover_pattern(m), min(probe_timeout, remaining))
+            await expect(pattern(m), min(probe_timeout, remaining))
             return True
     return False
 ```
 
 Key properties:
-- **Fresh markers per probe** — a slow probe's late output can never satisfy a later probe, and the recover probe never collides with the session's *command* markers (so it can't match a stale command END sentinel left in the buffer).
-- **Settle then resend** — the settle makes the common case land on probe 1; the resend loop covers the tail (a settle that under-absorbs under heavy load, or a genuinely slow round-trip).
+- **Caller-supplied marker source** — `_resync_shell` has no session markers to reuse (especially over the bridge), so it passes a *fresh-per-probe* factory (`SessionMarkers.for_session(uuid…)`); a slow probe's late output then can't satisfy a later probe. `_recover_session`/handshake pass `lambda: self._markers` (the session's fixed markers) — safe because a timed-out command left no END sentinel to falsely match, and it keeps their existing marker-driven tests concrete.
+- **Settle then resend** — the settle makes the common case land on probe 1; the resend loop covers the tail (a settle that under-absorbs under heavy load, or a genuinely slow round-trip). `settle=0` for the handshake (no transition to flush past).
 - **`probe_timeout` decoupled from `deadline`** — the exact fix for 3.13: how long to wait for *one* probe is independent of how long to *keep trying*. The old code fused them into 5×2 s.
+- **Returns `bool`, no side effects** — each caller maps a `False` to its own outcome (handshake → `ConnectionError`; resync → `LoginProxyError`; recover → mark dead), so the loop stays pure and the module has no back-dependency on sessions or login proxies.
 
 ### 3.2 Frame API additions
 
@@ -87,9 +94,11 @@ This is the crux of "works on both families": the loop is identical; the dialect
 
 ### 3.3 Call-site integration
 
-- **`_recover_session`** (all dialects): keep the Ctrl+C + 0.1 s pause, then call `confirm_live` with `self._write` and an `expect` adapter (`lambda p, t: asyncio.wait_for(self._read_until_pattern(p), t)`) and `self._frame`. On `False`, mark the session dead (as today). On bash this now correctly *fails* when parked in a REPL (fixes I-3); on Zephyr it behaves as before but with retries.
-- **`_resync_shell`** (bash only — login proxies are a `PosixPrivilege` path; Zephyr embedded hosts have no user-switching): call `confirm_live` with `io.send` / `io.expect` and a `BashFrame()`. This works over all three `ProxyIO` implementations — `_HostProxyIO`, `_SessionProxyIO`, and the echo-ON interact `_BridgeProxyIO` — because the digit-form match is echo-proof over each. Raise `LoginProxyError` on `False`, preserving the current wrapping.
-- **`_ensure_initialized`** (handshake): optional. It already has the robust loop; refactoring it onto `confirm_live` is a nice-to-have consolidation, not required. Proposed: refactor if it lands cleanly without perturbing the failed-login `ConnectionError` semantics; otherwise leave and note the shared lineage.
+- **`_recover_session`** (all dialects): keep the Ctrl+C + 0.1 s pause, then call `confirm_live` with `self._write`, an `expect` adapter (`lambda p, t: asyncio.wait_for(self._read_until_pattern(p), t)`), and `render=self._frame.recover` / `pattern=self._frame.recover_pattern`. On `False`, mark the session dead (as today). On bash this now correctly *fails* when parked in a REPL (fixes I-3); on Zephyr it behaves as before but with retries.
+- **`_resync_shell`** (bash only — login proxies are a `PosixPrivilege` path; Zephyr embedded hosts have no user-switching): call `confirm_live` with `io.send` / `io.expect` and `render`/`pattern` bound to a module-level `BashFrame()`. Works over all three `ProxyIO` implementations — `_HostProxyIO`, `_SessionProxyIO`, and the echo-ON interact `_BridgeProxyIO` — because the digit-form match is echo-proof over each. Uses `settle > 0` (the transition flush) and `deadline = 10 s`. Raise `LoginProxyError` on `False`, preserving the current wrapping.
+- **`_ensure_initialized`** (handshake): **folded in.** Refactor it onto `confirm_live` with `render=self._frame.handshake`, `pattern=` the existing line-anchored, ANSI-absorbing READY pattern (built per fresh marker), `settle=0`, and its current `_init_timeout` deadline / probe interval. On `False` it calls `_fail_init` (mark dead + close + `ConnectionError`) exactly as today, so the failed-login semantics are preserved — the side effect just moves out of the loop and into the caller. This is the third consumer that makes the shared unit clearly warranted.
+
+**Home of the helper.** A dedicated `otto/host/shell_liveness.py` importing only `command_frame` (for `SessionMarkers`) + `asyncio`/`uuid`/`re`, imported by both `session.py` and `login_proxy.py`. It cannot live in `session.py`: `session.py` already imports `login_proxy` (`Cred`, `run_undo`, …), so `login_proxy` importing the helper back would create a `session ↔ login_proxy` cycle. `command_frame` is a leaf value-object module and should stay free of async-I/O orchestration. A small dedicated module below both is the cycle-free home.
 
 ### 3.4 Retired
 
@@ -116,4 +125,7 @@ This is the crux of "works on both families": the loop is identical; the dialect
 
 - **Interim already shipped** (staged): settle + larger `_RESYNC_TIMEOUT` in `_resync_shell` — unblocks `make release` now. This redesign lands after, as the durable fix, and removes the interim knobs.
 - **Blast radius**: shared session recovery (Part-1) + login-proxy resync. Mitigated by the frame-delegated design (dialect-specific probe, one loop) and the live-bed matrix above.
-- **Open questions for the plan**: (a) exact `settle` / `probe_timeout` / `deadline` defaults (start from the handshake's 0.5 s interval / a ~15 s deadline; tune on the bed); (b) whether to fold `_ensure_initialized` onto `confirm_live` now or note it; (c) home of the helper (`shell_liveness.py` vs a `command_frame` free function) — leaning to a dedicated module for isolation.
+- **Resolved (2026-07-05)**:
+  - (a) **Defaults** — resync `deadline = 10 s`; `probe_timeout ≈ 0.5 s` (the handshake's proven probe interval), `settle ≈ 0.3 s` (the interim's live-bed value). recover keeps its ~5 s deadline; handshake keeps `_init_timeout`. Final values tuned on the bed in the plan.
+  - (b) **Fold the handshake in now** — `_ensure_initialized` becomes the third `confirm_live` consumer (see §3.3), preserving its `ConnectionError` / line-anchored-READY semantics.
+  - (c) **Dedicated `shell_liveness.py`** — not simplification alone: single source of truth (no re-drift across the three loops), isolated deterministic testing, and a cycle-free home below both `session.py` and `login_proxy.py` (session already imports login_proxy, so the helper cannot live in session).
