@@ -339,7 +339,24 @@ Vagrant.configure("2") do |config|
                     west init -l "${ZWORKSPACE}/zephyr"
                 fi
                 cd "${ZWORKSPACE}"
-                west update --narrow -o=--depth=1
+                # Retry west update: it fetches ~90 modules per workspace from
+                # github.com, and across three workspaces in one provision an
+                # occasional transient fetch reset (early EOF / RPC failure) on a
+                # single module would otherwise abort the whole run. west update
+                # is idempotent — already-fetched modules are no-ops — so a retry
+                # only re-attempts the module that got the hiccup. Fail hard only
+                # if it is still failing after three attempts.
+                for attempt in 1 2 3; do
+                    if west update --narrow -o=--depth=1; then
+                        break
+                    elif [ "${attempt}" -eq 3 ]; then
+                        echo "west update still failing after 3 attempts" >&2
+                        exit 1
+                    else
+                        echo "west update failed (attempt ${attempt}/3); retrying in 5s..." >&2
+                        sleep 5
+                    fi
+                done
                 if grep -q 'zephyr-export' zephyr/scripts/west-commands.yml 2>/dev/null; then
                     west zephyr-export
                 fi
@@ -604,7 +621,24 @@ VERS
                     west init -l "${ZWORKSPACE}/zephyr"
                 fi
                 cd "${ZWORKSPACE}"
-                west update --narrow -o=--depth=1
+                # Retry west update: it fetches ~90 modules per workspace from
+                # github.com, and across three workspaces in one provision an
+                # occasional transient fetch reset (early EOF / RPC failure) on a
+                # single module would otherwise abort the whole run. west update
+                # is idempotent — already-fetched modules are no-ops — so a retry
+                # only re-attempts the module that got the hiccup. Fail hard only
+                # if it is still failing after three attempts.
+                for attempt in 1 2 3; do
+                    if west update --narrow -o=--depth=1; then
+                        break
+                    elif [ "${attempt}" -eq 3 ]; then
+                        echo "west update still failing after 3 attempts" >&2
+                        exit 1
+                    else
+                        echo "west update failed (attempt ${attempt}/3); retrying in 5s..." >&2
+                        sleep 5
+                    fi
+                done
                 # `west zephyr-export` writes the Zephyr CMake package to
                 # ~/.cmake/packages/Zephyr so find_package(Zephyr) resolves
                 # without ZEPHYR_BASE. It's a Zephyr *extension* command from
