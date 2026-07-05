@@ -347,6 +347,14 @@ class AppShell:
             await self._session.expect(self.prompt, timeout=self._timeout)
         except (TimeoutError, asyncio.TimeoutError) as exc:
             inner._app_shell = None  # noqa: SLF001 — release the lock: the app never reached its prompt
+            # The launch line was typed into a REPL that never returned its
+            # prompt, so the caller's session may be parked inside a live app
+            # (the #1 authoring error, a wrong `prompt` regex, hits exactly
+            # this). Flag it for recovery: _ensure_ready re-confirms the POSIX
+            # shell on the session's next use instead of typing a frame into
+            # the app. Harmless on the host.app_shell owned-session path
+            # (close() never calls _ensure_ready).
+            inner._needs_recovery = True  # noqa: SLF001 — mark the ShellSession for recovery on next use
             raise AppShellTimeoutError(
                 f"{type(self).__name__}: prompt {self.prompt.pattern!r} not seen "
                 f"within {self._timeout}s of launch {self.launch!r}"

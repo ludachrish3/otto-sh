@@ -551,15 +551,21 @@ async def test_cmd_type_conversion_failure_is_failed_result_not_exception():
 # failure semantics — prompt timeout raises; state handled on unwind
 # --------------------------------------------------------------------------- #
 @pytest.mark.asyncio
-async def test_launch_timeout_unlocks_and_does_not_recover():
+async def test_launch_timeout_unlocks_and_marks_session_for_recovery():
     # The launch prompt never arrives -> AppShellTimeoutError from _enter.
     session, inner = _demo([asyncio.TimeoutError()])
     with pytest.raises(AppShellTimeoutError):
         async with DemoShell.attach(session):
             pytest.fail("body must not run when launch times out")
-    # _enter released the lock itself; _exit (and thus recovery) never ran.
+    # _enter released the lock itself; _exit (and thus a *synchronous* recovery)
+    # never ran.
     assert inner._app_shell is None
     assert inner.recovered is False
+    # But the launch line was typed into a REPL that never returned its prompt,
+    # so the caller's session is flagged for recovery (I-2): its next use runs
+    # _ensure_ready -> _recover_session instead of typing a frame into a live
+    # app. This poisons an attach(session) caller no longer.
+    assert inner._needs_recovery is True
 
 
 @pytest.mark.asyncio
