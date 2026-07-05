@@ -19,7 +19,7 @@
     "check:fix": "biome check --write ."
   },
   "dependencies": {
-    "plotly.js-gl2d-dist-min": "3.6.0",
+    "plotly.js-gl2d-dist-min": "3.7.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "zustand": "5.0.14"
