@@ -335,8 +335,32 @@ coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage r
 # prerequisite, its fresh data file is then extended by the main run's
 # --cov-append, folding the browser-driven server/collector lines (e.g. the
 # dashboard HTML route, UI event round-trips) into the gated report.
+#
+# Both suites drive real build artifacts — the React dashboard
+# (src/otto/monitor/static/dist/) and the coverage-report bundle
+# (src/otto/coverage/renderer/static/dist/covreport.js) — that only exist
+# once `make web` has run (noxfile.py's `dashboard` session docstring
+# documents this as `make dashboard`'s prerequisite). Declaring them as real
+# file targets, built on demand by `make web`, lets a fresh checkout or
+# worktree self-heal on the first `make coverage`/`make dashboard` instead of
+# dying with "run `make web` first" — while a checkout that already has them
+# (the common case after the first build) pays nothing extra: `make coverage`
+# is the most-frequently-run target, and `make web` itself isn't incremental
+# (npm re-emits both bundles every time), so gating on file *existence* (not
+# an unconditional `$(MAKE) web` prerequisite) is what keeps repeat runs fast.
+# The `&:` grouped-target form (GNU Make 4.3+) runs the recipe once for both
+# outputs together, not once per missing file. Same caveat as `release`
+# above: because the recipe line names `$(MAKE)` literally, GNU Make always
+# runs it for real even under `make -n`, so a dry run against a checkout with
+# no dist yet will actually build it.
 DASHBOARD_BROWSERS ?= chromium
-dashboard: ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once.
+DASHBOARD_DIST := src/otto/monitor/static/dist/index.html
+COVREPORT_DIST := src/otto/coverage/renderer/static/dist/covreport.js
+
+$(DASHBOARD_DIST) $(COVREPORT_DIST) &:
+	$(MAKE) web
+
+dashboard: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; builds web/'s dist bundles on first run if missing (see `make web`).
 	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m browser $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 
 dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit); invoked by `make release`. Needs `make browsers` once.
