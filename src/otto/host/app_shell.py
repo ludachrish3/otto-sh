@@ -1,9 +1,11 @@
 """AppShell parsing engine — ``Parsed`` models and the ``parse=`` dispatch.
 
-This module holds the *parsing half* of otto's AppShell feature: regex-backed
-pydantic models (:class:`Parsed`) and the functions that turn REPL output into
-typed objects. The interactive :class:`AppShell` REPL itself lives alongside
-these in this file but is added by a later task.
+This module holds both halves of otto's AppShell feature: the *parsing half* —
+regex-backed pydantic models (:class:`Parsed`) and the functions that turn REPL
+output into typed objects — and the interactive :class:`AppShell` REPL that
+wraps an application (mysql, ``python3``) living inside an already-open shell
+session, driving it with :meth:`AppShell.cmd` and locking out the session's
+sentinel-framed ``run`` while attached.
 
 A :class:`Parsed` subclass pairs a pydantic model with the compiled regex that
 produces it. Named groups feed same-named fields; pydantic converts the
@@ -22,13 +24,23 @@ the ``parse=`` spec:
   verbatim and any exception surfaced as :class:`ParseMismatch`.
 """
 
+import asyncio
 import re
 import types
-from typing import Any, ClassVar, Union, get_args, get_origin
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any, ClassVar, Union, get_args, get_origin
 
-from typing_extensions import override
+from typing_extensions import Self, override
 
 from otto.models.base import OttoModel
+from otto.result import ShellResult
+from otto.utils import Status
+
+from .command_frame import _ANSI_RE
+
+if TYPE_CHECKING:
+    from .session import HostSession
 
 
 class ParseMismatch(ValueError):  # noqa: N818 — spec-mandated public name; an `Error` suffix would break the documented AppShell API
@@ -156,3 +168,226 @@ def apply_parse(spec: Any, text: str) -> Any:
         except Exception as exc:
             raise ParseMismatch(str(exc)) from exc
     raise TypeError(f"unsupported parse spec: {spec!r}")
+
+
+class AppShellActiveError(RuntimeError):
+    """A shell session already has an :class:`AppShell` attached.
+
+    Raised by :meth:`~otto.host.session.ShellSession.run_cmd` while a shell is
+    attached — the sentinel command frame must never be typed into the app, so
+    ``run()`` is locked out — and by :meth:`AppShell.attach` when the session
+    already owns an active shell (AppShells do not nest).
+    """
+
+
+class AppShellTimeoutError(TimeoutError):
+    """The application REPL's prompt did not return within the timeout.
+
+    A *state* failure (the REPL is left in an unknown state), distinct from a
+    *data* mismatch: :meth:`AppShell.cmd` marks the shell broken and the
+    attaching context manager, on unwind, skips ``quit_cmd`` and goes straight
+    to the command-frame recovery handshake.
+    """
+
+
+class AppShell:
+    r"""Base class for an application REPL living inside a shell session.
+
+    A subclass declares how to start the app (:attr:`launch`), how to recognise
+    its prompt (:attr:`prompt`), and how to quit (:attr:`quit_cmd`); it may add
+    methods that build on :meth:`cmd`. Attach it to an already-open
+    :class:`~otto.host.session.HostSession` with the :meth:`attach` async
+    context manager, then drive the REPL with :meth:`cmd`::
+
+        class MySql(AppShell):
+            launch = "mysql --pager=cat"
+            prompt = re.compile(r"mysql> \Z")
+            quit_cmd = "quit"
+
+
+        async with MySql.attach(session) as sql:
+            rows = (await sql.cmd("SELECT id FROM users;", parse=list[Row])).value
+
+    While attached, the session's sentinel-framed
+    :meth:`~otto.host.session.HostSession.run` is locked out (raises
+    :class:`AppShellActiveError`) so the command frame is never typed into the
+    app; raw ``send`` / ``expect`` stay available. :class:`AppShell` is a plain
+    class, not a pydantic model.
+    """
+
+    launch: ClassVar[str]
+    """Command that starts the application REPL (sent with a trailing newline)."""
+
+    prompt: ClassVar[re.Pattern[str]]
+    r"""Pattern matching the app's prompt. A ``str`` is compiled at
+    class-definition time; an end-anchored pattern (``r"...\Z"``) is recommended
+    so a prompt-looking substring in the output cannot match early."""
+
+    quit_cmd: ClassVar[str] = "exit"
+    """Line sent on a clean context exit to leave the REPL."""
+
+    user: ClassVar[str | None] = None
+    """Cred login to become before launching (Part-1 proxy machinery); ``None``
+    keeps the session's current user."""
+
+    cmd_timeout: ClassVar[float] = 30.0
+    """Default seconds to wait for the prompt on launch, quit, and :meth:`cmd`."""
+
+    def __init__(self, session: "HostSession") -> None:
+        self._session = session
+        # Set when a prompt wait times out: the REPL state is unknown, so exit
+        # skips quit_cmd and goes straight to POSIX-shell recovery.
+        self._broken = False
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Reject a subclass missing ``launch``/``prompt``; compile a ``str`` prompt.
+
+        Runs at class-definition time (the plain-class analogue of
+        :meth:`Parsed.__pydantic_init_subclass__`) so a misdeclared shell fails
+        on import, never at attach time.
+        """
+        super().__init_subclass__(**kwargs)
+        missing = [name for name in ("launch", "prompt") if not hasattr(cls, name)]
+        if missing:
+            raise TypeError(
+                f"{cls.__name__} must define ClassVar(s) {missing} — an AppShell "
+                f"subclass needs both a launch command and a prompt pattern"
+            )
+        if isinstance(cls.prompt, str):
+            cls.prompt = re.compile(cls.prompt)
+        if not isinstance(cls.prompt, re.Pattern):
+            raise TypeError(
+                f"{cls.__name__}.prompt must be a str or compiled re.Pattern, "
+                f"got {type(cls.prompt).__name__}"
+            )
+
+    @classmethod
+    @asynccontextmanager
+    async def attach(cls, session: "HostSession") -> "AsyncIterator[Self]":
+        r"""Attach the shell to an already-open session (async context manager).
+
+        Takes the session's app-shell lock, sends :attr:`launch`, waits for
+        :attr:`prompt`, and yields the shell instance. While the block runs, the
+        session's sentinel-framed ``run`` is locked out. On exit it sends
+        :attr:`quit_cmd` (unless the shell is broken), confirms the POSIX shell
+        via the command-frame recovery handshake, and releases the lock; the
+        session itself is left open. Raises :class:`AppShellActiveError` if the
+        session already has a shell attached, or :class:`AppShellTimeoutError`
+        if the launch prompt never arrives.
+        """
+        shell = cls(session)
+        await shell._enter()
+        try:
+            yield shell
+        finally:
+            await shell._exit()
+
+    async def _enter(self) -> None:
+        """Take the lock, launch the app, and wait for its first prompt.
+
+        The lock is released here on *any* launch failure — because ``_enter``
+        raising means the :meth:`attach` context manager never runs its exit
+        path, so nothing else would release it. A prompt timeout is translated
+        to :class:`AppShellTimeoutError`; a dead transport or cancellation
+        surfaces unchanged. Either way a shell that never started leaves the
+        session unlocked (and its ``run`` usable again).
+        """
+        inner = self._session._session  # noqa: SLF001 — intra-package access to the HostSession's ShellSession to take the app-shell lock
+        active = inner._app_shell  # noqa: SLF001 — intra-package read of the ShellSession app-shell lock
+        if active is not None:
+            raise AppShellActiveError(
+                f"{type(active).__name__} is already attached to this session; "
+                f"AppShells do not nest"
+            )
+        inner._app_shell = self  # noqa: SLF001 — intra-package write taking the ShellSession app-shell lock
+        try:
+            await self._session.send(self.launch + "\n")
+            await self._session.expect(self.prompt, timeout=self.cmd_timeout)
+        except (TimeoutError, asyncio.TimeoutError) as exc:
+            inner._app_shell = None  # noqa: SLF001 — release the lock: the app never reached its prompt
+            raise AppShellTimeoutError(
+                f"{type(self).__name__}: prompt {self.prompt.pattern!r} not seen "
+                f"within {self.cmd_timeout}s of launch {self.launch!r}"
+            ) from exc
+        except BaseException:
+            # Non-timeout launch failure (dead transport, cancellation): the
+            # shell never attached, so release the lock and let the real error
+            # surface instead of a misleading AppShellActiveError on next run().
+            inner._app_shell = None  # noqa: SLF001 — release the lock: launch failed before the shell attached
+            raise
+
+    async def cmd(
+        self,
+        text: str,
+        *,
+        parse: Any = None,
+        timeout: float | None = None,
+    ) -> ShellResult:
+        """Run one line in the REPL and return its :class:`~otto.result.ShellResult`.
+
+        Sends ``text``, waits for the next :attr:`prompt`, and strips the echoed
+        command line (if the app echoed it), ANSI sequences, and the matched
+        prompt — what remains is :attr:`~otto.result.ShellResult.output`. With no
+        ``parse`` the output is also the ``value``; with a ``parse`` spec the
+        output is fed to :func:`apply_parse`. A parse mismatch is a *data*
+        problem — it returns a failed :class:`~otto.result.ShellResult` with the
+        output preserved, not an exception. A prompt timeout is a *state*
+        problem — the shell is marked broken and :class:`AppShellTimeoutError`
+        is raised.
+        """
+        await self._session.send(text + "\n")
+        wait = timeout if timeout is not None else self.cmd_timeout
+        try:
+            out = await self._session.expect(self.prompt, wait)
+        except (TimeoutError, asyncio.TimeoutError) as exc:
+            self._broken = True
+            raise AppShellTimeoutError(
+                f"{type(self).__name__}: prompt {self.prompt.pattern!r} not seen "
+                f"within {wait}s of {text!r}"
+            ) from exc
+        body = self._strip_output(text, out)
+        if parse is None:
+            return ShellResult(Status.Success, value=body, command=text, output=body)
+        try:
+            value = apply_parse(parse, body)
+        except ParseMismatch as exc:
+            return ShellResult(Status.Failed, value=None, msg=str(exc), command=text, output=body)
+        return ShellResult(Status.Success, value=value, command=text, output=body)
+
+    def _strip_output(self, text: str, out: str) -> str:
+        """Reduce a raw ``expect`` capture to the command's output.
+
+        Removes ANSI control sequences, the trailing matched prompt, and a
+        leading echoed copy of ``text`` (apps differ on whether they echo the
+        input line). A multi-line ``text`` is only echo-matched on its first
+        line, which is acceptable for the single-line commands AppShell targets.
+        """
+        body = _ANSI_RE.sub("", out)
+        # `expect` returns data up to and including the prompt match, so the
+        # prompt is at the tail — take the last match's start as the cut point.
+        last: re.Match[str] | None = None
+        for match in self.prompt.finditer(body):
+            last = match
+        if last is not None:
+            body = body[: last.start()]
+        # Drop a leading echoed command line, if the app echoed the input.
+        first, sep, rest = body.partition("\n")
+        if sep and first.rstrip("\r") == text:
+            body = rest
+        return body
+
+    async def _exit(self) -> None:
+        """Leave the REPL and confirm the POSIX shell, always releasing the lock.
+
+        Sends :attr:`quit_cmd` unless the shell is broken (best-effort), then
+        runs the command-frame recovery handshake to prove the underlying POSIX
+        shell is responsive again. The lock is cleared in a ``finally`` so the
+        session is always unlocked, even if quit or recovery raises.
+        """
+        inner = self._session._session  # noqa: SLF001 — intra-package access to the HostSession's ShellSession for recovery + lock release
+        try:
+            if not self._broken:
+                await self._session.send(self.quit_cmd + "\n")
+            await inner._recover_session()  # noqa: SLF001 — intra-package call to re-confirm the POSIX shell after the app exits
+        finally:
+            inner._app_shell = None  # noqa: SLF001 — always release the app-shell lock

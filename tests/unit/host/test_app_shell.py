@@ -17,17 +17,25 @@ verbatim from spec §9 and exercised against a representative mysql ``SELECT``
 output block.
 """
 
+import asyncio
 import re
 
 import pytest
+from typing_extensions import override
 
 from otto.host.app_shell import (
+    AppShell,
+    AppShellActiveError,
+    AppShellTimeoutError,
     Parsed,
     ParseMismatch,
     apply_parse,
     parse_all,
     parse_one,
 )
+from otto.host.session import ShellSession
+from otto.result import ShellResult
+from otto.utils import Status
 
 
 class Kv(Parsed):
@@ -208,3 +216,295 @@ def test_apply_parse_unsupported_spec_is_type_error():
     # Not a Parsed subclass, not list[Parsed], not callable -> rejected.
     with pytest.raises(TypeError, match="unsupported parse spec"):
         apply_parse(42, "anything")
+
+
+# =========================================================================== #
+# AppShell core + session locking (Task 13)
+# =========================================================================== #
+#
+# The AppShell tests drive a FAKE HostSession over a scripted ShellSession. The
+# ShellSession fake is a *real* ``ShellSession`` subclass so it carries the real
+# ``run_cmd`` guard and the real ``_app_shell`` lock slot; only its I/O and the
+# ``_recover_session`` handshake are stubbed. The HostSession fake mirrors the
+# thin ``send``/``expect``/``run`` delegation the real one performs.
+
+
+class _ReachedEnsureReadyError(Exception):
+    """Sentinel proving ``run_cmd`` fell through the lock guard to real work."""
+
+
+class FakeShellSession(ShellSession):
+    """A real ShellSession whose I/O + recovery are stubbed.
+
+    Instantiating it exercises the real ``ShellSession.__init__`` (so
+    ``_app_shell`` defaults to ``None``) and inherits the real ``run_cmd`` lock
+    guard. ``_recover_session`` records that it ran; ``_ensure_ready`` raises a
+    sentinel so a guard-passthrough can be observed without real transport I/O.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.recovered = False
+
+    @override
+    async def _open(self):
+        raise NotImplementedError
+
+    @override
+    async def _write(self, data):
+        raise NotImplementedError
+
+    @override
+    async def _read_until_pattern(self, pattern):
+        raise NotImplementedError
+
+    @override
+    async def close(self):
+        pass
+
+    @override
+    async def _ensure_ready(self):
+        raise _ReachedEnsureReadyError
+
+    @override
+    async def _recover_session(self):
+        self.recovered = True
+        return ""
+
+
+class FakeHostSession:
+    """Duck-typed HostSession: records sends, scripts expect, delegates run.
+
+    ``expect`` pops items off ``script`` — a str is returned, a BaseException is
+    raised (to script a prompt timeout). ``run`` funnels through the underlying
+    ShellSession's real ``run_cmd`` so the lock guard is exercised end-to-end.
+    """
+
+    def __init__(self, session, script=None):
+        self._session = session
+        self.sent = []
+        self.expected = []
+        self._script = list(script or [])
+
+    async def send(self, text, log=None):
+        self.sent.append(text)
+
+    async def expect(self, pattern, timeout=10.0):
+        self.expected.append((pattern, timeout))
+        item = self._script.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    async def run(self, cmds, *args, **kwargs):
+        return await self._session.run_cmd(str(cmds))
+
+
+class DemoShell(AppShell):
+    """Minimal AppShell fixture: mysql-like launch/prompt/quit."""
+
+    launch = "mysql"
+    prompt = re.compile(r"mysql> \Z")
+    quit_cmd = "quit"
+
+
+def _demo(script):
+    """Build a (FakeHostSession, FakeShellSession) pair scripted with ``script``."""
+    inner = FakeShellSession()
+    return FakeHostSession(inner, script=script), inner
+
+
+# --------------------------------------------------------------------------- #
+# class-definition-time guards
+# --------------------------------------------------------------------------- #
+def test_appshell_requires_launch():
+    with pytest.raises(TypeError, match="launch"):
+
+        class NoLaunch(AppShell):
+            prompt = re.compile(r">>> ")
+
+
+def test_appshell_requires_prompt():
+    with pytest.raises(TypeError, match="prompt"):
+
+        class NoPrompt(AppShell):
+            launch = "python3"
+
+
+def test_appshell_normalizes_str_prompt_to_pattern():
+    class StrPrompt(AppShell):
+        launch = "python3"
+        prompt = r">>> \Z"
+
+    assert isinstance(StrPrompt.prompt, re.Pattern)
+    assert StrPrompt.prompt.pattern == r">>> \Z"
+
+
+def test_appshell_subclass_inherits_launch_and_prompt():
+    # A sub-subclass that redefines nothing inherits the (already-compiled)
+    # ClassVars without re-tripping the class-def guard.
+    class Child(DemoShell):
+        quit_cmd = "\\q"
+
+    assert Child.launch == "mysql"
+    assert isinstance(Child.prompt, re.Pattern)
+
+
+# --------------------------------------------------------------------------- #
+# attach — launch, yield instance, quit + recover + unlock on exit
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_attach_launches_yields_and_cleans_up():
+    session, inner = _demo(["\nmysql> "])
+    async with DemoShell.attach(session) as shell:
+        assert isinstance(shell, DemoShell)
+        # The lock is held: the underlying session names this shell.
+        assert inner._app_shell is shell
+
+    # Launch sent, then quit sent, in order.
+    assert session.sent == ["mysql\n", "quit\n"]
+    # Frame recovery ran to confirm the POSIX shell is back.
+    assert inner.recovered is True
+    # Lock always released on exit.
+    assert inner._app_shell is None
+
+
+# --------------------------------------------------------------------------- #
+# session locking — run()/run_cmd blocked while attached
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_run_blocked_while_attached_names_shell_class():
+    session, inner = _demo(["\nmysql> "])
+    async with DemoShell.attach(session):
+        # Raw run_cmd on the locked ShellSession is rejected, naming the shell.
+        with pytest.raises(AppShellActiveError, match="DemoShell"):
+            await inner.run_cmd("ls -la")
+        # And through the HostSession.run delegation too.
+        with pytest.raises(AppShellActiveError, match="DemoShell"):
+            await session.run("whoami")
+    # Once the shell exits the lock is gone; the guard no longer fires.
+    assert inner._app_shell is None
+
+
+@pytest.mark.asyncio
+async def test_run_cmd_guard_is_passthrough_when_unlocked():
+    inner = FakeShellSession()  # _app_shell defaults to None
+    # With no shell attached the guard must not fire — execution falls through
+    # to _ensure_ready (here a sentinel) instead of raising AppShellActiveError.
+    with pytest.raises(_ReachedEnsureReadyError):
+        await inner.run_cmd("ls")
+
+
+@pytest.mark.asyncio
+async def test_nested_attach_raises_without_disturbing_first_lock():
+    session, inner = _demo(["\nmysql> "])
+    async with DemoShell.attach(session) as first:
+        with pytest.raises(AppShellActiveError, match="DemoShell"):
+            async with DemoShell.attach(session):
+                pass
+        # The first shell still owns the lock; the failed nested attach did not
+        # clear it or run recovery.
+        assert inner._app_shell is first
+        assert inner.recovered is False
+    assert inner._app_shell is None
+
+
+# --------------------------------------------------------------------------- #
+# cmd — echo + prompt stripping, parse dispatch, parse-mismatch semantics
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_cmd_strips_echo_and_prompt():
+    session, _inner = _demo(["\nmysql> ", "SELECT 1\n1\nmysql> "])
+    async with DemoShell.attach(session) as shell:
+        result = await shell.cmd("SELECT 1")
+
+    assert isinstance(result, ShellResult)
+    assert result.status is Status.Success
+    assert result.command == "SELECT 1"
+    # Echoed "SELECT 1" line and trailing "mysql> " prompt removed.
+    assert result.output == "1\n"
+    assert result.value == "1\n"
+
+
+@pytest.mark.asyncio
+async def test_cmd_handles_echo_off_apps():
+    # No echoed command line — only the output and the prompt.
+    session, _inner = _demo(["\nmysql> ", "42\nmysql> "])
+    async with DemoShell.attach(session) as shell:
+        result = await shell.cmd("SELECT 42")
+    assert result.output == "42\n"
+
+
+@pytest.mark.asyncio
+async def test_cmd_strips_ansi_sequences():
+    session, _inner = _demo(["\nmysql> ", "SELECT 1\n\x1b[32mgreen\x1b[0m\nmysql> "])
+    async with DemoShell.attach(session) as shell:
+        result = await shell.cmd("SELECT 1")
+    assert result.output == "green\n"
+
+
+@pytest.mark.asyncio
+async def test_cmd_with_parse_returns_typed_value():
+    session, _inner = _demo(["\nmysql> ", "SELECT 1\na=5\nmysql> "])
+    async with DemoShell.attach(session) as shell:
+        result = await shell.cmd("SELECT 1", parse=Kv)
+    assert result.status is Status.Success
+    assert isinstance(result.value, Kv)
+    assert (result.value.key, result.value.n) == ("a", 5)
+    assert result.output == "a=5\n"
+
+
+@pytest.mark.asyncio
+async def test_cmd_parse_mismatch_is_failed_result_not_exception():
+    session, _inner = _demo(["\nmysql> ", "SELECT 1\nnope\nmysql> "])
+    async with DemoShell.attach(session) as shell:
+        result = await shell.cmd("SELECT 1", parse=Kv)
+    # A parse mismatch is a DATA problem: failed ShellResult, not a raise.
+    assert result.status is Status.Failed
+    assert result.value is None
+    assert result.msg  # names what didn't match
+    # Output is preserved for debugging.
+    assert result.output == "nope\n"
+
+
+# --------------------------------------------------------------------------- #
+# failure semantics — prompt timeout raises; state handled on unwind
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_launch_timeout_unlocks_and_does_not_recover():
+    # The launch prompt never arrives -> AppShellTimeoutError from _enter.
+    session, inner = _demo([asyncio.TimeoutError()])
+    with pytest.raises(AppShellTimeoutError):
+        async with DemoShell.attach(session):
+            pytest.fail("body must not run when launch times out")
+    # _enter released the lock itself; _exit (and thus recovery) never ran.
+    assert inner._app_shell is None
+    assert inner.recovered is False
+
+
+@pytest.mark.asyncio
+async def test_non_timeout_launch_failure_releases_lock():
+    # A dead transport during launch is NOT a timeout: the real error must
+    # surface and the lock must be released (else run() is wrongly blocked).
+    session, inner = _demo([ConnectionError("boom")])
+    with pytest.raises(ConnectionError, match="boom"):
+        async with DemoShell.attach(session):
+            pass
+    assert inner._app_shell is None
+    assert inner.recovered is False
+
+
+@pytest.mark.asyncio
+async def test_cmd_timeout_marks_broken_then_exit_recovers_without_quit():
+    session, inner = _demo(["\nmysql> ", asyncio.TimeoutError()])
+    with pytest.raises(AppShellTimeoutError):
+        async with DemoShell.attach(session) as shell:
+            await shell.cmd("SELECT 1")
+
+    # The cmd line was sent before the timeout; quit_cmd was NOT (shell broken).
+    assert "mysql\n" in session.sent
+    assert "SELECT 1\n" in session.sent
+    assert "quit\n" not in session.sent
+    # Broken exit still recovers the POSIX shell and releases the lock.
+    assert inner.recovered is True
+    assert inner._app_shell is None

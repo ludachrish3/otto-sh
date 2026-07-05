@@ -152,6 +152,12 @@ class ShellSession(ABC):
         # SessionManager from the host's login user; mutated only by the
         # elevation flow (switch_user/as_user). '' on loginless shells.
         self.current_user: str = ""
+        # App-shell lock: the AppShell instance currently attached to this
+        # session, or None. Typed `object` (not AppShell) to avoid an import
+        # cycle — session.py must not import app_shell at module load. While
+        # set, run_cmd refuses to type its sentinel command frame into the app
+        # (see the guard at the top of run_cmd); raw send/expect stay usable.
+        self._app_shell: object | None = None
 
     @property
     def alive(self) -> bool:
@@ -375,6 +381,18 @@ class ShellSession(ABC):
         Returns:
             CommandResult with exit code extracted from the sentinel.
         """
+        # An attached AppShell has this session parked inside an application
+        # REPL (mysql, python3); typing the sentinel command frame into it would
+        # be gibberish. Cheap `is not None` guard on the hot path — a no-op when
+        # nothing is attached (the default). Local import breaks the
+        # app_shell <-> session import cycle.
+        if self._app_shell is not None:
+            from .app_shell import AppShellActiveError
+
+            raise AppShellActiveError(
+                f"{type(self._app_shell).__name__} is attached to this session; "
+                f"run() is unavailable until the app shell exits"
+            )
         await self._ensure_ready()
         sink = on_output if on_output is not None else self._on_output
         try:
