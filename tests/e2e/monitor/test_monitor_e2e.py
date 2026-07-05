@@ -143,22 +143,35 @@ def _run_monitor_briefly(
     host: str,
     db_path: Path,
     extra_env: dict[str, str] | None = None,
+    interval: int = 1,
 ) -> _MonitorRunResult:
     """Start, tick, and cleanly stop ``otto monitor`` against *host*.
 
     Shared choreography for the monitor e2e tests: start the subprocess with
-    ``--hosts <host> --interval 1 --db <db_path>``, poll the DB for up to 6 s
-    waiting for the first collection tick, send SIGINT, and wait up to 30 s
-    for a clean exit — failing loudly (never skipping) if the live-bed
+    ``--hosts <host> --interval <interval> --db <db_path>``, poll the DB for up
+    to 6 s waiting for the first collection tick, send SIGINT, and wait up to
+    30 s for a clean exit — failing loudly (never skipping) if the live-bed
     process wedges. Returns the process's exit status and captured output so
     callers apply their own assertions.
+
+    ``interval`` is the collection interval *and* the per-tick cumulative
+    timeout budget shared across all of a host's parser commands (see
+    ``otto.host.host._run_cmds_with_budget``). A tick's commands run
+    sequentially under that budget, so the *last* parser in the batch is the
+    first to be starved when the budget is exhausted. A caller asserting on a
+    trailing parser's output (e.g. the registered ``UptimeParser``, which sorts
+    dead-last after ``DEFAULT_PARSERS``) must pass a budget large enough for the
+    whole batch to finish under CI load — hence the default of 1 s is only safe
+    for callers that assert on the fast, early parsers. Raising the budget costs
+    no wall-clock: SIGINT is sent as soon as the first tick's rows land, not
+    after the interval elapses.
     """
     proc = _start_monitor(
         [
             "--hosts",
             host,
             "--interval",
-            "1",
+            str(interval),
             "--db",
             str(db_path),
         ],
@@ -336,10 +349,18 @@ def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Pa
     host_id = f"{monitor_host}_seed"
 
     # Run 1: registration targets the leased host -> Uptime present.
-    # Same Popen->ticks->SIGINT choreography as the existing test.
+    # Same Popen->ticks->SIGINT choreography as the existing test, but with the
+    # production-default 5 s interval rather than 1 s: UptimeParser is the last
+    # command in the (DEFAULT_PARSERS + uptime) batch, and all of a host's
+    # parser commands share the interval as a single cumulative timeout budget.
+    # Under make-release load (~0.13 s/command over ~10 commands) a 1 s budget
+    # is exhausted before the trailing `cat /proc/uptime` runs, starving it on
+    # every tick so no Uptime rows are ever written. A 5 s budget clears the
+    # whole batch with margin. (No wall-clock cost: SIGINT fires as soon as the
+    # first tick's rows land — see _run_monitor_briefly.)
     db_registered = tmp_path / "registered.db"
     result_registered = _run_monitor_briefly(
-        monitor_host, db_registered, extra_env={"OTTO_E2E_UPTIME_HOST": host_id}
+        monitor_host, db_registered, extra_env={"OTTO_E2E_UPTIME_HOST": host_id}, interval=5
     )
     assert _uptime_rows(db_registered, monitor_host) > 0, (
         f"host {monitor_host} registered UptimeParser but produced no Uptime rows\n"
