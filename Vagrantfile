@@ -149,17 +149,21 @@ Vagrant.configure("2") do |config|
             # set `playwright install-deps chromium` reports missing on this
             # box); the browser binary itself comes from `make browsers`.
             # The gstreamer/libwoff/xvfb/fonts block below it is WebKit's
-            # runtime for the same suite's `make dashboard-webkit` lane
-            # (Task 11's Safari modebar pin): the package list is verbatim
-            # what `playwright install-deps --dry-run webkit` resolves to on
-            # ubuntu-24.04 (Playwright 1.61.0's native-deps registry — its
-            # `webkit` + `tools` dependency groups), minus the two packages
-            # the Chromium block above already installs (libatk1.0-0t64,
-            # libgbm1) and one upstream-duplicated entry (libicu74). On a
-            # Playwright bump, regenerate with that --dry-run command (on a
-            # box without the deps — it prints "All system dependencies are
-            # installed" once satisfied). Browser binaries still come from
-            # `make browsers`, never from provisioning.
+            # runtime (the dashboard e2e runs on all three engines): the
+            # package list is verbatim what `playwright install-deps --dry-run
+            # webkit` resolves to on ubuntu-24.04 (Playwright 1.61.0's
+            # native-deps registry — its `webkit` + `tools` dependency groups),
+            # minus the two packages the Chromium block above already installs
+            # (libatk1.0-0t64, libgbm1) and one upstream-duplicated entry
+            # (libicu74). The final libavcodec60/libgtk-3-0t64/libx11-xcb1/
+            # libxcb1/libxcb-shm0/libxcursor1/libxi6/libxrender1 group is
+            # Firefox's delta — Playwright 1.61.0's `firefox` group for
+            # ubuntu-24.04 minus everything the Chromium+WebKit blocks already
+            # cover. On a Playwright bump, regenerate each with `playwright
+            # install-deps --dry-run <engine>` (on a box WITHOUT the deps — it
+            # prints "All system dependencies are installed" once satisfied).
+            # Browser binaries still come from `make browsers`, never from
+            # provisioning.
             apt install -y  gcc                   \
                             gh                    \
                             graphviz              \
@@ -245,6 +249,14 @@ Vagrant.configure("2") do |config|
                             fonts-wqy-zenhei               \
                             fonts-tlwg-loma-otf            \
                             fonts-freefont-ttf             \
+                            libavcodec60                   \
+                            libgtk-3-0t64                  \
+                            libx11-xcb1                    \
+                            libxcb1                        \
+                            libxcb-shm0                    \
+                            libxcursor1                    \
+                            libxi6                         \
+                            libxrender1                    \
 
             # Set MTU to 1350 on all ethernet interfaces to support mobile
             # connections that have a smaller MTU size

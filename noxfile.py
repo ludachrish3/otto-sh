@@ -155,10 +155,13 @@ def tests_all(session: nox.Session) -> None:
 
 @nox_uv.session(python=["3.12"], uv_groups=["dev"])
 def dashboard(session: nox.Session) -> None:
-    """Run the monitor-dashboard browser e2e suite (Chromium via Playwright).
+    """Run the monitor-dashboard browser e2e suite on all three engines.
 
-    Kept out of the hostless gate (and its 5-Python CI matrix) so only this
-    session needs a browser binary. Installs Chromium idempotently first.
+    Runs every test on Chromium (Blink), Firefox (Gecko), and WebKit (Safari)
+    via Playwright; the one Safari-specific test is `@only_browser("webkit")`,
+    so it runs on WebKit only and skips (not silently) elsewhere. Kept out of
+    the hostless gate (and its 5-Python CI matrix) so only this session needs
+    browser binaries. Installs all three idempotently first.
 
     This suite drives the built React dashboard (`src/otto/monitor/static/
     dist/`) through a real `MonitorServer` — there's no legacy static
@@ -169,15 +172,22 @@ def dashboard(session: nox.Session) -> None:
     Node toolchain onto a nox session, that step lives directly in
     `.github/workflows/ci.yml`'s `dashboard` job, ahead of `uv run nox -s
     dashboard`; `make dashboard` (the local/dev entrypoint) carries the same
-    prerequisite. The WebKit-only pin (`make dashboard-webkit`) is likewise
-    invoked straight from the Makefile in CI, not as a nox session.
+    prerequisite. The browser system libraries (for all three engines) are
+    installed by `.github/workflows/ci.yml`'s `dashboard` job via `playwright
+    install --with-deps` ahead of this session.
     """
-    session.run("playwright", "install", "chromium")
+    session.run("playwright", "install", "chromium", "firefox", "webkit")
     session.run(
         "pytest",
         "tests/e2e/monitor/dashboard",
         "-m",
         "browser",
+        "--browser",
+        "chromium",
+        "--browser",
+        "firefox",
+        "--browser",
+        "webkit",
         # CI-only lane: unlike `make dashboard` (which writes coverage data for
         # `make coverage` to fold in via --cov-append), this job stands alone
         # with nothing to combine into, so coverage stays off entirely.

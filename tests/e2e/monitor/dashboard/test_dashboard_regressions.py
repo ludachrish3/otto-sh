@@ -173,10 +173,9 @@ def test_safari_modebar_contained_after_resize(
     engine-agnostically by `test_resize_relayouts_plot_width` above) and adds
     `overflow: hidden` containment (dashboard.css) as defense in depth. This
     test is the WebKit-specific half of that pin, matching the bug report's
-    own browser — see this file's module docstring and the Makefile's
-    `dashboard-webkit` target/comment for why `only_browser` gates it to a
-    dedicated invocation instead of folding it into the default (chromium)
-    `make dashboard` run.
+    own browser. `make dashboard` runs the whole suite on all three engines;
+    `@only_browser("webkit")` limits THIS test to WebKit (it skips on
+    Chromium/Firefox) since it asserts Safari's specific modebar overdraw.
     """
     _open_host(page, live_dash)
     _resize_and_settle(page, 1200)

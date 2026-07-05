@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-webkit web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -190,8 +190,8 @@ hyperfine:
 		bash scripts/install_hyperfine.sh "$(HYPERFINE_VERSION)" "$(VENV_BIN)"; \
 	fi
 
-browsers: ## (Setup) Install the Playwright Chromium + WebKit binaries used by the dashboard e2e tests and the docs media pipeline (WebKit: Task 11's Safari-modebar pin; on a box missing WebKit's system libs, run `uv run playwright install-deps webkit` once — the Vagrantfile's dev-root provisioner carries the exact apt package list + how to regenerate it)
-	uv run playwright install chromium webkit
+browsers: ## (Setup) Install the Playwright Chromium + Firefox + WebKit binaries: the dashboard e2e suite runs on all three engines, and the docs media pipeline uses Chromium. On a box missing a browser's system libs, run `uv run playwright install-deps <chromium|firefox|webkit>` once — the Vagrantfile's dev-root provisioner carries the exact apt package list + how to regenerate it.
+	uv run playwright install chromium firefox webkit
 
 # web/ (React+TS monitor dashboard) build lanes. `make web` produces the
 # dist/ that MonitorServer requires (see server.py's _dist_index_path()) —
@@ -310,34 +310,22 @@ coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a covera
 coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
 	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
 
-# The dashboard lane runs -n 1 (all browser tests share one xdist_group anyway;
-# extra workers would sit idle and emit "No data was collected" coverage
-# warnings) and writes coverage DATA only: --cov-report= suppresses the report
-# so a standalone `make dashboard` never stomps reports/coverage/html. Running
-# first as `coverage`'s prerequisite, its fresh data file is then extended by
-# the main run's --cov-append, folding the browser-driven server/collector
-# lines (e.g. the dashboard HTML route, UI event round-trips) into the gated
-# report.
-dashboard: ## Run the browser e2e suites (monitor dashboard + coverage report; needs `make browsers` once). Writes coverage data for `coverage` to append. JUnit XML in reports/junit/dashboard/.
-	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m browser -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
-
-# Task 11's WebKit lane. Design choice, in full:
-# pytest-playwright parametrizes the `browser_name` fixture from
-# `--browser` at the SESSION level, so `--browser webkit` alone would attempt
-# EVERY test in the dashboard suite under WebKit, not just the Safari-specific
-# one — nearly all of those tests assert engine-agnostic DOM/behavior parity
-# already covered by the default chromium `dashboard` target above, so running
-# them twice would just double runtime for zero new coverage. Instead: the one
-# genuinely Safari-specific test is marked `@pytest.mark.only_browser("webkit")`
-# (a built-in pytest-playwright marker) — a no-op skip under every OTHER
-# `--browser` (including the default chromium `dashboard` run above, where it
-# shows up as 1 skipped, not silently absent) — and this target additionally
-# narrows to just that test via `-k`, so the WebKit lane's runtime is one
-# browser launch, not the whole suite. `--no-cov`: a single-test lane like
-# this isn't meant to feed the aggregate coverage gate (unlike `dashboard`,
-# it's not chained into `coverage`); CI wiring for this target is Task 13's.
-dashboard-webkit: ## Run Task 11's WebKit-only Safari modebar-containment pin (needs `make browsers` once, incl. WebKit's system deps — see the `browsers` target and the Vagrantfile's dev-root provisioner)
-	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard -m browser --browser webkit -k test_safari_modebar_contained_after_resize -n 1 --no-cov --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard-webkit)
+# The dashboard lane runs the monitor-dashboard + coverage-report browser
+# suites on ALL THREE engines — Chromium (Blink), Firefox (Gecko), WebKit
+# (Safari) — so a rendering or behavior regression is caught on whichever
+# engine breaks. pytest-playwright parametrizes each test across the
+# `--browser` values; the one genuinely Safari-specific test is marked
+# `@pytest.mark.only_browser("webkit")`, so it runs on WebKit only and shows up
+# as a skip (not silently absent) under Chromium/Firefox. Runs -n 1 (all
+# browser tests share one xdist_group anyway; extra workers would sit idle and
+# emit "No data was collected" coverage warnings) and writes coverage DATA
+# only: --cov-report= suppresses the report so a standalone `make dashboard`
+# never stomps reports/coverage/html. Running first as `coverage`'s
+# prerequisite, its fresh data file is then extended by the main run's
+# --cov-append, folding the browser-driven server/collector lines (e.g. the
+# dashboard HTML route, UI event round-trips) into the gated report.
+dashboard: ## Run the browser e2e suites (monitor dashboard + coverage report) on Chromium + Firefox + WebKit; needs `make browsers` once. Writes coverage data for `coverage` to append. JUnit XML in reports/junit/dashboard/.
+	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m browser --browser chromium --browser firefox --browser webkit -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead

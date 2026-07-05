@@ -70,17 +70,13 @@ jobs:
         run: make web
       # Unit tests + coverage now run in the dedicated web-quality job below;
       # this job builds the dashboard purely for the browser e2e that follows.
-      - name: Install Chromium + WebKit with system dependencies
-        run: uv run --group dev playwright install --with-deps chromium webkit
-      - name: Run dashboard browser e2e (Chromium)
+      - name: Install Chromium + Firefox + WebKit with system dependencies
+        run: uv run --group dev playwright install --with-deps chromium firefox webkit
+      # The dashboard suite runs on all three engines (Blink/Gecko/Safari) —
+      # the Safari-specific test is @only_browser("webkit"), so it runs on
+      # WebKit only and skips on the others. See noxfile.py's `dashboard`.
+      - name: Run dashboard browser e2e (Chromium + Firefox + WebKit)
         run: uv run nox -s dashboard
-      # WebKit lane: Task 11's Safari-modebar pin is the one genuinely
-      # engine-specific test in the suite (see the Makefile's
-      # `dashboard-webkit` target for the full `-k` rationale); this is not
-      # a nox session (see noxfile.py's `dashboard` docstring) so it's
-      # invoked directly via the Makefile.
-      - name: Run the WebKit-only Safari modebar pin
-        run: make dashboard-webkit
 
   # web/ TypeScript quality gates (Biome lint + format, tsc, vitest v8
   # coverage) — the TS analogue of the lint/typecheck jobs. Node-only: no

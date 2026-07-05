@@ -32,18 +32,16 @@ is left to the Playwright e2e), `EventToolbar.tsx` (~34%), `api/sse.ts` (~28%),
 `EventPopover.tsx` (~34%). Raise the thresholds each time coverage climbs so it
 stays a ratchet.
 
-## 3. Firefox (Gecko) browser-engine testing
+## 3. Firefox (Gecko) browser-engine testing — DONE (in this branch)
 
-The Playwright dashboard e2e covers Chromium (Blink) + WebKit today. Add Firefox
-(Gecko) for full main-engine coverage:
-- CI: `playwright install --with-deps firefox` in the dashboard job; add a
-  Firefox lane (parametrize `--browser firefox`, or a dedicated nox/Makefile
-  target à la `dashboard-webkit`).
-- Vagrantfile: Firefox's Playwright build needs its own system libs — add them
-  to the dev-root provisioner's apt list (mirror the WebKit deps note), and to
-  `make browsers` (`playwright install ... firefox`).
-- Mind engine-specific pins (the WebKit Safari-modebar test) — most assertions
-  should be engine-agnostic.
+The dashboard e2e now runs the full suite on all three engines (Chromium/Blink,
+Firefox/Gecko, WebKit/Safari); the one Safari-specific test stays
+`@only_browser("webkit")`. This surfaced and fixed a real SSE bug (Firefox sat
+at "Connecting…" until the first byte — `server.py` now sends an immediate
+prelude). Left as a future note: `make dashboard` runs three engines serially
+(`-n 1`), so it's ~3× the browser wall-clock; if that becomes a drag on `make
+coverage`, consider parallelizing engines across CI jobs or trimming the
+coverage-feeding lane to one engine while keeping all three in CI.
 
 ## 4. TypeScript performance tooling
 

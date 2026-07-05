@@ -134,9 +134,10 @@ that pins the dashboard's observable surface — element ids and classes,
 Plotly trace/layout internals, status text, `localStorage` keys — the
 contract the frontend was ported to React against. Those pins adjudicate,
 not this page or the source: if a doc description and a pin ever disagree,
-fix the doc. Run them locally with `make dashboard` (Chromium; needs
-`make browsers` once) and `make dashboard-webkit` (the WebKit-only Safari
-modebar pin).
+fix the doc. Run them locally with `make dashboard` (needs `make browsers`
+once), which exercises the suite on all three engines — Chromium (Blink),
+Firefox (Gecko), and WebKit (Safari); the one Safari-specific test runs on
+WebKit only via `@only_browser("webkit")`.
 
 ## Monitoring during a test run
 
