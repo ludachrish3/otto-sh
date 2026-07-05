@@ -650,6 +650,16 @@ async def test_attach_timeout_overrides_launch_expect():
 
 
 @pytest.mark.asyncio
+async def test_attach_timeout_reported_in_launch_timeout_message():
+    # A launch-prompt timeout under a session override must report the
+    # session's timeout value in the error message, not the ClassVar default.
+    session, _inner = _demo([asyncio.TimeoutError()])
+    with pytest.raises(AppShellTimeoutError, match=r"within 90\.0s of launch"):
+        async with DemoShell.attach(session, timeout=90.0):
+            pytest.fail("body must not run when launch times out")
+
+
+@pytest.mark.asyncio
 async def test_host_app_shell_timeout_threads_through_to_attach():
     host, session = _recording_demo()
     async with host.app_shell(DemoShell, timeout=45.0):
