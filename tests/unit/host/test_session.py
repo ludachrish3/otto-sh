@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
+from otto.host.local_host import LocalHost
 from otto.host.session import LocalSession, SessionManager, ShellSession
 from otto.utils import Status
 
@@ -289,7 +290,7 @@ class TestTimeout:
         # We need to feed the recovery marker
         async def feed_recovery():
             await asyncio.sleep(0.15)
-            session.feed(f"{session._recover_marker}\n")
+            session.feed(f"{session._end_marker_prefix}0__\n")
 
         recovery_task = asyncio.create_task(feed_recovery())
 
@@ -313,7 +314,7 @@ class TestTimeout:
 
         async def feed_recovery():
             await asyncio.sleep(0.15)
-            session.feed(f"{session._recover_marker}\n")
+            session.feed(f"{session._end_marker_prefix}0__\n")
 
         recovery_task = asyncio.create_task(feed_recovery())
 
@@ -323,6 +324,38 @@ class TestTimeout:
 
         # Session should still be alive
         assert session.alive
+
+    @pytest.mark.asyncio
+    async def test_recovery_fails_when_parked_in_repl(self, session: MockSession):
+        """A session parked in a REPL echoes the probe's literal `$?`, never the
+        digit form — recovery must report failure (I-3), not a false positive."""
+
+        async def simulate():
+            await asyncio.sleep(0.01)
+            session.feed(f"{session._begin_marker}\n")  # command hangs, no END
+
+        feed_task = asyncio.create_task(simulate())
+
+        async def echo_probe_literally():
+            # Mimic a REPL parroting the probe command back verbatim (literal $?).
+            await asyncio.sleep(0.15)
+            session.feed(f'echo "{session._end_marker_prefix}$?__"\n')
+
+        repl_task = asyncio.create_task(echo_probe_literally())
+
+        import otto.host.session as session_mod
+
+        original = session_mod._RECOVERY_TIMEOUT
+        session_mod._RECOVERY_TIMEOUT = 0.3
+        try:
+            result = await session.run_cmd("mysql", timeout=0.1)
+        finally:
+            session_mod._RECOVERY_TIMEOUT = original
+        await feed_task
+        await repl_task
+
+        assert result.status == Status.Error
+        assert not session.alive  # literal-$? echo never matched -> dead, no false "recovered"
 
     @pytest.mark.asyncio
     async def test_session_dies_if_recovery_fails(self, session: MockSession):
@@ -521,6 +554,41 @@ class TestLocalSession:
         result = await local_session.run_cmd("echo recovered")
         assert result.status == Status.Success
         assert "recovered" in result.value
+
+    @pytest.mark.asyncio
+    async def test_recovery_fails_when_parked_in_python_repl(self):
+        """I-3 on the real subprocess path (LocalSession._recover_session override).
+
+        python3 -i catches SIGINT and stays at its prompt rather than exiting,
+        so the exit-code recover probe fed into it can only come back as a
+        syntax-error echo of the literal ``$?`` — never the digit form bash
+        would produce. Recovery must therefore report failure and mark the
+        session dead, not falsely "recovered".
+        """
+        import otto.host.session as session_mod
+
+        original_timeout = session_mod._RECOVERY_TIMEOUT
+        original_probe_timeout = session_mod._RECOVERY_PROBE_TIMEOUT
+        # Real wall-clock waits — keep them short so the test stays fast.
+        session_mod._RECOVERY_TIMEOUT = 1.0
+        session_mod._RECOVERY_PROBE_TIMEOUT = 0.3
+        host = LocalHost()
+        try:
+            result = (await host.run("python3 -i", timeout=0.3)).only
+            assert result.status == Status.Error
+
+            session = host._session_mgr._session
+            assert session is not None
+            assert not session.alive  # no false "recovered" while parked in the REPL
+        finally:
+            session_mod._RECOVERY_TIMEOUT = original_timeout
+            session_mod._RECOVERY_PROBE_TIMEOUT = original_probe_timeout
+            session = host._session_mgr._session
+            if session is not None and session._pid is not None:
+                # The parked python3 REPL survived our SIGINT recovery probe;
+                # hard-kill it (and the now-dead bash) so no orphan lingers.
+                LocalSession._signal_children(session._pid, signal.SIGKILL)
+            await host.close()
 
     @pytest.mark.asyncio
     async def test_send_and_expect(self, local_session: LocalSession):

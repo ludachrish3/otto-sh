@@ -24,6 +24,7 @@ from typing_extensions import Self, override
 
 from .command_frame import BashFrame, CommandFrame, SessionMarkers
 from .login_proxy import Cred, LoginProxyError, cred_for, perform_switch, run_proxy, run_undo
+from .shell_liveness import confirm_live
 from .telnet import TelnetClient
 
 if TYPE_CHECKING:
@@ -52,6 +53,9 @@ _LOG_PREVIEW_BUFFER = 1024  # buffer length above which run_cmd shows head+tail 
 
 # Timeout for session recovery after Ctrl+C
 _RECOVERY_TIMEOUT = 5.0
+
+# Per-probe wait inside the recovery resend loop (confirm_live).
+_RECOVERY_PROBE_TIMEOUT = 0.5
 
 # Ceiling on the post-open marker handshake (_ensure_initialized). Generous
 # enough for slow MOTD generation on real hardware, but bounded so a failed
@@ -577,41 +581,72 @@ class ShellSession(ABC):
         return re.compile("|".join(parts))
 
     async def _recover_session(self) -> str:
-        """Attempt session recovery after timeout: Ctrl+C, then recovery sentinel.
+        """Interrupt the hung command, then confirm the shell is back (echo-proof).
 
-        Returns any partial output captured during recovery.
-        Sets self._alive = False if recovery fails.
+        Sends Ctrl+C, then drives :func:`~otto.host.shell_liveness.confirm_live`
+        with the dialect's recover probe. On bash the probe is exit-code framed,
+        so a session parked inside a REPL (which can only echo the literal ``$?``)
+        correctly fails to confirm and is marked dead rather than falsely
+        "recovered". Returns any partial output captured before the probe reply.
         """
-        recover_cmd = self._frame.recover(self._markers)
-        logger.debug(
-            f"{self._log_tag}: recover_session entry "
-            f"marker={self._recover_marker!r} cmd={recover_cmd!r}"
-        )
+        logger.debug(f"{self._log_tag}: recover_session entry marker={self._recover_marker!r}")
+        await self._write("\x03")
+        await asyncio.sleep(0.1)
+        return await self._confirm_recovered()
+
+    async def _confirm_recovered(self) -> str:
+        """Drive :func:`~otto.host.shell_liveness.confirm_live` to confirm recovery.
+
+        Shared by every ``_recover_session`` override — only how the hung
+        command is interrupted (Ctrl+C byte vs. SIGINT-to-children) differs
+        between them; confirming recovery is identical everywhere.
+
+        Returns any partial output captured before the probe reply, or ``""``
+        if the shell never confirmed (``self._alive`` is set to False then).
+        """
+        captured = ""
+
+        async def _expect(pat: re.Pattern[str], t: float) -> str:
+            nonlocal captured
+            captured = await asyncio.wait_for(self._read_until_pattern(pat), t)
+            return captured
+
         try:
-            # Send Ctrl+C (SIGINT) to interrupt the hung foreground process
-            await self._write("\x03")
-            await asyncio.sleep(0.1)
-
-            # Send recovery sentinel to re-synchronize
-            await self._write(recover_cmd)
-            data = await asyncio.wait_for(
-                self._read_until_pattern(re.compile(re.escape(self._recover_marker))),
-                timeout=_RECOVERY_TIMEOUT,
+            confirmed = await confirm_live(
+                self._write,
+                _expect,
+                self._frame.recover,
+                self._frame.recover_pattern,
+                lambda: self._markers,
+                settle=0.0,  # the caller's post-interrupt sleep already settled
+                probe_timeout=_RECOVERY_PROBE_TIMEOUT,
+                deadline=_RECOVERY_TIMEOUT,
             )
-            # Session is recovered and usable for the next command
-            partial = data.split(self._recover_marker)[0].strip()
-            logger.debug(f"{self._log_tag}: recover_session ok partial_len={len(partial)}")
+        except asyncio.IncompleteReadError:
+            confirmed = False
 
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError) as exc:
-            # Shell itself is unresponsive — mark session as dead
-            logger.debug(
-                f"{self._log_tag}: recover_session failed ({type(exc).__name__}); "
-                f"session marked dead"
-            )
+        if not confirmed:
+            logger.debug(f"{self._log_tag}: recover_session failed; session marked dead")
             self._alive = False
             return ""
-        else:
-            return partial
+        # Output that arrived before the probe's END marker (echo is off during a
+        # session, so the probe command itself is not in the stream to confuse this).
+        partial = captured.split(self._markers.end_prefix, maxsplit=1)[0].strip()
+
+        # The interrupted command was itself framed as `cmd; echo end$?__` (see
+        # BashFrame.frame): if it exits in response to the interrupt (rather than
+        # hanging forever, e.g. a plain `sleep`), the shell resumes and runs that
+        # trailing echo on its own, often before our probe above is even sent.
+        # confirm_live then confirms off *that* echo, leaving our own probe —
+        # rendering the identical text — still queued unread. The shell executes
+        # it as soon as it is idle, i.e. right before the next real command, and
+        # its echo would otherwise leak into that command's output. Best-effort,
+        # bounded drain of exactly that one redundant echo.
+        with suppress(TimeoutError, asyncio.TimeoutError, asyncio.IncompleteReadError):
+            await _expect(self._frame.recover_pattern(self._markers), _RECOVERY_PROBE_TIMEOUT)
+
+        logger.debug(f"{self._log_tag}: recover_session ok partial_len={len(partial)}")
+        return partial
 
 
 class SshSession(ShellSession):
@@ -803,25 +838,22 @@ class LocalSession(ShellSession):
 
     @override
     async def _recover_session(self) -> str:
-        """Recovery via SIGINT to child processes (Ctrl+C byte doesn't work over PIPE)."""
+        """Interrupt the hung command, then confirm the shell is back (echo-proof).
+
+        SIGINT is sent to the child processes instead of a Ctrl+C byte, since a
+        Ctrl+C byte does not cross a subprocess stdin PIPE.
+
+        Same echo-proof confirmation as the base session: a shell parked inside a
+        REPL can only echo the literal ``$?`` and so fails to confirm, is marked
+        dead rather than falsely "recovered" (fixes I-3). Only the interrupt
+        mechanism differs from the base.
+        """
         import signal
 
-        try:
-            # Send SIGINT to all children of the bash process (the hung command)
-            if self._pid is not None:
-                self._signal_children(self._pid, signal.SIGINT)
-            await asyncio.sleep(0.1)
-
-            await self._write(f"echo {self._recover_marker}\n")
-            data = await asyncio.wait_for(
-                self._read_until_pattern(re.compile(re.escape(self._recover_marker))),
-                timeout=_RECOVERY_TIMEOUT,
-            )
-            return data.split(self._recover_marker)[0].strip()
-
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError):
-            self._alive = False
-            return ""
+        if self._pid is not None:
+            self._signal_children(self._pid, signal.SIGINT)
+        await asyncio.sleep(0.1)
+        return await self._confirm_recovered()
 
     @staticmethod
     def _signal_children(parent_pid: int, sig: int) -> None:
