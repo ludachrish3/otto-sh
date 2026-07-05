@@ -105,7 +105,28 @@ OPTIONS=(
 )
 # ──────────────────────────────────────────────────────────────────────────────
 
-# Read from terminal directly — stdin is not available in git hooks
+# (A) Respect an existing tag: if the message already carries an `Assisted-by:`
+# trailer (a tool/agent self-attributed it, or this is a re-edit), don't prompt
+# — take it as authoritative and leave it untouched. Also prevents a duplicate
+# trailer.
+if git interpret-trailers --parse "$COMMIT_MSG_FILE" | grep -qi '^Assisted-by:'; then
+    exit 0
+fi
+
+# (B) No controlling terminal (agent / CI / any non-interactive commit): we
+# can't ask. Don't fall through to the "None" default, which would silently
+# mis-tag AI-assisted work as human — instead stamp a sentinel that flags the
+# commit for a human to confirm (or correct) the model at squash/merge time.
+# `{ : < /dev/tty; }` probes tty availability without consuming stdin and, being
+# a plain command (not `exec`), fails cleanly into the branch rather than
+# risking a shell exit on the redirect error.
+if ! { : < /dev/tty; } 2>/dev/null; then
+    git interpret-trailers --in-place \
+        --trailer "Assisted-by: Claude Opus 4.8 (unverified)" "$COMMIT_MSG_FILE"
+    exit 0
+fi
+
+# Interactive: read from the terminal directly — stdin is not available in hooks.
 exec < /dev/tty
 
 echo ""
