@@ -1,8 +1,9 @@
 // `defineConfig` comes from "vitest/config" rather than "vite" so the `test`
 // key below type-checks; it re-exports vite's own config type merged with
 // vitest's, and is a drop-in for plain `vite build`/`vite dev` too.
-import { defineConfig } from "vitest/config";
+
 import react from "@vitejs/plugin-react";
+import { defineConfig } from "vitest/config";
 
 // otto monitor's MonitorServer serves this build's output straight off disk
 // (see src/otto/monitor/server.py's dashboard() dist-preferred branch), so

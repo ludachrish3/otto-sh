@@ -7,11 +7,20 @@
 // `metaText`/`buildMetricTraces`/`hexToRgba`/`buildShapes`/
 // `buildAnnotations`). See `plotly-gl2d.d.ts` for why the package's own
 // (nonexistent) types aren't used.
-import Plotly, { type PlotlyClickAnnotationEvent, type PlotlyData, type PlotlyLayout } from "plotly.js-gl2d-dist-min";
+import Plotly, {
+  type PlotlyClickAnnotationEvent,
+  type PlotlyData,
+  type PlotlyLayout,
+} from "plotly.js-gl2d-dist-min";
 
 import type { MonitorEvent, Point } from "./api/client";
 import type { Metric } from "./grouping";
-import { LEGEND_CAP_ROWS, type LegendCandidate, retireStaleMetrics, selectLegendEntries } from "./retirement";
+import {
+  LEGEND_CAP_ROWS,
+  type LegendCandidate,
+  retireStaleMetrics,
+  selectLegendEntries,
+} from "./retirement";
 import { seriesKey } from "./store";
 
 /**
@@ -43,7 +52,11 @@ export const plotly = {
     Plotly.newPlot(div, data, layout, PLOT_CONFIG),
   react: (div: HTMLDivElement, data: PlotlyData[], layout: PlotlyLayout): Promise<HTMLElement> =>
     Plotly.react(div, data, layout),
-  extendTraces: (div: HTMLDivElement, update: Record<string, unknown[][]>, indices: number[]): void => {
+  extendTraces: (
+    div: HTMLDivElement,
+    update: Record<string, unknown[][]>,
+    indices: number[],
+  ): void => {
     Plotly.extendTraces(div, update, indices);
   },
   relayout: (div: HTMLDivElement, update: Record<string, unknown>): Promise<HTMLElement> =>
@@ -65,7 +78,10 @@ export const plotly = {
   onClickAnnotation: (div: HTMLElement, cb: (event: PlotlyClickAnnotationEvent) => void): void => {
     (
       div as HTMLElement & {
-        on: (name: "plotly_clickannotation", cb: (event: PlotlyClickAnnotationEvent) => void) => void;
+        on: (
+          name: "plotly_clickannotation",
+          cb: (event: PlotlyClickAnnotationEvent) => void,
+        ) => void;
       }
     ).on("plotly_clickannotation", cb);
   },
@@ -97,10 +113,12 @@ export const LEGEND_CAP_ENTRIES = LEGEND_CAP_ROWS * ITEMS_PER_ROW;
 export const FIXED_TOP_MARGIN_PX = 36;
 
 /** Fixed regardless of actual trace/legend-row count — always reserves the full legend cap. */
-export const FIXED_BOTTOM_MARGIN_PX = AXIS_BOTTOM_PX + LEGEND_CAP_ROWS * LEGEND_ROW_PX + LEGEND_PAD_PX;
+export const FIXED_BOTTOM_MARGIN_PX =
+  AXIS_BOTTOM_PX + LEGEND_CAP_ROWS * LEGEND_ROW_PX + LEGEND_PAD_PX;
 
 /** The one, constant `.metric-plot` div height — Task 10's height-growth fix. */
-export const CONSTANT_CHART_HEIGHT_PX = CHART_AREA_HEIGHT + FIXED_TOP_MARGIN_PX + FIXED_BOTTOM_MARGIN_PX;
+export const CONSTANT_CHART_HEIGHT_PX =
+  CHART_AREA_HEIGHT + FIXED_TOP_MARGIN_PX + FIXED_BOTTOM_MARGIN_PX;
 
 interface PlotTheme {
   paper: string;
@@ -151,7 +169,11 @@ export function legendRows(traces: PlotlyData[]): number {
  * (`buildShapes`/`buildAnnotations` still read it; only the margin sizing
  * stopped depending on it).
  */
-export function buildLayout(traces: PlotlyData[], opts: { yaxisTitle: string }, events: MonitorEvent[]): PlotlyLayout {
+export function buildLayout(
+  traces: PlotlyData[],
+  opts: { yaxisTitle: string },
+  events: MonitorEvent[],
+): PlotlyLayout {
   const t = plotTheme();
   const rows = legendRows(traces);
   const layout: PlotlyLayout = {
@@ -251,7 +273,9 @@ export function buildPanelRender(
     return { label: m.label, value: pts.length > 0 ? pts[pts.length - 1].value : -Infinity };
   });
   const keep = selectLegendEntries(candidates, LEGEND_CAP_ENTRIES);
-  const cappedTraces = traces.map((tr, i) => (keep.has(active[i].label) ? tr : { ...tr, showlegend: false }));
+  const cappedTraces = traces.map((tr, i) =>
+    keep.has(active[i].label) ? tr : { ...tr, showlegend: false },
+  );
 
   const layout = buildLayout(cappedTraces, { yaxisTitle }, events);
   return { traces: cappedTraces, layout };

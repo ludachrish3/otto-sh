@@ -10,7 +10,13 @@ import { describe, expect, it } from "vitest";
 
 import type { Point } from "../api/client";
 import type { Metric } from "../grouping";
-import { isProcMetric, type LegendCandidate, RETIREMENT_K, retireStaleMetrics, selectLegendEntries } from "../retirement";
+import {
+  isProcMetric,
+  type LegendCandidate,
+  RETIREMENT_K,
+  retireStaleMetrics,
+  selectLegendEntries,
+} from "../retirement";
 
 function pt(ts: string, value = 1): Point {
   return { ts, value, meta: null };

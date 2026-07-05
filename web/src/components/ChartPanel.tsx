@@ -72,11 +72,18 @@ function ChartPanel({
   // whatever `series`/`events` are current *at the moment of activation*,
   // exactly like dashboard.js's one-shot deferred init; it is not meant to
   // re-fire on later data (that's the live-append / refresh effects below).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot init keyed on `active` alone; series/events/group are drawn from whatever is current at activation and must NOT re-fire on their later changes (see comment above).
   useEffect(() => {
     if (!active || mountedRef.current || !divRef.current) return;
     mountedRef.current = true;
     const div = divRef.current;
-    const { traces, layout } = buildPanelRender(group.metrics, series, selectedHost, events, group.metrics[0].y_title);
+    const { traces, layout } = buildPanelRender(
+      group.metrics,
+      series,
+      selectedHost,
+      events,
+      group.metrics[0].y_title,
+    );
     void plotly.newPlot(div, traces, layout).then(() => {
       onInitialized(group.id);
       // dashboard.js's `initTabPlots()`: wires the annotation-click ->
@@ -96,13 +103,20 @@ function ChartPanel({
   // do the full `Plotly.react()` rebuild a new trace count needs. No-ops
   // before this panel is ever initialized (mirrors legacy's
   // `if (targetMp.initialized)` guard around that rebuild).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rebuild is keyed on the metrics *shape* changing (`group.metrics`); series/events/selectedHost are read fresh inside, by design (see comment above).
   useEffect(() => {
     if (skipMetricsEffect.current) {
       skipMetricsEffect.current = false;
       return;
     }
     if (!mountedRef.current || !divRef.current) return;
-    const { traces, layout } = buildPanelRender(group.metrics, series, selectedHost, events, group.metrics[0].y_title);
+    const { traces, layout } = buildPanelRender(
+      group.metrics,
+      series,
+      selectedHost,
+      events,
+      group.metrics[0].y_title,
+    );
     void plotly.react(divRef.current, traces, layout);
     // Deps deliberately limited to `group.metrics` — rebuild is keyed on the metrics *shape* changing.
   }, [group.metrics]);
@@ -110,13 +124,20 @@ function ChartPanel({
   // dashboard.js's `refreshPlot()` callers: theme toggle, pause resume,
   // host switch, and expand-collapse's restore-natural-height pass (all
   // funneled through `ChartGrid`'s `refreshEpoch`).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the `refreshEpoch` trigger; current props are read fresh at fire time, mirroring dashboard.js's refreshPlot() (see comment above).
   useEffect(() => {
     if (skipRefreshEffect.current) {
       skipRefreshEffect.current = false;
       return;
     }
     if (!mountedRef.current || !divRef.current) return;
-    const { traces, layout } = buildPanelRender(group.metrics, series, selectedHost, events, group.metrics[0].y_title);
+    const { traces, layout } = buildPanelRender(
+      group.metrics,
+      series,
+      selectedHost,
+      events,
+      group.metrics[0].y_title,
+    );
     void plotly.react(divRef.current, traces, layout);
     // Deps deliberately limited to `refreshEpoch` — the trigger; current props are read fresh at fire time.
   }, [refreshEpoch]);
@@ -188,7 +209,10 @@ function ChartPanel({
 
   return (
     <>
-      <div ref={dividerRef} className={expanded ? "section-divider expanded-title" : "section-divider"}>
+      <div
+        ref={dividerRef}
+        className={expanded ? "section-divider expanded-title" : "section-divider"}
+      >
         {group.chartKey}
         <button type="button" className="expand-btn" onClick={onToggleExpand}>
           {expanded ? "Collapse" : "Expand"}

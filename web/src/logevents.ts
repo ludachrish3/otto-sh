@@ -30,7 +30,9 @@ export function appendRows(
 export function groupRowsFromData(rows: LogEventRow[]): Record<string, LogEventRow[]> {
   const out: Record<string, LogEventRow[]> = {};
   for (const row of rows) {
-    (out[logKey(row.host, row.tab)] ??= []).push(row);
+    const key = logKey(row.host, row.tab);
+    out[key] ??= [];
+    out[key].push(row);
   }
   for (const key of Object.keys(out)) {
     out[key] = out[key].slice(-MAX_TABLE_ROWS);

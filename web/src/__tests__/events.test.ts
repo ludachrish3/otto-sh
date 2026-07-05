@@ -111,7 +111,10 @@ describe("clampPopoverPosition (dashboard.js's openPopover() viewport-clamp math
   });
 
   it("honors a custom margin", () => {
-    expect(clampPopoverPosition(100, 100, 240, 140, 1200, 800, 20)).toEqual({ left: 120, top: 120 });
+    expect(clampPopoverPosition(100, 100, 240, 140, 1200, 800, 20)).toEqual({
+      left: 120,
+      top: 120,
+    });
   });
 });
 
@@ -125,8 +128,14 @@ describe("popoverDraftReducer (dashboard.js's popover-label/-color/-dash field s
   });
 
   it("seed on a second click replaces (does not merge with) any unsaved edit — legacy has no 'already open' guard", () => {
-    const edited = popoverDraftReducer(initialPopoverDraft, { type: "label", value: "unsaved draft" });
-    const reseeded = popoverDraftReducer(edited, { type: "seed", event: event({ label: "fresh" }) });
+    const edited = popoverDraftReducer(initialPopoverDraft, {
+      type: "label",
+      value: "unsaved draft",
+    });
+    const reseeded = popoverDraftReducer(edited, {
+      type: "seed",
+      event: event({ label: "fresh" }),
+    });
     expect(reseeded.label).toBe("fresh");
   });
 

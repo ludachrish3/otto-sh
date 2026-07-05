@@ -63,13 +63,25 @@ describe("groupByChart (dashboard.js initTabCharts' chartGroups Map)", () => {
 describe("buildInitialChartGroups (dashboard.js initTabCharts)", () => {
   it("builds one group per chart key per tab and returns the first tab id", () => {
     const meta = {
-      metrics: [metric({ label: "Overall CPU", chart: "cpu" }), metric({ label: "Memory Usage", chart: "mem" })],
-      tabs: [tab({ id: "cpu", metrics: ["Overall CPU"] }), tab({ id: "memory", label: "Memory", metrics: ["Memory Usage"] })],
+      metrics: [
+        metric({ label: "Overall CPU", chart: "cpu" }),
+        metric({ label: "Memory Usage", chart: "mem" }),
+      ],
+      tabs: [
+        tab({ id: "cpu", metrics: ["Overall CPU"] }),
+        tab({ id: "memory", label: "Memory", metrics: ["Memory Usage"] }),
+      ],
     };
     const { groups, firstTabId } = buildInitialChartGroups(meta);
     expect(firstTabId).toBe("cpu");
     expect(groups).toEqual([
-      { id: "cpu::cpu", tabId: "cpu", chartKey: "cpu", metrics: [metric({ label: "Overall CPU", chart: "cpu" })], initialized: false },
+      {
+        id: "cpu::cpu",
+        tabId: "cpu",
+        chartKey: "cpu",
+        metrics: [metric({ label: "Overall CPU", chart: "cpu" })],
+        initialized: false,
+      },
       {
         id: "memory::mem",
         tabId: "memory",
@@ -83,7 +95,10 @@ describe("buildInitialChartGroups (dashboard.js initTabCharts)", () => {
   it("skips a tab whose metrics don't resolve to anything (never gets a panel)", () => {
     const meta = {
       metrics: [metric({ label: "Overall CPU", chart: "cpu" })],
-      tabs: [tab({ id: "ghost", metrics: ["nonexistent"] }), tab({ id: "cpu", metrics: ["Overall CPU"] })],
+      tabs: [
+        tab({ id: "ghost", metrics: ["nonexistent"] }),
+        tab({ id: "cpu", metrics: ["Overall CPU"] }),
+      ],
     };
     const { groups, firstTabId } = buildInitialChartGroups(meta);
     expect(groups.map((g) => g.tabId)).toEqual(["cpu"]);
@@ -156,7 +171,10 @@ describe("initSeriesFromData (dashboard.js initSeriesFromData)", () => {
 });
 
 describe("appendMetricToGroups (dashboard.js appendMetricPoint's metricPlots bookkeeping)", () => {
-  const tabs: TabSpec[] = [tab({ id: "cpu", metrics: ["Overall CPU"] }), tab({ id: "memory", label: "Memory", metrics: ["Memory Usage"] })];
+  const tabs: TabSpec[] = [
+    tab({ id: "cpu", metrics: ["Overall CPU"] }),
+    tab({ id: "memory", label: "Memory", metrics: ["Memory Usage"] }),
+  ];
 
   it("extends an existing, initialized group when the label already belongs to it", () => {
     const groups: ChartGroup[] = [
@@ -171,7 +189,11 @@ describe("appendMetricToGroups (dashboard.js appendMetricPoint's metricPlots boo
         initialized: true,
       },
     ];
-    const outcome = appendMetricToGroups(groups, { label: "proc/init", chart: "cpu", y_title: "%", unit: "%" }, tabs);
+    const outcome = appendMetricToGroups(
+      groups,
+      { label: "proc/init", chart: "cpu", y_title: "%", unit: "%" },
+      tabs,
+    );
     expect(outcome).toEqual({ kind: "extend", groupId: "cpu::cpu", traceIndex: 1 });
   });
 
@@ -185,7 +207,11 @@ describe("appendMetricToGroups (dashboard.js appendMetricPoint's metricPlots boo
         initialized: false,
       },
     ];
-    const outcome = appendMetricToGroups(groups, { label: "Overall CPU", chart: "cpu", y_title: "%", unit: "%" }, tabs);
+    const outcome = appendMetricToGroups(
+      groups,
+      { label: "Overall CPU", chart: "cpu", y_title: "%", unit: "%" },
+      tabs,
+    );
     expect(outcome).toEqual({ kind: "noop" });
   });
 
@@ -199,10 +225,16 @@ describe("appendMetricToGroups (dashboard.js appendMetricPoint's metricPlots boo
         initialized: true,
       },
     ];
-    const outcome = appendMetricToGroups(groups, { label: "Load (1m)", chart: "load", y_title: "load avg", unit: "" }, tabs);
+    const outcome = appendMetricToGroups(
+      groups,
+      { label: "Load (1m)", chart: "load", y_title: "load avg", unit: "" },
+      tabs,
+    );
     expect(outcome.kind).toBe("changed");
     if (outcome.kind !== "changed") throw new Error("unreachable");
-    expect(outcome.groups[0].metrics).toEqual([{ label: "Load (1m)", chart: "load", y_title: "load avg", unit: "" }]);
+    expect(outcome.groups[0].metrics).toEqual([
+      { label: "Load (1m)", chart: "load", y_title: "load avg", unit: "" },
+    ]);
   });
 
   it("Load-series-joins-existing-chart: a second real label is appended alongside the first, not swapped", () => {
@@ -215,14 +247,22 @@ describe("appendMetricToGroups (dashboard.js appendMetricPoint's metricPlots boo
         initialized: true,
       },
     ];
-    const outcome = appendMetricToGroups(groups, { label: "Load (5m)", chart: "load", y_title: "load avg", unit: "" }, tabs);
+    const outcome = appendMetricToGroups(
+      groups,
+      { label: "Load (5m)", chart: "load", y_title: "load avg", unit: "" },
+      tabs,
+    );
     expect(outcome.kind).toBe("changed");
     if (outcome.kind !== "changed") throw new Error("unreachable");
     expect(outcome.groups[0].metrics.map((m) => m.label)).toEqual(["Load (1m)", "Load (5m)"]);
   });
 
   it("new-chart-group creation: an unseen chart lands under the tab that configures its label", () => {
-    const outcome = appendMetricToGroups([], { label: "Memory Usage", chart: "mem", y_title: "%", unit: "%" }, tabs);
+    const outcome = appendMetricToGroups(
+      [],
+      { label: "Memory Usage", chart: "mem", y_title: "%", unit: "%" },
+      tabs,
+    );
     expect(outcome.kind).toBe("changed");
     if (outcome.kind !== "changed") throw new Error("unreachable");
     expect(outcome.groups).toEqual([
@@ -237,14 +277,22 @@ describe("appendMetricToGroups (dashboard.js appendMetricPoint's metricPlots boo
   });
 
   it("new-chart-group creation falls back to the first tab when no tab lists the label", () => {
-    const outcome = appendMetricToGroups([], { label: "proc/newpid", chart: "cpu", y_title: "%", unit: "%" }, tabs);
+    const outcome = appendMetricToGroups(
+      [],
+      { label: "proc/newpid", chart: "cpu", y_title: "%", unit: "%" },
+      tabs,
+    );
     expect(outcome.kind).toBe("changed");
     if (outcome.kind !== "changed") throw new Error("unreachable");
     expect(outcome.groups[0].tabId).toBe("cpu"); // tabs[0], since no tab.metrics includes "proc/newpid"
   });
 
   it("is a no-op when there are no tabs at all to host a brand-new group", () => {
-    const outcome = appendMetricToGroups([], { label: "Overall CPU", chart: "cpu", y_title: "%", unit: "%" }, []);
+    const outcome = appendMetricToGroups(
+      [],
+      { label: "Overall CPU", chart: "cpu", y_title: "%", unit: "%" },
+      [],
+    );
     expect(outcome).toEqual({ kind: "noop" });
   });
 });

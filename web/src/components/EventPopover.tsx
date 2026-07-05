@@ -7,7 +7,12 @@
 // outside-click listener). IDs match dashboard.html's markup exactly.
 import { useEffect, useReducer, useRef } from "react";
 
-import { clampPopoverPosition, DASH_OPTIONS, initialPopoverDraft, popoverDraftReducer } from "../events";
+import {
+  clampPopoverPosition,
+  DASH_OPTIONS,
+  initialPopoverDraft,
+  popoverDraftReducer,
+} from "../events";
 import { useMonitorActions, useMonitorStore } from "../store";
 
 function EventPopover() {
@@ -25,6 +30,7 @@ function EventPopover() {
   // SAME annotation — because legacy has no "already open for this id"
   // guard, so an in-progress unsaved edit is clobbered by a second click;
   // this ports that quirk rather than "fixing" it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-seeds only on a new open ([editingEventId, popoverAnchor]); the current `events` array is read fresh via .find at fire time, faithfully porting dashboard.js's openPopover (see comment above).
   useEffect(() => {
     if (editingEventId === null || !popoverAnchor) return;
     const ev = events.find((e) => e.id === editingEventId);
@@ -85,7 +91,11 @@ function EventPopover() {
   }
 
   return (
-    <div id="event-popover" ref={popRef} className={editingEventId !== null ? "visible" : undefined}>
+    <div
+      id="event-popover"
+      ref={popRef}
+      className={editingEventId !== null ? "visible" : undefined}
+    >
       <label htmlFor="popover-label">Label</label>
       <input
         id="popover-label"

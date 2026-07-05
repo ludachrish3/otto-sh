@@ -12,10 +12,9 @@
 // fails loudly instead of only showing up as a blank page in the browser.
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
+import App from "../App";
 import type { DataPayload } from "../api/client";
 import type { MonitorDashboardApiMetaPayload } from "../api/types.gen";
-import App from "../App";
 import { useMonitorStore } from "../store";
 
 const META: MonitorDashboardApiMetaPayload = {
@@ -131,7 +130,9 @@ describe("App bootstrap error path (dashboard.js's init().catch parity)", () => 
     render(<App />);
 
     await waitFor(() => {
-      expect(document.getElementById("tab-bar")?.textContent).toBe("Error loading dashboard: Error: boom");
+      expect(document.getElementById("tab-bar")?.textContent).toBe(
+        "Error loading dashboard: Error: boom",
+      );
     });
     // The error state replaces <TabBar/> entirely — no tab buttons render.
     expect(document.querySelectorAll(".tab-btn")).toHaveLength(0);

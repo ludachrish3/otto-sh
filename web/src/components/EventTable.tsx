@@ -50,6 +50,7 @@ function EventTable({ tab }: { tab: TabSpec }) {
           {visible.map((row, i) => (
             // Index keys are safe: the list is always re-derived whole from
             // the store snapshot (no per-row identity to preserve).
+            // biome-ignore lint/suspicious/noArrayIndexKey: rows are re-derived whole from the store snapshot each render; there is no stable per-row identity to key on (see comment above).
             <tr key={i}>
               <td className="event-table-time">{timeCell(row.timestamp)}</td>
               {columns.map((c) => (

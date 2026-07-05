@@ -94,7 +94,13 @@ export function buildInitialChartGroups(
     const tabMetrics = resolvedTabMetrics(tab, meta.metrics);
     if (tabMetrics.length === 0) continue;
     for (const { chartKey, metrics } of groupByChart(tabMetrics)) {
-      groups.push({ id: makeGroupId(tab.id, chartKey), tabId: tab.id, chartKey, metrics, initialized: false });
+      groups.push({
+        id: makeGroupId(tab.id, chartKey),
+        tabId: tab.id,
+        chartKey,
+        metrics,
+        initialized: false,
+      });
     }
     if (firstTabId === null) firstTabId = tab.id;
   }
@@ -146,7 +152,7 @@ export function initSeriesFromData(
     // itself a real series in chartMap (a stand-in seeded from meta.metrics
     // before any data arrived for the real, differently-labeled series).
     const placeholderIdx = metrics.findIndex(
-      (m) => m.label === chart && !Object.prototype.hasOwnProperty.call(chartMap, m.label),
+      (m) => m.label === chart && !Object.hasOwn(chartMap, m.label),
     );
     if (placeholderIdx >= 0) {
       metrics = metrics.filter((_, i) => i !== placeholderIdx);
@@ -154,7 +160,10 @@ export function initSeriesFromData(
 
     for (const label of labels) {
       if (!metrics.some((m) => m.label === label)) {
-        metrics = [...metrics, { label, chart, y_title: metaMeta?.y_title ?? "", unit: metaMeta?.unit ?? "" }];
+        metrics = [
+          ...metrics,
+          { label, chart, y_title: metaMeta?.y_title ?? "", unit: metaMeta?.unit ?? "" },
+        ];
       }
     }
 
@@ -201,7 +210,11 @@ export type AppendOutcome =
  * "changed" handling (a single full `react()` rebuild) is the only Plotly
  * call issued for those two branches.
  */
-export function appendMetricToGroups(groups: ChartGroup[], msg: Metric, tabs: TabSpec[]): AppendOutcome {
+export function appendMetricToGroups(
+  groups: ChartGroup[],
+  msg: Metric,
+  tabs: TabSpec[],
+): AppendOutcome {
   const { label, chart, y_title, unit } = msg;
 
   const existing = groups.find((g) => g.metrics.some((m) => m.label === label));

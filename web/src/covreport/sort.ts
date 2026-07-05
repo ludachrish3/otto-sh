@@ -47,7 +47,9 @@ export function attachSort(table: HTMLTableElement): void {
       th.classList.add(asc ? "sort-asc" : "sort-desc");
       const numeric = th.classList.contains("num");
       rows.sort(makeComparator(idx, asc, numeric));
-      rows.forEach((r) => tbody.appendChild(r));
+      rows.forEach((r) => {
+        tbody.appendChild(r);
+      });
     });
   });
 }

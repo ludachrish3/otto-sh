@@ -9,7 +9,14 @@
     "build": "tsc && vite build",
     "build:covreport": "vite build --config vite.covreport.config.ts",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome lint .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "check": "biome check .",
+    "check:fix": "biome check --write ."
   },
   "dependencies": {
     "plotly.js-gl2d-dist-min": "3.6.0",
@@ -18,12 +25,14 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.2",
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.2",
     "@types/node": "24.13.2",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.3",
+    "@vitest/coverage-v8": "4.1.9",
     "jsdom": "29.1.1",
     "json-schema-to-typescript": "15.0.4",
     "typescript": "6.0.3",

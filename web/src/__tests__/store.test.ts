@@ -40,7 +40,9 @@ function makeEvent(overrides: Partial<MonitorEvent> = {}): MonitorEvent {
   };
 }
 
-function makeMeta(overrides: Partial<MonitorDashboardApiMetaPayload> = {}): MonitorDashboardApiMetaPayload {
+function makeMeta(
+  overrides: Partial<MonitorDashboardApiMetaPayload> = {},
+): MonitorDashboardApiMetaPayload {
   return { hosts: [], live: true, metrics: [], tabs: [], interval: null, ...overrides };
 }
 
@@ -68,8 +70,28 @@ describe("metricMsg (dashboard.js appendMetricPoint)", () => {
 
   it("appends to an existing series without disturbing prior points", () => {
     const { metricMsg } = useMonitorStore.getState().actions;
-    metricMsg({ type: "metric", key: "k", host: "h", label: "l", chart: "c", y_title: "", unit: "", ts: "t1", value: 1 });
-    metricMsg({ type: "metric", key: "k", host: "h", label: "l", chart: "c", y_title: "", unit: "", ts: "t2", value: 2 });
+    metricMsg({
+      type: "metric",
+      key: "k",
+      host: "h",
+      label: "l",
+      chart: "c",
+      y_title: "",
+      unit: "",
+      ts: "t1",
+      value: 1,
+    });
+    metricMsg({
+      type: "metric",
+      key: "k",
+      host: "h",
+      label: "l",
+      chart: "c",
+      y_title: "",
+      unit: "",
+      ts: "t2",
+      value: 2,
+    });
     expect(useMonitorStore.getState().series.k).toEqual([
       { ts: "t1", value: 1, meta: null },
       { ts: "t2", value: 2, meta: null },
@@ -79,8 +101,28 @@ describe("metricMsg (dashboard.js appendMetricPoint)", () => {
   it("appends even while paused — pause freezes chart rendering, never the data (dashboard.js: push happens before the `if (state.paused) return;` gate)", () => {
     useMonitorStore.setState({ paused: true });
     const { metricMsg } = useMonitorStore.getState().actions;
-    metricMsg({ type: "metric", key: "k", host: "h", label: "l", chart: "c", y_title: "", unit: "", ts: "t1", value: 1 });
-    metricMsg({ type: "metric", key: "k", host: "h", label: "l", chart: "c", y_title: "", unit: "", ts: "t2", value: 2 });
+    metricMsg({
+      type: "metric",
+      key: "k",
+      host: "h",
+      label: "l",
+      chart: "c",
+      y_title: "",
+      unit: "",
+      ts: "t1",
+      value: 1,
+    });
+    metricMsg({
+      type: "metric",
+      key: "k",
+      host: "h",
+      label: "l",
+      chart: "c",
+      y_title: "",
+      unit: "",
+      ts: "t2",
+      value: 2,
+    });
     expect(useMonitorStore.getState().series.k).toHaveLength(2);
     expect(useMonitorStore.getState().paused).toBe(true);
   });
@@ -127,7 +169,9 @@ describe("event lifecycle (dashboard.js addEventToPlot / event_updated / event_d
   });
 
   it("eventUpdated replaces the event with a matching id in place", () => {
-    useMonitorStore.setState({ events: [makeEvent({ id: 5, label: "old" }), makeEvent({ id: 6 })] });
+    useMonitorStore.setState({
+      events: [makeEvent({ id: 5, label: "old" }), makeEvent({ id: 6 })],
+    });
     useMonitorStore.getState().actions.eventUpdated(makeEvent({ id: 5, label: "new" }));
     const { events } = useMonitorStore.getState();
     expect(events[0].label).toBe("new");

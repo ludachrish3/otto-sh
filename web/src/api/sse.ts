@@ -2,8 +2,9 @@
 // Mirrors dashboard.js's startSSE(): one connection, dispatch-by-`type` on
 // message, and an onerror handler that transitions to disconnected/historical
 // and closes the source (no auto-retry — same as the legacy dashboard).
-import type { MonitorEvent } from "./client";
+
 import { type LogEventMessage, type MetricMessage, useMonitorStore } from "../store";
+import type { MonitorEvent } from "./client";
 
 interface EventDeletedMessage {
   type: "event_deleted";

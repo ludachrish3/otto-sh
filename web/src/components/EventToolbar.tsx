@@ -68,7 +68,12 @@ function EventToolbar() {
     // span input on abandon, only the button chrome, so neither do we).
     // Excludes `phase === "ending"`: that's OUR OWN end-flow nulling
     // `spanStartId` on purpose, not an external abandonment.
-    if (prevSpanStartId.current !== null && spanStartId === null && phase !== "idle" && phase !== "ending") {
+    if (
+      prevSpanStartId.current !== null &&
+      spanStartId === null &&
+      phase !== "idle" &&
+      phase !== "ending"
+    ) {
       dispatchSpan({ type: "abandoned" });
     }
     prevSpanStartId.current = spanStartId;
@@ -111,14 +116,24 @@ function EventToolbar() {
   // snapshot is taken fresh at click time, matching legacy's synchronous
   // `state.events.map(...)` read before any SSE callback can mutate it.
   async function handleClear(): Promise<void> {
-    if (!window.confirm("Are you sure you want to clear all event markers?\nThis action cannot be undone.")) return;
+    if (
+      !window.confirm(
+        "Are you sure you want to clear all event markers?\nThis action cannot be undone.",
+      )
+    )
+      return;
     const ids = useMonitorStore.getState().events.map((e) => e.id);
     await Promise.all(ids.map((id) => fetch(`/api/event/${id}`, { method: "DELETE" })));
   }
 
   return (
     <div id="event-bar">
-      <button type="button" id="clear-events-btn" disabled={!chartsInitialized} onClick={() => void handleClear()}>
+      <button
+        type="button"
+        id="clear-events-btn"
+        disabled={!chartsInitialized}
+        onClick={() => void handleClear()}
+      >
         Clear Events
       </button>
       <div className="event-box">
@@ -159,7 +174,12 @@ function EventToolbar() {
             </option>
           ))}
         </select>
-        <button type="button" id="event-btn" disabled={markDisabled} onClick={() => void handleMark()}>
+        <button
+          type="button"
+          id="event-btn"
+          disabled={markDisabled}
+          onClick={() => void handleMark()}
+        >
           Mark Event
         </button>
       </div>

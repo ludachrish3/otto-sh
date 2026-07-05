@@ -69,6 +69,7 @@ function Header() {
         )}
       </select>
       <button
+        type="button"
         id="theme-btn"
         title={theme === "light" ? "Switch to dark mode" : "Switch to light mode"}
         onClick={handleThemeToggle}
@@ -76,6 +77,7 @@ function Header() {
         {theme === "light" ? "🌙" : "☀️"}
       </button>
       <button
+        type="button"
         id="pause-btn"
         title={paused ? "Resume live updates" : "Pause live updates"}
         disabled={pauseDisabled}

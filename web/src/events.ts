@@ -103,7 +103,11 @@ export interface PopoverDraft {
   dash: string;
 }
 
-export const initialPopoverDraft: PopoverDraft = { label: "", color: "#888888", dash: DASH_OPTIONS[0] };
+export const initialPopoverDraft: PopoverDraft = {
+  label: "",
+  color: "#888888",
+  dash: DASH_OPTIONS[0],
+};
 
 export type PopoverDraftAction =
   | { type: "seed"; event: MonitorEvent }

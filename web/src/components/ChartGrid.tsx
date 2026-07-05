@@ -7,7 +7,12 @@
 // subscriptions.
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { appendMetricToGroups, buildInitialChartGroups, initSeriesFromData, type ChartGroup } from "../grouping";
+import {
+  appendMetricToGroups,
+  buildInitialChartGroups,
+  type ChartGroup,
+  initSeriesFromData,
+} from "../grouping";
 import { buildExtendUpdate, buildPanelRender, plotly } from "../plotly";
 import { isProcMetric } from "../retirement";
 import { useMonitorStore } from "../store";
@@ -152,9 +157,15 @@ function ChartGrid() {
   // selectedHost)` gate, plus the metricPlots bookkeeping (`grouping.ts`)
   // and the resulting Plotly call (extend fast path, or a `setGroups` that
   // lets `ChartPanel` do the full rebuild for a structural change).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fires on [lastMetric] only; sibling state (groups/paused/host/meta) is read fresh via latest.current, mirroring dashboard.js's appendMetricPoint gate.
   useEffect(() => {
     if (!lastMetric) return;
-    const { groups: current, paused: isPaused, selectedHost: host, meta: currentMeta } = latest.current;
+    const {
+      groups: current,
+      paused: isPaused,
+      selectedHost: host,
+      meta: currentMeta,
+    } = latest.current;
     if (isPaused || lastMetric.host !== host) return;
     const outcome = appendMetricToGroups(current, lastMetric, currentMeta?.tabs ?? []);
     if (outcome.kind === "changed") {
@@ -173,7 +184,7 @@ function ChartGrid() {
       // buildPanelRender ChartPanel's own effects use, so it re-derives the
       // current retired-set + legend cap fresh rather than trusting a stale
       // index.
-      if (targetGroup && targetGroup.metrics.some((m) => isProcMetric(m.label))) {
+      if (targetGroup?.metrics.some((m) => isProcMetric(m.label))) {
         const { traces, layout } = buildPanelRender(
           targetGroup.metrics,
           series,
@@ -200,8 +211,15 @@ function ChartGrid() {
         const isActive = activeTab === tab.id;
         const sectionExpanded = tabGroups.some((g) => g.id === expandedGroupId);
         return (
-          <div key={tab.id} id={`tab-${tab.id}`} className={isActive ? "tab-panel active" : "tab-panel"}>
-            <div id={`charts-${tab.id}`} className={sectionExpanded ? "tab-charts expanded-section" : "tab-charts"}>
+          <div
+            key={tab.id}
+            id={`tab-${tab.id}`}
+            className={isActive ? "tab-panel active" : "tab-panel"}
+          >
+            <div
+              id={`charts-${tab.id}`}
+              className={sectionExpanded ? "tab-charts expanded-section" : "tab-charts"}
+            >
               {tabGroups.map((group) => (
                 <ChartPanel
                   key={group.id}

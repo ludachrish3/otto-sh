@@ -117,7 +117,11 @@ describe("buildShapes (dashboard.js buildShapes)", () => {
   it("draws a single vertical line for an instantaneous event", () => {
     const shapes = buildShapes([event({ end_timestamp: null })]);
     expect(shapes).toHaveLength(1);
-    expect(shapes[0]).toMatchObject({ type: "line", x0: "2026-07-02T00:00:00Z", x1: "2026-07-02T00:00:00Z" });
+    expect(shapes[0]).toMatchObject({
+      type: "line",
+      x0: "2026-07-02T00:00:00Z",
+      x1: "2026-07-02T00:00:00Z",
+    });
   });
 
   it("draws a borderless fill rect + two edge lines for a span event", () => {
