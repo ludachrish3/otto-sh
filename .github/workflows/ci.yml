@@ -68,8 +68,8 @@ jobs:
         run: make web-install
       - name: Build the React dashboard (type-drift + air-gap gates)
         run: make web
-      - name: Run the web/ vitest suite
-        run: make web-test
+      # Unit tests + coverage now run in the dedicated web-quality job below;
+      # this job builds the dashboard purely for the browser e2e that follows.
       - name: Install Chromium + WebKit with system dependencies
         run: uv run --group dev playwright install --with-deps chromium webkit
       - name: Run dashboard browser e2e (Chromium)
@@ -81,6 +81,29 @@ jobs:
       # invoked directly via the Makefile.
       - name: Run the WebKit-only Safari modebar pin
         run: make dashboard-webkit
+
+  # web/ TypeScript quality gates (Biome lint + format, tsc, vitest v8
+  # coverage) — the TS analogue of the lint/typecheck jobs. Node-only: no
+  # Python, no browsers, no dashboard build, so it runs fast and in parallel.
+  web-quality:
+    name: web-quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - name: Set up Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version-file: .nvmrc
+      - name: Install web/ dependencies (npm ci)
+        run: make web-install
+      - name: Lint (Biome)
+        run: make web-lint
+      - name: Format check (Biome)
+        run: make web-format-check
+      - name: Type-check (tsc --noEmit)
+        run: make web-typecheck
+      - name: Unit tests + coverage floor (vitest v8)
+        run: make web-coverage
 
   lint:
     runs-on: ubuntu-latest
@@ -143,7 +166,7 @@ jobs:
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [lint, tests, dashboard, typecheck, docs]
+    needs: [lint, tests, dashboard, web-quality, typecheck, docs]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -157,7 +180,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of lint / tests / dashboard / typecheck / docs failed."
+            echo "Check the job logs to see which of lint / tests / dashboard / web-quality / typecheck / docs failed."
           } > issue-body.md
 
       - name: Create issue from file

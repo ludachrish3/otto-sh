@@ -13,5 +13,8 @@
         "davidanson.vscode-markdownlint",
         "anthropic.claude-code",
         "gruntfuggly.todo-tree",
+        "biomejs.biome",
+        "vitest.explorer",
+        "ms-playwright.playwright",
     ]
 }

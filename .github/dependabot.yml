@@ -17,3 +17,13 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
+
+  # web/ React+TS monitor dashboard (npm, committed package-lock.json).
+  - package-ecosystem: "npm"
+    directory: "/web"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "javascript"

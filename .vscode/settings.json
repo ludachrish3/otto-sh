@@ -18,10 +18,37 @@
         "${workspaceFolder}/.venv/bin/python"
     ],
     "autoDocstring.startOnNewLine": true,
+    // Biome is the formatter + organize-imports source for the web/ dashboard.
+    // Scoped to TS/TSX/JS (which live only under web/) so it never touches the
+    // repo's other JSON/CSS. web/ CSS + JSON format via `make web-format`. The
+    // Biome extension auto-resolves web/biome.json per file.
+    "[typescript]": {
+        "editor.defaultFormatter": "biomejs.biome",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports.biome": "explicit"
+        }
+    },
+    "[typescriptreact]": {
+        "editor.defaultFormatter": "biomejs.biome",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports.biome": "explicit"
+        }
+    },
+    "[javascript]": {
+        "editor.defaultFormatter": "biomejs.biome",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports.biome": "explicit"
+        }
+    },
     "files.watcherExclude": {
         ".pytest_cache/**": true,
         ".nox/**": true,
         ".ruff_cache/**": true,
-        ".venv/**": true
+        ".venv/**": true,
+        "web/node_modules/**": true,
+        "web/coverage/**": true
     },
 }
