@@ -87,6 +87,22 @@ class CommandResult(Result):
 
 
 @dataclass(frozen=True)
+class ShellResult(Result):
+    """Result of one :class:`~otto.host.app_shell.AppShell` command.
+
+    :attr:`~otto.result.Result.value` holds the parsed object (or the raw
+    output when no parser was given); :attr:`output` always keeps the raw,
+    prompt-stripped text for debugging.
+    """
+
+    command: str = ""
+    """The line sent to the application shell."""
+
+    output: str = ""
+    """Raw output between the echoed command and the next prompt."""
+
+
+@dataclass(frozen=True)
 class Results(Result, Sequence[CommandResult]):
     """Aggregate over per-command results; itself a :class:`Result`.
 

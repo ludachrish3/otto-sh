@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.result import CommandResult, Result, Results
+from otto.result import CommandResult, Result, Results, ShellResult
 from otto.utils import Status
 
 
@@ -64,6 +64,26 @@ class TestCommandResult:
 
     def test_is_a_result(self):
         assert isinstance(CommandResult(Status.Success), Result)
+
+
+def test_shell_result_success_truthy_with_parsed_value():
+    r = ShellResult(Status.Success, value={"n": 1}, command="SELECT 1;", output="| 1 |")
+    assert r
+    assert r.exit_code == 0
+    assert r.output == "| 1 |"
+
+
+def test_shell_result_parse_failure_is_falsy_and_keeps_output():
+    r = ShellResult(
+        Status.Failed,
+        value=None,
+        msg="pattern did not match",
+        command="SELECT 1;",
+        output="garbage",
+    )
+    assert not r
+    assert r.exit_code == Status.Failed.value
+    assert r.output == "garbage"
 
 
 def _cr(status: Status, retcode: int = 0, command: str = "c") -> CommandResult:
