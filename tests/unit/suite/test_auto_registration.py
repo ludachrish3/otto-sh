@@ -5,32 +5,8 @@ import pytest
 from otto.suite import OttoSuite
 from otto.suite.register import SUITES
 
-
-@pytest.fixture(autouse=True)
-def _isolate_suites():
-    """Park registered suites before each test and restore after.
-
-    Tests in this module auto-register classes into the global SUITES registry.
-    This fixture snapshots the registry's names before each test and removes
-    any new entries after, ensuring the registry is left exactly as it was found.
-    Follows the established idiom from test_import_and_register.py's clean_registry.
-    """
-    parked = {}
-    for name in list(SUITES.names()):
-        entry = SUITES.get(name)
-        origin = SUITES.origin(name)
-        parked[name] = (entry, origin)
-        SUITES.unregister(name)
-
-    yield
-
-    # Remove any new registrations added by the test.
-    for name in list(SUITES.names()):
-        SUITES.unregister(name)
-
-    # Restore the original state.
-    for name, (entry, origin) in parked.items():
-        SUITES.register(name, entry, overwrite=True, origin=origin)
+# SUITES registry isolation is provided package-wide by the autouse
+# ``_isolate_suites`` fixture in ``tests/unit/suite/conftest.py``.
 
 
 def test_test_named_subclass_registers() -> None:

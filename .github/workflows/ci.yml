@@ -44,6 +44,30 @@ jobs:
       - name: Run tests under Python ${{ matrix.python }}
         run: uv run nox -s tests_hostless-${{ matrix.python }}
 
+  # Repeat the tests/unit/suite slice twice in one process to catch tests that
+  # leak global SUITES-registry state. Such a leak passes the single-pass
+  # `tests` job above but collides on the second run, so it only ever surfaced
+  # in the nightly `--count` matrix — days after landing. This fast, no-VM,
+  # single-Python job moves that guard onto the pre-merge fast path. It is kept
+  # separate from `tests` because it needs no Python matrix and the
+  # tests_suite_repeat session clears addopts to run single-process.
+  suite-repeat:
+    name: suite-repeat (registry-leak guard)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v8.3.0
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Repeat the suite tests (SUITES-registry leak guard)
+        run: uv run nox -s tests_suite_repeat
+
   # One parallel job per browser engine (Blink/Gecko/Safari) — the nox
   # `dashboard` session is parametrized by browser, and this matrix runs each
   # variant on its own runner so wall-clock is a single engine's runtime, not
@@ -171,7 +195,7 @@ jobs:
   # to the PR author in the checks UI.
   report-failure:
     name: Open issue on failure
-    needs: [lint, tests, dashboard, web-quality, typecheck, docs]
+    needs: [lint, tests, suite-repeat, dashboard, web-quality, typecheck, docs]
     if: failure() && github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
@@ -185,7 +209,7 @@ jobs:
             echo "- Workflow run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             echo "- Commit: ${{ github.sha }}"
             echo
-            echo "Check the job logs to see which of lint / tests / dashboard / web-quality / typecheck / docs failed."
+            echo "Check the job logs to see which of lint / tests / suite-repeat / dashboard / web-quality / typecheck / docs failed."
           } > issue-body.md
 
       - name: Create issue from file

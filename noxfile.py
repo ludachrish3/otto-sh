@@ -100,6 +100,37 @@ def tests_hostless(session: nox.Session) -> None:
     session.run("pytest", *HOSTLESS_TEST_ARGS, _junitxml(session, "nox-hostless"), *session.posargs)
 
 
+@nox_uv.session(python=["3.12"], uv_groups=["dev"])
+def tests_suite_repeat(session: nox.Session) -> None:
+    """Repeat the ``tests/unit/suite`` slice in one process to catch state leaks.
+
+    Those tests exercise ``OttoSuite`` auto-registration into the process-wide
+    ``SUITES`` registry — directly, and via in-process inner pytest sessions
+    (``pytest.main`` / ``pytester.runpytest_inprocess``). A test that leaves an
+    entry behind is invisible to a single CI pass but collides the second time
+    the test runs in the same process, which is why such leaks only ever
+    surfaced in the nightly ``--count`` matrix — three nights after landing.
+
+    Running just this fast, no-VM slice twice in one process
+    (``--count=2 --repeat-scope=session``, single-process via a cleared
+    ``addopts``) is enough to trip any such regression, so it runs here on the
+    CI fast path instead of waiting for the nightly. One Python is sufficient —
+    registry leakage is interpreter-version-independent. ``addopts`` is cleared
+    to drop the repo-wide ``-n auto`` / coverage / ``--doctest-modules`` so the
+    repeat is single-process (strictest accumulation) and quick.
+    """
+    session.run(
+        "pytest",
+        "tests/unit/suite",
+        "-o",
+        "addopts=",
+        "--count=2",
+        "--repeat-scope=session",
+        _junitxml(session, "nox-suite-repeat"),
+        *session.posargs,
+    )
+
+
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
 def tests_unix(session: nox.Session) -> None:
     """Run the Unix-VM integration suite (incl. multi-hop) under each Python.

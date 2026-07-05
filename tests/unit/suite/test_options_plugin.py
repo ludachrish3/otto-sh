@@ -7,7 +7,6 @@ import pytest
 from otto.configmodule.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.suite.plugin import OttoPlugin
-from otto.suite.register import SUITES
 
 pytest_plugins = ["pytester"]
 
@@ -73,35 +72,9 @@ def _otto_context(tmp_path: Path):
         reset_context(token)
 
 
-@pytest.fixture(autouse=True)
-def _isolate_suites():
-    """Park registered suites before each test and restore after.
-
-    Each pytester run below imports SUITE_SRC's TestDefaulted/TestRequired
-    as a fresh `test_inner` module under a distinct temp path, so
-    OttoSuite.__init_subclass__ (Task 2's auto-registration) registers them
-    into the process-wide SUITES registry on every run. register_suite_class
-    only treats a re-registration as a same-file overwrite when the source
-    *path* matches exactly — different pytester temp dirs never match — so
-    back-to-back runs in this module (e.g. under -p no:xdist / -n0) would
-    otherwise collide as "already registered by a different file". Isolating
-    per-test, following test_auto_registration.py's idiom, keeps this
-    module's runs independent of xdist worker-process isolation.
-    """
-    parked = {}
-    for name in list(SUITES.names()):
-        entry = SUITES.get(name)
-        origin = SUITES.origin(name)
-        parked[name] = (entry, origin)
-        SUITES.unregister(name)
-
-    yield
-
-    for name in list(SUITES.names()):
-        SUITES.unregister(name)
-
-    for name, (entry, origin) in parked.items():
-        SUITES.register(name, entry, overwrite=True, origin=origin)
+# SUITES registry isolation (needed because each pytester run below registers
+# TestDefaulted/TestRequired from a fresh temp path) is provided package-wide
+# by the autouse ``_isolate_suites`` fixture in ``tests/unit/suite/conftest.py``.
 
 
 def test_defaulted_options_are_constructed(pytester: pytest.Pytester) -> None:

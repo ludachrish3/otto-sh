@@ -160,6 +160,9 @@ nox-embedded: ## Run the embedded (Zephyr) suite across all supported Pythons. R
 nox-hostless: ## Run the no-testbed CI gate (tests/unit + no-VM e2e) across all supported Pythons. No VMs. Override COUNT=N (default 1); JUnit XML lands in reports/junit/nox-hostless/.
 	uv run nox -s tests_hostless -- --count=$(NOX_COUNT) --repeat-scope=session
 
+nox-suite-repeat: ## Repeat the tests/unit/suite slice twice in one process — the SUITES-registry leak guard that also runs in CI. No VMs. JUnit XML lands in reports/junit/nox-suite-repeat/. (Count is fixed at 2; the check is pass/fail, not a soak.)
+	uv run nox -s tests_suite_repeat
+
 nox: ## Run the FULL test suite (all environments) across all supported Pythons. Requires dev VM with Vagrant hosts up. Not used by CI. Override COUNT=N (default 1); JUnit XML in reports/junit/nox/.
 	uv run nox -s tests_all -- --count=$(NOX_COUNT) --repeat-scope=session
 
