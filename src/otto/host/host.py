@@ -2,8 +2,10 @@
 
 import asyncio
 import re
+import uuid
 from abc import ABC
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import (
     dataclass,
     replace,
@@ -19,6 +21,7 @@ from typing import (
     Annotated,
     NoReturn,
     Protocol,
+    TypeVar,
     cast,
 )
 
@@ -35,9 +38,15 @@ from ..utils import (
 )
 
 if TYPE_CHECKING:
+    from .app_shell import AppShell
     from .power import PowerController
     from .product import Product
     from .session import HostSession
+
+    # Quoted-forward-ref only (see BaseHost.app_shell); keeping this TypeVar
+    # under TYPE_CHECKING avoids a runtime import of otto.host.app_shell,
+    # which would blow the import-budget guard on a bare ``import otto``.
+    AppShellT = TypeVar("AppShellT", bound=AppShell)
 
 # Runtime type alias — mirrored from session.Expect so get_type_hints can resolve
 # it without a circular import (session.py imports from host.py at module level).
@@ -657,6 +666,22 @@ class BaseHost(ABC):
     ) -> "HostSession":
         """Open a named auxiliary session on this host. Subclasses must override."""
         raise NotImplementedError from None
+
+    @asynccontextmanager
+    async def app_shell(
+        self, shell_cls: "type[AppShellT]", *, user: str | None = None
+    ) -> "AsyncIterator[AppShellT]":
+        """Run *shell_cls* on a dedicated session; see the sessions cookbook."""
+        name = f"__appshell_{shell_cls.__name__.lower()}_{uuid.uuid4().hex[:6]}__"
+        session = await self.open_session(name)
+        try:
+            target = user if user is not None else shell_cls.user
+            if target is not None:
+                await session.switch_user(target)
+            async with shell_cls.attach(session) as shell:
+                yield shell
+        finally:
+            await session.close()
 
     async def send(
         self,

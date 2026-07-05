@@ -33,6 +33,7 @@ from otto.host.app_shell import (
     parse_all,
     parse_one,
 )
+from otto.host.host import BaseHost
 from otto.host.session import ShellSession
 from otto.result import ShellResult
 from otto.utils import Status
@@ -508,3 +509,122 @@ async def test_cmd_timeout_marks_broken_then_exit_recovers_without_quit():
     # Broken exit still recovers the POSIX shell and releases the lock.
     assert inner.recovered is True
     assert inner._app_shell is None
+
+
+# =========================================================================== #
+# BaseHost.app_shell() — dedicated session lifecycle (Task 14)
+# =========================================================================== #
+#
+# These tests drive a fake BaseHost whose `open_session` hands back a
+# recording HostSession fake (built on the same FakeShellSession used above),
+# so `AppShell.attach`'s own launch/quit machinery runs for real while
+# `open_session`/`switch_user`/`close` calls are captured for assertion.
+
+
+class RecordingHostSession(FakeHostSession):
+    """FakeHostSession that also records switch_user/close calls (and sends).
+
+    ``calls`` interleaves ``send``/``switch_user`` in real call order so tests
+    can assert *ordering* (switch_user before the launch line), not just that
+    each happened somewhere.
+    """
+
+    def __init__(self, inner, script=None):
+        super().__init__(inner, script=script)
+        self.calls = []
+        self.closed = False
+
+    @override
+    async def send(self, text, log=None):
+        self.calls.append(("send", text))
+        await super().send(text, log=log)
+
+    async def switch_user(self, user):
+        self.calls.append(("switch_user", user))
+
+    async def close(self):
+        self.calls.append(("close", None))
+        self.closed = True
+
+
+class RecordingHost(BaseHost):
+    """Minimal BaseHost whose open_session hands back a fixed recording session."""
+
+    def __init__(self, session):
+        self._session = session
+        self.opened_names = []
+
+    @override
+    async def open_session(self, name):
+        self.opened_names.append(name)
+        return self._session
+
+
+def _recording_demo(script=None):
+    """Build a (RecordingHost, RecordingHostSession) pair scripted with ``script``."""
+    inner = FakeShellSession()
+    session = RecordingHostSession(inner, script=script or ["\nmysql> "])
+    host = RecordingHost(session)
+    return host, session
+
+
+@pytest.mark.asyncio
+async def test_app_shell_yields_attached_shell_on_fresh_session_and_closes():
+    host, session = _recording_demo()
+    async with host.app_shell(DemoShell) as shell:
+        assert isinstance(shell, DemoShell)
+        # The shell is genuinely attached: the underlying lock names it.
+        assert session._session._app_shell is shell
+
+    # A single, collision-safe session name was opened for this shell class.
+    assert len(host.opened_names) == 1
+    name = host.opened_names[0]
+    assert name.startswith("__appshell_demoshell_")
+    assert name.endswith("__")
+    # app_shell always closes the session it opened, on top of attach's own
+    # quit/recover cleanup.
+    assert session.closed is True
+
+
+@pytest.mark.asyncio
+async def test_app_shell_switch_user_runs_before_launch():
+    host, session = _recording_demo()
+    async with host.app_shell(DemoShell, user="mysql"):
+        pass
+    # Call ORDER matters: switch_user must land before the launch line is sent.
+    assert session.calls == [
+        ("switch_user", "mysql"),
+        ("send", "mysql\n"),
+        ("send", "quit\n"),
+        ("close", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_app_shell_uses_shell_cls_user_default_when_user_kwarg_omitted():
+    class UserShell(DemoShell):
+        user = "dbadmin"
+
+    host, session = _recording_demo()
+    async with host.app_shell(UserShell):
+        pass
+    assert session.calls[0] == ("switch_user", "dbadmin")
+
+
+@pytest.mark.asyncio
+async def test_app_shell_no_switch_user_when_target_is_none():
+    host, session = _recording_demo()
+    async with host.app_shell(DemoShell):
+        pass
+    # DemoShell.user is None and no user= override was given: switch_user must
+    # never be called; only the launch/quit sends (and the final close) happen.
+    assert session.calls == [("send", "mysql\n"), ("send", "quit\n"), ("close", None)]
+
+
+@pytest.mark.asyncio
+async def test_app_shell_closes_session_even_if_attach_raises():
+    host, session = _recording_demo([asyncio.TimeoutError()])
+    with pytest.raises(AppShellTimeoutError):
+        async with host.app_shell(DemoShell):
+            pytest.fail("body must not run when launch times out")
+    assert session.closed is True

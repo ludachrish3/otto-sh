@@ -15,19 +15,23 @@ if TYPE_CHECKING:
 
     from otto.cli import app
     from otto.cli.registry import cli_command, register_cli_command
+    from otto.host.app_shell import AppShell, Parsed
     from otto.host.login_proxy import Cred, register_login_proxy
     from otto.logger import get_logger
-    from otto.result import CommandResult, Result, Results
+    from otto.result import CommandResult, Result, Results, ShellResult
 
     from .configmodule import all_hosts, get_host, get_lab, load_lab, run_on_all_hosts
     from .context import OttoContext, get_context, open_context, try_get_context
 
 __all__ = [
+    "AppShell",
     "CommandResult",
     "Cred",
     "OttoContext",
+    "Parsed",
     "Result",
     "Results",
+    "ShellResult",
     "all_hosts",
     "app",
     "cli_command",
@@ -65,6 +69,9 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "cli_command": ("otto.cli.registry", "cli_command"),
     "Cred": ("otto.host.login_proxy", "Cred"),
     "register_login_proxy": ("otto.host.login_proxy", "register_login_proxy"),
+    "AppShell": ("otto.host.app_shell", "AppShell"),
+    "Parsed": ("otto.host.app_shell", "Parsed"),
+    "ShellResult": ("otto.result", "ShellResult"),
 }
 
 
