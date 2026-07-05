@@ -685,7 +685,7 @@ In `_common_host_kwargs` (line 210): remove `"creds"` from `_COMMON_PLAIN_FIELDS
 ### Task 4: Runtime plumbing (host fields, connections, session seeding)
 
 **Files:**
-- Modify: `src/otto/host/unix_host.py` (`creds` field ~line 119; `_user_password` ~294; `_sudo_password` ~288), `src/otto/host/remote_host.py` (contract ~line 116; hop creds ~388), `src/otto/host/connections.py` (`TermContext` line 44; ctor ~200; `credentials` 254-266), `src/otto/host/session.py` (`_login_user` 1133-1143)
+- Modify: `src/otto/host/unix_host.py` (`creds` field ~line 119; `_user_password` ~294; `_sudo_password` ~288), `src/otto/host/remote_host.py` (contract ~line 116; hop creds ~388), `src/otto/host/embedded_host.py` (`creds` field ~line 125 — same `list[Cred]` migration; embedded creds ride the identical ConnectionManager path), `src/otto/host/connections.py` (`TermContext` line 44; ctor ~200; `credentials` 254-266), `src/otto/host/session.py` (`_login_user` 1133-1143)
 - Test: `tests/unit/host/test_login_proxy.py` (chain-aware `credentials`), existing connection/session unit tests updated to list-creds fakes
 
 **Interfaces:**
