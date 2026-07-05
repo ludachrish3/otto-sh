@@ -41,11 +41,13 @@ at "Connecting…" until the first byte — `server.py` now sends an immediate
 prelude). **CI is parallelized:** the nox `dashboard` session is parametrized
 by browser and the CI `dashboard` job is a `browser: [chromium, firefox,
 webkit]` matrix (fail-fast off), so each engine runs on its own runner —
-wall-clock is one engine's runtime, not three. Remaining local-only note:
-`make dashboard` (which feeds `make coverage`) still runs three engines
-serially (`-n 1`); if that drags the local coverage gate, trim the
-coverage-feeding lane to one engine (Python coverage is engine-independent)
-while keeping all three in CI + the standalone `make dashboard`.
+wall-clock is one engine's runtime, not three. The coverage-gating lane is
+scoped for speed: `make dashboard` (and thus `make coverage`) runs **Chromium
+only** by default — coverage is engine-independent, so one engine keeps the
+per-task gate fast (the browser analogue of `make coverage` pinning a single
+Python). Full cross-engine runs are `make dashboard-all`, `make release`, and
+the CI matrix. Override ad hoc with `DASHBOARD_BROWSERS="chromium firefox
+webkit"`. Nothing outstanding here.
 
 ## 4. TypeScript performance tooling
 

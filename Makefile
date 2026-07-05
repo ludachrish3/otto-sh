@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -119,12 +119,14 @@ changelog: ## (Build & Release) Regenerate CHANGELOG.md from conventional commit
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) lint, typecheck, docs, nox, profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
+release: ## (Build & Release) lint, typecheck, docs, nox, all-browser dashboard e2e, profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) lint \
 		&& $(MAKE) typecheck \
 		&& $(MAKE) docs \
 		&& OTTO_DETECT_ASYNCIO_LEAKS=1 $(MAKE) nox \
+		&& $(MAKE) web \
+		&& $(MAKE) dashboard-all \
 		&& $(MAKE) profile \
 		&& NEW_VERSION="$${NEW_VERSION:-$$(bump-my-version show new_version --increment $(BUMP))}" \
 		&& echo "Targeting v$$NEW_VERSION" \
@@ -310,22 +312,29 @@ coverage-unix: ## Run the Unix-VM resource slice (incl. multi-hop) with a covera
 coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage report (no gate). Requires Vagrant lab up. JUnit XML in reports/junit/coverage-embedded/.
 	$(TIMEOUT_CMD) uv run pytest -m "$(M_EMBEDDED)" $(call junitxml,coverage-embedded)
 
-# The dashboard lane runs the monitor-dashboard + coverage-report browser
-# suites on ALL THREE engines — Chromium (Blink), Firefox (Gecko), WebKit
-# (Safari) — so a rendering or behavior regression is caught on whichever
-# engine breaks. pytest-playwright parametrizes each test across the
-# `--browser` values; the one genuinely Safari-specific test is marked
-# `@pytest.mark.only_browser("webkit")`, so it runs on WebKit only and shows up
-# as a skip (not silently absent) under Chromium/Firefox. Runs -n 1 (all
-# browser tests share one xdist_group anyway; extra workers would sit idle and
-# emit "No data was collected" coverage warnings) and writes coverage DATA
-# only: --cov-report= suppresses the report so a standalone `make dashboard`
+# The dashboard lane feeds `coverage` (its browser-driven server/collector
+# lines) and by default runs on Chromium ONLY: the coverage numbers are
+# engine-independent, so one engine keeps the per-task `make coverage` gate
+# fast — mirroring how `make coverage` pins a single Python while `make nox`
+# spans them all. The full cross-engine run is `make dashboard-all` (Chromium
+# + Firefox + WebKit), which `make release` invokes; CI runs the three engines
+# as a parallel matrix (see the `dashboard` job / noxfile's parametrized
+# session). Override ad hoc with DASHBOARD_BROWSERS="chromium firefox webkit".
+# The one Safari-specific test is `@pytest.mark.only_browser("webkit")`, so it
+# only runs when webkit is in the set (a skip, not silently absent, otherwise).
+# Runs -n 1 (all browser tests share one xdist_group anyway; extra workers
+# would sit idle and emit "No data was collected" coverage warnings) and writes
+# coverage DATA only: --cov-report= suppresses the report so a standalone run
 # never stomps reports/coverage/html. Running first as `coverage`'s
 # prerequisite, its fresh data file is then extended by the main run's
 # --cov-append, folding the browser-driven server/collector lines (e.g. the
 # dashboard HTML route, UI event round-trips) into the gated report.
-dashboard: ## Run the browser e2e suites (monitor dashboard + coverage report) on Chromium + Firefox + WebKit; needs `make browsers` once. Writes coverage data for `coverage` to append. JUnit XML in reports/junit/dashboard/.
-	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m browser --browser chromium --browser firefox --browser webkit -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+DASHBOARD_BROWSERS ?= chromium
+dashboard: ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once.
+	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m browser $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+
+dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit); invoked by `make release`. Needs `make browsers` once.
+	$(MAKE) dashboard DASHBOARD_BROWSERS="chromium firefox webkit"
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead
