@@ -102,11 +102,13 @@ JUNIT_DIR := reports/junit
 junitxml = --junitxml=$(JUNIT_DIR)/$(1)/$(1).xml
 
 all: ## (Build & Release) Run full pipeline against the dev VM (includes integration tests)
-	@$(MAKE) validate \
+	@$(MAKE) web-install \
+		&& $(MAKE) validate \
 		&& $(MAKE) build
 
 ci: ## (Build & Release) Run pipeline without VM-dependent tests (used by GitHub Actions)
-	@$(MAKE) validate COVERAGE_TARGET=coverage-hostless \
+	@$(MAKE) web-install \
+		&& $(MAKE) validate COVERAGE_TARGET=coverage-hostless \
 		&& $(MAKE) build
 
 changelog: export PATH := $(VENV_BIN):$(PATH)
@@ -119,8 +121,9 @@ changelog: ## (Build & Release) Regenerate CHANGELOG.md from conventional commit
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) lint, typecheck, docs, nox, all-browser dashboard e2e, profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
+release: ## (Build & Release) npm ci web/, lint, typecheck, docs, nox, all-browser dashboard e2e, profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
 	@$(MAKE) clean-dist \
+		&& $(MAKE) web-install \
 		&& $(MAKE) lint \
 		&& $(MAKE) typecheck \
 		&& $(MAKE) docs \
