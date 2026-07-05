@@ -31,6 +31,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, ClassVar, Union, get_args, get_origin
 
+from pydantic import ValidationError
 from typing_extensions import Self, override
 
 from otto.models.base import OttoModel
@@ -82,6 +83,23 @@ class Parsed(OttoModel):
                 f"{cls.__name__}: required fields {sorted(required - groups)} "
                 f"have no pattern named group"
             )
+        # A ``list[X]`` field means "finditer the sub-model's pattern over the
+        # region", so ``X`` must itself be a ``Parsed`` subclass; a scalar
+        # element (``list[int]``) has no sub-pattern and is meaningless in the
+        # region engine. Reject it LOUDLY here — otherwise it would fall through
+        # ``_parse_region`` to a raw region string and, post the ValidationError
+        # -> ParseMismatch wrap, silently downgrade an authoring error into a
+        # quiet failed result.
+        for field, info in cls.model_fields.items():
+            inner = _unwrap_optional(info.annotation)
+            if get_origin(inner) is not list:
+                continue
+            (element,) = get_args(inner)
+            if not (isinstance(element, type) and issubclass(element, Parsed)):
+                raise TypeError(
+                    f"{cls.__name__}.{field}: list fields must contain a Parsed "
+                    f"subclass, got {element}"
+                )
 
 
 def _unwrap_optional(annotation: Any) -> Any:
@@ -129,7 +147,15 @@ def _from_match(model: type[Parsed], match: re.Match[str]) -> Parsed:
         name: _parse_region(model.model_fields[name].annotation, region)
         for name, region in match.groupdict().items()
     }
-    return model(**data)
+    try:
+        return model(**data)
+    except ValidationError as exc:
+        # The regex matched but a captured string failed type conversion — a
+        # DATA problem per spec §10, not a state problem. Surface it as the
+        # uniform in-band failure signal so ``cmd`` returns a failed
+        # ShellResult instead of leaking a raw pydantic ValidationError. This
+        # routes parse_one, parse_all, and nested sub-model construction alike.
+        raise ParseMismatch(f"{model.__name__}: matched but validation failed: {exc}") from exc
 
 
 def parse_one(model: type[Parsed], text: str) -> Parsed:
@@ -166,7 +192,9 @@ def apply_parse(spec: Any, text: str) -> Any:
         try:
             return spec(text)
         except Exception as exc:
-            raise ParseMismatch(str(exc)) from exc
+            # Name the exception type so a bare ``KeyError('x')`` reports
+            # "KeyError: 'x'" rather than the opaque "'x'" (M12-2).
+            raise ParseMismatch(f"{type(exc).__name__}: {exc}") from exc
     raise TypeError(f"unsupported parse spec: {spec!r}")
 
 

@@ -21,6 +21,7 @@ import asyncio
 import re
 
 import pytest
+from pydantic import ValidationError
 from typing_extensions import override
 
 from otto.host.app_shell import (
@@ -44,6 +45,18 @@ class Kv(Parsed):
 
     pattern = re.compile(r"(?P<key>\w+)=(?P<n>\d+)")
     key: str
+    n: int
+
+
+class IntN(Parsed):
+    """Regex captures ``\\S+`` into an ``int`` field.
+
+    The pattern matches non-numeric text (``n=abc``) so the regex succeeds but
+    pydantic's type conversion fails — the fixture for the "matched but
+    validation failed is a *data* problem" contract (spec §10 / I-1).
+    """
+
+    pattern = re.compile(r"n=(?P<n>\S+)")
     n: int
 
 
@@ -74,6 +87,29 @@ def test_parsed_required_field_without_group_is_class_def_error():
             n: int  # required, but no (?P<n>...) group -> drift the other way
 
 
+def test_parsed_list_of_non_parsed_field_is_class_def_error():
+    # A `list[X]` field is meaningful only as "finditer the sub-model's pattern
+    # over the region" -> X must be a Parsed subclass. `list[int]` has no
+    # sub-pattern; reject it LOUDLY at class-definition time (M12-1) so I-1's
+    # runtime ValidationError->ParseMismatch wrap can't silently downgrade this
+    # authoring error to a quiet failed result.
+    with pytest.raises(TypeError, match=r"nums.*Parsed subclass"):
+
+        class BadList(Parsed):
+            pattern = re.compile(r"(?P<nums>[\d ]+)")
+            nums: list[int]
+
+
+def test_parsed_list_of_parsed_field_is_allowed():
+    # Regression guard: a legitimate nested list (element IS a Parsed subclass)
+    # is unaffected by the M12-1 rejection.
+    class Container(Parsed):
+        pattern = re.compile(r"(?P<items>(?:\w+=\d+\s*)+)")
+        items: list[Kv]
+
+    assert Container.model_fields["items"].annotation == list[Kv]
+
+
 # --------------------------------------------------------------------------- #
 # parse_one — single search + pydantic conversion
 # --------------------------------------------------------------------------- #
@@ -90,6 +126,21 @@ def test_parse_one_mismatch_raises():
         parse_one(Kv, "nothing to match here")
     # The offending pattern is surfaced (repr'd) in the message for debugging.
     assert repr(Kv.pattern.pattern) in str(excinfo.value)
+
+
+def test_matched_but_validation_fails_is_parse_mismatch_not_validation_error():
+    # The regex MATCHES ("n=abc") but pydantic cannot convert "abc" to int.
+    # Per spec §10 that is a DATA problem, not a state problem: it must surface
+    # as ParseMismatch (which cmd catches), NOT as a raw pydantic
+    # ValidationError leaking through parse_one/apply_parse.
+    with pytest.raises(ParseMismatch) as excinfo:
+        parse_one(IntN, "n=abc")
+    assert not isinstance(excinfo.value, ValidationError)
+    # The model name is named so the author can find the offending model.
+    assert "IntN" in str(excinfo.value)
+    # Same path through apply_parse's single-model dispatch.
+    with pytest.raises(ParseMismatch):
+        apply_parse(IntN, "n=abc")
 
 
 # --------------------------------------------------------------------------- #
@@ -205,6 +256,17 @@ def test_apply_parse_callable_exception_is_wrapped():
 
     with pytest.raises(ParseMismatch, match="callable blew up"):
         apply_parse(boom, "anything")
+
+
+def test_apply_parse_callable_exception_names_its_type():
+    # M12-2: the wrapped message must name the exception TYPE, so a bare
+    # KeyError('x') reports "KeyError: 'x'" rather than the opaque "'x'".
+    def boom(_text: str) -> str:
+        raise KeyError("x")
+
+    with pytest.raises(ParseMismatch, match="KeyError") as excinfo:
+        apply_parse(boom, "anything")
+    assert "KeyError" in str(excinfo.value)
 
 
 def test_apply_parse_list_of_non_parsed_is_type_error():
@@ -466,6 +528,23 @@ async def test_cmd_parse_mismatch_is_failed_result_not_exception():
     assert result.msg  # names what didn't match
     # Output is preserved for debugging.
     assert result.output == "nope\n"
+
+
+@pytest.mark.asyncio
+async def test_cmd_type_conversion_failure_is_failed_result_not_exception():
+    # Spec §10 contract: the regex MATCHES ("n=abc") but pydantic can't convert
+    # "abc" to int. Because it's a DATA problem, cmd(parse=Model) must return a
+    # failed ShellResult end-to-end (output preserved) rather than letting a
+    # pydantic ValidationError escape.
+    session, _inner = _demo(["\nmysql> ", "SELECT 1\nn=abc\nmysql> "])
+    async with DemoShell.attach(session) as shell:
+        result = await shell.cmd("SELECT 1", parse=IntN)
+    assert result.status is Status.Failed
+    assert result.value is None
+    assert result.msg  # names the model that matched but failed validation
+    assert "IntN" in result.msg
+    # Output is preserved for debugging even though validation failed.
+    assert result.output == "n=abc\n"
 
 
 # --------------------------------------------------------------------------- #
