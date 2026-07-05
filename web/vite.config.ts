@@ -39,5 +39,35 @@ export default defineConfig({
     // whole web/ vitest project is simpler than per-file overrides.
     environment: "jsdom",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    coverage: {
+      // v8 provider (matches @vitest/coverage-v8); parity with the Python
+      // pytest-cov gate. Report term-missing + html like pyproject's addopts.
+      provider: "v8",
+      reporter: ["text", "html"],
+      include: ["src/**"],
+      exclude: [
+        // Tests, generated wire types (owned by scripts/gen_web_types.sh and
+        // the `make web` drift gate), type-only declarations, and the two
+        // bootstrap entrypoints that only wire the app to the DOM (exercised
+        // by the Playwright dashboard e2e, not unit tests).
+        "src/**/*.test.{ts,tsx}",
+        "src/__tests__/**",
+        "src/**/*.d.ts",
+        "src/api/types.gen.ts",
+        "src/main.tsx",
+        "src/covreport/main.ts",
+      ],
+      // Ratchet floor: ~2-3% below the current measured baseline
+      // (stmts 67.1 / branch 55.6 / funcs 68.6 / lines 67.7), mirroring the
+      // Python gate's headroom (CI floor 92 vs ~94.7 actual). Catches
+      // regressions without breaking on trivial refactors; raise it as
+      // component test coverage grows (see the tooling follow-ups).
+      thresholds: {
+        statements: 65,
+        branches: 53,
+        functions: 66,
+        lines: 65,
+      },
+    },
   },
 });
