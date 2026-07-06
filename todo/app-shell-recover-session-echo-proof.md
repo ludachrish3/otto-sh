@@ -1,4 +1,15 @@
-# Echo-proof `_recover_session` for REPL-parked sessions (deferred)
+# Echo-proof `_recover_session` for REPL-parked sessions
+
+> **STATUS 2026-07-05 — the echo-proof root fix is IMPLEMENTED** on the
+> `shell-liveness-probe-unification` branch (`confirm_live` + `BashFrame.recover`
+> exit-code probe; the "Proposed fix" section below is now done, via a distinct
+> RECOVER-marker digit form disjoint from `end_pattern`). Recovery from inside a
+> mysql/python3 REPL now correctly reports the session **dead** instead of a
+> false positive, on both the SSH/telnet base path and real python3-over-
+> LocalHost. What REMAINS from this doc: the **relaxation** below — revisit the
+> `AppShell.attach()` "discard the session after `AppShellTimeoutError`" caveat
+> now that recovery is trustworthy (see "Validation required" step 3). The
+> "Related deferred minors" backlog at the bottom is untouched by this.
 
 Goal: make `ShellSession._recover_session()` reliably confirm the POSIX shell
 is back even when the session was parked *inside* an application REPL (mysql,
