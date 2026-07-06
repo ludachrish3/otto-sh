@@ -78,7 +78,7 @@ def test_register_function_resolves_to_command():
     assert not hasattr(cmd, "commands")  # a leaf command, not a group
 
 
-def test_lazy_module_attr_loader_imports_only_on_resolve(tmp_path, monkeypatch):
+def test_lazy_module_attr_loader_imports_only_on_resolve(tmp_path, monkeypatch, purge_tmp_imports):
     mod_dir = tmp_path / "fake_pkg"
     mod_dir.mkdir()
     (mod_dir / "__init__.py").write_text("")

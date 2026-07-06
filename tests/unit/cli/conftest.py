@@ -71,6 +71,39 @@ def no_logger_output_dir():
         reset_context(token)
 
 
+@pytest.fixture(autouse=True)
+def _resync_cli_submodule_identity():
+    """Keep ``otto.cli.<sub>`` (attribute) identical to ``sys.modules["otto.cli.<sub>"]``.
+
+    Several tests here ``monkeypatch.delitem`` an ``otto.cli.*`` submodule from
+    ``sys.modules`` to exercise lazy loading, then trigger a re-import (e.g.
+    ``_OttoGroup.get_command(ctx, "run")``). The re-import builds a *new* module
+    object and repoints the parent-package attribute (``otto.cli.run``) at it,
+    but ``monkeypatch`` restores only the ``sys.modules`` entry on teardown — not
+    the attribute. That leaves two live ``otto.cli.run`` objects. ``mock.patch``
+    resolves ``"otto.cli.run.X"`` by getattr traversal (the attribute), while
+    code that does ``from ..cli.run import X`` reads ``sys.modules`` — so under
+    the nightly ``--repeat-scope=session`` repeat a later test's patch landed on
+    one object while the code under test read the other, silently defeating the
+    patch (it desynced ``test_listing``'s ``INSTRUCTIONS`` patch → issue #108).
+    A single CI pass never re-runs the victim, so it only surfaced under repeat.
+
+    Resyncing each parent-package submodule attribute to whatever ``sys.modules``
+    holds (the entry ``monkeypatch`` restores) after every test keeps the two in
+    lockstep, so ``mock.patch`` and ``from``-imports always see one object.
+    """
+    import sys
+
+    import otto.cli as cli_pkg
+
+    yield
+
+    for name in list(vars(cli_pkg)):
+        cached = sys.modules.get(f"otto.cli.{name}")
+        if cached is not None and getattr(cli_pkg, name, None) is not cached:
+            setattr(cli_pkg, name, cached)
+
+
 # ── Helpers for real filesystem fixtures ─────────────────────────────────────
 
 HOSTS_DATA = [
