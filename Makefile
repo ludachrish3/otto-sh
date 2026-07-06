@@ -210,7 +210,21 @@ browsers: ## (Setup) Install the Playwright Chromium + Firefox + WebKit binaries
 # that's why `make web-clean` exists, but it's no longer required after
 # every build.)
 web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfile (npm ci)
-	cd web && npm ci
+	# npm ci occasionally hits a transient registry ECONNRESET mid-download in CI
+	# (issue #107) that npm's own fetch-retries don't catch. Retry ONLY on
+	# network-class failures (up to 3 attempts, 5s/10s backoff); a deterministic
+	# error such as a package.json/lockfile drift still fails fast on attempt 1.
+	cd web && n=1; while :; do \
+	  log=$$(mktemp); \
+	  npm ci >"$$log" 2>&1; rc=$$?; cat "$$log"; \
+	  if [ $$rc -eq 0 ]; then rm -f "$$log"; break; fi; \
+	  if ! grep -qiE 'ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|socket hang up|npm (error|ERR!) network' "$$log"; then \
+	    rm -f "$$log"; echo "web-install: npm ci failed (exit $$rc), not a network error - failing fast" >&2; exit $$rc; fi; \
+	  rm -f "$$log"; \
+	  if [ $$n -ge 3 ]; then echo "web-install: npm ci still failing after $$n network-error attempts (exit $$rc)" >&2; exit $$rc; fi; \
+	  echo "web-install: npm ci hit a network error (attempt $$n); retrying in $$((n * 5))s" >&2; \
+	  sleep $$((n * 5)); n=$$((n + 1)); \
+	done
 
 web: ## (Build & Release) Build the web/ React dashboard + the covreport bundle (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh)
 	# Regenerate web/src/api/types.gen.ts from the live pydantic models and fail
