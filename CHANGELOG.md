@@ -5,24 +5,244 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.0] - 2026-07-06
 
 ### Added
 
-- tab completion for `--lab` (lab names from `hosts.json`) and `otto test
-  --tests` (test names, matched by base name)
-- `otto test --tests` completion now also offers *dynamically generated*
-  tests: on top of the instant static-source-scan floor, a pytest-collected
-  set is warmed by any real `otto test --list-tests` run, or by a single
-  timeout-bounded background collection on the first `--tests` TAB, then
-  cached (and re-warmed automatically when a test file changes). The process
-  answering the keystroke still never runs user code — collection happens in a
-  disposable subprocess.
+- login-proxy resync via confirm_live; retire interim knobs + lookbehind
+- recover_session via confirm_live (echo-proof, fixes REPL false-positive)
+- echo-proof exit-code recover probe on BashFrame; recover_pattern
+- shared confirm_live shell-liveness loop
+- per-session timeout override for app_shell() and attach()
+- host.app_shell() context manager + public exports
+- AppShell REPL abstraction with prompt-regex cmd() and session locking
+- Parsed models with nested regex-region parsing
+- ShellResult for AppShell commands
+- login-proxy e2e on the mysql bed; public exports
+- interact --as-user replays login-proxy hops over the bridge
+- oneshot/nc route through proxied pool sessions when the user is proxied
+- proxied logins at session establishment (default, named, pooled)
+- switch_user/as_user route through the login-proxy engine; _perform_su deleted
+- migrate in-repo lab data + schemas to list-creds
+- creds become list[Cred]; ConnectionManager resolves the direct-auth chain
+- CredSpec list-creds boundary validation
+- perform_switch engine with recursive via-switching
+- login-proxy registry, Cred, chain resolution, built-in su proxy
+- EventTable — kind="table" tabs render log-event rows
+- log-event data layer — store slice, SSE dispatch, /api/data hydration
+- TabSpec kind/columns — table tabs on the /api/meta wire
+- RegexLogEventParser — named groups become table columns
+- log-event persistence and wire — DB table, batched SSE, /api/data
+- CsvMetricParser + timestamp high-water mark
+- parse_tick contract — timed samples, log events, collector cutover
+- UptimeParser — executed custom-parser template + scoping integration test
+- regex host patterns for register_host_parsers (fullmatch, loud ambiguity)
+- enterprise net/fs OID contract + named SNMP bundles (otto-core/net/fs)
+- SNMP counter->rate + meta_of descriptors (process_snmp_values replaces points_from_values)
+- parser-health warnings (edge-triggered failures + never-produced backstop)
+- Swap series rides free -b in MemParser
+- ProcCountParser — runnable/blocked/total process counts
+- PerCoreCpuParser — busy%% per core from /proc/stat deltas
+- DiskIoParser — per-device B/s from /proc/diskstats deltas
+- SocketsParser — established/time-wait counts from ss -s
+- NetDevParser — per-interface rx/tx rates on a Network tab
+- shared counter->rate helpers + ParseContext.ts
+- otto cov report --prefix strips a display root from report paths
+- report sorter served from the vite-built covreport bundle
+- TypeScript port of the coverage-report sorter with Vitest pins
+- clang gcov support — stamp-based discovery + llvm-cov capture
+- React monitor dashboard replaces the vanilla-JS frontend
+- cov get defaults to the standard per-invocation output dir
+- persist per-file excluded_lines in store.json
+- expand ${sut_dir} in tier harvest_dirs on read
+- tier-colored rendering, legend, state rows, provenance table
+- reporter consumes captures, manual store, unit harvest; e2e pin guard
+- otto cov clean — zero remote .gcda counters
+- otto cov get — single retrieval command; test --cov emits captures
+- per-board capture.json production from fetched counters
+- line states + provenance in store; blob-anchored manual validity pass
+- manual capture store dir + exclusion-marker scan
+- Capture artifact model with dirty-tree remap and blob anchors
+- bidirectional hunk remap engine
+- git plumbing helpers for capture pinning
+- runtime TierConfig accessor for declarative tiers
+- typed [coverage] settings with declarative tiers, colors, exclusions
+- warm --tests completion with pytest-collected test names
+- tab completion for --lab and --tests
+- MonitorServer.force_stop(); harness sheds its uvicorn reach-in
+- project-level register_parsers() — extend/override defaults for all hosts
+- per-parser collection intervals via per-bucket loops
+- parser API v2 — parse(output, *, ctx: ParseContext); no more parser mutation
+- typed /api/meta contract (ChartSpec/TabSpec/MonitorMeta) + schema export
+- otto reservation is lab-free — whoami needs no lab, check loads it lazily
+- otto init epilogue — next steps + idempotent re-runs
+- otto init doctor mode — validate existing areas via real ingestion
+- otto init prompt/flag semantics — per-area confirms, --all, area flags
+- otto init — area scaffolds with inline templates
+- allow _-prefixed annotation keys in hosts.json entries
+- suite-less selection runs — --tests names and -m alone
+- default-construct suite Options per class in multi-suite runs
+- auto-register Test* OttoSuite subclasses; delete @register_suite
+- incremental product builds + helpful polluted-tree error, no tracebacks
+- third-party group subcommands tab-complete on the fast path
+- live Typer apps without help= inherit their own Typer-native help
+- unified command registry + bootstrap composition root; user-extensible top-level CLI
+- unify host-verb returns into the Result family
+- built-in local host + per-command output dirs; fix --help crash across groups
+- CLI-subprocess e2e coverage + hostless marker + 3 surfaced fixes
+- remove the repeat-command scheduler (RepeatRunner)
+
 
 ### Changed
 
-- `otto reservation` is now lab-free: `whoami` needs no `--lab`, and
-  `check` loads the lab itself only when required
+- fold session handshake onto confirm_live
+- give bash recover its own distinct digit marker (drop drain)
+- extract history import/export; acknowledge new modules in import budget
+- extract MetricStore from MetricCollector
+- extract MetricDB from MetricCollector
+- extract Broadcaster from MetricCollector
+- remove 'from __future__ import annotations' across src (repo ban)
+
+
+### Dependencies
+
+- bump @types/node from 24.13.2 to 26.1.0 in /web
+- bump plotly.js-gl2d-dist-min from 3.6.0 to 3.7.0 in /web
+- bump astral-sh/setup-uv from 8.2.0 to 8.3.0
+- bump typing-extensions from 4.15.0 to 4.16.0
+- bump fastapi from 0.138.1 to 0.139.0
+- bump asyncssh from 2.23.1 to 2.24.0
+- bump ty from 0.0.55 to 0.0.56
+- bump hypothesis from 6.155.7 to 6.156.1
+- bump uvicorn from 0.49.0 to 0.50.0
+- raise ruff floor to 0.15.20, the currently-locked version
+
+
+### Documentation
+
+- add e2e embedded REPL-product harness to the embedded-recovery follow-up
+- tee up fresh-worktree web-dist build gap (make coverage Error 127)
+- queue embedded-recovery tests; mark echo-proof I-3 fix implemented
+- design spec for Untitled UI + ECharts redesign
+- frontend redesign plan
+- tee up TS-tooling follow-ups
+- document the web/ TypeScript quality gates
+- track echo-proof recover_session follow-up + deferred AppShell review minors
+- note attach() session-discard caveat after app-shell timeout
+- AppShell cookbook, login-proxy extending guide, list-creds host-database guide
+- update login-proxy and app shell plan
+- monitor Phase 3 Plan B ship-as-noted follow-ups
+- log-sourced data guide — CSV digests, syslog event tables, large files
+- Plan B implementation plan — log-sourced data
+- monitor Phase 3 Plan A ship-as-noted follow-ups
+- Phase 3 metrics — Unix parser tables, OID contract, bundles, warnings
+- edge-triggered parser-health warnings + Plan A implementation plan
+- Phase 3 metrics-expansion design spec
+- build-time screenshot of the coverage report in the guide
+- restore browser-guard rationale dropped in the extraction
+- align guide/reference/architecture with the shipped pipeline
+- record deferred lcov-rc wiring for custom exclusion markers
+- custom markers are render-only; provenance table is manual-only; filename pattern
+- declarative tiers, otto cov get/clean, manual captures, validity semantics
+- spec the collected-tests completion cache follow-up
+- showcase --lab / --tests completion, document the static-scan boundary
+- rename "pillars" to "first-party commands"
+- API pages for the decomposed modules; ctx/interval/register_parsers guide
+- note dormant orphaned-bucket risk at the gather site
+- save plans and specs for command revamps
+- restructure as a story — pillars, lifecycle tree, subsystems, utilities
+- onboarding rewritten around otto init; underscore-key idiom documented
+- selection-run syntax, discovery-scope tests key, decorator-less suites
+- otto init scaffolding + pytest-native flexibility designs and plans
+- accuracy sweep across all pages + new architecture tree
+- selection-based otto test — listing + running by suite/marker/test
+- test/suite listing rework — registry-based --list-suites + hardened collect_tests
+- make @options the standard options decorator
+
+
+### Fixed
+
+- reap orphaned uvicorn transports in dashboard harness teardown
+- retry npm ci in web-install only on network-class failures
+- fail-fast on dead session in send/expect; collect long-dead session tests
+- harden login-proxy resync against the tty-flush window
+- give monitor scoping e2e an adequate per-tick timeout budget
+- auto-build web dist for coverage/dashboard on fresh checkouts
+- close listening sockets before aborting in force_stop
+- npm-ci web/ deps at the start of release/all/ci
+- isolate the SUITES registry per suite test; guard it in CI
+- prime the SSE stream so Firefox reaches "live" at once
+- mark session for recovery when app-shell launch times out
+- parse type-conversion failures return a failed ShellResult; reject non-Parsed list fields
+- line-anchor login-proxy resync marker so it is sound on echo-on bridges
+- resync shell after login-proxy transitions to survive su/sudo tty flush
+- consume matched bytes in _BridgeProxyIO.expect so multi-hop replay waits per hop
+- symmetric full via-cred lookup at session-establishment proxy
+- wrap all login-proxy failures in LoginProxyError
+- retry west update to survive transient module-fetch resets
+- provisional-tail guard — confirm the final line across reads
+- final-review fixes — log-only hosts, torn-line guard, year rollover
+- final-gate fixes — ruff format drift, ty-narrowed table columns
+- export/json key-set pin missed log_events
+- inject year before strptime for year-less timestamp formats
+- wire up otto.monitor.rates API page; fix two docstring gates
+- explicit params in net-descriptor helper (ty gate)
+- failed ticks still parse and record points; only health bookkeeping is success-gated
+- silent-parser backstop counts only succeeding ticks; no literal None in failure msg
+- scope `otto host <TAB>` to the selected lab
+- dashboard dist-guard matcher mirrors the browser tests' full marker set
+- hermetic OTTO_* env — ambient sut_dirs broke the bootstrap test
+- anchor blobs cwd-relative — nested sut_dir produced empty captures
+- otto test --cov-report renders via the collection model
+- scope `get --clean` to unix hosts; robust report errors
+- remap dirty-tree e2e captures HEAD→worktree at report time
+- resolve relative harvest_dirs against the repo root
+- clean one-line errors for all new failure modes
+- exclusion display is render-time; thread extra_markers reporter→renderer
+- cov clean scopes its sweep to the computed unix hosts
+- test --cov capture tail never fails the run; cover the tail with tests
+- preserve never-reached branch state through capture format
+- position-aware START/STOP handling in exclusion scan
+- skip unanchored sources (no HEAD blob) in build_capture
+- gitio raises on non-repo paths; cat_blob routed through _run
+- user-facing help for the otto test group
+- concurrent tick cadence restored; project parsers reach historical catalog; pin gaps closed
+- historical collectors declare the parser catalog — --file mode renders again
+- release the flock fd when MetricDB.open() fails mid-way
+- add dashboard browser coverage; playwright-proof pytester inner runs; provision chromium libs
+- selection runs skip non-matching repos, per-repo --results, loud --tests+suite conflict
+- otto init lab doctor rejects non-object hosts.json entries cleanly
+- otto init epilogue honors comma-or-pathsep OTTO_SUT_DIRS convention
+- otto init derives area names from existing settings.toml, not the dir name
+- narrow cls before use in suite_options; docstring + comment polish
+- cut conftest loading at the repo root, not the suite dir
+- backport Zephyr fs-shell mount-leak fix for 2.7 and 3.7 beds
+- probe mount state with statvfs instead of leaking Zephyr re-mounts
+- park repo1 suites by source FILE, not origin prefix
+- built-in local host is not fleet — all_hosts/do_for_all_hosts exclude it
+- close the sys.modules isolation gap; fix embedded-cov e2e Result drift
+- --show-lab/--list-hosts fail loud on contained bootstrap errors
+- completion resolves real commands by dispatch target only, not COMP_WORDS sniffing
+- contain phase-1 config-data errors; otto --help survives malformed settings.toml
+- list otto-test suites from the registry; harden collect_tests; add --list-tests/--list-markers
+
+
+### Maintenance
+
+- remove login proxy and app shell as todo items
+- add frontend component framework update to todo list
+- update vagrant config to install MySQL on unix hosts
+- tweaked ideas around application shells
+- added more future ideas to todo list
+- save plans for future work
+- added future work items
+- mark termynal docs item done
+- prune stale files; re-verify fable ranked list against main
+- update todo list
+- hygiene batch from the registry-unification final review
+- update Claude model names
+- updated review by fable
+
 
 ## [0.5.4] - 2026-06-30
 
@@ -563,7 +783,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.5.4...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/ludachrish3/otto-sh/compare/v0.5.4...v0.6.0
 [0.5.4]: https://github.com/ludachrish3/otto-sh/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/ludachrish3/otto-sh/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/ludachrish3/otto-sh/compare/v0.5.1...v0.5.2
