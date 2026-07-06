@@ -6,6 +6,7 @@ the collector is only ever touched from one loop.
 """
 
 import asyncio
+import gc
 import threading
 import time
 from collections.abc import Coroutine
@@ -84,7 +85,54 @@ class DashboardHarness(Generic[C]):
                                 "task": task,
                             }
                         )
+            self._reap_orphaned_transports()
             self._loop.close()
+
+    def _reap_orphaned_transports(self) -> None:
+        """Abort any live server connection whose transport would outlive the loop.
+
+        ``force_stop()`` aborts a one-shot snapshot of uvicorn's
+        ``server_state.connections``, but asyncio defers ``connection_made``
+        (where uvicorn *registers* a connection) onto the loop via
+        ``call_soon``. So a socket accepted right as we shut down can finish
+        registering *after* force_stop's abort snapshot — even after
+        ``serve()`` returns — and is then never aborted. Its still-open
+        ``_SelectorSocketTransport`` survives ``loop.close()`` and fires a
+        ``ResourceWarning`` from ``__del__`` at GC time, which pytest's
+        ``[unraisable]`` hook (with ``filterwarnings=error``, e.g. under
+        ``OTTO_DETECT_ASYNCIO_LEAKS=1`` in ``make release``) escalates into a
+        teardown ``ExceptionGroup`` — seen on Python 3.14, whose finalizer
+        surfaces the warning. No snapshot inside ``force_stop`` can close this
+        window (registration timing is unbounded), so the hand-rolled loop
+        owner reaps here instead: settle pending ``connection_made``, abort
+        every live selector transport bound to *this* loop, and flush the
+        socket-close callbacks before closing. ``asyncio.run()`` runs extra
+        turns that let registration settle but never actively closes live
+        transports, so production only escapes this by exiting the process.
+        """
+        # _SelectorTransport is the concrete base of the read/write selector
+        # transports; there is no public per-loop transport registry, so scan
+        # the heap (as tests/conftest.py's leak detector does).
+        from asyncio.selector_events import _SelectorTransport
+
+        loop = self._loop
+        assert loop is not None
+        for _ in range(10):  # loop-until-clean: a late connection_made may add one mid-reap
+            loop.run_until_complete(asyncio.sleep(0))
+            live = [
+                obj
+                for obj in gc.get_objects()
+                if isinstance(obj, _SelectorTransport)
+                and getattr(obj, "_loop", None) is loop
+                and getattr(obj, "_sock", None) is not None
+                and not obj.is_closing()
+            ]
+            if not live:
+                break
+            for transport in live:
+                transport.abort()
+        # Final turn so the last abort()'s _call_connection_lost closes its socket.
+        loop.run_until_complete(asyncio.sleep(0))
 
     def run(self, coro: Coroutine[Any, Any, T]) -> T:
         """Run *coro* on the server's loop and return its result."""
