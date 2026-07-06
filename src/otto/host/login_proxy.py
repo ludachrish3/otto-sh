@@ -10,8 +10,6 @@ the old hardcoded su-switch helper that ``switch_user``/``as_user`` used to
 call directly).
 """
 
-import asyncio
-import contextlib
 import re
 import shlex
 import uuid
@@ -21,6 +19,8 @@ from typing import Any, Protocol, runtime_checkable
 
 from ..logger.mode import LogMode
 from ..registry import Registry, caller_module
+from .command_frame import BashFrame, SessionMarkers
+from .shell_liveness import confirm_live
 
 
 @dataclass(frozen=True)
@@ -166,91 +166,53 @@ def _get_proxy(hop: Cred) -> LoginProxy:
     return LOGIN_PROXIES.get(hop.proxy or "su")
 
 
-# Ceiling on one resync attempt and the number of attempts _resync_shell makes
-# before giving up. A su/sudo/exit transition is a foreground-process handoff
-# on the pty: su/login/sudo traditionally flush pending terminal input across
-# a privilege boundary (a typeahead-attack defense), so bytes written the
-# instant control changes hands can be silently dropped. Confirmed on the live
-# bed with otto's built-in "su" proxy: a fire-and-forget send after the
-# transition reproduced a 100%-reliable hang on the very next sentinel-wrapped
-# command. Resending a fresh, unique marker (retried a bounded number of times)
-# closes the race — mirrors the connection-level READY handshake in
-# otto.host.session._ensure_initialized.
-#
-# INTERIM HARDENING (issue: `make release` 3.13 flake on the mysql bed): the
-# very first probe after the transition is *deterministically* eaten by the
-# flush (verified 40/40 on the live bed — the `exit` and the `echo <marker>`
-# are written back-to-back, so the marker lands in the flush window). Recovery
-# then depends on the remaining attempts each completing a round-trip within
-# _RESYNC_TIMEOUT; under heavy `make release` load (nox x3 + subprocess-coverage
-# saturating the client VM) those round-trips slow down and all attempts are
-# exhausted. Two cheap knobs close the gap until the unified redesign lands
-# (spec: docs/superpowers/specs/2026-07-05-shell-liveness-probe-unification-design.md):
-#   * _RESYNC_SETTLE — a short settle so the first probe is NOT written into
-#     the flush window (live-bed: a 0.3 s settle makes attempt 1 land ~7 ms,
-#     eliminating the always-wasted first attempt);
-#   * a larger _RESYNC_TIMEOUT — tolerate a slow probe round-trip under load
-#     (only paid when a probe is genuinely slow, which the settle makes rare).
-_RESYNC_ATTEMPTS = 5
-_RESYNC_TIMEOUT = 6.0
+# Post-transition resync. A su/sudo/exit hop is a foreground-process handoff on
+# the pty: su/login/sudo flush pending terminal input across the privilege
+# boundary (a typeahead-attack defense), so the first probe written back-to-back
+# with the transition is silently dropped (verified 40/40 on the live bed).
+# _RESYNC_SETTLE absorbs that flush; confirm_live then resends an echo-proof
+# exit-code probe (BashFrame.recover) on a short interval until the shell answers
+# with the digit form or _RESYNC_DEADLINE passes — decoupling per-probe wait from
+# the overall budget so a slow round-trip under load no longer exhausts a fixed
+# attempt count (the 3.13 flake). See otto.host.shell_liveness.confirm_live.
 _RESYNC_SETTLE = 0.3
+_RESYNC_PROBE_TIMEOUT = 0.5
+_RESYNC_DEADLINE = 10.0
+_RESYNC_FRAME = BashFrame()
 
 
 async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
-    r"""Resync with the shell after a su/sudo/exit transition.
+    """Resync with the shell after a su/sudo/exit transition.
 
-    Sends a fresh, unique marker via ``echo <marker>`` and waits for it to
-    come back, retrying up to :data:`_RESYNC_ATTEMPTS` times.
+    Drives the shared :func:`~otto.host.shell_liveness.confirm_live` loop with
+    a fresh :class:`~otto.host.command_frame.SessionMarkers` per probe and
+    :class:`~otto.host.command_frame.BashFrame`'s echo-proof exit-code probe
+    (``recover``/``recover_pattern``): the probe bakes ``$?`` into its own
+    marker, so only a real shell — never an echo of the probe text itself —
+    can produce the digit form the pattern requires. That holds across both
+    echo modes a login proxy can run in (the echo-ON ``interact --as-user``
+    bridge and the echo-OFF framed ``switch_user``/``as_user`` path), which is
+    why no lookbehind or echo-mode discrimination is needed here.
 
-    The wait matches the marker **only when it is NOT immediately preceded by
-    this function's own ``"echo "`` probe prefix** (a negative lookbehind).
-    That discriminator is what makes the resync sound across both echo modes
-    a login proxy can run in:
-
-    - **echo-ON** (the ``interact --as-user`` bridge replays hops over
-      ``_BridgeProxyIO`` on a PTY that still echoes input): the outgoing
-      ``echo <marker>`` probe is echoed back on the same read stream, and
-      ``_BridgeProxyIO.expect()`` does an unanchored ``regex.search``. A bare
-      marker would match inside that echoed *command* — before the shell ran
-      anything — and vacuously "succeed" without confirming a round-trip. The
-      lookbehind rejects the echoed occurrence (preceded by ``"echo "``) and
-      matches only the shell's real output line (preceded by a newline).
-    - **echo-OFF** (framed ``switch_user``/``as_user``/session establishment,
-      which run ``stty -echo`` — and ``stty`` state persists across ``su``/
-      ``sudo`` since it lives on the PTY): the probe command is NOT echoed,
-      so the shell's marker output glues directly onto the prior prompt with
-      no leading newline (e.g. ``test@host:~$ <marker>``). A pure line-anchor
-      (``(?:^|\r|\n)``) would *reject* that — verified on the live bed to hang
-      the framed path — whereas the lookbehind matches it (preceded by the
-      prompt, not ``"echo "``).
-
-    In both modes the only occurrence the resync must ignore is the marker
-    inside its own ``echo <marker>`` probe; the lookbehind targets exactly
-    that and nothing else, so it is correct regardless of echo state or
-    whether a prompt precedes the output.
-
-    Raises :class:`LoginProxyError` if the shell never resyncs — the caller
-    (:func:`run_proxy`/:func:`run_undo`) wraps this with hop context like any
-    other proxy-step failure.
+    Raises :class:`LoginProxyError` if the shell never resyncs before
+    :data:`_RESYNC_DEADLINE` — the caller (:func:`run_proxy`/:func:`run_undo`)
+    wraps this with hop context like any other proxy-step failure.
     """
-    # Let the su/sudo/exit foreground handoff settle before probing so the first
-    # marker is not written into the transition's tty-flush window and silently
-    # dropped (see the _RESYNC_* constants' note). Interim hardening for the
-    # `make release` 3.13 flake, superseded by the unified liveness-probe redesign.
-    await asyncio.sleep(_RESYNC_SETTLE)
-    for _ in range(_RESYNC_ATTEMPTS):
-        marker = f"__OTTO_LP_SYNC_{uuid.uuid4().hex}__"
-        await io.send(f"echo {marker}\n")
-        with contextlib.suppress(TimeoutError, asyncio.TimeoutError):
-            # Negative lookbehind for our own "echo " probe prefix: match the
-            # shell's real echo of the marker, never the marker inside the
-            # echoed command on an echo-ON pty. See docstring.
-            await io.expect(rf"(?<!echo ){re.escape(marker)}", timeout=_RESYNC_TIMEOUT)
-            return
-    raise LoginProxyError(
-        f"{host_id}: shell did not resync after a login-proxy transition "
-        f"({hop_login!r}) — su/sudo/exit flushed the next command"
+    confirmed = await confirm_live(
+        io.send,
+        io.expect,
+        _RESYNC_FRAME.recover,
+        _RESYNC_FRAME.recover_pattern,
+        lambda: SessionMarkers.for_session(uuid.uuid4().hex[:12]),
+        settle=_RESYNC_SETTLE,
+        probe_timeout=_RESYNC_PROBE_TIMEOUT,
+        deadline=_RESYNC_DEADLINE,
     )
+    if not confirmed:
+        raise LoginProxyError(
+            f"{host_id}: shell did not resync after a login-proxy transition "
+            f"({hop_login!r}) — su/sudo/exit flushed the next command"
+        )
 
 
 async def run_proxy(io: ProxyIO, hop: Cred, via: Cred, host_id: str) -> None:
