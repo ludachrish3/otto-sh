@@ -59,6 +59,45 @@ test through `confirm_live` with a Zephyr frame.
    path with no regression. Otherwise leave the live check to the Task 6 manual
    matrix and rely on (1) for durable coverage.
 
+## E2e embedded harness — a trivial REPL shell as a repo product (owner-requested 2026-07-05)
+
+The larger motivation: **otto has no e2e embedded testing today.** The embedded
+recovery path is exercised only by unit/frame-level tests and by manual live-bed
+checks — there is no automated, real-target proof that the recovery mechanism
+(or command framing generally) actually works against a Zephyr shell. The bash
+and Zephyr dialects are unified behind one `confirm_live` loop *today*, but if
+they ever need to diverge, we want the validation harness already in place
+rather than discovering the gap under pressure. It does not need to be elaborate
+— it just needs to **exist** so embedded behavior can be verified in good faith.
+
+Proposal: build a **minimal REPL/shell as a repo test product** and stand up one
+real e2e embedded test around it.
+
+- **The product can be trivial.** A tiny Zephyr application whose only job is to
+  present an interactive prompt otto can drive: either the stock Zephyr shell
+  subsystem (`CONFIG_SHELL=y`) with one custom command that can be made to hang
+  (so a command timeout → `_recover_session` cycle is reachable), or an even
+  simpler bespoke read-eval-print loop over the console. Place it under the
+  existing test-product convention (see `tests/repo*/product/` and its
+  `build.sh`), so it builds and deploys through the same path real embedded
+  products use. Keep it as small as the Zephyr build system allows.
+- **The e2e test** (`@pytest.mark.embedded`): deploy the product to the Zephyr
+  bed (ssh hop `10.10.200.14` → telnet Zephyr shell), then drive at least:
+  (a) a normal framed command round-trip (proves `ZephyrFrame` framing e2e);
+  (b) a command timeout followed by `_recover_session`, asserting the session
+  recovers via the bare-token `retval` path with no regression. This is the
+  first real embedded e2e in the repo — it establishes the harness; more cases
+  can follow once it exists.
+- **Value:** turns "embedded recovery works by construction" into "embedded
+  recovery is verified against a real target," and gives any future bash/Zephyr
+  divergence a place to be caught automatically.
+- **Cost / why deferred:** a Zephyr product build + bed deploy + CI wiring is
+  substantial and touches the real embedded bed (never power/reboot VMs without
+  the owner's say-so). This is a follow-up effort in its own right, not part of
+  the shell-liveness-probe-unification branch. The hostless unit test (item 1
+  above) remains the cheap durable coverage to land first; this harness is the
+  higher-investment, higher-fidelity complement.
+
 ## Notes
 
 - No product change is anticipated — this is test coverage. If (1) surfaces a
