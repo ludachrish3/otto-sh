@@ -10,6 +10,7 @@ design, so there is no need to fake either library here.
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -755,7 +756,7 @@ class TestBridgeProxyIOExpect:
 # meaningful by filtering the probe's own noise back out.
 # ---------------------------------------------------------------------------
 
-_RESYNC_ECHO_PREFIX = b"echo __OTTO_LP_SYNC_"
+_RESYNC_ECHO_PREFIX = b'echo "__OTTO_'
 
 
 def _is_resync_probe(write: bytes) -> bool:
@@ -764,9 +765,16 @@ def _is_resync_probe(write: bytes) -> bool:
 
 
 def _resync_reply(write: bytes) -> bytes:
-    """Build a read_remote() reply that satisfies expect() for the marker in *write*."""
-    marker = write.decode("utf-8").removeprefix("echo ").rstrip("\r\n")
-    return f"\n{marker}\n".encode()
+    """Build a read_remote() reply that satisfies expect() for the marker in *write*.
+
+    The probe is ``echo "<recover>$?__"\\n``; a real shell prints the digit
+    form ``<recover>0__`` (exit code 0), which is what confirm_live's
+    ``recover_pattern`` actually matches — echoing the probe text back
+    verbatim (with its literal ``$?``) does not.
+    """
+    m = re.search(rb'"(.*?)\$\?__"', write)
+    marker = m.group(1)
+    return b"\n" + marker + b"0__\n"
 
 
 def _drop_resync_probes(writes: list[bytes]) -> list[bytes]:
@@ -955,19 +963,25 @@ class TestReplayProxyHops:
 # ---------------------------------------------------------------------------
 # The engine resync (_resync_shell) must be sound in BOTH pty echo modes.
 # _BridgeProxyIO does a REAL unanchored regex.search, so these two tests
-# exercise the actual matching _resync_shell relies on (the negative
-# lookbehind for its own "echo " probe prefix):
+# exercise the actual matching _resync_shell relies on — now the echo-proof
+# `$?`-digit probe (BashFrame.recover/recover_pattern), not a lookbehind:
 #
 # - echo-ON (the interact bridge leaves the pty echoing): the resync's own
-#   `echo <marker>` probe is echoed back on the read stream. A BARE marker
-#   would match inside that echoed probe (before the shell ran anything) and
-#   vacuously "succeed"; the lookbehind must reject it and wait for the real
-#   output line.
+#   probe, `echo "<recover>$?__"`, is echoed back on the read stream verbatim
+#   — literal `$?`, not digits. `recover_pattern` (`<recover>(\d+)__`) cannot
+#   match a literal `$?`, so the echoed probe is harmlessly skipped and the
+#   resync keeps reading until a REAL shell evaluates `$?` and prints the
+#   digit form `<recover>0__`.
 # - echo-OFF (framed switch_user/as_user/establishment run `stty -echo`, which
-#   persists across su/sudo): the probe is NOT echoed, so the shell's marker
-#   output glues onto the prior prompt with no leading newline. A pure
-#   line-anchor would (wrongly) reject THAT — verified on the live bed to hang
-#   the framed path — so the lookbehind (not an anchor) is what's used.
+#   persists across su/sudo): the probe is NOT echoed, so the shell's digit
+#   output glues onto the prior prompt with no leading newline. The pattern
+#   is unanchored (no `^`/`\r`/`\n` requirement), so it still matches a
+#   marker glued mid-line — verified on the live bed to matter for the framed
+#   path, which would otherwise hang waiting for a line start that never
+#   comes.
+#
+# The lookbehind this module's comments used to describe is gone; the
+# echo-proof `$?` digit form is what provides soundness now.
 # ---------------------------------------------------------------------------
 
 
@@ -975,11 +989,12 @@ class TestResyncSoundInBothEchoModes:
     @pytest.mark.asyncio
     async def test_echo_on_ignores_its_own_echoed_probe_and_waits_for_real_line(self):
         """Echo-ON bridge: the resync must skip the marker inside its OWN echoed
-        `echo <marker>` command (marker preceded by "echo ") and only accept the
-        shell's real output line. Proven by feeding the echoed command back
-        FIRST, then the real line, and asserting the resync had to read PAST its
-        own echo (2 reads). With a bare/unanchored marker this would match on
-        read 1 and stop — reads==1."""
+        `echo "<recover>$?__"` probe (a literal, un-evaluated `$?`, not digits)
+        and only accept the shell's real digit-form output. Proven by feeding
+        the echoed probe back FIRST, then the real digit line, and asserting
+        the resync had to read PAST its own echo (2 reads). With a pattern
+        that could match the literal `$?` text this would match on read 1 and
+        stop — reads==1."""
         sent: list[bytes] = []
         reads = 0
 
@@ -989,14 +1004,15 @@ class TestResyncSoundInBothEchoModes:
         async def read_remote() -> bytes:
             nonlocal reads
             reads += 1
-            probe = sent[-1].decode("utf-8")  # "echo <marker>\n"
-            marker = probe.removeprefix("echo ").rstrip("\r\n")
+            probe = sent[-1].decode("utf-8")  # 'echo "<recover>$?__"\n'
+            m = re.search(r'"(.*?)\$\?__"', probe)
+            marker = m.group(1)
             if reads == 1:
-                # Only the echoed command comes back — marker follows "echo ".
-                # The lookbehind must reject it.
+                # Only the echoed probe comes back — literal "$?", not
+                # digits. recover_pattern (`<recover>(\d+)__`) must reject it.
                 return probe.encode()
-            # The shell's real output line: marker at line start.
-            return f"{marker}\n".encode()
+            # The shell's real output: `$?` evaluated to the digit form.
+            return f"{marker}0__\n".encode()
 
         io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
         await _resync_shell(io, host_id="h1", hop_login="mysql")
@@ -1007,12 +1023,13 @@ class TestResyncSoundInBothEchoModes:
     @pytest.mark.asyncio
     async def test_echo_off_matches_marker_glued_to_prompt(self):
         """Echo-OFF framed path: with `stty -echo` the probe is NOT echoed, so
-        the shell's marker output glues directly after the prior prompt with no
-        leading newline (e.g. `test@host:~$ <marker>`). The resync must still
-        match it — a pure line-start anchor would reject this (marker preceded by
-        `$ `, not `^`/`\\r`/`\\n`) and the framed switch_user/as_user path would
-        hang, which is exactly what was observed on the live bed. The lookbehind
-        matches because the marker is not preceded by `echo `."""
+        the shell's digit-form output glues directly after the prior prompt
+        with no leading newline (e.g. `test@host:~$ <recover>0__`). The resync
+        must still match it — `recover_pattern` is unanchored (no
+        `^`/`\\r`/`\\n` requirement), so a marker glued mid-line still matches
+        despite not following `echo ` at all here. A pure line-start anchor
+        would reject this and the framed switch_user/as_user path would hang,
+        which is exactly what was observed on the live bed."""
         sent: list[bytes] = []
 
         async def write_remote(data: bytes) -> None:
@@ -1020,12 +1037,14 @@ class TestResyncSoundInBothEchoModes:
 
         async def read_remote() -> bytes:
             probe = sent[-1].decode("utf-8")
-            marker = probe.removeprefix("echo ").rstrip("\r\n")
-            # Echo-off: no echoed command; marker glued onto a fake prompt.
-            return f"test@test1:/home/vagrant$ {marker}\r\n".encode()
+            m = re.search(r'"(.*?)\$\?__"', probe)
+            marker = m.group(1)
+            # Echo-off: no echoed probe; the shell's digit-form output glues
+            # onto a fake prompt.
+            return f"test@test1:/home/vagrant$ {marker}0__\r\n".encode()
 
         io = _BridgeProxyIO(write_remote, read_remote, newline=b"\n")
-        # Must NOT raise (a line-anchor would time out all 5 attempts and raise).
+        # Must NOT raise (a line-anchor would time out all attempts and raise).
         await _resync_shell(io, host_id="h1", hop_login="mysql")
 
 

@@ -11,13 +11,14 @@ from otto.utils import Status
 
 
 def _without_resync(sent: list[str]) -> list[str]:
-    """Drop the login-proxy engine's post-transition "echo <marker>" resync probes.
+    """Drop the login-proxy engine's post-transition echo-proof `$?`-digit
+    resync probes.
 
     ``run_proxy``/``run_undo`` now end every hop with a resync (see
     ``otto.host.login_proxy._resync_shell``) — filter its noise out before
     asserting on the exact send sequence a test cares about.
     """
-    return [s for s in sent if not s.startswith("echo __OTTO_LP_SYNC_")]
+    return [s for s in sent if not s.startswith('echo "__OTTO_')]
 
 
 def _mock_session_mgr():

@@ -1168,12 +1168,14 @@ class _ImmediateSession(ShellSession):
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         # Resync-aware: otto.host.login_proxy.run_proxy/run_undo now end every
-        # hop with a post-transition "echo <marker>"/expect(marker) resync —
-        # answer that transparently (most hops here never call expect()
+        # hop with a post-transition echo-proof `$?`-digit resync probe
+        # (echo "<recover>$?__") — answer that transparently with a real
+        # shell's digit-form reply (most hops here never call expect()
         # themselves, so without this every hop replay would raise below).
-        if self.writes and self.writes[-1].startswith("echo __OTTO_LP_SYNC_"):
-            marker = self.writes[-1].removeprefix("echo ").rstrip("\n")
-            return f"\n{marker}\n"
+        if self.writes and self.writes[-1].startswith('echo "__OTTO_'):
+            m = re.search(r'"(.*?)\$\?__"', self.writes[-1])
+            marker = m.group(1)
+            return f"\n{marker}0__\n"
         if self._expect_response is not None:
             return self._expect_response
         raise AssertionError("this fake does not support expect(); pass expect_response=...")
@@ -1205,13 +1207,13 @@ async def _task7_hop_with_password(io, ctx) -> None:
 
 
 def _without_resync_writes(writes: list[str]) -> list[str]:
-    """Drop the engine's post-transition "echo <marker>" resync probes.
+    """Drop the engine's post-transition echo-proof `$?`-digit resync probes.
 
     ``run_proxy``/``run_undo`` now end every hop with a resync (see
     ``otto.host.login_proxy._resync_shell``) — filter its noise out before
     asserting on the exact write sequence a test cares about.
     """
-    return [w for w in writes if not w.startswith("echo __OTTO_LP_SYNC_")]
+    return [w for w in writes if not w.startswith('echo "__OTTO_')]
 
 
 class TestLoginProxyAtSessionEstablishment:
@@ -1460,10 +1462,12 @@ class _StubOneshotSession(ShellSession):
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
         # Resync-aware (see _ImmediateSession): the proxied-oneshot tests
         # below use a passwordless built-in `su` hop, so the only expect()
-        # call this stub ever sees is the engine's post-transition resync.
-        if self.writes and self.writes[-1].startswith("echo __OTTO_LP_SYNC_"):
-            marker = self.writes[-1].removeprefix("echo ").rstrip("\n")
-            return f"\n{marker}\n"
+        # call this stub ever sees is the engine's post-transition echo-proof
+        # `$?`-digit resync probe.
+        if self.writes and self.writes[-1].startswith('echo "__OTTO_'):
+            m = re.search(r'"(.*?)\$\?__"', self.writes[-1])
+            marker = m.group(1)
+            return f"\n{marker}0__\n"
         raise AssertionError("stub does not read")
 
     async def close(self) -> None:
