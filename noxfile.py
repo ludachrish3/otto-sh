@@ -101,32 +101,40 @@ def tests_hostless(session: nox.Session) -> None:
 
 
 @nox_uv.session(python=["3.12"], uv_groups=["dev"])
-def tests_suite_repeat(session: nox.Session) -> None:
-    """Repeat the ``tests/unit/suite`` slice in one process to catch state leaks.
+def tests_unit_repeat(session: nox.Session) -> None:
+    """Repeat the whole ``tests/unit`` tree in one process to catch state leaks.
 
-    Those tests exercise ``OttoSuite`` auto-registration into the process-wide
-    ``SUITES`` registry — directly, and via in-process inner pytest sessions
-    (``pytest.main`` / ``pytester.runpytest_inprocess``). A test that leaves an
-    entry behind is invisible to a single CI pass but collides the second time
-    the test runs in the same process, which is why such leaks only ever
-    surfaced in the nightly ``--count`` matrix — three nights after landing.
+    Many unit tests mutate process-global state and rely on it being pristine:
+    they register into the ``otto.registry.Registry`` singletons (``INSTRUCTIONS``,
+    ``LOADER_CLASSES``, ``CLI_COMMANDS``, ``SUITES`` …) via ``@instruction`` /
+    ``register_*`` / ``OttoSuite`` auto-registration, import packages/repos from
+    a ``tmp_path``, or ``monkeypatch.delitem`` an ``otto.cli.*`` submodule from
+    ``sys.modules``. A test that leaves any of that behind is invisible to a
+    single CI pass but breaks the second time it runs in the same process —
+    which is why such leaks only ever surfaced in the nightly ``--count`` matrix,
+    several nights after landing (issue #108, and the earlier SUITES leak).
 
-    Running just this fast, no-VM slice twice in one process
+    Running the whole no-VM ``tests/unit`` tree twice in one process
     (``--count=2 --repeat-scope=session``, single-process via a cleared
-    ``addopts``) is enough to trip any such regression, so it runs here on the
-    CI fast path instead of waiting for the nightly. One Python is sufficient —
-    registry leakage is interpreter-version-independent. ``addopts`` is cleared
-    to drop the repo-wide ``-n auto`` / coverage / ``--doctest-modules`` so the
-    repeat is single-process (strictest accumulation) and quick.
+    ``addopts``) trips any such regression at PR time instead of waiting for the
+    nightly. Single-process is deliberate: under ``-n auto`` the repeated items
+    scatter across workers, so within-module collisions become probabilistic and
+    cross-module leaks (a later test broken by an earlier one) are masked
+    entirely — exactly how the nightly missed the ``test_root_group`` →
+    ``test_listing`` desync. One Python is sufficient (isolation leakage is
+    interpreter-version-independent); clearing ``addopts`` drops the repo-wide
+    ``-n auto`` / coverage / ``--doctest-modules`` so the repeat is single-process
+    (strictest accumulation) and quick. Supersedes the former
+    ``tests_suite_repeat`` (``tests/unit/suite`` ⊂ ``tests/unit``).
     """
     session.run(
         "pytest",
-        "tests/unit/suite",
+        "tests/unit",
         "-o",
         "addopts=",
         "--count=2",
         "--repeat-scope=session",
-        _junitxml(session, "nox-suite-repeat"),
+        _junitxml(session, "nox-unit-repeat"),
         *session.posargs,
     )
 
