@@ -39,6 +39,7 @@ otto.host.privilege
 otto.host.product
 otto.host.remote_host
 otto.host.session
+otto.host.shell_liveness
 otto.host.telnet
 otto.host.toolchain
 otto.host.transfer
