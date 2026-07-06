@@ -217,17 +217,18 @@ class ShellSession(ABC):
 
         After the transport opens, a marker handshake confirms the shell is
         live: write ``stty -echo; echo <READY marker>`` and read until that
-        marker comes back. This is the deterministic readiness check that
-        replaced telnet login's silence-drain — prompt-independent and
-        content-independent.
+        marker comes back, via :func:`~otto.host.shell_liveness.confirm_live`.
+        This is the deterministic readiness check that replaced telnet
+        login's silence-drain — prompt-independent and content-independent.
 
-        The probe is *retried* on a fixed interval rather than written once.
-        This matters for telnet: ``login(1)`` typically flushes pending
-        terminal input before it exec's the shell, so a probe written in the
-        window between the password and the shell starting is silently
-        discarded. Resending until one lands closes that race. SSH and local
-        shells are ready immediately and answer the first probe, so they
-        never actually retry.
+        The probe is *resent* on a fixed interval rather than written once
+        (``confirm_live``'s resend loop). This matters for telnet:
+        ``login(1)`` typically flushes pending terminal input before it
+        exec's the shell, so a probe written in the window between the
+        password and the shell starting is silently discarded. Resending
+        until one lands closes that race. SSH and local shells are ready
+        immediately and answer the first probe, so they never actually
+        retry.
 
         Bounded by ``_init_timeout``: a failed login (no shell ever spawns,
         so no probe can echo back) surfaces as a clear ``ConnectionError``
@@ -237,70 +238,37 @@ class ShellSession(ABC):
             return
         await self._open()
 
-        # Anchor the marker to line-start (or buffer-start, for pipe-backed
-        # shells whose output has no preceding echo). Without the anchor the
-        # pattern also matches the marker *inside the echoed probe command*
-        # ("... echo __OTTO_..._READY__") — which is fatal on a failed telnet
-        # login, where the device loops back to "login:" and echoes our probe
-        # as a username, making a rejected login look successful.
-        #
-        # ``(?:\x1b\[[0-9;]*m)*`` after the anchor absorbs any ANSI colour
-        # codes a shell emits between the line start and the marker — the
-        # Zephyr RTOS shell colours its ``command not found`` line, so the
-        # rejected marker arrives as ``\n\x1b[1;31m__OTTO_..._READY__``.
-        # The group matches zero times for a plain bash shell, so this is a
-        # no-op there.
-        marker = re.compile(r"(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*" + re.escape(self._ready_marker))
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + self._init_timeout
+        def _ready_pattern(m: SessionMarkers) -> re.Pattern[str]:
+            # Line-anchored (or buffer-start) + ANSI-absorbing, so the marker
+            # can't match inside the echoed probe command (fatal on a failed
+            # telnet login that loops back to "login:" echoing our probe).
+            return re.compile(r"(?:^|\r|\n)(?:\x1b\[[0-9;]*m)*" + re.escape(m.ready))
+
         handshake_cmd = self._frame.handshake(self._markers)
         logger.debug(
-            f"{self._log_tag}: handshake start "
-            f"cmd={handshake_cmd!r} marker={self._ready_marker!r} "
-            f"timeout={self._init_timeout}s"
+            f"{self._log_tag}: handshake start cmd={handshake_cmd!r} "
+            f"marker={self._ready_marker!r} timeout={self._init_timeout}s"
         )
-        start = loop.time()
-        attempt = 0
-        while True:
-            attempt += 1
-            await self._write(handshake_cmd)
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                await self._fail_init(attempt=attempt)
-            try:
-                data = await asyncio.wait_for(
-                    self._read_until_pattern(marker),
-                    timeout=min(self._init_probe_interval, remaining),
-                )
-                elapsed = loop.time() - start
-                # Truncate the matched data so a noisy banner doesn't flood
-                # the log; the tail (where the marker landed) is the part
-                # that matters for diagnosing a future bring-up.
-                shown = (
-                    data
-                    if len(data) <= _LOG_PREVIEW_HANDSHAKE
-                    else f"...{data[-_LOG_PREVIEW_HANDSHAKE:]}"
-                )
-                logger.debug(
-                    f"{self._log_tag}: handshake matched in {elapsed:.2f}s "
-                    f"(attempts={attempt}, {len(data)} bytes): {shown!r}"
-                )
-                break
-            except asyncio.TimeoutError:
-                # No response to this probe — the shell may not be reading
-                # input yet. Resend, unless we've run out the clock.
-                logger.debug(
-                    f"{self._log_tag}: handshake probe #{attempt} timed out, "
-                    f"resending (deadline in {deadline - loop.time():.2f}s)"
-                )
-                if loop.time() >= deadline:
-                    await self._fail_init(attempt=attempt)
-                continue
-            except asyncio.IncompleteReadError:
-                # Peer EOF mid-handshake — the connection is gone; retrying
-                # cannot help.
-                logger.debug(f"{self._log_tag}: handshake hit EOF on attempt #{attempt}")
-                await self._fail_init(attempt=attempt)
+        confirmed = False
+        with suppress(asyncio.IncompleteReadError):
+            confirmed = await confirm_live(
+                self._write,
+                lambda pat, t: asyncio.wait_for(self._read_until_pattern(pat), t),
+                self._frame.handshake,
+                _ready_pattern,
+                lambda: self._markers,
+                settle=0.0,
+                probe_timeout=self._init_probe_interval,
+                deadline=self._init_timeout,
+            )
+        if not confirmed:
+            await self._fail_init()
+
+        # confirm_live owns the resend bookkeeping internally and doesn't
+        # expose a per-probe attempt count or the matched bytes to its
+        # caller, so this is deliberately leaner than the bespoke loop it
+        # replaces — just enough to confirm the handshake landed.
+        logger.debug(f"{self._log_tag}: handshake matched")
 
         self._initialized = True
         self._alive = True

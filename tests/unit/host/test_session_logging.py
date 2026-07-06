@@ -91,7 +91,15 @@ class TestHandshakeLogging:
         caplog: pytest.LogCaptureFixture,
     ):
         """A successful handshake logs the start (cmd + marker + timeout)
-        and the match (timing + bytes received)."""
+        and the match.
+
+        The handshake is driven by the shared ``confirm_live`` resend loop
+        (see ``otto.host.shell_liveness``), which owns per-probe retry
+        bookkeeping internally and doesn't expose an attempt count or the
+        matched bytes to its caller — so, unlike the bespoke loop it
+        replaced, the match log here is a plain confirmation rather than a
+        timing/attempts/bytes breakdown.
+        """
         caplog.set_level(logging.DEBUG, logger="otto")
         s = MockSession()
         await s._open()
@@ -106,16 +114,21 @@ class TestHandshakeLogging:
         assert s._ready_marker in log  # marker echoed in the log
         assert "stty -echo" in log  # the bash handshake command
         assert "handshake matched" in log
-        assert "attempts=1" in log  # SSH/local-like single-probe path
 
     @pytest.mark.asyncio
-    async def test_handshake_failure_logs_attempt_count(
+    async def test_handshake_failure_logs_and_raises(
         self,
         caplog: pytest.LogCaptureFixture,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        """A handshake that never sees the marker logs the FAILED line with
-        the attempt count, then raises ConnectionError."""
+        """A handshake that never sees the marker logs the FAILED line,
+        then raises ConnectionError.
+
+        ``confirm_live`` (see ``otto.host.shell_liveness``) swallows each
+        per-probe timeout and resends silently rather than logging it, so
+        the FAILED line from ``_fail_init`` is the observable failure
+        signal here — not a per-probe timeout log.
+        """
         caplog.set_level(logging.DEBUG, logger="otto")
         s = MockSession()
         # Shrink the timeout so the test doesn't sit on the default 3s.
@@ -127,8 +140,7 @@ class TestHandshakeLogging:
             await s._ensure_initialized()
 
         log = _messages(caplog)
-        assert "handshake probe" in log
-        assert "timed out" in log
+        assert "handshake start" in log
         assert "handshake FAILED" in log
         assert "marking session dead" in log
 
