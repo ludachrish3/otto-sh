@@ -121,12 +121,13 @@ changelog: ## (Build & Release) Regenerate CHANGELOG.md from conventional commit
 # git-cliff/git-add/bump-my-version commands run for real (version bump +
 # CHANGELOG staged). Never dry-run this target.
 release: export PATH := $(VENV_BIN):$(PATH)
-release: ## (Build & Release) npm ci web/, lint, typecheck, docs, nox, all-browser dashboard e2e, profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
+release: ## (Build & Release) npm ci web/, Python lint+typecheck, docs, full TS gate (web-check), nox, build web dist, all-browser dashboard e2e, profile, then changelog, bump, build dist (BUMP=patch|minor|major, default patch; or NEW_VERSION=X.Y.Z[rcN] for prereleases)
 	@$(MAKE) clean-dist \
 		&& $(MAKE) web-install \
-		&& $(MAKE) lint \
-		&& $(MAKE) typecheck \
+		&& $(MAKE) lint-python \
+		&& $(MAKE) typecheck-python \
 		&& $(MAKE) docs \
+		&& $(MAKE) web-check \
 		&& OTTO_DETECT_ASYNCIO_LEAKS=1 $(MAKE) nox \
 		&& $(MAKE) web \
 		&& $(MAKE) dashboard-all \
@@ -314,8 +315,9 @@ profile: hyperfine ## (Dev) Enforce the import budget (module-count caps + snaps
 build: ## (Build & Release) Build the project with uv
 	uv build
 
-coverage: dashboard ## Run the full suite (all tiers, pinned Python) and enforce the coverage gate (excludes heavy `stability`; browser (Playwright) suite runs first, as its own process, via the `dashboard` prerequisite — its coverage data is folded in via --cov-append). Requires lab VMs (+ `make browsers` once). JUnit XML lands in reports/junit/coverage/ and reports/junit/dashboard/.
+coverage: dashboard ## Run the full suite (all tiers, pinned Python) and enforce the coverage gate (excludes heavy `stability`; browser (Playwright) suite runs first, as its own process, via the `dashboard` prerequisite — its coverage data is folded in via --cov-append), then the TS vitest coverage floor (web-coverage) for Python/TS parity. Requires lab VMs (+ `make browsers` once) and web/ node_modules (populated by `make dev`/`make web-install`). JUnit XML lands in reports/junit/coverage/ and reports/junit/dashboard/.
 	$(TIMEOUT_CMD) uv run pytest -m "not stability and not browser" --cov-append --cov-fail-under=$(COVERAGE_THRESHOLD) $(call junitxml,coverage)
+	$(MAKE) web-coverage
 
 coverage-unit: ## Run the unit level tier (tests/unit only; no testbed) with a coverage report (no gate — one tier can't meet the whole-repo floor). JUnit XML lands in reports/junit/coverage-unit/.
 	$(TIMEOUT_CMD) uv run pytest tests/unit -m "not stability" $(call junitxml,coverage-unit)
