@@ -224,9 +224,9 @@ class TestRecoverSessionLogging:
 
         async def simulate():
             await asyncio.sleep(0.01)
-            # Exit-code digit form (the echo-proof recover probe's real reply —
-            # see BashFrame.recover/recover_pattern), not the bare recover token.
-            s.feed(f"interrupted stuff\n{s._end_marker_prefix}0__\n")
+            # RECOVER-marker digit form (the echo-proof recover probe's real reply
+            # — see BashFrame.recover/recover_pattern), not the bare recover token.
+            s.feed(f"interrupted stuff\n{s._recover_marker}0__\n")
 
         feed_task = asyncio.create_task(simulate())
         partial = await s._recover_session()

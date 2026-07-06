@@ -180,14 +180,21 @@ class BashFrame(CommandFrame):
 
     @override
     def recover(self, m: SessionMarkers) -> str:
-        # Echo-proof liveness probe: the END sentinel bakes in $?, so a real
-        # shell emits `..._END__<digits>__` while an echo/REPL can only reproduce
-        # the literal `$?`. recover_pattern matches only the digit form.
-        return f'echo "{m.end_prefix}$?__"\n'
+        # Echo-proof liveness probe on a marker distinct from the normal
+        # end-of-command sentinel: bake $? into the RECOVER marker (not
+        # end_prefix), so a real shell emits `..._RECOVER__<digits>__` while an
+        # echo/REPL can only reproduce the literal `$?`. Using RECOVER rather
+        # than end_prefix keeps recover_pattern distinct from end_pattern, so a
+        # dying command's own compound-line tail echo (`{end_prefix}<code>__`,
+        # appended by `frame`) never matches this probe's reply — no collision,
+        # nothing to drain.
+        return f'echo "{m.recover}$?__"\n'
 
     @override
     def recover_pattern(self, m: SessionMarkers) -> re.Pattern[str]:
-        return self.end_pattern(m)
+        # `__OTTO_<id>_RECOVER__<code>__` — digits prove real execution; the
+        # RECOVER marker keeps this disjoint from end_pattern.
+        return re.compile(re.escape(m.recover) + r"(\d+)__")
 
     @override
     def end_pattern(self, m: SessionMarkers) -> re.Pattern[str]:

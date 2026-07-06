@@ -629,22 +629,17 @@ class ShellSession(ABC):
             logger.debug(f"{self._log_tag}: recover_session failed; session marked dead")
             self._alive = False
             return ""
-        # Output that arrived before the probe's END marker (echo is off during a
-        # session, so the probe command itself is not in the stream to confuse this).
-        partial = captured.split(self._markers.end_prefix, maxsplit=1)[0].strip()
-
-        # The interrupted command was itself framed as `cmd; echo end$?__` (see
-        # BashFrame.frame): if it exits in response to the interrupt (rather than
-        # hanging forever, e.g. a plain `sleep`), the shell resumes and runs that
-        # trailing echo on its own, often before our probe above is even sent.
-        # confirm_live then confirms off *that* echo, leaving our own probe —
-        # rendering the identical text — still queued unread. The shell executes
-        # it as soon as it is idle, i.e. right before the next real command, and
-        # its echo would otherwise leak into that command's output. Best-effort,
-        # bounded drain of exactly that one redundant echo.
-        with suppress(TimeoutError, asyncio.TimeoutError, asyncio.IncompleteReadError):
-            await _expect(self._frame.recover_pattern(self._markers), _RECOVERY_PROBE_TIMEOUT)
-
+        # Return the output that arrived before the probe reply. The bash recover
+        # probe is framed on the RECOVER marker (distinct from the end-of-command
+        # marker — see BashFrame.recover), so it never collides with the framing
+        # of the interrupted command: split off our probe reply, then drop any
+        # leftover dying-command tail echo (`{end_prefix}<code>__`) so it can't
+        # leak forward.
+        partial = (
+            captured.split(self._markers.recover, maxsplit=1)[0]
+            .split(self._markers.end_prefix, maxsplit=1)[0]
+            .strip()
+        )
         logger.debug(f"{self._log_tag}: recover_session ok partial_len={len(partial)}")
         return partial
 

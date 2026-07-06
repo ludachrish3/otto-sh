@@ -287,10 +287,10 @@ class TestTimeout:
         simulate_task = asyncio.create_task(simulate())
 
         # After timeout, recovery sends Ctrl+C + recovery sentinel
-        # We need to feed the recovery marker
+        # We need to feed the recovery marker (RECOVER digit form)
         async def feed_recovery():
             await asyncio.sleep(0.15)
-            session.feed(f"{session._end_marker_prefix}0__\n")
+            session.feed(f"{session._recover_marker}0__\n")
 
         recovery_task = asyncio.create_task(feed_recovery())
 
@@ -314,7 +314,7 @@ class TestTimeout:
 
         async def feed_recovery():
             await asyncio.sleep(0.15)
-            session.feed(f"{session._end_marker_prefix}0__\n")
+            session.feed(f"{session._recover_marker}0__\n")
 
         recovery_task = asyncio.create_task(feed_recovery())
 
@@ -339,7 +339,7 @@ class TestTimeout:
         async def echo_probe_literally():
             # Mimic a REPL parroting the probe command back verbatim (literal $?).
             await asyncio.sleep(0.15)
-            session.feed(f'echo "{session._end_marker_prefix}$?__"\n')
+            session.feed(f'echo "{session._recover_marker}$?__"\n')
 
         repl_task = asyncio.create_task(echo_probe_literally())
 

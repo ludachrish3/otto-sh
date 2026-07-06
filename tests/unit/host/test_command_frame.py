@@ -54,7 +54,7 @@ class TestBashFrame:
         )
 
     def test_recover_is_exit_code_probe(self):
-        assert self.frame.recover(M) == f'echo "{M.end_prefix}$?__"\n'
+        assert self.frame.recover(M) == f'echo "{M.recover}$?__"\n'
 
     def test_end_pattern_captures_retcode_digits(self):
         pat = self.frame.end_pattern(M)
@@ -175,17 +175,24 @@ class TestRecoverProbe:
     zephyr = ZephyrFrame()
 
     def test_bash_recover_is_exit_code_probe(self):
-        assert self.bash.recover(M) == f'echo "{M.end_prefix}$?__"\n'
+        assert self.bash.recover(M) == f'echo "{M.recover}$?__"\n'
 
     def test_bash_recover_pattern_matches_digit_form(self):
         pat = self.bash.recover_pattern(M)
-        assert pat.search(f"{M.end_prefix}0__")
-        assert pat.search(f"prompt$ {M.end_prefix}130__")
+        assert pat.search(f"{M.recover}0__")
+        assert pat.search(f"prompt$ {M.recover}130__")
 
     def test_bash_recover_pattern_rejects_echoed_literal_probe(self):
         # An echo/REPL reflects the probe text verbatim: literal "$?", no digits.
         pat = self.bash.recover_pattern(M)
-        assert pat.search(f'echo "{M.end_prefix}$?__"') is None
+        assert pat.search(f'echo "{M.recover}$?__"') is None
+
+    def test_bash_recover_pattern_distinct_from_end_marker(self):
+        # The whole point of the RECOVER marker: a dying command's own
+        # compound-line tail echo (`{end_prefix}<code>__`) must NOT be mistaken
+        # for the recovery probe's reply.
+        pat = self.bash.recover_pattern(M)
+        assert pat.search(f"{M.end_prefix}0__") is None
 
     def test_zephyr_recover_pattern_matches_bare_token(self):
         pat = self.zephyr.recover_pattern(M)
