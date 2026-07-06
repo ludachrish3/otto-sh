@@ -39,18 +39,18 @@ test through `confirm_live` with a Zephyr frame.
 
 ## What to add
 
-1. **Hostless unit test — `confirm_live` + `_recover_session` with a `ZephyrFrame`.**
-   Mirror the bash MockSession recovery tests in `tests/unit/host/test_session.py`
-   (`TestTimeout`), but construct the mock session with a `ZephyrFrame` (the
-   `ShellSession.__init__` `command_frame=` param already supports this). Assert:
-   - a hung command that is interrupted and then answers with the bare
-     `{recover}` token → `_recover_session` confirms and the session stays alive
-     (the resend loop tolerates a first dropped probe — feed the token only on
-     the 2nd probe to prove resend works on the Zephyr dialect too);
-   - a command that never answers → recovery times out and marks the session
-     dead (`_alive is False`), no false positive.
-   This is the durable core: it proves the dialect-agnostic loop drives the
-   Zephyr probe/pattern correctly. No bed required.
+1. ~~**Hostless unit test — `confirm_live` + `_recover_session` with a `ZephyrFrame`.**~~
+   **✅ DONE (on the shell-liveness-probe-unification branch):**
+   `tests/unit/host/test_session.py::TestZephyrRecovery` — a `MockSession` built with
+   `command_frame=ZephyrFrame()`/`ZephyrSerialFrame()` drives the real base
+   `ShellSession._recover_session` → `confirm_live` path: `test_recovery_confirms_on_bare_token`
+   (a hung, interrupted command answered with the bare `{recover}` token recovers,
+   session stays alive) and `test_recovery_marks_dead_when_unanswered` (an
+   unanswered probe exhausts the deadline → session dead, no false positive), both
+   parametrized over the two Zephyr frames. Generic resend-until-deadline is already
+   covered by `test_shell_liveness.py::test_resends_past_timeouts_then_confirms`, so
+   these focus on the Zephyr probe/pattern through the real recovery method. No bed
+   required. This closes the durable-coverage gap; only the e2e harness below remains.
 
 2. **(Optional) Live-bed embedded recovery test.** If a Zephyr bed is routinely
    available in CI, add an `@pytest.mark.embedded` recovery test that drives a

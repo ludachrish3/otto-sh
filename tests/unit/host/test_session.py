@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
+from otto.host.command_frame import CommandFrame, ZephyrFrame, ZephyrSerialFrame
 from otto.host.local_host import LocalHost
 from otto.host.session import LocalSession, SessionManager, ShellSession
 from otto.utils import Status
@@ -24,8 +25,8 @@ from otto.utils import Status
 class MockSession(ShellSession):
     """Concrete ShellSession backed by in-memory asyncio streams for testing."""
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, command_frame: CommandFrame | None = None) -> None:
+        super().__init__(command_frame=command_frame)
         # Streams simulating the shell's stdin/stdout
         self._in_reader: asyncio.StreamReader | None = None
         self._in_writer: asyncio.StreamWriter | None = None
@@ -373,6 +374,89 @@ class TestTimeout:
         session_mod._RECOVERY_TIMEOUT = 0.1
         try:
             result = await session.run_cmd("sleep 999", timeout=0.1)
+        finally:
+            session_mod._RECOVERY_TIMEOUT = original
+        await feed_task
+
+        assert result.status == Status.Error
+        assert not session.alive
+
+
+# ---------------------------------------------------------------------------
+# Zephyr-dialect recovery through confirm_live (hostless)
+# ---------------------------------------------------------------------------
+
+
+class TestZephyrRecovery:
+    """Post-timeout recovery on the Zephyr dialect, driven through ``confirm_live``.
+
+    Embedded hosts run on ``TelnetSession`` with a ``ZephyrFrame`` and inherit the
+    base ``ShellSession._recover_session``, so recovery drives ``confirm_live`` with
+    the Zephyr frame's probe: the bare ``{recover}`` token (no ``$?`` — an embedded
+    shell is never parked in a nested REPL, so it keeps the bare-token confirmation
+    and gains only the resend-until-deadline robustness). These hostless tests drive
+    the real recovery method with a ``ZephyrFrame``/``ZephyrSerialFrame`` mock,
+    closing the gap between the frame-level unit tests (probe/pattern in isolation)
+    and the live Zephyr bed — no bed required.
+    """
+
+    async def _init_session(self, frame_cls: type[CommandFrame]) -> MockSession:
+        """A ``MockSession`` framed by ``frame_cls`` and past its readiness handshake."""
+        session = MockSession(command_frame=frame_cls())
+        await session._open()
+        init_task = asyncio.create_task(session._ensure_initialized())
+        await asyncio.sleep(0.01)
+        session.feed(session._ready_marker + "\n")
+        await init_task
+        session.written.clear()
+        return session
+
+    @pytest.mark.parametrize("frame_cls", [ZephyrFrame, ZephyrSerialFrame])
+    @pytest.mark.asyncio
+    async def test_recovery_confirms_on_bare_token(self, frame_cls: type[CommandFrame]) -> None:
+        """A hung command is interrupted; the shell answers the probe with the bare
+        ``{recover}`` token (Zephyr rejects it as an unknown command and echoes it
+        back as OUTPUT) — recovery confirms and the session stays alive."""
+        session = await self._init_session(frame_cls)
+
+        async def simulate() -> None:
+            await asyncio.sleep(0.01)
+            session.feed(f"{session._begin_marker}\n")
+
+        feed_task = asyncio.create_task(simulate())
+
+        async def feed_recovery() -> None:
+            await asyncio.sleep(0.15)
+            session.feed(f"{session._recover_marker}\n")
+
+        recovery_task = asyncio.create_task(feed_recovery())
+
+        result = await session.run_cmd("some-cmd", timeout=0.1)
+        await feed_task
+        await recovery_task
+
+        assert result.status == Status.Error  # the command itself timed out
+        assert session.alive  # ...but the shell recovered via the bare-token probe
+
+    @pytest.mark.parametrize("frame_cls", [ZephyrFrame, ZephyrSerialFrame])
+    @pytest.mark.asyncio
+    async def test_recovery_marks_dead_when_unanswered(self, frame_cls: type[CommandFrame]) -> None:
+        """If the probe is never answered, ``confirm_live`` exhausts its deadline and
+        the session is marked dead (no false positive)."""
+        session = await self._init_session(frame_cls)
+
+        async def simulate() -> None:
+            await asyncio.sleep(0.01)
+            session.feed(f"{session._begin_marker}\n")
+
+        feed_task = asyncio.create_task(simulate())
+
+        import otto.host.session as session_mod
+
+        original = session_mod._RECOVERY_TIMEOUT
+        session_mod._RECOVERY_TIMEOUT = 0.2
+        try:
+            result = await session.run_cmd("some-cmd", timeout=0.1)
         finally:
             session_mod._RECOVERY_TIMEOUT = original
         await feed_task
