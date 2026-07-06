@@ -289,6 +289,17 @@ class ShellSession(ABC):
 
     # --- Public API ---
 
+    def _require_alive(self) -> None:
+        """Fail fast if the session is known dead.
+
+        Called after :meth:`_ensure_ready` (which self-heals a recoverable
+        session): if the shell is still not alive — a prior recovery gave up and
+        marked it dead — raise immediately rather than issuing an I/O that can
+        only hang until its timeout.
+        """
+        if not self._alive:
+            raise RuntimeError(f"{self._log_tag}: session is not alive")
+
     async def send(self, text: str) -> None:
         """Send raw text to the session's stdin.
 
@@ -296,6 +307,7 @@ class ShellSession(ABC):
         The caller is responsible for including line endings.
         """
         await self._ensure_ready()
+        self._require_alive()
         try:
             await self._write(text)
         except asyncio.CancelledError:
@@ -314,6 +326,7 @@ class ShellSession(ABC):
         Marks the session as dead if EOF is received.
         """
         await self._ensure_ready()
+        self._require_alive()
         compiled = re.compile(pattern) if isinstance(pattern, str) else pattern
         try:
             return await asyncio.wait_for(

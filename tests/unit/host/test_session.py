@@ -435,7 +435,7 @@ def test_shell_session_current_user_defaults_empty():
     assert s.current_user == ""
 
 
-class MockSessionInit:
+class TestSessionInit:
     @pytest.mark.asyncio
     async def test_init_sends_stty_and_ready_marker(self):
         s = MockSession()
@@ -472,7 +472,7 @@ class MockSessionInit:
 # ---------------------------------------------------------------------------
 
 
-class MockSessionDeath:
+class TestSessionDeath:
     @pytest.mark.asyncio
     async def test_eof_during_run_cmd_returns_error(self, session: MockSession):
         async def simulate():
