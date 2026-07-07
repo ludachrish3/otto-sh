@@ -87,7 +87,7 @@ extension = "cov_ext"
 
 # The cross-gcov is no longer named here — it is a per-host bed property declared
 # in lab data (each host's ``toolchain`` dict). See the embedded host entries in
-# lab_data/tech1/hosts.json. (.gcno discovery remains the no-config fallback.)
+# lab_data/tech1/lab.json. (.gcno discovery remains the no-config fallback.)
 
 # The extension's build dir: holds the .gcno + source used as the report's
 # source root. Absolute, on the dev VM where the product is built. See product/.

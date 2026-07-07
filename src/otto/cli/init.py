@@ -23,7 +23,7 @@ version = "{version}"
 # Where otto looks for things, relative to this repo's root (${{sut_dir}}).
 # These conventional paths are pre-wired so `otto init --lab` etc. can add
 # areas later without editing this file.
-labs = ["${{sut_dir}}/lab_data"]   # directories searched for hosts.json
+labs = ["${{sut_dir}}/lab_data"]   # directories searched for lab.json
 tests = ["${{sut_dir}}/tests"]     # defines where test discovery happens
 libs = ["${{sut_dir}}/pylib"]      # added to sys.path at startup
 init = ["{init_module}"]           # modules imported at startup (register instructions)
@@ -37,9 +37,9 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 # [docker]                 # image builds + compose stacks
 """
 
-HOSTS_JSON_ENTRY = {
+EXAMPLE_HOST_ENTRY = {
     "_comment": (
-        "Example host - replace these values. Full host schema: "
+        "Example host — replace these values. Full host schema: "
         "docs/guide/host-database.md or `otto schema export`. The `labs` list "
         "names the labs this host belongs to (select with --lab/OTTO_LAB)."
     ),
@@ -53,16 +53,31 @@ HOSTS_JSON_ENTRY = {
     "labs": ["example_lab"],
 }
 
+LAB_JSON_TEMPLATE: dict[str, Any] = {
+    "_comment": (
+        "otto lab database: 'hosts' lists every lab host; 'links' declares "
+        "data-plane routes between them (see docs/guide/lab-config.md). "
+        "Keys starting with _ are comments."
+    ),
+    "hosts": [EXAMPLE_HOST_ENTRY],
+    "links": [],
+}
+
 LAB_README_TEMPLATE = """\
 # lab_data/
 
-This directory holds `hosts.json` — otto's host database for this repo. Every
-entry describes one lab host and is validated against a pydantic spec before
-otto will use it (`UnixHostSpec` / `EmbeddedHostSpec`, see
-`docs/guide/host-database.md`). The scaffolded `hosts.json` has one example
-entry; edit or replace it, and add as many more entries as your lab needs.
+This directory holds `lab.json` — otto's lab database for this repo. It is a
+JSON object with two array sections:
 
-## Fields in the example entry
+- **`hosts`** — every lab host. Each entry is validated against a pydantic spec
+  before otto will use it (`UnixHostSpec` / `EmbeddedHostSpec`, see
+  `docs/guide/host-database.md`). The scaffolded `lab.json` has one example
+  host; edit or replace it, and add as many more as your lab needs.
+- **`links`** — declared data-plane routes between hosts (routes not used for
+  ssh/telnet access, carrying UDP/HTTP/RTP/etc.). Empty by default; see the
+  `links` section below.
+
+## Fields in the example host entry
 
 - **`ip`** — the host's IP address (or hostname), used to open term/transfer
   sessions.
@@ -88,11 +103,29 @@ entry; edit or replace it, and add as many more entries as your lab needs.
 - **`labs`** — the list of lab names this host belongs to. A host can belong
   to more than one lab; select which lab is active with `--lab`/`OTTO_LAB`.
 
+Interfaces (when present) are keyed by their network-device name (`eth0`,
+`eth1`, …), so impairment/capture can read the device straight off the key.
+
+## Fields in a `links` entry
+
+Each `links` entry describes one data-plane route between two hosts:
+
+- **`endpoints`** — exactly two, each `{"host": <id>, "interface": <netdev>}`.
+  `interface` is required only when the host defines more than one interface;
+  with one (or none) otto assumes it and its IP.
+- **`protocol`** — optional, defaults to `"tcp"`. Informational for declared
+  links (documents what the route carries: udp/http/rtp/…).
+- **`name`** — optional friendly handle; the id is otherwise derived from the
+  endpoints.
+
+A link belongs to every lab either endpoint belongs to, so it may span labs.
+
 ## Keys starting with `_`
 
-`hosts.json` is plain JSON, which has no comment syntax. Any key beginning
+`lab.json` is plain JSON, which has no comment syntax. Any key beginning
 with `_` (like `_comment` above) is stripped before validation, so it is
-otto's sanctioned way to leave a note inline. Use it freely.
+otto's sanctioned way to leave a note inline — both at the top level and
+inside host/link entries. Use it freely.
 
 ## Where to go next
 
@@ -233,11 +266,11 @@ def _scaffold_settings(root: Path, cfg: InitConfig) -> list[Path]:
 def _scaffold_lab(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG001 — cfg unused, uniform Area signature
     lab_dir = root / "lab_data"
     lab_dir.mkdir(parents=True, exist_ok=True)
-    hosts = lab_dir / "hosts.json"
-    hosts.write_text(json.dumps([HOSTS_JSON_ENTRY], indent=4) + "\n")
+    lab_file = lab_dir / "lab.json"
+    lab_file.write_text(json.dumps(LAB_JSON_TEMPLATE, indent=4) + "\n")
     readme = lab_dir / "README.md"
     readme.write_text(LAB_README_TEMPLATE)
-    return [hosts, readme]
+    return [lab_file, readme]
 
 
 def _scaffold_tests(root: Path, cfg: InitConfig) -> list[Path]:  # noqa: ARG001 — cfg unused, uniform Area signature
@@ -288,7 +321,7 @@ def _detect_lab(root: Path) -> bool:
     # NB: `any(p.glob(...) for p in dirs)` is a bug trap — a Path.glob()
     # generator object is truthy even when empty, so `any()` would see it as
     # a hit regardless of matches. Force each generator to yield to check.
-    return any(next(lab_dir.glob("hosts.json"), None) is not None for lab_dir in lab_dirs)
+    return any(next(lab_dir.glob("lab.json"), None) is not None for lab_dir in lab_dirs)
 
 
 def _detect_tests(root: Path) -> bool:
@@ -338,42 +371,70 @@ def _validate_settings(root: Path) -> list[str]:
 
 
 def _validate_lab(root: Path) -> list[str]:
-    """Validate every ``hosts.json`` under the settings' ``labs`` dirs via the real host factory.
+    """Validate every ``lab.json`` under the settings' ``labs`` dirs via the real specs.
 
-    Delegates each entry to :func:`otto.storage.factory.validate_host_dict` —
-    the same per-entry validation :class:`~otto.storage.json_repository.JsonFileLabRepository`
-    runs before ever constructing a host — so a bad ``os_type`` or field name
-    surfaces exactly the pydantic error otto's own lab loader would raise.
+    Each ``hosts`` entry is delegated to
+    :func:`otto.storage.factory.validate_host_dict` — the same per-entry
+    validation :class:`~otto.storage.json_repository.JsonFileLabRepository` runs
+    before ever constructing a host — so a bad ``os_type`` or field name
+    surfaces exactly the pydantic error otto's own lab loader would raise. Each
+    ``links`` entry is validated structurally via
+    :class:`~otto.models.link.LinkSpec`; endpoint cross-references (host ids,
+    interface keys) are resolved at load time, not here.
     """
+    from pydantic import ValidationError
+
+    from ..models.link import LinkSpec
     from ..storage.factory import validate_host_dict
 
     paths = _settings_paths(root)
     lab_dirs = paths["labs"] if paths is not None else [root / "lab_data"]
     problems: list[str] = []
     for lab_dir in lab_dirs:
-        hosts_file = lab_dir / "hosts.json"
-        if not hosts_file.is_file():
+        lab_file = lab_dir / "lab.json"
+        if not lab_file.is_file():
             continue
         try:
-            data = json.loads(hosts_file.read_text())
+            data = json.loads(lab_file.read_text())
         except (OSError, json.JSONDecodeError) as e:
-            problems.append(f"{hosts_file}: {e}")
+            problems.append(f"{lab_file}: {e}")
             continue
-        if not isinstance(data, list):
-            problems.append(f"{hosts_file}: must contain a JSON array, got {type(data).__name__}")
+        if not isinstance(data, dict):
+            problems.append(
+                f"{lab_file}: must contain a JSON object with 'hosts'/'links' sections, "
+                f"got {type(data).__name__}"
+            )
             continue
-        for idx, host_data in enumerate(data):
-            if not isinstance(host_data, dict):
-                problems.append(
-                    f"{hosts_file}: [{idx}] must be a JSON object, got {type(host_data).__name__}"
-                )
-                continue
-            try:
-                # JSON object keys are always str; the isinstance guard above
-                # is the runtime check ty cannot see through.
-                validate_host_dict(cast("dict[str, Any]", host_data))
-            except ValueError as e:
-                problems.append(f"{hosts_file}: [{idx}] {e}")
+        hosts = data.get("hosts", [])
+        if not isinstance(hosts, list):
+            problems.append(
+                f"{lab_file}: section 'hosts' must be a JSON array, got {type(hosts).__name__}"
+            )
+        else:
+            for idx, host_data in enumerate(hosts):
+                if not isinstance(host_data, dict):
+                    problems.append(
+                        f"{lab_file}: hosts[{idx}] must be a JSON object, "
+                        f"got {type(host_data).__name__}"
+                    )
+                    continue
+                try:
+                    # JSON object keys are always str; the isinstance guard above
+                    # is the runtime check ty cannot see through.
+                    validate_host_dict(cast("dict[str, Any]", host_data))
+                except ValueError as e:
+                    problems.append(f"{lab_file}: hosts[{idx}] {e}")
+        links = data.get("links", [])
+        if not isinstance(links, list):
+            problems.append(
+                f"{lab_file}: section 'links' must be a JSON array, got {type(links).__name__}"
+            )
+        else:
+            for idx, link_data in enumerate(links):
+                try:
+                    LinkSpec.model_validate(link_data)
+                except ValidationError as e:  # noqa: PERF203 — per-item resilience
+                    problems.append(f"{lab_file}: links[{idx}] {e}")
     return problems
 
 
@@ -453,7 +514,7 @@ async def init_command(
         bool, typer.Option("--all", help="Scaffold every missing area without prompting.")
     ] = False,
     lab: Annotated[
-        bool, typer.Option("--lab", help="Scaffold the lab area (lab_data/hosts.json).")
+        bool, typer.Option("--lab", help="Scaffold the lab area (lab_data/lab.json).")
     ] = False,
     tests: Annotated[
         bool, typer.Option("--tests", help="Scaffold the tests area (example suite + conftest).")

@@ -431,9 +431,9 @@ class TestHostGet:
 
 def _write_hosts_json(path: Path, hosts: list[dict]) -> Path:
     path.mkdir(parents=True, exist_ok=True)
-    hosts_file = path / "hosts.json"
-    hosts_file.write_text(json.dumps(hosts))
-    return hosts_file
+    lab_file = path / "lab.json"
+    lab_file.write_text(json.dumps({"hosts": hosts}))
+    return lab_file
 
 
 def _fake_repo(*lab_paths: Path) -> SimpleNamespace:
@@ -445,7 +445,7 @@ def _fake_repo(*lab_paths: Path) -> SimpleNamespace:
 class TestHostIdCompleter:
     """``_host_id_completer`` runs during tab completion, before
     :func:`otto.bootstrap.bootstrap` registers repo init modules.  It must
-    therefore derive host IDs straight from the ``hosts.json`` files
+    therefore derive host IDs straight from the ``lab.json`` files
     referenced by each repo's ``labs`` search paths."""
 
     def test_returns_all_host_ids(self, tmp_path):
@@ -532,7 +532,7 @@ class TestHostIdCompleter:
         assert result == ["beet_seed", "carrot_seed", "local"]  # + built-in local
 
     def test_deduplicates_ids(self, tmp_path):
-        """Same host id present in two hosts.json files must collapse to one."""
+        """Same host id present in two lab.json files must collapse to one."""
         lab1 = tmp_path / "lab1"
         lab2 = tmp_path / "lab2"
         dup = {
@@ -552,12 +552,12 @@ class TestHostIdCompleter:
         """Non-existent search path must not raise; completer is best-effort."""
         with patch("otto.configmodule.get_repos", return_value=[_fake_repo(tmp_path / "nope")]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
-        assert result == ["local"]  # only the built-in local (no hosts.json to scan)
+        assert result == ["local"]  # only the built-in local (no lab.json to scan)
 
     def test_skips_malformed_json(self, tmp_path):
         lab = tmp_path / "bad"
         lab.mkdir()
-        (lab / "hosts.json").write_text("{not json")
+        (lab / "lab.json").write_text("{not json")
         with patch("otto.configmodule.get_repos", return_value=[_fake_repo(lab)]):
             result = _host_id_completer(ctx=MagicMock(), incomplete="")
         assert result == ["local"]  # malformed json skipped; built-in local remains
@@ -584,7 +584,7 @@ class TestHostIdCompleter:
 
     def test_prefers_cached_host_ids(self, tmp_path):
         """When the completion cache is populated (fast path), the completer
-        must serve from it and not re-parse every ``hosts.json``.
+        must serve from it and not re-parse every ``lab.json``.
 
         Uses a nonexistent search path to prove live parsing didn't run:
         without the cache, ``collect_host_ids`` would return ``[]`` and the
@@ -607,7 +607,7 @@ class TestHostIdCompleter:
 
     def test_falls_through_on_cache_miss(self, tmp_path):
         """``get_completion_names`` returns None off the fast path — completer
-        must still find host IDs by scanning ``hosts.json`` live."""
+        must still find host IDs by scanning ``lab.json`` live."""
         lab = tmp_path / "labA"
         _write_hosts_json(
             lab,
@@ -662,7 +662,7 @@ class TestHostIdCompleterLabFilter:
     must offer only hosts in that lab, not the whole fleet."""
 
     def test_live_scan_filters_by_selected_lab(self, tmp_path):
-        """Cache miss: a live hosts.json scan is restricted to the lab."""
+        """Cache miss: a live lab.json scan is restricted to the lab."""
         lab = tmp_path / "labA"
         _write_hosts_json(
             lab,

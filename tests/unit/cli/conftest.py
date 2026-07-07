@@ -135,7 +135,7 @@ def _make_lab_fs(tmp_path: Path) -> tuple[Path, Path]:
     """
     lab_data_dir = tmp_path / "lab_data"
     lab_data_dir.mkdir()
-    (lab_data_dir / "hosts.json").write_text(json.dumps(HOSTS_DATA))
+    (lab_data_dir / "lab.json").write_text(json.dumps({"hosts": HOSTS_DATA}))
 
     sut_dir = tmp_path / "sut"
     sut_dir.mkdir()
@@ -154,7 +154,7 @@ def real_main_mocks(tmp_path):
 
     What runs for real:
       - ``management.init_cli_logging`` (level, handler setup)
-      - ``load_lab`` (reads hosts.json from tmp_path)
+      - ``load_lab`` (reads lab.json from tmp_path)
       - OttoContext installation via ``set_context``
 
     What is mocked (I/O boundaries only):

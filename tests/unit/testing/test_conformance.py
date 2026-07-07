@@ -18,24 +18,26 @@ from otto.testing import (
 
 
 def _hosts_file(path: Path) -> None:
-    (path / "hosts.json").write_text(
+    (path / "lab.json").write_text(
         json.dumps(
-            [
-                {
-                    "ip": "10.0.0.1",
-                    "element": "a",
-                    "creds": [{"login": "u", "password": "p"}],
-                    "resources": ["a"],
-                    "labs": ["alpha"],
-                },
-                {
-                    "ip": "10.0.0.2",
-                    "element": "b",
-                    "creds": [{"login": "u", "password": "p"}],
-                    "resources": ["b"],
-                    "labs": ["beta"],
-                },
-            ]
+            {
+                "hosts": [
+                    {
+                        "ip": "10.0.0.1",
+                        "element": "a",
+                        "creds": [{"login": "u", "password": "p"}],
+                        "resources": ["a"],
+                        "labs": ["alpha"],
+                    },
+                    {
+                        "ip": "10.0.0.2",
+                        "element": "b",
+                        "creds": [{"login": "u", "password": "p"}],
+                        "resources": ["b"],
+                        "labs": ["beta"],
+                    },
+                ]
+            }
         )
     )
 

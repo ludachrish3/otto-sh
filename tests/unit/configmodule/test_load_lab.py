@@ -8,8 +8,8 @@ from otto.storage.json_repository import JsonFileLabRepository
 
 
 def _hosts_file(path: Path, hosts: list[dict]) -> Path:
-    f = path / "hosts.json"
-    f.write_text(json.dumps(hosts))
+    f = path / "lab.json"
+    f.write_text(json.dumps({"hosts": hosts}))
     return f
 
 

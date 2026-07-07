@@ -135,7 +135,7 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
 
 
 def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
-    """Completion source for ``--lab``: lab names referenced by the hosts.json files.
+    """Completion source for ``--lab``: lab names referenced by the lab.json files.
 
     Prefers the completion-cache snapshot; falls back to a live, data-only scan
     (:func:`~otto.configmodule.completion_cache.collect_lab_names`, no user

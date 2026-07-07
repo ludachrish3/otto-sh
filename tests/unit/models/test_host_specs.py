@@ -209,9 +209,9 @@ def test_embedded_spec_rejects_unix_only_field():
 
 
 # Runtime host init fields applied by overridable repo logic (NOT lab data) —
-# intentionally absent from the hosts.json spec, so the drift guard skips them.
+# intentionally absent from the lab.json spec, so the drift guard skips them.
 # ``products`` is user product data, independent of lab data; it is attached to
-# hosts by repo logic, never declared in hosts.json.
+# hosts by repo logic, never declared in lab.json.
 _NON_SPEC_RUNTIME_FIELDS = frozenset({"products"})
 
 
@@ -365,7 +365,7 @@ def test_spec_unset_power_control_defaults_none():
 
 
 def test_spec_rejects_products_as_lab_data():
-    """``products`` is repo-logic-applied, not lab data — hosts.json must not
+    """``products`` is repo-logic-applied, not lab data — lab.json must not
     declare it (extra='forbid' rejects the key).
     """
     with pytest.raises(ValidationError):

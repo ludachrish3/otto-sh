@@ -42,7 +42,7 @@ def _repo(*, labs: list[Path] | None = None, tests: list[Path] | None = None):
 
 
 def test_collect_lab_names_reads_lab_tags(tmp_path: Path) -> None:
-    (tmp_path / "hosts.json").write_text(json.dumps(_HOSTS))
+    (tmp_path / "lab.json").write_text(json.dumps({"hosts": _HOSTS}))
     assert collect_lab_names([_repo(labs=[tmp_path])]) == ["shared", "tech1", "tech2"]
 
 

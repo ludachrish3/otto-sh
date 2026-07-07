@@ -9,7 +9,7 @@ Emitted documents (default):
 
 - one self-contained file per *distinct* registered host spec
   (``unix-host``, ``embedded-host``, …),
-- ``hosts`` — the array schema for the whole ``hosts.json`` file, assembled from
+- ``hosts`` — the array schema for the whole ``lab.json`` file, assembled from
   the registry with ``anyOf`` + an ``os_type`` discriminator hint,
 - ``settings`` — for ``settings.toml``,
 - ``reservations`` — for the reservations JSON file,
@@ -110,7 +110,7 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
 def _host_array_schema(
     distinct: list[type[HostSpec]], names: dict[str, type[HostSpec]]
 ) -> dict[str, Any]:
-    """Build the ``hosts.json`` array schema.
+    """Build the ``lab.json`` array schema.
 
     Uses ``anyOf`` over the distinct specs with a shared ``$defs`` and an
     ``os_type`` discriminator mapping covering every registered name.

@@ -21,7 +21,7 @@ _TECHS = ("tech1", "tech2")
 
 @pytest.mark.parametrize("tech", _TECHS)
 def test_no_unix_host_defines_a_hop(tech: str) -> None:
-    hosts = json.loads(lab_data_path(tech).read_text())
+    hosts = json.loads(lab_data_path(tech).read_text())["hosts"]
     offenders = [h["element"] for h in hosts if h.get("os_type", "unix") == "unix" and "hop" in h]
     assert not offenders, (
         f"{tech}: Unix hosts must be directly reachable (no hop) — "
@@ -31,7 +31,7 @@ def test_no_unix_host_defines_a_hop(tech: str) -> None:
 
 @pytest.mark.parametrize("tech", _TECHS)
 def test_embedded_hops_are_preserved(tech: str) -> None:
-    hosts = json.loads(lab_data_path(tech).read_text())
+    hosts = json.loads(lab_data_path(tech).read_text())["hosts"]
     embedded = [h for h in hosts if h.get("os_type", "unix") != "unix"]
     if not embedded:
         pytest.skip(f"{tech}: no embedded hosts — hop-preservation check not applicable")

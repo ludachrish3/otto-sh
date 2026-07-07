@@ -507,7 +507,7 @@ def embedded_param_id(backend_id: str) -> str:
     """Descriptive test id for an embedded backend, derived from lab data.
 
     Returns ``"{os_name}-{os_version}-{fs}"`` so a new entry in
-    ``lab_data/tech1/hosts.json`` (e.g. a future Zephyr 4.x or a different
+    ``lab_data/tech1/lab.json`` (e.g. a future Zephyr 4.x or a different
     RTOS) surfaces its identity in test output without test-code edits.
     Non-embedded backend ids pass through unchanged so the same helper can
     be used by parametrize callers that mix unix and embedded backends.
@@ -757,7 +757,7 @@ def _zephyr_kit(backend_id: str) -> HostKit:
 
     Deriving the kit from lab data (rather than a hand-written table per
     backend) means a new Zephyr version added to :data:`_ZEPHYR_BACKEND_NE`
-    and ``hosts.json`` gets a correct kit for free.
+    and ``lab.json`` gets a correct kit for free.
     """
     from otto.host.embedded_filesystem import build_filesystem
 

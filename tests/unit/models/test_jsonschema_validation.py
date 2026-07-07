@@ -10,7 +10,7 @@ from otto.models.jsonschema import build_schemas
 from tests._fixtures.labdata import lab_data_dir
 
 _LAB_DATA = lab_data_dir()
-_HOST_FILES = sorted(_LAB_DATA.glob("*/hosts.json"))
+_LAB_FILES = sorted(_LAB_DATA.glob("*/lab.json"))
 
 
 @pytest.fixture(scope="module")
@@ -21,18 +21,18 @@ def hosts_validator() -> Draft202012Validator:
 
 
 def test_lab_data_fixtures_exist():
-    assert _HOST_FILES, "expected at least one tests/lab_data/*/hosts.json fixture"
+    assert _LAB_FILES, "expected at least one tests/_fixtures/lab_data/*/lab.json fixture"
 
 
-@pytest.mark.parametrize("hosts_file", _HOST_FILES, ids=lambda p: p.parent.name)
-def test_real_hosts_json_validates(hosts_validator, hosts_file):
-    data = json.loads(hosts_file.read_text())
-    errors = list(hosts_validator.iter_errors(data))
+@pytest.mark.parametrize("lab_file", _LAB_FILES, ids=lambda p: p.parent.name)
+def test_real_hosts_json_validates(hosts_validator, lab_file):
+    hosts = json.loads(lab_file.read_text())["hosts"]
+    errors = list(hosts_validator.iter_errors(hosts))
     assert errors == [], [e.message for e in errors]
 
 
 def test_unknown_host_key_is_rejected(hosts_validator):
-    base = json.loads(_HOST_FILES[0].read_text())
-    bad = copy.deepcopy(base)
+    hosts = json.loads(_LAB_FILES[0].read_text())["hosts"]
+    bad = copy.deepcopy(hosts)
     bad[0]["totally_unknown_key"] = "x"
     assert list(hosts_validator.iter_errors(bad)), "unknown key should fail validation"

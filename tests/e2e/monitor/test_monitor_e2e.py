@@ -341,7 +341,7 @@ def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Pa
     # repo1_monitor_uptime.py's register_host_parsers() call keys on the exact
     # host *id* (otto/monitor/factory.py: get_host_parsers(host.id)), not the
     # short pool element --hosts matches by regex. The tech1 lab fixture (see
-    # tests/_fixtures/lab_data/tech1/hosts.json) gives every veggies-pool host
+    # tests/_fixtures/lab_data/tech1/lab.json) gives every veggies-pool host
     # board="seed", so RemoteHost._generate_id() composes "<element>_seed" —
     # e.g. "carrot_seed" for the leased element "carrot" (verified against
     # UnixHost directly; also assumed elsewhere, e.g.

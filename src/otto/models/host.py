@@ -1,4 +1,4 @@
-"""Pydantic boundary specs for the host record (a ``hosts.json`` entry).
+"""Pydantic boundary specs for the host record (a ``lab.json`` entry).
 
 ``HostSpec`` and its family subclasses validate a host dict and build the
 unchanged runtime ``UnixHost`` / ``EmbeddedHost`` via ``to_host()``. The specs
@@ -168,7 +168,7 @@ class CredSpec(OttoModel):
 
 
 class HostSpec(OttoModel):
-    """Abstract boundary spec for a ``hosts.json`` host entry.
+    """Abstract boundary spec for a ``lab.json`` host entry.
 
     Holds the fields common to both host families (identity, credentials, telnet/SNMP
     options, toolchain, power control) and builds the constructor kwargs via
@@ -223,7 +223,7 @@ class HostSpec(OttoModel):
     def _strip_comment_keys(cls, data: object) -> object:
         """Drop ``_``-prefixed keys before validation — the JSON comment idiom.
 
-        hosts.json cannot carry real comments, so keys like ``_comment`` are
+        lab.json cannot carry real comments, so keys like ``_comment`` are
         sanctioned annotation space. Only the leading-underscore form is
         exempt from ``extra='forbid'``; any other unknown key still errors.
         """
@@ -338,7 +338,7 @@ class HostSpec(OttoModel):
 
 
 class UnixHostSpec(HostSpec):
-    """Boundary spec for a Unix host entry in ``hosts.json``.
+    """Boundary spec for a Unix host entry in ``lab.json``.
 
     Extends ``HostSpec`` with the Unix-specific fields: term/transfer menus and active
     selections, SSH/SFTP/SCP/FTP/nc option tables, Docker capability, and hardware/software
@@ -406,7 +406,7 @@ class UnixHostSpec(HostSpec):
 
 
 class EmbeddedHostSpec(HostSpec):
-    """Boundary spec for an embedded host entry in ``hosts.json``.
+    """Boundary spec for an embedded host entry in ``lab.json``.
 
     Extends ``HostSpec`` with the embedded-family fields: term/transfer menus and active
     selections, filesystem and binary loader registry names. ``to_host()`` resolves the

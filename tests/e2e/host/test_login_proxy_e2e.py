@@ -46,7 +46,7 @@ previously untested here and confirmed 100% reliably hanging pre-fix.
 
 Containment
 -----------
-``tests/_fixtures/lab_data/tech1/hosts.json`` (the "veggies" lab) is loaded
+``tests/_fixtures/lab_data/tech1/lab.json`` (the "veggies" lab) is loaded
 directly by several *unit* tests that do not register any login proxies —
 ``CredSpec`` validates a cred's ``proxy`` name against the ``LOGIN_PROXIES``
 registry at ingest, so adding a proxy-referencing cred to that shared file
@@ -57,13 +57,13 @@ module therefore never touches shared lab data:
   (``overwrite=True`` so re-import under xdist is idempotent).
 - Tests 1-5 build hosts from INLINE dicts via
   :func:`otto.storage.factory.create_host_from_dict`, reading only the
-  leased VM's IP read-only from ``tech1/hosts.json`` (via
+  leased VM's IP read-only from ``tech1/lab.json`` (via
   ``tests._fixtures.labdata.host_data``) — never its ``creds``.
 - Test 6 (the ``interact --as-user`` bridge) drives a real ``otto``
   subprocess, which needs its OWN registration (it never imports this test
   module) — it scaffolds a throwaway, fully self-contained SUT directory
   under ``tmp_path`` with its own init module and its own single-host
-  ``hosts.json``, again built from the leased IP.
+  ``lab.json``, again built from the leased IP.
 
 Zero shared-file mutation; zero blast radius on any other test.
 
@@ -121,7 +121,7 @@ register_login_proxy("sudo-su-shell", _sudo_su_shell, undo=_sudo_su_shell_undo, 
 
 
 # ---------------------------------------------------------------------------
-# Inline host-dict builder (never touches tech1/hosts.json's creds)
+# Inline host-dict builder (never touches tech1/lab.json's creds)
 # ---------------------------------------------------------------------------
 
 _MYSQL_CREDS: list[dict[str, str]] = [
@@ -156,7 +156,7 @@ def _mysql_host_dict(ip: str, element: str, **overrides: object) -> dict[str, ob
 def leased_host(tmp_path_factory) -> Iterator[tuple[str, str]]:
     """Lease one Unix host from the pool; yield ``(element, ip)``.
 
-    ``ip`` is read read-only from ``tech1/hosts.json`` (the veggies lab's
+    ``ip`` is read read-only from ``tech1/lab.json`` (the veggies lab's
     real IP-to-element map) via :func:`tests._fixtures.labdata.host_data` —
     the shared file's ``creds`` are never consulted, so this never depends on
     (or risks) anything mutated there.
@@ -346,7 +346,7 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
     its OWN ``sudo-su-shell`` registration — wired via an ``init`` module
     (mirrors how real SUT repos register custom login proxies). Returns the
     host id (``"<element>_seed"``) the single host in the scaffolded
-    ``hosts.json`` will resolve to.
+    ``lab.json`` will resolve to.
     """
     (sut_dir / ".otto").mkdir(parents=True)
     (sut_dir / "initlib").mkdir(parents=True)
@@ -370,7 +370,7 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
             "labs": [_LP_E2E_LAB],
         }
     ]
-    (sut_dir / "lab_data" / "hosts.json").write_text(json.dumps(hosts))
+    (sut_dir / "lab_data" / "lab.json").write_text(json.dumps({"hosts": hosts}))
 
     return f"{element}_seed"
 

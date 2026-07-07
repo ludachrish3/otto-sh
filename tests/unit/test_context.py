@@ -114,7 +114,7 @@ def test_get_host_unknown_id_raises_helpful_keyerror():
 
 
 def test_context_get_host_and_all_hosts_resolve_from_lab():
-    # Use NEs that exist in tests/lab_data/tech1/hosts.json with creds (Unix hosts):
+    # Use NEs that exist in tests/lab_data/tech1/lab.json with creds (Unix hosts):
     # carrot, tomato, pepper, basil
     lab = _lab_with("carrot", "tomato", "pepper")
     ctx = OttoContext(lab=lab)

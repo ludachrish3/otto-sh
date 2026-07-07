@@ -24,13 +24,13 @@ def lab_data_dir() -> Path:
 
 
 def lab_data_path(tech: str = "tech1") -> Path:
-    """Path to a tech's ``hosts.json`` (default the primary ``tech1`` lab)."""
-    return _LAB_DATA_DIR / tech / "hosts.json"
+    """Path to a tech's ``lab.json`` (default the primary ``tech1`` lab)."""
+    return _LAB_DATA_DIR / tech / "lab.json"
 
 
 def host_data(ne: str, tech: str = "tech1") -> dict[str, Any]:
-    """Return the raw host dict for ``ne`` from the lab JSON."""
-    hosts = json.loads(lab_data_path(tech).read_text())
+    """Return the raw host dict for ``ne`` from the lab JSON's ``hosts`` section."""
+    hosts = json.loads(lab_data_path(tech).read_text())["hosts"]
     for host in hosts:
         if host["element"] == ne:
             return host

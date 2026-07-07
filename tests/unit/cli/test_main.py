@@ -390,7 +390,7 @@ class TestLoggerArguments:
 class TestLabLoading:
     """Verify lab loading produces real Lab objects with correct hosts.
 
-    load_lab runs for real here, reading hosts.json from the tmp_path fixture.
+    load_lab runs for real here, reading lab.json from the tmp_path fixture.
     The fixture data has three hosts across two labs:
       - test_lab: host1, host2
       - lab2: host2, host3

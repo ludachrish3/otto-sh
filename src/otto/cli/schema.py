@@ -5,7 +5,7 @@ Commands:
 
 The schemas are generated from the installed otto's pydantic models, so they
 always match the running version. Point your editor at the emitted files for
-autocomplete + typo-catching on ``hosts.json``, ``settings.toml``, and the
+autocomplete + typo-catching on ``lab.json``, ``settings.toml``, and the
 reservations JSON. See the "Editor schemas" user guide.
 """
 
@@ -19,7 +19,7 @@ from rich import print as rprint
 schema_app = typer.Typer(
     name="schema",
     no_args_is_help=True,
-    help="Export JSON Schema for hosts.json / settings.toml / reservations.",
+    help="Export JSON Schema for lab.json / settings.toml / reservations.",
     context_settings={
         "help_option_names": ["-h", "--help"],
     },
@@ -28,7 +28,7 @@ schema_app = typer.Typer(
 
 @schema_app.callback()
 def schema_callback(ctx: typer.Context) -> None:
-    """Export JSON Schema for hosts.json / settings.toml / reservations."""
+    """Export JSON Schema for lab.json / settings.toml / reservations."""
 
 
 @schema_app.command("export")

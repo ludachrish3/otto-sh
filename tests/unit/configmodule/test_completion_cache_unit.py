@@ -570,7 +570,7 @@ def test_read_cache_defaults_hosts_by_lab_to_empty_dict(tmp_path: Path, monkeypa
 
 
 # ---------------------------------------------------------------------------
-# collect_docker_capable_host_ids — hosts.json reading + docker_capable filter
+# collect_docker_capable_host_ids — lab.json reading + docker_capable filter
 # ---------------------------------------------------------------------------
 
 _DOCKER_HOST = {
@@ -613,9 +613,11 @@ def test_collect_returns_only_capable_sorted(tmp_path: Path) -> None:
     """Only docker_capable hosts are returned, sorted, and non-dict entries are skipped."""
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    hosts_file = lab_path / cc.HOSTS_FILENAME
+    lab_file = lab_path / cc.LAB_FILENAME
     # docker_capable host "b_seed", non-docker host "a_seed", junk non-dict entry
-    hosts_file.write_text(json.dumps([_DOCKER_HOST, _NON_DOCKER_HOST, "junk-string-not-a-dict"]))
+    lab_file.write_text(
+        json.dumps({"hosts": [_DOCKER_HOST, _NON_DOCKER_HOST, "junk-string-not-a-dict"]})
+    )
     repo = _make_fake_repo(tmp_path)
 
     result = cc.collect_docker_capable_host_ids([repo])
@@ -624,20 +626,20 @@ def test_collect_returns_only_capable_sorted(tmp_path: Path) -> None:
 
 
 def test_collect_skips_missing_file(tmp_path: Path) -> None:
-    """A repo whose lab path has no hosts.json yields an empty list."""
+    """A repo whose lab path has no lab.json yields an empty list."""
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    # Deliberately do NOT write hosts.json
+    # Deliberately do NOT write lab.json
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []
 
 
-def test_collect_skips_non_list_json(tmp_path: Path) -> None:
-    """A hosts.json containing a non-list value (e.g. a dict) is skipped."""
+def test_collect_skips_non_list_hosts_section(tmp_path: Path) -> None:
+    """A lab.json whose ``hosts`` section is not a JSON array is skipped."""
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    (lab_path / cc.HOSTS_FILENAME).write_text(json.dumps({"not": "a list"}))
+    (lab_path / cc.LAB_FILENAME).write_text(json.dumps({"hosts": {"not": "a list"}}))
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []
@@ -745,10 +747,10 @@ def test_fingerprint_is_deterministic(tmp_path: Path) -> None:
 
 
 def test_collect_skips_corrupt_json(tmp_path: Path) -> None:
-    """A hosts.json with invalid JSON (JSONDecodeError branch) is silently skipped."""
+    """A lab.json with invalid JSON (JSONDecodeError branch) is silently skipped."""
     lab_path = tmp_path / "lab"
     lab_path.mkdir(parents=True)
-    (lab_path / cc.HOSTS_FILENAME).write_text("not valid json }{")
+    (lab_path / cc.LAB_FILENAME).write_text("not valid json }{")
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []
@@ -760,7 +762,7 @@ def test_collect_skips_invalid_host_dict(tmp_path: Path) -> None:
     lab_path.mkdir(parents=True)
     # docker_capable=True but missing required fields (no 'ip', invalid os_type, etc.)
     bad_host = {"docker_capable": True, "element": "x", "os_type": "nonexistent_profile"}
-    (lab_path / cc.HOSTS_FILENAME).write_text(json.dumps([bad_host]))
+    (lab_path / cc.LAB_FILENAME).write_text(json.dumps({"hosts": [bad_host]}))
     repo = _make_fake_repo(tmp_path)
 
     assert cc.collect_docker_capable_host_ids([repo]) == []

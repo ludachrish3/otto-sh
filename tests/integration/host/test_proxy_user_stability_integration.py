@@ -41,7 +41,7 @@ below (``overwrite=True``), and ``_MYSQL_CREDS`` / ``_mysql_host_dict`` are
 redefined locally rather than imported from the e2e module, so this file
 never depends on (or risks) anything the e2e module does at collection
 time. Hosts are built from inline dicts; only the leased VM's IP is read
-from ``tech1/hosts.json`` (via :func:`tests._fixtures.labdata.host_data`) —
+from ``tech1/lab.json`` (via :func:`tests._fixtures.labdata.host_data`) —
 never its ``creds``.
 
 Runs via ``make stability-unix`` (``-m "stability and integration"``,
@@ -95,7 +95,7 @@ register_login_proxy("sudo-su-shell", _sudo_su_shell, undo=_sudo_su_shell_undo, 
 
 
 # ---------------------------------------------------------------------------
-# Inline host-dict builder (never touches tech1/hosts.json's creds)
+# Inline host-dict builder (never touches tech1/lab.json's creds)
 # ---------------------------------------------------------------------------
 
 _MYSQL_CREDS: list[dict[str, str]] = [
@@ -136,7 +136,7 @@ _NC_SERIAL_GROUP = pytest.mark.xdist_group("nc-serial")
 def leased_host(tmp_path_factory) -> Iterator[tuple[str, str]]:
     """Lease one Unix host from the pool; yield ``(element, ip)``.
 
-    ``ip`` is read read-only from ``tech1/hosts.json`` (the veggies lab's
+    ``ip`` is read read-only from ``tech1/lab.json`` (the veggies lab's
     real IP-to-element map) via :func:`tests._fixtures.labdata.host_data` —
     the shared file's ``creds`` are never consulted.
     """

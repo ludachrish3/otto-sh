@@ -13,10 +13,10 @@ from otto.host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 
 
 def _repo_with_hosts(tmp_path: Path, hosts: list[dict]) -> SimpleNamespace:
-    """A fake Repo whose single lab search path holds *hosts* in hosts.json."""
+    """A fake Repo whose single lab search path holds *hosts* in lab.json."""
     lab = tmp_path / "lab"
     lab.mkdir(parents=True, exist_ok=True)
-    (lab / "hosts.json").write_text(json.dumps(hosts))
+    (lab / "lab.json").write_text(json.dumps({"hosts": hosts}))
     return SimpleNamespace(labs=[lab])
 
 
@@ -44,7 +44,7 @@ _APPLE = {
 
 
 def test_collect_host_ids_includes_builtin_local() -> None:
-    # No repos → no hosts.json hosts, but the built-in local must still appear.
+    # No repos → no lab.json hosts, but the built-in local must still appear.
     ids = collect_host_ids([])
     assert BUILTIN_LOCAL_HOST_ID in ids
 

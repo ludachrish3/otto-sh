@@ -29,7 +29,7 @@ def test_interactive_prompts_per_missing_area(tmp_path: Path) -> None:
     result = runner.invoke(_app(), ["--path", str(tmp_path)], input="widget\n0.1.0\ny\ny\nn\nn\n")
     assert result.exit_code == 0, result.output
     assert (tmp_path / ".otto" / "settings.toml").is_file()
-    assert (tmp_path / "lab_data" / "hosts.json").is_file()
+    assert (tmp_path / "lab_data" / "lab.json").is_file()
     assert not (tmp_path / "tests" / "test_example.py").exists()
 
 
@@ -38,7 +38,7 @@ def test_all_flag_scaffolds_everything_without_prompts(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     for artifact in (
         ".otto/settings.toml",
-        "lab_data/hosts.json",
+        "lab_data/lab.json",
         "lab_data/README.md",
         "tests/test_example.py",
         "tests/conftest.py",
@@ -51,7 +51,7 @@ def test_area_flag_pulls_in_missing_settings_with_note(tmp_path: Path) -> None:
     result = runner.invoke(_app(), ["--lab", "--name", "widget", "--path", str(tmp_path)])
     assert result.exit_code == 0, result.output
     assert (tmp_path / ".otto" / "settings.toml").is_file()
-    assert (tmp_path / "lab_data" / "hosts.json").is_file()
+    assert (tmp_path / "lab_data" / "lab.json").is_file()
     assert not (tmp_path / "tests" / "test_example.py").exists()
     assert "repo marker" in result.output
 
@@ -93,7 +93,7 @@ def test_epilogue_skips_sut_dirs_when_already_set(tmp_path: Path, monkeypatch) -
 
 def test_second_run_is_pure_report(tmp_path: Path) -> None:
     runner.invoke(_app(), ["--all", "--name", "widget", "--path", str(tmp_path)])
-    hosts = tmp_path / "lab_data" / "hosts.json"
+    hosts = tmp_path / "lab_data" / "lab.json"
     mtime = hosts.stat().st_mtime_ns
     result = runner.invoke(_app(), ["--all", "--path", str(tmp_path)])
     assert result.exit_code == 0

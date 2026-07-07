@@ -79,7 +79,7 @@ def make_selection_repo(
     ``otto.cli.invoke``, which concatenates every repo's ``labs`` list
     unchanged). Pass ``False`` for every repo but one in a multi-repo test —
     two repos both pointing at the same lab data dir would load the same
-    ``hosts.json`` twice and collide on duplicate host IDs.
+    ``lab.json`` twice and collide on duplicate host IDs.
 
     The test module is named ``test_selection_<name>.py`` (not a fixed
     ``test_selection.py``): two repos collected in the same otto process

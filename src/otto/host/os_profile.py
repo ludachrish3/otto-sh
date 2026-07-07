@@ -8,7 +8,7 @@ A profile records which *base* registered host class to build (e.g.
 values* that the storage factory merges beneath each host's own fields. This
 lets many hosts that share a characteristic bundle (e.g. a particular Zephyr
 build's ``command_frame`` / ``filesystem`` / ``max_filename_len``) name that
-bundle once instead of copy-pasting it into every ``hosts.json`` entry.
+bundle once instead of copy-pasting it into every ``lab.json`` entry.
 
 Profiles are authorable two ways, both feeding the same registry:
 
@@ -44,7 +44,7 @@ To ship a host subclass from an external repo:
 3. Optionally call ``register_os_profile('myos-v1', base='myos',
    defaults={...})`` to layer a per-build data bundle (e.g. a specific
    ``command_frame``, ``max_filename_len``, or ``os_name``) over the class,
-   selectable via ``os_type: myos-v1`` in ``hosts.json``.
+   selectable via ``os_type: myos-v1`` in ``lab.json``.
 
 :class:`~otto.host.embedded_host.ZephyrHost` is the in-tree worked example: it
 subclasses :class:`~otto.host.embedded_host.EmbeddedHost`, declares Zephyr-
@@ -92,7 +92,7 @@ _HOST_SPECS: "dict[str, type[HostSpec]]" = {}
 class OsProfile:
     """A named bundle of host defaults over a base family.
 
-    The ``defaults`` dict holds *raw* values exactly as a ``hosts.json`` entry
+    The ``defaults`` dict holds *raw* values exactly as a ``lab.json`` entry
     would (strings for ``command_frame`` / ``filesystem``, dicts for the
     ``*_options`` tables, plain scalars otherwise). The storage factory merges
     them beneath the host's own fields and runs its existing string→instance
@@ -108,7 +108,7 @@ class OsProfile:
     :func:`register_host_class`)."""
 
     defaults: dict[str, Any] = field(default_factory=dict)
-    """Raw field defaults merged beneath a host's own ``hosts.json`` fields."""
+    """Raw field defaults merged beneath a host's own ``lab.json`` fields."""
 
 
 # Registry of profile name -> profile, mirroring

@@ -109,7 +109,7 @@ def _resolve_parent(
         raise TypeError(f"Docker host {candidate!r} must be a UnixHost; got {type(host).__name__}")
     if not host.docker_capable:
         raise ValueError(
-            f"Host {candidate!r} is not docker_capable. Mark it in hosts.json with "
+            f"Host {candidate!r} is not docker_capable. Mark it in lab.json with "
             f'"docker_capable": true.'
         )
     return host

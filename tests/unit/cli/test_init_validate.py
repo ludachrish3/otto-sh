@@ -1,5 +1,6 @@
 """otto init validates existing areas via real ingestion code — never rewrites."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -60,22 +61,48 @@ def test_broken_settings_key_fails_with_pydantic_error(tmp_path: Path) -> None:
 
 def test_invalid_host_field_fails_named(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
-    hosts = tmp_path / "lab_data" / "hosts.json"
-    hosts.write_text(hosts.read_text().replace('"ip"', '"ipp"'))
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    lab_file.write_text(lab_file.read_text().replace('"ip"', '"ipp"'))
     result = runner.invoke(_app(), ["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "ipp" in result.output
 
 
 def test_non_dict_host_entry_fails_named(tmp_path: Path) -> None:
-    """A non-object array entry gets a clean indexed error, not an AttributeError."""
+    """A non-object hosts[] entry gets a clean indexed error, not an AttributeError."""
     _scaffold_all(tmp_path)
-    hosts = tmp_path / "lab_data" / "hosts.json"
-    hosts.write_text(hosts.read_text().rstrip().rstrip("]") + ', "oops"]\n')
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    data = json.loads(lab_file.read_text())
+    data["hosts"].append("oops")
+    lab_file.write_text(json.dumps(data))
     result = runner.invoke(_app(), ["--all", "--path", str(tmp_path)])
     assert result.exit_code == 1
     assert "must be a JSON object" in result.output
     assert "str" in result.output
+
+
+def test_invalid_link_entry_fails_named(tmp_path: Path) -> None:
+    """A structurally invalid links[] entry surfaces a named validation error."""
+    _scaffold_all(tmp_path)
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    data = json.loads(lab_file.read_text())
+    # LinkSpec requires exactly two endpoints; one endpoint fails validation.
+    data["links"].append({"endpoints": [{"host": "example-device"}]})
+    lab_file.write_text(json.dumps(data))
+    result = runner.invoke(_app(), ["--all", "--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "links[0]" in result.output
+
+
+def test_valid_link_entry_passes(tmp_path: Path) -> None:
+    """A well-formed links[] entry validates clean alongside the example host."""
+    _scaffold_all(tmp_path)
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    data = json.loads(lab_file.read_text())
+    data["links"].append({"endpoints": [{"host": "example-device"}, {"host": "other-device"}]})
+    lab_file.write_text(json.dumps(data))
+    result = runner.invoke(_app(), ["--all", "--path", str(tmp_path)])
+    assert result.exit_code == 0, result.output
 
 
 def test_missing_libs_dir_reported(tmp_path: Path) -> None:

@@ -62,7 +62,7 @@ def register_builtin_commands() -> None:
     register_cli_command(
         "schema",
         "otto.cli.schema:schema_app",
-        help="Export JSON Schema for hosts.json / settings.toml / reservations.",
+        help="Export JSON Schema for lab.json / settings.toml / reservations.",
         lab_free=True,
         output_dir=False,
         gate=False,

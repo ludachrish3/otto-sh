@@ -174,7 +174,7 @@ class TestGetLabPanel:
         sut_dir = _make_sut(tmp_path, extra_toml='labs = ["${sut_dir}/labdata"]\n')
         labdata = sut_dir / "labdata"
         labdata.mkdir()
-        (labdata / "hosts.json").write_text('[{"labs": ["alpha", "beta"]}]')
+        (labdata / "lab.json").write_text('{"hosts": [{"labs": ["alpha", "beta"]}]}')
         repo = Repo(sut_dir=sut_dir)
         text = _render(repo.get_lab_panel())
         assert "alpha" in text

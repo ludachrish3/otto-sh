@@ -104,7 +104,7 @@ def test_slow_path_seeds_cache(tmp_path: Path) -> None:
     suite_names = {s["name"] for s in entry["suites"]}
     assert "test-instruction" in instruction_names
     assert {"TestDevice", "TestCoverageProduct"} <= suite_names
-    # Host IDs from tests/_fixtures/lab_data/tech1/hosts.json — co-cached
+    # Host IDs from tests/_fixtures/lab_data/tech1/lab.json — co-cached
     # alongside instructions/suites so `otto host <TAB>` hits the fast path.
     assert {"carrot_seed", "tomato_seed", "pepper_seed"} <= set(entry["hosts"])
     # docker-capable parents are cached separately so `otto docker --on <TAB>`
@@ -191,7 +191,7 @@ def _host_completions(result: subprocess.CompletedProcess[str]) -> set[str]:
     return {line.split(",", 1)[-1] for line in result.stdout.splitlines() if line}
 
 
-# tech1/hosts.json splits into two labs: `veggies` (carrot/tomato/pepper) and
+# tech1/lab.json splits into two labs: `veggies` (carrot/tomato/pepper) and
 # `embedded` (basil/sprout*). Lab-scoped `otto host <TAB>` must show one, not both.
 _VEGGIES = {"carrot_seed", "tomato_seed", "pepper_seed"}
 _EMBEDDED = {"basil_seed", "sprout", "sprout27", "sprout_lfs"}
@@ -385,7 +385,7 @@ def test_fast_path_returns_rebuilt_suite_options(tmp_path: Path) -> None:
 
 
 def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:
-    """`otto host <TAB>` must complete host IDs from the configured hosts.json.
+    """`otto host <TAB>` must complete host IDs from the configured lab.json.
 
     The completer in ``otto.cli.host`` runs during completion before
     :func:`otto.bootstrap.bootstrap` registers repo init modules — this test
@@ -400,7 +400,7 @@ def test_fast_path_returns_host_ids_for_host_subcommand(tmp_path: Path) -> None:
         comp_cword="2",
     )
     assert result.returncode == 0, result.stderr
-    # tech1/hosts.json in repo1 defines carrot_seed, tomato_seed, pepper_seed.
+    # tech1/lab.json in repo1 defines carrot_seed, tomato_seed, pepper_seed.
     blob = result.stdout
     for host_id in ("carrot_seed", "tomato_seed", "pepper_seed"):
         assert host_id in blob, f"{host_id!r} missing from: {blob!r}"

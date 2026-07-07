@@ -502,7 +502,7 @@ class TestCoverageIntegrity:
 # Test Class 5: .gcda Fetch Structure
 # ---------------------------------------------------------------------------
 
-# Expected host layout from tests/lab_data/tech1/hosts.json for lab "veggies".
+# Expected host layout from tests/lab_data/tech1/lab.json for lab "veggies".
 # Discovering the list from disk rather than calling all_hosts() keeps this
 # test process free of otto.configmodule singletons.
 EXPECTED_HOST_IDS = {"carrot_seed", "tomato_seed", "pepper_seed"}

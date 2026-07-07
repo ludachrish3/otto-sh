@@ -20,7 +20,7 @@ xdist and co-import with the e2e / proxy-stability modules are all
 idempotent), and ``MySql``/``Row``/``QueryStats``/``Select``/
 ``_MYSQL_CREDS``/``_mysql_host_dict`` are redefined locally rather than
 imported from the e2e module. Hosts are built from inline dicts; only the
-leased VM's IP is read from ``tech1/hosts.json`` (via
+leased VM's IP is read from ``tech1/lab.json`` (via
 :func:`tests._fixtures.labdata.host_data`) — never its creds.
 
 mysql connection note

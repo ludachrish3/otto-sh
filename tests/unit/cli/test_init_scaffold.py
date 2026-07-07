@@ -33,14 +33,16 @@ def test_settings_scaffold_parses_via_settings_model(tmp_path: Path) -> None:
 
 def test_lab_scaffold_passes_hostspec_ingest(tmp_path: Path) -> None:
     BY_NAME["lab"].scaffold(tmp_path, CFG)
-    hosts_file = tmp_path / "lab_data" / "hosts.json"
-    entries = json.loads(hosts_file.read_text())
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    data = json.loads(lab_file.read_text())
     from otto.models.host import UnixHostSpec
 
-    spec = UnixHostSpec.model_validate(entries[0])
+    assert data["links"] == []  # links section present, empty by default
+    hosts = data["hosts"]
+    spec = UnixHostSpec.model_validate(hosts[0])
     assert spec.element == "example-device"
     assert spec.labs == ["example_lab"]
-    assert "_comment" in entries[0]  # the docs pointer rides in the file itself
+    assert "_comment" in hosts[0]  # the docs pointer rides in the host entry
     assert (tmp_path / "lab_data" / "README.md").exists()
 
 

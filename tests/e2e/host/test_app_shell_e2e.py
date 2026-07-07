@@ -27,7 +27,7 @@ registered). This module is therefore self-contained: it registers the
 ``sudo-su-shell`` proxy at module scope (``overwrite=True`` so re-import under
 xdist and co-import with the login-proxy e2e are both idempotent) and builds its
 mysql host from an INLINE dict, reading only the leased VM's IP read-only from
-``tech1/hosts.json`` — never its creds. Zero shared-file mutation.
+``tech1/lab.json`` — never its creds. Zero shared-file mutation.
 
 mysql connection note
 ---------------------

@@ -293,7 +293,7 @@ Vagrant.configure("2") do |config|
 
         # Zephyr SDK arm-zephyr-eabi toolchains for the embedded (repo3) coverage
         # bed: the cross-gcov the coverage *report* runs
-        # (tests/lab_data/tech1/hosts.json -> each host's `toolchain`) and the
+        # (tests/_fixtures/lab_data/tech1/lab.json -> each host's `toolchain`) and the
         # compiler that builds the mps2_an385 coverage product on this VM. The
         # report gcov MUST be the same GCC that compiled the product's .gcno
         # (gcov's on-disk format is a GCC-internal ABI), so each Zephyr version
@@ -1310,7 +1310,7 @@ EOF
     # get docker, so the docker e2e suite can lease whichever is free and run
     # against its own daemon — spreading the docker chain off a single host.
     # A host advertises itself as a docker parent via `docker_capable: true` in
-    # tests/_fixtures/lab_data/tech1/hosts.json (flipped on for carrot+tomato
+    # tests/_fixtures/lab_data/tech1/lab.json (flipped on for carrot+tomato
     # alongside the docker-e2e pooling test work).
     def provision_docker(vm, name)
         vm.vm.provision "shell", name: "#{name} docker", keep_color: true, inline: <<-SHELL
@@ -1324,7 +1324,7 @@ EOF
 
             # Let the `vagrant` user (the credential otto authenticates as)
             # talk to the docker socket without sudo. Otto authenticates as
-            # `vagrant` per tests/_fixtures/lab_data/tech1/hosts.json.
+            # `vagrant` per tests/_fixtures/lab_data/tech1/lab.json.
             usermod -aG docker vagrant
 
             systemctl enable --now docker

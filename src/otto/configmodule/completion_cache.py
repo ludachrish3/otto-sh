@@ -103,7 +103,7 @@ Fingerprint
 sha256 over ``(path, mtime_ns, size)`` triples for every file whose change
 would alter the registered name sets: each SUT's ``settings.toml``, every
 ``.py`` file under any ``init`` module, every ``test_*.py`` in a configured
-``tests`` directory, and every ``hosts.json`` under a configured ``labs``
+``tests`` directory, and every ``lab.json`` under a configured ``labs``
 search path. File contents are never read, so the fingerprint is cheap to
 compute even when SUTs are large.
 
@@ -134,9 +134,11 @@ CACHE_FILENAME = "completion_cache.json"
 # Bump when the on-disk schema changes in a way older readers can't parse.
 # v9: added "labs" and "tests" (sources for --lab / --tests completion).
 # v10: added "hosts_by_lab" (lab-scoped `otto host <TAB>` fast path).
-SCHEMA_VERSION = 10
+# v11: host-ID sources now hash lab.json (renamed from hosts.json), so cached
+#      fingerprints reference a different filename.
+SCHEMA_VERSION = 11
 
-HOSTS_FILENAME = "hosts.json"
+LAB_FILENAME = "lab.json"
 
 # Cache entries older than this (seconds) are treated as a miss. Forces the
 # slow path to run periodically so annotation / option changes that don't
@@ -283,12 +285,12 @@ def compute_fingerprint(repos: list["Repo"]) -> str:
                 for t in sorted(test_dir.glob("test_*.py")):
                     _hash_file(h, t)
 
-        # Host-ID sources: hosts.json under each configured lab search path.
+        # Host-ID sources: lab.json under each configured lab search path.
         # Adding these to the fingerprint lets the cache self-invalidate on
         # edits. (Future DB-backed sources will need a different staleness
         # signal — likely a pure TTL or DB revision token.)
         for lab_path in repo.labs:
-            _hash_file(h, lab_path / HOSTS_FILENAME)
+            _hash_file(h, lab_path / LAB_FILENAME)
 
     return h.hexdigest()
 
@@ -786,8 +788,25 @@ def collect_reservation_usernames(repos: list["Repo"]) -> list[str]:
     return []
 
 
+def _read_lab_hosts(lab_file: Path) -> list[dict[str, Any]]:
+    """Best-effort read of a lab.json's ``hosts`` array ([] on any problem).
+
+    Completion must never crash on bad user data, so malformed shapes are
+    silently empty here (the real loader raises with full diagnostics). Kept
+    stdlib-only (json) so the completion fast path stays import-light.
+    """
+    try:
+        data = json.loads(lab_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    hosts = data.get("hosts", [])
+    return hosts if isinstance(hosts, list) else []
+
+
 def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
-    """Enumerate host IDs whose ``hosts.json`` entry has ``docker_capable: true``.
+    """Enumerate host IDs whose ``lab.json`` host entry has ``docker_capable: true``.
 
     Used as the completion source for ``otto docker --on <TAB>`` and any
     other surface that should be limited to docker-capable parents.
@@ -799,16 +818,7 @@ def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
     ids: set[str] = set()
     for repo in repos:
         for lab_path in repo.labs:
-            hosts_file = lab_path / HOSTS_FILENAME
-            if not hosts_file.is_file():
-                continue
-            try:
-                data = json.loads(hosts_file.read_text())
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(data, list):
-                continue
-            for host_data in data:
+            for host_data in _read_lab_hosts(lab_path / LAB_FILENAME):
                 if not isinstance(host_data, dict):
                     continue
                 if not host_data.get("docker_capable"):
@@ -825,7 +835,7 @@ def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
 def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) -> list[str]:
     """Enumerate every host ID reachable via the configured lab search paths.
 
-    Reads each repo's ``labs`` directories for a ``hosts.json`` file and
+    Reads each repo's ``labs`` directories for a ``lab.json`` file and
     builds :class:`UnixHost` objects via the existing factory so the
     resulting IDs match what ``get_host`` will look up at runtime. Also
     synthesizes container host IDs of the form ``<parent>.<project>.<service>``
@@ -855,20 +865,11 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     ids: set[str] = set(builtin_host_ids())
     for repo in repos:
         # Map of host_id -> docker_capable flag, scoped to this repo's labs.
-        # Populated as we walk hosts.json so we can synthesize container
+        # Populated as we walk lab.json so we can synthesize container
         # ids in the same pass.
         docker_capable_ids: list[str] = []
         for lab_path in repo.labs:
-            hosts_file = lab_path / HOSTS_FILENAME
-            if not hosts_file.is_file():
-                continue
-            try:
-                data = json.loads(hosts_file.read_text())
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(data, list):
-                continue
-            for host_data in data:
+            for host_data in _read_lab_hosts(lab_path / LAB_FILENAME):
                 if not isinstance(host_data, dict):
                     continue
                 # Lab filter: keep only hosts tagged with a requested lab.
@@ -908,7 +909,7 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
 
 
 def collect_lab_names(repos: list["Repo"]) -> list[str]:
-    """Enumerate every lab name referenced across the configured hosts.json files.
+    """Enumerate every lab name referenced across the configured lab.json files.
 
     A lab is a *tag* on hosts (each host's ``labs`` array), not a directory,
     so the names come straight from the built-in json backend's
@@ -942,7 +943,7 @@ def collect_host_ids_by_lab(repos: list["Repo"]) -> dict[str, list[str]]:
     name resolves to exactly the built-ins on both the warm and cold paths.
 
     Written by the slow-path cache writer only, so the per-lab rescan of
-    ``hosts.json`` is not on any latency-sensitive path.
+    ``lab.json`` is not on any latency-sensitive path.
     """
     from ..host.builtin_hosts import builtin_host_ids
 

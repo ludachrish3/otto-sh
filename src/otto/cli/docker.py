@@ -66,7 +66,7 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:  #
     containers.
 
     Prefers the cached entry written by the slow path
-    (``cache['docker_hosts']``); falls through to a live ``hosts.json``
+    (``cache['docker_hosts']``); falls through to a live ``lab.json``
     scan on cache miss so first-run completion still works.
     """
     from ..configmodule import get_completion_names, get_repos

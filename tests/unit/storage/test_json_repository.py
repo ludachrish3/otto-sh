@@ -7,12 +7,25 @@ from otto.configmodule.lab import Lab
 from otto.storage import LabNotFoundError, LabRepositoryError
 from otto.storage.json_repository import JsonFileLabRepository
 
+HOST_ENTRY = {
+    "ip": "192.0.2.1",
+    "element": "carrot",
+    "creds": [{"login": "vagrant", "password": "vagrant"}],
+    "resources": ["carrot"],
+    "labs": ["veggies"],
+}
+
 
 def _hosts_file(path: Path, hosts: list[dict]) -> Path:
-    """Write a hosts.json file to the given directory and return its path."""
-    f = path / "hosts.json"
-    f.write_text(json.dumps(hosts))
+    """Write a ``lab.json`` (object form) holding *hosts* and return its path."""
+    f = path / "lab.json"
+    f.write_text(json.dumps({"hosts": hosts}))
     return f
+
+
+def _write_lab(tmp_path, hosts=(), links=(), name="lab.json"):
+    payload = {"hosts": list(hosts), "links": list(links)}
+    (tmp_path / name).write_text(json.dumps(payload))
 
 
 class TestJsonFileLabRepository:
@@ -74,7 +87,7 @@ class TestJsonFileLabRepository:
         assert "tomato" in lab.resources
 
     def test_load_lab_not_found_no_hosts_file(self, tmp_path):
-        """A missing hosts.json raises LabNotFoundError, not FileNotFoundError."""
+        """A missing lab.json raises LabNotFoundError, not FileNotFoundError."""
         repo = JsonFileLabRepository([tmp_path])
 
         with pytest.raises(LabNotFoundError) as exc_info:
@@ -83,7 +96,7 @@ class TestJsonFileLabRepository:
         assert str(tmp_path) in str(exc_info.value)
 
     def test_load_lab_not_found_lab_absent(self, tmp_path):
-        """hosts.json exists but the lab name is not present -> LabNotFoundError."""
+        """lab.json exists but the lab name is not present -> LabNotFoundError."""
         _hosts_file(
             tmp_path,
             [
@@ -156,20 +169,9 @@ class TestJsonFileLabRepository:
         assert isinstance(lab, Lab)
         assert lab.name == "testlab"
 
-    def test_load_lab_not_a_list(self, tmp_path):
-        """A non-array JSON root raises LabRepositoryError."""
-        (tmp_path / "hosts.json").write_text(json.dumps({"hosts": []}))
-
-        repo = JsonFileLabRepository([tmp_path])
-
-        with pytest.raises(LabRepositoryError) as exc_info:
-            repo.load_lab("badlab")
-
-        assert "array" in str(exc_info.value)
-
     def test_load_lab_invalid_json(self, tmp_path):
         """Malformed JSON raises LabRepositoryError."""
-        (tmp_path / "hosts.json").write_text("[{invalid json")
+        (tmp_path / "lab.json").write_text("{invalid json")
 
         repo = JsonFileLabRepository([tmp_path])
 
@@ -310,15 +312,58 @@ class TestJsonFileLabRepository:
         assert repo.list_labs() == []
 
     def test_list_labs_skips_malformed_file(self, tmp_path):
-        """A malformed hosts.json is skipped by list_labs, not fatal."""
-        (tmp_path / "hosts.json").write_text("[{invalid json")
+        """A malformed lab.json is skipped by list_labs, not fatal."""
+        (tmp_path / "lab.json").write_text("{invalid json")
         repo = JsonFileLabRepository([tmp_path])
         assert repo.list_labs() == []
 
     def test_default_search_paths_empty(self):
-        """Constructed with no search paths -> no labs, no hosts file found."""
+        """Constructed with no search paths -> no labs, no lab file found."""
         repo = JsonFileLabRepository()
         assert repo.list_labs() == []
+
+
+class TestLabFileShape:
+    """The lab.json object contract: hosts/links sections, comment keys, hard cutover."""
+
+    def test_array_top_level_rejected(self, tmp_path):
+        (tmp_path / "lab.json").write_text(json.dumps([{"ip": "192.0.2.1"}]))
+        repo = JsonFileLabRepository(search_paths=[tmp_path])
+        with pytest.raises(LabRepositoryError, match="JSON object"):
+            repo.load_lab("veggies")
+
+    def test_unknown_section_rejected(self, tmp_path):
+        (tmp_path / "lab.json").write_text(json.dumps({"hosts": [], "routes": []}))
+        repo = JsonFileLabRepository(search_paths=[tmp_path])
+        with pytest.raises(LabRepositoryError, match="unknown section"):
+            repo.load_lab("veggies")
+
+    def test_top_level_comment_keys_allowed(self, tmp_path):
+        _write_lab(tmp_path, hosts=[HOST_ENTRY])
+        payload = json.loads((tmp_path / "lab.json").read_text())
+        payload["_comment"] = "a note"
+        (tmp_path / "lab.json").write_text(json.dumps(payload))
+        repo = JsonFileLabRepository(search_paths=[tmp_path])
+        assert repo.load_lab("veggies").hosts  # loads fine
+
+    def test_missing_sections_default_empty(self, tmp_path):
+        (tmp_path / "lab.json").write_text(json.dumps({}))
+        repo = JsonFileLabRepository(search_paths=[tmp_path])
+        with pytest.raises(LabNotFoundError):  # no hosts -> lab not found
+            repo.load_lab("veggies")
+
+    def test_section_not_array_rejected(self, tmp_path):
+        (tmp_path / "lab.json").write_text(json.dumps({"hosts": {"not": "a list"}}))
+        repo = JsonFileLabRepository(search_paths=[tmp_path])
+        with pytest.raises(LabRepositoryError, match="must be a JSON array"):
+            repo.load_lab("veggies")
+
+    def test_hosts_json_is_not_read(self, tmp_path):
+        """Hard cutover: a legacy hosts.json is invisible."""
+        (tmp_path / "hosts.json").write_text(json.dumps([HOST_ENTRY]))
+        repo = JsonFileLabRepository(search_paths=[tmp_path])
+        with pytest.raises(LabNotFoundError, match=r"lab\.json"):
+            repo.load_lab("veggies")
 
 
 class TestLoadLabWithPreferences:

@@ -356,7 +356,7 @@ separate instance from the ARM serial-telnet `sprout_cov` and does not affect co
 4. **Hop host absent from the coverage lab (`KeyError: 'basil_seed'`).** `sprout_cov`
    declares `hop="basil_seed"` (= basil's `ne`+`board`), but `basil` was only in the
    `embedded` lab, so `otto … --lab embedded-cov` filtered it out and the hop couldn't
-   resolve. Fix: add `embedded-cov` to basil's `labs` in `tests/lab_data/tech1/hosts.json`.
+   resolve. Fix: add `embedded-cov` to basil's `labs` in `tests/lab_data/tech1/lab.json`.
 5. **Hop host mistaken for a Unix coverage target (`geninfo: skipping .gcda`).** With
    basil now in the lab, `_run_coverage` (which iterated *every* Unix host) enrolled the
    hop as a Unix coverage host: it flipped `if not unix_hosts:` so `sut_dir` became the

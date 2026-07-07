@@ -31,7 +31,7 @@ The existing concurrency-focused stability suite
 (``tests/unit/host/test_session_stability_integration.py``) covers unix
 SSH/telnet fan-out dynamics that don't generalize to embedded; this file
 covers what *does* generalize, including future embedded OS / version /
-filesystem variants that drop into ``lab_data/tech1/hosts.json``.
+filesystem variants that drop into ``lab_data/tech1/lab.json``.
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ def _backend_param(backend_id: str) -> pytest.param:
     """Mirror of ``test_host_contract._backend_param`` with a lab-derived id.
 
     Embedded backends get an id like ``zephyr-3.7-fat`` synthesized from
-    ``hosts.json`` so a new RTOS / version / filesystem in lab data
+    ``lab.json`` so a new RTOS / version / filesystem in lab data
     surfaces descriptively in test output without test-code edits.
     """
     marks = []

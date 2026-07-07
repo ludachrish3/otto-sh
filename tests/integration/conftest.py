@@ -101,7 +101,7 @@ def reap_orphan_docker_stacks() -> None:
 
 
 def _host_data(ne: str) -> dict[str, Any]:
-    hosts = json.loads(_LAB_DATA.read_text())
+    hosts = json.loads(_LAB_DATA.read_text())["hosts"]
     for host in hosts:
         if host["element"] == ne:
             return host

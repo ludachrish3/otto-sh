@@ -119,7 +119,7 @@ class OsProfileSpec(OttoModel):
 
     ``extra='allow'`` collects the non-``base`` keys; the per-field typo guard
     runs later, in ``register_os_profile`` (against the base class's slots), so
-    the bundle stays raw here exactly as a ``hosts.json`` entry would be.
+    the bundle stays raw here exactly as a ``lab.json`` entry would be.
     """
 
     model_config = ConfigDict(extra="allow")

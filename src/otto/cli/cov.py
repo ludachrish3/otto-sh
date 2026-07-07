@@ -12,7 +12,7 @@ subdirectory with per-host ``.gcda`` files.  Multiple directories can be
 specified to stitch together coverage from separate test runs.
 
 Per-host toolchains (``gcov``, ``lcov``) are resolved automatically from
-host configuration in ``hosts.json`` or by inspecting ``.gcno`` files.
+host configuration in ``lab.json`` or by inspecting ``.gcno`` files.
 See the :doc:`/guide/coverage` and :doc:`/guide/host/index` documentation.
 
 **Options**

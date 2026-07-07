@@ -3,7 +3,7 @@
 Runs the real ``otto`` binary via the shared subprocess harness
 (:mod:`tests.e2e._otto_subprocess`) against a freshly scaffolded repo — no
 mocking, no hand-authored fixture repo. This is the durable proof that the
-scaffolded settings.toml / hosts.json / test suite / instructions module are
+scaffolded settings.toml / lab.json / test suite / instructions module are
 all mutually consistent with what otto's bootstrap actually expects, closing
 out narrative-only "it works" claims from earlier tasks.
 """

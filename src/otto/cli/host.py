@@ -54,7 +54,7 @@ def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
 
     Prefers the completion-cache entry populated by the slow path (same file
     that backs suite/instruction completion, wiped by
-    ``--clear-autocomplete-cache``). Falls through to a live ``hosts.json``
+    ``--clear-autocomplete-cache``). Falls through to a live ``lab.json``
     scan on cache miss so first-run completion still works.
     """
     from ..configmodule import get_completion_names, get_repos

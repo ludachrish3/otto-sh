@@ -418,7 +418,7 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 	@echo "── Tier 2 (real telnet/SSH) ──"
 	@if command -v jq >/dev/null 2>&1; then \
 	    reachable=0; total=0; \
-	    for ip in $$(jq -r '.[].ip' tests/_fixtures/lab_data/tech1/hosts.json); do \
+	    for ip in $$(jq -r '.hosts[].ip' tests/_fixtures/lab_data/tech1/lab.json); do \
 	        total=$$((total+1)); \
 	        if ping -c 1 -W 1 $$ip >/dev/null 2>&1; then \
 	            reachable=$$((reachable+1)); \
@@ -473,7 +473,7 @@ typecheck-python: ## (Quality) Run ty type checker (advisory during trial; not w
 
 typecheck-ts: web-typecheck ## (Quality) Type-check web/ with tsc --noEmit (alias of web-typecheck)
 
-schema: ## (Dev) Generate JSON Schema for hosts.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
+schema: ## (Dev) Generate JSON Schema for lab.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
 	uv run otto schema export --out schemas
 
 import-snapshot: ## (Dev) Regenerate import-budget golden snapshots + print per-surface counts (run after an intentional import change, then review the diff and update caps)

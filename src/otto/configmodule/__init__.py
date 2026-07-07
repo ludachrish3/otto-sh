@@ -68,7 +68,7 @@ def get_completion_names() -> dict[str, Any] | None:
       ``{"name": str, "options": [...]}`` dicts. :mod:`otto.cli.main` rebuilds
       Typer stubs from them.
     - ``hosts``: a plain list of host-ID strings. :mod:`otto.cli.host`'s
-      ``host_id`` completer prefers this over live ``hosts.json`` parsing.
+      ``host_id`` completer prefers this over live ``lab.json`` parsing.
     - ``term_backends``: a ``list[str]`` of registered term backend names.
       :mod:`otto.cli.host`'s ``--term`` completer prefers this over the live
       registry.

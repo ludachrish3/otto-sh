@@ -36,7 +36,7 @@ def test_list_hosts(tmp_path: Path) -> None:
     """--list-hosts with --lab veggies exits 0 and lists a concrete host id."""
     r = run_otto(["--lab", "veggies", "--list-hosts"], xdir=tmp_path, sut_dirs=REPO_E2E)
     assert r.returncode == 0, r.stderr
-    # tech1 hosts.json: carrot/tomato/pepper all belong to lab "veggies"
+    # tech1 lab.json: carrot/tomato/pepper all belong to lab "veggies"
     assert "carrot_seed" in r.stdout
     assert_no_output_dir(tmp_path)  # queries lab state but runs no subcommand — no run dir
 

@@ -42,7 +42,7 @@ from ..storage import (
 
 # A tiny built-in dataset so the sample works out of the box (doctests +
 # conformance). Each value is a list of host dicts as they'd appear in a
-# hosts.json entry; the mapping key supplies lab membership here, so the
+# lab.json entry; the mapping key supplies lab membership here, so the
 # host-level "labs" field is unnecessary.
 _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
     "east": [
