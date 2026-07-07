@@ -30,6 +30,13 @@ class TestLinkId:
         a, b = _ep("carrot"), _ep("tomato")
         assert Link(a=a, b=b, protocol="udp").id != Link(a=a, b=b, protocol="tcp").id
 
+    def test_id_protocol_case_insensitive(self):
+        """Protocol is lowercased in the id, so a future ``--protocol UDP`` mints
+        the same route id as the declared ``"udp"`` (stability contract)."""
+        a, b = _ep("carrot"), _ep("tomato")
+        assert make_link_id(a, b, "UDP") == make_link_id(a, b, "udp")
+        assert make_link_id(a, b, "TCP") == make_link_id(a, b, "tcp")
+
     def test_id_distinguishes_interface(self):
         assert (
             Link(a=_ep("carrot", "eth1"), b=_ep("tomato")).id

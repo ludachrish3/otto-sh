@@ -29,6 +29,14 @@ async def test_default_discovery_not_implemented():
         await discover_dynamic_links(_lab_with([]))
 
 
+async def test_all_links_default_discover_is_the_guard():
+    """With no ``discover=`` argument, ``all_links`` calls the default guard, so
+    #2's live swap-in is detectable (the default must stay the guard function).
+    """
+    with pytest.raises(NotImplementedError, match="sub-project #2"):
+        await all_links(_lab_with([]))
+
+
 async def test_all_links_unions_static_and_dynamic():
     declared = _declared()
     dynamic = Link(

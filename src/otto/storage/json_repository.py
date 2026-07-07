@@ -26,6 +26,49 @@ LAB_FILENAME = "lab.json"
 _LAB_SECTIONS = frozenset({"hosts", "links"})
 
 
+def parse_lab_sections(data: object, source: str) -> dict[str, list[Any]]:
+    """Validate a parsed ``lab.json`` object's section shape; return its sections.
+
+    The single source of truth for the ``lab.json`` object contract — shared by
+    the runtime loader (:meth:`JsonFileLabRepository._load_lab_file`) and the
+    ``otto init`` doctor (:func:`otto.cli.init._validate_lab`) so the doctor
+    cannot drift from what otto actually accepts (there is no second validator
+    to drift). *data* is the already-parsed JSON value; *source* names its
+    origin (a file path) for error messages.
+
+    Top-level ``_``-prefixed keys are comment space (same idiom as host
+    entries); unknown sections fail loud. Returns a dict carrying every known
+    section as a (possibly empty) list.
+
+    Raises
+    ------
+    LabRepositoryError
+        If *data* is not a JSON object, carries an unknown top-level section,
+        or a section's value is not a JSON array.
+    """
+    if not isinstance(data, dict):
+        raise LabRepositoryError(
+            f"Lab file '{source}' must contain a JSON object with "
+            f"'hosts'/'links' sections, got {type(data).__name__}"
+        )
+    unknown = {k for k in data if not (isinstance(k, str) and k.startswith("_"))} - _LAB_SECTIONS
+    if unknown:
+        raise LabRepositoryError(
+            f"Lab file '{source}' has unknown section(s) {sorted(unknown)}; "
+            f"known sections: {sorted(_LAB_SECTIONS)}"
+        )
+    out: dict[str, list[Any]] = {}
+    for section in _LAB_SECTIONS:
+        value = data.get(section, [])
+        if not isinstance(value, list):
+            raise LabRepositoryError(
+                f"Lab file '{source}': section '{section}' must be a JSON array, "
+                f"got {type(value).__name__}"
+            )
+        out[section] = value
+    return out
+
+
 class JsonFileLabRepository:
     """Load labs from ``lab.json`` files under a fixed set of search paths.
 
@@ -118,10 +161,19 @@ class JsonFileLabRepository:
                 continue
             addressing[host_id] = host_addressing
         loaded_ids = set(lab.hosts)
+        # ``all_links_data`` spans ALL lab files (like ``all_hosts_data``), so a
+        # typo'd link between two hosts of an UNRELATED lab must not break this
+        # lab's load: ``resolve_declared_links`` skips entries touching no loaded
+        # host, symmetric with the cross-lab host-record containment above. Links
+        # touching this lab still fail loud with their original file index.
         try:
-            declared = resolve_declared_links(all_links_data, addressing, source=LAB_FILENAME)
+            declared = resolve_declared_links(
+                all_links_data, addressing, source=LAB_FILENAME, loaded_ids=loaded_ids
+            )
         except ValueError as e:
             raise LabRepositoryError(str(e)) from e
+        # Membership: only links with >= 1 endpoint in this lab (guaranteed by
+        # the skip above, restated here so the invariant is visible at the call site).
         lab.links = [
             link for link in declared if link.a.host in loaded_ids or link.b.host in loaded_ids
         ]
@@ -176,12 +228,14 @@ class JsonFileLabRepository:
 
         return found
 
-    def _load_lab_file(self, lab_file: Path) -> dict[str, list[dict[str, Any]]]:
+    def _load_lab_file(self, lab_file: Path) -> dict[str, list[Any]]:
         """Load one ``lab.json``: an object with ``hosts`` / ``links`` array sections.
 
-        Top-level ``_``-prefixed keys are comment space (same idiom as host
-        entries). Unknown sections fail loud; adding a future section (e.g.
-        ``elements``) means extending ``_LAB_SECTIONS`` and handling it here.
+        Reads the file, then delegates the section-shape contract (object guard,
+        ``_``-comment allowance, unknown-section rejection, per-section array
+        check) to :func:`parse_lab_sections` — the same helper the ``otto init``
+        doctor uses, so the two can never diverge. Adding a future section (e.g.
+        ``elements``) means extending ``_LAB_SECTIONS``.
 
         Raises
         ------
@@ -195,25 +249,4 @@ class JsonFileLabRepository:
                 data = json.load(f)
         except json.JSONDecodeError as e:
             raise LabRepositoryError(f"Lab file '{lab_file}' contains malformed JSON: {e}") from e
-
-        if not isinstance(data, dict):
-            raise LabRepositoryError(
-                f"Lab file '{lab_file}' must contain a JSON object with "
-                f"'hosts'/'links' sections, got {type(data).__name__}"
-            )
-        unknown = {k for k in data if not k.startswith("_")} - _LAB_SECTIONS
-        if unknown:
-            raise LabRepositoryError(
-                f"Lab file '{lab_file}' has unknown section(s) {sorted(unknown)}; "
-                f"known sections: {sorted(_LAB_SECTIONS)}"
-            )
-        out: dict[str, list[dict[str, Any]]] = {}
-        for section in _LAB_SECTIONS:
-            value = data.get(section, [])
-            if not isinstance(value, list):
-                raise LabRepositoryError(
-                    f"Lab file '{lab_file}': section '{section}' must be a JSON array, "
-                    f"got {type(value).__name__}"
-                )
-            out[section] = value
-        return out
+        return parse_lab_sections(data, str(lab_file))

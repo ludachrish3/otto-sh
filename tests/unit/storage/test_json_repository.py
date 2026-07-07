@@ -452,6 +452,53 @@ class TestDeclaredLinks:
 
         assert lab.links == []
 
+    def test_unrelated_lab_bad_links_do_not_break_load(self, tmp_path):
+        """A typo'd/malformed link between two hosts of a DIFFERENT lab must not
+        break loading the requested lab — symmetric with the cross-lab host-record
+        containment. The requested lab's own valid link still surfaces.
+        """
+        carrot = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        tomato = {
+            **HOST_ENTRY,
+            "element": "tomato",
+            "board": "seed",
+            "ip": "192.0.2.2",
+            "labs": ["veggies"],
+        }
+        kiwi = {
+            **HOST_ENTRY,
+            "element": "kiwi",
+            "board": "seed",
+            "ip": "192.0.2.9",
+            "labs": ["other"],
+        }
+        _write_lab(
+            tmp_path,
+            hosts=[carrot, tomato, kiwi],
+            links=[
+                # (0) the requested lab's OWN valid link — must survive.
+                {
+                    "endpoints": [{"host": "carrot_seed"}, {"host": "tomato_seed"}],
+                    "protocol": "tcp",
+                },
+                # (1) unrelated lab: references an unknown host — must be SKIPPED,
+                # not raise (pre-fix this failed every lab's load).
+                {
+                    "endpoints": [{"host": "ghost_seed"}, {"host": "phantom_seed"}],
+                    "protocol": "udp",
+                },
+                # (2) unrelated lab: structurally malformed (1 endpoint) — must be SKIPPED.
+                {"endpoints": [{"host": "kiwi_seed"}]},
+            ],
+        )
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("veggies")
+
+        assert set(lab.hosts) == {"carrot_seed", "tomato_seed"}
+        assert len(lab.links) == 1
+        (link,) = lab.links
+        assert {link.a.host, link.b.host} == {"carrot_seed", "tomato_seed"}
+
     def test_unknown_host_link_raises_with_index_and_source(self, tmp_path):
         host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
         _write_lab(

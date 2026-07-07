@@ -52,13 +52,16 @@ def make_link_id(a: LinkEndpoint, b: LinkEndpoint, protocol: str) -> str:
     tunnel's sentinel and every recorded id across otto versions:
 
     - endpoints are sorted by ``(host, interface or "")`` so a<->b == b<->a;
+    - a ``None`` interface falls back to ``''`` in the canonical string;
+    - *protocol* is lowercased, so a route declared ``"udp"`` and a tunnel
+      added as ``"UDP"`` reconcile to the same id;
     - **ports and ips are excluded** — the id names the route, so a dynamic
       tunnel over a declared route reconciles to the same id;
     - format: ``"lnk-"`` + first 12 hex chars of sha256 over
-      ``"{lo.host}|{lo.interface}|{hi.host}|{hi.interface}|{protocol}"``.
+      ``"{lo.host}|{lo.interface or ''}|{hi.host}|{hi.interface or ''}|{protocol.lower()}"``.
     """
     lo, hi = sorted((a, b), key=_endpoint_key)
-    canon = f"{lo.host}|{lo.interface or ''}|{hi.host}|{hi.interface or ''}|{protocol}"
+    canon = f"{lo.host}|{lo.interface or ''}|{hi.host}|{hi.interface or ''}|{protocol.lower()}"
     return "lnk-" + hashlib.sha256(canon.encode()).hexdigest()[:12]
 
 

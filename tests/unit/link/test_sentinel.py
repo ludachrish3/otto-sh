@@ -27,6 +27,9 @@ class TestRoundTrip:
             ("carrot_seed", "eth1", 5000),
             ("tomato_seed", "eth1", 5001),
         }
+        # No lab context at parse time, so endpoint ips stay empty (resolved later).
+        assert parsed.a.ip == ""
+        assert parsed.b.ip == ""
 
     def test_colon_in_interface_name_survives(self):
         link = _dynamic_link(a_iface="eth0:1")
@@ -44,7 +47,26 @@ class TestRoundTrip:
         assert parsed.a.port is None
 
     def test_no_username_in_wire_format(self):
-        assert getpass.getuser() not in encode_sentinel(_dynamic_link())
+        """Owner-agnostic frame: exactly the 10 documented colon segments and
+        none carries the username. A substring check (``getuser() not in token``)
+        would false-fail for a user whose name is a substring of a fixed segment
+        (e.g. a user named ``seed`` or ``udp``); a structural check cannot.
+        """
+        link = _dynamic_link()
+        segments = encode_sentinel(link).split(":")
+        assert segments == [
+            "otto-link",
+            "v1",
+            link.id,
+            "udp",
+            "carrot_seed",
+            "eth1",
+            "5000",
+            "tomato_seed",
+            "eth1",
+            "5001",
+        ]
+        assert getpass.getuser() not in segments
 
 
 class TestParseRejections:

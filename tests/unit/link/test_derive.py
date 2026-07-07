@@ -27,14 +27,16 @@ def _entry(**overrides) -> dict:
 
 class TestResolveDeclaredLinks:
     def test_resolves_named_interfaces(self):
-        (link,) = resolve_declared_links([_entry()], HOSTS, source="lab.json")
+        (link,) = resolve_declared_links(
+            [_entry()], HOSTS, source="lab.json", loaded_ids=set(HOSTS)
+        )
         assert link.provenance is Provenance.DECLARED
         ips = {link.a.ip, link.b.ip}
         assert ips == {"192.168.1.11", "192.168.1.12"}
 
     def test_omitted_interface_single_iface_host_assumed(self):
         entry = _entry(endpoints=[{"host": "carrot_seed"}, {"host": "basil_seed"}])
-        (link,) = resolve_declared_links([entry], HOSTS, source="lab.json")
+        (link,) = resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
         by_host = {e.host: e for e in (link.a, link.b)}
         assert by_host["carrot_seed"].interface == "eth1"  # sole iface assumed
         assert by_host["carrot_seed"].ip == "192.168.1.11"
@@ -44,24 +46,47 @@ class TestResolveDeclaredLinks:
     def test_omitted_interface_multi_iface_host_errors(self):
         entry = _entry(endpoints=[{"host": "tomato_seed"}, {"host": "basil_seed"}])
         with pytest.raises(ValueError, match=r"ambiguous interface.*eth1.*eth2"):
-            resolve_declared_links([entry], HOSTS, source="lab.json")
+            resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
 
     def test_unknown_host_errors(self):
         entry = _entry(endpoints=[{"host": "nope"}, {"host": "basil_seed"}])
         with pytest.raises(ValueError, match="unknown host 'nope'"):
-            resolve_declared_links([entry], HOSTS, source="lab.json")
+            resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
 
     def test_unknown_interface_errors(self):
         entry = _entry(
             endpoints=[{"host": "carrot_seed", "interface": "eth9"}, {"host": "basil_seed"}]
         )
         with pytest.raises(ValueError, match="no interface 'eth9'"):
-            resolve_declared_links([entry], HOSTS, source="lab.json")
+            resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
 
     def test_error_names_source_and_index(self):
         entry = _entry(endpoints=[{"host": "nope"}, {"host": "basil_seed"}])
         with pytest.raises(ValueError, match=r"lab\.json.*index 0"):
-            resolve_declared_links([entry], HOSTS, source="lab.json")
+            resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
+
+    def test_unrelated_link_skipped_not_resolved(self):
+        """A link whose BOTH endpoints lie outside ``loaded_ids`` is skipped, so
+        even an otherwise-broken entry (unknown host, malformed shape) cannot
+        raise — containment symmetric with cross-lab host records.
+        """
+        bad_unknown = _entry(endpoints=[{"host": "ghost"}, {"host": "phantom"}])
+        malformed = {"endpoints": [{"host": "ghost"}]}  # 1 endpoint: would fail LinkSpec
+        assert (
+            resolve_declared_links(
+                [bad_unknown, malformed], HOSTS, source="lab.json", loaded_ids={"carrot_seed"}
+            )
+            == []
+        )
+
+    def test_touching_link_resolved_even_with_dangling_endpoint(self):
+        """>= 1 endpoint in ``loaded_ids`` -> resolved; the other end still
+        resolves from ``hosts`` even though it is outside the lab."""
+        entry = _entry(endpoints=[{"host": "carrot_seed"}, {"host": "basil_seed"}])
+        (link,) = resolve_declared_links(
+            [entry], HOSTS, source="lab.json", loaded_ids={"carrot_seed"}
+        )
+        assert {link.a.host, link.b.host} == {"carrot_seed", "basil_seed"}
 
 
 class _FakeHost:

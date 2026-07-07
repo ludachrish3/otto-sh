@@ -105,6 +105,22 @@ def test_valid_link_entry_passes(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
 
 
+def test_unknown_top_level_section_fails(tmp_path: Path) -> None:
+    """The doctor rejects an unknown top-level lab.json section, exactly as the
+    runtime loader does — it reuses the loader's section validator, so it cannot
+    drift from what otto actually accepts.
+    """
+    _scaffold_all(tmp_path)
+    lab_file = tmp_path / "lab_data" / "lab.json"
+    data = json.loads(lab_file.read_text())
+    data["routes"] = []  # not a known section
+    lab_file.write_text(json.dumps(data))
+    result = runner.invoke(_app(), ["--all", "--path", str(tmp_path)])
+    assert result.exit_code == 1
+    assert "unknown section" in result.output
+    assert "routes" in result.output
+
+
 def test_missing_libs_dir_reported(tmp_path: Path) -> None:
     _scaffold_all(tmp_path)
     # Remove only the module's __init__.py, NOT the whole pylib/ tree: the

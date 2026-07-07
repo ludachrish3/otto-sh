@@ -373,11 +373,14 @@ def _validate_settings(root: Path) -> list[str]:
 def _validate_lab(root: Path) -> list[str]:
     """Validate every ``lab.json`` under the settings' ``labs`` dirs via the real specs.
 
-    Each ``hosts`` entry is delegated to
-    :func:`otto.storage.factory.validate_host_dict` — the same per-entry
-    validation :class:`~otto.storage.json_repository.JsonFileLabRepository` runs
-    before ever constructing a host — so a bad ``os_type`` or field name
-    surfaces exactly the pydantic error otto's own lab loader would raise. Each
+    The top-level section shape (object guard, ``_``-comment allowance,
+    unknown-section rejection, per-section array check) is delegated to
+    :func:`otto.storage.json_repository.parse_lab_sections` — the SAME helper the
+    runtime loader uses — so the doctor cannot drift from what otto actually
+    accepts (e.g. an unknown ``routes`` section is rejected here exactly as it
+    is at load). Each ``hosts`` entry is then delegated to
+    :func:`otto.storage.factory.validate_host_dict` (a bad ``os_type`` or field
+    name surfaces the same pydantic error the loader would raise), and each
     ``links`` entry is validated structurally via
     :class:`~otto.models.link.LinkSpec`; endpoint cross-references (host ids,
     interface keys) are resolved at load time, not here.
@@ -385,7 +388,9 @@ def _validate_lab(root: Path) -> list[str]:
     from pydantic import ValidationError
 
     from ..models.link import LinkSpec
+    from ..storage.errors import LabRepositoryError
     from ..storage.factory import validate_host_dict
+    from ..storage.json_repository import parse_lab_sections
 
     paths = _settings_paths(root)
     lab_dirs = paths["labs"] if paths is not None else [root / "lab_data"]
@@ -399,42 +404,29 @@ def _validate_lab(root: Path) -> list[str]:
         except (OSError, json.JSONDecodeError) as e:
             problems.append(f"{lab_file}: {e}")
             continue
-        if not isinstance(data, dict):
-            problems.append(
-                f"{lab_file}: must contain a JSON object with 'hosts'/'links' sections, "
-                f"got {type(data).__name__}"
-            )
+        try:
+            sections = parse_lab_sections(data, str(lab_file))
+        except LabRepositoryError as e:
+            problems.append(str(e))
             continue
-        hosts = data.get("hosts", [])
-        if not isinstance(hosts, list):
-            problems.append(
-                f"{lab_file}: section 'hosts' must be a JSON array, got {type(hosts).__name__}"
-            )
-        else:
-            for idx, host_data in enumerate(hosts):
-                if not isinstance(host_data, dict):
-                    problems.append(
-                        f"{lab_file}: hosts[{idx}] must be a JSON object, "
-                        f"got {type(host_data).__name__}"
-                    )
-                    continue
-                try:
-                    # JSON object keys are always str; the isinstance guard above
-                    # is the runtime check ty cannot see through.
-                    validate_host_dict(cast("dict[str, Any]", host_data))
-                except ValueError as e:
-                    problems.append(f"{lab_file}: hosts[{idx}] {e}")
-        links = data.get("links", [])
-        if not isinstance(links, list):
-            problems.append(
-                f"{lab_file}: section 'links' must be a JSON array, got {type(links).__name__}"
-            )
-        else:
-            for idx, link_data in enumerate(links):
-                try:
-                    LinkSpec.model_validate(link_data)
-                except ValidationError as e:  # noqa: PERF203 — per-item resilience
-                    problems.append(f"{lab_file}: links[{idx}] {e}")
+        for idx, host_data in enumerate(sections["hosts"]):
+            if not isinstance(host_data, dict):
+                problems.append(
+                    f"{lab_file}: hosts[{idx}] must be a JSON object, "
+                    f"got {type(host_data).__name__}"
+                )
+                continue
+            try:
+                # JSON object keys are always str; the isinstance guard above
+                # is the runtime check ty cannot see through.
+                validate_host_dict(cast("dict[str, Any]", host_data))
+            except ValueError as e:
+                problems.append(f"{lab_file}: hosts[{idx}] {e}")
+        for idx, link_data in enumerate(sections["links"]):
+            try:
+                LinkSpec.model_validate(link_data)
+            except ValidationError as e:  # noqa: PERF203 — per-item resilience
+                problems.append(f"{lab_file}: links[{idx}] {e}")
     return problems
 
 
