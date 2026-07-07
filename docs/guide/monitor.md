@@ -77,7 +77,7 @@ otto is safe to run with its log/artifact root (`OTTO_XDIR`) on a shared mount
 - **Logs and artifacts.** Per-run log directories are fine on shared storage.
   Old-log rotation is wall-clock budgeted, so even a very large log tree cannot
   stall a run — any backlog is pruned across subsequent runs.
-- **Lab data and settings** (`hosts.json`, `.otto/settings.toml`) are read once
+- **Lab data and settings** (`lab.json`, `.otto/settings.toml`) are read once
   per run and are unaffected.
 
 If otto cannot determine the filesystem type, it assumes local disk and keeps
@@ -519,9 +519,9 @@ when you prefer to pull metrics through a dedicated management channel rather th
 shell commands.  See {doc}`embedded` for embedded host setup and {doc}`lab-config`
 for the `snmp` field reference.
 
-### Configuring the `snmp` block in hosts.json
+### Configuring the `snmp` block in lab.json
 
-Add an `snmp` object to a host entry in `hosts.json` to enable SNMP collection
+Add an `snmp` object to a host entry in `lab.json` to enable SNMP collection
 for that host:
 
 ```json

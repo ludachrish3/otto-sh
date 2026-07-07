@@ -19,7 +19,7 @@ class Provenance(enum.Enum):
     """Declared in ``lab.json``'s ``links`` section (a data-plane route)."""
 
     DYNAMIC = "dynamic"
-    """Observed live: an otto-created tunnel discovered on the hosts."""
+    """An otto-created tunnel, observed live on the hosts."""
 
 
 @dataclass(frozen=True, slots=True)

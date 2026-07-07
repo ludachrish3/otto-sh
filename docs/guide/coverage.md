@@ -132,13 +132,13 @@ section behaves exactly as before — an implicit `system` tier
 
 Each host can specify its own toolchain (``gcov``, ``lcov``) for
 coverage processing.  This is configured via the ``toolchain`` field in
-``hosts.json`` — see the [host guide](per-host-toolchain) for
+``lab.json`` — see the [host guide](per-host-toolchain) for
 the full syntax.
 
 When no explicit toolchain is configured, otto resolves tools in this
 order:
 
-1. **Explicit config** — ``toolchain`` object in ``hosts.json``.
+1. **Explicit config** — ``toolchain`` object in ``lab.json``.
 2. **Auto-discovery** — otto reads the gcov *version stamp* from the
    build's ``.gcno`` headers (a ``.gcno`` embeds no compiler path, but
    every compiler stamps the format version it wrote).  A clang stamp
@@ -739,7 +739,7 @@ one `printk` character at a time and can take several seconds for large binaries
 ### Toolchain for embedded coverage
 
 Embedded hosts that need a cross-`gcov` binary for the report step can declare
-a `toolchain` block in `hosts.json` pointing to the cross toolchain's `gcov`:
+a `toolchain` block in `lab.json` pointing to the cross toolchain's `gcov`:
 
 ```json
 {
@@ -757,4 +757,4 @@ cross toolchain — point it at the host's `lcov` binary (e.g. `/usr/bin/lcov`),
 not a path under the sysroot.
 
 See {doc}`embedded` for embedded host setup and {doc}`lab-config` for the full
-`hosts.json` schema.
+`lab.json` schema.

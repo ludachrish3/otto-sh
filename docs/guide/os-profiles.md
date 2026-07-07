@@ -1,6 +1,6 @@
 # OS Profiles & Custom Host Classes
 
-The `os_type` field in a `hosts.json` entry is a *selector* that resolves to an
+The `os_type` field in a `lab.json` entry is a *selector* that resolves to an
 `OsProfile`.  A profile names a registered host class (its `base`) and carries
 an optional bundle of raw field defaults merged beneath each host's own fields.
 This lets many hosts that share a characteristic bundle — a particular Zephyr
@@ -134,7 +134,7 @@ always win.
 
 ## See also
 
-- {doc}`lab-config` — `hosts.json` schema and repo-level host defaults
+- {doc}`lab-config` — `lab.json` schema and repo-level host defaults
 - {doc}`embedded` — embedded host classes, command frames, and filesystems
 - {doc}`extending-embedded` — writing a custom command frame or filesystem
 - {doc}`repo-setup` — `init` modules and `settings.toml` field reference

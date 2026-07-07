@@ -155,7 +155,7 @@ block.
 
 ## In-memory labs (no lab file)
 
-You do not need a `hosts.json` on disk. Build a `Lab` from host dicts, install
+You do not need a `lab.json` on disk. Build a `Lab` from host dicts, install
 it as the active context, and the zero-argument selectors (`all_hosts`,
 `get_host`) operate on it directly — useful for tests and ad-hoc scripts.
 Selection touches no network, so this runs as-is:

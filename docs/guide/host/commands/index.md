@@ -85,7 +85,7 @@ remote TUIs reflow on resize.  For telnet, NAWS is enabled automatically for the
 `login` command only — non-interactive `run`/`put`/`get` calls keep the historical
 fixed column width.
 
-**Hops.**  `login` honors `--hop` and the `hop` field in `hosts.json`, so an
+**Hops.**  `login` honors `--hop` and the `hop` field in `lab.json`, so an
 interactive session can tunnel through jump hosts just like the other
 subcommands (see {doc}`Connection control <../connections>`):
 

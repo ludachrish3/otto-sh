@@ -1,39 +1,47 @@
 # Lab Configuration
 
-A *lab* is a set of hosts described in one or more `hosts.json` files.  Each
-file lists every host in a given location; each host entry declares which lab
-names it belongs to, so a single file can serve multiple labs and a host can
-belong to more than one lab at once.  This page is the full per-host schema
-reference.  For repo-level settings (paths, libs, init modules) see
-{doc}`repo-setup`.
+A *lab* is a set of hosts (and the routes between them) described in one or
+more `lab.json` files.  Each file lists every host and declared link in a
+given location; each host entry declares which lab names it belongs to, so a
+single file can serve multiple labs and a host can belong to more than one lab
+at once.  This page is the full per-host and per-link schema reference.  For
+repo-level settings (paths, libs, init modules) see {doc}`repo-setup`.
+
+(lab-files)=
 
 ## Lab files
 
 Each directory listed under the `labs` key in `.otto/settings.toml` may
-contain a `hosts.json` file.  The file is a JSON **array** of host objects:
+contain a `lab.json` file.  The file is a JSON **object** with two array
+sections, `hosts` and `links`:
 
 ```json
-[
-    {
-        "ip": "10.10.200.11",
-        "element": "carrot",
-        "board": "seed",
-        "creds": [{ "login": "vagrant", "password": "vagrant" }],
-        "labs": ["veggies"]
-    },
-    {
-        "ip": "192.0.2.1",
-        "element": "sprout",
-        "board": "seed",
-        "os_type": "zephyr",
-        "labs": ["embedded"]
-    }
-]
+{
+    "hosts": [
+        {
+            "ip": "10.10.200.11",
+            "element": "carrot",
+            "board": "seed",
+            "creds": [{ "login": "vagrant", "password": "vagrant" }],
+            "labs": ["veggies"]
+        },
+        {
+            "ip": "192.0.2.1",
+            "element": "sprout",
+            "board": "seed",
+            "os_type": "zephyr",
+            "labs": ["embedded"]
+        }
+    ],
+    "links": []
+}
 ```
 
-Each entry carries a `labs` field listing the lab names it belongs to.  Pass
-`--lab veggies` (or set `OTTO_LAB=veggies`) and otto loads every host whose
-`labs` field includes `"veggies"`.
+`hosts` schema is unchanged from before the `lab.json` cutover.  Each entry
+carries a `labs` field listing the lab names it belongs to.  Pass `--lab
+veggies` (or set `OTTO_LAB=veggies`) and otto loads every host whose `labs`
+field includes `"veggies"`.  `links` is covered in {ref}`lab-links` below;
+when a file declares none, `"links": []` (or omitting the key) is fine.
 
 The host **id** used by `get_host()`, `--list-hosts`, and the rest of the CLI
 is derived from the `element`, `board`, and `element_id` fields.  `carrot` with board
@@ -92,6 +100,31 @@ details.
 
 File transfer for embedded hosts uses `"console"` or `"tftp"` — see
 {doc}`embedded`.
+
+### Network interfaces
+
+The optional `interfaces` field maps a network-device name to that device's
+address, so links (below) and later impairment/capture tooling can address a
+specific device directly instead of just the host's management `ip`.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `interfaces` | object | Map of netdev name (e.g. `"eth0"`, `"eth1"`) to an interface definition. |
+| `interfaces.<name>` | object or string | `{"ip": "10.0.0.5"}`, or the bare string `"10.0.0.5"` as shorthand for the same object. |
+
+```json
+{
+    "interfaces": {
+        "eth0": "10.0.0.5",
+        "eth1": { "ip": "10.0.1.5" }
+    }
+}
+```
+
+A host with no `interfaces` (or exactly one entry) needs no `interface` on a
+declared-link endpoint — otto assumes it. A host with more than one entry
+requires each declared-link endpoint on it to name which one; see
+{ref}`lab-links` below.
 
 ### Power control
 
@@ -202,57 +235,95 @@ coverage pipeline.  See {doc}`coverage`.
 Two real entries from the test fixture — one Unix host and one Zephyr host:
 
 ```json
-[
-    {
-        "ip": "10.10.200.11",
-        "element": "carrot",
-        "os_type": "unix",
-        "board": "seed",
-        "term": "ssh",
-        "transfer": "scp",
-        "is_virtual": true,
-        "creds": [
-            {"login": "vagrant", "password": "vagrant"},
-            {"login": "test", "password": "Password1"}
-        ],
-        "resources": [
-            "carrot"
-        ],
-        "labs": [
-            "veggies"
-        ]
-    },
-    {
-        "ip": "192.0.2.1",
-        "element": "sprout",
-        "os_type": "zephyr",
-        "os_version": "3.7",
-        "transfer": "console",
-        "filesystem": "fat-ram",
-        "max_filename_len": 32,
-        "is_virtual": true,
-        "hop": "basil_seed",
-        "snmp": {
-            "address": "10.10.200.14",
-            "port": 16101,
-            "community": "public",
-            "oids": [
-                "1.3.6.1.2.1.1.3.0",
-                "1.3.6.1.4.1.63245.1.1.0",
-                "1.3.6.1.4.1.63245.1.2.0",
-                "1.3.6.1.4.1.63245.1.3.0",
-                "1.3.6.1.4.1.63245.1.4.0"
+{
+    "hosts": [
+        {
+            "ip": "10.10.200.11",
+            "element": "carrot",
+            "os_type": "unix",
+            "board": "seed",
+            "term": "ssh",
+            "transfer": "scp",
+            "is_virtual": true,
+            "creds": [
+                {"login": "vagrant", "password": "vagrant"},
+                {"login": "test", "password": "Password1"}
+            ],
+            "resources": [
+                "carrot"
+            ],
+            "labs": [
+                "veggies"
             ]
         },
-        "resources": [
-            "sprout"
-        ],
-        "labs": [
-            "embedded"
-        ]
-    }
-]
+        {
+            "ip": "192.0.2.1",
+            "element": "sprout",
+            "os_type": "zephyr",
+            "os_version": "3.7",
+            "transfer": "console",
+            "filesystem": "fat-ram",
+            "max_filename_len": 32,
+            "is_virtual": true,
+            "hop": "basil_seed",
+            "snmp": {
+                "address": "10.10.200.14",
+                "port": 16101,
+                "community": "public",
+                "oids": [
+                    "1.3.6.1.2.1.1.3.0",
+                    "1.3.6.1.4.1.63245.1.1.0",
+                    "1.3.6.1.4.1.63245.1.2.0",
+                    "1.3.6.1.4.1.63245.1.3.0",
+                    "1.3.6.1.4.1.63245.1.4.0"
+                ]
+            },
+            "resources": [
+                "sprout"
+            ],
+            "labs": [
+                "embedded"
+            ]
+        }
+    ],
+    "links": []
+}
 ```
+
+(lab-links)=
+
+## Links
+
+A `links` entry in `lab.json` declares a data-plane route between two hosts —
+distinct from the `hop` field's SSH/telnet *management* path. It is resolved
+into a runtime `Link` object (`otto.link`) at lab-load time, the foundation
+for tooling that will tunnel and impair such routes:
+
+```json
+{
+    "name": "data-plane-a",
+    "endpoints": [
+        { "host": "carrot_seed", "interface": "eth1" },
+        { "host": "tomato_seed", "interface": "eth1" }
+    ],
+    "protocol": "udp"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `endpoints` | array of exactly 2 objects | The two ends of the route, each `{"host": <id>, "interface": <netdev name>}`. |
+| `endpoints[].host` | string | Host id (see {ref}`lab-files` above) — must resolve to a host loaded from *some* lab file. |
+| `endpoints[].interface` | string | A key in that host's `interfaces` map (above). **Required only when the host defines more than one interface** — with one interface (or none) otto assumes it and its IP. Omitting it on a host with more than one interface is a load-time validation error ("ambiguous interface — specify one of {…}"), since otto can't disambiguate. |
+| `protocol` | string | Optional; defaults to `"tcp"`. Informational for a declared link (documents what the route carries — e.g. `"udp"`, `"rtp"`); becomes functional for a *dynamic* link created by `otto link add` (drives socat UDP-vs-TCP). |
+| `name` | string | Optional friendly handle; the link's id is otherwise derived from its endpoints. |
+| `impair` / `management` | string | Optional, reserved for later `otto link` sub-projects (link impairment and management-host source attribution); accepted today but not yet acted on. |
+
+**Lab membership is derived, not authored** — a link carries no `labs` field
+of its own. It belongs to the union of both endpoints' `labs`: loading lab
+`veggies` surfaces every link with at least one endpoint in `veggies`, even
+one whose *other* endpoint lives in a different lab (that far endpoint
+renders as a stub/dangling node). A link can legitimately span two labs.
 
 (host-preferences)=
 
@@ -282,7 +353,7 @@ matched (`re.fullmatch`) against each host's **id** (e.g. `carrot_seed`,
 
 # Selector = Python regex matched against host id (".*" = all hosts).
 # Selections (term/transfer) are ordered preferences gated by each host's
-# lab menu; option tables are per-key values that win over hosts.json.
+# lab menu; option tables are per-key values that win over lab.json.
 [host_preferences.".*"]
 term = ["telnet"]
 transfer = ["nc"]
@@ -303,15 +374,15 @@ raise at startup so typos fail loudly instead of silently no-opping.
 
 1. The hardcoded dataclass defaults in `otto.host.options`.
 2. The host's own `*_options` table and `term`/`transfer` pin in
-   `hosts.json` (the `valid_*` menu hard-gates selections).
+   `lab.json` (the `valid_*` menu hard-gates selections).
 3. `[host_preferences]` from each repo — product values **win over**
-   `hosts.json`.  Repos are applied in `OTTO_SUT_DIRS` order (later repo
+   `lab.json`.  Repos are applied in `OTTO_SUT_DIRS` order (later repo
    wins); within a repo, selectors are applied in definition order (later
    selector wins on the same key).
 4. CLI `--term` / `--transfer` — final word, applied at invocation time.
 
 Merging happens **per key** at every option-table layer.  Setting only
-`port` on a host in `hosts.json` still inherits `connect_timeout` from the
+`port` on a host in `lab.json` still inherits `connect_timeout` from the
 product preference, and so on down to the dataclass default.
 
 The merge is performed at host construction time, so the resulting host

@@ -21,7 +21,7 @@ Container hosts have a two-stage life:
    placeholders; `compose down` closes each container host *before* its
    parent's connection (sessions must drain while the transport is alive —
    the ordering rule from {doc}`index`) and restores the placeholders.
-   `hosts.json` is never written back — lab data stays read-only.
+   `lab.json` is never written back — lab data stays read-only.
 
 ## What is unique about `docker`
 

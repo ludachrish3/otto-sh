@@ -98,7 +98,7 @@ it never creates an output directory.
 | Option | Default | Description |
 | ------ | ------- | ----------- |
 | `--all` | `False` | Scaffold every missing area without prompting |
-| `--lab` | `False` | Scaffold the lab area (`lab_data/hosts.json` + README) |
+| `--lab` | `False` | Scaffold the lab area (`lab_data/lab.json` + README) |
 | `--tests` | `False` | Scaffold the tests area (example suite + conftest) |
 | `--instructions` | `False` | Scaffold the instructions area (`pylib/<name>_instructions/`) |
 | `--name NAME` | directory name | Product name for `settings.toml` |

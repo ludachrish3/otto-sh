@@ -1,8 +1,8 @@
 """Pure derivations of the static link layer (implicit hop edges + declared links).
 
 No I/O and no live host access: callers hand in host dicts / host objects,
-these functions hand back :class:`~otto.link.model.Link`s. That keeps every
-rule here unit-testable without a lab.
+these functions hand back :class:`~otto.link.model.Link` objects. That keeps
+every rule here unit-testable without a lab.
 """
 
 from collections.abc import Mapping
@@ -72,7 +72,7 @@ def resolve_declared_links(
     *,
     source: str,
 ) -> list[Link]:
-    """Validate + resolve raw ``links`` entries into DECLARED ``Link``s.
+    """Validate + resolve raw ``links`` entries into DECLARED ``Link`` objects.
 
     *source* names the origin (a file path or "lab.json") for error messages.
     """

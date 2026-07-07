@@ -89,7 +89,7 @@ missing the fields its family supplies. The config-facing path is **always the
 registered string** — that is the only way lab data names a backend. Bare
 callables such as `UnixHost._connection_factory` are a code-only convenience for
 injecting a test double or a programmatic backend; they are never a config
-selector and never appear in `hosts.json`.
+selector and never appear in `lab.json`.
 
 ## `tftp` is reserved
 
@@ -160,7 +160,7 @@ assert result.is_ok
 assert result.value[Path("a.bin")].value == Path("/tmp/a.bin")
 ```
 
-A host then selects it with `"transfer": "xmodem"` in `hosts.json`:
+A host then selects it with `"transfer": "xmodem"` in `lab.json`:
 
 ```json
 { "element": "mote", "os_type": "embedded", "transfer": "xmodem" }

@@ -1,7 +1,7 @@
 # Host Database
 
 Otto builds its lab — the set of hosts a command can touch — from a **host
-source**. By default that source is the `hosts.json` files under your `labs`
+source**. By default that source is the `lab.json` files under your `labs`
 directories, but the source is a pluggable backend: point otto at a CMDB, an
 inventory API, or any system of record by implementing one small interface.
 
@@ -30,7 +30,7 @@ then queried.
 
 ## Quick start: the built-in JSON source
 
-The default backend is `"json"`: it reads `hosts.json` from each directory in
+The default backend is `"json"`: it reads `lab.json` from each directory in
 your `labs` setting. No `[lab]` block is required — a repo with just
 `labs = [...]` already uses it:
 
@@ -48,11 +48,11 @@ Writing it out explicitly is equivalent:
 backend = "json"
 ```
 
-The per-host `hosts.json` schema — every field, and how labs merge — lives in
+The per-host `lab.json` schema — every field, and how labs merge — lives in
 {doc}`lab-config`.
 
 ```{tip}
-Running `otto init` (or `otto init --lab`) scaffolds a `hosts.json` with one
+Running `otto init` (or `otto init --lab`) scaffolds a `lab.json` with one
 example entry and a `lab_data/README.md` walking through its fields — a
 faster way to see a valid entry than building one from scratch. See
 {doc}`../getting-started`.
@@ -60,25 +60,30 @@ faster way to see a valid entry than building one from scratch. See
 
 ### Annotating entries with `_`-prefixed keys
 
-`hosts.json` is plain JSON, which has no comment syntax. Any key beginning
-with `_` (e.g. `_comment`) on a host entry is stripped before validation, so
-it is otto's sanctioned way to leave a note inline without tripping the
-schema's `extra="forbid"` check:
+`lab.json` is plain JSON, which has no comment syntax. Any key beginning
+with `_` (e.g. `_comment`) on a host or link entry is stripped before
+validation, so it is otto's sanctioned way to leave a note inline without
+tripping the schema's `extra="forbid"` check:
 
 ```json
 {
-    "_comment": "Replace before connecting to a real host.",
-    "ip": "192.0.2.1",
-    "element": "example-device",
-    "os_type": "unix",
-    "valid_terms": ["ssh"],
-    "creds": [{ "login": "admin", "password": "CHANGE_ME" }],
-    "labs": ["example_lab"]
+    "hosts": [
+        {
+            "_comment": "Replace before connecting to a real host.",
+            "ip": "192.0.2.1",
+            "element": "example-device",
+            "os_type": "unix",
+            "valid_terms": ["ssh"],
+            "creds": [{ "login": "admin", "password": "CHANGE_ME" }],
+            "labs": ["example_lab"]
+        }
+    ],
+    "links": []
 }
 ```
 
-This idiom is scoped to host entries only — it is not a general convention
-elsewhere in otto's JSON/TOML configuration.
+This idiom is scoped to host and link entries only — it is not a general
+convention elsewhere in otto's JSON/TOML configuration.
 
 ## Credentials and login proxies
 
@@ -137,7 +142,7 @@ the account otto authenticated as.
 ### Breaking change: `creds` was a dict, now a list
 
 `creds` used to be a flat `{"login": "password"}` mapping; it is now the
-ordered list described above (`feat(host)!`). A `hosts.json` still written in
+ordered list described above (`feat(host)!`). A `lab.json` still written in
 the old dict shape is rejected loudly at load:
 
 ```text

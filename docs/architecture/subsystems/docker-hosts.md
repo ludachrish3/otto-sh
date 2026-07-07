@@ -80,7 +80,7 @@ is resolved from
 `docker compose -p <proj> ps -q <service>`. `compose_down()` removes
 the entry again.
 
-This avoids writing back to `hosts.json` at runtime — that file stays
+This avoids writing back to `lab.json` at runtime — that file stays
 read-only — while still giving the tab-completion / listing UX the
 TODO asked for.
 

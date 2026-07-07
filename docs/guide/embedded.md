@@ -32,7 +32,7 @@ Host (Protocol) / BaseHost (ABC)
 
 ## Selecting an embedded host
 
-Set `os_type` in the host's `hosts.json` entry to select the host class:
+Set `os_type` in the host's `lab.json` entry to select the host class:
 
 - `os_type: "zephyr"` builds a `ZephyrHost` with Zephyr-specific defaults
   (the `zephyr` command frame, `os_name: "Zephyr"`).  Use `os_version` to record
@@ -193,7 +193,7 @@ Key fields:
 
 ## See also
 
-- {doc}`lab-config` — full `hosts.json` schema reference
+- {doc}`lab-config` — full `lab.json` schema reference
 - {doc}`os-profiles` — custom host classes and data profile bundles
 - {doc}`extending-embedded` — writing custom command frames and filesystems
 - {doc}`coverage` — cross-toolchain configuration for embedded coverage

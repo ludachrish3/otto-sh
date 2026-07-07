@@ -1,6 +1,6 @@
 # Data at the boundary
 
-otto consumes data from three outside sources: lab files (`hosts.json`),
+otto consumes data from three outside sources: lab files (`lab.json`),
 repo settings (`.otto/settings.toml`), and `OTTO_*` environment variables.
 The rule for all of them is the same: **pydantic at the boundary, plain
 objects inside**. External data is validated exactly once, by a spec model in
@@ -12,19 +12,19 @@ runtime object that is never re-validated.
 Each kind of input has a `*Spec` model whose job ends at construction:
 
 ```text
-hosts.json entry      → HostSpec.model_validate(...)  → spec.to_host(cls, ...)   → UnixHost
+lab.json entry      → HostSpec.model_validate(...)  → spec.to_host(cls, ...)   → UnixHost
 settings.toml tables  → settings spec models          → spec.to_runtime()        → backend objects
 OTTO_* environment    → OttoEnvSettings               → typed fields (paths, …)
 ```
 
-The split keeps validation errors where the *data* is (a bad `hosts.json`
+The split keeps validation errors where the *data* is (a bad `lab.json`
 field fails with a pydantic error naming the file and field, not a traceback
 deep in connection code) and keeps runtime classes free of parsing concerns.
 Field names are `snake_case` end to end — JSON, TOML, models, and runtime
 attributes all agree, so there is no translation layer.
 
 One deliberate escape hatch: keys beginning with `_` are stripped from each
-`hosts.json` entry before validation — the sanctioned way to keep comments
+`lab.json` entry before validation — the sanctioned way to keep comments
 in a format that has none (`"_comment": "…"`). Everything else unknown is
 still rejected loudly.
 
@@ -71,7 +71,7 @@ graph into every boundary crossing.
 
 Lab loading is behind a protocol so hosts don't have to come from JSON files:
 `LabRepository` (in {mod}`otto.storage.protocol`) is the host-source
-contract, the built-in `json` backend reads `hosts.json` files from the
+contract, the built-in `json` backend reads `lab.json` files from the
 configured lab paths, and alternatives (a database, an inventory service)
 register a name via {func}`otto.storage.register_lab_repository`.
 {func}`otto.testing.assert_lab_repository_conforms` verifies a custom backend
@@ -85,7 +85,7 @@ compose without editing either.
 ## Schemas as exports, not just validation
 
 Because every boundary is a pydantic model, otto can *emit* its data contracts:
-`otto schema export` writes JSON Schemas for `hosts.json`,
+`otto schema export` writes JSON Schemas for `lab.json`,
 `settings.toml`, and reservation files, which editors use for completion and
 inline validation ({doc}`../../guide/editor-schemas`). The schema version is
 bumped when host-spec fields change shape, keeping downstream lab data

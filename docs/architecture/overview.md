@@ -90,7 +90,7 @@ a lower layer never imports from a higher one.
 
 | Module | Responsibility |
 | --- | --- |
-| `otto.models` | Pydantic specs for hosts.json, settings.toml, env vars, monitor records |
+| `otto.models` | Pydantic specs for lab.json, settings.toml, env vars, monitor records |
 | `otto.storage` | The lab-repository (host source) protocol and the default JSON backend |
 | `otto.configmodule` | Repo/lab discovery, settings parsing, fleet accessors |
 

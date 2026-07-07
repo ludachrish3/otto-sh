@@ -76,7 +76,7 @@ runtime stats, filesystem), the same way a Unix host needs an
 `sshd_config`. If any overlay is missing, the `west build` provisioning
 step fails with a missing-file error.
 
-The lab definition `tests/_fixtures/lab_data/tech1/hosts.json` is read by otto at
+The lab definition `tests/_fixtures/lab_data/tech1/lab.json` is read by otto at
 **runtime** (not provision time); it must be present to target the test
 hosts but is not needed for `vagrant up` itself.
 

@@ -4,7 +4,7 @@
 expression of the {doc}`data-boundary <../subsystems/data-boundary>` design:
 because every external file otto reads is validated by a pydantic model,
 those same models can be *emitted* as JSON Schemas. `otto schema export` writes schemas for
-`hosts.json`, `.otto/settings.toml`, and reservation files; editors pick
+`lab.json`, `.otto/settings.toml`, and reservation files; editors pick
 them up for completion and inline validation
 ({doc}`../../guide/editor-schemas`).
 

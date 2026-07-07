@@ -6,7 +6,7 @@ port* on the remote and *verify the listener is ready*, both with configurable,
 auto-detecting strategies. This page collects everything netcat-specific.
 
 Select it per invocation with `--transfer nc` (see {doc}`Connection control <../connections>`) or
-persist it with `"transfer": "nc"` in `hosts.json`.
+persist it with `"transfer": "nc"` in `lab.json`.
 
 ## Through hops
 
@@ -45,7 +45,7 @@ The auto cascade order is: ss → netstat → python → proc.
 | ``proc``     | Scan ``/proc/net/tcp`` for LISTEN state (Linux-only, always available).                               |
 | ``custom``   | Run the command in ``nc_options.listener_cmd`` with ``{port}`` placeholder. Must exit 0 if listening. |
 
-Override the strategy under ``nc_options`` in ``hosts.json`` when auto-detection
+Override the strategy under ``nc_options`` in ``lab.json`` when auto-detection
 isn't appropriate for a particular host:
 
 ```json

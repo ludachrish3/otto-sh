@@ -2,7 +2,7 @@
 
 How otto reaches a host for a single invocation: route through SSH jump hosts with
 `--hop`, and override the terminal or file-transfer protocol with `--term` /
-`--transfer`. (For *persistent* connection tuning in `hosts.json`, see
+`--transfer`. (For *persistent* connection tuning in `lab.json`, see
 {doc}`Host configuration <configuration>`.)
 
 ## Reaching hosts through hops
@@ -30,7 +30,7 @@ otto --lab my_lab host --hop jumpbox target_seed put firmware.bin /tmp/
 otto --lab my_lab host --hop jumpbox target_seed get /var/log/syslog ./logs/
 ```
 
-For persistent hop configuration, set the `hop` field in `hosts.json`
+For persistent hop configuration, set the `hop` field in `lab.json`
 (see {doc}`../lab-config` for the full host schema):
 
 ```json
@@ -60,7 +60,7 @@ as any other telnet connection. See {doc}`../embedded` for a worked example.
 ## Overriding protocol for a single session
 
 Use `--term` to override the terminal protocol and `--transfer` to override
-the file transfer protocol for a single invocation without editing `hosts.json`:
+the file transfer protocol for a single invocation without editing `lab.json`:
 
 ```bash
 otto --lab my_lab host --term telnet router1 run "show version"
@@ -79,7 +79,7 @@ Valid values for the built-in backends (UnixHost):
 - `--transfer`: `scp`, `sftp`, `ftp`, `nc`
 
 The accepted values are validated against the host's configured menu
-(`valid_terms` / `valid_transfers` fields in `hosts.json`); out-of-menu
+(`valid_terms` / `valid_transfers` fields in `lab.json`); out-of-menu
 selections are rejected at invocation time. See {doc}`../lab-config` for
 those fields. Projects can also register additional backends via
 `register_term_backend` / `register_transfer_backend`; see
@@ -89,4 +89,4 @@ Embedded hosts use the `console` / `tftp` transfer backends instead — see
 {doc}`../embedded`.
 
 The override applies only to the current invocation. To persist the change,
-update the `term` or `transfer` field in `hosts.json`.
+update the `term` or `transfer` field in `lab.json`.

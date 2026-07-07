@@ -1,6 +1,6 @@
-# Host configuration (hosts.json)
+# Host configuration (lab.json)
 
-Persistent per-host connection tuning, declared in `hosts.json`. (For
+Persistent per-host connection tuning, declared in `lab.json`. (For
 per-invocation overrides, see {doc}`connections`; for the custom netcat backend,
 see {doc}`commands/netcat`.)
 
@@ -10,7 +10,7 @@ see {doc}`commands/netcat`.)
 
 Every host can be configured with a dedicated options object per network
 protocol.  The default-constructed options reproduce otto's historical
-defaults exactly, so existing `hosts.json` entries keep working without
+defaults exactly, so existing `lab.json` entries keep working without
 changes.  To tune a protocol, add the matching ``*_options`` object to
 the host entry:
 
@@ -28,16 +28,16 @@ to most specific:
 
 1. **Hardcoded defaults** in `otto.host.options` — what you get when no
    `*_options` is supplied anywhere.
-2. **Per-host `*_options`** in `hosts.json` — the lab's own values for
+2. **Per-host `*_options`** in `lab.json` — the lab's own values for
    a single host.
 3. **Product `[host_preferences]`** in `.otto/settings.toml` — applied
    to every host whose id matches the selector regex.  Product values
-   **win over** `hosts.json`.  See {ref}`host-preferences`.
+   **win over** `lab.json`.  See {ref}`host-preferences`.
 4. **CLI `--term` / `--transfer`** — final word, applied at invocation
    time.
 
 Merging is **per key** between layers (1)–(3).  A host that sets only
-`port` in `hosts.json` still inherits `connect_timeout` from the
+`port` in `lab.json` still inherits `connect_timeout` from the
 product preference, and so on down to the dataclass default.  The
 fully resolved options are baked into the `UnixHost` at construction
 time.
@@ -188,7 +188,7 @@ Netcat has additional options and auto-detection strategies — see {doc}`comman
 A host that exposes metrics over SNMP rather than a shell carries an ``snmp``
 block ({class}`~otto.host.options.SnmpOptions`) instead of (or alongside) the
 ``*_options`` transport objects.  The full field reference and a worked example
-are in {doc}`../monitor` — see the *Configuring the snmp block in hosts.json*
+are in {doc}`../monitor` — see the *Configuring the snmp block in lab.json*
 section.
 
 (per-host-toolchain)=
@@ -199,7 +199,7 @@ Each host can specify a **toolchain** that tells otto which ``gcov`` and
 ``lcov`` binaries to use for coverage report generation.  This is
 essential when hosts run products built with different cross-compilers.
 
-Add an optional ``toolchain`` object to the host entry in ``hosts.json``:
+Add an optional ``toolchain`` object to the host entry in ``lab.json``:
 
 ```json
 {

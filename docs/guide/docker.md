@@ -42,7 +42,7 @@ default_host = "pepper_seed"             # lab host id; CLI --on overrides
 services = ["api", "db"]                 # used for tab-completion only
 ```
 
-### Per-lab (`hosts.json`)
+### Per-lab (`lab.json`)
 
 Mark hosts that can host containers:
 

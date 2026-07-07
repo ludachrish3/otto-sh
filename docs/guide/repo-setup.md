@@ -19,7 +19,7 @@ init  = ["my_instructions", "my_shared_options"]
 
 # Optional: product preferences applied to every host this repo touches.
 # Selector = Python regex matched against the host id; ".*" = all hosts.
-# Values win over hosts.json; CLI --term/--transfer win over everything.
+# Values win over lab.json; CLI --term/--transfer win over everything.
 [host_preferences.".*"]
 ssh_options = { connect_timeout = 5.0, keepalive_interval = 30 }
 ```
@@ -48,7 +48,7 @@ labs
 \[lab\]
 : Optional table selecting the **host-source backend** — where otto's hosts come
   from. `backend` names a registered source (defaults to `"json"`, which reads
-  `hosts.json` from the `labs` directories); a `[lab.<name>]` sub-table holds
+  `lab.json` from the `labs` directories); a `[lab.<name>]` sub-table holds
   that backend's keyword arguments. See {doc}`host-database` for the full
   treatment.
 
@@ -76,7 +76,7 @@ init
 : Optional table of product-wide selector-scoped preferences.  Each
   sub-table key is a Python regex matched against host ids; inner keys
   are `term`, `transfer` (ordered backend lists) or `*_options` tables
-  (per-key option values that win over `hosts.json`).  See
+  (per-key option values that win over `lab.json`).  See
   {ref}`host-preferences` in {doc}`lab-config` for the full schema and
   precedence rules.
 
@@ -156,7 +156,7 @@ in the CLI, and lab search paths from all repos are combined.
 
 ## Lab files
 
-Each directory listed under `labs` holds a `hosts.json` file describing the
+Each directory listed under `labs` holds a `lab.json` file describing the
 hosts at that location.  The full per-host schema — every field, the
 connection-option tables, repo-level host defaults, and how labs merge — lives
 in {doc}`lab-config`.
@@ -174,7 +174,7 @@ otto for a team:
    step. `otto init --all` scaffolds everything with no prompts; bare `otto
    init` asks per missing area. See {doc}`../getting-started` and
    {doc}`cli-reference`.
-2. **Choose a host source** — the built-in `json` source (commit `hosts.json`
+2. **Choose a host source** — the built-in `json` source (commit `lab.json`
    under a `labs` directory) is the default; point `[lab] backend` at a CMDB or
    inventory API if you have one. See {doc}`host-database`.
 3. **Decide on reservation gating** — leave it off (`backend = "none"`, the

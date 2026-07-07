@@ -277,7 +277,7 @@ settings
   at the other three areas.
 
 lab
-: `lab_data/hosts.json` with one example host (`example-device`, in lab
+: `lab_data/lab.json` with one example host (`example-device`, in lab
   `example_lab`) plus `lab_data/README.md` explaining the schema.
 
 tests
@@ -320,7 +320,7 @@ my_project/
 ├── .otto/
 │   └── settings.toml
 ├── lab_data/
-│   ├── hosts.json
+│   ├── lab.json
 │   └── README.md
 ├── pylib/
 │   └── my_project_instructions/
@@ -382,34 +382,39 @@ Other useful environment variables:
 
 ## Lab files
 
-`otto init --lab` (or `--all`) scaffolds `lab_data/hosts.json` with one
+`otto init --lab` (or `--all`) scaffolds `lab_data/lab.json` with one
 example host for you, plus a `lab_data/README.md` walking through its
 fields — see {doc}`guide/host-database` for the full per-field schema. This
 section explains the format so you can add real hosts by hand.
 
-A lab file is a JSON array of host definitions.  Place lab files in one of the
-directories listed in your `labs` setting; each host joins one or more labs
-through its `labs` field, and `--lab <name>` selects the matching hosts:
+A lab file is a JSON object with a `hosts` array (and an optional `links`
+array declaring data-plane routes between hosts — see {doc}`guide/lab-config`).
+Place lab files in one of the directories listed in your `labs` setting; each
+host joins one or more labs through its `labs` field, and `--lab <name>`
+selects the matching hosts:
 
 ```json
-[
-    {
-        "ip": "192.168.1.1",
-        "element": "router1",
-        "os_type": "unix",
-        "valid_terms": ["ssh"],
-        "creds": [{ "login": "admin", "password": "secret" }],
-        "labs": ["my_lab"]
-    },
-    {
-        "ip": "192.168.1.2",
-        "element": "switch1",
-        "os_type": "unix",
-        "valid_terms": ["telnet"],
-        "creds": [{ "login": "admin", "password": "secret" }],
-        "labs": ["my_lab"]
-    }
-]
+{
+    "hosts": [
+        {
+            "ip": "192.168.1.1",
+            "element": "router1",
+            "os_type": "unix",
+            "valid_terms": ["ssh"],
+            "creds": [{ "login": "admin", "password": "secret" }],
+            "labs": ["my_lab"]
+        },
+        {
+            "ip": "192.168.1.2",
+            "element": "switch1",
+            "os_type": "unix",
+            "valid_terms": ["telnet"],
+            "creds": [{ "login": "admin", "password": "secret" }],
+            "labs": ["my_lab"]
+        }
+    ],
+    "links": []
+}
 ```
 
 otto loads each entry into a host object — the same dicts build the

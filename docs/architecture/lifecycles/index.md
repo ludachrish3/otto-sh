@@ -61,7 +61,7 @@ effects with an explicit composition root:
 repeated calls return the same result.
 
 Lab loading is deliberately **not** part of bootstrap. `otto --help`,
-`--list-*` flags, and shell completion never open `hosts.json`, and a missing
+`--list-*` flags, and shell completion never open `lab.json`, and a missing
 or malformed lab file only matters once a command that needs the lab runs.
 
 ## The preamble, and who opts out
@@ -86,7 +86,7 @@ reservation gate. Each first-party command declares what it needs on its
 | {doc}`init <init>` | no (`lab_free`) | no | no |
 
 `--lab` itself tab-completes — the lab names are tags on hosts in the
-`hosts.json` files, read data-only (no host construction, no user code), and
+`lab.json` files, read data-only (no host construction, no user code), and
 the option is comma-separated so each segment completes in turn:
 
 ```{raw} html

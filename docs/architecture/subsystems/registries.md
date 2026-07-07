@@ -109,7 +109,7 @@ per-class host verbs plus registry-backed option values
 
 The consistent rule behind all of them: the process answering the keystroke
 **never runs user code**. Registry names come from the cache the slow path
-already wrote; host ids and lab names are read from `hosts.json` data;
+already wrote; host ids and lab names are read from `lab.json` data;
 `--tests` names come from a static `ast` scan of the test sources. The one
 case that genuinely needs a live pytest collection — dynamically generated
 tests — is handled without breaking that rule: the collection runs in a

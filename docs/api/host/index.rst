@@ -25,6 +25,7 @@ local and remote machines.
    command_frame
    toolchain
    options
+   interface
    interact
    product
    power

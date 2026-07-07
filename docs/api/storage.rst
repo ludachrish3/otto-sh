@@ -3,7 +3,7 @@ storage
 
 The storage package provides a DB-agnostic host-source (``LabRepository``)
 backend, selected by name and constructed via :func:`otto.storage.build_lab_repository`.
-The built-in ``json`` backend reads ``hosts.json`` files; custom backends
+The built-in ``json`` backend reads ``lab.json`` files; custom backends
 register a name via :func:`otto.storage.register_lab_repository` from an
 ``init`` module.
 

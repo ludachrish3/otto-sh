@@ -11,12 +11,12 @@ Options can be set in four places, layered lowest-to-highest:
 
 1. **Hardcoded dataclass defaults** in `otto.host.options` — what you
    get when nothing else is configured.
-2. **Per-host values** in `hosts.json` under the matching `*_options`
+2. **Per-host values** in `lab.json` under the matching `*_options`
    table — the lab's own definition of what the host needs.
 3. **Product preferences** in `.otto/settings.toml` under
    `[host_preferences."<selector>".<protocol>_options]` — applied to
    every host whose id matches the selector regex.  Product values **win
-   over** the host's own `hosts.json` values.  Best for conventions
+   over** the host's own `lab.json` values.  Best for conventions
    shared across the whole product.
 4. **Per-call overrides** passed to `get_host()` / `all_hosts()` —
    transient, scoped to a single lookup.  Best for one-off test-time
@@ -41,12 +41,12 @@ For the reference table of every field, see the
 When every host in a product needs the same handful of tweaks (a longer
 SSH connect timeout, a larger telnet column count, an alternate `nc`
 binary), set them once in `.otto/settings.toml` under
-`[host_preferences]` and let `hosts.json` stay focused on what's
+`[host_preferences]` and let `lab.json` stay focused on what's
 actually different per host.
 
 The selector (e.g. `".*"`) is a Python regex matched against the host
 **id**; `".*"` applies to all hosts.  Option tables under each selector
-are per-key overrides that **win over** any value in `hosts.json`.
+are per-key overrides that **win over** any value in `lab.json`.
 
 > **Migration note:** `[host_defaults]` was removed; its option tables
 > move under `[host_preferences."<selector>".<opt>]`.
@@ -55,7 +55,7 @@ are per-key overrides that **win over** any value in `hosts.json`.
 # .otto/settings.toml
 
 # Selector = regex matched against host id; ".*" = all hosts.
-# Option tables (ssh_options, …) win over hosts.json values per-key.
+# Option tables (ssh_options, …) win over lab.json values per-key.
 [host_preferences.".*"]
 ssh_options = { connect_timeout = 5.0, keepalive_interval = 30 }
 telnet_options = { cols = 200 }
@@ -66,9 +66,9 @@ nc_options = { exec_name = "ncat", port_strategy = "proc" }
 telnet_options = { port = 9023 }
 ```
 
-Per-host `*_options` tables in `hosts.json` are merged per-key with
+Per-host `*_options` tables in `lab.json` are merged per-key with
 the hardcoded defaults first, then the product preferences layer is
-applied on top.  A host that sets only `port` in `hosts.json` still
+applied on top.  A host that sets only `port` in `lab.json` still
 picks up `connect_timeout` from the product preference:
 
 ```json
@@ -106,7 +106,7 @@ repo a "base" for shared conventions and others its overlays.
 2222
 ```
 
-Equivalent `hosts.json` entry:
+Equivalent `lab.json` entry:
 
 ```json
 {
@@ -159,7 +159,7 @@ connection is created:
 After any session on this host opens, `curl localhost:8080` on the
 local machine reaches `web.internal:80` through the host.
 
-The same forward expressed in `hosts.json` — `local_forwards`,
+The same forward expressed in `lab.json` — `local_forwards`,
 `remote_forwards`, and `socks_forwards` are lists of plain dicts whose
 keys mirror the dataclass fields:
 
@@ -326,4 +326,4 @@ ssh_options = SshOptions(post_connect=setup)
 The hook runs on a freshly opened connection, right after the
 structured forwards have been applied, before the session is handed to
 any caller.  It can't be expressed in JSON, so hosts that need it must
-be constructed in Python rather than loaded from `hosts.json`.
+be constructed in Python rather than loaded from `lab.json`.

@@ -8,7 +8,7 @@ path.
 ## Areas, not a monolith
 
 The command is organized around four **areas** — `settings`
-(`.otto/settings.toml`), `lab` (`lab_data/hosts.json`), `tests`, and
+(`.otto/settings.toml`), `lab` (`lab_data/lab.json`), `tests`, and
 `instructions` — each a small value object with three operations:
 
 - `detect` — does this area already exist here?
@@ -35,7 +35,7 @@ that passes `otto init` loads.
 The generated files are deliberately didactic: the sample suite is a
 `Test`-prefixed {class}`~otto.suite.suite.OttoSuite` subclass (demonstrating
 auto-registration — {doc}`test`), alongside a plain pytest function runnable
-via `otto test --tests`, and the `hosts.json` template uses the sanctioned
+via `otto test --tests`, and the `lab.json` template uses the sanctioned
 `_`-prefixed comment keys to explain itself in place.
 
 ## `otto init --help`

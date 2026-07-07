@@ -270,6 +270,15 @@ _EXTERNAL_DOC_LINKS = {
     # role-scoped lookup (missing_reference) never matches it even after
     # retargeting. A direct link sidesteps that mismatch instead of fighting it.
     "Self": "https://docs.python.org/3/library/typing.html#typing.Self",
+    # annotated-types ships no Sphinx docs / objects.inv (README-only project).
+    # LinkSpec.endpoints (models/link.py) uses ``Field(min_length=2,
+    # max_length=2)``, which pydantic renders in the signature as
+    # ``Annotated[..., MinLen(...), MaxLen(...)]``; autodoc's annotation
+    # stringifier turns each metadata class into a py:class xref attempt once
+    # there are 2+ metadata args (a single-constraint field like
+    # ``UnixHostSpec.creds`` renders as opaque text and never attempts one).
+    "annotated_types.MinLen": "https://github.com/annotated-types/annotated-types#minlen-maxlen-len",
+    "annotated_types.MaxLen": "https://github.com/annotated-types/annotated-types#minlen-maxlen-len",
 }
 
 
