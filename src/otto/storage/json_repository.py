@@ -68,9 +68,8 @@ class JsonFileLabRepository:
             sections = self._load_lab_file(lab_file)
             all_hosts_data.extend(sections["hosts"])
             all_links_data.extend(sections["links"])
-        # ``all_links_data`` is aggregated here so this loader owns reading both
-        # sections; Task 5 consumes the ``links`` section (declared-link
-        # derivation). It is intentionally not used yet.
+        # ``all_links_data`` spans ALL lab files (like ``all_hosts_data``) so
+        # declared links can resolve dangling (cross-lab) endpoints below.
 
         matching = [h for h in all_hosts_data if name in h.get("labs", [])]
 
@@ -100,6 +99,25 @@ class JsonFileLabRepository:
                 raise LabRepositoryError(
                     f"Failed to create host at index {idx} in lab '{name}': {e}"
                 ) from e
+
+        from ..link.derive import addressing_from_dict, resolve_declared_links
+
+        # Guard: all_hosts_data spans ALL lab files, including entries never
+        # validated (they belong to other labs) — skip shapes that can't
+        # produce an id rather than crash link resolution on someone else's typo.
+        addressing = dict(
+            addressing_from_dict(h)
+            for h in all_hosts_data
+            if isinstance(h, dict) and isinstance(h.get("element"), str)
+        )
+        loaded_ids = set(lab.hosts)
+        try:
+            declared = resolve_declared_links(all_links_data, addressing, source=LAB_FILENAME)
+        except ValueError as e:
+            raise LabRepositoryError(str(e)) from e
+        lab.links = [
+            link for link in declared if link.a.host in loaded_ids or link.b.host in loaded_ids
+        ]
 
         logger.debug(f"Loaded lab '{name}' with {len(lab.hosts)} hosts")
         return lab

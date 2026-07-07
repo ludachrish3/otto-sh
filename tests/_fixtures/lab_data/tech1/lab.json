@@ -16,6 +16,9 @@
             "resources": [
                 "carrot"
             ],
+            "interfaces": {
+                "eth1": {"ip": "192.168.1.11"}
+            },
             "labs": [
                 "veggies"
             ]
@@ -36,6 +39,9 @@
             "resources": [
                 "tomato"
             ],
+            "interfaces": {
+                "eth1": {"ip": "192.168.1.12"}
+            },
             "labs": [
                 "veggies"
             ]
@@ -266,5 +272,13 @@
             ]
         }
     ],
-    "links": []
+    "links": [
+        {
+            "endpoints": [
+                {"host": "carrot_seed", "interface": "eth1"},
+                {"host": "tomato_seed", "interface": "eth1"}
+            ],
+            "protocol": "udp"
+        }
+    ]
 }

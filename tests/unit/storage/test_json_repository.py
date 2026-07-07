@@ -366,6 +366,110 @@ class TestLabFileShape:
             repo.load_lab("veggies")
 
 
+class TestDeclaredLinks:
+    """``links`` section consumption in ``load_lab`` (Task 5: declared-link resolution)."""
+
+    def test_declared_link_between_in_lab_hosts_loads_with_resolved_ips(self, tmp_path):
+        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed"}
+        host_b = {**HOST_ENTRY, "element": "tomato", "board": "seed", "ip": "192.0.2.2"}
+        _write_lab(
+            tmp_path,
+            hosts=[host_a, host_b],
+            links=[
+                {
+                    "endpoints": [{"host": "carrot_seed"}, {"host": "tomato_seed"}],
+                    "protocol": "tcp",
+                }
+            ],
+        )
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("veggies")
+
+        assert len(lab.links) == 1
+        (link,) = lab.links
+        assert {link.a.host, link.b.host} == {"carrot_seed", "tomato_seed"}
+        assert {link.a.ip, link.b.ip} == {"192.0.2.1", "192.0.2.2"}
+
+    def test_cross_lab_link_resolves_dangling_endpoint(self, tmp_path):
+        """One endpoint outside the requested lab still resolves its ip
+        from the raw host dict, and the link surfaces (>= 1 endpoint in-lab).
+        """
+        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        host_other = {
+            **HOST_ENTRY,
+            "element": "kiwi",
+            "board": "seed",
+            "ip": "192.0.2.9",
+            "labs": ["other"],
+        }
+        _write_lab(
+            tmp_path,
+            hosts=[host_a, host_other],
+            links=[
+                {
+                    "endpoints": [{"host": "carrot_seed"}, {"host": "kiwi_seed"}],
+                    "protocol": "tcp",
+                }
+            ],
+        )
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("veggies")
+
+        assert "kiwi_seed" not in lab.hosts  # dangling: not part of this lab's hosts
+        assert len(lab.links) == 1
+        (link,) = lab.links
+        assert {link.a.host, link.b.host} == {"carrot_seed", "kiwi_seed"}
+        assert {link.a.ip, link.b.ip} == {"192.0.2.1", "192.0.2.9"}
+
+    def test_link_fully_outside_lab_is_excluded(self, tmp_path):
+        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        host_x = {
+            **HOST_ENTRY,
+            "element": "kiwi",
+            "board": "seed",
+            "ip": "192.0.2.9",
+            "labs": ["other"],
+        }
+        host_y = {
+            **HOST_ENTRY,
+            "element": "mango",
+            "board": "seed",
+            "ip": "192.0.2.10",
+            "labs": ["other"],
+        }
+        _write_lab(
+            tmp_path,
+            hosts=[host_a, host_x, host_y],
+            links=[
+                {
+                    "endpoints": [{"host": "kiwi_seed"}, {"host": "mango_seed"}],
+                    "protocol": "tcp",
+                }
+            ],
+        )
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("veggies")
+
+        assert lab.links == []
+
+    def test_unknown_host_link_raises_with_index_and_source(self, tmp_path):
+        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        _write_lab(
+            tmp_path,
+            hosts=[host_a],
+            links=[
+                {
+                    "endpoints": [{"host": "nope"}, {"host": "carrot_seed"}],
+                    "protocol": "tcp",
+                }
+            ],
+        )
+        repo = JsonFileLabRepository([tmp_path])
+
+        with pytest.raises(LabRepositoryError, match=r"lab\.json.*index 0"):
+            repo.load_lab("veggies")
+
+
 class TestLoadLabWithPreferences:
     """End-to-end tests for the unified ``preferences=`` parameter on ``load_lab``."""
 

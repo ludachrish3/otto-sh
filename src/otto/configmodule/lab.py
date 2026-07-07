@@ -13,6 +13,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from ..host.host import Host
+    from ..link.model import Link
     from ..storage.protocol import LabRepository
 
 
@@ -33,6 +34,9 @@ class Lab:
 
     hosts: "dict[str, Host]" = field(default_factory=dict)
     """Host objects, keyed by unique host id."""
+
+    links: "list[Link]" = field(default_factory=list)
+    """Declared links loaded from lab data (implicit links are derived, not stored)."""
 
     def add_host(
         self,
@@ -57,6 +61,19 @@ class Lab:
 
         self.hosts[host.id] = host
 
+    def static_links(self) -> "list[Link]":
+        """Return the static link layer: implicit hop edges plus declared links.
+
+        Free (no I/O). Declared wins over implicit on route-id collision.
+        Dynamic links are NOT here — see ``otto.link.discovery`` (async, costed).
+        """
+        from ..link.derive import implicit_links  # lazy: keep Lab import-light
+
+        merged = {link.id: link for link in implicit_links(self.hosts)}
+        for link in self.links:
+            merged[link.id] = link
+        return list(merged.values())
+
     def __add__(
         self,
         other: "Lab",
@@ -70,6 +87,10 @@ class Lab:
             if isinstance(host, RemoteHost):
                 host._lab = self
         self.hosts.update(other.hosts)
+
+        by_id = {link.id: link for link in self.links}
+        by_id.update({link.id: link for link in other.links})
+        self.links = list(by_id.values())
 
         return self
 
