@@ -27,6 +27,7 @@ otto.host.embedded_host
 otto.host.file_ops
 otto.host.host
 otto.host.interact
+otto.host.interface
 otto.host.local_host
 otto.host.login_proxy
 otto.host.options

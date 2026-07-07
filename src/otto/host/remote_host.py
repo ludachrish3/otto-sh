@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from ..configmodule.lab import Lab
     from ..result import CommandResult
     from .connections import ConnectionManager
+    from .interface import Interface
     from .options import SnmpOptions
     from .power import PowerController
     from .product import Product
@@ -176,11 +177,12 @@ class RemoteHost(BaseHost):
     front with a clear message instead of letting the device produce an
     opaque error like ``-ENOENT`` or ``File name too long``."""
 
-    interfaces: dict[str, str]
-    """Named secondary interface addresses, keyed by interface name (e.g.
-    ``{"mgmt": "10.0.0.5", "data": "192.168.1.5"}``). The *primary* address
-    stays :attr:`ip`; this map is additive and optional (empty by default).
-    Resolve a name (or pass a literal through) with :meth:`address_for`."""
+    interfaces: dict[str, "Interface"]
+    """Named network devices, keyed by the netdev name (e.g.
+    ``{"eth0": Interface(ip="10.0.0.5"), "eth1": Interface(ip="192.168.1.5")}``).
+    The *primary* address stays :attr:`ip`; this map is additive and optional
+    (empty by default). Resolve a name (or pass a literal through) with
+    :meth:`address_for`."""
 
     products: "list[Product]"
     """Software-under-test deployed to this host (see
@@ -292,7 +294,8 @@ class RemoteHost(BaseHost):
         a host's ``snmp.address`` name a secondary interface without otto having
         to distinguish names from literals.
         """
-        return self.interfaces.get(name_or_literal, name_or_literal)
+        entry = self.interfaces.get(name_or_literal)
+        return entry.ip if entry is not None else name_or_literal
 
     ####################
     #  Hop transport

@@ -82,6 +82,7 @@ from .host import (
     is_dry_run,
 )
 from .interact import run_ssh_login, run_telnet_login
+from .interface import Interface
 from .login_proxy import Cred, LoginProxyError, cred_for, resolve_chain
 from .options import (
     FtpOptions,
@@ -238,8 +239,8 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     resources: set[str] = field(default_factory=set[str])
     """Names of resources required to use this host."""
 
-    interfaces: dict[str, str] = field(default_factory=dict, repr=False)
-    """Named secondary interface addresses
+    interfaces: dict[str, Interface] = field(default_factory=dict, repr=False)
+    """Named network devices
     (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
     Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 

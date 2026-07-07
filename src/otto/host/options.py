@@ -522,5 +522,7 @@ class SnmpOptions:
     address: str | None = None
     """Address otto sends SNMP to. ``None`` (the default) means use the host's
     own ``ip``; set it when the agent is reached at a different address than the
-    host's primary interface — e.g. a relay endpoint, or (future) a named
-    interface from a per-host interface map. See ``todo/multi_interface_hosts.md``."""
+    host's primary interface — e.g. a relay endpoint, or a named netdev key
+    from the host's ``interfaces`` map (now ``Interface`` objects — see
+    ``todo/multi_interface_hosts.md``), resolved via
+    :meth:`~otto.host.remote_host.RemoteHost.address_for`."""

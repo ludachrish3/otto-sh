@@ -1,5 +1,6 @@
 from otto.host.command_frame import ZephyrFrame
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.interface import Interface
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 
@@ -19,7 +20,7 @@ def test_address_for_returns_literal_unchanged():
 
 
 def test_address_for_resolves_named_interface():
-    h = _unix(interfaces={"mgmt": "10.9.9.9", "data": "192.168.5.5"})
+    h = _unix(interfaces={"mgmt": Interface(ip="10.9.9.9"), "data": Interface(ip="192.168.5.5")})
     assert h.address_for("mgmt") == "10.9.9.9"
     assert h.address_for("data") == "192.168.5.5"
     assert h.address_for("10.0.0.1") == "10.0.0.1"  # literal still passes through

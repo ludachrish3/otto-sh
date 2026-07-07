@@ -64,6 +64,7 @@ from .command_frame import CommandFrame, ZephyrFrame
 from .connections import ConnectionManager
 from .embedded_filesystem import EmbeddedFileSystem, NoFileSystem
 from .host import Host, SuppressCommandOutput, is_dry_run
+from .interface import Interface
 from .login_proxy import Cred
 from .options import SnmpOptions, TelnetOptions
 from .power import PowerController, power_control_from_spec
@@ -236,8 +237,8 @@ class EmbeddedHost(RemoteHost):
     resources: set[str] = field(default_factory=set[str])
     """Names of resources required to use this host."""
 
-    interfaces: dict[str, str] = field(default_factory=dict, repr=False)
-    """Named secondary interface addresses
+    interfaces: dict[str, Interface] = field(default_factory=dict, repr=False)
+    """Named network devices
     (see :attr:`~otto.host.remote_host.RemoteHost.interfaces`).
     Resolve with :meth:`~otto.host.remote_host.RemoteHost.address_for`."""
 

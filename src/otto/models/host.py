@@ -21,6 +21,7 @@ from ..host.command_frame import FRAME_CLASSES, build_command_frame
 from ..host.connections import TERM_BACKENDS
 from ..host.embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
 from ..host.embedded_host import EmbeddedHost
+from ..host.interface import Interface
 from ..host.login_proxy import LOGIN_PROXIES, Cred, LoginProxyError, resolve_chain
 from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain
@@ -49,6 +50,29 @@ class ToolchainSpec(OttoModel):
     def to_runtime(self) -> Toolchain:
         """Build the runtime ``Toolchain`` dataclass from the validated path fields."""
         return Toolchain(sysroot=self.sysroot, lcov=self.lcov, gcov=self.gcov)
+
+
+class InterfaceSpec(OttoModel):
+    """One ``interfaces`` entry, keyed by the netdev name (``eth0``, …).
+
+    A bare string value (``"eth0": "10.0.0.5"``) is accepted as shorthand for
+    ``{"ip": "10.0.0.5"}`` (coerced in ``HostSpec._coerce_interface_shorthand``).
+    """
+
+    ip: str
+
+    @field_validator("ip")
+    @classmethod
+    def _validate_ip(cls, v: str) -> str:
+        try:
+            ip_address(v)
+        except ValueError:
+            raise ValueError(f"interface address {v!r} is not a valid IP") from None
+        return v
+
+    def to_runtime(self) -> Interface:
+        """Build the runtime ``Interface`` dataclass."""
+        return Interface(ip=self.ip)
 
 
 # Common fields passed straight through to the host constructor (no conversion).
@@ -172,7 +196,7 @@ class HostSpec(OttoModel):
     default_dest_dir: Path = Path()
     max_filename_len: int = 255
     resources: set[str] = Field(default_factory=set)
-    interfaces: dict[str, str] = Field(default_factory=dict)
+    interfaces: dict[str, InterfaceSpec] = Field(default_factory=dict)
     log: LogMode = LogMode.NORMAL
     log_stdout: bool = True  # common: both UnixHost and EmbeddedHost declare it
     telnet_options: TelnetOptionsSpec = TelnetOptionsSpec()
@@ -218,16 +242,12 @@ class HostSpec(OttoModel):
             )
         return v
 
-    @field_validator("interfaces")
+    @field_validator("interfaces", mode="before")
     @classmethod
-    def _validate_interface_addresses(cls, v: dict[str, str]) -> dict[str, str]:
-        # Validate only; runtime keeps the raw string form (like ``ip``), so we
-        # return the originals rather than the parsed ip_address objects.
-        for name, addr in v.items():
-            try:
-                ip_address(addr)
-            except ValueError:  # noqa: PERF203 — per-item resilience
-                raise ValueError(f"interface {name!r} address {addr!r} is not a valid IP") from None
+    def _coerce_interface_shorthand(cls, v: object) -> object:
+        # "eth0": "10.0.0.5"  ->  "eth0": {"ip": "10.0.0.5"}
+        if isinstance(v, dict):
+            return {k: ({"ip": e} if isinstance(e, str) else e) for k, e in v.items()}
         return v
 
     @field_validator("command_frame")
@@ -290,7 +310,7 @@ class HostSpec(OttoModel):
         if "resources" in s:
             kw["resources"] = set(self.resources)
         if "interfaces" in s:
-            kw["interfaces"] = dict(self.interfaces)
+            kw["interfaces"] = {k: e.to_runtime() for k, e in self.interfaces.items()}
         if "telnet_options" in s:
             kw["telnet_options"] = self.telnet_options.to_runtime()
         if "snmp" in s:

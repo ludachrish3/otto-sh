@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from otto.host.command_frame import ZephyrFrame
 from otto.host.embedded_filesystem import NoFileSystem
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.interface import Interface
 from otto.host.options import TelnetOptions
 from otto.host.toolchain import Toolchain
 from otto.host.unix_host import UnixHost
@@ -246,13 +247,13 @@ def test_hostspec_interfaces_resolve_on_built_host():
         interfaces={"mgmt": "10.9.9.9"},
     )
     host = spec.to_host()
-    assert host.interfaces == {"mgmt": "10.9.9.9"}
+    assert host.interfaces == {"mgmt": Interface(ip="10.9.9.9")}
     assert host.address_for("mgmt") == "10.9.9.9"
 
 
 def test_hostspec_interfaces_accepts_ipv6():
     spec = HostSpec(ip="10.0.0.1", element="lab", interfaces={"v6": "2001:db8::1"})
-    assert spec.interfaces["v6"] == "2001:db8::1"
+    assert spec.interfaces["v6"].ip == "2001:db8::1"
 
 
 def test_hostspec_interfaces_rejects_non_ip_value():
@@ -615,3 +616,35 @@ class TestCredSpec:
     def test_creds_required_on_unix_host(self):
         with pytest.raises(ValidationError):
             UnixHostSpec.model_validate(CRED_BASE)
+
+
+class TestInterfaceSpec:
+    """interfaces: dict[netdev -> InterfaceSpec], with bare-string shorthand."""
+
+    def _host(self, interfaces: object) -> dict:
+        return {
+            "ip": "192.0.2.1",
+            "element": "iface-host",
+            "creds": [{"login": "u", "password": "p"}],
+            "interfaces": interfaces,
+        }
+
+    def test_object_form_parses(self):
+        spec = UnixHostSpec.model_validate(self._host({"eth1": {"ip": "10.0.0.5"}}))
+        assert spec.interfaces["eth1"].ip == "10.0.0.5"
+
+    def test_string_shorthand_coerces(self):
+        spec = UnixHostSpec.model_validate(self._host({"eth1": "10.0.0.5"}))
+        assert spec.interfaces["eth1"].ip == "10.0.0.5"
+
+    def test_bad_ip_rejected(self):
+        with pytest.raises(ValidationError, match="not a valid IP"):
+            UnixHostSpec.model_validate(self._host({"eth1": {"ip": "not-an-ip"}}))
+
+    def test_unknown_interface_key_rejected(self):
+        with pytest.raises(ValidationError):
+            UnixHostSpec.model_validate(self._host({"eth1": {"ip": "10.0.0.5", "mac": "x"}}))
+
+    def test_runtime_host_gets_interface_objects(self):
+        host = UnixHostSpec.model_validate(self._host({"eth1": "10.0.0.5"})).to_host()
+        assert host.interfaces["eth1"] == Interface(ip="10.0.0.5")
