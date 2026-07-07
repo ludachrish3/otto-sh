@@ -37,7 +37,7 @@ def test_schema_export_writes_json_files(tmp_path: Path) -> None:
     assert r.returncode == 0, r.stderr
     written = list(out.glob("*.schema.json"))
     assert written, f"no schema files written to {out}"
-    json.loads((out / "hosts.schema.json").read_text())  # one is valid JSON
+    json.loads((out / "lab.schema.json").read_text())  # one is valid JSON
     assert_no_output_dir(tmp_path)  # schema is informational — no run dir
 
 

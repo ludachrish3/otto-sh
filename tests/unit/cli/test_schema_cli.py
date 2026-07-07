@@ -18,7 +18,8 @@ def test_export_writes_all_documents(tmp_path):
     assert {
         "unix-host.schema.json",
         "embedded-host.schema.json",
-        "hosts.schema.json",
+        "lab.schema.json",
+        "link.schema.json",
         "settings.schema.json",
         "reservations.schema.json",
     } <= written
@@ -33,4 +34,4 @@ def test_export_reports_what_it_wrote(tmp_path):
     out = tmp_path / "schemas"
     result = runner.invoke(schema_app, ["export", "--out", str(out), "--builtins-only"])
     assert result.exit_code == 0
-    assert "hosts.schema.json" in result.output
+    assert "lab.schema.json" in result.output

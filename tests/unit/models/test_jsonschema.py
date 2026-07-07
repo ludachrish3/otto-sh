@@ -12,7 +12,8 @@ def test_default_set_of_documents():
     assert set(docs) >= {
         "unix-host",
         "embedded-host",
-        "hosts",
+        "lab",
+        "link",
         "settings",
         "reservations",
         "monitor-meta",
@@ -34,7 +35,8 @@ def test_friendly_title_wins_over_the_models_class_name_title():
     assert docs["settings"]["title"] == "otto settings.toml"
     assert docs["unix-host"]["title"] == "otto unix-host"
     assert docs["reservations"]["title"] == "otto reservations"
-    assert docs["hosts"]["title"] == "otto hosts.json"
+    assert docs["lab"]["title"] == "otto lab.json"
+    assert docs["link"]["title"] == "otto link"
 
 
 def test_host_specs_forbid_unknown_keys():
@@ -43,8 +45,28 @@ def test_host_specs_forbid_unknown_keys():
     assert docs["embedded-host"]["additionalProperties"] is False
 
 
-def test_hosts_wrapper_is_an_anyof_array_with_discriminator():
-    hosts = build_schemas()["hosts"]
+def test_lab_schema_emitted():
+    docs = build_schemas(builtins_only=True)
+    assert "hosts" not in docs  # hard cutover: array-only schema retired
+    lab = docs["lab"]
+    assert lab["type"] == "object"
+    assert set(lab["properties"]) == {"hosts", "links"}
+    assert lab["properties"]["hosts"]["type"] == "array"
+    assert lab["properties"]["links"]["type"] == "array"
+    assert lab["additionalProperties"] is False
+    assert "^_" in lab.get("patternProperties", {})  # top-level comment keys
+
+
+def test_link_schema_emitted():
+    docs = build_schemas(builtins_only=True)
+    link = docs["link"]
+    assert link["title"] == "otto link"
+    assert "endpoints" in link["properties"]
+
+
+def test_lab_hosts_property_is_an_anyof_array_with_discriminator():
+    lab = build_schemas()["lab"]
+    hosts = lab["properties"]["hosts"]
     assert hosts["type"] == "array"
     items = hosts["items"]
     # anyOf, not oneOf — minimal hosts validate against >1 spec.
@@ -62,8 +84,8 @@ def test_hosts_wrapper_is_an_anyof_array_with_discriminator():
         "embedded": "#/$defs/EmbeddedHostSpec",
         "zephyr": "#/$defs/EmbeddedHostSpec",
     }
-    assert "UnixHostSpec" in hosts["$defs"]
-    assert "EmbeddedHostSpec" in hosts["$defs"]
+    assert "UnixHostSpec" in lab["$defs"]
+    assert "EmbeddedHostSpec" in lab["$defs"]
 
 
 def test_custom_registered_spec_appears(monkeypatch):
@@ -74,8 +96,9 @@ def test_custom_registered_spec_appears(monkeypatch):
 
     monkeypatch.setitem(op._HOST_SPECS, "acme", AcmeSpec)
     docs = build_schemas()
-    assert "acme" in docs["hosts"]["items"]["discriminator"]["mapping"]
-    assert docs["hosts"]["items"]["discriminator"]["mapping"]["acme"] == "#/$defs/AcmeSpec"
+    mapping = docs["lab"]["properties"]["hosts"]["items"]["discriminator"]["mapping"]
+    assert "acme" in mapping
+    assert mapping["acme"] == "#/$defs/AcmeSpec"
     assert "acme" in docs  # its own per-spec file (stem from the class name)
 
 
@@ -99,12 +122,13 @@ def test_builtins_only_excludes_custom_specs(monkeypatch):
 
     full = build_schemas()
     assert "acme" in full
-    assert "acme" in full["hosts"]["items"]["discriminator"]["mapping"]
+    assert "acme" in full["lab"]["properties"]["hosts"]["items"]["discriminator"]["mapping"]
 
     builtins = build_schemas(builtins_only=True)
     assert "acme" not in builtins
-    assert "acme" not in builtins["hosts"]["items"]["discriminator"]["mapping"]
-    assert set(builtins["hosts"]["items"]["discriminator"]["mapping"]) == {
+    mapping = builtins["lab"]["properties"]["hosts"]["items"]["discriminator"]["mapping"]
+    assert "acme" not in mapping
+    assert set(mapping) == {
         "unix",
         "embedded",
         "zephyr",
@@ -143,7 +167,7 @@ class TestSelectorEnums:
     def test_hosts_array_defs_carry_enums(self):
         from otto.models.jsonschema import build_schemas
 
-        defs = build_schemas()["hosts"]["$defs"]
+        defs = build_schemas()["lab"]["$defs"]
         unix_def = next(
             d
             for d in defs.values()

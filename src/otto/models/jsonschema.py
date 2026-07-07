@@ -9,8 +9,12 @@ Emitted documents (default):
 
 - one self-contained file per *distinct* registered host spec
   (``unix-host``, ``embedded-host``, …),
-- ``hosts`` — the array schema for the whole ``lab.json`` file, assembled from
-  the registry with ``anyOf`` + an ``os_type`` discriminator hint,
+- ``lab`` — the object schema for the whole ``lab.json`` file: a ``hosts``
+  array (assembled from the registry with ``anyOf`` + an ``os_type``
+  discriminator hint) and a ``links`` array, plus the ``^_`` comment-key
+  escape,
+- ``link`` — the schema for one ``lab.json`` ``links`` entry
+  (:class:`~otto.models.link.LinkSpec`),
 - ``settings`` — for ``settings.toml``,
 - ``reservations`` — for the reservations JSON file,
 - ``monitor-meta`` — the monitor dashboard's ``/api/meta`` payload
@@ -27,6 +31,7 @@ from ..host.connections import TERM_BACKENDS
 from ..host.os_profile import registered_host_specs
 from ..host.transfer import TRANSFER_BACKENDS
 from .host import HostSpec
+from .link import LinkSpec
 from .monitor import MonitorMeta
 from .settings import ReservationFile, SettingsModel
 
@@ -107,10 +112,30 @@ def _inject_selector_enums(schema: dict[str, Any], spec_cls: type[HostSpec]) -> 
         props["valid_transfers"] = _scalar_or_list_with_enum(props["valid_transfers"], names)
 
 
-def _host_array_schema(
+def _inject_interface_shorthand(schema: dict[str, Any]) -> None:
+    """Rewrite ``interfaces`` to accept a bare IP string per entry, in place.
+
+    ``HostSpec._coerce_interface_shorthand`` is a ``mode="before"`` validator
+    (so it's invisible to pydantic's schema generation) that accepts
+    ``{"eth0": "10.0.0.5"}`` as shorthand for ``{"eth0": {"ip": "10.0.0.5"}}``.
+    Mirrors ``_inject_selector_enums``'s scalar-or-... rewrite pattern: each
+    value in the ``interfaces`` map may be a bare string or an
+    :class:`~otto.models.host.InterfaceSpec` object. No-op for a spec without
+    an ``interfaces`` property.
+    """
+    props = schema.get("properties")
+    if not isinstance(props, dict) or "interfaces" not in props:
+        return
+    ref = props["interfaces"].get("additionalProperties")
+    if not isinstance(ref, dict):
+        return
+    props["interfaces"]["additionalProperties"] = {"anyOf": [{"type": "string"}, ref]}
+
+
+def _hosts_array_schema(
     distinct: list[type[HostSpec]], names: dict[str, type[HostSpec]]
 ) -> dict[str, Any]:
-    """Build the ``lab.json`` array schema.
+    """Build the ``lab.json`` ``hosts`` array schema.
 
     Uses ``anyOf`` over the distinct specs with a shared ``$defs`` and an
     ``os_type`` discriminator mapping covering every registered name.
@@ -123,6 +148,7 @@ def _host_array_schema(
         key = defs_map[(s, "validation")]["$ref"].rsplit("/", 1)[-1]
         if key in top["$defs"]:
             _inject_selector_enums(top["$defs"][key], s)
+            _inject_interface_shorthand(top["$defs"][key])
     return {
         "type": "array",
         "items": {
@@ -135,6 +161,22 @@ def _host_array_schema(
             },
         },
         "$defs": top["$defs"],
+    }
+
+
+def _lab_schema(hosts_array: dict[str, Any]) -> dict[str, Any]:
+    """Build the ``lab.json`` object schema: ``hosts``/``links`` sections + ``_`` comments."""
+    link_doc = LinkSpec.model_json_schema(ref_template="#/$defs/{model}")
+    defs = {**hosts_array.pop("$defs", {}), **link_doc.pop("$defs", {})}
+    return {
+        "type": "object",
+        "properties": {
+            "hosts": hosts_array,
+            "links": {"type": "array", "items": link_doc},
+        },
+        "patternProperties": {"^_": {}},
+        "additionalProperties": False,
+        "$defs": defs,
     }
 
 
@@ -153,9 +195,13 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
         stem = _stem(spec)
         doc = spec.model_json_schema()
         _inject_selector_enums(doc, spec)
+        _inject_interface_shorthand(doc)
         docs[stem] = _decorate(doc, stem, f"otto {stem}")
 
-    docs["hosts"] = _decorate(_host_array_schema(distinct, names), "hosts", "otto hosts.json")
+    docs["lab"] = _decorate(
+        _lab_schema(_hosts_array_schema(distinct, names)), "lab", "otto lab.json"
+    )
+    docs["link"] = _decorate(LinkSpec.model_json_schema(), "link", "otto link")
     docs["settings"] = _decorate(
         SettingsModel.model_json_schema(), "settings", "otto settings.toml"
     )

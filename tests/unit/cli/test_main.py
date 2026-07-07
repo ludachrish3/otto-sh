@@ -176,7 +176,7 @@ class TestLabFreeSubcommands:
             env={"OTTO_LAB": ""},
         )
         assert result.exit_code == 0, result.output
-        assert (out / "hosts.schema.json").is_file()
+        assert (out / "lab.schema.json").is_file()
 
 
 # ── Lab-free flags: --help and --list-* discovery ────────────────────────────
