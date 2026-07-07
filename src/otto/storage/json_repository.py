@@ -105,11 +105,18 @@ class JsonFileLabRepository:
         # Guard: all_hosts_data spans ALL lab files, including entries never
         # validated (they belong to other labs) — skip shapes that can't
         # produce an id rather than crash link resolution on someone else's typo.
-        addressing = dict(
-            addressing_from_dict(h)
-            for h in all_hosts_data
-            if isinstance(h, dict) and isinstance(h.get("element"), str)
-        )
+        # The requested lab's own hosts were already validated above, so any
+        # exception here belongs to an unrelated lab's malformed record.
+        addressing: dict[str, Any] = {}
+        for h in all_hosts_data:
+            if not (isinstance(h, dict) and isinstance(h.get("element"), str)):
+                continue
+            try:
+                host_id, host_addressing = addressing_from_dict(h)
+            except Exception:  # noqa: BLE001 — per-item resilience, see guard above
+                logger.debug(f"Skipping malformed cross-lab host record: {h!r}")
+                continue
+            addressing[host_id] = host_addressing
         loaded_ids = set(lab.hosts)
         try:
             declared = resolve_declared_links(all_links_data, addressing, source=LAB_FILENAME)

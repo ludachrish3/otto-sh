@@ -469,6 +469,35 @@ class TestDeclaredLinks:
         with pytest.raises(LabRepositoryError, match=r"lab\.json.*index 0"):
             repo.load_lab("veggies")
 
+    @pytest.mark.parametrize(
+        "malformed_fields",
+        [
+            {"interfaces": None},
+            {"interfaces": ["eth0"]},
+            {"interfaces": {"eth0": 123}},
+            {"board": 123},
+        ],
+        ids=["interfaces-none", "interfaces-list", "interfaces-bad-entry", "board-int"],
+    )
+    def test_malformed_unrelated_lab_host_does_not_crash_load(self, tmp_path, malformed_fields):
+        """A malformed host record belonging to a DIFFERENT lab must be skipped
+        by the cross-lab addressing build, not crash the requested lab's load.
+        """
+        host_a = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        malformed_other = {
+            **HOST_ENTRY,
+            "element": "kiwi",
+            "board": "seed",
+            "labs": ["other"],
+            **malformed_fields,
+        }
+        _write_lab(tmp_path, hosts=[host_a, malformed_other])
+
+        repo = JsonFileLabRepository([tmp_path])
+        lab = repo.load_lab("veggies")
+
+        assert "carrot_seed" in lab.hosts
+
 
 class TestLoadLabWithPreferences:
     """End-to-end tests for the unified ``preferences=`` parameter on ``load_lab``."""
