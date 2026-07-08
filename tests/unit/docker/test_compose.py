@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import getpass
 import logging
+import re
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -303,6 +304,42 @@ async def test_compose_up_idempotent_when_already_running(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_compose_up_second_call_reregisters_without_raising(tmp_path):
+    """A second compose_up for the same service (e.g. after a container
+    restart bumped its container id) must re-register cleanly, not raise.
+
+    The registered host id (``<parent_id>.<project>.<service>``) is stable
+    across calls, so a second ``compose_up`` targets the SAME id every time —
+    exercising the explicit ``lab.hosts.pop(host.id, None); lab.add_host(host)``
+    pattern in ``compose_up`` (Lab.add_host on its own rejects a duplicate id
+    outright; see test_placeholder_id_collision_with_different_host_is_rejected).
+    """
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+    container_ids = iter(["abc111", "def222"])
+
+    async def oneshot(cmd, *_, **__):
+        if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
+            return _ok("xyz\n")  # stack always reports "up"
+        if "config" in cmd and "--services" in cmd:
+            return _ok("api\n")
+        if "label=com.docker.compose.project=" in cmd and "service=" in cmd:
+            return _ok(f"{next(container_ids)}\n")
+        return _ok()
+
+    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+
+    first = await compose_up(repo, lab, build=False)
+    second = await compose_up(repo, lab, build=False)  # must NOT raise
+
+    assert first["api"].id == second["api"].id
+    assert first["api"].container_id == "abc111"
+    assert second["api"].container_id == "def222"  # replaced in place
+    assert lab.hosts[second["api"].id] is second["api"]  # exactly one entry, the latest
+
+
+@pytest.mark.asyncio
 async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monkeypatch):
     """A transient libnetwork "network ... not found" on the first `up -d` is
     retried once; the convergent re-run then starts the already-created
@@ -535,6 +572,45 @@ def test_register_declared_noop_without_capable_hosts(tmp_path):
     lab = Lab(name="empty")  # no hosts at all
     n = register_declared_container_hosts(lab, [repo])
     assert n == 0
+
+
+def test_placeholder_id_collision_with_different_host_is_rejected(tmp_path):
+    """A genuinely colliding placeholder — a DIFFERENT host already
+    registered under the exact id a new placeholder would take — is
+    rejected by Lab.add_host, not silently overwritten.
+
+    register_declared_container_hosts's own `if placeholder.id in
+    lab.hosts: continue` guard never reaches add_host for this case (it
+    treats any existing entry, ours or otherwise, as "already handled"),
+    so this exercises add_host directly — the safety net that compose_up's
+    own explicit pop-then-add (see test_compose_up_second_call_reregisters_
+    without_raising) deliberately routes around only for ITS OWN
+    re-registrations.
+    """
+    repo = _make_repo(tmp_path)
+    lab = _make_lab()
+    parent = lab.hosts["pepper_seed"]
+
+    placeholder = DockerContainerHost(
+        parent=parent,
+        container_id="",
+        project=repo.name,
+        service="api",
+        compose_project=get_user_compose_project(repo.name),
+        resources=set(parent.resources),
+    )
+
+    # A pre-existing, unrelated host occupying the exact id the placeholder
+    # would take.
+    existing = MagicMock()
+    existing.id = placeholder.id
+    lab.hosts[placeholder.id] = existing
+
+    with pytest.raises(KeyError, match=re.escape(placeholder.id)):
+        lab.add_host(placeholder)
+
+    # The unrelated host must survive untouched — no silent overwrite.
+    assert lab.hosts[placeholder.id] is existing
 
 
 def _make_bare_repo(tmp: Path, *, name: str = "bare1") -> Repo:

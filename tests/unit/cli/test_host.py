@@ -202,6 +202,48 @@ class TestResolveHost:
         assert "No host with ID" in result.output
 
 
+class TestResolveCliHostHop:
+    def test_hop_handle_resolves_to_canonical_id(self):
+        """A positional-handle ``--hop`` (e.g. "dut1", the N-th "dut" host by
+        logical index) must be canonicalized before being stored on
+        ``host.hop`` — downstream hop lookups (e.g.
+        ``RemoteHost._build_hop_transport``'s ``lab.hosts[hop_id]``) are
+        canonical-id-only and would KeyError on a raw handle.
+
+        ``get_host`` is the lab-data-lookup I/O boundary (see conftest mock
+        policy), so it's faked here to mimic ``Lab.resolve_handle``: "dut1"
+        (the positional handle) resolves to the host whose canonical id is
+        "dut47" (a repeated "dut" element whose lowest element_id sorts to
+        logical index 1).
+        """
+        target_host = _make_host("router1")
+        canonical_hop_host = _make_host("dut47")
+
+        def _fake_get_host(host_id: str, **_overrides: object) -> UnixHost:
+            if host_id == "router1":
+                return target_host
+            if host_id == "dut1":
+                return canonical_hop_host
+            raise KeyError(host_id)
+
+        ctx = SimpleNamespace(
+            obj=None,
+            meta={
+                "_otto_host_request": {
+                    "host_id": "router1",
+                    "hop": "dut1",
+                    "term": None,
+                    "transfer": None,
+                }
+            },
+        )
+
+        with patch.object(host_module, "get_host", side_effect=_fake_get_host):
+            host = host_module.resolve_cli_host(ctx)
+
+        assert host.hop == "dut47"
+
+
 # ── run command ───────────────────────────────────────────────────────────────
 
 

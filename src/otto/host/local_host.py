@@ -153,7 +153,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             session_factory=LocalSession,
             oneshot_factory=self._exec_subprocess,
             creds=[],
-            host_id=self.name,
+            host_id=self.id,
         )
         self._file_transfer = LocalFileTransfer(name=self.name)
 

@@ -30,8 +30,8 @@ def parse_lab_sections(data: object, source: str) -> dict[str, list[Any]]:
     """Validate a parsed ``lab.json`` object's section shape; return its sections.
 
     The single source of truth for the ``lab.json`` object contract — shared by
-    the runtime loader (:meth:`JsonFileLabRepository._load_lab_file`) and the
-    ``otto init`` doctor (:func:`otto.cli.init._validate_lab`) so the doctor
+    the runtime loader (``JsonFileLabRepository._load_lab_file``) and the
+    ``otto init`` doctor (``otto.cli.init._validate_lab``) so the doctor
     cannot drift from what otto actually accepts (there is no second validator
     to drift). *data* is the already-parsed JSON value; *source* names its
     origin (a file path) for error messages.
@@ -158,6 +158,13 @@ class JsonFileLabRepository:
                 host_id, host_addressing = addressing_from_dict(h)
             except Exception:  # noqa: BLE001 — per-item resilience, see guard above
                 logger.debug(f"Skipping malformed cross-lab host record: {h!r}")
+                continue
+            if host_id in addressing and addressing[host_id] != host_addressing:
+                logger.warning(
+                    "Duplicate host id %r across lab files with differing addressing; "
+                    "keeping the first. Differentiate the element, element_id, or board/slot.",
+                    host_id,
+                )
                 continue
             addressing[host_id] = host_addressing
         loaded_ids = set(lab.hosts)

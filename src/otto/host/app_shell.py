@@ -222,6 +222,17 @@ class AppShellTimeoutError(TimeoutError):
     """
 
 
+# Give-up ceiling for the app-shell teardown confirm in ``_exit`` — NOT an
+# expected wait. Once the graceful path stopped SIGINT-racing the app's own exit
+# (the wedge bug), a responsive shell confirms on the first probe and pays
+# nothing here; this is only the point at which a genuinely-stuck shell is
+# declared dead. A little larger than ``session._RECOVERY_TIMEOUT`` (5s) so a
+# REPL that is merely CPU-starved (not wedged) still returns the POSIX shell
+# under realistic ``-n auto`` contention, without the fast-fail post-timeout
+# path inheriting the looser budget. See the app-shell recovery e2e.
+_EXIT_RECOVERY_TIMEOUT = 10.0
+
+
 class AppShell:
     r"""Base class for an application REPL living inside a shell session.
 
@@ -454,8 +465,21 @@ class AppShell:
         """
         inner = self._session._session  # noqa: SLF001 — intra-package access to the HostSession's ShellSession for recovery + lock release
         try:
-            if not self._broken:
+            if self._broken:
+                # The REPL is in an unknown/hung state (a prompt wait timed out),
+                # so no graceful quit was sent — interrupt it (Ctrl+C / SIGINT)
+                # to break out, then confirm the POSIX shell is back.
+                await inner._recover_session(deadline=_EXIT_RECOVERY_TIMEOUT)  # noqa: SLF001 — intra-package interrupt+confirm for a hung app
+            else:
+                # Graceful path: quit_cmd was accepted, so the app is exiting on
+                # its own. Do NOT send an interrupt here — a SIGINT racing the
+                # app's own exit can interrupt the REPL's stdin read and discard
+                # the quit line, wedging it at its prompt forever (it then treats
+                # every recovery probe as REPL input and never hands the POSIX
+                # shell back — the app-shell recovery e2e flake under CPU load).
+                # Just confirm the shell returned, with a load-tolerant budget so
+                # a slow-to-quit REPL under starvation still confirms.
                 await self._session.send(self.quit_cmd + "\n")
-            await inner._recover_session()  # noqa: SLF001 — intra-package call to re-confirm the POSIX shell after the app exits
+                await inner._confirm_recovered(deadline=_EXIT_RECOVERY_TIMEOUT)  # noqa: SLF001 — intra-package confirm-only after a graceful app exit
         finally:
             inner._app_shell = None  # noqa: SLF001 — always release the app-shell lock

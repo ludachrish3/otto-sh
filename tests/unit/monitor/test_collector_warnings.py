@@ -232,6 +232,7 @@ class TestSnmpSilentOidWarning:
 
         host = MagicMock()
         host.name = "zeph1"
+        host.id = "zeph1"
         target = MonitorTarget(
             host=host,
             snmp=SnmpSource(client=SnmpClient(address="10.0.0.1"), oids=["1.2.3.4.0"]),
@@ -285,6 +286,7 @@ class TestSnmpRatePlumbing:
         )
         host = MagicMock()
         host.name = "zeph3"
+        host.id = "zeph3"
         target = MonitorTarget(
             host=host,
             snmp=SnmpSource(client=SnmpClient(address="10.0.0.1"), oids=[oid]),

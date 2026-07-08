@@ -450,6 +450,18 @@ class BaseHost(ABC):
     resources: set[str]
     products: list["Product"]
     power_control: "PowerController | None"
+
+    @override
+    def __str__(self) -> str:
+        """Return the human-readable display name.
+
+        So ``print(host)`` / ``f"{host}"`` / ``log.info("... %s", host)`` render
+        the friendly name (e.g. ``Lab X Server``), not the correlation id or the
+        dataclass repr. ``repr`` is left to the dataclass (id + fields) for
+        debugging; identity/correlation still uses ``host.id``.
+        """
+        return self.name
+
     ####################
     #  Dry-run helpers
     ####################

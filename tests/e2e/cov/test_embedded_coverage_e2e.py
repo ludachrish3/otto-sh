@@ -212,8 +212,9 @@ def test_embedded_coverage_cli_e2e(clean_sprout_cov, tmp_path):
 
     # The collector decoded a .gcda for the embedded host (cross-loop fix +
     # real hop transport), and the report rendered (cross-gcov lcov fix).
-    gcda = cov_dir / "sprout_cov" / "cov_ext.c.gcda"
-    assert gcda.exists(), f"no decoded .gcda staged for sprout_cov\n{result.stdout[-2000:]}"
+    # Staged under the host id, which is the slug of element "sprout_cov" -> "sprout-cov".
+    gcda = cov_dir / "sprout-cov" / "cov_ext.c.gcda"
+    assert gcda.exists(), f"no decoded .gcda staged for sprout-cov\n{result.stdout[-2000:]}"
     assert (report_dir / "index.html").exists(), "no HTML report rendered"
 
     # The product file is covered (the cross-gcov processed the .gcda + .gcno).

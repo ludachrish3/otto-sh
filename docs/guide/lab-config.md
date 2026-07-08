@@ -44,9 +44,11 @@ field includes `"veggies"`.  `links` is covered in {ref}`lab-links` below;
 when a file declares none, `"links": []` (or omitting the key) is fine.
 
 The host **id** used by `get_host()`, `--list-hosts`, and the rest of the CLI
-is derived from the `element`, `board`, and `element_id` fields.  `carrot` with board
-`seed` becomes `carrot_seed`; `carrot` with board `seed` and `element_id` `2`
-becomes `carrot_seed_2`.
+is `slug(element)`, plus `element_id` when set, plus (only when a `board` is
+set) `_` + `slug(board)` and then `slot` when set — so `slot` never appears
+in the id without a `board`.  See {ref}`host-identity` below for the exact
+rules, a worked example, and how the display name and CLI handles are derived
+alongside it.
 
 ## Per-host fields
 
@@ -55,7 +57,7 @@ becomes `carrot_seed_2`.
 | Field | Type | Description |
 |-------|------|-------------|
 | `ip` | string | IP address or DNS name otto will connect to. |
-| `element` | string | Network-element name.  Combined with `board` and `element_id` to form the host id. |
+| `element` | string | Network-element name.  Slugged, then combined with `element_id`/`board`/`slot`, to form the host id — see {ref}`host-identity` below. |
 | `creds` | array of objects | Ordered list of `{"login": ..., "password": ...}` entries (the first is the default login unless `user` pins another one).  At least one entry required for Unix hosts; optional for embedded hosts (RTOS telnet shells typically have no login step).  An entry may also carry `proxy`/`via`/`params` to describe a login-proxy hop. |
 | `labs` | array of strings | Lab names this host belongs to.  Without this the host is invisible to `--lab`. |
 
@@ -70,13 +72,68 @@ becomes `carrot_seed_2`.
 | `transfer` | string | File-transfer protocol lab pin — must be in the host's `valid_transfers` menu.  Product `[host_preferences]` and CLI `--transfer` can override; see the precedence chain below. |
 | `valid_terms` | array of strings | Ordered list of term backends that may be selected for this host (gates `--term` and `[host_preferences]`).  Defaults to `["ssh", "telnet"]` for Unix hosts and `["telnet"]` for embedded hosts.  Custom backends registered via `register_term_backend` also appear. |
 | `valid_transfers` | array of strings | Ordered list of transfer backends that may be selected for this host (gates `--transfer` and `[host_preferences]`).  Defaults to `["scp", "sftp", "ftp", "nc"]` for Unix hosts and `["console"]` for embedded hosts.  Custom backends registered via `register_transfer_backend` also appear. |
-| `slot` | integer | Physical slot number of the board to which this host belongs.  Free-form metadata; not part of the host id. |
+| `slot` | integer | Physical slot number of the board to which this host belongs.  Appended to the host id, but only when `board` is also set — see {ref}`host-identity` below. |
 | `hop` | string | Host id of an intermediate SSH jump host.  Otto opens an SSH tunnel through it and routes all subsequent connections automatically.  Hops can chain. |
 | `resources` | array of strings | Free-form resource tags used by the reservation backend. |
 | `is_virtual` | boolean | `true` when the host is a VM or emulator. |
 | `log` | boolean | Whether to log output to stdout and log files (default `true`). |
 | `log_stdout` | boolean | Whether to log output to stdout (default `true`).  Setting `log` to `false` overrides this. |
 | `docker_capable` | boolean | `true` when this host can run Docker containers (Unix hosts only). |
+
+(host-identity)=
+
+### Host identity & naming
+
+There is no separate `id` field.  `element` is both the human-readable name
+*and* the id source: it is **slugged** — lower-cased, with every run of
+characters outside `[a-z0-9]` (spaces, punctuation, `_`) collapsed to a
+single `-`, leading/trailing `-` stripped — to form the canonical id.  The id
+is then `slug(element)`, plus `element_id` when set, plus (only when a `board`
+is set) `_` + `slug(board)` and then `slot` when set: `element_id` can follow
+the element with no board, but `slot` never appears without a board.
+`"Lab X Server"` slugs to `lab-x-server`.  **Renaming `element` changes the
+host's id** — and, transitively, the id of any declared {ref}`link
+<lab-links>` whose `endpoints[].host` names it.
+
+When the same `element` string appears more than once in a lab, disambiguate
+with distinct `element` strings, an `element_id`, or `board`/`slot` — any of
+these changes the resulting id.  Two hosts that still resolve to the same id
+fail the lab load with a clear error instead of one silently overwriting the
+other.
+
+The **display name** (`host.name`) is a separate, human-friendly label: the
+original-case `element`, a small logical number, `board`, and `slot`,
+space-joined (parts omitted when absent).  The logical number is only added
+when the `element` string repeats in the lab — it counts instances in
+ascending `element_id` order, starting at `1` — so a unique `element` gets no
+number.  Setting an explicit `name` on the host entry overrides this
+generated label entirely.
+
+On the CLI, wherever a *host* is named — the `otto host <id>` positional,
+`--hop`, and docker's `--on` — you can type either the canonical id or the
+shorter positional handle `<element-slug><logical number>` (e.g. `dut1` for
+the first `dut`); tab completion offers both forms.
+
+```json
+{
+  "hosts": [
+    { "ip": "10.0.0.2", "element": "Lab X Server" },
+    { "ip": "10.0.0.3", "element": "dut", "element_id": 47 },
+    { "ip": "10.0.0.4", "element": "dut", "element_id": 103 }
+  ]
+}
+```
+
+| `element` / `element_id` | Id | Display name | CLI handle(s) |
+|---|---|---|---|
+| `"Lab X Server"` | `lab-x-server` | `Lab X Server` | `lab-x-server` |
+| `"dut"` / `47` | `dut47` | `dut 1` | `dut47`, `dut1` |
+| `"dut"` / `103` | `dut103` | `dut 2` | `dut103`, `dut2` |
+
+`Lab X Server` is the only host with that `element`, so it has no logical
+number and no positional handle — just its id.  The two `dut` hosts share an
+`element`, so each is numbered by ascending `element_id` (`47` before `103`)
+in both its display name and its positional handle.
 
 ### Host type / OS
 

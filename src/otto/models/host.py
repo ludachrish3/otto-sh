@@ -250,6 +250,29 @@ class HostSpec(OttoModel):
             return {k: ({"ip": e} if isinstance(e, str) else e) for k, e in v.items()}
         return v
 
+    @field_validator("element", "board")
+    @classmethod
+    def _validate_slugs_nonempty(cls, v: str | None) -> str | None:
+        """Reject an ``element``/``board`` that slugs to an empty id.
+
+        They are free human strings but must slug to a non-empty ``[a-z0-9-]``
+        token (else they cannot form a valid id).
+        """
+        if v is None:
+            return v
+        from ..host.remote_host import slug
+
+        if not slug(v):
+            raise ValueError(f"{v!r} slugs to an empty id (needs at least one letter or digit)")
+        return v
+
+    @field_validator("element_id", "slot")
+    @classmethod
+    def _validate_nonnegative(cls, v: int | None) -> int | None:
+        if v is not None and v < 0:
+            raise ValueError(f"must be >= 0, got {v}")
+        return v
+
     @field_validator("command_frame")
     @classmethod
     def _validate_command_frame_name(cls, v: str | None) -> str | None:

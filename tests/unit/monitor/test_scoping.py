@@ -74,9 +74,10 @@ class TestPerHostScoping:
                     timeout=5,
                 )
             series = set(collector._store.series)
-            assert "scope_a/Uptime" in series  # registered host gets the custom metric
-            assert "scope_b/Uptime" not in series  # unregistered host does NOT
-            assert "scope_b/Memory Usage" in series  # ...and keeps the untouched defaults
+            # Series are attributed by host.id, not the display name.
+            assert "scoping-host-a/Uptime" in series  # registered host gets the custom metric
+            assert "scoping-host-b/Uptime" not in series  # unregistered host does NOT
+            assert "scoping-host-b/Memory Usage" in series  # ...and keeps the untouched defaults
             meta = collector.get_meta_model()
             assert any(m.chart == "Uptime" for m in meta.metrics)  # /api/meta grew the chart
         finally:

@@ -101,12 +101,11 @@ class OttoContext:
         """Look up *host_id* in the active lab, apply any keyword overrides, and register it."""
         from .configmodule.configmodule import _apply_option_overrides
 
-        try:
-            host = self.lab.hosts[host_id]
-        except KeyError:
+        host = self.lab.resolve_handle(host_id)
+        if host is None:
             raise KeyError(
                 f"No host {host_id!r} in lab {self.lab.name!r}. Available: {sorted(self.lab.hosts)}"
-            ) from None
+            )
         resolved = _apply_option_overrides(cast("Any", host), **overrides)
         self.scope.register(resolved)
         return cast("UnixHost", resolved)

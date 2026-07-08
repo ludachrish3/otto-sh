@@ -236,8 +236,11 @@ def resolve_cli_host(ctx: typer.Context) -> RemoteHost:
 
     hop = request.get("hop")
     if hop:
-        _resolve_host(hop)  # Validate the hop host exists
-        host.hop = hop
+        # _resolve_host accepts a positional handle (e.g. dut1) as well as a
+        # canonical id; store the resolved canonical id so downstream
+        # canonical-only lookups (e.g. RemoteHost._build_hop_transport's
+        # `lab.hosts[hop_id]`) don't KeyError on a raw handle.
+        host.hop = _resolve_host(hop).id
         host.rebuild_connections()
 
     term = request.get("term")

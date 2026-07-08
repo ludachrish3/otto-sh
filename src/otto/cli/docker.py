@@ -146,6 +146,28 @@ def _resolve_parent_for_repo(repo: Repo, lab: Lab, on: str | None) -> UnixHost:
     return _resolve_parent(repo, lab, on, list(repo.docker_settings.composes))
 
 
+def _canonicalize_on(lab: Lab, on: str | None) -> str | None:
+    """Resolve a ``--on`` CLI value to its canonical host id.
+
+    ``--on`` is a CLI host-id INPUT — like the ``otto host`` positional and
+    ``--hop`` — so per the host-id rules it accepts both canonical ids and
+    positional element-slug handles (``dut1``). Everything downstream
+    (``_select_repos``'s ``lab.hosts`` membership check, ``_resolve_parent``'s
+    ``lab.hosts[...]`` lookup) is canonical-id-only, so resolve the handle
+    here, once, at the CLI boundary — never pass a raw handle further in.
+    """
+    if on is None:
+        return None
+    host = lab.resolve_handle(on)
+    if host is None:
+        rprint(
+            f"[red]--on {on!r} is not a host in the active lab {lab.name!r}. "
+            f"Available hosts: {sorted(lab.hosts)}"
+        )
+        raise typer.Exit(1)
+    return host.id
+
+
 async def _build(
     repo: Annotated[
         str | None, typer.Option("--repo", help="Restrict to a single repo by name.")
@@ -165,6 +187,7 @@ async def _build(
 ) -> None:
     """Build docker images declared in selected repos."""
     lab = get_lab()
+    on = _canonicalize_on(lab, on)
     selected_repos = _select_repos(repo, on=on)
     any_failed = False
     for r in selected_repos:
@@ -205,6 +228,7 @@ async def _up(
     only published images and otto's build step is unnecessary.
     """
     lab = get_lab()
+    on = _canonicalize_on(lab, on)
     selected_repos = _select_repos(repo, on=on)
     for r in selected_repos:
         if not r.docker_settings.composes:
@@ -229,6 +253,7 @@ async def _down(
 ) -> None:
     """Tear down compose stacks for selected repos."""
     lab = get_lab()
+    on = _canonicalize_on(lab, on)
     selected_repos = _select_repos(repo, on=on)
     any_failed = False
     for r in selected_repos:
@@ -260,7 +285,9 @@ async def _ps(
     lab = get_lab()
     parents: list[UnixHost] = []
     if on:
-        host = lab.hosts.get(on)
+        # --on is a CLI host-id input: accept a canonical id or a positional
+        # handle (e.g. dut1), same as `otto host`.
+        host = lab.resolve_handle(on)
         if not isinstance(host, UnixHost) or not host.docker_capable:
             rprint(f"[red]{on!r} is not a docker-capable lab host.")
             raise typer.Exit(1)

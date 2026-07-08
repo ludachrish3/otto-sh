@@ -73,12 +73,13 @@ max_filename_len = 32
 # embedded test hosts and the `basil` SSH hop out — so the collect-from set is
 # repo-declared, not inferred from which hosts happen to emit .gcda. The same
 # selector scopes the TestEmbeddedCoverage suite (which hosts it loads the
-# instrumented extension onto). The re.search match means "sprout_cov" selects
-# BOTH coverage beds — sprout_cov (3.7) and sprout_cov44 (4.4) — so coverage is
-# collected across multiple Zephyr versions. Future (per
-# embedded_cortex_m_migration.md): when every QEMU host can emit coverage,
-# widen this further (e.g. "sprout").
-hosts = "sprout_cov"
+# instrumented extension onto). The re.search match means "sprout-cov" selects
+# BOTH coverage beds — sprout-cov (3.7) and sprout-cov44 (4.4) — so coverage is
+# collected across multiple Zephyr versions. (The ids are hyphenated: the
+# elements "sprout_cov"/"sprout_cov44" slug their underscore to a hyphen under
+# the host-id rules.) Future (per embedded_cortex_m_migration.md): when every
+# QEMU host can emit coverage, widen this further (e.g. "sprout").
+hosts = "sprout-cov"
 
 [coverage.embedded]
 # LLEXT extension name — matches add_llext_target(cov_ext) in product/. otto

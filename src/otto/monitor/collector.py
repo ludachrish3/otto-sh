@@ -298,7 +298,7 @@ class MetricCollector:
             match result:
                 case Results() as res:
                     await self._process_host_results(
-                        target.host.name,
+                        target.host.id,
                         ts,
                         list(res),
                         target.parsers,
@@ -550,7 +550,7 @@ class MetricCollector:
     ) -> None:
         if target.snmp is None:  # routing invariant from _collect_bucket; keeps ty narrow
             return
-        host_name = target.host.name
+        host_name = target.host.id
         for oid, raw in values.items():
             # Not success-gated by design (unlike the shell path above): SNMP
             # has no retcode concept, and transport/PDU failures already warn

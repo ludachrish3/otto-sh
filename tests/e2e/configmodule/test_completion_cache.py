@@ -194,7 +194,11 @@ def _host_completions(result: subprocess.CompletedProcess[str]) -> set[str]:
 # tech1/lab.json splits into two labs: `veggies` (carrot/tomato/pepper) and
 # `embedded` (basil/sprout*). Lab-scoped `otto host <TAB>` must show one, not both.
 _VEGGIES = {"carrot_seed", "tomato_seed", "pepper_seed"}
-_EMBEDDED = {"basil_seed", "sprout", "sprout27", "sprout_lfs"}
+# `sprout_lfs` (an element with an underscore) now slugs to `sprout-lfs` under the
+# host-id rules: an underscore *inside* an element folds to a hyphen; only the `_`
+# between element and board survives. `basil_seed` (element `basil` + board `seed`)
+# and the `_seed` veggies are board-separated ids and stay unchanged.
+_EMBEDDED = {"basil_seed", "sprout", "sprout27", "sprout-lfs"}
 
 
 def test_host_completion_scoped_by_lab_flag(tmp_path: Path) -> None:

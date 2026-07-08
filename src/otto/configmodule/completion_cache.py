@@ -849,6 +849,13 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     The built-in hosts are always seeded regardless of the filter, mirroring
     ``load_lab`` injecting ``local`` into every lab.
 
+    Also emits positional logical handles (``<element-slug><N>``, e.g.
+    ``server1``) for every host in a repeated-element group, computed via
+    :func:`otto.configmodule.lab.logical_indices` — the same single source
+    ``Lab._assign_logical_indices`` stamps from — so a completed handle always
+    matches what ``Lab.resolve_handle`` resolves at runtime. Added alongside
+    canonical ids, never in place of them.
+
     Runs without an initialized ConfigModule, so it's safe to call from
     the completion fast path as well as the cache writer on the slow path.
 
@@ -856,13 +863,21 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     silently skipped — completion must never crash on bad user data.
     """
     from ..host.builtin_hosts import builtin_host_ids
+    from ..host.remote_host import slug
     from ..storage.factory import create_host_from_dict, validate_host_dict
+    from .lab import logical_indices
 
     wanted = set(lab_names) if lab_names is not None else None
 
     # Seed with the built-in hosts otto injects into every lab (e.g. `local`) so
     # they are tab-completable in every repo, mirroring load_lab's injection.
     ids: set[str] = set(builtin_host_ids())
+    # Every constructed host across all repos, keyed by id (dedup). Logical
+    # positions are derived from this combined set (once, below) so a group
+    # split across repos' lab.json files is still numbered as one group —
+    # matching how a real Lab merges hosts from multiple sources before
+    # stamping.
+    built: dict[str, Any] = {}
     for repo in repos:
         # Map of host_id -> docker_capable flag, scoped to this repo's labs.
         # Populated as we walk lab.json so we can synthesize container
@@ -881,6 +896,7 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
                 except (ValueError, TypeError):
                     continue
                 ids.add(host.id)
+                built[host.id] = host
                 if getattr(host, "docker_capable", False):
                     docker_capable_ids.append(host.id)
 
@@ -905,6 +921,16 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
             for parent in parents:
                 for service in compose.services:
                     ids.add(f"{parent}.{repo.name}.{service}".lower())
+
+    # Logical handles (<slug(element)><position>) alongside canonical ids, so
+    # `otto host <TAB>` offers exactly what Lab.resolve_handle would resolve at
+    # runtime — logical_indices is the single shared source (see lab.py).
+    positions = logical_indices(built.values())
+    for host in built.values():
+        pos = positions.get(host.id)
+        if pos is not None:
+            ids.add(f"{slug(host.element)}{pos}")
+
     return sorted(ids)
 
 

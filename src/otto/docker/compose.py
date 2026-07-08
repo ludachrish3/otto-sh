@@ -284,8 +284,14 @@ async def compose_up(
             compose_project=proj,
             resources=set(parent.resources),
         )
-        # Register in the lab so otto host <id> finds it.
-        lab.hosts[host.id] = host  # type: ignore[assignment]
+        # Register in the lab so otto host <id> finds it. compose_up is
+        # idempotent and re-registers on every call — replacing a placeholder
+        # from register_declared_container_hosts, or a prior compose_up's
+        # entry for the same service (e.g. after a container restart changed
+        # its id) — so this is an explicit delete-then-add rather than a
+        # silent overwrite (add_host would reject the duplicate id outright).
+        lab.hosts.pop(host.id, None)
+        lab.add_host(host)
         hosts[service] = host
 
     return hosts
@@ -439,7 +445,7 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
                     )
                     if placeholder.id in lab.hosts:
                         continue
-                    lab.hosts[placeholder.id] = placeholder  # type: ignore[assignment]
+                    lab.add_host(placeholder)
                     count += 1
     return count
 

@@ -309,6 +309,42 @@ async def test_up_skips_repo_with_no_composes(tmp_path):
     mock_compose_up.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_up_accepts_positional_handle_for_on(tmp_path):
+    """--on is a CLI host-id input (like `otto host`'s positional), so it must
+    accept a positional handle (e.g. "dut1"), not just a canonical id.
+
+    Two "dut" hosts make the lower element_id host's logical_index 1, so its
+    canonical id ("dut47") is reachable via the handle "dut1". compose_up's
+    downstream lookup is canonical-id-only, so ``_up`` must resolve the
+    handle to "dut47" before calling compose_up — not forward "dut1" raw.
+    """
+    repo = _make_repo(tmp_path / "r1", name="myrepo", default_host="pepper_seed")
+
+    lab = Lab(name="veggies")
+    dut_a = UnixHost(ip="10.0.0.1", creds=[], element="dut", element_id=47)
+    dut_b = UnixHost(ip="10.0.0.2", creds=[], element="dut", element_id=200)
+    lab.add_host(dut_a)
+    lab.add_host(dut_b)
+    lab._assign_logical_indices()
+    assert dut_a.id == "dut47"  # sanity: canonical id
+    assert dut_a.logical_index == 1  # sanity: "dut1" handle -> dut_a
+
+    mock_compose_up = AsyncMock(return_value={})
+
+    with (
+        patch.object(docker_cli, "_select_repos", return_value=[repo]),
+        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(docker_cli, "compose_up", mock_compose_up),
+        patch.object(docker_cli, "get_user_compose_project", return_value="myrepo_proj"),
+        patch.object(docker_cli, "rprint", MagicMock()),
+    ):
+        await docker_cli._up(repo=None, on="dut1", no_build=False)
+
+    mock_compose_up.assert_called_once()
+    assert mock_compose_up.call_args.kwargs["on"] == "dut47"
+
+
 # ---------------------------------------------------------------------------
 # _down command
 # ---------------------------------------------------------------------------
@@ -512,6 +548,33 @@ async def test_ps_specific_capable_host():
         await docker_cli._ps(on="cap_host")
 
     mock_compose_ps.assert_called_once_with(capable)
+
+
+@pytest.mark.asyncio
+async def test_ps_accepts_positional_handle_for_on(tmp_path):
+    """_ps --on <handle> resolves a positional handle (e.g. "dut1") to the
+    matching docker-capable host, same as a canonical id — --on is a CLI
+    host-id input like `otto host`'s positional argument."""
+    dut_a = UnixHost(ip="10.0.0.1", creds=[], element="dut", element_id=47, docker_capable=True)
+    dut_b = UnixHost(ip="10.0.0.2", creds=[], element="dut", element_id=200, docker_capable=True)
+
+    lab = Lab(name="veggies")
+    lab.add_host(dut_a)
+    lab.add_host(dut_b)
+    lab._assign_logical_indices()
+    assert dut_a.id == "dut47"
+    assert dut_a.logical_index == 1
+
+    mock_compose_ps = AsyncMock(return_value=[])
+
+    with (
+        patch.object(docker_cli, "get_lab", return_value=lab),
+        patch.object(docker_cli, "compose_ps", mock_compose_ps),
+        patch.object(docker_cli, "rprint", MagicMock()),
+    ):
+        await docker_cli._ps(on="dut1")
+
+    mock_compose_ps.assert_called_once_with(dut_a)
 
 
 # ---------------------------------------------------------------------------

@@ -49,6 +49,7 @@ def _make_mock_host(name: str, delay: float = 0.0, fail: bool = False) -> MagicM
     """
     host = MagicMock()
     host.name = name
+    host.id = name
     host.log = LogMode.QUIET
 
     async def _run_cmds(cmds, timeout=None):
@@ -304,6 +305,7 @@ class TestSnmpCollection:
     ) -> tuple[MagicMock, MonitorTarget]:
         host = MagicMock()
         host.name = name
+        host.id = name
         host.log = LogMode.QUIET
         host.run = AsyncMock()  # must NOT be called for an SNMP target
         target = MonitorTarget(

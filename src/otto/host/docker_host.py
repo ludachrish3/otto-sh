@@ -161,7 +161,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             session_factory=_make_session,
             oneshot_factory=self._oneshot_via_parent,
             creds=[],
-            host_id=self.name,
+            host_id=self.id,
         )
 
     ####################

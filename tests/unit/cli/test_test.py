@@ -820,7 +820,7 @@ class TestRunCoverageEmbedded:
         )
 
         embedded_collect = AsyncMock(
-            return_value={"sprout_cov": cov_dir / "sprout_cov"},
+            return_value={"sprout-cov": cov_dir / "sprout-cov"},
         )
         cov_config = {
             "embedded": {
@@ -838,7 +838,8 @@ class TestRunCoverageEmbedded:
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
         assert meta["sut_dir"] == str(build_dir.resolve())
-        assert set(meta["toolchains"]) == {"sprout_cov"}
+        # element "sprout_cov" slugs to the id "sprout-cov" (underscore -> hyphen).
+        assert set(meta["toolchains"]) == {"sprout-cov"}
         assert "basil_seed" not in meta["toolchains"]
 
     def test_embedded_toolchain_is_per_host(self, tmp_path):
@@ -871,7 +872,7 @@ class TestRunCoverageEmbedded:
         repo.sut_dir = tmp_path / "repo3"
 
         embedded_collect = AsyncMock(
-            return_value={"sprout_cov": cov_dir / "sprout_cov"},
+            return_value={"sprout-cov": cov_dir / "sprout-cov"},
         )
         cov_config = {
             "embedded": {
@@ -888,7 +889,8 @@ class TestRunCoverageEmbedded:
             asyncio.run(_run_coverage([repo], tmp_path / "log", cov_dir))
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
-        entry = meta["toolchains"]["sprout_cov"]
+        # element "sprout_cov" slugs to the id "sprout-cov" (underscore -> hyphen).
+        entry = meta["toolchains"]["sprout-cov"]
         assert entry["gcov"] == "bin/arm-zephyr-eabi-gcov"
         assert entry["sysroot"] == "/home/vagrant/zephyr-sdk-0.16.8/arm-zephyr-eabi"
         assert entry["lcov"] == "/usr/bin/lcov"
@@ -915,7 +917,7 @@ class TestRunCoverageEmbedded:
         repo.sut_dir = tmp_path / "repo3"
 
         embedded_collect = AsyncMock(
-            return_value={"sprout_cov": cov_dir / "sprout_cov"},
+            return_value={"sprout-cov": cov_dir / "sprout-cov"},
         )
         cov_config = {
             "embedded": {
@@ -943,8 +945,10 @@ class TestRunCoverageEmbedded:
             asyncio.run(test_mod._run_coverage([repo], tmp_path / "log", cov_dir))
 
         meta = json.loads((cov_dir / ".otto_cov_meta.json").read_text())
-        assert meta["toolchains"]["sprout_cov"]["gcov"] == "bin/x-gcov"
-        assert meta["toolchains"]["sprout_cov"]["sysroot"] == "/discovered"
+        # element "sprout_cov" slugs to the id "sprout-cov"; the collect result is
+        # keyed by that id, so the host resolves and its toolchain is recorded.
+        assert meta["toolchains"]["sprout-cov"]["gcov"] == "bin/x-gcov"
+        assert meta["toolchains"]["sprout-cov"]["sysroot"] == "/discovered"
 
     def test_coverage_hosts_regex_passed_to_both_selectors(self, tmp_path):
         """``[coverage].hosts`` compiles to a regex handed to the Unix and

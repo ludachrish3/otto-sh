@@ -79,7 +79,9 @@ def test_host_id_and_name_render_element_id():
         slot=2,
     )
     assert h.id == "test5_boardx2"  # element_id is the NUMBER; id is lower-cased
-    assert h.name == "Test5 BoardX2"  # original case, space-joined name
+    # name shows the lab-scoped logical_index, not element_id; standalone (no
+    # lab) -> no number. Board/slot are now space-separated, original case.
+    assert h.name == "Test BoardX 2"
 
     h2 = UnixHost(ip="1.1.1.1", creds=[Cred(login="root", password="x")], element="solo")
     assert h2.id == "solo"

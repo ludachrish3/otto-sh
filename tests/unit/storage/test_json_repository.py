@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -544,6 +545,56 @@ class TestDeclaredLinks:
         lab = repo.load_lab("veggies")
 
         assert "carrot_seed" in lab.hosts
+
+    def test_duplicate_cross_lab_addressing_warns_and_keeps_first(self, tmp_path, caplog):
+        """Two lab files that each declare a host slugging to the same id, with
+        DIFFERING addressing (different ip), must not raise while building the
+        cross-lab addressing map: the FIRST file's addressing wins, a warning
+        is logged, and the requested lab still loads (cross-lab resilience —
+        distinct from ``Lab.__add__``'s same-lab merge, which fails loud).
+        """
+        path1 = tmp_path / "path1"
+        path2 = tmp_path / "path2"
+        path1.mkdir()
+        path2.mkdir()
+
+        carrot = {**HOST_ENTRY, "element": "carrot", "board": "seed", "labs": ["veggies"]}
+        dup_first = {
+            **HOST_ENTRY,
+            "element": "dup",
+            "board": "seed",
+            "ip": "192.0.2.50",
+            "labs": ["other1"],
+        }
+        dup_second = {
+            **HOST_ENTRY,
+            "element": "dup",
+            "board": "seed",
+            "ip": "192.0.2.99",
+            "labs": ["other2"],
+        }
+        _write_lab(
+            path1,
+            hosts=[carrot, dup_first],
+            links=[
+                {
+                    "endpoints": [{"host": "carrot_seed"}, {"host": "dup_seed"}],
+                    "protocol": "tcp",
+                }
+            ],
+        )
+        _write_lab(path2, hosts=[dup_second])
+
+        repo = JsonFileLabRepository([path1, path2])
+
+        with caplog.at_level(logging.WARNING):
+            lab = repo.load_lab("veggies")
+
+        assert any("Duplicate host id" in r.message for r in caplog.records)
+        assert "carrot_seed" in lab.hosts
+        (link,) = lab.links
+        dup_ip = link.a.ip if link.a.host == "dup_seed" else link.b.ip
+        assert dup_ip == "192.0.2.50"  # first file's addressing kept
 
 
 class TestLoadLabWithPreferences:

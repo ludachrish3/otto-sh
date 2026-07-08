@@ -301,7 +301,9 @@ class FakeShellSession(ShellSession):
 
     Instantiating it exercises the real ``ShellSession.__init__`` (so
     ``_app_shell`` defaults to ``None``) and inherits the real ``run_cmd`` lock
-    guard. ``_recover_session`` records that it ran; ``_ensure_ready`` raises a
+    guard. Both recovery entrypoints record that they ran: ``_recover_session``
+    (the interrupt+confirm the *broken* exit path uses) and ``_confirm_recovered``
+    (the confirm-only the *graceful* exit path uses). ``_ensure_ready`` raises a
     sentinel so a guard-passthrough can be observed without real transport I/O.
     """
 
@@ -330,7 +332,12 @@ class FakeShellSession(ShellSession):
         raise _ReachedEnsureReadyError
 
     @override
-    async def _recover_session(self):
+    async def _recover_session(self, deadline: float = 5.0):
+        self.recovered = True
+        return ""
+
+    @override
+    async def _confirm_recovered(self, deadline: float = 5.0):
         self.recovered = True
         return ""
 
@@ -426,7 +433,8 @@ async def test_attach_launches_yields_and_cleans_up():
 
     # Launch sent, then quit sent, in order.
     assert session.sent == ["mysql\n", "quit\n"]
-    # Frame recovery ran to confirm the POSIX shell is back.
+    # The graceful path confirmed the POSIX shell is back (confirm-only, no
+    # interrupt — sending Ctrl+C/SIGINT here can race the app's own exit).
     assert inner.recovered is True
     # Lock always released on exit.
     assert inner._app_shell is None
