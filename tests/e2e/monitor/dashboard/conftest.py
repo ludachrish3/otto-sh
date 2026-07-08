@@ -99,6 +99,27 @@ def pytest_configure(config: pytest.Config) -> None:
         pytest.exit(str(exc), returncode=1)
 
 
+@pytest.fixture(autouse=True)
+def _generous_playwright_timeout(request: pytest.FixtureRequest) -> None:
+    """Give browser actions/navigations more headroom than Playwright's 30s default.
+
+    These suites are solid — they pass hundreds of consecutive runs at ~33s
+    each even under coverage instrumentation. But a rare, purely environmental
+    ~10x slowdown (a loaded gate host: one run clocked ~340s for the same
+    command and coverage) makes an otherwise-fine ``page.click``/navigation
+    blow past Playwright's default 30s action timeout and fail as a flake, not
+    a bug. Doubling the ceiling to 60s absorbs that transient with zero cost on
+    fast runs (fast actions still return immediately; the timeout is only an
+    upper bound). Scoped to ``browser``-marked tests so the hermetic
+    ``test_harness.py`` lane never instantiates ``page``.
+    """
+    if request.node.get_closest_marker("browser") is None:
+        return
+    page = request.getfixturevalue("page")
+    page.set_default_timeout(60_000)
+    page.set_default_navigation_timeout(60_000)
+
+
 _PROC_META = {
     "Command": "stress",
     "User": "root",
