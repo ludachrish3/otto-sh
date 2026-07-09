@@ -13,8 +13,8 @@ usage, tunnel construction, and host requirements, see the
 .. automodule:: otto.link
    :members:
    :exclude-members: Link, LinkEndpoint, Provenance, make_link_id, all_links,
-      discover_dynamic_links, AddedTunnel, RemovedReport, add_link,
-      remove_all_links, remove_link
+      discover_dynamic_links, discover_dynamic_links_status, AddedTunnel,
+      RemovedReport, add_link, remove_all_links, remove_link
 
 .. automodule:: otto.link.model
    :members:
