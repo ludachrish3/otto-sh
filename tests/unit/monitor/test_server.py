@@ -168,6 +168,94 @@ def test_force_stop_before_serve_is_noop() -> None:
     assert server.started is False
 
 
+def test_force_stop_aborts_connection_registered_after_first_pass() -> None:
+    """Regression for #109: a connection whose ``connection_made`` runs *after*
+    the first abort pass must still be aborted.
+
+    asyncio defers ``connection_made`` via ``call_soon``, so a socket accepted
+    just as the listeners close registers its transport on a later loop turn —
+    after a one-shot abort snapshot. An un-aborted mid-stream SSE then blocks
+    uvicorn's ``Server.wait_closed()`` (3.12+), so ``serve()`` never returns and
+    the harness thread-join wedges. ``force_stop`` must re-abort across turns.
+
+    A fake loop/server drives the exact ordering: the (fake) listener's
+    ``close()`` schedules the late registration, and we assert the late
+    connection's transport is aborted (a single pass would miss it).
+    """
+    from collections import deque
+
+    class FakeLoop:
+        def __init__(self):
+            self._queue = deque()
+
+        def call_soon_threadsafe(self, cb, *args):
+            self._queue.append((cb, args))
+
+        def call_soon(self, cb, *args):
+            self._queue.append((cb, args))
+
+        def run(self, max_turns=200):
+            turns = 0
+            while self._queue and turns < max_turns:
+                cb, args = self._queue.popleft()
+                cb(*args)
+                turns += 1
+
+    class FakeTransport:
+        def __init__(self):
+            self.aborted = False
+
+        def abort(self):
+            self.aborted = True
+
+    class FakeConn:
+        def __init__(self):
+            self.transport = FakeTransport()
+
+    class FakeState:
+        def __init__(self, connections):
+            self.connections = connections
+
+    class FakeListener:
+        def __init__(self, loop, on_close):
+            self._loop = loop
+            self._on_close = on_close
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+            # A socket accepted just before this close finishes its deferred
+            # connection_made on a *later* loop turn.
+            self._loop.call_soon(self._on_close)
+
+    class FakeUvServer:
+        def __init__(self, state, listeners):
+            self.force_exit = False
+            self.should_exit = False
+            self.server_state = state
+            self.servers = listeners
+
+    loop = FakeLoop()
+    early = FakeConn()
+    connections = [early]
+    late = FakeConn()
+    listener = FakeListener(loop, lambda: connections.append(late))
+    fake_server = FakeUvServer(FakeState(connections), [listener])
+
+    server = MonitorServer.__new__(MonitorServer)
+    server._server = fake_server
+    server._loop = loop
+
+    server.force_stop()
+    loop.run()
+
+    assert fake_server.force_exit is True
+    assert fake_server.should_exit is True  # self.stop() ran
+    assert listener.closed is True
+    assert early.transport.aborted is True
+    assert late.transport.aborted is True, "late-registered connection was never aborted"
+
+
 class TestDashboardRoute:
     """GET / — dist-required serving (Task 9 cutover: the React build at
     ``web/`` is the only frontend; there is no legacy fallback anymore).

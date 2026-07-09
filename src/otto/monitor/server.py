@@ -239,6 +239,16 @@ def _get_all_ips() -> list[str]:
     return ips
 
 
+# force_stop() re-aborts open transports across this many consecutive loop turns
+# rather than once. asyncio defers connection_made (where uvicorn registers a
+# connection) via call_soon, so a socket accepted just before the listeners
+# close can register its transport *after* a single abort pass; uvicorn's
+# shutdown then blocks on Server.wait_closed() forever (issue #109). The
+# listeners are closed first, so all still-pending registrations run within a
+# few turns — a small fixed number of unconditional passes drains them.
+_FORCE_STOP_ABORT_PASSES = 10
+
+
 class MonitorServer:
     """
     Wraps a FastAPI/uvicorn server for the monitoring dashboard.
@@ -334,32 +344,41 @@ class MonitorServer:
         not see the connection die). Used by test harnesses and Ctrl+C paths;
         prefer ``stop()`` when clients should finish cleanly.
 
-        The listening sockets are closed *first, in the same loop callback* as
-        the abort. Aborting only a one-shot snapshot of ``state.connections``
-        left a race: uvicorn keeps accepting until its own shutdown closes the
-        sockets (~one 0.1s tick later), so a connection established in that
-        window — e.g. the fresh EventSource a browser opens right after a page
-        reload — was never aborted, and an un-aborted mid-stream h11 SSE keeps
-        the server task alive (``asyncio.Server.wait_closed()`` waits on it on
-        3.12+), hanging shutdown indefinitely. Because an asyncio callback runs
-        to completion before the loop can accept another connection, closing the
-        sockets and aborting the live transports in one callback guarantees the
-        snapshot is complete: nothing new can slip in between the two steps.
+        The listening sockets are closed *first* so no new connection is
+        accepted, then open transports are aborted. A single abort pass is not
+        enough: uvicorn registers a connection in its protocol's
+        ``connection_made``, which asyncio *defers* onto the loop via
+        ``call_soon``. So a socket already accepted at the OS level when the
+        listeners close can finish registering a live transport *after* the
+        abort pass — and an un-aborted mid-stream h11 SSE keeps the server task
+        alive (``asyncio.Server.wait_closed()`` waits on it on 3.12+), hanging
+        shutdown indefinitely (issue #109). Because the listeners are closed,
+        the set of still-pending registrations is bounded, so we re-abort across
+        a few consecutive loop turns (:data:`_FORCE_STOP_ABORT_PASSES`) until
+        they have all run and been aborted.
         """
         server, loop = self._server, self._loop
         if server is not None and loop is not None:
             server.force_exit = True
             state = server.server_state
 
-            def _stop_accepting_and_abort() -> None:
-                # Stop accepting new connections first so the abort snapshot
-                # below is exhaustive, then abort every open transport.
-                for listener in getattr(server, "servers", []):
-                    listener.close()
+            def _abort_open_transports(passes_left: int) -> None:
+                # Abort every currently-open transport, then re-schedule: a
+                # connection whose deferred connection_made runs on a later turn
+                # is caught by a subsequent pass. Unconditional (not gated on
+                # ``state.connections`` being non-empty) because that set can be
+                # momentarily empty between an abort and a late registration.
                 for conn in list(state.connections):
                     transport = getattr(conn, "transport", None)
                     if transport is not None:
                         transport.abort()
+                if passes_left > 0:
+                    loop.call_soon(_abort_open_transports, passes_left - 1)
+
+            def _stop_accepting_and_abort() -> None:
+                for listener in getattr(server, "servers", []):
+                    listener.close()
+                _abort_open_transports(_FORCE_STOP_ABORT_PASSES)
 
             loop.call_soon_threadsafe(_stop_accepting_and_abort)
         self.stop()
