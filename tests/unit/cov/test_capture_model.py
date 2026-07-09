@@ -87,6 +87,20 @@ def test_build_capture_dirty_remaps(repo: Path, tmp_path: Path) -> None:
     assert cap.files["f.c"].lines == {1: 0, 2: 7}
 
 
+def test_build_capture_dirty_whitespace_only_keeps_all_lines(repo: Path, tmp_path: Path) -> None:
+    # A whitespace-only reindent of the working tree is dirty byte-wise but
+    # carries no code change: -w hides it, so every DA line maps verbatim to
+    # pin coordinates instead of being dropped as "changed".
+    (repo / "f.c").write_text("    int a;\n\tint b;\n  int c;\n")
+    info = _write_info(tmp_path, repo / "f.c")  # DA lines are worktree coords
+    cap = build_capture(
+        info_path=info, tier="manual", repo_root=repo, board="b", labs=["lab1"], ticket="T-1"
+    )
+    assert cap.dirty_remap is True  # tree is dirty (byte-wise)
+    assert cap.files["f.c"].lines == {1: 5, 2: 0, 3: 7}  # nothing dropped
+    assert cap.files["f.c"].blob == blob_sha(repo, Path("f.c"))
+
+
 def test_build_capture_nested_sut_dir(repo: Path, tmp_path: Path) -> None:
     # The sut repo may be a subdirectory of a larger git repo (the e2e bed:
     # tests/repo1 inside otto-sh).  Blob anchoring must then still resolve —

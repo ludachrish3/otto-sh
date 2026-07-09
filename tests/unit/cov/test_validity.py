@@ -89,6 +89,41 @@ def test_edited_line_goes_stale(repo: Path) -> None:
     assert line3.hits.for_tier("manual") == 0  # no credit
 
 
+def test_whitespace_only_reindent_stays_valid(repo: Path) -> None:
+    """A pure reformat (reindent) of the covered lines must NOT stale them:
+    ``-w`` in the anchor-chain diff hides whitespace-only modifications, so
+    the manual hits carry through at their (unshifted) line numbers."""
+    cap = _capture(repo)  # covers lines 1 and 3
+    # Reindent every line — no code change — and commit past the pin.
+    _commit_edit(repo, "    int a;\n\tint b;\n        int c;\n")
+    store = CoverageStore(tier_order=["manual"])
+    apply_manual_capture(store, cap, repo, max_age_days=None)
+    line1 = _find(store, repo, 1)
+    line3 = _find(store, repo, 3)
+    assert line1.hits.for_tier("manual") == 2
+    assert line1.state is None  # not stale
+    assert line3.hits.for_tier("manual") == 1
+    assert line3.state is None
+
+
+def test_whitespace_reindent_plus_insertion_remaps_and_stays_valid(repo: Path) -> None:
+    """Reindent the covered lines AND insert a blank-ish code line above line 3:
+    the whitespace-only reindents are ignored, while the real insertion shifts
+    line 3 down. The manual hit follows to its new line number, still valid."""
+    cap = _capture(repo)  # covers lines 1 and 3
+    _commit_edit(repo, "  int a;\n  int b;\n  int inserted;\n  int c;\n")
+    store = CoverageStore(tier_order=["manual"])
+    apply_manual_capture(store, cap, repo, max_age_days=None)
+    # line 1 unchanged position, still valid
+    assert _find(store, repo, 1).hits.for_tier("manual") == 2
+    assert _find(store, repo, 1).state is None
+    # original line 3 (int c;) moved to line 4; the hit remaps there, no stale
+    line4 = _find(store, repo, 4)
+    assert line4.hits.for_tier("manual") == 1
+    assert line4.state is None
+    assert _find(store, repo, 3) is None or _find(store, repo, 3).state is None
+
+
 def test_aging_flag(repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
     apply_manual_capture(

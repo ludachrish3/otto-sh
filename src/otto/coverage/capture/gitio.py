@@ -85,11 +85,31 @@ def cat_blob(repo_root: Path, sha: str) -> bytes:
 
 
 def diff_worktree_file_u0(repo_root: Path, relpath: Path) -> str:
-    """Return unified diff (U0) of HEAD vs worktree file."""
-    return _run(["diff", "-U0", "HEAD", "--", relpath.as_posix()], repo_root)
+    """Return unified diff (U0, whitespace-insensitive) of HEAD vs worktree file.
+
+    ``-w`` (``--ignore-all-space``) suppresses whitespace-only line
+    modifications so a reformat/reindent does not invalidate manual
+    coverage anchored to the untouched code. Safe for the line remapper:
+    a whitespace-only modification is 1 line -> 1 line and shifts no
+    counts, so hiding it loses no hunk-offset information (unlike
+    ``--ignore-blank-lines``, which would hide count-changing hunks). The
+    SUTs are C/C++, where intra-string whitespace is not coverage-
+    relevant, so the one behavioural case ``-w`` also equates (spacing
+    inside a string literal) is an accepted, immaterial false-valid.
+    """
+    return _run(["diff", "-w", "-U0", "HEAD", "--", relpath.as_posix()], repo_root)
 
 
 def diff_no_index_u0(path_a: Path, path_b: Path) -> str:
-    """Return unified diff (U0) between two files outside a repo."""
-    # git diff --no-index exits 1 when the files differ — that is success here.
-    return _run(["diff", "--no-index", "-U0", str(path_a), str(path_b)], cwd=None, ok_codes=(0, 1))
+    """Return unified diff (U0, whitespace-insensitive) between two files outside a repo.
+
+    ``-w`` matches :func:`diff_worktree_file_u0` so the report-time anchor
+    chain (pinned blob vs current file) ignores whitespace-only edits the
+    same way the dirty-tree remap does. ``git diff --no-index`` exits 1
+    when the files differ — that is success here; with ``-w`` a
+    whitespace-only difference exits 0 with empty output (hunkless), which
+    the remapper treats as verbatim.
+    """
+    return _run(
+        ["diff", "--no-index", "-w", "-U0", str(path_a), str(path_b)], cwd=None, ok_codes=(0, 1)
+    )

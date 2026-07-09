@@ -467,6 +467,15 @@ Stale vs. aging, precisely: **stale = the code changed** out from under
 the evidence; **aging = the code is unchanged but the evidence is
 old**.
 
+The anchor-chain diff is **whitespace-insensitive** (`git diff -w`), so a
+pure reformat — reindentation, tabs↔spaces, trailing-whitespace strips —
+does not stale a manually-covered line: the evidence carries through, and
+lines merely shifted by such edits remap to their new numbers. Only a
+change to the code itself revokes coverage. (The SUTs are C/C++, where
+whitespace is not semantically load-bearing; the single case this also
+forgives — a whitespace change *inside a string literal* — is treated as
+immaterial to coverage.)
+
 Validity only applies to the **manual** tier. E2E captures use a
 strict pin **merge guard** instead — see
 {ref}`coverage-report-stale-builds`.  Unit tiers carry no validity

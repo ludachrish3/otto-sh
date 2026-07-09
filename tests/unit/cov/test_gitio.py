@@ -98,6 +98,25 @@ def test_worktree_diff_u0(repo: Path) -> None:
     assert "+ADDED" in out
 
 
+def test_worktree_diff_ignores_whitespace_only_change(repo: Path) -> None:
+    # A reindent of an untouched line produces no hunk: -w hides
+    # whitespace-only modifications so the remapper never stales the line.
+    (repo / "a.c").write_text("line1\n    line2\nline3\n")
+    assert diff_worktree_file_u0(repo, Path("a.c")) == ""
+
+
+def test_worktree_diff_ignores_whitespace_but_keeps_real_change(repo: Path) -> None:
+    # Whitespace-only reindent of line 2 PLUS a real insertion: only the
+    # insertion survives, with count-accurate coordinates for the remapper.
+    # (line2 may appear in a hunk's @@ section-context header; what must NOT
+    # appear is a +/- content line touching it.)
+    (repo / "a.c").write_text("line1\n\tline2\nADDED\nline3\n")
+    out = diff_worktree_file_u0(repo, Path("a.c"))
+    assert "+ADDED" in out
+    changed = [ln for ln in out.splitlines() if ln[:1] in "+-" and ln[:3] not in ("+++", "---")]
+    assert changed == ["+ADDED"]  # the reindented line is not reported as changed
+
+
 def test_no_index_diff_exit_1_ok(tmp_path: Path) -> None:
     a = tmp_path / "a.txt"
     a.write_text("x\n")
@@ -106,6 +125,14 @@ def test_no_index_diff_exit_1_ok(tmp_path: Path) -> None:
     out = diff_no_index_u0(a, b)
     assert "@@" in out
     assert diff_no_index_u0(a, a) == ""
+
+
+def test_no_index_diff_ignores_whitespace_only(tmp_path: Path) -> None:
+    a = tmp_path / "a.txt"
+    a.write_text("int a;\nint b;\n")
+    b = tmp_path / "b.txt"
+    b.write_text("int a;\n        int b;\n")
+    assert diff_no_index_u0(a, b) == ""
 
 
 def test_not_a_repo_raises(tmp_path: Path) -> None:
