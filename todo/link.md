@@ -188,6 +188,14 @@ assumed unless UDP is selected. Every spawned process is **tagged with an otto
 sentinel** (see § Dynamic Link state) so it is discoverable and unambiguously
 ours.
 
+**SSH carrier options (hop-aware phase forward-note, 2026-07-08):** when the
+carrier is an `ssh -L` forward (the deferred multi-hop phase — sub-project #2's
+direct-L2 tunnels use a plain TCP carrier, no SSH), it may need tunnel-specific
+SSH options set *strictly for the tunnel process*, independent of otto's
+management SSH sessions: keepalive intervals
+(`ServerAliveInterval`/`ClientAliveInterval`), `ExitOnForwardFailure`,
+connection timeouts, cipher/compression, etc.
+
 ### Dynamic Link state — live discovery, no ledger _(decided 2026-07-06)_
 
 **Rejected:** a shared persistent registry/DB (file could go stale and would be
@@ -233,6 +241,17 @@ commands with performance counts, reflecting stats about *other* hosts/links.
 optional **"Sources" overlay**: management hosts with dashed "reports-for" edges
 to the elements they feed, a toggle defaulting **off**. How to define/record a
 management host is still open (§ Open Questions).
+
+### GUI topology — container rendering (#6, forward-note 2026-07-08)
+
+Docker **container hosts** must be represented in the Phase-2 topology GUI,
+rendered **visually distinct** and **nested *inside* their parent host** (a
+container-within-host visual), not as free-floating peers. Partially
+anticipated already — the foundation surfaces containers as `local↔container`
+implicit edges — but the nested/distinct rendering is the new requirement.
+Bleeds into #6; noted here so it isn't lost. (Also nudges #2 onward to keep the
+tunnel spawn/discovery routed through `host.oneshot`, which is docker-exec-backed
+for `DockerHost`, so container tunnel endpoints stay possible in a later phase.)
 
 ## CLI
 
@@ -309,6 +328,42 @@ the real network behavior needs the bed.
      only reaps its own tunnels and never orphans processes on failure.
   3. Honor dev-VM rules: no heavy parallel load, don't power VMs, fail-loud on
      host-down.
+
+## Backlog (from #2 final fix wave, 2026-07-09)
+
+Deferred out of the #2 fix wave that closed the whole-branch review; not
+blocking, but real gaps worth picking up in #2b/#3:
+
+- **`list`'s `via <exit>` column** — spec §9.2 always intended `port` / `age` /
+  `via <exit>` columns, but the shipped `otto link list` only renders `id` ·
+  `endpoints` · `protocol`. Concretely: a **relay tunnel's exit host is
+  currently invisible** in `list` output — `add --dest` records the exit host
+  as an *origin* in `Observation`/`discover_observations`, and
+  `discover_dynamic_links`'s grouping (`_group_and_resolve` in
+  `src/otto/link/discovery.py`) keeps only the logical `a`/`b` endpoints, so
+  the relay hop never surfaces to the CLI. Fix = thread origin hosts through
+  to the printer and render `via <exit>` when the exit isn't a logical
+  endpoint.
+- **`remove` post-removal verify step** — spec §9.3 says "kill … verify gone";
+  today `remove`/`_reap` (`src/otto/link/manage.py`) trust a `Status.Success`
+  `kill` and stop there, with no re-scan confirming the process actually
+  exited. Add an optional re-discovery pass after the kill (bounded by
+  `_LINK_HOST_TIMEOUT`) that confirms the id is gone, folding a lingering
+  process into `RemovedReport.unreachable` (or a new field) rather than
+  silently trusting the shell exit code.
+- **Consolidate `sentinel.parse_discovery` with `discover_dynamic_links`** —
+  `src/otto/link/sentinel.py`'s `parse_discovery` and
+  `src/otto/link/discovery.py`'s `_group_and_resolve` both group tagged
+  processes by id from raw text, but their **merge semantics diverge**:
+  `parse_discovery` merges per-id fields (keeps the first non-`None` port per
+  end across duplicate observations — see its docstring), while
+  `_group_and_resolve` just takes the *first* `Link` seen per id
+  (`by_id.setdefault`) and discards the rest. `parse_discovery` looks like an
+  earlier/parallel implementation that `discover_observations` +
+  `parse_process_discovery` superseded but never replaced; worth auditing
+  whether `parse_discovery` is still load-bearing anywhere (it has its own
+  test coverage in `test_sentinel.py`) before picking one merge strategy and
+  deleting the other.
 
 ## Open Questions
 

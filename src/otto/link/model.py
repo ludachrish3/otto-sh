@@ -65,6 +65,29 @@ def make_link_id(a: LinkEndpoint, b: LinkEndpoint, protocol: str) -> str:
     return "lnk-" + hashlib.sha256(canon.encode()).hexdigest()[:12]
 
 
+def make_dynamic_link_id(a: LinkEndpoint, b: LinkEndpoint, protocol: str, port: int) -> str:
+    """Id for a dynamic tunnel: the route hash plus a readable ``-<port>`` suffix.
+
+    The suffix keeps the port visible in the id, in ``otto link list``, in
+    ``remove <id>``, and in every tagged process's ``argv[0]``. Distinct ports
+    on the same route are therefore distinct tunnels.
+    """
+    return f"{make_link_id(a, b, protocol)}-{port}"
+
+
+def make_static_link_id(a: LinkEndpoint, b: LinkEndpoint, name: str | None) -> str:
+    """Readable handle for a static link — the declared ``name`` or ``a--b``.
+
+    No hash: static links (implicit hop edges, declared routes) are described
+    connectivity, not otto tunnels, so they never wear the ``lnk-<hex>`` form.
+    Endpoints are sorted so ``a<->b`` and ``b<->a`` yield the same handle.
+    """
+    if name:
+        return name
+    lo, hi = sorted((a, b), key=_endpoint_key)
+    return f"{lo.host}--{hi.host}"
+
+
 @dataclass(frozen=True, slots=True)
 class Link:
     """An edge between two endpoints, from any provenance."""
@@ -74,10 +97,19 @@ class Link:
     protocol: str = "tcp"
     provenance: Provenance = Provenance.DECLARED
     id: str = ""
-    """Deterministic route id (``make_link_id``); auto-computed when empty."""
+    """Provenance-aware id, auto-computed when empty.
+
+    Uses ``make_dynamic_link_id`` (route hash + ``-<port>``) for DYNAMIC,
+    ``make_static_link_id`` (readable ``name``/``a--b`` handle) otherwise."""
     name: str | None = None
     """Optional friendly handle from the lab data."""
 
     def __post_init__(self) -> None:
-        if not self.id:
-            object.__setattr__(self, "id", make_link_id(self.a, self.b, self.protocol))
+        if self.id:
+            return
+        if self.provenance is Provenance.DYNAMIC:
+            port = self.a.port if self.a.port is not None else self.b.port
+            new_id = make_dynamic_link_id(self.a, self.b, self.protocol, port or 0)
+        else:
+            new_id = make_static_link_id(self.a, self.b, self.name)
+        object.__setattr__(self, "id", new_id)

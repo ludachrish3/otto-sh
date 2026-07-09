@@ -460,3 +460,34 @@ otto reservation check
 | ---------- | ----------- |
 | `whoami` | Show the resolved reservation identity and backend |
 | `check` | Verify the current reservation for the loaded lab |
+
+## otto link
+
+Create, list, and remove host-resident tunnels. See {doc}`link` for the full
+guide (relay semantics, host requirements, link identity).
+
+```text
+otto link add    --hosts <h1[@if],h2[@if]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>]
+otto link list   [--all]
+otto link remove [<id>] [--all] [-y]
+```
+
+### Link subcommands
+
+| Subcommand | Description |
+| ---------- | ----------- |
+| `add` | Create a tunnel between exactly two hosts |
+| `list` | List dynamic tunnels (`--all` folds in implicit + declared links) |
+| `remove` | Remove a tunnel by id, or every tunnel with `--all` |
+
+### Link options
+
+| Option | Applies to | Description |
+| ------ | ---------- | ----------- |
+| `--hosts` | `add` | Ordered `host[@iface]` path; `@iface` only needed when a host has more than one interface |
+| `--port` | `add` | Service port, used on both ends |
+| `--protocol` | `add` | `tcp` (default) or `udp` |
+| `--dest` | `add` | Relay target; defaults to the last `--hosts` entry |
+| `--all` | `list`, `remove` | `list`: include implicit + declared links. `remove`: reap every otto tunnel |
+| `-y, --yes` | `remove` | Skip the `--all` confirmation prompt |
+| `<id>` (argument) | `remove` | Id of the tunnel to remove |

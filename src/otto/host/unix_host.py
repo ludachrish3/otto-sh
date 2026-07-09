@@ -167,6 +167,13 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     is_virtual: bool = False
     """Determines whether a host is a VM or not."""
 
+    has_bash: bool = True
+    """Whether this host has a working ``bash`` a command can be tagged and
+    exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
+    (:mod:`otto.link.discovery`) scans only ``has_bash`` hosts. Unix hosts have
+    bash by default; override to ``False`` in ``lab.json`` for a host that
+    defies the norm."""
+
     docker_capable: bool = False
     """Whether this host can run Docker containers (i.e., has a docker daemon
     and the configured user can talk to it). Containers declared by projects

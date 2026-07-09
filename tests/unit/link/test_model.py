@@ -5,6 +5,7 @@ import dataclasses
 import pytest
 
 from otto.link import Link, LinkEndpoint, Provenance, make_link_id
+from otto.link.model import make_static_link_id
 
 
 def _ep(host: str, iface: str | None = "eth1") -> LinkEndpoint:
@@ -13,9 +14,11 @@ def _ep(host: str, iface: str | None = "eth1") -> LinkEndpoint:
 
 class TestLinkId:
     def test_id_auto_computed(self):
+        """Default provenance is DECLARED (static), so the id is the readable
+        ``a--b`` handle, not a ``lnk-<hex>`` route hash (that form is reserved
+        for DYNAMIC links; see ``test_link_id.py``)."""
         link = Link(a=_ep("carrot"), b=_ep("tomato"))
-        assert link.id.startswith("lnk-")
-        assert len(link.id) == 16
+        assert link.id == "carrot--tomato"
 
     def test_id_endpoint_order_invariant(self):
         assert (
@@ -27,8 +30,14 @@ class TestLinkId:
         assert Link(a=moved, b=_ep("tomato")).id == Link(a=_ep("carrot"), b=_ep("tomato")).id
 
     def test_id_distinguishes_protocol(self):
+        """Route-hash property of ``make_link_id`` itself (frozen contract).
+
+        Exercised directly rather than via ``Link(...).id``: default provenance
+        is DECLARED (static), whose id is the protocol-agnostic ``a--b``
+        handle — this property now only holds for the DYNAMIC id builder.
+        """
         a, b = _ep("carrot"), _ep("tomato")
-        assert Link(a=a, b=b, protocol="udp").id != Link(a=a, b=b, protocol="tcp").id
+        assert make_link_id(a, b, "udp") != make_link_id(a, b, "tcp")
 
     def test_id_protocol_case_insensitive(self):
         """Protocol is lowercased in the id, so a future ``--protocol UDP`` mints
@@ -38,17 +47,24 @@ class TestLinkId:
         assert make_link_id(a, b, "TCP") == make_link_id(a, b, "tcp")
 
     def test_id_distinguishes_interface(self):
-        assert (
-            Link(a=_ep("carrot", "eth1"), b=_ep("tomato")).id
-            != Link(a=_ep("carrot", "eth2"), b=_ep("tomato")).id
+        """Same rationale as ``test_id_distinguishes_protocol`` above: exercise
+        ``make_link_id`` directly since the static (default-provenance) ``Link``
+        id no longer varies by interface."""
+        assert make_link_id(_ep("carrot", "eth1"), _ep("tomato"), "tcp") != make_link_id(
+            _ep("carrot", "eth2"), _ep("tomato"), "tcp"
         )
 
     def test_explicit_id_preserved(self):
         assert Link(a=_ep("a"), b=_ep("b"), id="lnk-abcdef123456").id == "lnk-abcdef123456"
 
-    def test_make_link_id_matches_dataclass(self):
+    def test_make_static_link_id_matches_dataclass(self):
+        """Static-provenance counterpart of ``test_dynamic_link_computes_suffixed_id``
+        in ``test_link_id.py``: for the default (DECLARED) provenance, the
+        dataclass's auto-computed id matches ``make_static_link_id`` directly —
+        ``make_link_id`` (the route hash) is no longer involved for static links.
+        """
         a, b = _ep("carrot"), _ep("tomato")
-        assert make_link_id(a, b, "tcp") == Link(a=a, b=b).id
+        assert make_static_link_id(a, b, None) == Link(a=a, b=b).id
 
 
 class TestLinkDefaults:

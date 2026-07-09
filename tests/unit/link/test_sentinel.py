@@ -101,11 +101,20 @@ class TestParseDiscovery:
         ps = f"1 {encode_sentinel(one)}\n2 {encode_sentinel(two)}\n"
         assert {ln.id for ln in parse_discovery(ps)} == {one.id, two.id}
 
-    def test_port_backfill_across_processes(self):
-        with_ports, port_less = _dynamic_link(), _dynamic_link(a_port=None, b_port=None)
-        ps = f"1 {encode_sentinel(port_less)}\n2 {encode_sentinel(with_ports)}\n"
+    def test_same_id_processes_backfill_ports(self):
+        """Two tagged processes of one tunnel share an id (the dynamic id
+        encodes only ``a.port``), so ``parse_discovery`` groups them AND
+        backfills a port one process could not report: first non-``None`` per
+        end wins. Here ``one`` omits ``b.port`` and ``two`` supplies it, so the
+        merged link recovers both ends' ports.
+        """
+        one = _dynamic_link(b_port=None)  # a=5000, b unknown from this process
+        two = _dynamic_link()  # a=5000, b=5001 -> SAME id as `one`
+        assert one.id == two.id  # id encodes only a.port, so these collide
+        ps = f"1 {encode_sentinel(one)}\n2 {encode_sentinel(two)}\n"
         (merged,) = parse_discovery(ps)
-        assert {merged.a.port, merged.b.port} == {5000, 5001}
+        assert merged.id == two.id
+        assert {merged.a.port, merged.b.port} == {5000, 5001}  # b backfilled
 
     def test_empty_and_garbage_input(self):
         assert parse_discovery("") == []

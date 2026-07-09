@@ -1,7 +1,7 @@
 """First-party top-level command registrations — otto's own composition list.
 
 The direct analog of the backend registries' ``_register_builtin_*``
-functions: otto's nine subcommand groups travel the same public
+functions: otto's ten subcommand groups travel the same public
 :func:`~otto.cli.registry.register_cli_command` path a third-party plugin
 uses, with lazy ``"module:attr"`` loaders so nothing imports until dispatch.
 """
@@ -66,6 +66,15 @@ def register_builtin_commands() -> None:
         lab_free=True,
         output_dir=False,
         gate=False,
+    )
+    register_cli_command(
+        "link",
+        "otto.cli.link:link_app",
+        help="Create, list, and remove host-resident tunnels.",
+        # Short-lived like reservation: discovery/teardown touch hosts (and are
+        # reservation-gated, like host/run/test) but the group needs no
+        # per-invocation output directory of its own.
+        output_dir=False,
     )
     register_cli_command(
         "init",

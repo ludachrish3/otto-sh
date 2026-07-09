@@ -91,6 +91,7 @@ _COMMON_PLAIN_FIELDS = (
     "slot",
     "hop",
     "is_virtual",
+    "has_bash",
     "max_filename_len",
     "log",
     "log_stdout",
@@ -193,6 +194,7 @@ class HostSpec(OttoModel):
     slot: int | None = None
     hop: str | None = None
     is_virtual: bool = False
+    has_bash: bool = True
     default_dest_dir: Path = Path()
     max_filename_len: int = 255
     resources: set[str] = Field(default_factory=set)

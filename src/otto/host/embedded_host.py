@@ -146,6 +146,13 @@ class EmbeddedHost(RemoteHost):
     is_virtual: bool = False
     """Determines whether a host is a VM/emulator (e.g. QEMU) or not."""
 
+    has_bash: bool = False
+    """Whether this host has a working ``bash`` a command can be tagged and
+    exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
+    (:mod:`otto.link.discovery`) scans only ``has_bash`` hosts. Embedded
+    targets have no bash by default; override to ``True`` in ``lab.json`` for
+    a host that defies the norm."""
+
     term: str = "telnet"
     """Active session transport. Embedded hosts speak telnet today; the command
     frame is transport-independent, so this is not a hard coupling."""

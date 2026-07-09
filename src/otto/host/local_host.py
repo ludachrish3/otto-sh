@@ -124,6 +124,12 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     id: str = field(default="local", init=False)
     """Stable identifier for the local host — always ``"local"``."""
 
+    has_bash: bool = True
+    """Whether this host has a working ``bash`` a command can be tagged and
+    exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
+    (:mod:`otto.link.discovery`) scans only ``has_bash`` hosts. The local
+    machine has bash by default."""
+
     log: LogMode = field(default=LogMode.NORMAL, repr=False)
     """Standing per-host logging disposition. ``QUIET`` keeps this host's command
     I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere

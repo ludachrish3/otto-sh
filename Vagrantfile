@@ -1274,10 +1274,16 @@ EOF
 
         vm.vm.provision "shell", name: "common test", keep_color: true, inline: <<-SHELL
 
-            # install SSH and Telnet server
+            # install SSH and Telnet server, plus socat + python3 for the
+            # `otto link` tunnel e2e (tests/e2e/test_link_tunnels_e2e.py): socat is
+            # the tunnel data plane (the host-resident ingress/egress bridge otto
+            # spawns), and python3 is the e2e harness's UDP listener + datagram-send
+            # helper (a test-bed convenience only — never an otto host requirement).
             apt -y install  net-tools \
                             telnetd   \
                             vsftpd    \
+                            socat     \
+                            python3   \
 
             # Uncomment telnet from the inetd config file, then start and enable inetd
             sed -i 's/#<off># *//' /etc/inetd.conf

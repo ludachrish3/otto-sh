@@ -1281,3 +1281,71 @@ def _warm_collected_tests(repos: list["Repo"], cache_path: Path) -> list[str] | 
     with contextlib.suppress(OSError):
         _record_collected_tests(repos, names)  # names=None stamps the cooldown
     return names
+
+
+# ---------------------------------------------------------------------------
+# Dynamic link-id namespace, for `otto link remove <id>` completion
+# ---------------------------------------------------------------------------
+#
+# Like COLLECTED_TESTS_KEY above, this lives under its own reserved top-level
+# key rather than inside a fingerprint entry: live tunnel state is discovered
+# by process/argv inspection, not by anything the fingerprint's file-mtime
+# hashing tracks, and it must never clobber (or be clobbered by) the main
+# fingerprint entries. The TTL is intentionally short — tunnels come and go
+# independently of otto invocations, so a stale id list is wrong far sooner
+# than the main cache's config-derived data would be.
+DYNAMIC_LINKS_KEY = "__dynamic_links__"
+DYNAMIC_LINKS_SCHEMA_VERSION = 1
+DYNAMIC_LINKS_TTL_SECONDS = 120  # link state is volatile; short TTL (spec §11.2)
+
+
+def record_dynamic_link_ids(repos: list["Repo"], ids: list[str]) -> None:
+    """Cache the freshly-discovered tunnel ids for ``remove <id>`` completion."""
+    if not repos:
+        return
+    cache_path = _cache_path()
+    if cache_path is None:
+        return
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    existing: dict[str, Any] = {}
+    if cache_path.is_file():
+        try:
+            loaded = json.loads(cache_path.read_text())
+            if isinstance(loaded, dict):
+                existing = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+    namespace = existing.get(DYNAMIC_LINKS_KEY)
+    if not isinstance(namespace, dict):
+        namespace = {}
+    namespace[compute_fingerprint(repos)] = {
+        "schema_version": DYNAMIC_LINKS_SCHEMA_VERSION,
+        "generated_at": int(time.time()),
+        "ids": list(ids),
+    }
+    existing[DYNAMIC_LINKS_KEY] = namespace
+    _atomic_write_json(cache_path, existing)
+
+
+def read_dynamic_link_ids(repos: list["Repo"]) -> list[str] | None:
+    """Fresh cached tunnel ids, or ``None`` (cold / expired / malformed)."""
+    if not repos:
+        return None
+    cache_path = _cache_path()
+    if cache_path is None or not cache_path.is_file():
+        return None
+    try:
+        data = json.loads(cache_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    namespace = data.get(DYNAMIC_LINKS_KEY) if isinstance(data, dict) else None
+    entry = namespace.get(compute_fingerprint(repos)) if isinstance(namespace, dict) else None
+    if not isinstance(entry, dict) or entry.get("schema_version") != DYNAMIC_LINKS_SCHEMA_VERSION:
+        return None
+    generated_at = entry.get("generated_at")
+    if not isinstance(generated_at, (int, float)):
+        return None
+    if time.time() - generated_at > DYNAMIC_LINKS_TTL_SECONDS:
+        return None
+    ids = entry.get("ids")
+    return ids if isinstance(ids, list) else None

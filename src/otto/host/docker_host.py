@@ -94,6 +94,14 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     is_virtual: bool = field(default=True, init=False)
     """Containers are always virtual by definition."""
 
+    has_bash: bool = True
+    """Whether this container has a working ``bash`` a command can be tagged
+    and exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
+    (:mod:`otto.link.discovery`) scans only ``has_bash`` hosts. Defaults to
+    ``True`` but is a normal settable field, not ``init=False`` — minimal
+    container images (``alpine``, ``centos6``, …) may lack bash, so this must
+    be overridable per container."""
+
     log: LogMode = field(default=LogMode.NORMAL, repr=False)
     """Standing per-host logging disposition. ``QUIET`` keeps this host's command
     I/O in ``verbose.log`` but off the console; ``NEVER`` redacts it everywhere
