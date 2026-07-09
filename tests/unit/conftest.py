@@ -19,6 +19,7 @@ It also hosts ``_isolate_registries`` (below), the unit-tree-wide guard against
 global-registry state leaking between tests.
 """
 
+import logging
 import sys
 
 import pytest
@@ -99,6 +100,69 @@ def _isolate_registries():
                 reg.unregister(name)
         for name, (entry, origin) in parked.items():
             reg.register(name, entry, overwrite=True, origin=origin)
+
+
+@pytest.fixture(autouse=True)
+def _clirunner_live_log_capture_guard():
+    """Detach pytest's live-log handlers from the root logger during every ``CliRunner.invoke``.
+
+    With ``log_cli = true`` (our pyproject default), any log record reaching the
+    ROOT logger *while a ``CliRunner.invoke`` is in flight* makes pytest's
+    ``_LiveLoggingStreamHandler`` suspend stdout capture to print the line.
+    Suspending capture drops click's isolated ``_NamedTextIOWrapper``, whose
+    ``TextIOWrapper.__del__`` closes the underlying ``BytesIOCopy`` — so typer's
+    finally-block ``outstreams[0].getvalue()`` raises ``ValueError: I/O
+    operation on closed file``. The close is GC-timing-dependent, which is why it
+    surfaced just once, on the nightly ``--repeat-scope=session`` 3.12 job
+    (issue #110), and never in a single ``make coverage`` pass.
+
+    ``tests/unit/cli``'s ``no_logger_output_dir`` sets ``otto.propagate=False``,
+    but that only blocks the ``otto`` hierarchy; a record from ANY other logger
+    (a third-party lib, ``asyncio``, ``py.warnings``) still reaches root and
+    trips it. Removing only the live-log handlers for the invoke window closes
+    the whole class without changing observable behavior: ``caplog``'s separate
+    ``LogCaptureHandler`` and otto's console handler are left attached, so log
+    capture and console output during the invoke still work.
+
+    The patch is applied/restored manually rather than via the ``monkeypatch``
+    fixture ON PURPOSE: depending on ``monkeypatch`` here would pull its setup
+    earlier than ``no_logger_output_dir`` and thus flip their teardown order, so
+    a cli/suite test that ``monkeypatch.setattr``s ``create_output_dir`` would
+    have that undo run *after* ``no_logger_output_dir`` restores it — re-leaking
+    the mock into later (e.g. logger) tests.
+    """
+    from typer.testing import CliRunner
+
+    try:
+        from _pytest.logging import _LiveLoggingNullHandler, _LiveLoggingStreamHandler
+    except ImportError:  # pragma: no cover - pytest renamed its live-log handlers
+        # Guard is best-effort: if pytest's internal handler classes move, skip
+        # it rather than error every unit test. The flake reappears but is rare.
+        yield
+        return
+
+    real_invoke = CliRunner.invoke
+
+    def _invoke_without_live_log(self, *args, **kwargs):
+        root = logging.getLogger()
+        live = [
+            h
+            for h in root.handlers
+            if isinstance(h, (_LiveLoggingNullHandler, _LiveLoggingStreamHandler))
+        ]
+        for handler in live:
+            root.removeHandler(handler)
+        try:
+            return real_invoke(self, *args, **kwargs)
+        finally:
+            for handler in live:
+                root.addHandler(handler)
+
+    CliRunner.invoke = _invoke_without_live_log
+    try:
+        yield
+    finally:
+        CliRunner.invoke = real_invoke
 
 
 @pytest.fixture
