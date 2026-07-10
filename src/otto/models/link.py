@@ -26,15 +26,18 @@ class LinkSpec(OttoModel):
     """Boundary spec for one ``links`` entry in ``lab.json``.
 
     ``protocol`` is informational for declared links (what the route carries);
-    it becomes functional for dynamic links (sub-project #2). ``impair`` and
-    ``management`` are reserved for sub-projects #3/#5: accepted and carried,
-    not yet consumed.
+    it becomes functional for dynamic links (sub-project #2). ``management``
+    is reserved for sub-project #5: accepted and carried, not yet consumed.
     """
 
     endpoints: list[LinkEndpointSpec] = Field(min_length=2, max_length=2)
     protocol: str = "tcp"
     name: str | None = None
     impair: str | None = None
+    """In-path middlebox **host id** servicing this link's impairment
+    (sub-project #3, spec §10). Reference-validated at lab load
+    (:func:`otto.link.derive.resolve_declared_links`). ``management`` remains
+    reserved for #5."""
     management: str | None = None
 
     @model_validator(mode="before")

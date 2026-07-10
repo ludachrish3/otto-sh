@@ -69,6 +69,20 @@ def _resolve_endpoint(
     return LinkEndpoint(host=host_id, interface=None, ip=addressing.ip)
 
 
+def _validate_impair(
+    impair: str | None, a: LinkEndpoint, b: LinkEndpoint, hosts: Mapping[str, HostAddressing]
+) -> None:
+    if impair is None:
+        return
+    if impair not in hosts:
+        raise ValueError(f"impair host {impair!r} is not a known host")
+    if impair in (a.host, b.host):
+        raise ValueError(
+            f"impair host {impair!r} is an endpoint of the link — "
+            "an in-path middlebox must be a third host"
+        )
+
+
 def _raw_endpoint_host_ids(entry: object) -> list[str]:
     """Best-effort endpoint host ids from a *raw* link entry, before validation.
 
@@ -121,10 +135,18 @@ def resolve_declared_links(
             spec = LinkSpec.model_validate(entry)
             a = _resolve_endpoint(spec.endpoints[0].host, spec.endpoints[0].interface, hosts)
             b = _resolve_endpoint(spec.endpoints[1].host, spec.endpoints[1].interface, hosts)
+            _validate_impair(spec.impair, a, b, hosts)
         except ValueError as e:
             raise ValueError(f"Invalid link in {source} at index {idx}: {e}") from e
         links.append(
-            Link(a=a, b=b, protocol=spec.protocol, provenance=Provenance.DECLARED, name=spec.name)
+            Link(
+                a=a,
+                b=b,
+                protocol=spec.protocol,
+                provenance=Provenance.DECLARED,
+                name=spec.name,
+                impair=spec.impair,
+            )
         )
     return links
 

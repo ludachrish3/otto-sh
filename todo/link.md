@@ -45,7 +45,7 @@ because every CLI verb *and* the GUI consume it.
 |---|---|---|
 | **1** | **Foundation: `Link` model + `lab.json`** — rename `hosts.json`→`lab.json`, add a `links` schema section, evolve `interfaces` into per-interface objects, a unified implicit/declared/dynamic `Link` type + topology derivation, and the dynamic-link registry contract | — |
 | 2 | `otto link` CLI + **add/remove/list** (UDP tunnels via socat over the existing SSH TCP forward) | 1 |
-| 3 | **Impairment**: `LinkImpairer` protocol + NetEm + `otto link impair` | 1 |
+| 3 | **Impairment**: `LinkImpairer` protocol + NetEm + `otto link impair` — ★ SHIPPED 2026-07-10 (worktree-link-foundation) | 1 |
 | 4 | **Capture**: `otto link capture` / `otto host capture` (tcpdump + pcap filters) | 1 |
 | 5 | **Management hosts**: monitor source-attribution to *other* elements | 1 |
 | 6 | **GUI Phase 2 topology + link inspector** (consumes 1; reserves slots for 3/5) | 1 |

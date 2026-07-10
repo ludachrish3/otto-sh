@@ -65,5 +65,5 @@ class TestLinkSpec:
         LinkSpec.model_validate(_entry(_comment="a note"))
 
     def test_reserved_fields_accepted(self):
-        spec = LinkSpec.model_validate(_entry(impair="netem", management="mgmt-01"))
-        assert (spec.impair, spec.management) == ("netem", "mgmt-01")
+        spec = LinkSpec.model_validate(_entry(impair="wanem_seed", management="mgmt-01"))
+        assert (spec.impair, spec.management) == ("wanem_seed", "mgmt-01")

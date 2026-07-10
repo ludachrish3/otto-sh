@@ -16,7 +16,7 @@ from pydantic import Field, field_validator, model_validator
 from typing_extensions import override
 
 from ..host.binary_loader import build_binary_loader
-from ..host.capability import TERM_RESOLVER, TRANSFER_RESOLVER
+from ..host.capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
 from ..host.command_frame import FRAME_CLASSES, build_command_frame
 from ..host.connections import TERM_BACKENDS
 from ..host.embedded_filesystem import FILESYSTEM_CLASSES, build_filesystem
@@ -27,6 +27,7 @@ from ..host.remote_host import RemoteHost
 from ..host.toolchain import Toolchain
 from ..host.transfer import TRANSFER_BACKENDS
 from ..host.unix_host import UnixHost
+from ..link import IMPAIRERS
 from ..logger.mode import LogMode
 from .base import OttoModel
 from .options import (
@@ -138,6 +139,24 @@ def _validate_transfer_menu(v: list[str], family: str, label: str) -> list[str]:
     if not v:
         raise ValueError("valid_transfers must be a non-empty list of transfer backends")
     return [_validate_transfer_for_family(t, family, label) for t in v]
+
+
+def _validate_impairer_for_family(v: str, family: str, host_label: str) -> str:
+    """Validate an impairer selector against the registry and host-family applicability."""
+    if v not in IMPAIRERS:
+        known = ", ".join(sorted(IMPAIRERS.names()))
+        raise ValueError(f"impairer {v!r} is not a registered impairer. Known: {known}")
+    families = IMPAIRERS.get(v).host_families
+    if family not in families:
+        fam = ", ".join(sorted(families))
+        raise ValueError(f"impairer {v!r} is not valid on {host_label} (it serves: {fam}).")
+    return v
+
+
+def _validate_impairer_menu(v: list[str], family: str, label: str) -> list[str]:
+    if not v:
+        raise ValueError("valid_impairers must be a non-empty list of impairers")
+    return [_validate_impairer_for_family(entry, family, label) for entry in v]
 
 
 class CredSpec(OttoModel):
@@ -365,10 +384,11 @@ class HostSpec(OttoModel):
 class UnixHostSpec(HostSpec):
     """Boundary spec for a Unix host entry in ``lab.json``.
 
-    Extends ``HostSpec`` with the Unix-specific fields: term/transfer menus and active
-    selections, SSH/SFTP/SCP/FTP/nc option tables, Docker capability, and hardware/software
-    version strings. ``to_host()`` resolves the active term and transfer from preferences
-    and builds a ``UnixHost`` (or a custom subclass passed as ``cls``).
+    Extends ``HostSpec`` with the Unix-specific fields: term/transfer/impairer menus and
+    active selections, SSH/SFTP/SCP/FTP/nc option tables, Docker capability, and
+    hardware/software version strings. ``to_host()`` resolves the active term, transfer, and
+    impairer from preferences and builds a ``UnixHost`` (or a custom subclass passed as
+    ``cls``).
     """
 
     creds: list[CredSpec] = Field(min_length=1)  # required for a Unix host (SSH/telnet login)
@@ -376,8 +396,10 @@ class UnixHostSpec(HostSpec):
     sw_version: str | None = None
     valid_terms: list[str] = Field(default_factory=lambda: ["ssh", "telnet"])
     valid_transfers: list[str] = Field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
+    valid_impairers: list[str] = Field(default_factory=lambda: ["netem"])
     term: str | None = None  # optional active pin; resolved at to_host
     transfer: str | None = None  # optional active pin; resolved at to_host
+    impairer: str | None = None  # optional active pin; resolved at to_host
     docker_capable: bool = False
     ssh_options: SshOptionsSpec = SshOptionsSpec()
     sftp_options: SftpOptionsSpec = SftpOptionsSpec()
@@ -387,7 +409,7 @@ class UnixHostSpec(HostSpec):
 
     _host_family: ClassVar[str] = "unix"
 
-    @field_validator("valid_terms", "valid_transfers", mode="before")
+    @field_validator("valid_terms", "valid_transfers", "valid_impairers", mode="before")
     @classmethod
     def _coerce_unix_menus(cls, v: object) -> object:
         return _coerce_menu(v)
@@ -402,6 +424,11 @@ class UnixHostSpec(HostSpec):
     def _validate_unix_valid_transfers(cls, v: list[str]) -> list[str]:
         return _validate_transfer_menu(v, cls._host_family, "a unix host")
 
+    @field_validator("valid_impairers")
+    @classmethod
+    def _validate_unix_valid_impairers(cls, v: list[str]) -> list[str]:
+        return _validate_impairer_menu(v, cls._host_family, "a unix host")
+
     @override
     def to_host(
         self, cls: type[UnixHost] = UnixHost, *, preferences: dict[str, list[str]] | None = None
@@ -411,15 +438,19 @@ class UnixHostSpec(HostSpec):
         prefs = preferences or {}
         kw["valid_terms"] = list(self.valid_terms)
         kw["valid_transfers"] = list(self.valid_transfers)
+        kw["valid_impairers"] = list(self.valid_impairers)
         # Active selection precedence: the first product preference present in
-        # the menu wins; else the lab pin (self.term/.transfer, validated against
-        # the menu); else the menu's first entry. Out-of-menu preferences are
-        # skipped by the resolver.
+        # the menu wins; else the lab pin (self.term/.transfer/.impairer, validated
+        # against the menu); else the menu's first entry. Out-of-menu preferences
+        # are skipped by the resolver.
         kw["term"] = TERM_RESOLVER.resolve_active(
             self.valid_terms, pin=self.term, preference=prefs.get("term")
         )
         kw["transfer"] = TRANSFER_RESOLVER.resolve_active(
             self.valid_transfers, pin=self.transfer, preference=prefs.get("transfer")
+        )
+        kw["impairer"] = IMPAIRER_RESOLVER.resolve_active(
+            self.valid_impairers, pin=self.impairer, preference=prefs.get("impairer")
         )
         for n in ("hw_version", "sw_version", "docker_capable"):
             if n in s:

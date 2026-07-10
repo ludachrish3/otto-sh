@@ -47,9 +47,14 @@ class TestBuilders:
 class TestLaunchAndDiscovery:
     def test_launch_command_survival_shape(self) -> None:
         cmd = launch_command("otto-tunnel:v1:x", ["socat", "A", "B"])
-        # Live-bed-validated template (spec §6.4): systemd-run --user branch +
-        # setsid fallback, exec -a tagging, no hardcoded program name.
-        assert "systemd-run --user --collect --quiet" in cmd
+        # Live-bed-validated template (spec §6.4, hardened 2026-07-10):
+        # systemd-run --user branch (bounded by `timeout 5` so a hang-shaped
+        # dbus breakage still folds through) + setsid fallback, exec -a
+        # tagging, no hardcoded program name — the whole if/then/else/fi is
+        # wrapped in an outer `bash -c` so the string is one opaque word,
+        # safe for a caller to sudo-prefix by naive textual composition.
+        assert cmd.startswith("bash -c ")
+        assert "timeout 5 systemd-run --user --collect --quiet" in cmd
         assert "setsid bash -c" in cmd
         assert "command -v systemd-run" in cmd
         assert '\'exec -a "$1" "${@:2}"\'' in cmd

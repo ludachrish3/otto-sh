@@ -17,6 +17,7 @@ otto.context
 otto.filesystem
 otto.host
 otto.host.binary_loader
+otto.host.builtin_hosts
 otto.host.capability
 otto.host.command_frame
 otto.host.connections
@@ -53,6 +54,12 @@ otto.host.transfer.tftp
 otto.host.transfer.unix_base
 otto.host.transport
 otto.host.unix_host
+otto.link
+otto.link.impairer
+otto.link.model
+otto.link.netem
+otto.link.params
+otto.link.placement
 otto.logger
 otto.logger.formatters
 otto.logger.logger

@@ -5,7 +5,12 @@
 - Should `otto init` automatically place the JSON schemas in the correct `~/.vscode` location? That simplifies otto's command tree and makes the schema aspect just a flag that's on by default when running `otto init`. If the schemas are already there, validation could be done and prompt the user if they'd like to replace them.
 - Monitor GUI displays UTC times instead of local times
 - Look into moving to a solely `Untitled UI` component framework
+- If manual coverage reports track the line numbers at the time of test (even after correcting for local change drift), would further changes that shift line numbers in the file be resilient to older manual test runs? Like for instance if line 5 was manually covered and then multiple commits later added code above it (but never touching that manually tested line of code), how would we continue to correlate the manual coverage in later reports? Especially if the manual coverage is committed to the repo and always used as an input for future coverage reports?
+- Maybe each coverage run can take an annotation (manual tests already do), which can be treated like a context in python coverage reports. If a line is covered by multiple tiers and runs of coverage, expanding the line with a dropdown error on the righthand side of the page will highlight all the contexts with the appropriate tier color and the context name.
+- Look into code quality (linting and type checking), coverage reports for the frontend typescript code. I'd like there to be parity in terms of code quality enforcement for all code, python and typescripit alike.
+- Use sonnet to clean up type annotations throughout the repo. I noticed that the host.py file has quoted strings for many types. Annotations should only be strings if they're self-referential to support Python 3.10.
 - Docker redesign to use remote docker daemon management. Can pass through HTTP, TCP, and raw socket data over a tunneled SSH connection to a docker daemon host and control the docker daemon. The daemon needs to open a port that it listens on, and the SSH client sets up a port forwarding rule to access the docker daemon's open port.
+- E2E testing and compatibility matrix
 - Log tracebacks to the complete log file (the otto.log that currently gets saved)
 - Clean up and rename labs. The names are currently so obscure that they are difficult to intuitively tell what kinds of hosts they have. The embedded lab name is okay, but the hosts themselves should be more technically focused. The unix labs are all over the place and should be reconsidered as well, even at the lab name level.
 - Add RemoteHost `stat()` method if one does not already exist. Tricky part: format of stat has changed over the years. It might be tricky to flexibly parse all versions of stat output including all the different forks of unix (Linux 2.6 - present, other Unix OSes)
@@ -18,8 +23,12 @@
 - Integration tests for all new functionality except power on/off
   - A soft reboot stability test should be added. Possibly with a different marker and makefile target just because it's such a lengthy test.
 - Add TFTP to one of the zephyr hosts
+- Evaluate faster FTP *client* alternatives to aioftp if FTP transfer speed ever matters. (Original note suggested pyftpdlib, but that is a **server** library — otto uses aioftp as a client; the roles were conflated.)
+- Add other Zephyr configs and versions so that the embedded OS support is hardened.
+- Add REPL sessions that can live within an active shell session and has a special prompt. The session can be recognized as ending when a REPL end sentinel is seen maybe?
 - Have one of the projects define a custom stat collector beyond the default definitions. This helps prove out the workflow for defining custom parsers and graphs.
 - Change the `--project-name` option (or similar) to default to the product name from the repo info. Change the options to `--report-name`, which will append the name as a subtitle to the project name, still derived from the repo's name
+- Add a `--list-markers` option to the test subcommand
 - Make --show-hosts display a Rich.Tree of hosts within an NE. Group by NE in panels and order by slot number.
 - Graphical representation of a lab's hosts.
   - Plan available in the topology_plan.md file

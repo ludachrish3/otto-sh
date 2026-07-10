@@ -231,10 +231,11 @@ _HOST_DEFAULT_OPTION_SPECS: dict[str, type[OttoModel]] = {
 }
 
 # Capability names accepted inside a [host_preferences."<selector>"] table. Each
-# names a menu-style host field (term/transfer) whose value is an ordered list of
-# preferred backends; the resolver intersects the list with each host's menu at
-# build time. Extend this set when a new menu-style capability gains a resolver.
-_HOST_PREFERENCE_CAPABILITIES: frozenset[str] = frozenset({"term", "transfer"})
+# names a menu-style host field (term/transfer/impairer) whose value is an
+# ordered list of preferred backends; the resolver intersects the list with
+# each host's menu at build time. Extend this set when a new menu-style
+# capability gains a resolver.
+_HOST_PREFERENCE_CAPABILITIES: frozenset[str] = frozenset({"term", "transfer", "impairer"})
 
 # max_age format: "<days>d", e.g. "180d". No months/weeks — keep the unit
 # unambiguous for the staleness calculation in the collection model.

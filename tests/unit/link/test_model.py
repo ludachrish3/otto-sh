@@ -79,3 +79,7 @@ class TestLinkDefaults:
     def test_frozen(self):
         with pytest.raises(dataclasses.FrozenInstanceError):
             Link(a=_ep("a"), b=_ep("b")).protocol = "udp"  # type: ignore[misc]
+
+    def test_impair_defaults_none_and_is_carried(self):
+        assert Link(a=_ep("a"), b=_ep("b")).impair is None
+        assert Link(a=_ep("a"), b=_ep("b"), impair="wanem_seed").impair == "wanem_seed"

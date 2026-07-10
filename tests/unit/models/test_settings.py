@@ -347,6 +347,17 @@ def test_host_preferences_capability_must_be_list():
         )
 
 
+def test_host_preferences_accepts_impairer_selection():
+    m = SettingsModel.model_validate(
+        {
+            "name": "p",
+            "version": "1.0.0",
+            "host_preferences": {".*": {"impairer": ["netem"]}},
+        }
+    )
+    assert m.host_preferences[".*"]["impairer"] == ["netem"]
+
+
 def test_legacy_host_defaults_rejected_with_migration_message():
     with pytest.raises(ValueError, match=r"\[host_defaults\] was removed"):
         SettingsModel.model_validate(

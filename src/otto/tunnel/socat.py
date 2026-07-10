@@ -6,7 +6,8 @@ module unit-testable (assert exact argv).
 """
 
 import re
-import shlex
+
+from ..host.detached import launch_command  # noqa: F401  # back-compat re-export (#3 Task 1)
 
 # Old-stable socat address keywords only (compatible down to procps/socat on
 # Linux 2.6.32). ``fork`` lets one listener serve repeated datagrams/connections;
@@ -74,43 +75,6 @@ def egress_socat_args(
         f"TCP4-LISTEN:{carrier_port},fork,reuseaddr",
         f"{deliver}:{deliver_ip}:{service_port}",
     ]
-
-
-def launch_command(sentinel: str, socat_args: list[str]) -> str:
-    """Build the ``host.oneshot`` line for a detached, tagged, session-surviving tunnel.
-
-    ``bash -c 'exec -a "$1" "${@:2}"' _ <sentinel> <socat argv…>`` sets the
-    process's ``argv[0]`` to the sentinel (``exec -a`` — a bash builtin; bash is
-    required on tunnel hosts). ``socat_args`` is the FULL program argv (it begins
-    with ``"socat"``), so the template must NOT hardcode ``socat`` — hardcoding it
-    runs ``socat socat <addr> <addr>`` and dies on the bogus third address.
-
-    Surviving the ssh session is the subtle part (found via live-bed e2e). On a
-    systemd host, a process left in the ssh session's scope is killed when that
-    session ends, and ``setsid`` does NOT escape the session cgroup — so we
-    launch it in the USER manager's scope via ``systemd-run --user`` (no sudo, no
-    root; the transient unit is ``--collect``ed on exit). On a non-systemd host
-    (older distros — the portability floor), ``systemd-run`` is absent and a
-    plain ``setsid``-detached background process survives normally, so we fall
-    back to that.
-
-    ``systemd-run`` being present on ``PATH`` doesn't guarantee it *works*
-    (found via live-bed e2e against a centos:7 container): the binary ships in
-    the base image even though nothing runs an actual systemd/dbus user
-    session inside the container, so invoking it fails fast with "Failed to
-    create bus connection: Connection refused" rather than being absent. The
-    ``&&`` folds that real invocation into the ``if`` condition itself (not
-    just a ``command -v`` existence probe), so any failure — missing binary or
-    a present-but-unusable one — falls through to the ``setsid`` branch.
-    """
-    inner = shlex.quote('exec -a "$1" "${@:2}"')
-    tagged = " ".join(shlex.quote(a) for a in (sentinel, *socat_args))
-    systemd = f"systemd-run --user --collect --quiet -- bash -c {inner} _ {tagged}"
-    setsid = f"setsid bash -c {inner} _ {tagged} </dev/null >/dev/null 2>&1 &"
-    return (
-        f"if command -v systemd-run >/dev/null 2>&1 && {systemd} 2>/dev/null; "
-        f"then :; else ( {setsid} ); fi"
-    )
 
 
 def parse_listening_ports(output: str) -> set[int]:

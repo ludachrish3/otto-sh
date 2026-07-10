@@ -461,6 +461,44 @@ otto reservation check
 | `whoami` | Show the resolved reservation identity and backend |
 | `check` | Verify the current reservation for the loaded lab |
 
+## otto link
+
+Inspect and impair the lab's static links (the topology edges `otto tunnel`
+rides). See {doc}`link` for the full guide (units, merge semantics, in-path
+impairment, safety refusals, custom impairers).
+
+```text
+otto link impair <link> [--delay <time>] [--jitter <time>] [--loss <percent>] [--rate <rate>]
+                         [--corrupt <percent>] [--duplicate <percent>] [--reorder <percent>]
+                         [--from <host>] [--expire <seconds>]
+otto link repair [<link>] [--all]
+otto link list
+```
+
+### Link subcommands
+
+| Subcommand | Description |
+| ---------- | ----------- |
+| `impair` | Merge-apply netem parameters to a link's resolved placement(s) |
+| `repair` | Clear a link's impairment(s) and cancel its timers, or every link with `--all` |
+| `list` | List every static link's current impairment state |
+
+### Link options
+
+| Option | Applies to | Description |
+| ------ | ---------- | ----------- |
+| `<link>` (argument) | `impair`, `repair` | Link id or name |
+| `--delay` | `impair` | Delay; bare number = ms, or an explicit `us`/`ms`/`s` suffix |
+| `--jitter` | `impair` | Jitter; requires a delay (given now or already applied) |
+| `--loss` | `impair` | Packet loss; bare number = percent, or a `%` suffix |
+| `--rate` | `impair` | Rate limit; an explicit tc unit is required (e.g. `10mbit`) |
+| `--corrupt` | `impair` | Corruption; bare number = percent, or a `%` suffix |
+| `--duplicate` | `impair` | Duplication; bare number = percent, or a `%` suffix |
+| `--reorder` | `impair` | Reorder; requires a delay (given now or already applied) |
+| `--from` | `impair` | Narrow to the direction originating at this host (both by default) |
+| `--expire` | `impair` | Auto-clear this impairment after N seconds |
+| `--all` | `repair` | Repair every static link in the lab |
+
 ## otto tunnel
 
 Create, list, and remove host-resident bidirectional tunnels. See

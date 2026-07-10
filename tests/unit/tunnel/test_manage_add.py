@@ -23,7 +23,7 @@ from otto.tunnel.sentinel import ParsedSentinel, encode_sentinel, parse_sentinel
 from otto.tunnel.socat import DISCOVERY_PS_COMMAND, FREE_PORT_PROBE_COMMAND
 from otto.utils import Status
 
-_LAUNCH_PREFIX = "if command -v systemd-run"
+_LAUNCH_PREFIX = "bash -c 'if command -v systemd-run"
 _SENTINEL_RE = re.compile(r"otto-tunnel:v1:\S+")
 
 _LO = 49152

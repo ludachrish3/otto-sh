@@ -91,6 +91,9 @@ class Link:
     (readable ``name``/``a--b`` handle)."""
     name: str | None = None
     """Optional friendly handle from the lab data."""
+    impair: str | None = None
+    """In-path middlebox host id servicing this link's impairment (spec §10);
+    ``None`` = endpoint-anchored impairment."""
 
     def __post_init__(self) -> None:
         if not self.id:

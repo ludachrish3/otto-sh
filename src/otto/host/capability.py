@@ -52,6 +52,7 @@ class CapabilityResolver:
 
 TERM_RESOLVER = CapabilityResolver("term")
 TRANSFER_RESOLVER = CapabilityResolver("transfer")
+IMPAIRER_RESOLVER = CapabilityResolver("impairer")
 
 
 def select_preferences(

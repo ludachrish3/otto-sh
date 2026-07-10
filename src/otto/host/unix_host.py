@@ -68,7 +68,7 @@ from ..utils import (
     Status,
     cli_exposed,
 )
-from .capability import TERM_RESOLVER, TRANSFER_RESOLVER
+from .capability import IMPAIRER_RESOLVER, TERM_RESOLVER, TRANSFER_RESOLVER
 from .command_frame import CommandFrame, build_command_frame
 from .connections import (
     ConnectionManager,
@@ -187,6 +187,12 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
     valid_transfers: list[str] = field(default_factory=lambda: ["scp", "sftp", "ftp", "nc"])
     """Closed menu of transfer backends this host supports (active is ``transfer``)."""
+
+    impairer: str = "netem"
+    """Active impairer used for link-impairment placements on this host."""
+
+    valid_impairers: list[str] = field(default_factory=lambda: ["netem"])
+    """Closed menu of impairers this host supports (active is ``impairer``)."""
 
     default_dest_dir: Path = field(default_factory=Path)
     """Default landing directory for ``put`` / ``get`` when the caller
@@ -349,6 +355,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
 
         TERM_RESOLVER.validate_choice(self.valid_terms, self.term)
         TRANSFER_RESOLVER.validate_choice(self.valid_transfers, self.transfer)
+        IMPAIRER_RESOLVER.validate_choice(self.valid_impairers, self.impairer)
 
         self._connections = self._build_connections()
         self._session_mgr = SessionManager(

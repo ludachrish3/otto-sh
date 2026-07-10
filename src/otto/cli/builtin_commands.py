@@ -77,6 +77,14 @@ def register_builtin_commands() -> None:
         output_dir=False,
     )
     register_cli_command(
+        "link",
+        "otto.cli.link:link_app",
+        help="Inspect and impair the lab's static links.",
+        # Short-lived host-touching group like tunnel: no per-invocation
+        # output directory of its own.
+        output_dir=False,
+    )
+    register_cli_command(
         "init",
         "otto.cli.init:init_command",
         help="Scaffold a new otto repo or validate an existing one.",

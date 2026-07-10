@@ -89,6 +89,24 @@ class TestResolveDeclaredLinks:
         assert {link.a.host, link.b.host} == {"carrot_seed", "basil_seed"}
 
 
+class TestImpairField:
+    def test_impair_carried_onto_link(self):
+        hosts = {**HOSTS, "wanem_seed": HostAddressing(ip="10.10.200.14", interfaces={})}
+        entry = _entry(impair="wanem_seed")
+        (link,) = resolve_declared_links([entry], hosts, source="lab.json", loaded_ids=set(hosts))
+        assert link.impair == "wanem_seed"
+
+    def test_unknown_impair_host_rejected(self):
+        entry = _entry(impair="wanem_seed")
+        with pytest.raises(ValueError, match="impair host 'wanem_seed' is not a known host"):
+            resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
+
+    def test_impair_host_must_not_be_an_endpoint(self):
+        entry = _entry(impair="carrot_seed")
+        with pytest.raises(ValueError, match="is an endpoint of the link"):
+            resolve_declared_links([entry], HOSTS, source="lab.json", loaded_ids=set(HOSTS))
+
+
 class _FakeHost:
     def __init__(
         self, host_id: str, ip: str = "203.0.113.1", hop: str | None = None, term: str = "ssh"

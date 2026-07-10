@@ -355,8 +355,8 @@ Two real entries from the test fixture — one Unix host and one Zephyr host:
 A `links` entry in `lab.json` declares a data-plane route between two hosts —
 distinct from the `hop` field's SSH/telnet *management* path. It is resolved
 into a runtime `Link` object (`otto.link`) at lab-load time: the edge that
-`otto tunnel add` (see {doc}`tunnel`) rides to actually stand up traffic,
-and the foundation later impairment tooling will build on:
+`otto tunnel add` (see {doc}`tunnel`) rides to actually stand up traffic, and
+that `otto link impair` (see {doc}`link`) targets to impair it:
 
 ```json
 {
@@ -376,7 +376,8 @@ and the foundation later impairment tooling will build on:
 | `endpoints[].interface` | string | A key in that host's `interfaces` map (above). **Required only when the host defines more than one interface** — with one interface (or none) otto assumes it and its IP. Omitting it on a host with more than one interface is a load-time validation error ("ambiguous interface — specify one of {…}"), since otto can't disambiguate. |
 | `protocol` | string | Optional; defaults to `"tcp"`. Informational for a declared link (documents what the route carries — e.g. `"udp"`, `"rtp"`); the analogous `otto tunnel add --protocol` flag is what actually drives socat UDP-vs-TCP when a tunnel is built over this route. |
 | `name` | string | Optional friendly handle; the link's id is otherwise derived from its endpoints. |
-| `impair` / `management` | string | Optional, reserved for later link sub-projects (link impairment and management-host source attribution); accepted today but not yet acted on. |
+| `impair` | string | Optional in-path middlebox **host id** — a bare string, validated as a known host reference at lab load. When set, `otto link impair` (see {doc}`link`) places both directions' netem on that middlebox's live-resolved facing interfaces instead of the link's own endpoints. `None` (the default) is endpoint-anchored impairment. |
+| `management` | string | Optional, reserved for a later link sub-project (management-host source attribution); accepted today but not yet acted on. |
 
 **Lab membership is derived, not authored** — a link carries no `labs` field
 of its own. It belongs to the union of both endpoints' `labs`: loading lab

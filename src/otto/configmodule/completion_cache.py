@@ -934,6 +934,59 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     return sorted(ids)
 
 
+def _read_lab_links(lab_file: Path) -> list[dict[str, Any]]:
+    """Best-effort read of a lab.json's ``links`` array ([] on any problem).
+
+    Mirrors :func:`_read_lab_hosts`: completion must never crash on bad user
+    data, so malformed shapes are silently empty here.
+    """
+    try:
+        data = json.loads(lab_file.read_text())
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict):
+        return []
+    links = data.get("links", [])
+    return links if isinstance(links, list) else []
+
+
+def collect_link_ids(repos: list["Repo"]) -> list[str]:
+    """Enumerate static link ids/names for ``otto link`` completion.
+
+    Each id is the declared ``name`` if set, else the ``lo--hi`` static id.
+    Pure lab-data derivation (sync, no live scan).
+
+    Reuses :func:`collect_host_ids`'s repo/lab-file iteration, but reads raw
+    ``links`` entries with no host construction/validation: an entry's
+    completion id is either its declared ``name`` or the sorted ``a--b`` pair
+    of its two endpoint host ids — exactly
+    :func:`~otto.link.model.make_static_link_id`'s no-name form (the ids here
+    are already the resolved host ids a raw ``links`` entry names, so no
+    element/board resolution is needed). Malformed entries (missing/short
+    endpoints, non-dict shapes) are silently skipped — completion must never
+    crash on bad user data.
+    """
+    ids: set[str] = set()
+    for repo in repos:
+        for lab_path in repo.labs:
+            for entry in _read_lab_links(lab_path / LAB_FILENAME):
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name")
+                if isinstance(name, str) and name:
+                    ids.add(name)
+                    continue
+                endpoints = entry.get("endpoints")
+                if not isinstance(endpoints, list) or len(endpoints) != 2:  # noqa: PLR2004
+                    continue
+                hosts = [ep.get("host") for ep in endpoints if isinstance(ep, dict)]
+                if len(hosts) != 2 or not all(isinstance(h, str) and h for h in hosts):  # noqa: PLR2004
+                    continue
+                lo, hi = sorted(hosts)
+                ids.add(f"{lo}--{hi}")
+    return sorted(ids)
+
+
 def collect_lab_names(repos: list["Repo"]) -> list[str]:
     """Enumerate every lab name referenced across the configured lab.json files.
 

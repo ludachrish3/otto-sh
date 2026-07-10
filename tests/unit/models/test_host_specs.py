@@ -1,5 +1,6 @@
 import dataclasses
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from pydantic import ValidationError
@@ -11,6 +12,7 @@ from otto.host.interface import Interface
 from otto.host.options import TelnetOptions
 from otto.host.toolchain import Toolchain
 from otto.host.unix_host import UnixHost
+from otto.link import LinkImpairer, register_impairer
 from otto.logger.mode import LogMode
 from otto.models.host import (
     HOST_SPEC_RUNTIME_PAIRS,
@@ -544,6 +546,81 @@ class TestPreferenceResolution:
         )
         host = spec.to_host()
         assert host.term == "telnet"
+
+
+class TestImpairerValidation:
+    def test_default_menu_is_netem(self) -> None:
+        spec = UnixHostSpec(ip="1.1.1.1", element="x", creds=[{"login": "u", "password": "p"}])
+        assert spec.valid_impairers == ["netem"]
+        assert spec.impairer is None  # pin unset; resolved at to_host
+
+    def test_scalar_impairer_coerces_to_one_element_menu(self) -> None:
+        spec = UnixHostSpec(
+            ip="1.1.1.1",
+            element="x",
+            creds=[{"login": "u", "password": "p"}],
+            valid_impairers="netem",
+        )
+        assert spec.valid_impairers == ["netem"]
+
+    def test_unknown_impairer_in_menu_raises(self) -> None:
+        with pytest.raises(ValueError, match="not a registered impairer"):
+            UnixHostSpec(
+                ip="1.1.1.1",
+                element="x",
+                creds=[{"login": "u", "password": "p"}],
+                valid_impairers=["bogus"],
+            )
+
+    def test_family_inapplicable_impairer_rejected(self) -> None:
+        class _EmbeddedOnly(LinkImpairer):
+            host_families: ClassVar[frozenset[str]] = frozenset({"embedded"})
+
+        register_impairer("embedded-only", _EmbeddedOnly)
+        with pytest.raises(ValueError, match="not valid on a unix host"):
+            UnixHostSpec(
+                ip="1.1.1.1",
+                element="x",
+                creds=[{"login": "u", "password": "p"}],
+                valid_impairers=["embedded-only"],
+            )
+
+    def test_empty_menu_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must be a non-empty"):
+            UnixHostSpec(
+                ip="1.1.1.1",
+                element="x",
+                creds=[{"login": "u", "password": "p"}],
+                valid_impairers=[],
+            )
+
+    def test_pin_out_of_menu_rejected_at_to_host(self) -> None:
+        spec = UnixHostSpec(
+            ip="1.1.1.1",
+            element="x",
+            creds=[{"login": "u", "password": "p"}],
+            impairer="fake",
+        )
+        with pytest.raises(ValueError, match="impairer 'fake' is not in"):
+            spec.to_host()
+
+    def test_to_host_resolves_family_default(self) -> None:
+        spec = UnixHostSpec(ip="1.1.1.1", element="x", creds=[{"login": "u", "password": "p"}])
+        assert spec.to_host().impairer == "netem"
+
+    def test_preference_beats_default(self) -> None:
+        class _Fake(LinkImpairer):
+            host_families: ClassVar[frozenset[str]] = frozenset({"unix"})
+
+        register_impairer("fake", _Fake)
+        spec = UnixHostSpec(
+            ip="1.1.1.1",
+            element="x",
+            creds=[{"login": "u", "password": "p"}],
+            valid_impairers=["netem", "fake"],
+        )
+        host = spec.to_host(preferences={"impairer": ["fake"]})
+        assert host.impairer == "fake"
 
 
 CRED_BASE = {"ip": "10.0.0.1", "element": "e1"}

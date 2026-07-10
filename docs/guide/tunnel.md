@@ -8,7 +8,10 @@ declared in `lab.json`, or derived from each host's management `hop` (see
 {ref}`lab-links` in {doc}`lab-config`). Links document routes that exist;
 `otto tunnel add` is what actually stands traffic up over them — one `add`
 builds exactly one tunnel, so a second `add` on the same route with a
-different port is a second, coexisting tunnel.
+different port is a second, coexisting tunnel. Links are the static
+underlay, tunnels the dynamic overlay riding it — for impairing a link's
+traffic (delay, loss, rate, ...) rather than tunneling over it, see
+{doc}`link`.
 
 Every capability is a plain callable first — `otto tunnel` is a thin CLI
 wrapper over `otto.tunnel.add_tunnel` / `remove_tunnel` /
