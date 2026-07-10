@@ -149,7 +149,7 @@ class EmbeddedHost(RemoteHost):
     has_bash: bool = False
     """Whether this host has a working ``bash`` a command can be tagged and
     exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
-    (:mod:`otto.link.discovery`) scans only ``has_bash`` hosts. Embedded
+    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. Embedded
     targets have no bash by default; override to ``True`` in ``lab.json`` for
     a host that defies the norm."""
 

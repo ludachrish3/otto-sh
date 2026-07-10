@@ -67,7 +67,7 @@ class Lab:
         """Return the static link layer: implicit hop edges plus declared links.
 
         Free (no I/O). Declared wins over implicit on route-id collision.
-        Dynamic links are NOT here — see ``otto.link.discovery`` (async, costed).
+        Dynamic links are NOT here — see ``otto.tunnel.discovery`` (async, costed).
         """
         from ..link.derive import implicit_links  # lazy: keep Lab import-light
 

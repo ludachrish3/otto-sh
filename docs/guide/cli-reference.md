@@ -461,33 +461,34 @@ otto reservation check
 | `whoami` | Show the resolved reservation identity and backend |
 | `check` | Verify the current reservation for the loaded lab |
 
-## otto link
+## otto tunnel
 
-Create, list, and remove host-resident tunnels. See {doc}`link` for the full
-guide (relay semantics, host requirements, link identity).
+Create, list, and remove host-resident bidirectional tunnels. See
+{doc}`tunnel` for the full guide (multi-hop chains, docker endpoints, host
+requirements, tunnel identity).
 
 ```text
-otto link add    --hosts <h1[@if],h2[@if]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>]
-otto link list   [--all]
-otto link remove [<id>] [--all] [-y]
+otto tunnel add    --hosts <h0[@if],h1[@if],...,hn-1[@if]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>]
+otto tunnel list
+otto tunnel remove [<id>] [--all] [-y]
 ```
 
-### Link subcommands
+### Tunnel subcommands
 
 | Subcommand | Description |
 | ---------- | ----------- |
-| `add` | Create a tunnel between exactly two hosts |
-| `list` | List dynamic tunnels (`--all` folds in implicit + declared links) |
+| `add` | Create a bidirectional tunnel along an explicit host path (two or more hosts) |
+| `list` | List every live tunnel discovery finds right now |
 | `remove` | Remove a tunnel by id, or every tunnel with `--all` |
 
-### Link options
+### Tunnel options
 
 | Option | Applies to | Description |
 | ------ | ---------- | ----------- |
-| `--hosts` | `add` | Ordered `host[@iface]` path; `@iface` only needed when a host has more than one interface |
-| `--port` | `add` | Service port, used on both ends |
+| `--hosts` | `add` | Ordered `host[@iface]` path, two or more entries; `@iface` only needed when a host has more than one interface |
+| `--port` | `add` | Service port, used at both endpoints |
 | `--protocol` | `add` | `tcp` (default) or `udp` |
-| `--dest` | `add` | Relay target; defaults to the last `--hosts` entry |
-| `--all` | `list`, `remove` | `list`: include implicit + declared links. `remove`: reap every otto tunnel |
+| `--dest` | `add` | Far-end delivery override; defaults to loopback on the last `--hosts` entry |
+| `--all` | `remove` | Reap every otto tunnel |
 | `-y, --yes` | `remove` | Skip the `--all` confirmation prompt |
 | `<id>` (argument) | `remove` | Id of the tunnel to remove |

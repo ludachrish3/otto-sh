@@ -127,7 +127,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     has_bash: bool = True
     """Whether this host has a working ``bash`` a command can be tagged and
     exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
-    (:mod:`otto.link.discovery`) scans only ``has_bash`` hosts. The local
+    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. The local
     machine has bash by default."""
 
     log: LogMode = field(default=LogMode.NORMAL, repr=False)

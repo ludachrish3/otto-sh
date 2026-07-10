@@ -170,7 +170,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     has_bash: bool = True
     """Whether this host has a working ``bash`` a command can be tagged and
     exec'd through (``bash -c 'exec -a …'``). Tunnel discovery
-    (:mod:`otto.link.discovery`) scans only ``has_bash`` hosts. Unix hosts have
+    (:mod:`otto.tunnel.discovery`) scans only ``has_bash`` hosts. Unix hosts have
     bash by default; override to ``False`` in ``lab.json`` for a host that
     defies the norm."""
 

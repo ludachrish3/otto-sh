@@ -1,6 +1,6 @@
-"""``otto link`` — manage host-resident tunnels (spec §7/§9).
+"""``otto tunnel`` — manage host-resident bidirectional tunnels (spec §6/§9/§10).
 
-Thin consumer of the ``otto.link`` library API. Reservation-group shaped
+Thin consumer of the ``otto.tunnel`` library API. Reservation-group shaped
 (Typer group + callback + command leaves). Runs no per-invocation output dir and
 keeps internal host I/O quiet (only warnings/errors surface).
 """
@@ -11,16 +11,17 @@ import typer
 from rich import print as rprint
 
 from ..configmodule import get_lab, get_repos
-from ..configmodule.completion_cache import read_dynamic_link_ids, record_dynamic_link_ids
-from ..link import add_link, all_links, discover_dynamic_links_status, remove_all_links, remove_link
+from ..configmodule.completion_cache import read_tunnel_ids, record_tunnel_ids
+from ..tunnel import add_tunnel, discover_tunnels, remove_all_tunnels, remove_tunnel
 from ..utils import async_typer_command, complete_comma_list
 
 if TYPE_CHECKING:
     from ..configmodule.repo import Repo
+    from ..tunnel import Tunnel
 
-link_app = typer.Typer(
-    name="link",
-    help="Create, list, and remove host-resident tunnels.",
+tunnel_app = typer.Typer(
+    name="tunnel",
+    help="Create, list, and remove host-resident bidirectional tunnels.",
     no_args_is_help=True,
     context_settings={
         "help_option_names": ["-h", "--help"],
@@ -28,8 +29,8 @@ link_app = typer.Typer(
 )
 
 
-@link_app.callback()
-def link_callback(ctx: typer.Context) -> None:
+@tunnel_app.callback()
+def tunnel_callback(ctx: typer.Context) -> None:
     """Tunnel management. Discovery/teardown touch hosts but create no output dir."""
     if ctx.resilient_parsing:
         return
@@ -127,32 +128,49 @@ def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     return complete_comma_list(sorted(ids), incomplete)
 
 
-def _link_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001
+def _tunnel_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001
     try:
-        ids = read_dynamic_link_ids(get_repos()) or []
+        ids = read_tunnel_ids(get_repos()) or []
     except Exception:  # noqa: BLE001
         ids = []
     return sorted(i for i in ids if i.startswith(incomplete))
 
 
-@link_app.command()
+_AGE_UNITS = ((86400, "d"), (3600, "h"), (60, "m"))
+
+
+def _fmt_age(seconds: int) -> str:
+    for div, unit in _AGE_UNITS:
+        if seconds >= div:
+            return f"{seconds // div}{unit}"
+    return f"{seconds}s"
+
+
+def _fmt_via(tunnel: "Tunnel") -> str:
+    parts = [hop.host for hop in tunnel.path[1:-1]]
+    if tunnel.dest:
+        parts.append(f"→ {tunnel.dest}")
+    return " ".join(parts) or "-"
+
+
+@tunnel_app.command()
 @async_typer_command
 async def add(
     hosts: str = typer.Option(
         ...,
         "--hosts",
-        help="Ordered host path h1\\[@if],h2\\[@if].",
+        help="Ordered host path h1\\[@if],h2\\[@if],...",
         autocompletion=_hosts_completer,
     ),
     port: int = typer.Option(..., "--port", help="Service port (both ends)."),
     protocol: str = typer.Option("tcp", "--protocol", help="tcp or udp."),
-    dest: str | None = typer.Option(None, "--dest", help="Relay delivery target host\\[@if]."),
+    dest: str | None = typer.Option(None, "--dest", help="Far-end delivery target host\\[@if]."),
 ) -> None:
-    """Create a tunnel. See spec §7."""
+    """Create a bidirectional tunnel along an explicit host path. See spec §6."""
     lab = get_lab()
     try:
         dest_spec = _parse_endpoint(dest) if dest else None
-        added = await add_link(
+        added = await add_tunnel(
             lab, _parse_hosts(hosts), port=port, protocol=protocol, dest=dest_spec
         )
     except (ValueError, RuntimeError) as e:
@@ -161,61 +179,72 @@ async def add(
         # a normal user outcome, never a traceback.
         rprint(f"[red]{e}[/red]")
         raise typer.Exit(1) from e
+    t = added.tunnel
     rprint(
-        f"[green]added[/green] {added.link.id} "
-        f"({added.ingress_host} -> {added.exit_host}, carrier {added.carrier_port})"
+        f"[green]added[/green] {t.id} "
+        f"({t.path[0].host} <-> {t.path[-1].host}, via {_fmt_via(t)}, "
+        f"carriers {added.carrier_fwd}/{added.carrier_rev})"
     )
 
 
-@link_app.command(name="list")
+@tunnel_app.command(name="list")
 @async_typer_command
-async def list_links(
-    all_: bool = typer.Option(False, "--all", help="Include implicit + declared links."),
-) -> None:
-    """List tunnels (default: dynamic only). See spec §9.2."""
+async def list_tunnels() -> None:
+    """List live tunnels (observed truth; spec §9)."""
     lab = get_lab()
-    unreachable: list[str] = []
-    if all_:
-        links = await all_links(lab)
-    else:
-        links, unreachable = await discover_dynamic_links_status(lab)
-        record_dynamic_link_ids(get_repos(), [link.id for link in links])
-    for link in links:
+    discovery = await discover_tunnels(lab)
+    record_tunnel_ids(get_repos(), [d.tunnel.id for d in discovery.tunnels])
+    for d in discovery.tunnels:
+        t = d.tunnel
+        a, b = t.path[0], t.path[-1]
         rprint(
-            f"{link.id}  {link.a.host}@{link.a.interface or '-'} <-> "
-            f"{link.b.host}@{link.b.interface or '-'}  {link.protocol}"
+            f"{t.id}  {a.host}@{a.interface or '-'} <-> {b.host}@{b.interface or '-'}  "
+            f"{_fmt_via(t)}  {t.service_port}  {t.protocol}  "
+            f"{_fmt_age(d.age_seconds)}  {d.status}"
         )
-    if unreachable:
+    if discovery.unreachable:
         rprint(
             f"[yellow bold]partial scan[/yellow bold] — could not reach: "
-            f"{', '.join(sorted(unreachable))}"
+            f"{', '.join(sorted(discovery.unreachable))}"
         )
 
 
-@link_app.command()
+@tunnel_app.command()
 @async_typer_command
 async def remove(
-    link_id: str | None = typer.Argument(None, autocompletion=_link_id_completer),
+    tunnel_id: str | None = typer.Argument(None, autocompletion=_tunnel_id_completer),
     all_: bool = typer.Option(False, "--all", help="Reap every otto tunnel."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the --all confirmation."),
 ) -> None:
-    """Remove a tunnel by id, or all tunnels. See spec §9.3."""
+    """Remove a tunnel by id (all hops, both directions), or all tunnels. Spec §10."""
+    # These two usage-error exits are deliberately kept OUT of the try/except
+    # below: typer's vendored click fork makes ``typer.Exit`` a ``RuntimeError``
+    # subclass, so raising them inside a ``try`` guarded by
+    # ``except (ValueError, RuntimeError)`` would get them re-wrapped as a
+    # spurious "[red]1[/red]" / "[red]2[/red]" message instead of exiting clean.
+    if all_:
+        if not yes and not typer.confirm("Reap ALL otto tunnels?"):
+            raise typer.Exit(1)
+    elif not tunnel_id:
+        rprint("[red]give a tunnel id or --all[/red]")
+        raise typer.Exit(2)
+
     lab = get_lab()
     try:
         if all_:
-            if not yes and not typer.confirm("Reap ALL otto tunnels?"):
-                raise typer.Exit(1)
-            report = await remove_all_links(lab)
-        elif link_id:
-            report = await remove_link(lab, link_id)
+            report = await remove_all_tunnels(lab)
         else:
-            rprint("[red]give a link id or --all[/red]")
-            raise typer.Exit(2)
+            report = await remove_tunnel(lab, tunnel_id or "")
     except (ValueError, RuntimeError) as e:
         rprint(f"[red]{e}[/red]")
         raise typer.Exit(1) from e
-    record_dynamic_link_ids(get_repos(), [])  # invalidate; next scan refreshes
-    rprint(f"[green]removed[/green] {report.removed_ids or '(none found)'}")
+    record_tunnel_ids(get_repos(), [])  # invalidate; next scan refreshes
+    removed = ", ".join(report.removed_ids) if report.removed_ids else "(none found)"
+    rprint(f"[green]removed[/green] {removed}")
+    if report.survivors:
+        pretty = ", ".join(f"{h}/{pid}" for h, pid in report.survivors)
+        rprint(f"[red]still running after kill:[/red] {pretty}")
+        raise typer.Exit(1)
     if report.unreachable:
-        rprint(f"[yellow]could not reach:[/yellow] {report.unreachable}")
+        rprint(f"[yellow]could not reach:[/yellow] {', '.join(report.unreachable)}")
         raise typer.Exit(1)

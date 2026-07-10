@@ -1,7 +1,8 @@
 """Pure command/argv builders for host-resident socat tunnels — no I/O.
 
-Every value here is a string or list of strings destined for ``host.oneshot``;
-running nothing keeps the whole module unit-testable (assert exact argv).
+Bidirectional ingress/relay/egress builders (#2b); every value is a string or
+list of strings destined for ``host.oneshot``; running nothing keeps the whole
+module unit-testable (assert exact argv).
 """
 
 import re
@@ -13,13 +14,24 @@ import shlex
 _LISTEN = {"udp": "UDP4-LISTEN", "tcp": "TCP4-LISTEN"}
 _DELIVER = {"udp": "UDP4", "tcp": "TCP4"}
 
-DISCOVERY_PS_COMMAND: str = "ps -eo pid=,etime=,args= 2>/dev/null | grep -a ' otto-link:' || true"
+DISCOVERY_PS_COMMAND: str = (
+    "ps -eo pid= -eo etime= -eo args= 2>/dev/null | grep -a ' otto-tunnel:' || true"
+)
 """Portable ``ps`` used by discovery (formatted ``etime`` — ``etimes`` is
 procps>=3.3, too new for 2.6.32-era userland); ``|| true`` so a no-match grep
-(exit 1) is not treated as a command failure."""
+(exit 1) is not treated as a command failure.
+
+Each field is its own ``-eo`` flag rather than one comma-joined
+``-eo pid=,etime=,args=`` (found via live-bed e2e against a centos:7
+container): procps-ng 3.3.10 -- the version centos:7 ships -- silently
+mis-parses the comma-combined form (each column bleeds into the next,
+producing garbage), while the separate-flag form also produces identical
+output on modern procps (4.x), so this portable form is a strict
+improvement, not a tradeoff.
+"""
 
 FREE_PORT_PROBE_COMMAND: str = "ss -Htln 2>/dev/null || netstat -tln 2>/dev/null || true"
-"""Free-port probe run on the exit host — ``ss`` preferred, ``netstat``
+"""Free-port probe run on each chain host — ``ss`` preferred, ``netstat``
 fallback (both exist on CentOS 6). Parsed by :func:`parse_listening_ports`."""
 
 _PORT_RE = re.compile(r":(\d{1,5})\b")
@@ -27,29 +39,40 @@ _MAX_PORT = 65535
 
 
 def ingress_socat_args(
-    protocol: str, service_port: int, exit_ip: str, carrier_port: int
+    protocol: str, service_port: int, bind_ip: str, next_ip: str, carrier_port: int
 ) -> list[str]:
-    """Accept client traffic on service port, ship over TCP carrier to exit host."""
+    """Accept client traffic on the service port, ship over the TCP carrier.
+
+    Binds the endpoint's data-plane ip specifically (never wildcard) so the
+    reverse chain's loopback delivery on this same host cannot U-turn into
+    this listener (spec §6.3 loop hazard).
+    """
     listen = _LISTEN[protocol]
     return [
         "socat",
-        f"{listen}:{service_port},fork,reuseaddr",
-        f"TCP4:{exit_ip}:{carrier_port}",
+        f"{listen}:{service_port},bind={bind_ip},fork,reuseaddr",
+        f"TCP4:{next_ip}:{carrier_port}",
+    ]
+
+
+def relay_socat_args(carrier_port: int, next_ip: str) -> list[str]:
+    """Intermediate-hop pass-through: same carrier port on both sides (§6.2)."""
+    return [
+        "socat",
+        f"TCP4-LISTEN:{carrier_port},fork,reuseaddr",
+        f"TCP4:{next_ip}:{carrier_port}",
     ]
 
 
 def egress_socat_args(
-    protocol: str, service_port: int, dest_ip: str, carrier_port: int
+    protocol: str, service_port: int, deliver_ip: str, carrier_port: int
 ) -> list[str]:
-    """Accept TCP carrier, deliver to destination on service port.
-
-    dest_ip = the exit host itself, or a relay target for ``--dest``.
-    """
+    """Accept the TCP carrier, deliver to the service (loopback or ``--dest``)."""
     deliver = _DELIVER[protocol]
     return [
         "socat",
         f"TCP4-LISTEN:{carrier_port},fork,reuseaddr",
-        f"{deliver}:{dest_ip}:{service_port}",
+        f"{deliver}:{deliver_ip}:{service_port}",
     ]
 
 
@@ -70,12 +93,24 @@ def launch_command(sentinel: str, socat_args: list[str]) -> str:
     (older distros — the portability floor), ``systemd-run`` is absent and a
     plain ``setsid``-detached background process survives normally, so we fall
     back to that.
+
+    ``systemd-run`` being present on ``PATH`` doesn't guarantee it *works*
+    (found via live-bed e2e against a centos:7 container): the binary ships in
+    the base image even though nothing runs an actual systemd/dbus user
+    session inside the container, so invoking it fails fast with "Failed to
+    create bus connection: Connection refused" rather than being absent. The
+    ``&&`` folds that real invocation into the ``if`` condition itself (not
+    just a ``command -v`` existence probe), so any failure — missing binary or
+    a present-but-unusable one — falls through to the ``setsid`` branch.
     """
     inner = shlex.quote('exec -a "$1" "${@:2}"')
     tagged = " ".join(shlex.quote(a) for a in (sentinel, *socat_args))
     systemd = f"systemd-run --user --collect --quiet -- bash -c {inner} _ {tagged}"
     setsid = f"setsid bash -c {inner} _ {tagged} </dev/null >/dev/null 2>&1 &"
-    return f"if command -v systemd-run >/dev/null 2>&1; then {systemd}; else ( {setsid} ); fi"
+    return (
+        f"if command -v systemd-run >/dev/null 2>&1 && {systemd} 2>/dev/null; "
+        f"then :; else ( {setsid} ); fi"
+    )
 
 
 def parse_listening_ports(output: str) -> set[int]:

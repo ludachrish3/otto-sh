@@ -13,6 +13,7 @@ API Reference
    bootstrap
    context
    link
+   tunnel
    logger
    configmodule
    registry

@@ -68,9 +68,9 @@ def register_builtin_commands() -> None:
         gate=False,
     )
     register_cli_command(
-        "link",
-        "otto.cli.link:link_app",
-        help="Create, list, and remove host-resident tunnels.",
+        "tunnel",
+        "otto.cli.tunnel:tunnel_app",
+        help="Create, list, and remove host-resident bidirectional tunnels.",
         # Short-lived like reservation: discovery/teardown touch hosts (and are
         # reservation-gated, like host/run/test) but the group needs no
         # per-invocation output directory of its own.

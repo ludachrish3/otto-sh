@@ -15,8 +15,9 @@ def _ep(host: str, iface: str | None = "eth1") -> LinkEndpoint:
 class TestLinkId:
     def test_id_auto_computed(self):
         """Default provenance is DECLARED (static), so the id is the readable
-        ``a--b`` handle, not a ``lnk-<hex>`` route hash (that form is reserved
-        for DYNAMIC links; see ``test_link_id.py``)."""
+        ``a--b`` handle, not a ``lnk-<hex>`` route hash (``make_link_id``'s
+        hash form is a standalone route-id helper, not wired into ``Link``'s
+        own id computation; see ``test_link_id.py``)."""
         link = Link(a=_ep("carrot"), b=_ep("tomato"))
         assert link.id == "carrot--tomato"
 
@@ -34,7 +35,9 @@ class TestLinkId:
 
         Exercised directly rather than via ``Link(...).id``: default provenance
         is DECLARED (static), whose id is the protocol-agnostic ``a--b``
-        handle — this property now only holds for the DYNAMIC id builder.
+        handle — ``make_link_id`` itself is no longer wired into ``Link``'s
+        own id computation, so its protocol-sensitivity is only observable
+        by calling it directly.
         """
         a, b = _ep("carrot"), _ep("tomato")
         assert make_link_id(a, b, "udp") != make_link_id(a, b, "tcp")
@@ -58,10 +61,9 @@ class TestLinkId:
         assert Link(a=_ep("a"), b=_ep("b"), id="lnk-abcdef123456").id == "lnk-abcdef123456"
 
     def test_make_static_link_id_matches_dataclass(self):
-        """Static-provenance counterpart of ``test_dynamic_link_computes_suffixed_id``
-        in ``test_link_id.py``: for the default (DECLARED) provenance, the
-        dataclass's auto-computed id matches ``make_static_link_id`` directly —
-        ``make_link_id`` (the route hash) is no longer involved for static links.
+        """For the default (DECLARED) provenance, the dataclass's auto-computed
+        id matches ``make_static_link_id`` directly — ``make_link_id`` (the
+        route hash) is no longer involved for static links.
         """
         a, b = _ep("carrot"), _ep("tomato")
         assert make_static_link_id(a, b, None) == Link(a=a, b=b).id

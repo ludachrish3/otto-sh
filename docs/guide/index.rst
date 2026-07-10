@@ -19,7 +19,7 @@ These guides cover otto's CLI commands and project configuration in detail.
    extending-backends
    extending-cli
    docker
-   link
+   tunnel
    reservations
    coverage
    cli-reference

@@ -1,6 +1,6 @@
 """``has_bash`` host capability field.
 
-Tunnel discovery (:mod:`otto.link.discovery`) needs to scan only hosts that
+Tunnel discovery (:mod:`otto.tunnel.discovery`) needs to scan only hosts that
 can run our bash-tagged socat tunnels — the tagging shells out via
 ``bash -c 'exec -a …'``. ``has_bash`` replaces the old nominal
 ``isinstance(host, (UnixHost, LocalHost))`` filter with a proper capability

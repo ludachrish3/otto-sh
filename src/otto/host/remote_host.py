@@ -57,7 +57,8 @@ _SLUG_RUN = re.compile(r"[^a-z0-9]+")
 def slug(value: str) -> str:
     """Normalize an identity token into a URL/id-safe slug.
 
-    STABILITY CONTRACT — feeds ``make_host_id`` → ``make_link_id`` → sentinels;
+    STABILITY CONTRACT — feeds ``make_host_id``, which in turn feeds
+    ``make_link_id`` (static route ids) and tunnel path hops/sentinels;
     changing it re-maps every id and invalidates live tunnel markers. Never
     change the algorithm:
 

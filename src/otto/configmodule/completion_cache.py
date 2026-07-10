@@ -1284,7 +1284,7 @@ def _warm_collected_tests(repos: list["Repo"], cache_path: Path) -> list[str] | 
 
 
 # ---------------------------------------------------------------------------
-# Dynamic link-id namespace, for `otto link remove <id>` completion
+# Dynamic tunnel-id namespace, for `otto tunnel remove <id>` completion
 # ---------------------------------------------------------------------------
 #
 # Like COLLECTED_TESTS_KEY above, this lives under its own reserved top-level
@@ -1294,12 +1294,12 @@ def _warm_collected_tests(repos: list["Repo"], cache_path: Path) -> list[str] | 
 # fingerprint entries. The TTL is intentionally short — tunnels come and go
 # independently of otto invocations, so a stale id list is wrong far sooner
 # than the main cache's config-derived data would be.
-DYNAMIC_LINKS_KEY = "__dynamic_links__"
-DYNAMIC_LINKS_SCHEMA_VERSION = 1
-DYNAMIC_LINKS_TTL_SECONDS = 120  # link state is volatile; short TTL (spec §11.2)
+DYNAMIC_TUNNELS_KEY = "__dynamic_tunnels__"
+DYNAMIC_TUNNELS_SCHEMA_VERSION = 1
+DYNAMIC_TUNNELS_TTL_SECONDS = 120  # tunnel state is volatile; short TTL (spec §11.2)
 
 
-def record_dynamic_link_ids(repos: list["Repo"], ids: list[str]) -> None:
+def record_tunnel_ids(repos: list["Repo"], ids: list[str]) -> None:
     """Cache the freshly-discovered tunnel ids for ``remove <id>`` completion."""
     if not repos:
         return
@@ -1315,19 +1315,19 @@ def record_dynamic_link_ids(repos: list["Repo"], ids: list[str]) -> None:
                 existing = loaded
         except (OSError, json.JSONDecodeError):
             pass
-    namespace = existing.get(DYNAMIC_LINKS_KEY)
+    namespace = existing.get(DYNAMIC_TUNNELS_KEY)
     if not isinstance(namespace, dict):
         namespace = {}
     namespace[compute_fingerprint(repos)] = {
-        "schema_version": DYNAMIC_LINKS_SCHEMA_VERSION,
+        "schema_version": DYNAMIC_TUNNELS_SCHEMA_VERSION,
         "generated_at": int(time.time()),
         "ids": list(ids),
     }
-    existing[DYNAMIC_LINKS_KEY] = namespace
+    existing[DYNAMIC_TUNNELS_KEY] = namespace
     _atomic_write_json(cache_path, existing)
 
 
-def read_dynamic_link_ids(repos: list["Repo"]) -> list[str] | None:
+def read_tunnel_ids(repos: list["Repo"]) -> list[str] | None:
     """Fresh cached tunnel ids, or ``None`` (cold / expired / malformed)."""
     if not repos:
         return None
@@ -1338,14 +1338,14 @@ def read_dynamic_link_ids(repos: list["Repo"]) -> list[str] | None:
         data = json.loads(cache_path.read_text())
     except (OSError, json.JSONDecodeError):
         return None
-    namespace = data.get(DYNAMIC_LINKS_KEY) if isinstance(data, dict) else None
+    namespace = data.get(DYNAMIC_TUNNELS_KEY) if isinstance(data, dict) else None
     entry = namespace.get(compute_fingerprint(repos)) if isinstance(namespace, dict) else None
-    if not isinstance(entry, dict) or entry.get("schema_version") != DYNAMIC_LINKS_SCHEMA_VERSION:
+    if not isinstance(entry, dict) or entry.get("schema_version") != DYNAMIC_TUNNELS_SCHEMA_VERSION:
         return None
     generated_at = entry.get("generated_at")
     if not isinstance(generated_at, (int, float)):
         return None
-    if time.time() - generated_at > DYNAMIC_LINKS_TTL_SECONDS:
+    if time.time() - generated_at > DYNAMIC_TUNNELS_TTL_SECONDS:
         return None
     ids = entry.get("ids")
     return ids if isinstance(ids, list) else None

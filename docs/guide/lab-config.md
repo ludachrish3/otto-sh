@@ -79,7 +79,7 @@ alongside it.
 | `log` | boolean | Whether to log output to stdout and log files (default `true`). |
 | `log_stdout` | boolean | Whether to log output to stdout (default `true`).  Setting `log` to `false` overrides this. |
 | `docker_capable` | boolean | `true` when this host can run Docker containers (Unix hosts only). |
-| `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto link` tunnels — see {doc}`link`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
+| `has_bash` | boolean | `true` when the host has a working `bash` to `exec -a`-tag processes through. Gates which hosts can host or be scanned for `otto tunnel` tunnels — see {doc}`tunnel`. Defaults to `true` for Unix hosts (including `local` and Docker containers), `false` for embedded hosts. |
 
 (host-identity)=
 
@@ -354,8 +354,9 @@ Two real entries from the test fixture — one Unix host and one Zephyr host:
 
 A `links` entry in `lab.json` declares a data-plane route between two hosts —
 distinct from the `hop` field's SSH/telnet *management* path. It is resolved
-into a runtime `Link` object (`otto.link`) at lab-load time, the foundation
-for tooling that will tunnel and impair such routes:
+into a runtime `Link` object (`otto.link`) at lab-load time: the edge that
+`otto tunnel add` (see {doc}`tunnel`) rides to actually stand up traffic,
+and the foundation later impairment tooling will build on:
 
 ```json
 {
@@ -373,9 +374,9 @@ for tooling that will tunnel and impair such routes:
 | `endpoints` | array of exactly 2 objects | The two ends of the route, each `{"host": <id>, "interface": <netdev name>}`. |
 | `endpoints[].host` | string | Host id (see {ref}`lab-files` above) — must resolve to a host loaded from *some* lab file. |
 | `endpoints[].interface` | string | A key in that host's `interfaces` map (above). **Required only when the host defines more than one interface** — with one interface (or none) otto assumes it and its IP. Omitting it on a host with more than one interface is a load-time validation error ("ambiguous interface — specify one of {…}"), since otto can't disambiguate. |
-| `protocol` | string | Optional; defaults to `"tcp"`. Informational for a declared link (documents what the route carries — e.g. `"udp"`, `"rtp"`); becomes functional for a *dynamic* link created by `otto link add` (drives socat UDP-vs-TCP). |
+| `protocol` | string | Optional; defaults to `"tcp"`. Informational for a declared link (documents what the route carries — e.g. `"udp"`, `"rtp"`); the analogous `otto tunnel add --protocol` flag is what actually drives socat UDP-vs-TCP when a tunnel is built over this route. |
 | `name` | string | Optional friendly handle; the link's id is otherwise derived from its endpoints. |
-| `impair` / `management` | string | Optional, reserved for later `otto link` sub-projects (link impairment and management-host source attribution); accepted today but not yet acted on. |
+| `impair` / `management` | string | Optional, reserved for later link sub-projects (link impairment and management-host source attribution); accepted today but not yet acted on. |
 
 **Lab membership is derived, not authored** — a link carries no `labs` field
 of its own. It belongs to the union of both endpoints' `labs`: loading lab

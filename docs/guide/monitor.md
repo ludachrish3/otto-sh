@@ -202,12 +202,13 @@ and re-baselines from the new counters — a reboot never shows up as a
 spike.
 
 ```{note}
-{doc}`otto link <link>` tunnel discovery is built as a `(command, pure
-parser)` pair for exactly this reason — it maps 1:1 onto the `MetricParser`
-shape below (command / parse / interval) so a future collector integration
-can reuse it as-is. That wiring (scheduling discovery on the collection
-interval, storing edges, topology views) is a later phase; today `otto.link`
-stays monitor-free and `otto link list` is the only live view of tunnels.
+{doc}`otto tunnel <tunnel>` discovery (`discover_tunnels`) is built as a
+`(command, pure parser)` pair for exactly this reason — it maps 1:1 onto the
+`MetricParser` shape below (command / parse / interval) so a future
+collector integration can reuse it as-is. That wiring (scheduling discovery
+on the collection interval, storing edges, topology views) is a later phase;
+today `otto.tunnel` stays monitor-free and `otto tunnel list` is the only
+live view of tunnels.
 ```
 
 ## Custom parsers
