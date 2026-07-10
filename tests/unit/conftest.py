@@ -91,15 +91,56 @@ def _isolate_registries():
         (reg, {name: (reg.get(name), reg.origin(name)) for name in reg.names()})
         for reg in _loaded_registries()
     ]
+    modules_before = frozenset(sys.modules)
 
     yield
 
+    _restore_registries(snapshots, modules_before)
+
+
+def _restore_registries(
+    snapshots: list[tuple[Registry, dict[str, tuple[object, str]]]],
+    modules_before: frozenset[str],
+) -> None:
+    """Drop entries a test added, restore the snapshot, evict side-effect origins.
+
+    A test that imports an extension module listed in a repo's ``init`` (e.g.
+    ``custom_hosts``, which calls ``register_command_frame`` at import) registers
+    into an isolated registry as an **import side effect**. Dropping the entry
+    on teardown is not enough: the origin module stays in ``sys.modules``, so a
+    later ``importlib.import_module`` of it is a no-op and never re-runs the
+    registration — leaving the module imported but its registry entry gone. A
+    downstream test that relies on re-import to re-register (e.g.
+    ``Repo.import_init_modules`` mirroring bootstrap order) then fails with
+    ``... is not a registered frame``. This surfaces only single-process
+    (``-n0``); ``-n auto`` scatters the importer and the victim across workers.
+
+    So after restoring each registry, evict from ``sys.modules`` the origin
+    module of every entry the test added — but ONLY origins the test itself
+    imported (absent from *modules_before*), mirroring ``purge_tmp_imports``.
+    A module already loaded before the test (a pytest-collected test module
+    registering a locally-defined class via ``register_suite_class``, or a core
+    ``otto`` module) must never be evicted: it isn't a re-importable extension,
+    and dropping the running test file breaks ``inspect.getfile`` for every
+    later registration in it.
+    """
+    evict_origins: set[str] = set()
     for reg, parked in snapshots:
         for name in list(reg.names()):
             if name not in parked:
+                origin = reg.origin(name)
+                if (
+                    origin
+                    and origin not in modules_before
+                    and origin != "otto"
+                    and not origin.startswith("otto.")
+                ):
+                    evict_origins.add(origin)
                 reg.unregister(name)
         for name, (entry, origin) in parked.items():
             reg.register(name, entry, overwrite=True, origin=origin)
+    for origin in evict_origins:
+        sys.modules.pop(origin, None)
 
 
 @pytest.fixture(autouse=True)
