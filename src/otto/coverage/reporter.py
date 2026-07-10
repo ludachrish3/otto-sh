@@ -46,6 +46,7 @@ from .store.model import TIER_SYSTEM, CoverageStore
 if TYPE_CHECKING:
     from ..host.local_host import LocalHost
     from ..host.toolchain import Toolchain
+    from .capture.model import Capture
     from .tiers import TierConfig
 
 logger = logging.getLogger(__name__)
@@ -375,7 +376,8 @@ class CoverageReporter:
                 if tier_path is None:
                     # Implicit system tier from the merged .gcda pipeline
                     if system_info is not None:
-                        loader.load(system_info, tier_name)
+                        ctx = store.add_context(tier=tier_name)
+                        loader.load(system_info, tier_name, ctx_id=ctx)
                     else:
                         # Still register so the renderer shows the column
                         store.register_tier(tier_name)
@@ -388,14 +390,30 @@ class CoverageReporter:
                         )
                         store.register_tier(tier_name)
                         continue
-                    loader.load(tier_path, tier_name)
+                    ctx = store.add_context(tier=tier_name)
+                    loader.load(tier_path, tier_name, ctx_id=ctx)
 
             # 3b. Collection-model inputs (Task 10). No-ops for legacy
             #     callers: every step is gated on the new constructor
-            #     arguments being present.
-            self._load_captures(store)
+            #     arguments being present. Cross-source dedupe is a
+            #     *key* hoist, not a load-order hoist: the manual store's
+            #     run keys are computed up front and seeded into
+            #     ``seen_runs`` before anything folds, so a verbatim
+            #     cov-dir duplicate of an already-committed manual run is
+            #     skipped before the pin guard gets a chance to raise —
+            #     but the manual captures themselves still fold LAST.
+            #     That preserves ``apply_manual_capture``'s stale guard
+            #     (it reads all tiers' hits at fold time): a line the e2e
+            #     capture or unit harvest already covers is not marked
+            #     stale just because the manual anchor chain couldn't
+            #     verify its own copy.
+            manual_captures = self._manual_captures()
+            seen_runs: set[tuple[str, str, str, str]] = set()
+            for cap in manual_captures:
+                seen_runs.add(self._run_key(cap))
+            self._load_captures(store, seen_runs)
             await self._harvest_unit_tiers(localhost, work_dir, loader)
-            self._load_manual_store(store)
+            self._load_manual_store(store, manual_captures)
             self._fill_tier_colors(store)
 
             # 4. Render HTML. Exclusion display is render-time (spec §8/§9):
@@ -425,7 +443,14 @@ class CoverageReporter:
     # relevant constructor argument is supplied.
     # ------------------------------------------------------------------
 
-    def _load_captures(self, store: CoverageStore) -> None:
+    @staticmethod
+    def _run_key(capture: "Capture") -> tuple[str, str, str, str]:
+        """Dedupe key: one context per distinct run across all capture sources."""
+        return (capture.tier, capture.pin, capture.board, capture.captured_at)
+
+    def _load_captures(
+        self, store: CoverageStore, seen_runs: set[tuple[str, str, str, str]]
+    ) -> None:
         """Fold e2e board ``capture.json`` files in under a strict HEAD pin guard.
 
         Each capture is pinned to the exact commit whose line numbering it
@@ -440,13 +465,25 @@ class CoverageReporter:
         silently misaligning every hit past a local edit. When the tree is
         dirty each capture is remapped HEAD → working tree (hits on
         locally-modified lines dropped) so the annotation lines up.
+
+        *seen_runs* is the cross-source dedupe set, pre-seeded by the
+        caller (:meth:`run`) with every committed manual capture's run
+        key before this method runs: a cov-dir capture that duplicates an
+        already-committed manual run is skipped here, before the pin
+        guard gets a chance to raise — even though the manual copy itself
+        does not fold into the store until :meth:`_load_manual_store` runs
+        later.
         """
         if not self.capture_paths or self.repo_root is None:
             return
         from .capture import gitio
         from .capture.model import Capture
         from .errors import CoverageDataMismatchError
-        from .validity import load_capture_into_store, load_dirty_capture_into_store
+        from .validity import (
+            load_capture_into_store,
+            load_dirty_capture_into_store,
+            register_capture_context,
+        )
 
         head = gitio.head_commit(self.repo_root)
         dirty = gitio.is_dirty(self.repo_root)
@@ -459,6 +496,12 @@ class CoverageReporter:
             )
         for cap_path in self.capture_paths:
             capture = Capture.load(cap_path)
+            key = self._run_key(capture)
+            if key in seen_runs:
+                logger.info("Skipping duplicate capture %s (already folded)", cap_path)
+                continue
+            seen_runs.add(key)
+            ctx = register_capture_context(store, capture)
             if capture.pin != head:
                 raise CoverageDataMismatchError(
                     f"e2e capture {cap_path} was taken at {capture.pin[:12]} "
@@ -466,9 +509,9 @@ class CoverageReporter:
                     f"report from the matching commit"
                 )
             if dirty:
-                load_dirty_capture_into_store(store, capture, self.repo_root)
+                load_dirty_capture_into_store(store, capture, self.repo_root, ctx_id=ctx)
             else:
-                load_capture_into_store(store, capture, self.repo_root)
+                load_capture_into_store(store, capture, self.repo_root, ctx_id=ctx)
 
     async def _harvest_unit_tiers(
         self,
@@ -490,6 +533,7 @@ class CoverageReporter:
 
         merger = LcovMerger(localhost)
         for tier in unit_tiers:
+            tier_ctx: int | None = None
             for idx, raw_hdir in enumerate(tier.harvest_dirs):
                 hdir = (
                     self.repo_root / raw_hdir
@@ -513,8 +557,10 @@ class CoverageReporter:
                     continue
                 self._warn_if_stale_counters(tier.name, hdir, gcda_files)
                 info_out = work_dir / f"unit_{tier.name}_{idx}.info"
+                if tier_ctx is None:
+                    tier_ctx = loader.store.add_context(tier=tier.name)
                 await merger.capture(hdir, hdir, info_out)
-                loader.load(info_out, tier.name)
+                loader.load(info_out, tier.name, ctx_id=tier_ctx)
 
     @staticmethod
     def _warn_if_stale_counters(tier_name: str, hdir: Path, gcda_files: list[Path]) -> None:
@@ -532,20 +578,56 @@ class CoverageReporter:
                 hdir,
             )
 
-    def _load_manual_store(self, store: CoverageStore) -> None:
-        """Fold every committed manual capture in with report-time validity states."""
+    def _manual_captures(self) -> "list[Capture]":
+        """Load every committed manual capture under ``repo_root``.
+
+        Returns ``[]`` when ``repo_root`` is unset. Split out from
+        :meth:`_load_manual_store` so :meth:`run` can seed the cross-source
+        dedupe set with these captures' run keys *before* e2e captures and
+        unit harvest fold in, while still folding the manual captures
+        themselves last (see :meth:`run`'s step-3b comment).
+        """
         if self.repo_root is None:
-            return
+            return []
         from .capture.store_dir import load_manual_captures
-        from .validity import apply_manual_capture
+
+        return list(load_manual_captures(self.repo_root))
+
+    def _load_manual_store(self, store: CoverageStore, manual_captures: "list[Capture]") -> None:
+        """Fold every committed manual capture in with report-time validity states.
+
+        Folds LAST — after e2e captures and unit harvest — so
+        ``apply_manual_capture``'s stale guard (which reads all tiers'
+        hits already folded into the line at fold time) only marks a line
+        stale when no other already-folded run covers it; an e2e capture
+        or unit harvest that hits the same line suppresses the stale mark
+        even though the manual anchor chain itself couldn't verify it.
+
+        Cross-source dedupe against e2e/unit runs already happened before
+        this method runs (:meth:`run` seeds ``seen_runs`` with these
+        captures' keys ahead of :meth:`_load_captures`); this method only
+        needs to dedupe *within* ``manual_captures`` itself, so two
+        identical committed captures still fold once.
+        """
+        if self.repo_root is None or not manual_captures:
+            return
+        from .validity import apply_manual_capture, register_capture_context
 
         max_age_by_tier = {t.name: t.max_age_days for t in self.tier_configs}
-        for capture in load_manual_captures(self.repo_root):
+        seen: set[tuple[str, str, str, str]] = set()
+        for capture in manual_captures:
+            key = self._run_key(capture)
+            if key in seen:
+                logger.info("Skipping duplicate manual capture %s (already folded)", key)
+                continue
+            seen.add(key)
+            ctx = register_capture_context(store, capture)
             apply_manual_capture(
                 store,
                 capture,
                 self.repo_root,
                 max_age_days=max_age_by_tier.get(capture.tier),
+                ctx_id=ctx,
             )
 
     def _fill_tier_colors(self, store: CoverageStore) -> None:

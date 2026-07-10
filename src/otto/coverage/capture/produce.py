@@ -81,6 +81,7 @@ async def produce_captures(
     tester: dict[str, str] | None = None,
     ticket: str | None = None,
     note: str | None = None,
+    display_names: dict[str, str] | None = None,
 ) -> list[Path]:
     """Produce a pinned ``capture.json`` for each board dir under *cov_dir*.
 
@@ -99,6 +100,8 @@ async def produce_captures(
         tester: Optional tester identity to stamp onto each capture.
         ticket: Optional ticket reference to stamp onto each capture.
         note: Optional free-text note to stamp onto each capture.
+        display_names: Board-dir name (host id) → host display name; boards
+            without an entry are stamped ``None``.
 
     Returns:
         Paths of the ``capture.json`` files written, one per board, in
@@ -141,6 +144,7 @@ async def produce_captures(
                 tester=tester,
                 ticket=ticket,
                 note=note,
+                display_name=(display_names or {}).get(board),
             )
             capture_path = board_dir / "capture.json"
             capture.save(capture_path)

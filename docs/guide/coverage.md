@@ -261,7 +261,8 @@ retrieved hits onto **committed-code line numbers** before writing the
 capture — added/changed lines' hits are dropped (crediting untested
 code would be wrong), unchanged lines remap exactly even when they've
 shifted.  The capture records `dirty_remap: true`, which shows up in
-the report's provenance table; no diff is stored.
+the report's run table (see {ref}`coverage-run-contexts`); no diff is
+stored.
 
 ### The capture file
 
@@ -476,6 +477,23 @@ whitespace is not semantically load-bearing; the single case this also
 forgives — a whitespace change *inside a string literal* — is treated as
 immaterial to coverage.)
 
+(coverage-run-contexts)=
+### Run contexts: which run covered this line?
+
+Every coverage input becomes a **run context** at report time: each manual
+or e2e capture is one run (labelled by the host's display name; hover for
+tier, ticket, note, date, and pin), and each unit-tier harvest or legacy
+`.info` load gets a synthetic per-tier run.  On a file's annotated page,
+the right-hand **runs** column expands per line to list every run that hit
+it, colored by tier, with per-run hit counts.  A stale line lists the
+revoked run struck through — the ticket to re-verify.  The index's
+Captures table is the full run table, and `store.json` carries it
+(`contexts` plus per-line `ctx`/`stale_ctx`) for downstream consumers.
+
+`--ticket` and `--note` on `otto cov get` annotate captures of **every**
+tier kind (`--ticket` remains required for manual-kind tiers; tester
+attribution stays manual-only).
+
 Validity only applies to the **manual** tier. E2E captures use a
 strict pin **merge guard** instead — see
 {ref}`coverage-report-stale-builds`.  Unit tiers carry no validity
@@ -684,19 +702,20 @@ The HTML report is written to the `--report` directory (default:
 - **Project summary** with aggregate (all-tier) and per-tier breakdowns,
   plus per-file stale/aging/excluded counts.
 - **Legend** mapping tier names and line states to their colors.
-- **Captures provenance table** — every contributing **manual**
-  capture (tier, board, labs, date, tester, ticket, note, and whether
-  the dirty-tree remap applied), shown whenever the store has at least
-  one. E2E and unit data carry no human session to attribute, so
-  automated e2e captures and unit harvests append no provenance row.
+- **Captures table** — the full run table (see
+  {ref}`coverage-run-contexts`), shown whenever the store has at least
+  one context: every contributing manual and e2e capture (tier, board,
+  labs, date, tester, ticket, note, and whether the dirty-tree remap
+  applied), plus one synthetic row per unit tier harvested.
 - **Sortable file table** with one column per configured tier.
 - **Per-file pages** with the same summary structure plus annotated
   source: per-tier hit counts, branch pills (taken/not-taken/
-  unreachable), and winner-take-all row coloring per
-  {ref}`coverage-colors`.
+  unreachable), winner-take-all row coloring per
+  {ref}`coverage-colors`, and the per-line **runs** drilldown from
+  {ref}`coverage-run-contexts`.
 
 `store.json` is written alongside the HTML report with the same data —
-validity states, colors, provenance, and each file's excluded lines
+validity states, colors, run contexts, and each file's excluded lines
 included — as the explicit data contract for tooling built on top of
 a report (e.g. a future frontend) without touching the pipeline.
 

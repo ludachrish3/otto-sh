@@ -136,6 +136,48 @@ class BranchHits:
 
 
 @dataclass
+class ContextRecord:
+    """One coverage run in the report — a capture or a synthetic per-tier load.
+
+    The run table (``CoverageStore.contexts``) is derived fresh at report
+    time from the capture inputs; ``id`` is the record's index into that
+    list.  ``label`` is what the drilldown chip shows: the host display
+    name when the capture carries one, else the board (host id), else the
+    tier name (synthetic contexts pass neither).
+    """
+
+    id: int
+    tier: str
+    label: str
+    board: str = ""
+    labs: list[str] = field(default_factory=list)
+    captured_at: str = ""
+    tester: dict[str, str] | None = None
+    ticket: str | None = None
+    note: str | None = None
+    pin: str = ""
+    dirty_remap: bool = False
+    aging: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable dict representation of this run."""
+        return {
+            "id": self.id,
+            "tier": self.tier,
+            "label": self.label,
+            "board": self.board,
+            "labs": list(self.labs),
+            "captured_at": self.captured_at,
+            "tester": self.tester,
+            "ticket": self.ticket,
+            "note": self.note,
+            "pin": self.pin,
+            "dirty_remap": self.dirty_remap,
+            "aging": self.aging,
+        }
+
+
+@dataclass
 class LineRecord:
     """Coverage data for a single source line."""
 
@@ -147,6 +189,12 @@ class LineRecord:
     # evidence no longer matches the current source), "aging" (valid but
     # older than the configured max age), or None (normal).
     state: str | None = None
+
+    # Per-run traceability (run-contexts spec §5): hits keyed by context id
+    # (index into CoverageStore.contexts), and the ids of runs whose
+    # evidence for this line was revoked by the manual-validity pass.
+    context_hits: dict[int, int] = field(default_factory=dict)
+    stale_contexts: list[int] = field(default_factory=list)
 
     def merge(self, other: "LineRecord") -> None:
         """Merge *other* into this line record, accumulating hits and branch data."""
@@ -166,6 +214,12 @@ class LineRecord:
                     reachable=dict(other_branch.reachable),
                 )
                 self.branches.append(clone)
+
+        for ctx_id, count in other.context_hits.items():
+            self.context_hits[ctx_id] = self.context_hits.get(ctx_id, 0) + count
+        for ctx_id in other.stale_contexts:
+            if ctx_id not in self.stale_contexts:
+                self.stale_contexts.append(ctx_id)
 
 
 @dataclass
@@ -195,11 +249,11 @@ class FileRecord:
             if lineno in self.lines:
                 self.lines[lineno].merge(other_line)
             else:
-                clone = LineRecord(
-                    line_number=lineno,
-                    hits=LineHits(counts=dict(other_line.hits.counts)),
-                )
-                clone.merge(other_line)  # picks up branches cleanly
+                # Start empty and let merge copy hits/branches/contexts —
+                # pre-seeding the clone with copied counts and then merging
+                # doubled every hit.
+                clone = LineRecord(line_number=lineno)
+                clone.merge(other_line)
                 self.lines[lineno] = clone
 
     def _all_branches(self) -> list[BranchHits]:
@@ -237,18 +291,24 @@ class FileRecord:
         """Yield :class:`LineRecord` objects in ascending line-number order."""
         yield from (self.lines[k] for k in sorted(self.lines))
 
+    @staticmethod
+    def _line_to_dict(rec: "LineRecord") -> dict[str, Any]:
+        d: dict[str, Any] = {
+            "hits": rec.hits.to_dict(),
+            "branches": [b.to_dict() for b in rec.branches],
+            "state": rec.state,
+        }
+        if rec.context_hits:
+            d["ctx"] = {str(cid): n for cid, n in rec.context_hits.items()}
+        if rec.stale_contexts:
+            d["stale_ctx"] = list(rec.stale_contexts)
+        return d
+
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serialisable dict representation of this file record."""
         return {
             "path": str(self.path),
-            "lines": {
-                str(lineno): {
-                    "hits": rec.hits.to_dict(),
-                    "branches": [b.to_dict() for b in rec.branches],
-                    "state": rec.state,
-                }
-                for lineno, rec in self.lines.items()
-            },
+            "lines": {str(lineno): self._line_to_dict(rec) for lineno, rec in self.lines.items()},
             "excluded_lines": sorted(self.excluded_lines),
         }
 
@@ -259,14 +319,16 @@ class CoverageStore:
     ``tier_order`` holds the user-defined precedence of tiers — first
     entry is highest precedence.  Downstream renderers iterate this list
     to drive column ordering and the winner-take-all row coloring used
-    by the annotated source view.
+    by the annotated source view.  ``contexts`` captures the run table —
+    each context record corresponds to one coverage run or synthetic per-tier
+    aggregate loaded into the store.
     """
 
     def __init__(self, tier_order: list[str] | None = None) -> None:
         self._files: dict[Path, FileRecord] = {}
         self.tier_order: list[str] = list(tier_order) if tier_order else []
-        self.provenance: list[dict[str, Any]] = []
         self.tier_colors: dict[str, str] = {}
+        self.contexts: list[ContextRecord] = []
 
     def register_tier(self, tier: str) -> None:
         """Append *tier* to the tier order if not already present.
@@ -277,6 +339,45 @@ class CoverageStore:
         """
         if tier not in self.tier_order:
             self.tier_order.append(tier)
+
+    def add_context(
+        self,
+        *,
+        tier: str,
+        label: str | None = None,
+        board: str = "",
+        labs: list[str] | None = None,
+        captured_at: str = "",
+        tester: dict[str, str] | None = None,
+        ticket: str | None = None,
+        note: str | None = None,
+        pin: str = "",
+        dirty_remap: bool = False,
+    ) -> int:
+        """Register one run and return its context id (index into ``contexts``).
+
+        ``label`` falls back to ``board``, then to ``tier`` — the synthetic
+        per-tier contexts pass neither.  Also registers *tier* so the run
+        table can never reference an unknown tier.
+        """
+        self.register_tier(tier)
+        ctx_id = len(self.contexts)
+        self.contexts.append(
+            ContextRecord(
+                id=ctx_id,
+                tier=tier,
+                label=label or board or tier,
+                board=board,
+                labs=list(labs or []),
+                captured_at=captured_at,
+                tester=tester,
+                ticket=ticket,
+                note=note,
+                pin=pin,
+                dirty_remap=dirty_remap,
+            )
+        )
+        return ctx_id
 
     def get_or_create_file(self, path: Path) -> FileRecord:
         """Return the :class:`FileRecord` for *path*, creating it if absent.
@@ -338,7 +439,7 @@ class CoverageStore:
         data = {
             "tier_order": list(self.tier_order),
             "files": [f.to_dict() for f in self.files()],
-            "provenance": list(self.provenance),
+            "contexts": [c.to_dict() for c in self.contexts],
             "tier_colors": dict(self.tier_colors),
         }
         path.write_text(json.dumps(data, indent=2))
@@ -352,17 +453,33 @@ class CoverageStore:
         if isinstance(data, dict):
             tier_order = data.get("tier_order") or []
             files_data = data.get("files", [])
-            provenance = data.get("provenance") or []
             tier_colors = data.get("tier_colors") or {}
+            contexts_data = data.get("contexts") or []
         else:
             tier_order = []
             files_data = data
-            provenance = []
             tier_colors = {}
+            contexts_data = []
 
         store = cls(tier_order=tier_order)
-        store.provenance = list(provenance)
         store.tier_colors = dict(tier_colors)
+        for cd in contexts_data:
+            store.contexts.append(
+                ContextRecord(
+                    id=cd["id"],
+                    tier=cd["tier"],
+                    label=cd["label"],
+                    board=cd.get("board", ""),
+                    labs=list(cd.get("labs") or []),
+                    captured_at=cd.get("captured_at", ""),
+                    tester=cd.get("tester"),
+                    ticket=cd.get("ticket"),
+                    note=cd.get("note"),
+                    pin=cd.get("pin", ""),
+                    dirty_remap=cd.get("dirty_remap", False),
+                    aging=cd.get("aging", False),
+                )
+            )
         for fd in files_data:
             record = FileRecord(path=Path(fd["path"]))
             record.excluded_lines = set(fd.get("excluded_lines") or [])
@@ -383,6 +500,8 @@ class CoverageStore:
                     branches=branches,
                     state=ld.get("state"),
                 )
+                lr.context_hits = {int(k): v for k, v in (ld.get("ctx") or {}).items()}
+                lr.stale_contexts = list(ld.get("stale_ctx") or [])
                 record.lines[int(lineno_str)] = lr
                 for tier in hits.counts:
                     store.register_tier(tier)

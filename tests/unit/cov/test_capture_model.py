@@ -191,3 +191,31 @@ def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
     out.write_text(json.dumps(raw))
     with pytest.raises(ValidationError):
         Capture.load(out)
+
+
+def test_build_capture_stamps_display_name_and_roundtrips(repo: Path, tmp_path: Path) -> None:
+    info = _write_info(tmp_path, repo / "f.c")
+    cap = build_capture(
+        info_path=info,
+        tier="system",
+        repo_root=repo,
+        board="rack2-slot4-id",
+        labs=["lab1"],
+        display_name="Rack 2 Slot 4",
+    )
+    assert cap.display_name == "Rack 2 Slot 4"
+    out = tmp_path / "cap.json"
+    cap.save(out)
+    assert Capture.load(out).display_name == "Rack 2 Slot 4"
+
+
+def test_capture_display_name_defaults_none_for_old_files(repo: Path, tmp_path: Path) -> None:
+    # A capture serialized before the field existed must load with None.
+    info = _write_info(tmp_path, repo / "f.c")
+    cap = build_capture(info_path=info, tier="system", repo_root=repo, board="b", labs=["lab1"])
+    out = tmp_path / "cap.json"
+    cap.save(out)
+    raw = json.loads(out.read_text())
+    raw.pop("display_name")
+    out.write_text(json.dumps(raw))
+    assert Capture.load(out).display_name is None

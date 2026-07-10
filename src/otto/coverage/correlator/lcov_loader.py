@@ -49,10 +49,12 @@ class LCOVLoader:
         self.store = store
         self.correlator = correlator
 
-    def load(self, info_path: Path | str, tier: str) -> int:
+    def load(self, info_path: Path | str, tier: str, ctx_id: int | None = None) -> int:
         """Load an ``.info`` file into the store under *tier*.
 
         Returns the number of source files loaded.
+
+        Optional run-context id credited for every DA line with a nonzero count.
         """
         info_path = Path(info_path)
         logger.info("Loading %s as %s coverage", info_path.name, tier)
@@ -79,6 +81,8 @@ class LCOVLoader:
                     count = int(parts[1])
                     lr = current_file.get_or_create_line(lineno)
                     lr.hits.add(tier, count)
+                    if ctx_id is not None and count > 0:
+                        lr.context_hits[ctx_id] = lr.context_hits.get(ctx_id, 0) + count
 
                 elif line.startswith("BRDA:") and current_file is not None:
                     parts = line[5:].split(",")

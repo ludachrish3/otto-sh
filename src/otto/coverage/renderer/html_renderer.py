@@ -3,7 +3,7 @@
 The report layout follows the familiar gcovr information architecture:
 
 - ``index.html`` — project summary (aggregate + per-tier breakdown), a
-  legend, a "Captures" provenance table (when the store has any), and a
+  legend, a "Captures" run table (when the store has any), and a
   sortable file table.
 - ``files/<mangled_path>.html`` — per-file annotated source with a file
   summary block, a legend, and a code table that shows per-tier hit
@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ...version import get_version
-from ..store.model import BranchHits, CoverageStore, FileRecord, LineRecord
+from ..store.model import BranchHits, ContextRecord, CoverageStore, FileRecord, LineRecord
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,7 @@ class HtmlRenderer:
         tier_order = self._effective_tier_order(store)
         tier_labels = {t: _label_for(t) for t in tier_order}
         tier_colors = self._resolve_tier_colors(store, tier_order, DEFAULT_TIER_COLORS)
+        tier_index = {t: i for i, t in enumerate(tier_order)}
         otto_version = get_version()
 
         files_data = []
@@ -134,6 +135,8 @@ class HtmlRenderer:
                 tier_colors,
                 STATE_COLORS,
                 otto_version,
+                store.contexts,
+                tier_index,
             )
             files_data.append(self._build_file_row(file_record, tier_order, excluded_count))
 
@@ -209,7 +212,7 @@ class HtmlRenderer:
                 tier_labels=tier_labels,
                 tier_colors=tier_colors,
                 state_colors=state_colors,
-                provenance=store.provenance,
+                contexts=store.contexts,
                 otto_version=otto_version,
             )
         )
@@ -244,6 +247,8 @@ class HtmlRenderer:
         tier_colors: dict[str, str],
         state_colors: dict[str, str],
         otto_version: str,
+        contexts: list[ContextRecord],
+        tier_index: dict[str, int],
     ) -> int:
         """Render one annotated-source page; returns its excluded-line count.
 
@@ -273,7 +278,15 @@ class HtmlRenderer:
         record.excluded_lines = excluded_linenos
 
         annotated_lines = [
-            self._build_line_row(i, text, record.lines.get(i), tier_order, i in excluded_linenos)
+            self._build_line_row(
+                i,
+                text,
+                record.lines.get(i),
+                tier_order,
+                i in excluded_linenos,
+                contexts,
+                tier_index,
+            )
             for i, text in enumerate(source_lines, start=1)
         ]
 
@@ -305,6 +318,8 @@ class HtmlRenderer:
         lr: LineRecord | None,
         tier_order: list[str],
         excluded: bool,
+        contexts: list[ContextRecord],
+        tier_index: dict[str, int],
     ) -> dict[str, Any]:
         """Build the template context for one row of the source table."""
         coverable = lr is not None
@@ -322,7 +337,59 @@ class HtmlRenderer:
             "tier_hits": tier_hits,
             "branches": branches,
             "row_class": self._row_class_for(lr, tier_order, excluded),
+            "contexts": self._build_ctx_entries(lr, contexts, tier_index),
         }
+
+    @staticmethod
+    def _ctx_tooltip(c: ContextRecord) -> str:
+        """Tier + ticket/note/date/pin — tells same-host runs apart on hover."""
+        parts = [c.tier]
+        if c.ticket:
+            parts.append(f"ticket {c.ticket}")
+        if c.note:
+            parts.append(c.note)
+        if c.captured_at:
+            parts.append(c.captured_at)
+        if c.pin:
+            parts.append(f"pin {c.pin[:12]}")
+        return " · ".join(parts)
+
+    @classmethod
+    def _build_ctx_entries(
+        cls,
+        lr: LineRecord | None,
+        contexts: list[ContextRecord],
+        tier_index: dict[str, int],
+    ) -> list[dict[str, Any]]:
+        """Drilldown entries for one line: valid runs first, then revoked ones."""
+        if lr is None or not contexts:
+            return []
+        entries: list[dict[str, Any]] = []
+        for ctx_id in sorted(lr.context_hits):
+            c = contexts[ctx_id]
+            entries.append(
+                {
+                    "label": c.label,
+                    "count": lr.context_hits[ctx_id],
+                    "tier_index": tier_index.get(c.tier, 0),
+                    "stale": False,
+                    "aging": c.aging,
+                    "tooltip": cls._ctx_tooltip(c),
+                }
+            )
+        for ctx_id in lr.stale_contexts:
+            c = contexts[ctx_id]
+            entries.append(
+                {
+                    "label": c.label,
+                    "count": 0,
+                    "tier_index": tier_index.get(c.tier, 0),
+                    "stale": True,
+                    "aging": c.aging,
+                    "tooltip": cls._ctx_tooltip(c),
+                }
+            )
+        return entries
 
     @staticmethod
     def _row_class_for(lr: LineRecord | None, tier_order: list[str], excluded: bool) -> str:

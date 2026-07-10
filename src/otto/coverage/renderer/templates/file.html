@@ -73,6 +73,7 @@
           {% endfor %}
           <th class="branches">branches</th>
           <th class="source">source</th>
+          <th class="ctx">runs</th>
         </tr>
       </thead>
       <tbody>
@@ -88,6 +89,20 @@
             {% endfor %}
           </td>
           <td class="source"><code>{{ line.source }}</code></td>
+          <td class="ctx">
+            {% if line.contexts %}
+            <details class="ctx-details">
+              <summary>▾ {{ line.contexts|length }}</summary>
+              <div class="ctx-panel">
+                {% for c in line.contexts %}
+                <span class="ctx-chip{% if c.stale %} ctx-stale{% endif %}{% if c.aging %} ctx-aging{% endif %}" title="{{ c.tooltip }}">
+                  <span class="ctx-dot" style="background: var(--tier-{{ c.tier_index }})"></span>{{ c.label }}{% if c.stale %} — STALE{% else %} × {{ c.count }}{% endif %}
+                </span>
+                {% endfor %}
+              </div>
+            </details>
+            {% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>

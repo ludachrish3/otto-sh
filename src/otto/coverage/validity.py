@@ -19,6 +19,27 @@ from .store.model import BranchHits, CoverageStore, FileRecord, LineRecord
 logger = logging.getLogger(__name__)
 
 
+def register_capture_context(store: CoverageStore, capture: Capture) -> int:
+    """Register one capture as a run context; returns its context id.
+
+    The chip label prefers the host display name, then the board (host
+    id) — ``add_context`` itself falls back to the tier name, which only
+    synthetic contexts use.
+    """
+    return store.add_context(
+        tier=capture.tier,
+        label=capture.display_name or capture.board or None,
+        board=capture.board,
+        labs=capture.labs,
+        captured_at=capture.captured_at,
+        tester=capture.tester,
+        ticket=capture.ticket,
+        note=capture.note,
+        pin=capture.pin,
+        dirty_remap=capture.dirty_remap,
+    )
+
+
 def _insert_branch_triples(
     line_rec: LineRecord, tier: str, triples: list[tuple[int, int, int | None]]
 ) -> None:
@@ -40,11 +61,18 @@ def _insert_branch_triples(
             existing[key].hits.add(tier, taken)
 
 
+def _record_stale_context_for_line(line_rec: LineRecord, ctx_id: int | None) -> None:
+    """Record a revoked run context on a stale line."""
+    if ctx_id is not None and ctx_id not in line_rec.stale_contexts:
+        line_rec.stale_contexts.append(ctx_id)
+
+
 def _insert_lines(
     file_rec: FileRecord,
     tier: str,
     lines: dict[int, int],
     branches: dict[int, list[tuple[int, int, int | None]]],
+    ctx_id: int | None = None,
 ) -> None:
     """Fold one file's line hits and branch triples into *file_rec* under *tier*.
 
@@ -53,29 +81,39 @@ def _insert_lines(
     anchor-chain remap). No validity states are set here; that is the
     manual-capture pass's job. This is the single insertion path shared by
     :func:`load_capture_into_store` and :func:`apply_manual_capture`.
+
+    Only executed lines (count > 0) credit the run context — a run that
+    instrumented but never hit a line is not listed for it.
     """
     for lineno, count in lines.items():
-        file_rec.get_or_create_line(lineno).hits.add(tier, count)
+        line_rec = file_rec.get_or_create_line(lineno)
+        line_rec.hits.add(tier, count)
+        if ctx_id is not None and count > 0:
+            line_rec.context_hits[ctx_id] = line_rec.context_hits.get(ctx_id, 0) + count
     for lineno, triples in branches.items():
         _insert_branch_triples(file_rec.get_or_create_line(lineno), tier, triples)
 
 
-def load_capture_into_store(store: CoverageStore, capture: Capture, repo_root: Path) -> None:
+def load_capture_into_store(
+    store: CoverageStore, capture: Capture, repo_root: Path, ctx_id: int | None = None
+) -> None:
     """Fold a pin==HEAD (e2e-kind) capture into *store* verbatim.
 
     The caller has already verified ``capture.pin`` equals the tree's HEAD,
     so the capture's pin coordinates *are* the current-worktree coordinates
     and no anchor chain / remap is needed. Unlike
-    :func:`apply_manual_capture` this sets no validity states and appends no
-    provenance — an automated capture carries no human session to attribute.
+    :func:`apply_manual_capture` this sets no validity states — an automated
+    capture carries no human session to attribute.
     """
     store.register_tier(capture.tier)
     for rel_str, fc in capture.files.items():
         file_rec = store.get_or_create_file(repo_root / Path(rel_str))
-        _insert_lines(file_rec, capture.tier, fc.lines, fc.branches)
+        _insert_lines(file_rec, capture.tier, fc.lines, fc.branches, ctx_id=ctx_id)
 
 
-def load_dirty_capture_into_store(store: CoverageStore, capture: Capture, repo_root: Path) -> None:
+def load_dirty_capture_into_store(
+    store: CoverageStore, capture: Capture, repo_root: Path, ctx_id: int | None = None
+) -> None:
     """Fold a pin==HEAD e2e capture in, remapping HEAD → dirty working tree.
 
     An e2e capture carries no anchor chain: its coordinates are the exact
@@ -105,7 +143,7 @@ def load_dirty_capture_into_store(store: CoverageStore, capture: Capture, repo_r
                 mapped_branches.setdefault(new_line, []).extend(triples)
 
         file_rec = store.get_or_create_file(repo_root / relpath)
-        _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches)
+        _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches, ctx_id=ctx_id)
 
 
 def _anchor_diff(fc: CaptureFileCov, repo_root: Path, relpath: Path, pin: str) -> str | None:
@@ -145,33 +183,55 @@ def _is_aging(capture: Capture, max_age_days: int | None, today: datetime | None
     return (now - captured).days > max_age_days
 
 
+def _apply_unverifiable_capture(
+    file_rec: FileRecord,
+    capture: Capture,
+    rel_str: str,
+    fc: CaptureFileCov,
+    ctx_id: int | None,
+) -> None:
+    """Mark one unverifiable file's executed lines stale (pin+blob both gone).
+
+    Never-executed (count 0) lines are skipped — mirrors the mapped path's
+    ``stale_linenos`` count>0 gate below, so a run is never listed STALE on
+    a line it never actually ran.
+    """
+    logger.warning(
+        "Manual capture %s/%s is unverifiable (pin %s and blob missing) — "
+        "treating as stale; re-capture to refresh.",
+        capture.ticket,
+        rel_str,
+        capture.pin[:12],
+    )
+    for lineno, count in fc.lines.items():
+        if count == 0:
+            continue
+        lr = file_rec.get_or_create_line(lineno)
+        if lr.state is None and not lr.hits.is_hit():
+            lr.state = "stale"
+        _record_stale_context_for_line(lr, ctx_id)
+
+
 def apply_manual_capture(
     store: CoverageStore,
     capture: Capture,
     repo_root: Path,
     max_age_days: int | None,
     today: datetime | None = None,
+    ctx_id: int | None = None,
 ) -> None:
     """Fold one manual capture into *store* with validity states."""
     store.register_tier(capture.tier)
     aging = _is_aging(capture, max_age_days, today)
+    if aging and ctx_id is not None:
+        store.contexts[ctx_id].aging = True
 
     for rel_str, fc in capture.files.items():
         relpath = Path(rel_str)
         diff = _anchor_diff(fc, repo_root, relpath, capture.pin)
         file_rec = store.get_or_create_file(repo_root / relpath)
         if diff is None:
-            logger.warning(
-                "Manual capture %s/%s is unverifiable (pin %s and blob missing) — "
-                "treating as stale; re-capture to refresh.",
-                capture.ticket,
-                rel_str,
-                capture.pin[:12],
-            )
-            for lineno in fc.lines:
-                lr = file_rec.get_or_create_line(lineno)
-                if lr.state is None and not lr.hits.is_hit():
-                    lr.state = "stale"
+            _apply_unverifiable_capture(file_rec, capture, rel_str, fc, ctx_id)
             continue
 
         remapper = LineRemapper(parse_u0_hunks(diff))
@@ -196,7 +256,7 @@ def apply_manual_capture(
             if new_line is not None:
                 mapped_branches.setdefault(new_line, []).extend(triples)
 
-        _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches)
+        _insert_lines(file_rec, capture.tier, mapped_lines, mapped_branches, ctx_id=ctx_id)
 
         # Covered wins over a stale marker from an earlier capture: when this
         # (later) capture validly credits a line that a previous capture left
@@ -219,17 +279,4 @@ def apply_manual_capture(
             lr = file_rec.get_or_create_line(lineno)
             if not lr.hits.is_hit():
                 lr.state = "stale"
-
-    store.provenance.append(
-        {
-            "tier": capture.tier,
-            "board": capture.board,
-            "labs": capture.labs,
-            "date": capture.captured_at,
-            "tester": capture.tester,
-            "ticket": capture.ticket,
-            "note": capture.note,
-            "dirty_remap": capture.dirty_remap,
-            "pin": capture.pin,
-        }
-    )
+            _record_stale_context_for_line(lr, ctx_id)

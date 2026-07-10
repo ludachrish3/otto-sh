@@ -93,3 +93,34 @@ async def test_produce_skips_boardless_dirs(
 
     assert [p.parent.name for p in written] == ["board1"]
     assert any("empty_dir" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_produce_stamps_display_names_by_board(
+    tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cov_dir = tmp_path / "out" / "cov"
+    for board in ("board1", "board2"):
+        (cov_dir / board).mkdir(parents=True)
+        (cov_dir / board / "x.gcda").write_bytes(b"")
+    (cov_dir / ".otto_cov_meta.json").write_text(
+        f'{{"repo_name": "r", "sut_dir": "{repo}", "toolchains": {{}}, "source_roots": {{}}}}'
+    )
+
+    async def fake_capture(self, gcda_dir, gcno_dir, output, toolchain=None):
+        output.write_text(f"TN:\nSF:{repo / 'f.c'}\nDA:1,3\nend_of_record\n")
+        return output
+
+    monkeypatch.setattr(produce_mod.LcovMerger, "capture", fake_capture)
+
+    written = await produce_captures(
+        cov_dir,
+        tier="system",
+        repo_root=repo,
+        labs=["lab1"],
+        display_names={"board1": "Rack 2 Slot 4"},
+    )
+
+    by_board = {p.parent.name: Capture.load(p) for p in written}
+    assert by_board["board1"].display_name == "Rack 2 Slot 4"
+    assert by_board["board2"].display_name is None  # no entry -> not stamped

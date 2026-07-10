@@ -354,7 +354,7 @@ class MonitorServer:
         alive (``asyncio.Server.wait_closed()`` waits on it on 3.12+), hanging
         shutdown indefinitely (issue #109). Because the listeners are closed,
         the set of still-pending registrations is bounded, so we re-abort across
-        a few consecutive loop turns (:data:`_FORCE_STOP_ABORT_PASSES`) until
+        a few consecutive loop turns (``_FORCE_STOP_ABORT_PASSES``) until
         they have all run and been aborted.
         """
         server, loop = self._server, self._loop

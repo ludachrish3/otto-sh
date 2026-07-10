@@ -63,11 +63,11 @@ retrieval command for both automated (e2e-kind tier) and manual-session
     e2e-kind tier; ambiguous or unknown names list the configured tiers.
 
 ``--ticket STR``
-    Ticket reference stamped onto each capture. Required when ``--tier``
+    Ticket reference stamped onto every tier's captures. Required when ``--tier``
     resolves to a manual-kind tier.
 
 ``--note STR``
-    Free-text note stamped onto each capture (manual-kind tiers only).
+    Free-text note stamped onto every tier's captures.
 
 ``--tester-name STR`` / ``--tester-email STR``
     Tester identity stamped onto each capture (manual-kind tiers only).
@@ -415,6 +415,23 @@ def _resolve_tester(name: str | None, email: str | None) -> dict[str, str]:
     return tester
 
 
+def _capture_stamps(
+    kind: str,
+    ticket: str | None,
+    note: str | None,
+    tester_name: str | None,
+    tester_email: str | None,
+) -> tuple[dict[str, str] | None, str | None, str | None]:
+    """Resolve the (tester, ticket, note) stamps for a capture run.
+
+    Ticket and note annotate every tier kind (run-contexts spec §4);
+    tester attribution stays manual-only — an automated run has no human
+    session to attribute.
+    """
+    tester = _resolve_tester(tester_name, tester_email) if kind == "manual" else None
+    return tester, ticket, note
+
+
 async def _connect_cov_hosts() -> tuple[
     "list[Repo]",
     "Repo",
@@ -593,15 +610,9 @@ async def _do_get(
         cov_dir=cov_dir,
     )
 
-    # Tester/ticket/note are only meaningful for a manual-kind tier — an
-    # automated e2e-kind pull has no human "tester" to attribute.
-    tester: dict[str, str] | None = None
-    produce_ticket: str | None = None
-    produce_note: str | None = None
-    if resolved_tier.kind == "manual":
-        tester = _resolve_tester(tester_name, tester_email)
-        produce_ticket = ticket
-        produce_note = note
+    tester, produce_ticket, produce_note = _capture_stamps(
+        resolved_tier.kind, ticket, note, tester_name, tester_email
+    )
 
     try:
         written = await produce_captures(
@@ -612,6 +623,7 @@ async def _do_get(
             tester=tester,
             ticket=produce_ticket,
             note=produce_note,
+            display_names={h.id: h.name for h in cov_hosts},
         )
     except GitUnavailableError as e:
         raise _GetError(str(e)) from e

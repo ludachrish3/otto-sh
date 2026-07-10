@@ -1,4 +1,4 @@
-"""Tests for HtmlRenderer: tier colors, legend, state rows, provenance table."""
+"""Tests for HtmlRenderer: tier colors, legend, state rows, run table."""
 
 from pathlib import Path
 
@@ -109,24 +109,23 @@ class TestExcludedAlwaysWins:
         assert 'class="line tier-0"' not in html
 
 
-class TestIndexProvenanceAndLegend:
-    def test_provenance_ticket_and_legend_tier_name_appear(self, tmp_path):
+class TestIndexRunTableAndLegend:
+    def test_run_table_ticket_and_legend_tier_name_appear(self, tmp_path):
         src = _write(tmp_path, "f.c", "int a;\n")
         store = CoverageStore(tier_order=["system"])
         fr = store.get_or_create_file(src)
         fr.lines[1] = LineRecord(line_number=1, hits=LineHits(counts={"system": 1}))
-        store.provenance.append(
-            {
-                "tier": "manual",
-                "board": "b1",
-                "labs": ["lab1"],
-                "date": "2026-07-01T00:00:00Z",
-                "tester": {"name": "Alice"},
-                "ticket": "T-42",
-                "note": "note text",
-                "dirty_remap": True,
-                "pin": "f" * 40,
-            }
+        store.add_context(
+            tier="manual",
+            label="b1",
+            board="b1",
+            labs=["lab1"],
+            captured_at="2026-07-01T00:00:00Z",
+            tester={"name": "Alice"},
+            ticket="T-42",
+            note="note text",
+            dirty_remap=True,
+            pin="f" * 40,
         )
 
         out_dir = tmp_path / "report"
@@ -165,3 +164,59 @@ class TestOutOfRangeStaleTolerance:
         # Verify stale count (1) appears in the file's row in the files table
         files_section = index_html.split('<section class="files">')[1].split("</section>")[0]
         assert 'data-sort="1">1</td>' in files_section
+
+
+class TestRunsDrilldown:
+    def _store(self, tmp_path):
+        src = _write(tmp_path, "f.c", "int a;\nint b;\nint c;\n")
+        store = CoverageStore(tier_order=["system", "manual"])
+        manual_ctx = store.add_context(
+            tier="manual",
+            label="Rack 2 Slot 4",
+            ticket="T-42",
+            captured_at="2026-07-01T00:00:00Z",
+        )
+        stale_ctx = store.add_context(tier="manual", label="oldrun", ticket="T-9")
+        fr = store.get_or_create_file(src)
+        lr = fr.get_or_create_line(1)
+        lr.hits.add("manual", 5)
+        lr.context_hits[manual_ctx] = 5
+        lr2 = fr.get_or_create_line(2)
+        lr2.state = "stale"
+        lr2.stale_contexts.append(stale_ctx)
+        fr.get_or_create_line(3)  # uncovered, no contexts
+        return store, fr
+
+    def _render(self, tmp_path):
+        store, fr = self._store(tmp_path)
+        out_dir = tmp_path / "report"
+        HtmlRenderer(out_dir).render(store)
+        return (out_dir / HtmlRenderer._file_link(fr)).read_text()
+
+    def test_covered_line_lists_run_chip_with_count_and_tooltip(self, tmp_path):
+        html = self._render(tmp_path)
+        assert "Rack 2 Slot 4" in html
+        assert "× 5" in html  # noqa: RUF001 -- multiplication sign is the rendered glyph under test
+        assert "ticket T-42" in html  # tooltip carries the ticket
+
+    def test_stale_line_lists_revoked_run_chip(self, tmp_path):
+        html = self._render(tmp_path)
+        assert "ctx-stale" in html
+        assert "oldrun" in html
+
+    def test_context_free_line_renders_no_details_element(self, tmp_path):
+        html = self._render(tmp_path)
+        # 3 source rows, only 2 carry a drilldown
+        assert html.count("<details") == 2
+
+    def test_runs_column_header_present(self, tmp_path):
+        html = self._render(tmp_path)
+        assert '<th class="ctx">runs</th>' in html
+
+    def test_index_run_table_shows_labels(self, tmp_path):
+        store, _ = self._store(tmp_path)
+        out_dir = tmp_path / "report"
+        HtmlRenderer(out_dir).render(store)
+        index_html = (out_dir / "index.html").read_text()
+        assert "Rack 2 Slot 4" in index_html
+        assert "T-42" in index_html

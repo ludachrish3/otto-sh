@@ -44,6 +44,7 @@ class Capture(BaseModel):
     note: str | None = None
     labs: list[str] = Field(default_factory=list)
     board: str = ""
+    display_name: str | None = None
     files: dict[str, CaptureFileCov] = Field(default_factory=dict)
 
     def save(self, path: Path) -> None:
@@ -119,9 +120,15 @@ def build_capture(
     tester: dict[str, str] | None = None,
     ticket: str | None = None,
     note: str | None = None,
+    display_name: str | None = None,
     now: datetime | None = None,
 ) -> Capture:
-    """Build a pinned :class:`Capture` from an lcov ``.info`` file."""
+    """Build a pinned :class:`Capture` from an lcov ``.info`` file.
+
+    Args:
+        display_name: Host display name to stamp; ``board`` stays the
+            staging-dir/host-id name.
+    """
     pin = gitio.head_commit(repo_root)
     dirty = gitio.is_dirty(repo_root)
     repo_root = repo_root.resolve()
@@ -162,5 +169,6 @@ def build_capture(
         note=note,
         labs=labs,
         board=board,
+        display_name=display_name,
         files=files,
     )

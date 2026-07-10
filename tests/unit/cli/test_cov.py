@@ -998,6 +998,7 @@ class TestCovGetSuccess:
 
         unix_host = MagicMock()
         unix_host.id = "host1"
+        unix_host.name = "host1"
 
         from otto.host import UnixHost
 
@@ -1044,9 +1045,11 @@ class TestCovGetSuccess:
 
         unix_host = MagicMock()
         unix_host.id = "sprout_cov"
+        unix_host.name = "sprout_cov"
         unix_host.__class__ = UnixHost
         embedded_host = MagicMock()
         embedded_host.id = "zeph1"
+        embedded_host.name = "zeph1"
         embedded_host.__class__ = EmbeddedHost
 
         out_dir = tmp_path / "get_out_clean"
@@ -1270,3 +1273,25 @@ class TestCovCleanSuccess:
         used_pattern = mock_fetcher_cls.call_args.kwargs["pattern"]
         assert used_pattern.search("sprout")
         assert not used_pattern.search("sprout2")
+
+
+# ── _capture_stamps — tier-aware stamp resolution ──────────────────────────────
+
+
+class TestCaptureStamps:
+    """ticket/note stamp every tier kind; tester attribution stays manual-only."""
+
+    def test_e2e_kind_keeps_ticket_and_note_but_no_tester(self):
+        from otto.cli.cov import _capture_stamps
+
+        tester, ticket, note = _capture_stamps("e2e", "CI-77", "nightly run", "Al", "al@x")
+        assert tester is None
+        assert (ticket, note) == ("CI-77", "nightly run")
+
+    def test_manual_kind_resolves_tester(self, monkeypatch):
+        import otto.cli.cov as cov_mod
+
+        monkeypatch.setattr(cov_mod, "_resolve_tester", lambda n, e: {"name": n, "email": e})
+        tester, ticket, note = cov_mod._capture_stamps("manual", "T-1", None, "Al", "al@x")
+        assert tester == {"name": "Al", "email": "al@x"}
+        assert (ticket, note) == ("T-1", None)

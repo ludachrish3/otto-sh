@@ -78,5 +78,72 @@ async def test_manual_survives_unrelated_commit_and_stales_on_edit(tmp_path: Pat
     assert frec2.lines[2].hits.for_tier("manual") == 0
     assert frec2.lines[2].state == "stale"
     assert (report2 / "index.html").is_file()
-    assert store2.provenance
-    assert store2.provenance[0]["ticket"] == "T-9"
+    assert store2.contexts
+    assert store2.contexts[0].ticket == "T-9"
+
+
+@pytest.mark.asyncio
+async def test_run_contexts_traceable_end_to_end(tmp_path: Path) -> None:
+    """Two manual runs on one file: drilldown credits each valid run per line,
+    a staled line names the revoked run, and store.json round-trips it all."""
+    from otto.coverage.store.model import CoverageStore
+
+    repo = tmp_path / "sut"
+    repo.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env={**ENV, "HOME": str(tmp_path)},
+        )
+
+    git("init", "-q")
+    (repo / "f.c").write_text("int a;\nint b;\nint c;\n")
+    git("add", "f.c")
+    git("commit", "-qm", "init")
+
+    def cap(ticket: str, lines: dict[int, int], display_name: str | None) -> Capture:
+        return Capture(
+            tier="manual",
+            pin=head_commit(repo),
+            captured_at=f"2026-07-0{len(ticket)}T00:00:00Z",
+            ticket=ticket,
+            labs=["lab1"],
+            board="b1",
+            display_name=display_name,
+            files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines=lines)},
+        )
+
+    write_manual_capture(cap("T-1", {1: 2, 2: 1}, "Rack 2 Slot 4"), repo)
+    write_manual_capture(cap("T-22", {2: 3}, None), repo)
+
+    # Edit line 1 → T-1's evidence for it is revoked.
+    (repo / "f.c").write_text("int EDITED;\nint b;\nint c;\n")
+    git("commit", "-aqm", "edit line 1")
+
+    report = tmp_path / "r"
+    store = await run_coverage_report([], report, repo_root=repo, tier_configs=load_tiers(COV))
+
+    by_ticket = {c.ticket: c for c in store.contexts}
+    assert by_ticket["T-1"].label == "Rack 2 Slot 4"
+    assert by_ticket["T-22"].label == "b1"
+
+    (fr,) = [f for f in store.files() if f.path.name == "f.c"]
+    t1, t22 = by_ticket["T-1"].id, by_ticket["T-22"].id
+    assert fr.lines[2].context_hits == {t1: 1, t22: 3}  # both runs credited
+    assert fr.lines[1].stale_contexts == [t1]  # revoked run named
+    assert fr.lines[1].context_hits == {}
+
+    # store.json round-trip preserves the run table + line context data.
+    reloaded = CoverageStore.load(report / "store.json")
+    (fr2,) = [f for f in reloaded.files() if f.path.name == "f.c"]
+    assert fr2.lines[2].context_hits == {t1: 1, t22: 3}
+    assert reloaded.contexts[t1].label == "Rack 2 Slot 4"
+
+    # The rendered page carries the drilldown.
+    page = next((report / "files").glob("*.html")).read_text()
+    assert "Rack 2 Slot 4" in page
+    assert "ctx-stale" in page

@@ -112,3 +112,18 @@ class TestLCOVLoader:
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
         assert foo.lines[1].hits.for_tier("smoke") == 2
         assert "smoke" in store.tier_order
+
+    def test_load_credits_context_id_for_hit_lines(self, tmp_path):
+        from otto.coverage.store.model import CoverageStore
+
+        info = tmp_path / "x.info"
+        info.write_text(f"TN:\nSF:{tmp_path / 'f.c'}\nDA:1,3\nDA:2,0\nend_of_record\n")
+        store = CoverageStore()
+        ctx = store.add_context(tier="unit")
+        loader = LCOVLoader(store, PathCorrelator([]))
+        loader.load(info, "unit", ctx_id=ctx)
+
+        (fr,) = list(store.files())
+        assert fr.lines[1].context_hits == {ctx: 3}
+        assert fr.lines[2].context_hits == {}  # zero-count line: no context credit
+        assert fr.lines[1].hits.for_tier("unit") == 3

@@ -57,12 +57,13 @@
     </table>
   </section>
 
-  {% if provenance %}
+  {% if contexts %}
   <section class="captures">
     <h2>Captures</h2>
     <table class="summary-table captures-table">
       <thead>
         <tr>
+          <th>Run</th>
           <th>Tier</th>
           <th>Board</th>
           <th>Labs</th>
@@ -74,12 +75,13 @@
         </tr>
       </thead>
       <tbody>
-        {% for cap in provenance %}
+        {% for cap in contexts %}
         <tr>
+          <td>{{ cap.label }}</td>
           <td>{{ cap.tier }}</td>
           <td>{{ cap.board }}</td>
           <td>{{ cap.labs|join(', ') }}</td>
-          <td>{{ cap.date }}</td>
+          <td>{{ cap.captured_at }}</td>
           <td>{{ cap.tester.name if cap.tester else '' }}</td>
           <td>{{ cap.ticket or '' }}</td>
           <td>{{ cap.note or '' }}</td>
