@@ -165,12 +165,12 @@ async def reap_tunnels(tunnel_lab):
 
 
 async def _assert_no_leftover_tunnel_processes() -> None:
-    """Scan all three peers for ``otto-tunnel:`` tagged processes; raise if any remain.
+    r"""Scan all three peers for ``otto-tunnel:`` tagged processes; raise if any remain.
 
     Must decode each line through :func:`parse_process_discovery` (the same
     strict sentinel parser production discovery uses) rather than treat any
     non-empty ``DISCOVERY_PS_COMMAND`` output as a leak: that command's own
-    ``ps | grep -a ' otto-tunnel:'`` pipeline always shows up in its own `ps`
+    ``ps | \grep -a ' otto-tunnel:'`` pipeline always shows up in its own `ps`
     snapshot (the grep argv literally contains the search string), which is a
     self-match, not a real tagged tunnel process. ``parse_process_discovery``
     requires the full 11-segment sentinel and correctly ignores that noise.

@@ -44,9 +44,12 @@ class TestPsScan:
 
 
 class TestWireGolden:
-    def test_ps_command_is_byte_identical_to_the_retired_literal(self):
+    def test_ps_command_golden(self):
+        # `\grep` bypasses the interactive-shell color alias that blinds the
+        # scan on telnet-term hosts — see TestPsScanCommand in
+        # tests/unit/host/test_daemon.py for the full story.
         assert IMPAIR_PS_COMMAND == (
-            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | grep -a ' otto-impair:' || true"
+            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | \\grep -a ' otto-impair:' || true"
         )
 
     def test_encode_produces_the_exact_v1_bytes(self):

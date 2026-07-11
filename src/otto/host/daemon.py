@@ -81,13 +81,23 @@ def launch_command(sentinel: str, argv: list[str]) -> str:
     """
     inner = shlex.quote('exec -a "$1" "${@:2}"')
     tagged = " ".join(shlex.quote(a) for a in (sentinel, *argv))
+    # Linger is what lets the daemon outlive the LOGIN SESSIONS on the host:
+    # without it, systemd stops the user manager — collecting its transient
+    # units, i.e. this daemon — the moment the user's last session ends, so a
+    # CLI-created tunnel died as soon as otto's own ssh session closed
+    # (live-bed A/B 2026-07-11: linger on = survives, off = dies). Self-linger
+    # needs no privilege for an active session (polkit set-self-linger) and is
+    # deliberately best-effort: where it is denied the launch still proceeds,
+    # degraded to session-bound lifetime. It persists on the host by design —
+    # that is the fix — and is a no-op when already enabled.
+    linger = "(loginctl enable-linger >/dev/null 2>&1 || true)"
     systemd = (
         f"timeout {_SYSTEMD_RUN_PROBE_TIMEOUT} systemd-run --user --collect --quiet "
         f"-- bash -c {inner} _ {tagged}"
     )
     setsid = f"setsid bash -c {inner} _ {tagged} </dev/null >/dev/null 2>&1 &"
     body = (
-        f"if command -v systemd-run >/dev/null 2>&1 && {systemd} 2>/dev/null; "
+        f"if command -v systemd-run >/dev/null 2>&1 && {linger} && {systemd} 2>/dev/null; "
         f"then :; else ( {setsid} ); fi"
     )
     return f"bash -c {shlex.quote(body)}"
@@ -103,7 +113,7 @@ they are restricted to characters that are inert in BOTH contexts."""
 
 
 def ps_scan_command(prefix: str) -> str:
-    """Portable ``ps`` scan for daemons whose argv[0] starts with ``<prefix>:``.
+    r"""Portable ``ps`` scan for daemons whose argv[0] starts with ``<prefix>:``.
 
     Each field is its own ``-eo`` flag rather than one comma-joined
     ``-eo pid=,etime=,args=`` (found via live-bed e2e against a centos:7
@@ -112,6 +122,14 @@ def ps_scan_command(prefix: str) -> str:
     identical output on modern procps (4.x) too. Formatted ``etime`` (not
     ``etimes``) keeps 2.6.32-era userland working; ``|| true`` so a no-match
     grep (exit 1) is not a command failure.
+
+    ``\grep`` (backslash-escaped) is load-bearing: sessions that run an
+    interactive login shell (telnet terms) apply the distro alias
+    ``grep='grep --color=auto'``, and with the session PTY as stdout the ANSI
+    color codes it injects corrupt the sentinel tokens — the scan goes blind
+    on exactly those hosts while ssh (non-interactive) stays clean (live-bed
+    finding 2026-07-11). The backslash suppresses alias expansion in every
+    POSIX shell and is a no-op where no alias exists.
 
     *prefix* must match ``[A-Za-z0-9][A-Za-z0-9-]*``: it lands inside a
     single-quoted grep BRE, where a quote would break the shell line, a regex
@@ -126,7 +144,7 @@ def ps_scan_command(prefix: str) -> str:
             f"daemon sentinel prefix {prefix!r} must match [A-Za-z0-9][A-Za-z0-9-]* — "
             "it is spliced into a single-quoted grep pattern"
         )
-    return f"ps -eo pid= -eo etime= -eo args= 2>/dev/null | grep -a ' {prefix}:' || true"
+    return f"ps -eo pid= -eo etime= -eo args= 2>/dev/null | \\grep -a ' {prefix}:' || true"
 
 
 def parse_etime(text: str) -> int:

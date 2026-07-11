@@ -30,17 +30,41 @@ class TestLaunchCommand:
         # to setsid when systemd-run is present but unusable — no dbus session)
         # and bounded by `timeout 5` so a hang-shaped failure also folds through.
         assert cmd.startswith("bash -c ")
-        assert "if command -v systemd-run >/dev/null 2>&1 && timeout 5 systemd-run --user" in cmd
+        assert "if command -v systemd-run >/dev/null 2>&1 && " in cmd
+        assert "timeout 5 systemd-run --user" in cmd
         assert "setsid bash -c" in cmd
         assert "otto-impair:v1:lnk:eth1" in cmd
 
+    def test_systemd_branch_enables_linger_before_launching(self) -> None:
+        # Without linger, systemd stops the USER MANAGER — collecting its
+        # transient units, i.e. our daemons — when the user's last login
+        # session on the host ends. A CLI-created tunnel verified green, then
+        # died the moment otto's own ssh session closed (live-bed A/B
+        # 2026-07-11: with linger the daemon survives, without it dies).
+        # Self-linger needs no sudo (polkit set-self-linger allows an active
+        # session) and is best-effort: where it is denied, behavior degrades
+        # to the old lifetime rather than failing the launch.
+        cmd = launch_command("otto-impair:v1:lnk:eth1", ["sleep", "5"])
+        linger = cmd.find("loginctl enable-linger")
+        systemd_run = cmd.find("systemd-run --user")
+        assert linger != -1, "systemd branch must best-effort enable linger"
+        assert systemd_run != -1
+        assert linger < systemd_run, "linger must be enabled BEFORE the unit launches"
+        assert "loginctl enable-linger >/dev/null 2>&1 || true" in cmd
+
 
 class TestPsScanCommand:
-    def test_tunnel_prefix_is_byte_identical_to_the_retired_literal(self):
-        # STABILITY CONTRACT: this exact command string is what shipped in
-        # otto.tunnel.socat.DISCOVERY_PS_COMMAND. Never change these bytes.
+    def test_tunnel_prefix_golden(self):
+        # STABILITY GOLDEN. `\grep` (not `grep`) is load-bearing: interactive
+        # login shells (telnet terms) apply the distro alias
+        # `grep='grep --color=auto'`, and the ANSI codes it injects corrupt
+        # the sentinel tokens — discovery/verify/remove go blind on those
+        # hosts and rollback leaks processes (live-bed finding 2026-07-11).
+        # The backslash bypasses alias expansion in every POSIX shell;
+        # non-interactive shells (ssh exec) never had the alias and are
+        # byte-unaffected apart from the backslash itself.
         assert ps_scan_command("otto-tunnel") == (
-            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | grep -a ' otto-tunnel:' || true"
+            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | \\grep -a ' otto-tunnel:' || true"
         )
 
     @pytest.mark.parametrize("bad", ["o'tto", "otto tunnel", "otto.tunnel", "otto[x]", "", "-x"])
@@ -52,9 +76,9 @@ class TestPsScanCommand:
         with pytest.raises(ValueError, match="prefix"):
             ps_scan_command(bad)
 
-    def test_impair_prefix_is_byte_identical_to_the_retired_literal(self):
+    def test_impair_prefix_golden(self):
         assert ps_scan_command("otto-impair") == (
-            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | grep -a ' otto-impair:' || true"
+            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | \\grep -a ' otto-impair:' || true"
         )
 
 
