@@ -5,12 +5,14 @@
 // dense arrays), derives elements from hosts, and surfaces non-fatal
 // oddities as warnings (spec ship-and-note: duplicate ids warn, not fail).
 import type {
+  ChartSpecRecord,
   ElementRecord,
   HostSnapshot,
   LinkSnapshot,
   MetricRecord,
   MonitorHistoricalExportDocument,
   SessionRecord,
+  TabSpecRecord,
 } from "../api/export.gen";
 import { parseTs } from "./time";
 
@@ -30,6 +32,14 @@ export interface DerivedElement {
   singleton: boolean;
 }
 
+/** Dense presentation meta: normalized ONCE at the boundary (follow-up #1) —
+ * downstream code iterates charts/tabs unconditionally, never `?? []`. */
+export interface NormalizedMeta {
+  interval: number | null;
+  charts: ChartSpecRecord[];
+  tabs: TabSpecRecord[];
+}
+
 export interface NormalizedSession {
   id: string;
   label: string | null;
@@ -41,7 +51,7 @@ export interface NormalizedSession {
     links: LinkSnapshot[];
     explicitElements: ElementRecord[];
   };
-  meta: NonNullable<SessionRecord["meta"]>;
+  meta: NormalizedMeta;
   metrics: MetricRecord[];
   events: NonNullable<SessionRecord["events"]>;
   logEvents: NonNullable<SessionRecord["log_events"]>;
@@ -123,11 +133,15 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     startMs,
     endMs,
     lab: { hosts, links, explicitElements },
-    meta: raw.meta ?? { interval: null, charts: [], tabs: [] },
+    meta: {
+      interval: raw.meta?.interval ?? null,
+      charts: raw.meta?.charts ?? [],
+      tabs: raw.meta?.tabs ?? [],
+    },
     metrics,
     events: raw.events ?? [],
     logEvents: raw.log_events ?? [],
-    chartMap: (raw.chart_map ?? {}) as Record<string, string>,
+    chartMap: raw.chart_map ?? {},
     elements,
     hostIds,
     elementIds: new Set(elements.map((e) => e.id)),

@@ -19,6 +19,9 @@
   --color-status-live: #2f9e6e;
   --color-status-historical: #4c8dff;
   --color-status-warn: #e8a13c;
+  /* Health (status family — reserved, never used as series colors). */
+  --color-status-ok: #2f9e6e;
+  --color-status-error: #d03b3b;
 }
 
 body {

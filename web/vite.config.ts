@@ -59,20 +59,17 @@ export default defineConfig({
         "src/covreport/main.ts",
       ],
       // Ratchet floor: ~2-3% below the current measured baseline
-      // (stmts 83.3 / branch 80.11 / funcs 82.03 / lines 83.53), mirroring the
-      // Python gate's headroom (CI floor 92 vs ~94.7 actual). Catches
+      // (stmts 88.19 / branch 80.68 / funcs 86.13 / lines 88.91), mirroring the
+      // Python gate's headroom (CI floor 90 vs ~93.25 actual). Catches
       // regressions without breaking on trivial refactors; raise it as
       // component test coverage grows (see the tooling follow-ups).
-      // Re-ratcheted post monitor-ui-scaffold: the legacy shell wipe removed
-      // large partially-covered files, and the new review-shell components
-      // came in near-fully tested, pushing coverage up ~15-18 points across
-      // the board (previous baseline: stmts 67.1 / branch 55.6 / funcs 68.6 /
-      // lines 67.7).
+      // raised after the shell rebuild: stmts +16.2, branches +24.5, funcs +13.4, lines +15.8.
+      // raised after the views phase (Plan 3): stmts +4.89, branches +0.57, funcs +4.10, lines +5.38.
       thresholds: {
-        statements: 81,
+        statements: 85,
         branches: 78,
-        functions: 79,
-        lines: 81,
+        functions: 83,
+        lines: 86,
       },
     },
   },

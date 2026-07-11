@@ -1,44 +1,137 @@
-// SCAFFOLD (Plan 3 replaces this body with the fleet grid): element
-// sections + plain subject links prove the data wiring, routing and the
-// per-session lab rendering end-to-end.
+// Fleet grid (UX spec §8): element sections with health-rollup bars and
+// host status tiles — status dot · name · board·slot · labeled headline
+// metric; down tiles show the outage duration instead. All health is
+// derived, range-scoped (data/health.ts) — nothing here is stored state.
 import { Link } from "wouter";
 
-import { useActiveSession } from "../data/reviewStore";
+import { elementRollup, headlineFor, healthForHosts, type SubjectHealth } from "../data/health";
+import { useActiveSession, useReviewStore } from "../data/reviewStore";
+import { formatSpan } from "../data/time";
+
+const DOT_CLASS: Record<SubjectHealth["status"], string> = {
+  ok: "bg-status-ok",
+  down: "bg-status-error",
+  "no-data": "bg-gray-300 dark:bg-gray-600",
+  unknown: "bg-gray-200 dark:bg-gray-700",
+};
+
+const SEGMENT_CLASS: Record<SubjectHealth["status"], string> = {
+  ok: "bg-status-ok",
+  down: "bg-status-error",
+  "no-data": "bg-gray-300 dark:bg-gray-600",
+  unknown: "bg-gray-200 dark:bg-gray-700",
+};
 
 export function OverviewPage() {
   const session = useActiveSession();
+  const range = useReviewStore((s) => s.range);
   if (!session) return null;
+
+  const healths = healthForHosts(session, range);
+  const hostById = new Map(session.lab.hosts.map((h) => [h.id, h]));
+
   return (
     <main data-testid="overview-page" className="flex flex-col gap-6 p-4">
-      {session.elements.map((el) => (
-        <section key={el.id} data-testid={`element-section-${el.id}`}>
-          <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-            <span aria-hidden>{el.type === "physical" ? "▦" : "▤"}</span>
-            {el.id}
-            <span className="font-normal text-gray-400">
-              {el.hostIds.length} host{el.hostIds.length === 1 ? "" : "s"}
-              {el.description ? ` · ${el.description}` : ""}
-            </span>
-          </h2>
-          <ul className="flex flex-wrap gap-2">
-            {el.hostIds.map((hostId) => (
-              <li key={hostId}>
-                <Link
-                  href={`/host/${hostId}`}
-                  data-testid={`subject-link-${hostId}`}
-                  className="inline-block rounded-lg border border-gray-200 px-3 py-2 text-sm
-                    hover:border-brand-500 dark:border-gray-800 dark:hover:border-brand-500"
-                >
-                  {hostId}
-                </Link>
-              </li>
-            ))}
-            {el.hostIds.length === 0 && (
-              <li className="text-sm text-gray-400">empty — no hosts fitted</li>
+      {session.elements.map((el) => {
+        const rollup = elementRollup(el, healths, session);
+        const memberIds = [...el.hostIds].sort((a, b) => {
+          const slotA = hostById.get(a)?.slot ?? Number.POSITIVE_INFINITY;
+          const slotB = hostById.get(b)?.slot ?? Number.POSITIVE_INFINITY;
+          return slotA - slotB || a.localeCompare(b);
+        });
+        return (
+          <section key={el.id} data-testid={`element-section-${el.id}`}>
+            <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
+              <span aria-hidden>{el.type === "physical" ? "▦" : "▤"}</span>
+              {el.id}
+              <span className="font-normal text-gray-400">
+                {el.hostIds.length} host{el.hostIds.length === 1 ? "" : "s"}
+                {el.description ? ` · ${el.description}` : ""}
+              </span>
+            </h2>
+            {rollup.length > 0 && (
+              <div
+                data-testid={`health-rollup-${el.id}`}
+                className="mb-2 flex h-1.5 w-full max-w-md gap-px overflow-hidden rounded"
+                title={rollupTitle(rollup)}
+              >
+                {rollup.map((h, i) => (
+                  <span
+                    // biome-ignore lint/suspicious/noArrayIndexKey: segments are positional by design
+                    key={i}
+                    className={`min-w-1 flex-1 ${SEGMENT_CLASS[h.status]}`}
+                  />
+                ))}
+              </div>
             )}
-          </ul>
-        </section>
-      ))}
+            <ul className="flex flex-wrap gap-2">
+              {memberIds.map((hostId) => {
+                const host = hostById.get(hostId);
+                const health = healths.get(hostId) ?? {
+                  status: "unknown" as const,
+                  lastSeenMs: null,
+                  outageMs: 0,
+                };
+                const headline =
+                  health.status === "ok" ? headlineFor(session, hostId, range) : null;
+                return (
+                  <li key={hostId}>
+                    <Link
+                      href={`/host/${hostId}`}
+                      data-testid={`subject-link-${hostId}`}
+                      className="block rounded-lg border border-gray-200 px-3 py-2 text-sm
+                        hover:border-brand-500 dark:border-gray-800 dark:hover:border-brand-500"
+                    >
+                      <article
+                        data-testid={`host-tile-${hostId}`}
+                        className="flex min-w-36 flex-col gap-1"
+                      >
+                        <span className="flex items-center gap-2 font-medium">
+                          <span
+                            aria-hidden
+                            title={health.status}
+                            className={`h-2 w-2 rounded-full ${DOT_CLASS[health.status]}`}
+                          />
+                          {hostId}
+                        </span>
+                        <span className="text-xs text-gray-400">
+                          {host?.board ?? "—"}
+                          {host?.slot != null ? ` · slot ${host.slot}` : ""}
+                        </span>
+                        {health.status === "down" ? (
+                          <span className="text-xs font-medium text-status-error">
+                            down · {formatSpan(0, health.outageMs)}
+                          </span>
+                        ) : health.status === "ok" && headline ? (
+                          <span
+                            data-testid={`headline-${hostId}`}
+                            className="text-xs text-gray-600 dark:text-gray-300"
+                          >
+                            {headline.text}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-400">
+                            {health.status === "no-data" ? "no data" : "—"}
+                          </span>
+                        )}
+                      </article>
+                    </Link>
+                  </li>
+                );
+              })}
+              {el.hostIds.length === 0 && (
+                <li className="text-sm text-gray-400">empty — no hosts fitted</li>
+              )}
+            </ul>
+          </section>
+        );
+      })}
     </main>
   );
+}
+
+function rollupTitle(rollup: SubjectHealth[]): string {
+  const counts = new Map<string, number>();
+  for (const h of rollup) counts.set(h.status, (counts.get(h.status) ?? 0) + 1);
+  return [...counts.entries()].map(([status, n]) => `${n} ${status}`).join(" · ");
 }

@@ -8,6 +8,7 @@ import { Badge } from "../ui/Badge";
 import { Button } from "../ui/Button";
 import { OverflowMenu } from "../ui/Menu";
 import { Select } from "../ui/Select";
+import { SlideOver } from "../ui/SlideOver";
 import { TextInput } from "../ui/TextInput";
 import { ToggleGroup } from "../ui/ToggleGroup";
 
@@ -136,5 +137,29 @@ describe("Badge / TextInput", () => {
     expect(screen.getByTestId("tag").textContent).toBe("HISTORICAL");
     fireEvent.change(screen.getByTestId("from"), { target: { value: "2026-07-01T09:00" } });
     expect(onChange).toHaveBeenCalledWith("2026-07-01T09:00");
+  });
+});
+
+describe("SlideOver", () => {
+  it("renders children when open and calls onClose on dismiss", async () => {
+    const onClose = vi.fn();
+    render(
+      <SlideOver isOpen onClose={onClose} title="Events" testId="events-panel">
+        <p>content</p>
+      </SlideOver>,
+    );
+    const panel = await screen.findByTestId("events-panel");
+    expect(panel.textContent).toContain("content");
+    fireEvent.click(screen.getByLabelText("Close"));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("renders nothing when closed", () => {
+    render(
+      <SlideOver isOpen={false} onClose={() => {}} title="Events">
+        <p>content</p>
+      </SlideOver>,
+    );
+    expect(screen.queryByText("content")).toBeNull();
   });
 });

@@ -2,7 +2,32 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// jsdom has no ResizeObserver, and (without the optional "canvas" npm
+// package) HTMLCanvasElement#getContext returns null, which crashes real
+// echarts/zrender on init/dispose. The Subject page (Plan 3 Task 6) now
+// renders real ChartPanel instances via the full App, so this file needs
+// the same two shims chartpanel.test.tsx / subjectpage.test.tsx already
+// carry for the same reason.
+globalThis.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver;
+
+vi.mock("../charts/echarts", () => ({
+  echarts: {
+    init: () => ({
+      group: "",
+      setOption: () => {},
+      on: () => {},
+      resize: () => {},
+      dispose: () => {},
+    }),
+    connect: () => {},
+  },
+}));
 
 import App from "../App";
 import { presetRange, sessionBounds } from "../data/exportDoc";

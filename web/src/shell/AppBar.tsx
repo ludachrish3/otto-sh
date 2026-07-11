@@ -3,14 +3,17 @@
 // Pause appears here in live mode only — a later phase; review has none.
 import { useState } from "react";
 
-import { useReviewStore } from "../data/reviewStore";
+import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { loadTheme, saveTheme, type Theme } from "../theme";
 import { OverflowMenu } from "../ui/Menu";
+import { EventsPanel } from "./EventsPanel";
 import { exportLoadedDocument, openImportPicker } from "./ImportExport";
 
 export function AppBar() {
   const hasData = useReviewStore((s) => s.sessions.length > 0);
+  const session = useActiveSession();
   const [theme, setTheme] = useState<Theme>(loadTheme);
+  const [eventsOpen, setEventsOpen] = useState(false);
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
@@ -31,6 +34,23 @@ export function AppBar() {
         otto monitor
       </div>
       <div className="flex items-center gap-3">
+        {session && session.events.length > 0 && (
+          <button
+            type="button"
+            data-testid="events-button"
+            onClick={() => setEventsOpen(true)}
+            className="cursor-pointer rounded-md px-2 py-1 text-sm text-gray-500
+              hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-900"
+          >
+            Events{" "}
+            <span
+              data-testid="events-count"
+              className="rounded-full bg-gray-100 px-1.5 text-xs dark:bg-gray-800"
+            >
+              {session.events.length}
+            </span>
+          </button>
+        )}
         <span data-testid="status-text" className="text-sm text-gray-500 dark:text-gray-400">
           {hasData ? "Historical" : "No data"}
         </span>
@@ -58,6 +78,7 @@ export function AppBar() {
             },
           ]}
         />
+        <EventsPanel isOpen={eventsOpen} onClose={() => setEventsOpen(false)} />
       </div>
     </header>
   );

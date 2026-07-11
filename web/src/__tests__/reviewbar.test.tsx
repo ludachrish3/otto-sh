@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import App from "../App";
 import { useReviewStore } from "../data/reviewStore";
+import { msToLocalInput } from "../data/time";
 
 // `new URL(relative, import.meta.url)` throws "The URL must be of scheme
 // file" under this project's vitest/jsdom setup (see shell.test.tsx) —
@@ -17,6 +18,7 @@ import { useReviewStore } from "../data/reviewStore";
 const __dir = dirname(fileURLToPath(import.meta.url));
 const DRIFT = readFileSync(join(__dir, "../../fixtures/drift.json"), "utf-8");
 const MINIMAL = readFileSync(join(__dir, "../../fixtures/minimal.json"), "utf-8");
+const KITCHEN_SINK = readFileSync(join(__dir, "../../fixtures/kitchen-sink.json"), "utf-8");
 
 // jsdom (pinned here) doesn't implement `CSS.escape`
 // (https://github.com/jsdom/jsdom/issues/3363), which react-aria's
@@ -103,5 +105,24 @@ describe("ReviewBar", () => {
       ),
     );
     expect(useReviewStore.getState().range).toBeNull();
+  });
+
+  it("clamps a custom range that exceeds the session bounds (follow-up #2)", async () => {
+    render(<App />);
+    await importText(KITCHEN_SINK, "kitchen-sink.json");
+    const session = useReviewStore.getState().sessions[0];
+    // Type a window starting a day early and ending a day late, then Apply.
+    fireEvent.change(screen.getByTestId("range-from") as HTMLInputElement, {
+      target: { value: msToLocalInput(session.startMs - 86_400_000) },
+    });
+    fireEvent.change(screen.getByTestId("range-to") as HTMLInputElement, {
+      target: { value: msToLocalInput(session.endMs + 86_400_000) },
+    });
+    fireEvent.click(screen.getByTestId("range-apply"));
+    const range = useReviewStore.getState().range;
+    expect(range).not.toBeNull();
+    // datetime-local has minute precision — clamp must land exactly on bounds.
+    expect(range?.from).toBeGreaterThanOrEqual(session.startMs);
+    expect(range?.to).toBeLessThanOrEqual(session.endMs);
   });
 });

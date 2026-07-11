@@ -7,12 +7,9 @@ DOM-parity specs that used to exercise them through a page were retired in
 the Playwright pivot (plan 2026-07-11) in favor of ``shell_dash`` below.
 """
 
-import asyncio
-from collections.abc import Coroutine, Iterator
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, TypeVar
 
 import pytest
 
@@ -23,26 +20,6 @@ from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
 HISTORICAL_JSON = Path(__file__).parent / "data" / "historical.json"
-
-_T = TypeVar("_T")
-
-
-def _run_isolated(coro: "Coroutine[Any, Any, _T]") -> _T:
-    """Run *coro* to completion via ``asyncio.run`` on a throwaway thread.
-
-    Playwright's sync API (used by the ``page`` fixture) marks *this worker's
-    main thread* as having a permanently "running" event loop: its dispatcher
-    pumps a real loop through ``loop.run_until_complete()`` but cedes control
-    back to the test via a greenlet switch rather than returning, so asyncio's
-    thread-local running-loop flag never clears for the rest of the session.
-    Once any earlier test in this worker has touched ``page``/``browser``, a
-    plain ``asyncio.run()`` here raises "cannot be called from a running
-    event loop" even though nothing in *this* fixture is actually
-    concurrent. A fresh OS thread has its own independent running-loop flag,
-    sidestepping the poisoned shared state entirely.
-    """
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
 
 
 def pytest_configure(config: pytest.Config) -> None:

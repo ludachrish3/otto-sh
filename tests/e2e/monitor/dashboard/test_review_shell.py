@@ -254,3 +254,138 @@ def test_export_downloads_loaded_set(page, shell_dash):
     doc = json.loads(Path(path).read_text(encoding="utf-8"))
     assert doc["format"] == 1
     assert len(doc["sessions"]) == 1
+
+
+def test_grid_health_tiles_and_headline(shell_dash, page):
+    """Fleet grid (UX §8): labeled headline at full range; down · duration
+    when the selected range ends inside the outage window (health is
+    last-known-within-range, so narrowing re-evaluates it)."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    tile = page.locator('[data-testid="host-tile-chassis-a_lc1"]')
+    tile.wait_for()
+    assert re.search(r"% cpu", page.locator('[data-testid="headline-chassis-a_lc1"]').inner_text())
+    w2 = page.locator('[data-testid="host-tile-workers_w2"]')
+    assert "down ·" not in w2.inner_text()
+    # Rollup bar: one segment per chassis member.
+    assert page.locator('[data-testid="health-rollup-chassis-a"] > *').count() == 3
+
+    # End the range inside workers_w2's 60-80min outage: derive +70min from
+    # the pre-populated LOCAL from-input (same derivation the custom-range
+    # spec uses — datetime-local is local wall-clock).
+    start_raw = page.locator('[data-testid="range-from"]').input_value()
+    start = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M")  # noqa: DTZ007 — naive local wall-clock by design
+    page.locator('[data-testid="range-to"]').fill(
+        (start + timedelta(minutes=70)).strftime("%Y-%m-%dT%H:%M")
+    )
+    page.locator('[data-testid="range-apply"]').click()
+    page.wait_for_function(
+        "() => document.querySelector('[data-testid=\"host-tile-workers_w2\"]')"
+        ".innerText.includes('down ·')"
+    )
+    assert "down · 10m" in w2.inner_text()
+
+
+def test_subject_charts_render_and_filter(shell_dash, page):
+    """Per-subject stack (UX §9): canvases render per chart group; the
+    series tree checkbox and chip filters narrow the stack."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.locator('[data-testid="subject-link-chassis-a_lc1"]').click()
+    page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
+    assert page.locator('[data-testid="chart-stack"] canvas').count() >= 4
+    # Uncheck the CPU series -> its (single-series) panel unmounts.
+    page.locator('[data-testid="series-node-CPU %"]').click()
+    page.locator('[data-testid="chart-panel-cpu"]').wait_for(state="detached")
+    # Chip filter narrows to one group.
+    page.locator('[data-testid="chip-mem"]').click()
+    page.locator('[data-testid="chart-panel-psu-temp"]').wait_for(state="detached")
+    assert page.locator('[data-testid="chart-stack"] canvas').count() == 1
+
+
+def test_source_badges_and_source_filter(shell_dash, page):
+    """Provenance (UX §9): mgmt-sourced series wear a badge; the source
+    chip filters the tree to externally-sourced series only."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.locator('[data-testid="subject-link-chassis-a_lc1"]').click()
+    panel = page.locator('[data-testid="series-panel"]')
+    panel.wait_for()
+    assert "mgmt-01" in panel.inner_text()
+    before = page.locator('[data-testid^="series-node-"]').count()
+    page.locator('[data-testid="chip-source-mgmt-01"]').click()
+    page.wait_for_function(
+        f"() => document.querySelectorAll('[data-testid^=\"series-node-\"]').length < {before}"
+    )
+    # Only the two mgmt-sourced charts remain for this host.
+    assert page.locator('[data-testid^="chart-panel-"]').count() == 2
+
+
+def test_events_slide_over_jumps_range(shell_dash, page):
+    """Events (UX §11 review subset): reverse-chron slide-over; a row jump
+    re-scopes the shared range (review-bar inputs follow)."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    assert page.locator('[data-testid="events-count"]').inner_text() == "4"
+    before = page.locator('[data-testid="range-from"]').input_value()
+    page.locator('[data-testid="events-button"]').click()
+    page.locator('[data-testid="events-panel"]').wait_for()
+    rows = page.locator('[data-testid^="event-row-"]')
+    assert rows.count() == 4
+    assert "log capture" in rows.nth(0).inner_text()  # newest first
+    page.locator('[data-testid="event-row-2"]').click()  # stress-run span
+    page.locator('[data-testid="events-panel"]').wait_for(state="detached")
+    page.wait_for_function(
+        "(prev) => document.querySelector('[data-testid=\"range-from\"]').value !== prev",
+        arg=before,
+    )
+
+
+def test_log_table_renders_and_filters(shell_dash, page):
+    """Table tabs: kernel log rows render for db-01 and filter down."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.locator('[data-testid="subject-link-db-01"]').click()
+    table = page.locator('[data-testid="log-table-kernel"]')
+    table.wait_for()
+    rows_before = table.locator("tbody tr").count()
+    assert rows_before > 0
+    page.locator('[data-testid="log-filter-kernel"] input').fill("no-such-message-xyz")
+    page.wait_for_function(
+        "() => document.querySelector('[data-testid=\"log-table-kernel\"]')"
+        ".querySelectorAll('tbody tr').length === 0"
+    )
+
+
+def test_element_subject_renders_member_series(shell_dash, page):
+    """Element drill-in: /host/chassis-a stacks member + element-targeted
+    series (ambient) as charts."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/host/chassis-a")
+    page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
+    page.locator('[data-testid="chart-panel-ambient"] canvas').wait_for()
+
+
+def test_theme_toggle_with_charts_open(shell_dash, page):
+    """Theme flip re-renders open charts without error (canvas persists,
+    dark class lands).
+
+    The overflow menu's theme toggle is a strict two-state light<->dark
+    flip (web/src/theme.ts: ``Theme = "light" | "dark"``, no "system"
+    state) applied synchronously by AppBar's toggleTheme -> saveTheme ->
+    applyTheme (theme.ts:16-18) — one click always flips the `dark` class,
+    so waiting for it to differ from its pre-click value is a genuinely
+    discriminating wait (unlike a `!== undefined` check against a boolean,
+    which is always true and asserts nothing)."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.locator('[data-testid="subject-link-db-01"]').click()
+    page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
+    page.locator('[data-testid="overflow-menu"]').click()
+    before_dark = page.evaluate("document.documentElement.classList.contains('dark')")
+    page.locator('[data-testid="menu-theme"]').click()
+    page.wait_for_function(
+        "(prev) => document.documentElement.classList.contains('dark') !== prev", arg=before_dark
+    )
+    page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()

@@ -2,7 +2,7 @@
 // session picker (only >1) · range presets + custom from-to · Reset.
 import { useEffect, useState } from "react";
 
-import { presetRange, sessionBounds } from "../data/exportDoc";
+import { clampRange, presetRange, sessionBounds } from "../data/exportDoc";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { localInputToMs, msToLocalInput } from "../data/time";
 import { Badge } from "../ui/Badge";
@@ -57,7 +57,7 @@ export function ReviewBar() {
     const fromMs = localInputToMs(from);
     const toMs = localInputToMs(to);
     if (fromMs !== null && toMs !== null && fromMs < toMs) {
-      setRange({ from: fromMs, to: toMs });
+      setRange(clampRange({ from: fromMs, to: toMs }, bounds));
     }
   };
 

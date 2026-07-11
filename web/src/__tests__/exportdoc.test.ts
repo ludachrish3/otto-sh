@@ -110,3 +110,31 @@ describe("ranges", () => {
     expect(metricsForSubject(session, "chassis-a", null).length).toBeGreaterThan(0);
   });
 });
+
+describe("meta densification", () => {
+  const base = {
+    format: 1,
+    sessions: [
+      {
+        id: "s1",
+        start: "2026-07-01T08:00:00Z",
+        end: "2026-07-01T09:00:00Z",
+        meta: { interval: 15.0 }, // present but PARTIAL: no charts/tabs keys
+      },
+    ],
+  };
+
+  it("densifies a present-but-partial meta (follow-up #1)", () => {
+    const { sessions } = parseExportDocument(JSON.stringify(base));
+    expect(sessions[0].meta.interval).toBe(15.0);
+    expect(sessions[0].meta.charts).toEqual([]);
+    expect(sessions[0].meta.tabs).toEqual([]);
+  });
+
+  it("densifies an absent meta", () => {
+    const doc = structuredClone(base);
+    delete (doc.sessions[0] as Record<string, unknown>).meta;
+    const { sessions } = parseExportDocument(JSON.stringify(doc));
+    expect(sessions[0].meta).toEqual({ interval: null, charts: [], tabs: [] });
+  });
+});
