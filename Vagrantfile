@@ -92,6 +92,9 @@ Vagrant.configure("2") do |config|
     config.vm.define "dev", primary: true do |dev|
 
         dev.vm.provider "virtualbox" do |vb|
+            # The full test/coverage + Zephyr-build workload was thrashing swap
+            # at the default size.
+            vb.memory = 4096
             vb.cpus = 4
         end
 
