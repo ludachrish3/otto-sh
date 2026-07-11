@@ -54,12 +54,13 @@ if ZephyrInlineRetcodeFrame.type_name not in FRAME_CLASSES:
 
 
 def _install_integration_lab() -> None:
-    """Populate the configModule so embedded hosts can resolve their SSH hop.
+    """Populate the active context so embedded hosts can resolve their SSH hop.
 
     The Zephyr backends carry ``hop="basil_seed"``, and
     :meth:`RemoteHost._build_hop_transport` calls ``get_host(hop_id)`` to
-    resolve the hop's connection details. That lookup needs the configModule
-    populated with at least the ``basil`` Unix host.
+    resolve the hop's connection details. That lookup needs the active
+    :class:`~otto.context.OttoContext` populated with at least the ``basil``
+    Unix host.
 
     Adding ``carrot`` / ``tomato`` / ``pepper`` too keeps the lab usable by
     any cross-OS / mixed-hop test that ends up in this directory.

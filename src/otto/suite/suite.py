@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from otto.monitor.parsers import MetricParser
     from otto.monitor.server import MonitorServer
 
-logger = getLogger("otto")
+logger = getLogger(__name__)
 
 TOptions = TypeVar("TOptions")
 """Type variable for the options dataclass of an :class:`OttoSuite` subclass."""

@@ -31,8 +31,11 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .errors import CoverageConfigError, NoCoverageDataError
+
 if TYPE_CHECKING:
     from ..config.repo import Repo
+    from .tiers import TierConfig
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +100,7 @@ async def collect_coverage(
     cov_dir: Path,
     *,
     repos: "list[Repo] | None" = None,
-    tier: str | None = None,
+    tier: "str | TierConfig | None" = None,
     ticket: str | None = None,
     note: str | None = None,
     tester: dict[str, str] | None = None,
@@ -117,11 +120,15 @@ async def collect_coverage(
 
     Fails loud (never swallows):
 
-    * no ``[coverage]`` section configured → :class:`ValueError`;
-    * no ``.gcda`` retrieved from any matched host → :class:`ValueError`
+    * no ``[coverage]`` section configured → :class:`~otto.coverage.errors.CoverageConfigError`
+      (a :class:`ValueError`);
+    * no ``.gcda`` retrieved from any matched host →
+      :class:`~otto.coverage.errors.NoCoverageDataError` (a :class:`ValueError`)
       naming the hosts searched;
-    * an ambiguous/unknown tier → :class:`ValueError` (from
-      :func:`~otto.coverage.tiers.resolve_get_tier`);
+    * an ambiguous/unknown tier name → :class:`ValueError` (from
+      :func:`~otto.coverage.tiers.resolve_get_tier`) — only reachable when
+      *tier* is a name (or ``None``); a resolved :class:`~otto.coverage.tiers.TierConfig`
+      passed directly skips resolution entirely;
     * a non-git sut, a polluted tree, an incompatible gcov, or a merge failure
       propagate as :class:`~otto.coverage.capture.gitio.GitUnavailableError`,
       :class:`~otto.coverage.errors.CoverageDataMismatchError`,
@@ -133,7 +140,12 @@ async def collect_coverage(
         repos: Repo list to resolve ``[coverage]`` from (defaults to
             :func:`otto.config.get_repos`).
         tier: Tier name to annotate onto each capture; ``None`` resolves the
-            sole e2e-kind tier.
+            sole e2e-kind tier. A caller that has already resolved a
+            :class:`~otto.coverage.tiers.TierConfig` (e.g. ``otto cov get``,
+            which validates the manual-tier ``--ticket`` requirement against
+            it before calling in) can pass the object directly instead of its
+            name — this skips ``resolve_get_tier`` entirely rather than
+            re-resolving what the caller already resolved.
         ticket: Optional ticket reference annotated onto every capture.
         note: Optional free-text note annotated onto every capture.
         tester: Optional tester identity annotated onto each capture.
@@ -161,7 +173,7 @@ async def collect_coverage(
 
     cov_config = get_cov_config(repos)
     if not cov_config:
-        raise ValueError("No [coverage] section found in .otto/settings.toml")
+        raise CoverageConfigError("No [coverage] section found in .otto/settings.toml")
 
     host_dirs: dict[str, Path] = {}
 
@@ -210,7 +222,7 @@ async def collect_coverage(
     if not host_dirs:
         searched = ", ".join(sorted(h.id for h in cov_hosts))
         where = f"searched: {searched}" if searched else "no hosts matched [coverage].hosts"
-        raise ValueError(f"no .gcda counters retrieved from any host ({where})")
+        raise NoCoverageDataError(f"no .gcda counters retrieved from any host ({where})")
 
     logger.info("Coverage data collected to %s (%d hosts)", cov_dir, len(host_dirs))
 
@@ -243,7 +255,7 @@ async def _produce_capture_tail(
     repos: "list[Repo]",
     cov_config: dict[str, Any],
     cov_dir: Path,
-    tier: str | None,
+    tier: "str | TierConfig | None",
     ticket: str | None,
     note: str | None,
     tester: dict[str, str] | None,
@@ -258,17 +270,26 @@ async def _produce_capture_tail(
     stamp mismatch, or a merge failure propagate to the caller, which decides
     whether to fail the run. Returns an empty list (no captures) when no
     ``[coverage]`` repo resolved a git root.
+
+    *tier* skips :func:`~otto.coverage.tiers.resolve_get_tier` entirely when
+    it is already a :class:`~otto.coverage.tiers.TierConfig` (a caller like
+    ``otto cov get`` that resolved its own tier up front, e.g. to validate the
+    manual-tier ``--ticket`` requirement, must not pay for — or risk
+    diverging from — a second resolution by name here).
     """
     from .capture.produce import produce_captures
     from .config import get_cov_repo
-    from .tiers import load_tiers, resolve_get_tier
+    from .tiers import TierConfig, load_tiers, resolve_get_tier
 
     cov_repo = get_cov_repo(repos)
     if cov_repo is None:
         return []
 
-    tiers = load_tiers(cov_config)
-    resolved_tier = resolve_get_tier(tiers, tier)
+    if isinstance(tier, TierConfig):
+        resolved_tier = tier
+    else:
+        tiers = load_tiers(cov_config)
+        resolved_tier = resolve_get_tier(tiers, tier)
     written = await produce_captures(
         cov_dir,
         tier=resolved_tier.name,

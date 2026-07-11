@@ -277,6 +277,18 @@ called with both empty (a bare `RunOptions()`) it raises `ValueError` rather
 than silently matching every test in every repo — mirroring the `otto test`
 callback, which only takes the suite-less path once `--tests`/`-m` is given.
 
+### `cov_dir` overwrite guard
+
+When `RunOptions.cov` is set together with an explicit `cov_dir`, both
+`run_suite` and `run_selection` validate it up front, the same way the CLI's
+`--cov-dir`/`--overwrite-cov-dir` pair does: a non-empty target raises
+`ValueError` naming the flag (via `otto.coverage.config.prepare_empty_dir`)
+unless `overwrite_cov_dir=True` is also set, in which case its contents are
+cleared before the run starts.
+This runs before the pre-run remote `.gcda` clean, so a bad `cov_dir` fails
+before any host is touched. Leave `cov_dir` unset (the default) to collect
+into `<output_dir>/cov`, which is always fresh.
+
 ### Sync API, async callers
 
 `run_suite`/`run_selection` are synchronous, even though the suites and
@@ -315,8 +327,15 @@ hosts (Unix hosts over the network, embedded boards over the console), writes
 the `.otto_cov_meta.json` sidecar, and produces a `capture.json` per board —
 returning a `CollectResult`. A second async call, `run_coverage_report()`,
 renders those captures into a multi-tier HTML report. `collect_coverage`,
-`clean_remote_gcda`, and `CollectResult` are exported at `otto.coverage`;
+`clean_remote_gcda`, `CollectResult`, and the two named exceptions below
+(`CoverageConfigError`, `NoCoverageDataError`) are exported at `otto.coverage`;
 `run_coverage_report` lives at `otto.coverage.reporter`.
+
+`tier=` accepts either a tier name (`str`) or an already-resolved
+{class}`~otto.coverage.tiers.TierConfig` object — pass the object when you've
+already called {func}`~otto.coverage.tiers.resolve_get_tier` yourself (as
+`otto cov get` does, to validate the manual-tier `--ticket` requirement
+before fetching) so `collect_coverage` does not re-resolve it a second time.
 
 ```python
 import asyncio
@@ -362,9 +381,13 @@ asyncio.run(main())
 Unlike the CLI, `collect_coverage` never swallows. Wrap it if a collection
 failure should not abort your script:
 
-- `ValueError` — no `[coverage]` section is configured, no `.gcda` was
-  retrieved from any matched host (the message names the hosts it searched), or
-  the requested tier is ambiguous or unknown.
+- `otto.coverage.errors.CoverageConfigError` (a `ValueError`) — no `[coverage]`
+  section is configured for any of the resolved repos.
+- `otto.coverage.errors.NoCoverageDataError` (a `ValueError`) — no `.gcda` was
+  retrieved from any matched host (the message names the hosts it searched).
+- `ValueError` — the requested tier name is ambiguous or unknown (only
+  reachable when `tier=` is a name or `None`; a `TierConfig` object passed
+  directly skips resolution).
 - `otto.coverage.capture.gitio.GitUnavailableError` — the SUT checkout is not a
   git repository, so captures cannot be anchored to `base_commit`.
 - `otto.coverage.errors.CoverageDataMismatchError` — the fetched `.gcda` no
@@ -374,6 +397,9 @@ failure should not abort your script:
   this build's coverage format (e.g. a clang build captured with GNU `gcov`).
 - `RuntimeError` — an lcov/merge failure.
 
+`CoverageConfigError` and `NoCoverageDataError` both subclass `ValueError`, so
+an existing `except ValueError` handler keeps working unmodified; catch them
+by name first if you want to distinguish the two fail-loud sites.
 `GitUnavailableError`, `CoverageDataMismatchError`, and
 `CoverageToolVersionError` all subclass `RuntimeError`, so catch them *before* a
 bare `except RuntimeError` if you want to distinguish them. Swallowing-and-logging

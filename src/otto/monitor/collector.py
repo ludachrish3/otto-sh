@@ -57,7 +57,7 @@ class MetricView(Protocol):
     tab_label: str
 
 
-logger = logging.getLogger("otto")
+logger = logging.getLogger(__name__)
 
 # Ticks a parser may produce nothing before the "silent parser" warning fires.
 # Deliberately "never produced by tick K", not "K consecutive empties": rate

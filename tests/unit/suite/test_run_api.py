@@ -26,6 +26,23 @@ from otto.suite.run import (
 )
 
 
+def test_suite_package_reexports_selection_api():
+    """otto.suite is the documented library facade — run_selection and both
+    selection exceptions must be reachable from it directly, not only from the
+    internal otto.suite.run / otto.suite.selection submodules."""
+    import otto.suite
+    from otto.suite.run import NoTestsMatchedError as _NoTestsMatchedError
+    from otto.suite.run import run_selection as _run_selection
+    from otto.suite.selection import UnknownSelectionError as _UnknownSelectionError
+
+    assert otto.suite.run_selection is _run_selection
+    assert otto.suite.NoTestsMatchedError is _NoTestsMatchedError
+    assert otto.suite.UnknownSelectionError is _UnknownSelectionError
+    assert "run_selection" in otto.suite.__all__
+    assert "NoTestsMatchedError" in otto.suite.__all__
+    assert "UnknownSelectionError" in otto.suite.__all__
+
+
 def test_run_options_defaults_match_cli():
     o = RunOptions()
     assert o.cov_clean is True
@@ -425,6 +442,69 @@ def test_run_suite_cov_dir_override_used_as_report_source(tmp_path, monkeypatch)
     assert args[0] == [cov_dir]
 
 
+# ── run_suite: cov_dir empty/overwrite guard ─────────────────────────────────
+
+
+def test_run_suite_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypatch):
+    """A non-empty ``cov_dir`` without ``overwrite_cov_dir`` raises before any
+    host I/O — the same guard the CLI's ``--cov-dir``/``--overwrite-cov-dir``
+    pair already enforces, now also applied to a library caller that hands
+    ``RunOptions.cov_dir`` straight to ``run_suite``."""
+    import otto.config
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    cov_dir = tmp_path / "cov_dir"
+    cov_dir.mkdir()
+    (cov_dir / "stale.txt").write_text("stale")
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    clean_mock = AsyncMock()
+    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", clean_mock)
+
+    class _CovDirSuite:
+        pass
+
+    with pytest.raises(ValueError, match="cov_dir"):
+        run_suite(
+            _CovDirSuite,
+            run_options=RunOptions(cov=True, cov_dir=cov_dir),
+            output_dir=log_dir,
+        )
+    # Failed before the pre-run remote clean ever ran, and the stale contents
+    # were never touched.
+    clean_mock.assert_not_awaited()
+    assert (cov_dir / "stale.txt").exists()
+
+
+def test_run_suite_overwrite_cov_dir_true_clears_and_proceeds(tmp_path, monkeypatch):
+    """``overwrite_cov_dir=True`` clears a non-empty ``cov_dir`` and the run proceeds."""
+    import otto.config
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    cov_dir = tmp_path / "cov_dir"
+    cov_dir.mkdir()
+    (cov_dir / "stale.txt").write_text("stale")
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", AsyncMock())
+    monkeypatch.setattr("otto.coverage.collect.collect_coverage", AsyncMock())
+
+    class _CovDirSuite2:
+        pass
+
+    result = run_suite(
+        _CovDirSuite2,
+        run_options=RunOptions(cov=True, cov_dir=cov_dir, cov_clean=False, overwrite_cov_dir=True),
+        output_dir=log_dir,
+    )
+    assert result.passed
+    assert not (cov_dir / "stale.txt").exists()
+
+
 def test_run_selection_raises_value_error_when_nothing_matches(monkeypatch):
     """A --tests selection that matches nothing raises ValueError, not typer.Exit.
 
@@ -756,3 +836,166 @@ def test_run_suite_leaves_active_context_output_dir_untouched(tmp_path, monkeypa
     finally:
         reset_context(token)
         _cleanup_probe_suite("C")
+
+
+# ── _session_context hardening: restore on exception ─────────────────────────
+#
+# _run_pytest_session raising mid-session must not leak the temporary state
+# _session_context installs — the finally in each branch must still run.
+
+
+def test_run_suite_restores_no_context_state_on_exception(tmp_path, monkeypatch):
+    """No-active-context branch: an exception mid-session still resets the
+    contextvar, leaving no active OttoContext behind."""
+    import otto.config
+    from otto.context import _active, try_get_context
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+
+    def _raise(*_a, **_k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("otto.suite.run._run_pytest_session", _raise)
+
+    class _ExcNoCtxSuite:
+        pass
+
+    token = _active.set(None)  # hermetic: guarantee the no-context precondition
+    try:
+        assert try_get_context() is None
+        with pytest.raises(RuntimeError, match="boom"):
+            run_suite(_ExcNoCtxSuite, output_dir=tmp_path)
+        assert try_get_context() is None
+    finally:
+        _active.reset(token)
+
+
+def test_run_suite_restores_prior_output_dir_on_exception(tmp_path, monkeypatch):
+    """Active-context-with-no-output_dir branch: an exception mid-session still
+    rolls back the session-scoped output_dir assignment to its prior value."""
+    import otto.config
+    from otto.config.lab import Lab
+    from otto.context import OttoContext, reset_context, set_context
+
+    monkeypatch.setattr(otto.config, "get_repos", list)
+
+    def _raise(*_a, **_k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("otto.suite.run._run_pytest_session", _raise)
+
+    class _ExcOutDirSuite:
+        pass
+
+    ctx = OttoContext(lab=Lab(name="test"))
+    assert ctx.output_dir is None
+    token = set_context(ctx)
+    try:
+        with pytest.raises(RuntimeError, match="boom"):
+            run_suite(_ExcOutDirSuite, output_dir=tmp_path)
+        assert ctx.output_dir is None
+    finally:
+        reset_context(token)
+
+
+# ── run_selection: context installation for library callers ─────────────────
+#
+# The context-installation tests above only ever drove run_suite; run_selection
+# shares the exact same _session_context call but had no direct coverage.
+
+
+def test_run_selection_installs_and_restores_minimal_context(tmp_path, monkeypatch):
+    """run_selection installs the same minimal lab-less context run_suite does
+    for a no-context library caller, and restores the prior (no-context) state
+    afterwards."""
+    import otto.config
+    from otto.config.repo import CollectedTest
+    from otto.context import LIBRARY_LAB_NAME, _active, try_get_context
+
+    class _FakeRepo:
+        name = "fixture-repo"
+        sut_dir = tmp_path
+        tests: ClassVar[list] = []
+
+        def collect_tests(self, markers=None, suite=None, tests=None):
+            return [
+                CollectedTest(
+                    nodeid="tests/t.py::test_alpha",
+                    name="test_alpha",
+                    path=tmp_path / "tests" / "t.py",
+                    cls_name=None,
+                )
+            ]
+
+    monkeypatch.setattr(otto.config, "get_repos", lambda: [_FakeRepo()])
+
+    captured: dict = {}
+
+    def fake_main(_args, **_kw):
+        ctx = try_get_context()
+        captured["lab_name"] = ctx.lab.name if ctx is not None else None
+        captured["output_dir"] = ctx.output_dir if ctx is not None else None
+        return pytest.ExitCode.OK
+
+    monkeypatch.setattr("pytest.main", fake_main)
+
+    token = _active.set(None)  # hermetic: guarantee the no-context precondition
+    try:
+        assert try_get_context() is None
+        result = run_selection(run_options=RunOptions(tests="test_alpha"), output_dir=tmp_path)
+        assert result.passed, f"exit_code={result.exit_code}"
+        # A context WAS installed for the duration of the session...
+        assert captured["lab_name"] == LIBRARY_LAB_NAME
+        assert captured["output_dir"] == tmp_path
+        # ...and torn down afterwards.
+        assert try_get_context() is None
+    finally:
+        _active.reset(token)
+
+
+# ── run_selection: cov_dir empty/overwrite guard (carried from Task 3) ──────
+
+
+def test_run_selection_nonempty_cov_dir_without_overwrite_raises(tmp_path, monkeypatch):
+    """The cov_dir empty/overwrite guard run_suite enforces (Task 3) applies
+    identically on the run_selection path — a library caller handing
+    RunOptions.cov_dir straight to run_selection gets the same guard, before
+    any host I/O."""
+    import otto.config
+    from otto.config.repo import CollectedTest
+
+    log_dir = tmp_path / "log"
+    log_dir.mkdir()
+    cov_dir = tmp_path / "cov_dir"
+    cov_dir.mkdir()
+    (cov_dir / "stale.txt").write_text("stale")
+
+    class _FakeRepo:
+        name = "fixture-repo"
+        sut_dir = tmp_path
+        tests: ClassVar[list] = []
+
+        def collect_tests(self, markers=None, suite=None, tests=None):
+            return [
+                CollectedTest(
+                    nodeid="tests/t.py::test_alpha",
+                    name="test_alpha",
+                    path=tmp_path / "tests" / "t.py",
+                    cls_name=None,
+                )
+            ]
+
+    monkeypatch.setattr(otto.config, "get_repos", lambda: [_FakeRepo()])
+    monkeypatch.setattr("pytest.main", lambda *a, **k: pytest.ExitCode.OK)
+    clean_mock = AsyncMock()
+    monkeypatch.setattr("otto.coverage.collect.clean_remote_gcda", clean_mock)
+
+    with pytest.raises(ValueError, match="cov_dir"):
+        run_selection(
+            run_options=RunOptions(tests="test_alpha", cov=True, cov_dir=cov_dir),
+            output_dir=log_dir,
+        )
+    # Failed before the pre-run remote clean ever ran, and the stale contents
+    # were never touched.
+    clean_mock.assert_not_awaited()
+    assert (cov_dir / "stale.txt").exists()

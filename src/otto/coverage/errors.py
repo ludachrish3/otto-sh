@@ -25,6 +25,26 @@ class CoverageToolVersionError(RuntimeError):
         )
 
 
+class CoverageConfigError(ValueError):
+    """No ``[coverage]`` section is configured for the resolved repo(s).
+
+    Raised by ``otto.coverage.collect.collect_coverage`` before any fetch is
+    attempted: with no ``[coverage]`` section there is nothing to resolve a
+    host selector, a ``gcda_remote_dir``, or a tier against.
+    """
+
+
+class NoCoverageDataError(ValueError):
+    """No ``.gcda`` counters were retrieved from any matched host.
+
+    Raised by ``otto.coverage.collect.collect_coverage`` after the Unix-fetch
+    and embedded-collection stages both complete with nothing to show for it
+    — every host the ``[coverage].hosts`` selector matched (or, with no
+    selector, every host in the lab) contributed no coverage data. The
+    message names the hosts that were searched.
+    """
+
+
 class CoverageDataMismatchError(RuntimeError):
     """Fetched ``.gcda`` data does not match the current build's ``.gcno`` notes.
 

@@ -541,7 +541,10 @@ def main(  # noqa: PLR0913 — CLI command params
 
     cov_report_effective = cov_report or cov_report_dir is not None
     if cov_report_dir is not None:
-        from ..coverage.config import prepare_empty_dir  # cached after the above
+        # Re-import is free when --cov-dir already ran the block above: Python
+        # caches the module in sys.modules, so this never re-pays the
+        # otto.coverage package __init__ cost noted there.
+        from ..coverage.config import prepare_empty_dir
 
         try:
             prepare_empty_dir(

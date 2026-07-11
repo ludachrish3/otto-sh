@@ -113,6 +113,42 @@ def test_get_host_unknown_id_raises_helpful_keyerror():
         ctx.get_host("does-not-exist")
 
 
+def test_get_host_unknown_id_normal_lab_message_has_no_breadcrumb():
+    """A normal (non-sentinel) lab's unknown-host message stays exactly what it
+    was before the open_context breadcrumb was added — no library-only hint
+    leaking into ordinary CLI/lab-backed errors."""
+    import pytest
+
+    ctx = OttoContext(lab=_lab_with("carrot"))
+    with pytest.raises(KeyError) as excinfo:
+        ctx.get_host("does-not-exist")
+    message = str(excinfo.value)
+    assert message == ("\"No host 'does-not-exist' in lab 't'. Available: ['carrot_seed']\"")
+    assert "open_context" not in message
+    assert "no lab is loaded" not in message
+
+
+def test_get_host_unknown_id_sentinel_lab_appends_open_context_breadcrumb():
+    """The minimal library context installed by suite.run._session_context uses
+    the sentinel lab name LIBRARY_LAB_NAME ("<library>"); get_host's unknown-host
+    error must append a hint to wrap the call in ``async with
+    otto.open_context(lab=...)`` — and ONLY for that sentinel lab."""
+    import pytest
+
+    from otto.config.lab import Lab
+    from otto.context import LIBRARY_LAB_NAME
+
+    assert LIBRARY_LAB_NAME == "<library>"
+    ctx = OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))
+    with pytest.raises(KeyError) as excinfo:
+        ctx.get_host("does-not-exist")
+    message = str(excinfo.value)
+    assert "no lab is loaded" in message
+    assert "async with otto.open_context(lab=...)" in message
+    # The breadcrumb is an ADDITION, not a rewrite: the original wording is untouched.
+    assert "No host 'does-not-exist' in lab '<library>'. Available: []" in message
+
+
 def test_context_get_host_and_all_hosts_resolve_from_lab():
     # Use NEs that exist in tests/lab_data/tech1/lab.json with creds (Unix hosts):
     # carrot, tomato, pepper, basil

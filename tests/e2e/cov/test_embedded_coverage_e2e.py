@@ -63,10 +63,11 @@ def _extension_artifact() -> Path:
 def clean_sprout_cov():
     """Skip unless ``sprout_cov`` answers, and clear any loaded extension.
 
-    Populates the configModule with the ``basil`` hop (as the integration host
-    conftest does) so the embedded host's ``basil_seed`` hop resolves, probes
-    the console, and best-effort unloads ``cov_ext`` so the suite's ``load_hex``
-    starts from a clean slate (``--cov`` runs leave it resident).
+    Populates the active :class:`~otto.context.OttoContext` with the
+    ``basil`` hop (as the integration host conftest does) so the embedded
+    host's ``basil_seed`` hop resolves, probes the console, and best-effort
+    unloads ``cov_ext`` so the suite's ``load_hex`` starts from a clean slate
+    (``--cov`` runs leave it resident).
     """
     import asyncio
 

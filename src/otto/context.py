@@ -25,6 +25,26 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+LIBRARY_LAB_NAME = "<library>"
+"""Sentinel ``Lab.name`` for the minimal, host-less context a library caller
+gets for free.
+
+``otto.suite.run._session_context`` installs ``OttoContext(lab=Lab(name=LIBRARY_LAB_NAME))``
+around a session when no context is already active (e.g. ``run_suite()``/
+``run_selection()`` called outside ``async with otto.open_context(...)``). That
+Lab carries no hosts, so any ``get_host()`` call inside such a run fails loud —
+:meth:`OttoContext.get_host` checks this constant to append a hint pointing at
+``open_context`` (see below) ONLY for that sentinel lab; a real, lab-backed
+unknown-host error is untouched.
+
+Lives here rather than in ``otto.suite.run`` (where the sentinel is actually
+installed) because this is the lower module in the import graph: ``otto.suite``
+already imports ``otto.context``, and ``otto.context`` must never import from
+``otto.suite`` (that would cycle back through ``otto.suite.run``'s own
+``from ..context import ...``). Defining the shared constant on the
+already-imported side keeps both directions acyclic.
+"""
+
 
 class HostScope:
     """Owns hosts handed out during a command; closes any still-connected on exit.
@@ -103,8 +123,20 @@ class OttoContext:
 
         host = self.lab.resolve_handle(host_id)
         if host is None:
+            # The sentinel LIBRARY_LAB_NAME lab is what run_suite()/run_selection()
+            # install for a library caller with no active context (see
+            # otto.suite.run._session_context) — it never carries hosts, so
+            # get_host() always fails here. Point a caller who hits this at the
+            # real fix (open_context) rather than leaving them staring at an
+            # empty "Available: []". A normal, lab-backed miss is untouched.
+            breadcrumb = (
+                " — no lab is loaded; run inside 'async with otto.open_context(lab=...)'"
+                if self.lab.name == LIBRARY_LAB_NAME
+                else ""
+            )
             raise KeyError(
-                f"No host {host_id!r} in lab {self.lab.name!r}. Available: {sorted(self.lab.hosts)}"
+                f"No host {host_id!r} in lab {self.lab.name!r}. "
+                f"Available: {sorted(self.lab.hosts)}{breadcrumb}"
             )
         resolved = _apply_option_overrides(cast("Any", host), **overrides)
         self.scope.register(resolved)

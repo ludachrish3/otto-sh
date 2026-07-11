@@ -41,7 +41,7 @@ from ..registry import Registry, caller_module
 from .parsers import MetricDataPoint, human_readable
 from .rates import RateTracker
 
-logger = logging.getLogger("otto")
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

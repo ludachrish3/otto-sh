@@ -79,7 +79,16 @@ class Capture(BaseModel):
         raw = json.loads(raw_text)
         found_format = raw.get("schema") if isinstance(raw, dict) else None
         if found_format != CAPTURE_FORMAT_VERSION:
-            found_label = f"v{found_format}" if isinstance(found_format, int) else "none"
+            # Distinguish "no schema key at all" from "a schema key was
+            # present but isn't the int we expect" (e.g. a hand-edited
+            # capture.json with "schema": "2") — see the identical fix in
+            # otto.coverage.store.model.CoverageStore.load.
+            if found_format is None:
+                found_label = "none"
+            elif isinstance(found_format, int):
+                found_label = f"v{found_format}"
+            else:
+                found_label = f"{found_format!r} (expected an int)"
             raise ValueError(
                 f"capture format v{CAPTURE_FORMAT_VERSION} required; "
                 f"found {found_label} — re-capture with otto cov get"

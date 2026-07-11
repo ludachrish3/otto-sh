@@ -253,7 +253,7 @@ def ensure_cli_session(ctx: typer.Context) -> None:
         prefixes |= repo.product_log_prefixes()
     management.set_capture_prefixes(prefixes)
 
-    logger = getLogger("otto")
+    logger = getLogger(__name__)
     if opts.dry_run:
         logger.info(
             "[magenta][DRY RUN] Commands and file transfers will be skipped. "
@@ -377,7 +377,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     identity = reservation_gate.identity
     if identity is not None and identity.source == "--as-user":
-        getLogger("otto").info(
+        getLogger(__name__).info(
             f"[bold magenta][reservations] acting as {identity.username!r}"
             f" (--as-user)[/bold magenta]"
         )
@@ -429,7 +429,7 @@ def present_reservation_gate(ctx: typer.Context) -> None:
     Reads ``ctx.meta["otto_reservation"]`` — a no-op when absent (e.g. a
     lab-free command, or a test that never populated it) — and calls
     :meth:`~otto.reservations.check.ReservationGate.evaluate`. ``evaluate()``
-    returns a :class:`~otto.reservations.check.ReservationGateOutcome` whose
+    returns a :class:`~otto.reservations.check.ReservationGateResult` whose
     ``warning`` is deliberately plain text (the library has no Typer/rich
     dependency); this function OWNS the presentation of that text — it is
     the single place that wraps it in ``[bold red]...[/bold red]`` markup.

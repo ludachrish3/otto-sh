@@ -76,10 +76,12 @@ class TestRepoGitSubprocessLeak:
         """``repo.commit`` must not leave a BaseSubprocessTransport alive
         whose loop has already been closed.
 
-        This is the exact path ``otto monitor`` triggers at startup via
-        :meth:`ConfigModule.logRepoCommits`.  A leaked transport here is
-        what produces the ``RuntimeError: Event loop is closed`` traceback
-        the user saw on Ctrl+C.
+        This is the exact path ``otto monitor`` triggers at startup to
+        resolve and log each repo's commit (``Repo.commit`` /
+        ``Repo.commit_name``; the god-object ``ConfigModule`` that used to
+        own this logging is long gone — see WS#1). A leaked transport here
+        is what produces the ``RuntimeError: Event loop is closed``
+        traceback the user saw on Ctrl+C.
         """
         repo_path = Path(__file__).parent.parent.parent / "repo1"
         repo = Repo(sut_dir=repo_path)

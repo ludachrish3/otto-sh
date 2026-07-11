@@ -45,7 +45,7 @@ HOST_NAME = "carrot seed"
 ROUND_TRIP_TOKEN = "otto_login_marker"
 
 _LOG_LINE_RE = re.compile(
-    rb"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[ INFO  \] @"
+    rb"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[INFO \] @"
     + re.escape(HOST_NAME.encode())
     + rb"(?: > | +)\|"
 )
@@ -178,7 +178,7 @@ class TestHostLoginSession:
 
     def test_log_lines_match_rich_formatter_layout(self, login_session):
         # Every non-empty line must match the format _SessionLogFile.write_line
-        # and write_marker emit — pins the timestamp + '[ INFO  ]' + host
+        # and write_marker emit — pins the timestamp + '[INFO ]' + host
         # preamble so future drift from RichFormatter is caught.
         for line in login_session["log_bytes"].splitlines():
             if not line:

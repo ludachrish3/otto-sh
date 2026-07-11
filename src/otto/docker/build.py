@@ -65,12 +65,12 @@ async def _build_one(
     latest_tag = image_latest_tag(settings.registry_url, project, image)
 
     if not rebuild and await _image_exists(parent, full_tag):
-        logger.info(f"[docker] {full_tag}: already built, skipping")
+        logger.info(rf"\[docker] {full_tag}: already built, skipping")
         # Make sure :latest also points at the cached digest.
         await parent.exec(f"docker tag {shlex.quote(full_tag)} {shlex.quote(latest_tag)}")
         return Status.Skipped, full_tag
 
-    logger.info(f"[docker] building {full_tag}")
+    logger.info(rf"\[docker] building {full_tag}")
     remote_ctx = await stage_image_context(parent, project, image)
 
     # Resolve the Dockerfile path relative to the staged context. If the

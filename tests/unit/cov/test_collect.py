@@ -64,6 +64,60 @@ class TestNoCoverageConfig:
             asyncio.run(collect_coverage(tmp_path, repos=[repo]))
 
 
+class TestNamedExceptions:
+    """The two ``collect_coverage`` fail-loud sites raise named ``ValueError``
+    subclasses (:class:`~otto.coverage.errors.CoverageConfigError` and
+    :class:`~otto.coverage.errors.NoCoverageDataError`) with the exact same
+    message text as before — CLI ``except ValueError`` handling stays
+    unmodified since both subclass ``ValueError``."""
+
+    def test_no_coverage_config_raises_coverage_config_error(self, tmp_path):
+        from otto.coverage.errors import CoverageConfigError
+
+        repo = MagicMock()
+        repo.settings = {}
+        with pytest.raises(CoverageConfigError) as excinfo:
+            asyncio.run(collect_coverage(tmp_path, repos=[repo]))
+        assert isinstance(excinfo.value, ValueError)
+        assert str(excinfo.value) == "No [coverage] section found in .otto/settings.toml"
+
+    def test_no_gcda_data_raises_no_coverage_data_error(self, tmp_path):
+        from otto.coverage.errors import NoCoverageDataError
+        from otto.host import UnixHost
+
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+        repo = MagicMock()
+        repo.sut_dir = tmp_path
+        repo.name = "repo"
+
+        host = MagicMock(spec=UnixHost)
+        host.id = "carrot"
+
+        fetcher_instance = MagicMock()
+        fetcher_instance.fetch_all = AsyncMock(return_value={})
+        fetcher_instance.clean_remote = AsyncMock(return_value=None)
+
+        with (
+            patch(
+                "otto.coverage.config.get_cov_config",
+                return_value={"gcda_remote_dir": "/remote"},
+            ),
+            patch("otto.config.all_hosts", return_value=[host]),
+            patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
+            pytest.raises(NoCoverageDataError) as excinfo,
+        ):
+            asyncio.run(collect_coverage(cov_dir, repos=[repo]))
+        assert isinstance(excinfo.value, ValueError)
+        assert str(excinfo.value) == "no .gcda counters retrieved from any host (searched: carrot)"
+
+    def test_errors_importable_from_coverage_package(self):
+        from otto.coverage import CoverageConfigError, NoCoverageDataError
+
+        assert issubclass(CoverageConfigError, ValueError)
+        assert issubclass(NoCoverageDataError, ValueError)
+
+
 # ── Fetch destination + fail-loud "collected nothing" ────────────────────────
 
 
@@ -656,6 +710,43 @@ class TestCaptureTail:
         assert kwargs["note"] == "hi"
         assert kwargs["tester"] == {"name": "chris"}
         assert kwargs["display_names"] == {"board1": "Board One"}
+        assert result.captures_written == [cov_dir / "board1" / "capture.json"]
+
+
+# ── Tier passthrough — a resolved TierConfig object skips re-resolution ──────
+
+
+class TestTierPassthrough:
+    """Passing an already-resolved :class:`~otto.coverage.tiers.TierConfig` as
+    ``tier=`` is used directly — ``resolve_get_tier`` (and the ``load_tiers``
+    call that feeds it) never runs. This is what lets ``otto cov get`` resolve
+    the tier exactly once instead of twice (``_do_get`` resolves; the old
+    ``collect_coverage`` re-resolved from the name)."""
+
+    def test_tierconfig_object_skips_resolve_get_tier(self, tmp_path):
+        from otto.coverage.tiers import TierConfig
+
+        repo = MagicMock()
+        repo.sut_dir = tmp_path / "sut"
+        repo.name = "repo"
+        cov_dir = tmp_path / "cov"
+        cov_dir.mkdir()
+
+        tier_obj = TierConfig(name="manual", kind="manual", precedence=1, color="red")
+        produce_mock = AsyncMock(return_value=[cov_dir / "board1" / "capture.json"])
+        embedded_collect = AsyncMock(return_value={"board1": cov_dir / "board1"})
+        with (
+            patch("otto.coverage.config.get_cov_config", return_value={"tiers": {}}),
+            patch("otto.config.all_hosts", return_value=[]),
+            patch("otto.coverage.fetcher.embedded.collect_embedded_coverage", new=embedded_collect),
+            patch("otto.coverage.config.get_cov_repo", return_value=repo),
+            patch("otto.coverage.capture.produce.produce_captures", new=produce_mock),
+            patch("otto.coverage.tiers.resolve_get_tier") as resolve_mock,
+        ):
+            result = asyncio.run(collect_coverage(cov_dir, repos=[repo], tier=tier_obj))
+
+        resolve_mock.assert_not_called()
+        assert produce_mock.await_args.kwargs["tier"] == "manual"
         assert result.captures_written == [cov_dir / "board1" / "capture.json"]
 
 

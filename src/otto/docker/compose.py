@@ -217,7 +217,7 @@ async def compose_up(
     remote_file_strs = [str(p) for p in remote_files]
 
     if not await _stack_already_up(parent, proj):
-        logger.info(f"[docker] composing {proj} on {parent.id}")
+        logger.info(rf"\[docker] composing {proj} on {parent.id}")
         # `up -d` is convergent, so a transient libnetwork race (network
         # Created then reported "not found" when the container attaches) is
         # retried once with a brief backoff — the re-run starts the already-
@@ -238,14 +238,14 @@ async def compose_up(
                 break
             if attempt == 0 and _is_transient_network_race(output):
                 logger.debug(
-                    f"[docker] {proj} hit a transient network race on up; "
+                    rf"\[docker] {proj} hit a transient network race on up; "
                     f"retrying once after {_NETWORK_RACE_RETRY_BACKOFF_S}s"
                 )
                 await asyncio.sleep(_NETWORK_RACE_RETRY_BACKOFF_S)
                 continue
             raise RuntimeError(f"docker compose up failed: {output}")
     else:
-        logger.info(f"[docker] {proj} already running on {parent.id}; reusing")
+        logger.info(rf"\[docker] {proj} already running on {parent.id}; reusing")
 
     # Enumerate services. Project-declared list is authoritative for the
     # mapping we return; cross-check against the live list and warn on drift.
@@ -262,7 +262,7 @@ async def compose_up(
         live_services = {s.strip() for s in live_out.splitlines() if s.strip()}
         if declared_services and set(declared_services) != live_services:
             logger.warning(
-                f"[docker] declared services {sorted(declared_services)} differ from "
+                rf"\[docker] declared services {sorted(declared_services)} differ from "
                 f"compose-listed services {sorted(live_services)} for {proj}"
             )
     services = declared_services or sorted(live_services)
@@ -272,7 +272,7 @@ async def compose_up(
         cid = await _resolve_container_id(parent, proj, service)
         if not cid:
             logger.warning(
-                f"[docker] could not resolve container id for {proj}/{service}; "
+                rf"\[docker] could not resolve container id for {proj}/{service}; "
                 f"skipping registration"
             )
             continue
@@ -335,7 +335,7 @@ async def compose_down(
         extra=f"--timeout {int(stop_timeout)}",
     )
     if not status.is_ok:
-        logger.error(f"[docker] compose down failed: {output}")
+        logger.error(rf"\[docker] compose down failed: {output}")
 
     # Unregister any hosts that came from this stack. Close each container
     # host first so its persistent session drains cleanly while
@@ -349,7 +349,7 @@ async def compose_down(
             try:
                 await host.close()
             except Exception as e:  # noqa: BLE001 — best-effort teardown, logs warning
-                logger.warning(f"[docker] error closing container host {hid}: {e}")
+                logger.warning(rf"\[docker] error closing container host {hid}: {e}")
 
     return status
 

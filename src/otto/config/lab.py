@@ -109,7 +109,7 @@ class Lab:
             shadowed = self.hosts.get(f"{key}{host.element_id}")
             positional = by_group_pos.get((key, host.element_id))
             if shadowed is not None and positional is not None and shadowed is not positional:
-                getLogger("otto").warning(
+                getLogger(__name__).warning(
                     "Host id %r shadows the display label of %r (logical %d): "
                     "typing %r reaches the id-%d host, not the labelled one.",
                     shadowed.id,
@@ -289,7 +289,7 @@ def load_lab(
     if BUILTIN_LOCAL_HOST_ID not in lab.hosts:
         lab.add_host(make_builtin_local_host())
     else:
-        getLogger("otto").debug(
+        getLogger(__name__).debug(
             "Lab %r defines its own %r host; skipping the built-in local host.",
             lab.name,
             BUILTIN_LOCAL_HOST_ID,

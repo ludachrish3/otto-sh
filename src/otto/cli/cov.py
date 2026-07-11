@@ -97,6 +97,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 import typer
+from rich.markup import escape as escape_markup
 
 from ..coverage.errors import CoverageDataMismatchError, CoverageToolVersionError
 from ..coverage.reporter import TierSpec, run_coverage_report
@@ -306,8 +307,11 @@ def report(
         # Typed capture errors — polluted tree (product rebuilt after the
         # test run) or a gcov tool that cannot read the build's format (e.g.
         # clang build captured with GNU gcov): the message already names the
-        # cause and remedy — print it clean, never as a traceback.
-        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
+        # cause and remedy — print it clean, never as a traceback. Escaped:
+        # the console handler renders log messages as Rich markup, and this
+        # message is arbitrary (lcov/geninfo) text that may itself contain a
+        # literal bracket.
+        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: user-facing cause + remedy
         raise typer.Exit(1) from e
     except GitUnavailableError as e:
         # A [coverage] section resolved a repo_root, but it is not a git repo
@@ -320,11 +324,14 @@ def report(
         raise typer.Exit(1) from e
     except ValueError as e:
         # A malformed committed manual capture (load_manual_captures wraps the
-        # parse error with the offending file name). Print the cause clean.
-        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: user-facing cause (names the bad file)
+        # parse error with the offending file name), or the no-[coverage]-
+        # config / no-.gcda ValueErrors raised by collect_coverage. Print the
+        # cause clean, escaped for the Rich-markup console handler (these
+        # messages may contain a literal bracket, e.g. "[coverage]").
+        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: user-facing cause (names the bad file)
         raise typer.Exit(1) from e
     except RuntimeError as e:
-        logger.error("Coverage merge failed: %s", e)  # noqa: TRY400 — deliberately no traceback: lcov output is the diagnostic
+        logger.error("Coverage merge failed: %s", escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: lcov output is the diagnostic
         raise typer.Exit(1) from e
     if store is None:
         # run_coverage_report logged the specific warning (missing meta or
@@ -526,8 +533,11 @@ async def _do_get(
     delegates the whole fetch → metadata → capture pipeline to the single
     canonical :func:`otto.coverage.collect.collect_coverage` (with
     ``clean_after_fetch=False`` — ``get`` owns its own scoped post-fetch clean
-    via ``--clean``). Manual-kind tiers additionally copy each produced capture
-    into the repo's committed manual-capture store (``.otto/coverage/manual/``).
+    via ``--clean``). The already-resolved ``TierConfig`` is passed straight
+    through (not just its name), so ``collect_coverage`` never re-resolves it
+    — one ``resolve_get_tier`` call for the whole invocation, done here.
+    Manual-kind tiers additionally copy each produced capture into the repo's
+    committed manual-capture store (``.otto/coverage/manual/``).
 
     Every failure mode raises :class:`_GetError` (or, via
     :func:`_connect_cov_hosts`, the shared :class:`_CovError`) with a
@@ -598,15 +608,16 @@ async def _do_get(
     # below, scoped to the Unix host ids so a mixed lab's embedded board is never
     # zeroed — so collect_coverage must not fire its own unscoped clean. The
     # raised family maps to _GetError preserving today's exact message shapes:
-    # collect_coverage raises ValueError for the "no .gcda counters retrieved
-    # from any host (searched: ...)" fail-loud; GitUnavailableError and the typed
-    # capture errors are RuntimeError subclasses and must be caught before the
-    # bare-RuntimeError "Coverage merge failed" arm.
+    # collect_coverage raises NoCoverageDataError (a ValueError) for the "no
+    # .gcda counters retrieved from any host (searched: ...)" fail-loud;
+    # GitUnavailableError and the typed capture errors are RuntimeError
+    # subclasses and must be caught before the bare-RuntimeError "Coverage
+    # merge failed" arm.
     try:
         result = await collect_coverage(
             cov_dir,
             repos=repos,
-            tier=resolved_tier.name,
+            tier=resolved_tier,
             ticket=produce_ticket,
             note=produce_note,
             tester=tester,
@@ -721,7 +732,10 @@ def get(
             )
         )
     except _CovError as e:
-        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        # Escaped: this is the direct log-emit site for the no-[coverage]-
+        # config / no-.gcda _CovError family (a literal bracket must survive
+        # the Rich-markup console handler).
+        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
 
 
@@ -809,7 +823,10 @@ def clean() -> None:
     try:
         asyncio.run(_do_clean())
     except _CovError as e:
-        logger.error(str(e))  # noqa: TRY400 — deliberately no traceback: clean cause line
+        # Escaped: same log-emit site as `get`'s _CovError handler above —
+        # a literal bracket (e.g. "[coverage]") must survive the Rich-markup
+        # console handler.
+        logger.error(escape_markup(str(e)))  # noqa: TRY400 — deliberately no traceback: clean cause line
         raise typer.Exit(1) from e
 
 

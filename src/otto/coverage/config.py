@@ -3,8 +3,11 @@
 Pure helpers over the already-parsed repo list: which repo (if any) declared
 a ``[coverage]`` section, and what that section's raw settings dict looks
 like. Every ``otto test --cov`` / ``otto cov`` code path resolves its
-coverage settings through these three functions, so a lab with multiple SUT
-repos always picks the same one.
+coverage settings through :func:`has_cov_config`, :func:`get_cov_repo`, and
+:func:`get_cov_config`, so a lab with multiple SUT repos always picks the
+same one. :func:`prepare_empty_dir` is the fourth function here — the
+typer-free empty/overwrite directory gate shared by ``--cov-dir`` and
+``--cov-report-dir``.
 """
 
 import shutil

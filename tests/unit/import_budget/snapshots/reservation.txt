@@ -66,6 +66,7 @@ otto.link.netem
 otto.link.params
 otto.link.placement
 otto.logger
+otto.logger.levels
 otto.logger.mode
 otto.models
 otto.models.base

@@ -52,7 +52,7 @@ if TYPE_CHECKING:
 # it without a circular import (session.py imports from host.py at module level).
 Expect = tuple[str | re.Pattern[str], str]
 
-logger = getLogger("otto")
+logger = getLogger(__name__)
 
 
 def get_logging_command_output_enabled() -> bool:
@@ -934,7 +934,7 @@ class BaseHost(ABC):
     #  Logging
     ####################
 
-    # TODO: Dynamically size the preamble to be max(configModule.lab.hosts.names) + 2 (1 space on each side)  # noqa: E501 — TODO comment
+    # TODO: Dynamically size the preamble to be max(len(h.name) for h in all_hosts()) + 2 (1 space on each side)  # noqa: E501 — TODO comment
     def _log_command(
         self,
         command: str,

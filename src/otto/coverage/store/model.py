@@ -474,7 +474,17 @@ class CoverageStore:
         data = json.loads(path.read_text())
         found_format = data.get("format") if isinstance(data, dict) else None
         if found_format != STORE_FORMAT_VERSION:
-            found_label = f"v{found_format}" if isinstance(found_format, int) else "none"
+            # Distinguish "no format key at all" (found_format is None) from
+            # "a format key was present but isn't the int we expect" (e.g. a
+            # hand-edited store.json with "format": "3") — the latter must
+            # not silently collapse to "none", which would hide that a value
+            # actually was found, just the wrong shape.
+            if found_format is None:
+                found_label = "none"
+            elif isinstance(found_format, int):
+                found_label = f"v{found_format}"
+            else:
+                found_label = f"{found_format!r} (expected an int)"
             raise ValueError(
                 f"coverage store format v{STORE_FORMAT_VERSION} required; "
                 f"found {found_label} — regenerate with otto cov get/report"

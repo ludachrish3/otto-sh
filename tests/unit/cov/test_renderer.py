@@ -221,3 +221,23 @@ class TestRunsDrilldown:
         index_html = (out_dir / "index.html").read_text()
         assert "Rack 2 Slot 4" in index_html
         assert "T-42" in index_html
+
+    def test_tooltip_truncates_base_commit_to_sha12(self, tmp_path):
+        """``_run_tooltip`` pins ``r.base_commit[:12]`` — a 40-char sha's
+        tooltip carries only the 12-char short form, not the full sha."""
+        src = _write(tmp_path, "f.c", "int a;\n")
+        store = CoverageStore(tier_order=["system"])
+        full_sha = "abc123def4567890" + "0" * 23  # 40 hex-ish chars
+        run_id = store.add_run(tier="system", label="b1", base_commit=full_sha)
+        fr = store.get_or_create_file(src)
+        lr = fr.get_or_create_line(1)
+        lr.hits.add("system", 1)
+        lr.run_hits[run_id] = 1
+
+        out_dir = tmp_path / "report"
+        HtmlRenderer(out_dir).render(store)
+        html = (out_dir / HtmlRenderer._file_link(fr)).read_text()
+
+        assert f"commit {full_sha[:12]}" in html
+        assert full_sha not in html
+        assert full_sha[:13] not in html

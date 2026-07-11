@@ -809,8 +809,8 @@ def collect_docker_capable_host_ids(repos: list["Repo"]) -> list[str]:
 
     Used as the completion source for ``otto docker --on <TAB>`` and any
     other surface that should be limited to docker-capable parents.
-    Mirrors :func:`collect_host_ids` (no ConfigModule needed; safe in the
-    completion fast path).
+    Mirrors :func:`collect_host_ids` (no :func:`otto.bootstrap.bootstrap` call
+    needed; safe in the completion fast path).
     """
     from ..host.factory import create_host_from_dict, validate_host_dict
 
@@ -855,8 +855,9 @@ def collect_host_ids(repos: list["Repo"], lab_names: list[str] | None = None) ->
     matches what ``Lab.resolve_handle`` resolves at runtime. Added alongside
     canonical ids, never in place of them.
 
-    Runs without an initialized ConfigModule, so it's safe to call from
-    the completion fast path as well as the cache writer on the slow path.
+    Runs without :func:`otto.bootstrap.bootstrap` having been called, so it's
+    safe to call from the completion fast path as well as the cache writer
+    on the slow path.
 
     Returns a sorted, de-duplicated list. Malformed files / entries are
     silently skipped — completion must never crash on bad user data.

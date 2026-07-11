@@ -316,6 +316,11 @@ def remove_old_logs(
     When the budget is exceeded the scan stops early and resumes on the next
     call, bounding the per-run cost on large/slow (e.g. NFS) trees.
     """
+    # Deliberately the literal 'otto' logger, not getLogger(__name__): this
+    # module's whole job is configuring *that* logger's handlers (see the
+    # module docstring), and its own emitted records (below) are otto-CLI
+    # user-facing output that belongs on the same handlers/sinks as every
+    # other otto.* log call, not a distinctly-named child logger.
     logger = getLogger("otto")
     xdir = _state.xdir
     if xdir is None or not xdir.is_dir():

@@ -19,7 +19,7 @@ from otto.config.lab import Lab
 from otto.reservations import (
     MissingReservationError,
     ReservationGate,
-    ReservationGateOutcome,
+    ReservationGateResult,
     ResolvedIdentity,
 )
 from tests.conftest import make_host
@@ -54,7 +54,7 @@ def _lab_with_resources() -> Lab:
     )
 
 
-class TestReservationGateOutcomeMatrix:
+class TestReservationGateResultMatrix:
     def test_skip_check_returns_skipped_outcome_with_warning(self, caplog):
         import logging
 
@@ -101,7 +101,7 @@ class TestReservationGateOutcomeMatrix:
     def test_no_backend_is_all_false_none(self):
         gate = ReservationGate(backend=None, identity=None, skip_check=False)
         outcome = gate.evaluate()
-        assert outcome == ReservationGateOutcome(checked=False, skipped=False, warning=None)
+        assert outcome == ReservationGateResult(checked=False, skipped=False, warning=None)
 
     def test_backend_missing_resource_raises(self):
         lab = _lab_with_resources()
@@ -130,7 +130,7 @@ class TestReservationGateOutcomeMatrix:
         with patch("otto.config.get_lab", return_value=lab):
             outcome = gate.evaluate()
 
-        assert outcome == ReservationGateOutcome(checked=True, skipped=False, warning=None)
+        assert outcome == ReservationGateResult(checked=True, skipped=False, warning=None)
 
     def test_backend_configured_but_identity_none_raises_runtime_error(self):
         lab = _lab_with_resources()

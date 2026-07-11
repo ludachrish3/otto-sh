@@ -114,7 +114,7 @@ def _select_repos(repo_name: str | None, on: str | None = None) -> list[Repo]:
     if repo_name is not None:
         matches = [r for r in docker_repos if r.name == repo_name]
         if not matches:
-            rprint(f"[red]No loaded repo named {repo_name!r} with a [docker] section.")
+            rprint(rf"[red]No loaded repo named {repo_name!r} with a \[docker] section.")
             raise typer.Exit(1)
         docker_repos = matches
 

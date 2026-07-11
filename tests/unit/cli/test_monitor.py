@@ -29,7 +29,7 @@ from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector
 from otto.monitor.factory import build_monitor_collector
 from otto.monitor.parsers import LoadParser, MemParser
-from otto.reservations import ReservationGateOutcome
+from otto.reservations import ReservationGateResult
 from otto.result import CommandResult, Results
 from otto.utils import Status
 
@@ -238,7 +238,7 @@ class TestGatePerBranch:
 
     def test_live_mode_invokes_gate(self, live_mode_mocks):
         mock_res = MagicMock()
-        mock_res.evaluate.return_value = ReservationGateOutcome(
+        mock_res.evaluate.return_value = ReservationGateResult(
             checked=True, skipped=False, warning=None
         )
         ctx = _make_ctx({"otto_reservation": mock_res})
@@ -253,7 +253,7 @@ class TestGatePerBranch:
             "on lab 'x'. Required resources: []"
         )
         mock_res = MagicMock()
-        mock_res.evaluate.return_value = ReservationGateOutcome(
+        mock_res.evaluate.return_value = ReservationGateResult(
             checked=False, skipped=True, warning=warning
         )
         ctx = _make_ctx({"otto_reservation": mock_res})

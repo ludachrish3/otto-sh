@@ -1368,7 +1368,7 @@ class SessionManager:
                     last_exc = exc
                     if attempt == 0:
                         logger.debug(
-                            f"SessionManager[{self._name}]: handshake failed "
+                            rf"SessionManager\[{self._name}]: handshake failed "
                             f"on first attempt ({exc!r}); rebuilding transport "
                             f"and retrying once"
                         )
@@ -1412,7 +1412,7 @@ class SessionManager:
             case "telnet":
                 telnet_conn = await self._connections.telnet()
                 logger.debug(
-                    f"SessionManager[{self._name}]: building telnet session "
+                    rf"SessionManager\[{self._name}]: building telnet session "
                     f"with frame={type(self._command_frame).__name__}"
                 )
                 return TelnetSession(

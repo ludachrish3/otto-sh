@@ -17,7 +17,7 @@ from .check import (
     ReservationGate as ReservationGate,
 )
 from .check import (
-    ReservationGateOutcome as ReservationGateOutcome,
+    ReservationGateResult as ReservationGateResult,
 )
 from .check import (
     check_reservations as check_reservations,

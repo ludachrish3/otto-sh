@@ -22,7 +22,7 @@ import pytest
 
 from otto.cli import invoke
 from otto.cli.registry import CommandSpec
-from otto.reservations import MissingReservationError, ReservationGateOutcome
+from otto.reservations import MissingReservationError, ReservationGateResult
 
 
 class _FakeCtx:
@@ -78,7 +78,7 @@ def test_gate_evaluates_and_prints_warning(preamble_gate, capsys):
         "on lab 'test_lab'. Required resources: []"
     )
     mock_gate = MagicMock()
-    mock_gate.evaluate.return_value = ReservationGateOutcome(
+    mock_gate.evaluate.return_value = ReservationGateResult(
         checked=False, skipped=True, warning=warning
     )
     invoke.command_preamble(_FakeCtx(spec, reservation=mock_gate))  # ty: ignore[invalid-argument-type]
@@ -93,7 +93,7 @@ def test_gate_evaluates_and_prints_warning(preamble_gate, capsys):
 def test_gate_checked_true_prints_nothing(preamble_gate, capsys):
     spec = CommandSpec(name="run", loader=None, gate=True)
     mock_gate = MagicMock()
-    mock_gate.evaluate.return_value = ReservationGateOutcome(
+    mock_gate.evaluate.return_value = ReservationGateResult(
         checked=True, skipped=False, warning=None
     )
     invoke.command_preamble(_FakeCtx(spec, reservation=mock_gate))  # ty: ignore[invalid-argument-type]
@@ -117,7 +117,7 @@ class TestPresentReservationGateMarkup:
     def test_warning_is_wrapped_in_bold_red_markup(self):
         warning = "some plain-text warning, no markup of its own"
         mock_gate = MagicMock()
-        mock_gate.evaluate.return_value = ReservationGateOutcome(
+        mock_gate.evaluate.return_value = ReservationGateResult(
             checked=False, skipped=True, warning=warning
         )
         ctx = SimpleNamespace(meta={"otto_reservation": mock_gate})
@@ -132,7 +132,7 @@ class TestPresentReservationGateMarkup:
 
     def test_no_warning_means_rich_print_never_called(self):
         mock_gate = MagicMock()
-        mock_gate.evaluate.return_value = ReservationGateOutcome(
+        mock_gate.evaluate.return_value = ReservationGateResult(
             checked=True, skipped=False, warning=None
         )
         ctx = SimpleNamespace(meta={"otto_reservation": mock_gate})

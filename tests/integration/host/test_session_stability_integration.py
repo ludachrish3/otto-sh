@@ -185,7 +185,7 @@ async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None
         )
 
 
-# ── 4. Long telnet exec vs concurrent short execs ───────────────────────
+# ── 4. Long telnet exec vs concurrent short execs ─────────────────────────────
 
 
 @_TELNET_ONLY

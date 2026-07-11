@@ -384,7 +384,7 @@ Four steps:
 3. **Construct** a [`ReservationGate`](../api/reservations.rst) from the
    backend and identity and call `.evaluate()`.
 4. **Present** the result yourself. `evaluate()` returns a
-   `ReservationGateOutcome` whose `warning` is plain text — the library never
+   `ReservationGateResult` whose `warning` is plain text — the library never
    touches your terminal. `MissingReservationError` and
    `ReservationBackendError` (the same two exceptions from
    [Fail-closed behavior](#fail-closed-behavior) above) are what you catch;

@@ -10,7 +10,7 @@ Append a new dated entry to each section on every re-run; do not overwrite prior
 2. Pick the same representative files each time so results are comparable:
    - [src/otto/host/remoteHost.py](../src/otto/host/remoteHost.py) — async I/O, generics, many attribute accesses
    - [src/otto/host/host.py](../src/otto/host/host.py) — `Self` type usage, subclass-heavy
-   - [src/otto/storage/protocol.py](../src/otto/storage/protocol.py) — `Protocol` usage
+   - [src/otto/labs/protocol.py](../src/otto/labs/protocol.py) — `Protocol` usage (was `otto/storage/protocol.py`; renamed `807f86c`)
    - [src/otto/suite/plugin.py](../src/otto/suite/plugin.py) — pytest-internal typing edges
    - [src/otto/logger/logger.py](../src/otto/logger/logger.py) — the one inline pyright suppression
 3. For the LSP comparison, toggle the active language server in VS Code by disabling one extension and enabling the other on this workspace (`.vscode/settings.json`, `python.languageServer`). Reload the window.
@@ -22,7 +22,7 @@ Checks to perform on the representative files with each LSP active:
 
 | Check                                                          | Pylance | ty |
 |----------------------------------------------------------------|---------|----|
-| Go-to-definition across packages (`otto.host` → `otto.storage`)|         |    |
+| Go-to-definition across packages (`otto.host` → `otto.labs`)   |         |    |
 | Find-all-references across the package                         |         |    |
 | Hover shows accurate inferred types on generics / `Protocol`   |         |    |
 | Autocomplete on instance attributes set in `__init__`          |         |    |
@@ -41,7 +41,7 @@ Open the same representative files under each LSP and record the Problems panel.
 |----------------------------------------|---------------------:|---------:|
 | src/otto/host/remoteHost.py            |                      |          |
 | src/otto/host/host.py                  |                      |          |
-| src/otto/storage/protocol.py           |                      |          |
+| src/otto/labs/protocol.py              |                      |          |
 | src/otto/suite/plugin.py               |                      |          |
 | src/otto/logger/logger.py              |                      |          |
 

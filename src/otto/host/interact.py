@@ -152,7 +152,7 @@ class _SessionLogFile:
             datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S.")
             + f"{datetime.now(tz=timezone.utc).microsecond // 1000:03d}"
         )
-        record = f"{timestamp} [ INFO  ] @{self._host_name} > | {line}\n"
+        record = f"{timestamp} [INFO ] @{self._host_name} > | {line}\n"
         try:
             self._file.write(record)
             self._file.flush()
@@ -167,7 +167,7 @@ class _SessionLogFile:
             datetime.now(tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S.")
             + f"{datetime.now(tz=timezone.utc).microsecond // 1000:03d}"
         )
-        record = f"{timestamp} [ INFO  ] @{self._host_name}   | {text}\n"
+        record = f"{timestamp} [INFO ] @{self._host_name}   | {text}\n"
         try:
             self._file.write(record)
             self._file.flush()

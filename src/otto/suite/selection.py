@@ -13,10 +13,25 @@ adapter in ``otto.cli.test`` owns the translation to ``typer.BadParameter``.
 """
 
 import difflib
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config.repo import CollectedTest, Repo
+
+
+@dataclass(frozen=True)
+class SelectionMatch:
+    """One repo's resolved selection: the repo plus its matched pytest targets.
+
+    ``targets`` are absolute nodeids (from :func:`resolve_selection`) or
+    absolute test-directory paths (from the ``-m``-alone branch of
+    :func:`otto.suite.run.run_selection`) — always non-empty, since callers
+    only construct a :class:`SelectionMatch` for a repo that matched.
+    """
+
+    repo: "Repo"
+    targets: list[str]
 
 
 class UnknownSelectionError(ValueError):
@@ -58,7 +73,7 @@ def _absolute_nodeid(item: "CollectedTest") -> str:
 
 def resolve_selection(
     repos: "list[Repo]", names: list[str], markers: str
-) -> "list[tuple[Repo, list[str]]]":
+) -> "list[SelectionMatch]":
     """Resolve --tests names to exact nodeids, one entry per matching repo.
 
     A bare name matches every collected test with that function name (all
@@ -72,7 +87,7 @@ def resolve_selection(
     :func:`otto.suite.run.run_selection`) is the more honest message than a
     did-you-mean hint with no hints to offer.
     """
-    per_repo: list[tuple[Repo, list[str]]] = []
+    per_repo: list[SelectionMatch] = []
     matched: set[str] = set()
     seen_names: set[str] = set()
     for repo in repos:
@@ -90,7 +105,7 @@ def resolve_selection(
                     matched.add(wanted)
                     break
         if nodeids:
-            per_repo.append((repo, nodeids))
+            per_repo.append(SelectionMatch(repo=repo, targets=nodeids))
 
     unknown = [n for n in names if n not in matched]
     if unknown and seen_names:

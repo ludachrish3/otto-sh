@@ -231,7 +231,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         from ..docker.compose import compose_up
 
         logger.info(
-            f"[docker] container {self.id!r} not running; "
+            rf"\[docker] container {self.id!r} not running; "
             f"auto-starting stack {self.compose_project!r}"
         )
         repos = _get_repos()

@@ -17,7 +17,7 @@ import aiosqlite
 from ..filesystem import network_fs_type
 from .events import MonitorEvent
 
-logger = logging.getLogger("otto")
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS metrics (

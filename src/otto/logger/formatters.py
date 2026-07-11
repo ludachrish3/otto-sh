@@ -78,7 +78,7 @@ class MultilineFormatter(Formatter):
         return output
 
 
-_default_log_format = "{asctime} [{levelname:^7}] {message}"
+_default_log_format = "{asctime} [{levelname:<5}] {message}"
 _default_log_style = "{"
 
 FormatType = Literal["%", "{"]

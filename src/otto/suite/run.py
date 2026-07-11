@@ -67,6 +67,7 @@ class RunOptions:
     results: str = ""
     cov: bool = False
     cov_dir: Path | None = None
+    overwrite_cov_dir: bool = False
     cov_clean: bool = True  # matches the --cov-clean CLI default
     cov_report: bool = False
     cov_report_dir: Path | None = None
@@ -169,15 +170,20 @@ def _session_context(log_dir: Path) -> Iterator[None]:
     (``bootstrap()`` → :func:`run_suite`) has none. Three cases:
 
     - **No active context**: install a minimal lab-less one
-      (``OttoContext(lab=Lab(name="<library>"), output_dir=log_dir)``) for the
-      duration of the session and always restore the prior state via the
-      ``set_context``/``reset_context`` token pair. The default ``Lab`` carries
+      (``OttoContext(lab=Lab(name=LIBRARY_LAB_NAME), output_dir=log_dir)``) for
+      the duration of the session and always restore the prior state via the
+      ``set_context``/``reset_context`` token pair. The sentinel ``Lab`` carries
       no hosts, so ``get_host()`` inside such a suite fails loud with its
-      normal unknown-host error — correct for hostless library runs; suites
-      that need lab hosts use ``open_context()`` (see the library-usage guide).
+      normal unknown-host error (plus an ``open_context`` breadcrumb keyed off
+      ``LIBRARY_LAB_NAME`` — see :meth:`otto.context.OttoContext.get_host`) —
+      correct for hostless library runs; suites that need lab hosts use
+      ``open_context()`` (see the library-usage guide).
     - **Active context without an output_dir**: point it at *log_dir* for the
       session (the same assignment the CLI preamble makes) and restore the
-      prior value afterwards.
+      prior value afterwards. The prior value is captured explicitly (``prior
+      = active.output_dir``) rather than assumed to be the literal ``None``
+      this branch's guard implies — a defensive habit that stays correct even
+      if this branch's precondition ever changes.
     - **Active context with an output_dir**: leave it untouched.
     """
     from ..context import try_get_context
@@ -185,21 +191,47 @@ def _session_context(log_dir: Path) -> Iterator[None]:
     active = try_get_context()
     if active is None:
         from ..config.lab import Lab
-        from ..context import OttoContext, reset_context, set_context
+        from ..context import LIBRARY_LAB_NAME, OttoContext, reset_context, set_context
 
-        token = set_context(OttoContext(lab=Lab(name="<library>"), output_dir=log_dir))
+        token = set_context(OttoContext(lab=Lab(name=LIBRARY_LAB_NAME), output_dir=log_dir))
         try:
             yield
         finally:
             reset_context(token)
     elif active.output_dir is None:
+        prior = active.output_dir
         active.output_dir = log_dir
         try:
             yield
         finally:
-            active.output_dir = None
+            active.output_dir = prior
     else:
         yield
+
+
+def _pre_run_cov_dir_check(opts: RunOptions) -> None:
+    """Ensure an explicit ``cov_dir`` is empty (or clear it) before a run.
+
+    Mirrors the CLI's own preflight: ``otto.cli.test`` calls
+    ``otto.coverage.config.prepare_empty_dir`` on ``--cov-dir`` while
+    building its ``RunOptions``, so a library caller that hands
+    :attr:`RunOptions.cov_dir` straight to :func:`run_suite`/
+    :func:`run_selection` (bypassing that callback) now gets the identical
+    empty/overwrite guard. On the CLI path this call is a no-op: the
+    callback already cleared ``cov_dir`` before ``RunOptions`` was built, so
+    it is already empty by the time this runs, regardless of
+    ``overwrite_cov_dir``. Raises the neutral ``ValueError``
+    ``prepare_empty_dir`` itself raises — never ``typer`` — matching the
+    library's no-typer contract. Synchronous (no host I/O) and run before
+    ``otto.coverage.collect.clean_remote_gcda``'s network + event-loop work,
+    so a bad ``cov_dir`` fails before any remote is touched. Imported lazily
+    so a non-coverage library run never pulls the coverage stack at load time.
+    """
+    if not (opts.cov and opts.cov_dir is not None):
+        return
+    from ..coverage.config import prepare_empty_dir
+
+    prepare_empty_dir(opts.cov_dir, overwrite=opts.overwrite_cov_dir, flag_name="cov_dir")
 
 
 async def _pre_run_cov_clean(repos: "list[Repo]", opts: RunOptions) -> None:
@@ -239,6 +271,8 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         return
 
     if opts.cov:
+        from rich.markup import escape as escape_markup
+
         from ..coverage.collect import collect_coverage
 
         cov_dir = opts.cov_dir or log_dir / "cov"
@@ -247,17 +281,21 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
         # retrieved, an ambiguous/misconfigured tier, a non-git sut, or a
         # merge/produce error) turn an otherwise-successful test run red. Log
         # and swallow, leaving the raw artifacts on disk for manual recovery
-        # via `otto cov get`.
+        # via `otto cov get`. %s-formats *e* through escape_markup: the
+        # console handler renders log messages as Rich markup, and this
+        # message may echo a literal bracket (e.g. "no [coverage] section").
         try:
             await collect_coverage(cov_dir, repos=repos)
         except (ValueError, RuntimeError, FileNotFoundError) as e:
             logger.warning(
                 "Coverage collection failed (%s); raw coverage artifacts remain in %s",
-                e,
+                escape_markup(str(e)),
                 cov_dir,
             )
 
     if opts.cov_report:
+        from rich.markup import escape as escape_markup
+
         from ..coverage.config import get_cov_config, get_cov_repo, prepare_empty_dir
         from ..coverage.reporter import run_coverage_report
         from ..coverage.tiers import load_tiers
@@ -301,9 +339,13 @@ async def _post_run_coverage(repos: "list[Repo]", log_dir: Path, opts: RunOption
                 extra_markers=extra_markers,
             )
         except (ValueError, RuntimeError, FileNotFoundError) as e:
+            # escape_markup(*e*): the console handler renders log messages as
+            # Rich markup, and this message may echo a literal bracket (e.g.
+            # a no-[coverage]-section ValueError from prepare_empty_dir's
+            # config resolution).
             logger.warning(
                 "Coverage report generation failed (%s); raw coverage artifacts remain in %s",
-                e,
+                escape_markup(str(e)),
                 cov_dir,
             )
             store = None
@@ -482,6 +524,7 @@ def run_suite(
     sut_test_dirs = [p for r in repos for p in r.tests]
 
     with _session_context(log_dir):
+        _pre_run_cov_dir_check(run_options)
         asyncio.run(_pre_run_cov_clean(repos, run_options))
         outcome = _run_pytest_session(
             [suite_file],
@@ -546,7 +589,7 @@ def run_selection(
     import asyncio
 
     from ..config import get_repos
-    from .selection import repos_with_marker_matches, resolve_selection
+    from .selection import SelectionMatch, repos_with_marker_matches, resolve_selection
 
     opts = run_options
     repos = get_repos()
@@ -555,8 +598,11 @@ def run_selection(
         per_repo = resolve_selection(repos, names, opts.markers)
     else:  # -m alone: marker expression over each repo's test dirs
         matching_repos = repos_with_marker_matches(repos, opts.markers)
-        per_repo = [(r, [str(d) for d in r.tests if d.exists()]) for r in matching_repos]
-        per_repo = [(r, t) for r, t in per_repo if t]
+        per_repo = [
+            SelectionMatch(repo=r, targets=[str(d) for d in r.tests if d.exists()])
+            for r in matching_repos
+        ]
+        per_repo = [m for m in per_repo if m.targets]
 
     if not per_repo:
         raise NoTestsMatchedError("No tests matched the selection.")
@@ -569,8 +615,10 @@ def run_selection(
     last_report: Path | None = None
     any_unstable = False
     with _session_context(log_dir):
+        _pre_run_cov_dir_check(opts)
         asyncio.run(_pre_run_cov_clean(repos, opts))
-        for repo, targets in per_repo:
+        for match in per_repo:
+            repo, targets = match.repo, match.targets
             default_junit = log_dir / (f"junit_{repo.name}.xml" if multi else "junit.xml")
             if opts.results and multi:
                 # A single explicit --results path would otherwise have every

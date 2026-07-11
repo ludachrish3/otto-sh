@@ -804,6 +804,95 @@ class TestCovGetValidation:
         assert "not a git repository" in mock_err.call_args[0][0]
 
 
+# ── rich-markup escaping — literal brackets must survive the console handler ─
+
+
+class TestCovMarkupEscaping:
+    """A ``[coverage]``-bearing error message must render *literally* through
+    the real ``RichHandler`` console pipeline.
+
+    ``RichHandler``/``rich.console.Console`` are built with ``markup=True``
+    (see ``otto.logger.management.init_cli_logging``), so an unescaped
+    ``logger.error(str(e))`` of a message containing a literal ``[coverage]``
+    is parsed as an (unknown-style) markup tag and the bracketed text is
+    silently eaten — e.g. "No [coverage] section found" renders as "No
+    section found". This wires a real ``RichHandler`` onto a
+    ``Console(file=StringIO())`` (mirroring ``init_cli_logging``'s kwargs) in
+    place of the module logger's handlers, so the assertion exercises actual
+    rendering rather than just the string handed to ``logger.error``.
+    """
+
+    def test_no_config_error_renders_literal_brackets(self):
+        import io
+
+        from rich.console import Console
+        from rich.highlighter import NullHighlighter
+        from rich.logging import RichHandler
+
+        repo = TestCovGetValidation._repo(None)
+        buf = io.StringIO()
+        handler = RichHandler(
+            console=Console(file=buf, width=120, force_terminal=False),
+            markup=True,
+            highlighter=NullHighlighter(),
+            show_time=False,
+            show_path=False,
+        )
+        saved_handlers = list(cov_module.logger.handlers)
+        saved_level = cov_module.logger.level
+        saved_propagate = cov_module.logger.propagate
+        cov_module.logger.handlers = [handler]
+        cov_module.logger.setLevel(logging.ERROR)
+        cov_module.logger.propagate = False
+        try:
+            with patch("otto.config.get_repos", return_value=[repo]):
+                result = runner.invoke(cov_app, ["get"])
+        finally:
+            cov_module.logger.handlers = saved_handlers
+            cov_module.logger.setLevel(saved_level)
+            cov_module.logger.propagate = saved_propagate
+
+        assert result.exit_code == 1
+        rendered = buf.getvalue()
+        assert "[coverage]" in rendered
+        assert "No  section found" not in rendered
+
+    def test_clean_no_config_error_renders_literal_brackets(self):
+        import io
+
+        from rich.console import Console
+        from rich.highlighter import NullHighlighter
+        from rich.logging import RichHandler
+
+        repo = TestCovGetValidation._repo(None)
+        buf = io.StringIO()
+        handler = RichHandler(
+            console=Console(file=buf, width=120, force_terminal=False),
+            markup=True,
+            highlighter=NullHighlighter(),
+            show_time=False,
+            show_path=False,
+        )
+        saved_handlers = list(cov_module.logger.handlers)
+        saved_level = cov_module.logger.level
+        saved_propagate = cov_module.logger.propagate
+        cov_module.logger.handlers = [handler]
+        cov_module.logger.setLevel(logging.ERROR)
+        cov_module.logger.propagate = False
+        try:
+            with patch("otto.config.get_repos", return_value=[repo]):
+                result = runner.invoke(cov_app, ["clean"])
+        finally:
+            cov_module.logger.handlers = saved_handlers
+            cov_module.logger.setLevel(saved_level)
+            cov_module.logger.propagate = saved_propagate
+
+        assert result.exit_code == 1
+        rendered = buf.getvalue()
+        assert "[coverage]" in rendered
+        assert "No  section found" not in rendered
+
+
 # ── get command — success (fetch layer stubbed at the I/O boundary) ─────────
 
 
@@ -989,6 +1078,37 @@ class TestCovGetSuccess:
 
         manual_dir = repo / ".otto" / "coverage" / "manual"
         assert not manual_dir.exists() or not list(manual_dir.glob("*.json"))
+
+    def test_resolve_get_tier_called_once_across_full_get_flow(self, tmp_path, repo, monkeypatch):
+        """``_do_get`` resolves the tier once; ``collect_coverage`` must not
+        re-resolve it from the name.
+
+        Regression for the double-resolve: before the fix, ``_do_get``
+        resolved the tier via ``resolve_get_tier`` and then passed only the
+        resolved *name* into ``collect_coverage``, which re-resolved it a
+        second time internally. Passing the already-resolved ``TierConfig``
+        object through means ``resolve_get_tier`` runs exactly once for the
+        whole ``otto cov get`` invocation.
+        """
+        from otto.coverage import tiers as tiers_module
+
+        cov_repo = self._repo_mock(repo, {"hosts": ".*"})
+
+        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
+        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr(
+            "otto.coverage.fetcher.embedded.collect_embedded_coverage",
+            self._fake_collect_one_board(),
+        )
+        monkeypatch.setattr(produce_module.LcovMerger, "capture", self._fake_capture(repo))
+
+        resolve_spy = MagicMock(wraps=tiers_module.resolve_get_tier)
+        monkeypatch.setattr(tiers_module, "resolve_get_tier", resolve_spy)
+
+        out_dir = tmp_path / "get_out_resolve_once"
+        result = runner.invoke(cov_app, ["get", "-o", str(out_dir)])
+        assert result.exit_code == 0, result.output
+        assert resolve_spy.call_count == 1
 
     def test_get_clean_calls_clean_remote_when_unix_hosts_fetched(
         self, tmp_path, repo, monkeypatch

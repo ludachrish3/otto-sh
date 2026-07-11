@@ -117,8 +117,8 @@ def test_tests_flag_with_suite_subcommand_is_loud(tmp_path: Path) -> None:
     # --tests is a suite-less-selection flag; combined with a suite
     # subcommand it was previously silently discarded (the suite ran in
     # full). That silent-discard contradicts this CLI's loud-error
-    # philosophy elsewhere (e.g. _resolve_selection's unknown-name handling)
-    # so it must now be a usage error instead.
+    # philosophy elsewhere (e.g. otto.suite.selection.resolve_selection's
+    # unknown-name handling) so it must now be a usage error instead.
     repo = make_selection_repo(tmp_path)
     xdir = tmp_path / "xdir"
     xdir.mkdir()

@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class ReservationGateOutcome:
+class ReservationGateResult:
     """Result of :meth:`ReservationGate.evaluate`.
 
     ``warning`` is plain text (no rich markup) — CLI callers decide how to
@@ -60,7 +60,7 @@ class ReservationGate:
     # None) so reservation subcommands can construct it only when needed.
     backend_factory: "Callable[[], ReservationBackend] | None" = None
 
-    def evaluate(self) -> ReservationGateOutcome:
+    def evaluate(self) -> ReservationGateResult:
         """Run the reservation check (or the skip path) and report the outcome.
 
         When ``skip_check`` (``-R``) is set, a loud warning is always
@@ -95,16 +95,16 @@ class ReservationGate:
                 lab.name,
                 sorted(needed),
             )
-            return ReservationGateOutcome(checked=False, skipped=True, warning=warning)
+            return ReservationGateResult(checked=False, skipped=True, warning=warning)
 
         if self.backend is None:
-            return ReservationGateOutcome(checked=False, skipped=False, warning=None)
+            return ReservationGateResult(checked=False, skipped=False, warning=None)
 
         lab = get_lab()
         if self.identity is None:
             raise RuntimeError("identity must be resolved before evaluate() runs")
         check_reservations(lab, self.identity.username, self.backend)
-        return ReservationGateOutcome(checked=True, skipped=False, warning=None)
+        return ReservationGateResult(checked=True, skipped=False, warning=None)
 
 
 class ReservationBackendError(Exception):

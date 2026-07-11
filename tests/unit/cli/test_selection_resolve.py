@@ -39,23 +39,23 @@ ITEMS = [
 
 
 def test_bare_name_matches_every_suite() -> None:
-    [(_, nodeids)] = resolve_selection([_repo_with(ITEMS)], ["test_login"], "")
-    assert nodeids == ["tests/t.py::TestA::test_login", "tests/t.py::TestB::test_login"]
+    [match] = resolve_selection([_repo_with(ITEMS)], ["test_login"], "")
+    assert match.targets == ["tests/t.py::TestA::test_login", "tests/t.py::TestB::test_login"]
 
 
 def test_bare_name_matches_all_parametrizations() -> None:
-    [(_, nodeids)] = resolve_selection([_repo_with(ITEMS)], ["test_param"], "")
-    assert nodeids == ["tests/t.py::TestA::test_param[a]", "tests/t.py::TestA::test_param[b]"]
+    [match] = resolve_selection([_repo_with(ITEMS)], ["test_param"], "")
+    assert match.targets == ["tests/t.py::TestA::test_param[a]", "tests/t.py::TestA::test_param[b]"]
 
 
 def test_plain_function_is_selectable() -> None:
-    [(_, nodeids)] = resolve_selection([_repo_with(ITEMS)], ["test_plain"], "")
-    assert nodeids == ["tests/t.py::test_plain"]
+    [match] = resolve_selection([_repo_with(ITEMS)], ["test_plain"], "")
+    assert match.targets == ["tests/t.py::test_plain"]
 
 
 def test_qualified_name_disambiguates() -> None:
-    [(_, nodeids)] = resolve_selection([_repo_with(ITEMS)], ["TestB::test_login"], "")
-    assert nodeids == ["tests/t.py::TestB::test_login"]
+    [match] = resolve_selection([_repo_with(ITEMS)], ["TestB::test_login"], "")
+    assert match.targets == ["tests/t.py::TestB::test_login"]
 
 
 def test_unknown_name_raises_with_suggestion() -> None:
@@ -78,7 +78,7 @@ def test_repo_without_matches_is_omitted() -> None:
     full = _repo_with(ITEMS)
     resolved = resolve_selection([empty, full], ["test_plain"], "")
     assert len(resolved) == 1
-    assert resolved[0][0] is full
+    assert resolved[0].repo is full
 
 
 def test_repos_with_marker_matches_omits_repo_without_marker_hits() -> None:

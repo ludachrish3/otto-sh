@@ -119,7 +119,8 @@ subsystem behind the pluggable seams already started.
   selector is always a string; the registry maps name → callable-or-class. The
   *only* thing given up is anonymous inline callables in declarative config
   (e.g. `SshOptions.post_connect`, which is **silently dropped from JSON today**
-  at [src/otto/storage/factory.py](src/otto/storage/factory.py)) — and those
+  at [src/otto/host/factory.py](src/otto/host/factory.py) — moved from
+  `otto.storage.factory` in `807f86c`) — and those
   were never serializable anyway. A callable can still be registered under a
   name to keep closure/custom-code power.
 - Trade-off accepted: lose `Literal` exhaustiveness checks; runtime validation
