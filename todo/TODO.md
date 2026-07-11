@@ -2,6 +2,8 @@
 
 ## General
 
+- External libraries should also be able to provide data plots. A possible example is an external traffic generator. If it has metrics to share and record (packets/sec, connections/sec), it should also be able to record these in the graphs and DB entries.
+- per-ticket coverage report
 - Should `otto init` automatically place the JSON schemas in the correct `~/.vscode` location? That simplifies otto's command tree and makes the schema aspect just a flag that's on by default when running `otto init`. If the schemas are already there, validation could be done and prompt the user if they'd like to replace them.
 - Monitor GUI displays UTC times instead of local times
 - Look into moving to a solely `Untitled UI` component framework
