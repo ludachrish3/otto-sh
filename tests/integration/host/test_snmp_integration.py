@@ -22,8 +22,8 @@ from datetime import timedelta
 
 import pytest
 
+from otto.host.factory import create_host_from_dict
 from otto.monitor.factory import build_monitor_collector
-from otto.storage.factory import create_host_from_dict
 from tests.conftest import (
     _ZEPHYR_BACKEND_NE as _BACKEND_NE,
 )

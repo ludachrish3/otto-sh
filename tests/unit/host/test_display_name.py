@@ -1,6 +1,6 @@
 """Display name = space-joined, original-case element [logical] [board] [slot]."""
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.host.unix_host import UnixHost
 
 

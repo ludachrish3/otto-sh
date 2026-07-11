@@ -1,7 +1,7 @@
 """Tests for build_monitor_collector — choosing SNMP vs shell collection mode."""
 
+from otto.host.factory import create_host_from_dict
 from otto.monitor.factory import build_monitor_collector
-from otto.storage.factory import create_host_from_dict
 
 
 class TestBuildMonitorCollector:

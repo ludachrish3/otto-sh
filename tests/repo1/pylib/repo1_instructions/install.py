@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -6,13 +7,12 @@ from repo1_common.options import RepoOptions
 
 from otto import options
 from otto.cli.run import instruction
-from otto.configmodule.configmodule import do_for_all_hosts, run_on_all_hosts
+from otto.config.fleet import do_for_all_hosts, run_on_all_hosts
 from otto.context import get_context
 from otto.host import LocalHost
 from otto.host.unix_host import UnixHost
-from otto.logger import get_logger
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @options

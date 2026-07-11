@@ -96,7 +96,7 @@ Backend factory
 
 .. autofunction:: otto.reservations.register_reservation_backend
 
-.. autofunction:: otto.reservations.build_reservation_state
+.. autofunction:: otto.reservations.build_reservation_gate
 
 .. automodule:: otto.reservations.registry
 

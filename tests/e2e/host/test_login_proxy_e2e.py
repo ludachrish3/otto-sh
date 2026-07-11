@@ -15,9 +15,9 @@ What this module proves, end to end against the real bed, using a CUSTOM
 - proxied session *establishment* (``user='mysql'`` → default session runs
   as mysql);
 - ``switch_user`` / ``as_user`` roundtrip (become mysql, then restore);
-- ``oneshot`` routing through the proxied pool (Task 8);
+- ``exec`` routing through the proxied pool (Task 8);
 - ``nc`` transfer ownership under the proxied user;
-- ``interact --as-user`` over the real PTY bridge (Task 9);
+- ``login --as-user`` over the real PTY bridge (Task 9);
 - the BUILT-IN ``"su"`` proxy's ``switch_user``/``as_user`` path with the
   ``test`` account, with no custom proxy code at all
   (``test_builtin_su_proxy_switch_user_does_not_hang``);
@@ -56,10 +56,10 @@ module therefore never touches shared lab data:
 - The ``sudo-su-shell`` proxy is registered at MODULE scope below
   (``overwrite=True`` so re-import under xdist is idempotent).
 - Tests 1-5 build hosts from INLINE dicts via
-  :func:`otto.storage.factory.create_host_from_dict`, reading only the
+  :func:`otto.host.factory.create_host_from_dict`, reading only the
   leased VM's IP read-only from ``tech1/lab.json`` (via
   ``tests._fixtures.labdata.host_data``) — never its ``creds``.
-- Test 6 (the ``interact --as-user`` bridge) drives a real ``otto``
+- Test 6 (the ``login --as-user`` bridge) drives a real ``otto``
   subprocess, which needs its OWN registration (it never imports this test
   module) — it scaffolds a throwaway, fully self-contained SUT directory
   under ``tmp_path`` with its own init module and its own single-host
@@ -87,7 +87,7 @@ import asyncssh
 import pytest
 
 from otto import register_login_proxy
-from otto.storage.factory import create_host_from_dict
+from otto.host.factory import create_host_from_dict
 from otto.utils import Status
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
@@ -264,18 +264,18 @@ async def test_switch_user_roundtrip(leased_host: tuple[str, str]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Test 4: oneshot runs as the proxied user (Task 8 proxied-pool routing)
+# Test 4: exec runs as the proxied user (Task 8 proxied-pool routing)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_oneshot_runs_as_proxied_user(leased_host: tuple[str, str]) -> None:
-    """``oneshot`` on a proxied-user host must route through the proxied pool session."""
+async def test_exec_runs_as_proxied_user(leased_host: tuple[str, str]) -> None:
+    """``exec`` on a proxied-user host must route through the proxied pool session."""
     element, ip = leased_host
     host = create_host_from_dict(_mysql_host_dict(ip, element, user="mysql"))
     try:
-        result = await host.oneshot("whoami")
-        assert result.status == Status.Success, f"oneshot whoami failed: {result.value!r}"
+        result = await host.exec("whoami")
+        assert result.status == Status.Success, f"exec whoami failed: {result.value!r}"
         assert result.value.strip() == "mysql"
     finally:
         await host.close()
@@ -313,7 +313,7 @@ async def test_nc_put_owned_by_proxied_user(leased_host: tuple[str, str], tmp_pa
 
 
 # ---------------------------------------------------------------------------
-# Test 6: interact --as-user over the PTY bridge
+# Test 6: login --as-user over the PTY bridge
 # ---------------------------------------------------------------------------
 
 _LP_E2E_LAB = "lp_e2e_lab"
@@ -375,7 +375,7 @@ def _scaffold_sut_dir(sut_dir: Path, ip: str, element: str) -> str:
     return f"{element}_seed"
 
 
-def test_interact_as_user_over_bridge(leased_host: tuple[str, str], tmp_path: Path) -> None:
+def test_login_as_user_over_bridge(leased_host: tuple[str, str], tmp_path: Path) -> None:
     """``otto host <id> login --as-user mysql`` must bridge the human directly onto mysql.
 
     Drives the real interactive PTY bridge (Task 9) through a throwaway,

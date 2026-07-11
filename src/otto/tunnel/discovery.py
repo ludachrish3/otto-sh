@@ -8,22 +8,22 @@ observed against what the sentinel-encoded path says must exist.
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..logger import get_logger
 from ..logger.mode import LogMode
 from .model import ProcKey, Tunnel
 from .sentinel import SENTINEL_PREFIX, ParsedSentinel, parse_sentinel
 from .socat import DISCOVERY_PS_COMMAND
 
 if TYPE_CHECKING:
-    from ..configmodule.lab import Lab
+    from ..config.lab import Lab
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 _TUNNEL_HOST_TIMEOUT = 30.0
-"""Ceiling on any single-host ``oneshot`` on the discovery path (spec §6.4)."""
+"""Ceiling on any single-host ``exec`` on the discovery path (spec §6.4)."""
 
 _ETIME_MAX_FIELDS = 3
 _PS_MIN_FIELDS = 3
@@ -87,7 +87,7 @@ async def _scan_hosts(hosts: list[Any]) -> tuple[list[tuple[str, Observation]], 
     async def scan(host: Any) -> tuple[list[tuple[str, Observation]], str | None]:
         try:
             result = await asyncio.wait_for(
-                host.oneshot(DISCOVERY_PS_COMMAND, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
+                host.exec(DISCOVERY_PS_COMMAND, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
             )
             observed = parse_process_discovery(result.value)
         except asyncio.TimeoutError:

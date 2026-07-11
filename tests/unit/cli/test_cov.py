@@ -532,7 +532,7 @@ class TestResolveCovSettingsExtraMarkers:
                 "exclusions": {"markers": ["MYPROJ_NO_COV"]},
             }
         )
-        with patch("otto.configmodule.get_repos", return_value=[repo]):
+        with patch("otto.config.get_repos", return_value=[repo]):
             repo_root, tier_configs, extra_markers = cov_module._resolve_cov_settings()
         assert repo_root == repo.sut_dir
         assert tier_configs is not None
@@ -540,12 +540,12 @@ class TestResolveCovSettingsExtraMarkers:
 
     def test_no_exclusions_table_yields_empty_markers(self):
         repo = self._repo({"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
-        with patch("otto.configmodule.get_repos", return_value=[repo]):
+        with patch("otto.config.get_repos", return_value=[repo]):
             _repo_root, _tier_configs, extra_markers = cov_module._resolve_cov_settings()
         assert extra_markers == []
 
     def test_no_cov_repo_yields_empty_markers(self):
-        with patch("otto.configmodule.get_repos", return_value=[]):
+        with patch("otto.config.get_repos", return_value=[]):
             repo_root, tier_configs, extra_markers = cov_module._resolve_cov_settings()
         assert repo_root is None
         assert tier_configs is None
@@ -642,7 +642,7 @@ class TestCovGetValidation:
     def test_no_coverage_config_exits_1(self):
         repo = self._repo(None)
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.config.get_repos", return_value=[repo]),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["get"])
@@ -653,7 +653,7 @@ class TestCovGetValidation:
     def test_unknown_tier_lists_configured_tiers(self):
         repo = self._repo({"hosts": ".*"})
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.config.get_repos", return_value=[repo]),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["get", "--tier", "bogus"])
@@ -672,7 +672,7 @@ class TestCovGetValidation:
             }
         )
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.config.get_repos", return_value=[repo]),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["get", "--tier", "manual"])
@@ -692,7 +692,7 @@ class TestCovGetValidation:
             }
         )
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.config.get_repos", return_value=[repo]),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["get"])
@@ -709,8 +709,8 @@ class TestCovGetValidation:
             return {}
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=fake_collect,
@@ -731,8 +731,8 @@ class TestCovGetValidation:
             return {}
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([host1])),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([host1])),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=fake_collect,
@@ -756,8 +756,8 @@ class TestCovGetValidation:
             return {"board1": board}
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=fake_collect,
@@ -788,8 +788,8 @@ class TestCovGetValidation:
             return output
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
                 new=fake_collect,
@@ -866,12 +866,12 @@ class TestCovGetSuccess:
         """Without --output, `cov get` writes into the standard per-invocation
         output directory the CLI preamble records on the context — the same
         free output dir every other lab-touching command gets."""
-        from otto.configmodule.lab import Lab
+        from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
 
         cov_repo = self._repo_mock(repo, {"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
-        monkeypatch.setattr("otto.configmodule.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
+        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
         monkeypatch.setattr(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
             self._fake_collect_one_board(),
@@ -893,12 +893,12 @@ class TestCovGetSuccess:
         """No --output and no context output dir (e.g. a programmatic call
         outside the CLI preamble) fails with a clean one-line error — after
         config/tier validation, so a config problem is never masked by it."""
-        from otto.configmodule.lab import Lab
+        from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
 
         cov_repo = self._repo_mock(repo, {"tiers": {"system": {"kind": "e2e", "precedence": 1}}})
-        monkeypatch.setattr("otto.configmodule.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
+        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
 
         token = set_context(OttoContext(lab=Lab(name="t"), output_dir=None))
         try:
@@ -922,8 +922,8 @@ class TestCovGetSuccess:
             },
         )
 
-        monkeypatch.setattr("otto.configmodule.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
+        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
         monkeypatch.setattr(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
             self._fake_collect_one_board(),
@@ -968,8 +968,8 @@ class TestCovGetSuccess:
     def test_get_default_tier_no_manual_store(self, tmp_path, repo, monkeypatch):
         cov_repo = self._repo_mock(repo, {"hosts": ".*"})
 
-        monkeypatch.setattr("otto.configmodule.get_repos", lambda: [cov_repo])
-        monkeypatch.setattr("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([]))
+        monkeypatch.setattr("otto.config.get_repos", lambda: [cov_repo])
+        monkeypatch.setattr("otto.config.all_hosts", lambda pattern=None, **kw: iter([]))
         monkeypatch.setattr(
             "otto.coverage.fetcher.embedded.collect_embedded_coverage",
             self._fake_collect_one_board(),
@@ -1019,8 +1019,8 @@ class TestCovGetSuccess:
             return {}
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[cov_repo]),
-            patch("otto.configmodule.all_hosts", return_value=[unix_host]),
+            patch("otto.config.get_repos", return_value=[cov_repo]),
+            patch("otto.config.all_hosts", return_value=[unix_host]),
             patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
             patch(
                 "otto.coverage.fetcher.embedded.collect_embedded_coverage",
@@ -1065,8 +1065,8 @@ class TestCovGetSuccess:
             return {}
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[cov_repo]),
-            patch("otto.configmodule.all_hosts", return_value=[unix_host, embedded_host]),
+            patch("otto.config.get_repos", return_value=[cov_repo]),
+            patch("otto.config.all_hosts", return_value=[unix_host, embedded_host]),
             patch(
                 "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
             ) as mock_fetcher_cls,
@@ -1097,7 +1097,7 @@ class TestCovCleanValidation:
     def test_no_coverage_config_exits_1(self):
         repo = self._repo(None)
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
+            patch("otto.config.get_repos", return_value=[repo]),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["clean"])
@@ -1108,8 +1108,8 @@ class TestCovCleanValidation:
     def test_missing_gcda_remote_dir_exits_1(self):
         repo = self._repo({"hosts": ".*"})
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["clean"])
@@ -1120,8 +1120,8 @@ class TestCovCleanValidation:
     def test_no_matching_hosts_exits_1(self):
         repo = self._repo({"hosts": ".*", "gcda_remote_dir": "/remote"})
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", lambda pattern=None, **kw: iter([])),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", lambda pattern=None, **kw: iter([])),
             patch.object(cov_module.logger, "error") as mock_err,
         ):
             result = runner.invoke(cov_app, ["clean"])
@@ -1168,8 +1168,8 @@ class TestCovCleanSuccess:
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", return_value=[unix_host]),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", return_value=[unix_host]),
             patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
         ):
             result = runner.invoke(cov_app, ["clean"])
@@ -1182,8 +1182,8 @@ class TestCovCleanSuccess:
         embedded_host = self._embedded_host()
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", return_value=[embedded_host]),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", return_value=[embedded_host]),
             patch("otto.coverage.fetcher.remote.GcdaFetcher") as mock_fetcher_cls,
             patch.object(cov_module.logger, "info") as mock_info,
         ):
@@ -1204,8 +1204,8 @@ class TestCovCleanSuccess:
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", return_value=[unix_host, embedded_host]),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", return_value=[unix_host, embedded_host]),
             patch("otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance),
             patch.object(cov_module.logger, "info") as mock_info,
         ):
@@ -1230,8 +1230,8 @@ class TestCovCleanSuccess:
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", return_value=[unix_host, embedded_host]),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", return_value=[unix_host, embedded_host]),
             patch(
                 "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
             ) as mock_fetcher_cls,
@@ -1261,8 +1261,8 @@ class TestCovCleanSuccess:
         fetcher_instance.clean_remote = AsyncMock(return_value=None)
 
         with (
-            patch("otto.configmodule.get_repos", return_value=[repo]),
-            patch("otto.configmodule.all_hosts", return_value=[unix_host, other_host]),
+            patch("otto.config.get_repos", return_value=[repo]),
+            patch("otto.config.all_hosts", return_value=[unix_host, other_host]),
             patch(
                 "otto.coverage.fetcher.remote.GcdaFetcher", return_value=fetcher_instance
             ) as mock_fetcher_cls,
@@ -1275,16 +1275,16 @@ class TestCovCleanSuccess:
         assert not used_pattern.search("sprout2")
 
 
-# ── _capture_stamps — tier-aware stamp resolution ──────────────────────────────
+# ── _capture_annotations — tier-aware annotation resolution ────────────────────
 
 
-class TestCaptureStamps:
-    """ticket/note stamp every tier kind; tester attribution stays manual-only."""
+class TestCaptureAnnotations:
+    """ticket/note annotate every tier kind; tester attribution stays manual-only."""
 
     def test_e2e_kind_keeps_ticket_and_note_but_no_tester(self):
-        from otto.cli.cov import _capture_stamps
+        from otto.cli.cov import _capture_annotations
 
-        tester, ticket, note = _capture_stamps("e2e", "CI-77", "nightly run", "Al", "al@x")
+        tester, ticket, note = _capture_annotations("e2e", "CI-77", "nightly run", "Al", "al@x")
         assert tester is None
         assert (ticket, note) == ("CI-77", "nightly run")
 
@@ -1292,6 +1292,6 @@ class TestCaptureStamps:
         import otto.cli.cov as cov_mod
 
         monkeypatch.setattr(cov_mod, "_resolve_tester", lambda n, e: {"name": n, "email": e})
-        tester, ticket, note = cov_mod._capture_stamps("manual", "T-1", None, "Al", "al@x")
+        tester, ticket, note = cov_mod._capture_annotations("manual", "T-1", None, "Al", "al@x")
         assert tester == {"name": "Al", "email": "al@x"}
         assert (ticket, note) == ("T-1", None)

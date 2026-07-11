@@ -120,32 +120,32 @@ async def test_env_var_persists():
 
 
 # ---------------------------------------------------------------------------
-# oneshot (stateless subprocess)
+# exec (stateless subprocess)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_oneshot_basic():
+async def test_exec_basic():
     host = LocalHost()
-    result = await host.oneshot("echo oneshot_test")
+    result = await host.exec("echo exec_test")
     assert result.status == Status.Success
-    assert "oneshot_test" in result.value
+    assert "exec_test" in result.value
 
 
 @pytest.mark.asyncio
-async def test_oneshot_failure():
+async def test_exec_failure():
     host = LocalHost()
-    result = await host.oneshot("asdf_nonexistent_cmd_12345")
+    result = await host.exec("asdf_nonexistent_cmd_12345")
     assert result.status == Status.Failed
     assert result.retcode != 0
 
 
 @pytest.mark.asyncio
-async def test_oneshot_is_stateless():
-    """oneshot() should NOT persist state between calls."""
+async def test_exec_is_stateless():
+    """exec() should NOT persist state between calls."""
     host = LocalHost()
-    await host.oneshot("export OTTO_ONESHOT_VAR=nope")
-    result = await host.oneshot("echo ${OTTO_ONESHOT_VAR:-empty}")
+    await host.exec("export OTTO_EXEC_VAR=nope")
+    result = await host.exec("echo ${OTTO_EXEC_VAR:-empty}")
     assert "empty" in result.value
 
 
@@ -447,15 +447,15 @@ async def test_concurrent_per_host_suppression_does_not_conflict_globally():
 
 
 # ---------------------------------------------------------------------------
-# interact (still not implemented)
+# login (still not implemented)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_local_host_interact():
+async def test_local_host_login():
     host = LocalHost()
     with pytest.raises(NotImplementedError):
-        await host.interact()
+        await host.login()
 
 
 # ---------------------------------------------------------------------------

@@ -44,7 +44,7 @@ class FakeHost:
     slow: bool = False
     commands: list[str] = field(default_factory=list)
 
-    async def oneshot(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
+    async def exec(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
         self.commands.append(cmd)
         if self.slow:
             await asyncio.sleep(3600)

@@ -12,7 +12,7 @@ import typer
 
 from otto.cli.reservation import check, whoami
 from otto.reservations import (
-    ReservationState,
+    ReservationGate,
     ResolvedIdentity,
 )
 
@@ -65,7 +65,7 @@ class _FakeBackend:
 
 
 def test_whoami_exits_1_when_no_identity(capsys):
-    res = ReservationState(backend=None, identity=None, skip_check=False)
+    res = ReservationGate(backend=None, identity=None, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
     with pytest.raises(_Exit) as exc:
         whoami(ctx)
@@ -84,7 +84,7 @@ def test_whoami_exits_1_when_no_reservation_key(capsys):
 def test_whoami_prints_identity_when_configured(capsys):
     identity = ResolvedIdentity(username="alice", source="$USER")
     backend = _FakeBackend()
-    res = ReservationState(backend=backend, identity=identity, skip_check=False)
+    res = ReservationGate(backend=backend, identity=identity, skip_check=False)
     # No lab anywhere: no root options, no loaded lab — whoami must not care.
     ctx = _make_ctx({"otto_reservation": res})
 
@@ -101,7 +101,7 @@ def test_whoami_reports_requested_lab_names_without_loading(capsys):
     from otto.cli.invoke import RootOptions
 
     identity = ResolvedIdentity(username="alice", source="$USER")
-    res = ReservationState(backend=_FakeBackend(), identity=identity, skip_check=False)
+    res = ReservationGate(backend=_FakeBackend(), identity=identity, skip_check=False)
     opts = _root_options(labs=["tech1", "overlay"])
     ctx = _make_ctx({"otto_reservation": res, "_otto_root_options": opts})
     assert isinstance(opts, RootOptions)
@@ -117,12 +117,12 @@ def test_whoami_is_lab_free(capsys):
     from unittest.mock import patch
 
     identity = ResolvedIdentity(username="alice", source="$USER")
-    state = ReservationState(backend=_FakeBackend(), identity=identity, skip_check=False)
+    state = ReservationGate(backend=_FakeBackend(), identity=identity, skip_check=False)
     ctx = _make_ctx({"_otto_root_options": _root_options(labs=None)})
 
     with (
-        patch("otto.cli.reservation.build_reservation_state", return_value=state) as build,
-        patch("otto.configmodule.get_repos", return_value=[]),
+        patch("otto.cli.reservation.build_reservation_gate", return_value=state) as build,
+        patch("otto.config.get_repos", return_value=[]),
     ):
         whoami(ctx)
 
@@ -139,7 +139,7 @@ def test_whoami_is_lab_free(capsys):
 
 def test_check_exits_1_when_not_configured(capsys):
     ctx = _make_ctx(
-        {"otto_reservation": ReservationState(backend=None, identity=None, skip_check=False)}
+        {"otto_reservation": ReservationGate(backend=None, identity=None, skip_check=False)}
     )
     with pytest.raises(_Exit) as exc:
         check(ctx)
@@ -149,15 +149,15 @@ def test_check_exits_1_when_not_configured(capsys):
 def test_check_passes_when_fully_reserved(capsys):
     from unittest.mock import patch
 
-    from otto.configmodule.lab import Lab
+    from otto.config.lab import Lab
 
     identity = ResolvedIdentity(username="alice", source="$USER")
     backend = _FakeBackend()
-    res = ReservationState(backend=backend, identity=identity, skip_check=False)
+    res = ReservationGate(backend=backend, identity=identity, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = Lab(name="test_lab", resources={"r1"})
-    with patch("otto.configmodule.get_lab", return_value=lab):
+    with patch("otto.config.get_lab", return_value=lab):
         check(ctx)  # must not raise
 
     assert "OK" in capsys.readouterr().out
@@ -166,7 +166,7 @@ def test_check_passes_when_fully_reserved(capsys):
 def test_check_exits_1_on_missing_reservation(capsys):
     from unittest.mock import patch
 
-    from otto.configmodule.lab import Lab
+    from otto.config.lab import Lab
 
     class _EmptyBackend(_FakeBackend):
         def get_reserved_resources(self, username: str) -> set[str]:
@@ -176,12 +176,12 @@ def test_check_exits_1_on_missing_reservation(capsys):
             return []
 
     identity = ResolvedIdentity(username="alice", source="$USER")
-    res = ReservationState(backend=_EmptyBackend(), identity=identity, skip_check=False)
+    res = ReservationGate(backend=_EmptyBackend(), identity=identity, skip_check=False)
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = Lab(name="test_lab", resources={"r1"})
     with (
-        patch("otto.configmodule.get_lab", return_value=lab),
+        patch("otto.config.get_lab", return_value=lab),
         pytest.raises(_Exit) as exc,
     ):
         check(ctx)
@@ -191,7 +191,7 @@ def test_check_exits_1_on_missing_reservation(capsys):
 def test_whoami_builds_backend_on_demand(capsys):
     identity = ResolvedIdentity(username="alice", source="--as-user")
     # -R shape: backend not built, but a factory is available.
-    res = ReservationState(
+    res = ReservationGate(
         backend=None,
         identity=identity,
         skip_check=True,
@@ -210,10 +210,10 @@ def test_check_loads_lab_lazily_when_preamble_skipped(capsys):
     """The lab_free group means check must pull the lab in itself."""
     from unittest.mock import patch
 
-    from otto.configmodule.lab import Lab
+    from otto.config.lab import Lab
 
     identity = ResolvedIdentity(username="alice", source="$USER")
-    state = ReservationState(backend=_FakeBackend(), identity=identity, skip_check=False)
+    state = ReservationGate(backend=_FakeBackend(), identity=identity, skip_check=False)
     ctx = _make_ctx({})
 
     def _fake_ensure(c):
@@ -222,7 +222,7 @@ def test_check_loads_lab_lazily_when_preamble_skipped(capsys):
     lab = Lab(name="test_lab", resources={"r1"})
     with (
         patch("otto.cli.invoke.ensure_lab_context", side_effect=_fake_ensure) as ensure,
-        patch("otto.configmodule.get_lab", return_value=lab),
+        patch("otto.config.get_lab", return_value=lab),
     ):
         check(ctx)
 
@@ -250,10 +250,10 @@ def test_check_without_lab_exits_with_usage_error(capsys):
 def test_check_builds_backend_on_demand(capsys):
     from unittest.mock import patch
 
-    from otto.configmodule.lab import Lab
+    from otto.config.lab import Lab
 
     identity = ResolvedIdentity(username="alice", source="--as-user")
-    res = ReservationState(
+    res = ReservationGate(
         backend=None,
         identity=identity,
         skip_check=True,
@@ -262,7 +262,7 @@ def test_check_builds_backend_on_demand(capsys):
     ctx = _make_ctx({"otto_reservation": res})
 
     lab = Lab(name="test_lab", resources={"r1"})
-    with patch("otto.configmodule.get_lab", return_value=lab):
+    with patch("otto.config.get_lab", return_value=lab):
         check(ctx)  # _FakeBackend reserves {"r1"} for everyone → passes
 
     assert "OK" in capsys.readouterr().out

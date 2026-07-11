@@ -12,7 +12,7 @@ from otto.coverage.store.model import CoverageStore
 from otto.coverage.validity import (
     apply_manual_capture,
     load_capture_into_store,
-    register_capture_context,
+    register_capture_run,
 )
 
 
@@ -47,7 +47,7 @@ def repo(tmp_path: Path) -> Path:
 def _capture(repo: Path, captured_at: str = "2026-07-01T00:00:00Z") -> Capture:
     return Capture(
         tier="manual",
-        pin=head_commit(repo),
+        base_commit=head_commit(repo),
         captured_at=captured_at,
         ticket="T-1",
         labs=["lab1"],
@@ -97,7 +97,7 @@ def test_whitespace_only_reindent_stays_valid(repo: Path) -> None:
     ``-w`` in the anchor-chain diff hides whitespace-only modifications, so
     the manual hits carry through at their (unshifted) line numbers."""
     cap = _capture(repo)  # covers lines 1 and 3
-    # Reindent every line — no code change — and commit past the pin.
+    # Reindent every line — no code change — and commit past base_commit.
     _commit_edit(repo, "    int a;\n\tint b;\n        int c;\n")
     store = CoverageStore(tier_order=["manual"])
     apply_manual_capture(store, cap, repo, max_age_days=None)
@@ -144,7 +144,7 @@ def test_aging_flag(repo: Path) -> None:
 def test_branch_reachability_applied(repo: Path) -> None:
     cap = Capture(
         tier="manual",
-        pin=head_commit(repo),
+        base_commit=head_commit(repo),
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-1",
         labs=["lab1"],
@@ -206,9 +206,9 @@ def test_blank_captured_at_is_not_aging_and_warns(repo: Path, caplog) -> None:
 
 
 def test_later_capture_clears_stale_from_earlier(repo: Path) -> None:
-    """Covered wins: when a later (post-edit-pin) capture validly credits a
+    """Covered wins: when a later (post-edit base_commit) capture validly credits a
     line an earlier capture left flagged stale, the stale state is cleared."""
-    cap1 = _capture(repo)  # pinned at HEAD1, covers line 3
+    cap1 = _capture(repo)  # anchored at HEAD1, covers line 3
 
     # Edit line 3 and commit → HEAD2. cap1's line 3 now anchors to a changed
     # line → stale.
@@ -216,7 +216,7 @@ def test_later_capture_clears_stale_from_earlier(repo: Path) -> None:
 
     cap2 = Capture(
         tier="manual",
-        pin=head_commit(repo),  # HEAD2, matching the edited source
+        base_commit=head_commit(repo),  # HEAD2, matching the edited source
         captured_at="2026-07-02T00:00:00Z",
         ticket="T-2",
         labs=["lab1"],
@@ -236,7 +236,7 @@ def test_later_capture_clears_stale_from_earlier(repo: Path) -> None:
 
 def test_unverifiable_all_stale(repo: Path) -> None:
     cap = _capture(repo)
-    bogus = cap.model_copy(update={"pin": "f" * 40})
+    bogus = cap.model_copy(update={"base_commit": "f" * 40})
     for fc in bogus.files.values():
         fc.blob = "e" * 40
     store = CoverageStore(tier_order=["manual"])
@@ -251,22 +251,22 @@ def test_unverifiable_zero_count_line_not_staled(repo: Path) -> None:
     it never actually executed."""
     cap = _capture(repo)
     cap.files["f.c"].lines[2] = 0  # instrumented but never executed
-    bogus = cap.model_copy(update={"pin": "f" * 40})
+    bogus = cap.model_copy(update={"base_commit": "f" * 40})
     for fc in bogus.files.values():
         fc.blob = "e" * 40
     store = CoverageStore(tier_order=["manual"])
-    cid = register_capture_context(store, bogus)
-    apply_manual_capture(store, bogus, repo, max_age_days=None, ctx_id=cid)
+    rid = register_capture_run(store, bogus)
+    apply_manual_capture(store, bogus, repo, max_age_days=None, run_id=rid)
     assert _find(store, repo, 1).state == "stale"
-    assert cid in _find(store, repo, 1).stale_contexts
+    assert rid in _find(store, repo, 1).stale_runs
     line2 = _find(store, repo, 2)
-    assert line2 is None or cid not in line2.stale_contexts
+    assert line2 is None or rid not in line2.stale_runs
 
 
-def test_unverifiable_pin_warns_with_ticket_and_remedy(repo: Path, caplog) -> None:
-    """The unverifiable-pin warning is not fatal — it names the ticket and the remedy."""
+def test_unverifiable_base_commit_warns_with_ticket_and_remedy(repo: Path, caplog) -> None:
+    """The unverifiable-base_commit warning is not fatal — it names the ticket and the remedy."""
     cap = _capture(repo)
-    bogus = cap.model_copy(update={"pin": "f" * 40})
+    bogus = cap.model_copy(update={"base_commit": "f" * 40})
     for fc in bogus.files.values():
         fc.blob = "e" * 40
     store = CoverageStore(tier_order=["manual"])
@@ -279,70 +279,70 @@ def test_unverifiable_pin_warns_with_ticket_and_remedy(repo: Path, caplog) -> No
     assert "re-capture" in rec.message
 
 
-def test_register_capture_context_prefers_display_name(repo: Path) -> None:
+def test_register_capture_run_prefers_display_name(repo: Path) -> None:
     cap = _capture(repo)
     cap.display_name = "Rack 2 Slot 4"
     store = CoverageStore(tier_order=["manual"])
-    cid = register_capture_context(store, cap)
-    rec = store.contexts[cid]
+    rid = register_capture_run(store, cap)
+    rec = store.runs[rid]
     assert rec.label == "Rack 2 Slot 4"
     assert rec.board == "b"
     assert rec.ticket == "T-1"
-    assert rec.pin == cap.pin
+    assert rec.base_commit == cap.base_commit
 
 
-def test_register_capture_context_falls_back_to_board(repo: Path) -> None:
+def test_register_capture_run_falls_back_to_board(repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
-    cid = register_capture_context(store, _capture(repo))
-    assert store.contexts[cid].label == "b"
+    rid = register_capture_run(store, _capture(repo))
+    assert store.runs[rid].label == "b"
 
 
-def test_apply_manual_capture_credits_context_hits(repo: Path) -> None:
+def test_apply_manual_capture_credits_run_hits(repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
     cap = _capture(repo)  # lines {1: 2, 3: 1}
-    cid = register_capture_context(store, cap)
-    apply_manual_capture(store, cap, repo, max_age_days=None, ctx_id=cid)
-    assert _find(store, repo, 1).context_hits == {cid: 2}
-    assert _find(store, repo, 3).context_hits == {cid: 1}
+    rid = register_capture_run(store, cap)
+    apply_manual_capture(store, cap, repo, max_age_days=None, run_id=rid)
+    assert _find(store, repo, 1).run_hits == {rid: 2}
+    assert _find(store, repo, 3).run_hits == {rid: 1}
 
 
-def test_stale_line_records_revoked_context(repo: Path) -> None:
+def test_stale_line_records_revoked_run(repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
     cap = _capture(repo)
-    cid = register_capture_context(store, cap)
+    rid = register_capture_run(store, cap)
     _commit_edit(repo, "int a;\nint b;\nint CHANGED;\n")  # stales line 3
-    apply_manual_capture(store, cap, repo, max_age_days=None, ctx_id=cid)
+    apply_manual_capture(store, cap, repo, max_age_days=None, run_id=rid)
     line3 = _find(store, repo, 3)
     assert line3.state == "stale"
-    assert line3.stale_contexts == [cid]
-    assert line3.context_hits == {}  # no credit for the revoked run
+    assert line3.stale_runs == [rid]
+    assert line3.run_hits == {}  # no credit for the revoked run
 
 
-def test_aging_capture_flags_its_context_record(repo: Path) -> None:
+def test_aging_capture_flags_its_run_record(repo: Path) -> None:
     store = CoverageStore(tier_order=["manual"])
     cap = _capture(repo, "2025-01-01T00:00:00Z")
-    cid = register_capture_context(store, cap)
+    rid = register_capture_run(store, cap)
     apply_manual_capture(
         store,
         cap,
         repo,
         max_age_days=180,
         today=datetime(2026, 7, 2, tzinfo=timezone.utc),
-        ctx_id=cid,
+        run_id=rid,
     )
-    assert store.contexts[cid].aging is True
-    assert _find(store, repo, 1).context_hits == {cid: 2}
+    assert store.runs[rid].aging is True
+    assert _find(store, repo, 1).run_hits == {rid: 2}
 
 
-def test_e2e_capture_load_credits_context(repo: Path) -> None:
+def test_e2e_capture_load_credits_run(repo: Path) -> None:
     store = CoverageStore(tier_order=["system"])
     cap = _capture(repo)
-    cid = register_capture_context(store, cap)
-    load_capture_into_store(store, cap, repo, ctx_id=cid)
-    assert _find(store, repo, 1).context_hits == {cid: 2}
-    # zero-count DA lines never credit a context (line 3 has count 1; craft a 0):
+    rid = register_capture_run(store, cap)
+    load_capture_into_store(store, cap, repo, run_id=rid)
+    assert _find(store, repo, 1).run_hits == {rid: 2}
+    # zero-count DA lines never credit a run (line 3 has count 1; craft a 0):
     cap0 = _capture(repo)
     cap0.files["f.c"].lines = {2: 0}
-    cid0 = register_capture_context(store, cap0)
-    load_capture_into_store(store, cap0, repo, ctx_id=cid0)
-    assert _find(store, repo, 2).context_hits == {}
+    rid0 = register_capture_run(store, cap0)
+    load_capture_into_store(store, cap0, repo, run_id=rid0)
+    assert _find(store, repo, 2).run_hits == {}

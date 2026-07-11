@@ -10,8 +10,8 @@ from typing import Annotated
 import typer
 from rich import print as rprint
 
-from ..configmodule import all_hosts, get_host
-from ..configmodule.configmodule import _apply_option_overrides
+from ..config import all_hosts, get_host
+from ..config.fleet import _apply_option_overrides
 from ..host.remote_host import RemoteHost
 from ..host.unix_host import UnixHost
 from .callbacks import list_hosts_callback
@@ -57,8 +57,8 @@ def _host_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     ``--clear-autocomplete-cache``). Falls through to a live ``lab.json``
     scan on cache miss so first-run completion still works.
     """
-    from ..configmodule import get_completion_names, get_repos
-    from ..configmodule.completion_cache import collect_host_ids
+    from ..config import get_completion_names, get_repos
+    from ..config.completion_cache import collect_host_ids
 
     labs = _selected_lab_names(ctx)
     cached = get_completion_names()
@@ -94,7 +94,7 @@ def _term_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: 
     per-repo backends complete without re-running user code — see WS#4 Task 10);
     falls back to the live registry, where otto's built-ins are always present.
     """
-    from ..configmodule import get_completion_names
+    from ..config import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("term_backends"), list):
@@ -114,7 +114,7 @@ def _transfer_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # no
     host, so only backends whose ``host_families`` include ``'unix'`` are offered.
     Cached entries are ``{"name": str, "host_families": [...]}`` (see Task 10).
     """
-    from ..configmodule import get_completion_names
+    from ..config import get_completion_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("transfer_backends"), list):

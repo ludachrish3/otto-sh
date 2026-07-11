@@ -11,8 +11,16 @@ Coverage works in two steps:
    :class:`~otto.coverage.reporter.CoverageReporter`.
 """
 
+from .collect import CollectResult, clean_remote_gcda, collect_coverage
 from .fetcher.remote import GcdaFetcher
 from .reporter import CoverageReporter
 from .store.model import CoverageStore
 
-__all__ = ["CoverageReporter", "CoverageStore", "GcdaFetcher"]
+__all__ = [
+    "CollectResult",
+    "CoverageReporter",
+    "CoverageStore",
+    "GcdaFetcher",
+    "clean_remote_gcda",
+    "collect_coverage",
+]

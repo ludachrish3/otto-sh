@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from otto.logger import get_logger, management
+from otto.logger import management
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +39,7 @@ def test_library_logger_propagates_to_consumer_root():
     handler = _Capture()
     root.addHandler(handler)
     try:
-        get_logger("demo").warning("library warning")
+        logging.getLogger("otto.demo").warning("library warning")
     finally:
         root.removeHandler(handler)
     assert "library warning" in records

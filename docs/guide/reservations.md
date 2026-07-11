@@ -366,6 +366,71 @@ backend on demand when you ask them to.)
 All other failures (the user genuinely doesn't hold the resource) exit via the
 normal `MissingReservationError` path, which does not mention `-R`.
 
+## Using the reservation library in your own CLI
+
+Everything above walks through `otto`'s own subcommands. The library itself —
+`otto.reservations` — has no dependency on Typer, rich, or any other part of
+otto's CLI, so a completely separate tool (a deploy script, a CI gate, your
+own CLI) can run the exact same check without going through `otto` at all.
+Four steps:
+
+1. **Build** a backend from your tool's own settings with
+   [`build_backend`](../api/reservations.rst). An unconfigured (or `"none"`)
+   backend setting resolves to
+   [`NullReservationBackend`](../api/reservations.rst) — a no-op, so this step
+   needs no live scheduler to exercise in a test.
+2. **Resolve** the effective identity with
+   [`resolve_username`](../api/reservations.rst).
+3. **Construct** a [`ReservationGate`](../api/reservations.rst) from the
+   backend and identity and call `.evaluate()`.
+4. **Present** the result yourself. `evaluate()` returns a
+   `ReservationGateOutcome` whose `warning` is plain text — the library never
+   touches your terminal. `MissingReservationError` and
+   `ReservationBackendError` (the same two exceptions from
+   [Fail-closed behavior](#fail-closed-behavior) above) are what you catch;
+   exit codes, logging, and styling are entirely your call — `otto`'s own CLI
+   wraps `warning` in rich markup, nothing here requires you to do the same.
+
+| Exception                 | Raised by                                                      | Means                                                                       |
+|---------------------------|-----------------------------------------------------------------|------------------------------------------------------------------------------|
+| `MissingReservationError` | `evaluate()` / `check_reservations()`                          | The identity doesn't hold every required resource.                         |
+| `ReservationBackendError` | `build_backend()` (construction) or `evaluate()` (query time)  | The backend itself couldn't answer — network, credentials, malformed data. |
+
+A complete, runnable example ships as
+[`otto.examples.reservations_cli`](../api/examples.rst)
+(`src/otto/examples/reservations_cli.py`) — copy it as a starting point. Its
+`run_check()` is steps 3-4, kept separate from the Typer command so it is
+directly testable against the Null backend or the
+[`ExampleReservationBackend`](../api/examples.rst) sample, no real scheduler
+or CLI invocation required:
+
+```{doctest}
+>>> from otto.config.lab import Lab
+>>> from otto.examples.reservations import ExampleReservationBackend
+>>> from otto.reservations import resolve_username
+>>> from otto.examples.reservations_cli import run_check
+>>> demo = Lab(name="demo", resources={"lab-a"})
+>>> run_check(demo, backend=ExampleReservationBackend(), identity=resolve_username("alice"))
+alice: OK
+0
+>>> run_check(demo, backend=ExampleReservationBackend(), identity=resolve_username("carol"))
+carol: User 'carol' does not hold all resources required by lab 'demo'. Missing:
+  - lab-a (held by alice)
+1
+```
+
+Run the full example as a standalone CLI — with no `--backend` flag it falls
+back to the Null backend, so this needs no scheduler either:
+
+```bash
+python -m otto.examples.reservations_cli --resource rack1
+```
+
+If you're also writing a custom backend for your tool (rather than reusing
+`json` or `none`), see [Verify your backend](#verify-your-backend) above —
+`otto.testing.assert_reservation_backend_conforms` checks the same contract
+whether the backend ends up wired into `otto`, your own CLI, or both.
+
 ## Troubleshooting
 
 `"User $USER does not hold all resources required by lab ..."`

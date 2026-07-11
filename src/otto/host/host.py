@@ -206,9 +206,9 @@ class Host(Protocol):
     power_control: "PowerController | None"
     """Pluggable power backend, or None when this host can't be power-controlled."""
 
-    async def _interact(self, as_user: str | None = None) -> None: ...
+    async def _login(self, as_user: str | None = None) -> None: ...
 
-    async def interact(self, as_user: str | None = None) -> None:
+    async def login(self, as_user: str | None = None) -> None:
         """Open an interactive shell bridged to the local terminal."""
         ...
 
@@ -241,7 +241,7 @@ class Host(Protocol):
         """
         ...
 
-    async def oneshot(
+    async def exec(
         self,
         cmd: str,
         timeout: float | None = None,
@@ -253,7 +253,7 @@ class Host(Protocol):
         independent exec primitive (e.g.
         :class:`~otto.host.unix_host.UnixHost`,
         :class:`~otto.host.local_host.LocalHost`) open a fresh connection or
-        subprocess per call, so ``oneshot`` is safe to use concurrently from
+        subprocess per call, so ``exec`` is safe to use concurrently from
         multiple coroutines. Families exposing only a single console (e.g.
         :class:`~otto.host.embedded_host.EmbeddedHost`) share the persistent
         session and are **not** concurrency-safe — see the concrete class.
@@ -440,7 +440,7 @@ class BaseHost(ABC):
     and power/reboot orchestration. Concrete
     host classes (``UnixHost``,
     ``EmbeddedHost``, etc.) inherit from :class:`BaseHost`, implement the
-    family-specific hooks (``_run_one``, ``oneshot``, ``_soft_reboot``, …),
+    family-specific hooks (``_run_one``, ``exec``, ``_soft_reboot``, …),
     and satisfy the :class:`Host` protocol.
     """
 
@@ -550,16 +550,16 @@ class BaseHost(ABC):
     #  Command execution
     ####################
 
-    async def _interact(self, as_user: str | None = None) -> None:
+    async def _login(self, as_user: str | None = None) -> None:
         raise NotImplementedError(
             f"The '{self.__class__.__name__}' class does not support interactive sessions"
         ) from None
 
-    @cli_exposed(name="login")
-    async def interact(self, as_user: str | None = None) -> None:
+    @cli_exposed
+    async def login(self, as_user: str | None = None) -> None:
         """Open an interactive shell bridged to the local terminal.
 
-        Subclasses implement ``_interact`` to do the actual protocol
+        Subclasses implement ``_login`` to do the actual protocol
         work. This wrapper exists so CLI and SDK callers have a single
         public entry point.
 
@@ -574,7 +574,7 @@ class BaseHost(ABC):
                 hops needed to reach it (see :mod:`otto.host.login_proxy`).
                 Hosts that cannot proxy raise :exc:`NotImplementedError`.
         """
-        await self._interact(as_user)
+        await self._login(as_user)
 
     @cli_exposed
     async def run(
@@ -617,7 +617,7 @@ class BaseHost(ABC):
             per command.
 
         See Also:
-            :meth:`oneshot`: stateless, concurrent-safe alternative for one-off commands.
+            :meth:`exec`: stateless, concurrent-safe alternative for one-off commands.
         """
         default_expects = _normalize_expects(expects)
         if isinstance(cmds, (str, ShellCommand)):
@@ -663,7 +663,7 @@ class BaseHost(ABC):
         """Per-command runner for the persistent shell session. Subclasses override."""
         raise NotImplementedError from None
 
-    async def oneshot(
+    async def exec(
         self,
         cmd: str,
         timeout: float | None = None,

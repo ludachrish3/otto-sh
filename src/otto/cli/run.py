@@ -54,7 +54,7 @@ def list_instructions_callback(value: bool) -> None:
     """Print all available run instructions (one panel per repo) and exit when the flag is set."""
     if not value:
         return
-    from ..configmodule import get_repos  # lazy import — avoids circular dependency
+    from ..config import get_repos  # lazy import — avoids circular dependency
 
     panels = [repo.get_instructions_panel() for repo in get_repos()]
     table = Table(show_header=False, show_footer=False, box=None, expand=True, padding=(0, 1, 1, 1))

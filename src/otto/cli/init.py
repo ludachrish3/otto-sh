@@ -182,7 +182,7 @@ def repo_marker() -> str:
 # Fixtures can hand tests live lab hosts; uncomment once your lab_data/ is real:
 # @pytest.fixture
 # async def primary_host():
-#     from otto.configmodule import get_host
+#     from otto.config import get_host
 #
 #     host = get_host("example-device")
 #     yield host
@@ -192,10 +192,11 @@ def repo_marker() -> str:
 INSTRUCTIONS_TEMPLATE = '''\
 """{name} instructions — functions exposed as `otto run` subcommands."""
 
-from otto.cli.run import instruction
-from otto.logger import get_logger
+import logging
 
-logger = get_logger()
+from otto.cli.run import instruction
+
+logger = logging.getLogger(__name__)
 
 
 @instruction()
@@ -226,7 +227,7 @@ class Area:
 def _settings_paths(root: Path) -> dict[str, list[Path]] | None:
     """Parse ``.otto/settings.toml`` and resolve ``${sut_dir}`` in its path lists.
 
-    Mirrors the substitution :meth:`otto.configmodule.repo.Repo._expand_string`
+    Mirrors the substitution :meth:`otto.config.repo.Repo._expand_string`
     performs (plain ``str.replace``, no other variables). Returns ``None`` when
     the settings file is absent or fails to parse, so callers fall back to the
     conventional path instead of erroring.
@@ -375,11 +376,11 @@ def _validate_lab(root: Path) -> list[str]:
 
     The top-level section shape (object guard, ``_``-comment allowance,
     unknown-section rejection, per-section array check) is delegated to
-    :func:`otto.storage.json_repository.parse_lab_sections` — the SAME helper the
+    :func:`otto.labs.json_repository.parse_lab_sections` — the SAME helper the
     runtime loader uses — so the doctor cannot drift from what otto actually
     accepts (e.g. an unknown ``routes`` section is rejected here exactly as it
     is at load). Each ``hosts`` entry is then delegated to
-    :func:`otto.storage.factory.validate_host_dict` (a bad ``os_type`` or field
+    :func:`otto.host.factory.validate_host_dict` (a bad ``os_type`` or field
     name surfaces the same pydantic error the loader would raise), and each
     ``links`` entry is validated structurally via
     :class:`~otto.models.link.LinkSpec`; endpoint cross-references (host ids,
@@ -387,10 +388,10 @@ def _validate_lab(root: Path) -> list[str]:
     """
     from pydantic import ValidationError
 
+    from ..host.factory import validate_host_dict
+    from ..labs.errors import LabRepositoryError
+    from ..labs.json_repository import parse_lab_sections
     from ..models.link import LinkSpec
-    from ..storage.errors import LabRepositoryError
-    from ..storage.factory import validate_host_dict
-    from ..storage.json_repository import parse_lab_sections
 
     paths = _settings_paths(root)
     lab_dirs = paths["labs"] if paths is not None else [root / "lab_data"]
@@ -433,8 +434,8 @@ def _validate_lab(root: Path) -> list[str]:
 def _validate_tests(root: Path) -> list[str]:
     """Light check of configured test dirs: existence, ``test_*.py`` presence, syntax.
 
-    Deliberately does NOT build a :class:`~otto.configmodule.repo.Repo` and
-    run :meth:`~otto.configmodule.repo.Repo.collect_tests` — that spins an
+    Deliberately does NOT build a :class:`~otto.config.repo.Repo` and
+    run :meth:`~otto.config.repo.Repo.collect_tests` — that spins an
     inner pytest collection pass (module-cache save/restore, event-loop
     bookkeeping) which is too heavy for a doctor check. ``ast.parse`` catches
     syntax errors without importing user code.
@@ -571,11 +572,11 @@ async def init_command(
     from rich import print as rprint
     from rich.table import Table
 
-    from otto.configmodule.env import SUT_DIRS_ENV_VAR
+    from otto.config.env import SUT_DIRS_ENV_VAR
 
     steps: list[str] = []
     current = os.environ.get(SUT_DIRS_ENV_VAR, "")
-    # Split on comma OR os.pathsep (colon on Linux), matching configmodule.env
+    # Split on comma OR os.pathsep (colon on Linux), matching config.env
     # and settings.OttoEnvSettings convention, then strip each segment
     current_sep = re.compile(rf"[,{re.escape(os.pathsep)}]")
     current_dirs = [p.strip() for p in current_sep.split(current) if p.strip()]

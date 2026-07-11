@@ -21,8 +21,8 @@ from rich import print as rprint
 from ..reservations import (
     MissingReservationError,
     ReservationBackendError,
-    ReservationState,
-    build_reservation_state,
+    ReservationGate,
+    build_reservation_gate,
     check_reservations,
     required_resources,
 )
@@ -48,10 +48,10 @@ def reservation_callback(ctx: typer.Context) -> None:
         return
 
 
-def _reservation_state(ctx: typer.Context) -> ReservationState | None:
-    """Return the per-invocation reservation state, resolving it lab-free if needed.
+def _reservation_gate(ctx: typer.Context) -> ReservationGate | None:
+    """Return the per-invocation reservation gate, resolving it lab-free if needed.
 
-    Commands that already went through ``ensure_lab_context`` find the state in
+    Commands that already went through ``ensure_lab_context`` find the gate in
     ``ctx.meta``; the lab-free path (``whoami`` without ``--lab``) builds it
     here from repo settings + root options — identity and backend never depend
     on the lab.
@@ -63,10 +63,10 @@ def _reservation_state(ctx: typer.Context) -> ReservationState | None:
     if opts is None:
         return None
 
-    from ..configmodule import get_repos
+    from ..config import get_repos
 
     try:
-        state = build_reservation_state(
+        gate = build_reservation_gate(
             get_repos(),
             as_user=opts.as_user,
             skip_reservation_check=opts.skip_reservation_check,
@@ -75,14 +75,14 @@ def _reservation_state(ctx: typer.Context) -> ReservationState | None:
     except ReservationBackendError as e:
         rprint(f"[bold red]Reservation backend unavailable:[/bold red] {e}")
         raise typer.Exit(1) from e
-    ctx.meta["otto_reservation"] = state
-    return state
+    ctx.meta["otto_reservation"] = gate
+    return gate
 
 
 @reservation_app.command()
 def whoami(ctx: typer.Context) -> None:
     """Show the resolved reservation identity and backend (no lab required)."""
-    res = _reservation_state(ctx)
+    res = _reservation_gate(ctx)
     backend = None
     if res is not None:
         backend = res.backend or (res.backend_factory() if res.backend_factory else None)
@@ -105,7 +105,7 @@ def whoami(ctx: typer.Context) -> None:
 @reservation_app.command()
 def check(ctx: typer.Context) -> None:
     """Run the reservation check for the top-level ``--lab`` and report."""
-    from ..configmodule import get_lab
+    from ..config import get_lab
 
     # The group is lab_free (whoami needs no lab); check is the one subcommand
     # that does — the lab defines the required-resource list — so load it here,

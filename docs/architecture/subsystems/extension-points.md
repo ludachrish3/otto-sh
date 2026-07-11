@@ -25,7 +25,7 @@ registries, same CLI listing and completion, same error messages
 | an embedded filesystem type | `register_filesystem` | {doc}`../../guide/extending-embedded` |
 | a power controller | `register_power_controller` | {doc}`../../guide/extending-backends` |
 | products on hosts | `register_product_provider` | {doc}`../../guide/host/capabilities` |
-| a host source (lab repository) | {func}`otto.storage.register_lab_repository` | {doc}`../../guide/host-database` |
+| a host source (lab repository) | {func}`otto.labs.register_lab_repository` | {doc}`../../guide/host-database` |
 | a reservation backend | `register_reservation_backend` | {doc}`../../guide/reservations` |
 | per-host monitor parsers | `register_host_parsers` | {doc}`../../guide/monitor` |
 | SNMP metric descriptors | `register_snmp_metric` | {doc}`../../guide/monitor` |

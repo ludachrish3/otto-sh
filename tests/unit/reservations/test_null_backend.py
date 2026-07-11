@@ -1,6 +1,6 @@
 """Unit tests for the null reservation backend and its no-op behavior in the check."""
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.reservations import (
     NullReservationBackend,
     check_reservations,

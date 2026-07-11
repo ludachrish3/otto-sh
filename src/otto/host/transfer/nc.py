@@ -13,9 +13,10 @@ if TYPE_CHECKING:
     from ..connections import ConnectionManager
     from ..options import NcOptions
 
+import logging
+
 from typing_extensions import override
 
-from ...logger import get_logger
 from ...result import CommandResult, Result
 from ...utils import Status
 from .base import (
@@ -39,7 +40,7 @@ _NC_LISTENER_FAST_POLL_ITERS = (
 # 12 MB/s link while keeping the overhead negligible.
 _NC_DRAIN_EVERY = 64
 
-_logger = get_logger()
+_logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Shell script templates for port-finding strategies
@@ -152,7 +153,7 @@ async def _connect_with_retry(
 class NcFileTransfer(UnixFileTransfer):
     """Handles netcat file transfers for a UnixHost.
 
-    Receives injectable callables for open_session and oneshot so it can be tested
+    Receives injectable callables for open_session and exec so it can be tested
     without real connections.
 
     Inherits ``put_files`` / ``get_files`` from :class:`BaseFileTransfer` and
@@ -339,12 +340,12 @@ class NcFileTransfer(UnixFileTransfer):
 
         All control-plane work (port-finding, listener probes, the strategy
         probe, remote file-size stats) goes through ``_exec_cmd`` — the same
-        oneshot exec path the ``nc -l`` listeners use.
+        exec path the ``nc -l`` listeners use.
 
         On telnet, ``_control_lock`` serializes these calls so they reuse a
         single warm pooled session instead of fanning out and each paying a
         cold auth handshake. It is an economy measure, not a correctness one:
-        the telnet oneshot pool already hands *concurrent* callers distinct
+        the telnet exec pool already hands *concurrent* callers distinct
         sessions, so there is no shared-stdin corruption to guard against.
 
         On SSH, exec channels over the existing connection are cheap, so the

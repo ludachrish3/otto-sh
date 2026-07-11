@@ -2,7 +2,7 @@
 
 Invokes the installed ``otto`` entrypoint as a subprocess so the full
 dispatch path — repo discovery, lab loading, docker-stack bring-up, the
-``run`` subcommand, and the ``DockerContainerHost`` oneshot execution —
+``run`` subcommand, and the ``DockerContainerHost`` exec path —
 runs exactly as the user runs it.
 
 Requirements:

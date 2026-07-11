@@ -43,20 +43,20 @@ def _target_with_controller(runner):
 @pytest.mark.asyncio
 async def test_command_controller_on_runs_formatted_command_on_controller():
     runner = AsyncMock()
-    runner.oneshot.return_value = _fake_command_result("virsh start vm1", "", Status.Success, 0)
+    runner.exec.return_value = _fake_command_result("virsh start vm1", "", Status.Success, 0)
     target = _target_with_controller(runner)
     pc = CommandPowerController(
         on_cmd="virsh start {name}", off_cmd="virsh destroy {name}", controller="hyp"
     )
     result = await pc.on(target)
     assert result.status is Status.Success
-    runner.oneshot.assert_awaited_once_with("virsh start vm1")
+    runner.exec.assert_awaited_once_with("virsh start vm1")
 
 
 @pytest.mark.asyncio
 async def test_command_controller_status_parses_on_marker():
     runner = AsyncMock()
-    runner.oneshot.return_value = _fake_command_result(
+    runner.exec.return_value = _fake_command_result(
         "virsh domstate vm1", "running", Status.Success, 0
     )
     target = _target_with_controller(runner)
@@ -79,12 +79,12 @@ async def test_command_controller_status_none_when_no_status_command():
 @pytest.mark.asyncio
 async def test_cycle_default_is_off_then_on():
     runner = AsyncMock()
-    runner.oneshot.return_value = _fake_command_result("c", "", Status.Success, 0)
+    runner.exec.return_value = _fake_command_result("c", "", Status.Success, 0)
     target = _target_with_controller(runner)
     pc = CommandPowerController(on_cmd="on {name}", off_cmd="off {name}", controller="hyp")
     result = await pc.cycle(target)
     assert result.status is Status.Success
-    issued = [c.args[0] for c in runner.oneshot.await_args_list]
+    issued = [c.args[0] for c in runner.exec.await_args_list]
     assert issued == ["off vm1", "on vm1"]
 
 

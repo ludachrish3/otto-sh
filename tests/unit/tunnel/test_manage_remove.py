@@ -39,7 +39,7 @@ class FakeHost:
     ps_texts: list = field(default_factory=lambda: [""])
     commands: list = field(default_factory=list)
 
-    async def oneshot(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
+    async def exec(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
         self.commands.append(cmd)
         if cmd == DISCOVERY_PS_COMMAND:
             if self.scan_fail:

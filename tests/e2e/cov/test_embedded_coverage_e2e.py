@@ -7,7 +7,7 @@ SSH hop). Mocked unit tests can't cover this
 path; only the real CLI does, and only over the real multi-hop transport:
 
 * the ``pytest.main()`` test-phase loop followed by the *separate*
-  ``asyncio.run(_run_coverage)`` collection loop — the cross-event-loop seam
+  ``asyncio.run(collect_coverage)`` collection loop — the cross-event-loop seam
   that ``OttoSuite._otto_release_connections`` closes (a stale telnet session
   reused across that boundary hangs, and the single-client QEMU socket blocks
   the collector's reconnect);
@@ -70,11 +70,11 @@ def clean_sprout_cov():
     """
     import asyncio
 
-    from otto.configmodule.lab import Lab
+    from otto.config.lab import Lab
     from otto.context import OttoContext, set_context
+    from otto.host.factory import create_host_from_dict
     from otto.host.login_proxy import Cred
     from otto.host.unix_host import UnixHost
-    from otto.storage.factory import create_host_from_dict
     from otto.utils import Status
     from tests.conftest import host_data
 

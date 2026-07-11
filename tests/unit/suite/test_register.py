@@ -49,6 +49,24 @@ def _make_app_with_suite(suite_class: type) -> typer.Typer:
     return app
 
 
+def _ok_result(exit_code: int = 0):
+    """A SuiteRunResult stub for faked library ``run_suite`` calls.
+
+    The runner consumes the library ``run_suite`` (returning a
+    ``SuiteRunResult``) and raises ``typer.Exit`` on a non-zero exit code, so a
+    fake must return a result carrying an ``exit_code``.
+    """
+    from otto.suite.run import SuiteRunResult
+
+    return SuiteRunResult(
+        exit_code=exit_code,
+        junit_paths=[],
+        stability_report=None,
+        stability_unstable=False,
+        output_dir=Path(),
+    )
+
+
 # ── register_suite_class() ──────────────────────────────────────────────────
 
 
@@ -307,6 +325,25 @@ class TestInheritedOptions:
 
 
 class TestRunnerInvocation:
+    """The runner constructs the Options instance and calls the library run_suite.
+
+    Since Task 12 the suite runner consumes ``otto.suite.run.run_suite``
+    directly (class-first) — ``run_suite(suite, *, options, run_options,
+    output_dir)`` — rather than the old CLI wrapper, so these tests patch the
+    library entrypoint and assert on the new keyword call convention. The
+    runner reads ``output_dir`` from the active context, so a stub context is
+    installed for the class.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _stub_context(self):
+        from otto.config.lab import Lab
+        from otto.context import OttoContext, reset_context, set_context
+
+        token = set_context(OttoContext(lab=Lab(name="_test_stub")))
+        yield
+        reset_context(token)
+
     def test_runner_calls_run_suite_with_options(self):
         """Invoking a suite command constructs the Options instance and calls run_suite."""
 
@@ -321,11 +358,12 @@ class TestRunnerInvocation:
 
         captured: dict[str, object] = {}
 
-        def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
-            captured["opts"] = opts_instance
-            captured["suite_class"] = suite_class
+        def fake_run_suite(suite, **kw):
+            captured["opts"] = kw["options"]
+            captured["suite_class"] = suite
+            return _ok_result()
 
-        with patch("otto.cli.test.run_suite", fake_run_suite):
+        with patch("otto.suite.run.run_suite", fake_run_suite):
             result = runner.invoke(app, ["_SuiteRunner", "--device-type", "switch"])
 
         assert result.exit_code == 0
@@ -344,10 +382,11 @@ class TestRunnerInvocation:
         app = _make_app_with_suite(_SuiteDefaults)
         captured: dict[str, object] = {}
 
-        def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
-            captured["opts"] = opts_instance
+        def fake_run_suite(suite, **kw):
+            captured["opts"] = kw["options"]
+            return _ok_result()
 
-        with patch("otto.cli.test.run_suite", fake_run_suite):
+        with patch("otto.suite.run.run_suite", fake_run_suite):
             result = runner.invoke(app, ["_SuiteDefaults"])
 
         assert result.exit_code == 0
@@ -355,8 +394,9 @@ class TestRunnerInvocation:
         assert opts is not None
         assert opts.count == 7  # type: ignore[union-attr]
 
-    def test_runner_called_with_four_args(self):
-        """The runner invokes run_suite with (suite_cls, file, opts, ctx)."""
+    def test_runner_calls_library_run_suite_class_first(self):
+        """The runner invokes run_suite(suite, *, options, run_options, output_dir)."""
+        from otto.suite.run import RunOptions
 
         class _SuiteArity:
             pass
@@ -366,21 +406,39 @@ class TestRunnerInvocation:
         app = _make_app_with_suite(_SuiteArity)
         captured: dict[str, object] = {}
 
-        def fake_run_suite(suite_class, suite_file, opts_instance, ctx):
-            captured["args"] = (suite_class, suite_file, opts_instance, ctx)
+        def fake_run_suite(suite, **kw):
+            captured["suite"] = suite
+            captured["kw"] = kw
+            return _ok_result()
 
-        with patch("otto.cli.test.run_suite", fake_run_suite):
+        with patch("otto.suite.run.run_suite", fake_run_suite):
             result = runner.invoke(app, ["_SuiteArity"])
 
         assert result.exit_code == 0
-        args = captured["args"]
-        assert isinstance(args, tuple)
-        assert len(args) == 4
-        assert args[0] is _SuiteArity
-        assert args[2] is None  # no Options dataclass
-        # 4th arg is the Typer-injected context (carries ctx.meta run options).
-        assert args[3] is not None
-        assert hasattr(args[3], "meta")
+        # Suite class is passed positionally (class-first); no CLI ctx / file arg.
+        assert captured["suite"] is _SuiteArity
+        kw = captured["kw"]
+        assert kw["options"] is None  # no Options dataclass
+        assert isinstance(kw["run_options"], RunOptions)
+        assert "output_dir" in kw
+
+    def test_runner_propagates_nonzero_exit_code(self):
+        """A non-zero SuiteRunResult.exit_code becomes a typer.Exit from the runner."""
+
+        class _SuiteFails:
+            pass
+
+        register_suite_class(_SuiteFails)
+
+        app = _make_app_with_suite(_SuiteFails)
+
+        def fake_run_suite(suite, **kw):
+            return _ok_result(exit_code=5)
+
+        with patch("otto.suite.run.run_suite", fake_run_suite):
+            result = runner.invoke(app, ["_SuiteFails"])
+
+        assert result.exit_code == 5
 
 
 # ── OttoOptionsPlugin ─────────────────────────────────────────────────────────
@@ -413,7 +471,7 @@ class TestOttoOptionsPlugin:
 
     def test_ctx_fixture_returns_active_context(self):
         """The ctx fixture body returns the active OttoContext."""
-        from otto.configmodule.lab import Lab
+        from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
 
         plugin = OttoOptionsPlugin(None)

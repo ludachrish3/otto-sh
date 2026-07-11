@@ -9,6 +9,7 @@ TelnetSession for command execution.
 """
 
 import asyncio
+import logging
 import shutil
 import signal
 import struct
@@ -24,10 +25,9 @@ from weakref import WeakSet
 
 from typing_extensions import Self
 
-from ..logger import get_logger
 from .options import TelnetOptions
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 async def open_telnet_connection(*args: Any, **kwargs: Any) -> Any:
@@ -131,7 +131,7 @@ class TelnetClient:
     :class:`~otto.host.session.TelnetSession`, which owns command framing and
     output capture. Concurrent callers should not share a single
     ``TelnetClient`` instance — use :class:`~otto.host.session.SessionManager`'s
-    oneshot pool, which opens additional clients as needed.
+    exec pool, which opens additional clients as needed.
     """
 
     host: str

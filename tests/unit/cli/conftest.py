@@ -18,14 +18,14 @@ catch it?"  If no, move the mock boundary closer to I/O.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from otto.configmodule.repo import Repo
-from otto.logger import get_logger
+from otto.config.repo import Repo
 from otto.result import CommandResult, Results
 from otto.utils import Status
 
@@ -55,7 +55,7 @@ def no_logger_output_dir():
     """
     from logging import getLogger
 
-    from otto.configmodule.lab import Lab
+    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context, try_get_context
 
     token = None
@@ -172,7 +172,7 @@ def real_main_mocks(tmp_path):
     clean_env = {k: v for k, v in os.environ.items() if not k.startswith("OTTO_")}
     clean_env["OTTO_XDIR"] = str(tmp_path)
 
-    logger = get_logger()
+    logger = logging.getLogger("otto")
     original_level = logger.level
     original_handlers = list(logger.handlers)
 
@@ -180,12 +180,12 @@ def real_main_mocks(tmp_path):
 
     bs._reset()
     # Lab load + session setup are lazy (Task 7): otto.cli.invoke imports
-    # get_repos from otto.configmodule at call time, so patch the source.
+    # get_repos from otto.config at call time, so patch the source.
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.remove_old_logs") as p_remove,
         patch("otto.logger.management.RichHandler") as p_rich,
-        patch("otto.configmodule.get_repos", return_value=[repo]),
+        patch("otto.config.get_repos", return_value=[repo]),
         patch(
             "otto.host.local_host.LocalHost.run",
             new_callable=AsyncMock,

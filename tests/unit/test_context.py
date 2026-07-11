@@ -92,7 +92,7 @@ async def test_hostscope_closes_hosts_without_connected_attr():
     assert h.close_calls == 1
 
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 
 
 def _lab_with(*ne_names: str) -> Lab:
@@ -239,7 +239,7 @@ def test_async_typer_command_runs_without_active_context():
 
 
 def test_bare_accessors_delegate_to_active_context():
-    import otto.configmodule as cm
+    import otto.config as cm
     from otto.context import OttoContext, reset_context, set_context
 
     lab = _lab_with("carrot", "tomato")
@@ -312,7 +312,7 @@ async def test_open_context_sets_and_tears_down():
 @pytest.mark.asyncio
 async def test_run_on_all_hosts_accepts_option_overrides():
     """ctx.run_on_all_hosts/do_for_all_hosts accept *_options kwargs without error."""
-    from otto.configmodule.lab import Lab
+    from otto.config.lab import Lab
 
     lab = Lab(name="t")
     h = _FakeRunHost("h1")

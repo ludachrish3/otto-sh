@@ -190,7 +190,7 @@ async def _resync_shell(io: ProxyIO, host_id: str, hop_login: str) -> None:
     (``recover``/``recover_pattern``): the probe bakes ``$?`` into its own
     marker, so only a real shell — never an echo of the probe text itself —
     can produce the digit form the pattern requires. That holds across both
-    echo modes a login proxy can run in (the echo-ON ``interact --as-user``
+    echo modes a login proxy can run in (the echo-ON ``login --as-user``
     bridge and the echo-OFF framed ``switch_user``/``as_user`` path), which is
     why no lookbehind or echo-mode discrimination is needed here.
 

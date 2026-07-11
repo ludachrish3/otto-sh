@@ -1,1 +1,1 @@
-"""Git-based coverage capture pinning and remapping."""
+"""Git-based coverage capture anchoring (base_commit) and remapping."""

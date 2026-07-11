@@ -713,7 +713,7 @@ class TestCycleDetection:
         then wires into a Lab — this is the production ordering and confirms
         _create_tunnel reads self._lab lazily rather than at build time.
         """
-        from otto.configmodule.lab import Lab
+        from otto.config.lab import Lab
 
         host_a = UnixHost(
             ip="10.0.0.1",
@@ -753,7 +753,7 @@ class TestCycleDetection:
         With the lazy fix (lab = self._lab inside _create_tunnel), it resolves
         correctly after add_host wires self._lab.
         """
-        from otto.configmodule.lab import Lab
+        from otto.config.lab import Lab
 
         mock_ssh_conn = MagicMock(spec=SSHClientConnection)
 
@@ -805,7 +805,7 @@ class TestStandaloneHostHopResolution:
         Regression test for: _create_tunnel raising "no lab back-reference" when
         self._lab is None because the host was never added to a Lab.
         """
-        from otto.configmodule.lab import Lab
+        from otto.config.lab import Lab
         from otto.context import OttoContext, reset_context, set_context
 
         mock_ssh_conn = MagicMock(spec=SSHClientConnection)

@@ -32,13 +32,14 @@ if TYPE_CHECKING:
 
     from .connections import ConnectionManager
 
-from ..logger import get_logger
+import logging
+
 from ..logger.mode import LogMode
 from ..result import CommandResult, Results
 from ..utils import Status
 from .host import ShellCommand
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 # Type alias for expect patterns: (regex_pattern, response_text)
 Expect = tuple[str | re.Pattern[str], str]
@@ -1137,7 +1138,7 @@ class SessionManager:
     Session creation is pluggable: provide a ``session_factory`` callable to
     control how sessions are created (e.g. ``LocalSession`` for local hosts),
     or pass a ``ConnectionManager`` to use the default SSH/Telnet dispatch.
-    Similarly, ``oneshot_factory`` controls stateless command execution. The
+    Similarly, ``exec_factory`` controls stateless command execution. The
     shell *dialect* is selected by ``command_frame`` (default bash; an embedded
     host passes a :class:`~otto.host.command_frame.ZephyrFrame`) — it is handed
     to every session this manager builds, independent of the transport. A slow
@@ -1151,7 +1152,7 @@ class SessionManager:
         log_command: Callable[[str, LogMode], None] = lambda *_: None,
         log_output: Callable[[str, LogMode], None] = lambda *_: None,
         session_factory: "Callable[[], ShellSession] | None" = None,
-        oneshot_factory: "Callable[[str, float | None], Awaitable[CommandResult]] | None" = None,
+        exec_factory: "Callable[[str, float | None], Awaitable[CommandResult]] | None" = None,
         command_frame: CommandFrame | None = None,
         init_timeout: float | None = None,
         retry_backoff: float | None = None,
@@ -1163,7 +1164,7 @@ class SessionManager:
         self._log_command = log_command
         self._log_output = log_output
         self._session_factory = session_factory
-        self._oneshot_factory = oneshot_factory
+        self._exec_factory = exec_factory
         # Creds forwarded to HostSessions so named sessions can elevate via
         # otto.host.login_proxy.perform_switch. None on non-posix hosts →
         # named-session elevation is unsupported there; [] means supported
@@ -1185,14 +1186,14 @@ class SessionManager:
         self._retry_backoff = _HANDSHAKE_RETRY_BACKOFF if retry_backoff is None else retry_backoff
         self._session: ShellSession | None = None
         self._named_sessions: dict[str, HostSession] = {}
-        # Free-list of idle shell sessions used by `oneshot()` for terminals
+        # Free-list of idle shell sessions used by `exec()` for terminals
         # (e.g. telnet) that lack a stateless exec primitive.  Serial callers
         # reuse one session so the TCP+auth handshake is paid once; concurrent
         # callers each pull their own session off the list (opening a fresh
-        # one if none are free), preserving `oneshot()`'s documented contract
+        # one if none are free), preserving `exec()`'s documented contract
         # that concurrent calls run independently.
-        self._oneshot_pool: list[HostSession] = []
-        self._oneshot_pool_count: int = 0
+        self._exec_pool: list[HostSession] = []
+        self._exec_pool_count: int = 0
         # Serializes the get-or-create paths so concurrent callers can't all
         # observe a dead/missing session, all close it, and all create
         # replacements that clobber each other (each clobber leaks the prior).
@@ -1201,8 +1202,8 @@ class SessionManager:
         # get-or-create path only needs to dedupe callers requesting the *same*
         # name; a shared lock additionally serializes the (slow, ~1-2 s telnet)
         # connect of callers requesting *different* names — which collapses the
-        # oneshot pool's concurrency back to serial.  Keyed locks let distinct
-        # names (notably the unique `__oneshot_pool_N__` names) connect in
+        # exec pool's concurrency back to serial.  Keyed locks let distinct
+        # names (notably the unique `__exec_pool_N__` names) connect in
         # parallel while same-name callers still resolve to one session.
         self._named_session_locks: dict[str, asyncio.Lock] = {}
 
@@ -1455,7 +1456,7 @@ class SessionManager:
             write_progress=write_progress,
         )
 
-    async def oneshot(
+    async def exec(
         self,
         cmd: str,
         timeout: float | None = None,
@@ -1470,22 +1471,22 @@ class SessionManager:
         overhead of a fresh TCP + auth round-trip per call.
 
         When the login is proxied (:attr:`~otto.host.connections.ConnectionManager.proxy_hops`
-        non-empty), both raw-exec fast paths below — the ``_oneshot_factory``
+        non-empty), both raw-exec fast paths below — the ``_exec_factory``
         callable and the inline ``ssh_conn.create_process`` — are skipped in
         favor of the pooled named-session path (the same one Telnet always
         uses). Neither raw exec channel can replay proxy hops: they
-        authenticate as the resolved DIRECT cred, so a proxied oneshot on
+        authenticate as the resolved DIRECT cred, so a proxied exec on
         either fast path would silently run as the via-user rather than the
         target. Only a full shell session (built via ``open_session``, which
         replays hops through ``_apply_login_proxy``) ends up as the effective
         user — which is what makes nc transfers (whose ``exec_cmd`` is
-        ``UnixHost.oneshot``) land files owned by the proxied target.
+        ``UnixHost.exec``) land files owned by the proxied target.
         """
         hops = getattr(self._connections, "proxy_hops", []) if self._connections is not None else []
-        if self._oneshot_factory is not None and not hops:
-            return await self._oneshot_factory(cmd, timeout)
+        if self._exec_factory is not None and not hops:
+            return await self._exec_factory(cmd, timeout)
 
-        assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no oneshot_factory (or hops force the pool path)
+        assert self._connections is not None  # noqa: S101 — internal invariant: _connections required when no exec_factory (or hops force the pool path)
         mode = log
         if mode is not LogMode.NEVER:
             self._log_command(cmd, mode)
@@ -1493,13 +1494,13 @@ class SessionManager:
             # A proxied login can only be reached through a full shell session
             # (the raw SSH exec channel authenticates as the direct cred and
             # cannot replay the proxy steps). Route through the proxied pool —
-            # the same path telnet always uses — so oneshot/nc run as the
+            # the same path telnet always uses — so exec/nc run as the
             # effective user. Files land owned by the proxied target.
-            oneshot_session = await self._acquire_oneshot_session()
+            exec_session = await self._acquire_exec_session()
             try:
-                return (await oneshot_session.run(cmd, timeout=timeout, log=log)).only
+                return (await exec_session.run(cmd, timeout=timeout, log=log)).only
             finally:
-                self._oneshot_pool.append(oneshot_session)
+                self._exec_pool.append(exec_session)
         match self._connections.term:
             case "ssh":
                 import asyncssh
@@ -1530,35 +1531,35 @@ class SessionManager:
             case "telnet":
                 # Telnet has no stateless exec primitive (unlike SSH which
                 # multiplexes channels over one connection).  Rather than open
-                # a fresh TCP+auth for every oneshot call — which in practice cost
+                # a fresh TCP+auth for every exec call — which in practice cost
                 # 1-2 s each on real hardware — we keep a free-list of idle
                 # persistent sessions and reuse them.  Serial callers churn
                 # one session; concurrent callers (e.g. `_put_files_nc`
                 # launching multiple `nc -l` listeners in parallel) each get
                 # their own, preserving the documented concurrency contract.
-                oneshot_session = await self._acquire_oneshot_session()
+                exec_session = await self._acquire_exec_session()
                 try:
-                    return (await oneshot_session.run(cmd, timeout=timeout, log=log)).only
+                    return (await exec_session.run(cmd, timeout=timeout, log=log)).only
                 finally:
-                    self._oneshot_pool.append(oneshot_session)
+                    self._exec_pool.append(exec_session)
             case _:
                 raise ValueError(
                     f'{self._name}: unsupported terminal type "{self._connections.term}"'
                 )
 
-    async def _acquire_oneshot_session(self) -> "HostSession":
-        """Pop an idle oneshot session off the free-list, or open a new one.
+    async def _acquire_exec_session(self) -> "HostSession":
+        """Pop an idle exec session off the free-list, or open a new one.
 
         Sessions are keyed by a monotonic index so concurrent callers get
         independent entries in ``_named_sessions``.  Dead sessions (closed
         or disconnected) are skipped so callers always get a usable one.
         """
-        while self._oneshot_pool:
-            session = self._oneshot_pool.pop()
+        while self._exec_pool:
+            session = self._exec_pool.pop()
             if session.alive:
                 return session
-        self._oneshot_pool_count += 1
-        return await self.open_session(f"__oneshot_pool_{self._oneshot_pool_count}__")
+        self._exec_pool_count += 1
+        return await self.open_session(f"__exec_pool_{self._exec_pool_count}__")
 
     async def open_session(self, name: str) -> "HostSession":
         """Open or reuse a named persistent shell session.
@@ -1656,8 +1657,8 @@ class SessionManager:
                 raise
 
             # Replay proxy hops (if any) so this named session ends up as
-            # login_target too — this is also the oneshot-pool path
-            # (_acquire_oneshot_session -> open_session), so pooled sessions
+            # login_target too — this is also the exec-pool path
+            # (_acquire_exec_session -> open_session), so pooled sessions
             # get proxied for free. A failed hop tears the session down and
             # propagates, leaving no entry in _named_sessions (mirrors the
             # handshake-failure cleanup just above).

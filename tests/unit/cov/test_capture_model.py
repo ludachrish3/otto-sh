@@ -21,6 +21,20 @@ end_of_record
 """
 
 
+def test_load_rejects_old_format(tmp_path: Path) -> None:
+    p = tmp_path / "capture.json"
+    p.write_text('{"schema": 1, "tier": "manual", "pin": "deadbeef"}')
+    with pytest.raises(ValueError, match="re-capture"):
+        Capture.load(p)
+
+
+def test_load_rejects_missing_format(tmp_path: Path) -> None:
+    p = tmp_path / "capture.json"
+    p.write_text('{"tier": "manual", "base_commit": "deadbeef"}')
+    with pytest.raises(ValueError, match="re-capture"):
+        Capture.load(p)
+
+
 @pytest.fixture
 def repo(tmp_path: Path) -> Path:
     root = tmp_path / "sut"
@@ -68,7 +82,7 @@ def test_build_capture_clean(repo: Path, tmp_path: Path) -> None:
     cap = build_capture(
         info_path=info, tier="system", repo_root=repo, board="board1", labs=["lab1"]
     )
-    assert cap.pin == head_commit(repo)
+    assert cap.base_commit == head_commit(repo)
     assert cap.dirty_remap is False
     fc = cap.files["f.c"]
     assert fc.lines == {1: 5, 2: 0, 3: 7}
@@ -90,7 +104,7 @@ def test_build_capture_dirty_remaps(repo: Path, tmp_path: Path) -> None:
 def test_build_capture_dirty_whitespace_only_keeps_all_lines(repo: Path, tmp_path: Path) -> None:
     # A whitespace-only reindent of the working tree is dirty byte-wise but
     # carries no code change: -w hides it, so every DA line maps verbatim to
-    # pin coordinates instead of being dropped as "changed".
+    # base_commit coordinates instead of being dropped as "changed".
     (repo / "f.c").write_text("    int a;\n\tint b;\n  int c;\n")
     info = _write_info(tmp_path, repo / "f.c")  # DA lines are worktree coords
     cap = build_capture(
@@ -184,7 +198,7 @@ def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
     loaded = Capture.load(out)
     assert loaded == cap
     raw = json.loads(out.read_text())
-    assert raw["schema"] == 1
+    assert raw["schema"] == 2
     # never-reached branch ("-") must round-trip as JSON null, not 0.
     assert raw["files"]["f.c"]["branches"]["3"][1] == [0, 1, None]
     raw["surprise"] = True
@@ -193,7 +207,7 @@ def test_roundtrip_and_strictness(repo: Path, tmp_path: Path) -> None:
         Capture.load(out)
 
 
-def test_build_capture_stamps_display_name_and_roundtrips(repo: Path, tmp_path: Path) -> None:
+def test_build_capture_annotates_display_name_and_roundtrips(repo: Path, tmp_path: Path) -> None:
     info = _write_info(tmp_path, repo / "f.c")
     cap = build_capture(
         info_path=info,

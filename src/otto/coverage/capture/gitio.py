@@ -104,7 +104,7 @@ def diff_no_index_u0(path_a: Path, path_b: Path) -> str:
     """Return unified diff (U0, whitespace-insensitive) between two files outside a repo.
 
     ``-w`` matches :func:`diff_worktree_file_u0` so the report-time anchor
-    chain (pinned blob vs current file) ignores whitespace-only edits the
+    chain (base_commit blob vs current file) ignores whitespace-only edits the
     same way the dirty-tree remap does. ``git diff --no-index`` exits 1
     when the files differ — that is success here; with ``-w`` a
     whitespace-only difference exits 0 with empty output (hunkless), which

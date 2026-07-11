@@ -90,7 +90,7 @@ class CommandFrame(ABC):
 
     type_name: ClassVar[str]
     """Lab-data string for this dialect (e.g. ``'bash'``). Looked up against
-    ``FRAME_CLASSES`` by the storage factory; unique across frames."""
+    ``FRAME_CLASSES`` by the host factory; unique across frames."""
 
     streams_output_live: ClassVar[bool] = False
     """Whether this dialect's raw inter-marker byte stream is already clean

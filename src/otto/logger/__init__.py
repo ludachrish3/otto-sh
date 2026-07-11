@@ -1,12 +1,30 @@
-"""otto logging package: formatters, level aliases, and logger access."""
+"""otto logging package: formatters, level aliases, and CLI-side management.
 
-import logging
+otto modules emit via ``logging.getLogger(__name__)`` directly — this package
+holds no logger accessor of its own. The library-citizen ``NullHandler`` is
+attached at ``otto/__init__.py`` (so it fires on ANY ``import otto``, not just
+``import otto.logger``); see that module.
 
-from . import management as management
-from .logger import get_logger as get_logger
+``management`` (CLI handler config: three-sink logging, output-dir rotation)
+pulls in ``rich``, so it is exported lazily (PEP 562) — a bare
+``import otto.logger`` (or importing a submodule like ``otto.logger.mode``,
+which runs this package's ``__init__`` first) must stay rich-free.
+"""
 
-# Library-citizen default: attach a NullHandler so importing otto as a library
-# is silent unless the application configures handlers. Idempotent.
-_otto = logging.getLogger("otto")
-if not any(isinstance(h, logging.NullHandler) for h in _otto.handlers):
-    _otto.addHandler(logging.NullHandler())
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from . import management as management
+
+_LAZY_EXPORTS: dict[str, str] = {
+    "management": "otto.logger.management",
+}
+
+
+def __getattr__(name: str) -> object:
+    """PEP 562 lazy resolver for otto.logger's public exports."""
+    import importlib
+
+    if name in _LAZY_EXPORTS:
+        return importlib.import_module(_LAZY_EXPORTS[name])
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

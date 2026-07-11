@@ -89,7 +89,7 @@ async def test_session_monitor_disabled_is_noop():
     """When ``--monitor`` is off the fixture must not touch hosts or write files."""
     plugin = OttoPlugin(monitor=False)
     with (
-        patch("otto.configmodule.all_hosts") as p_hosts,
+        patch("otto.config.all_hosts") as p_hosts,
         patch("otto.monitor.factory.build_monitor_collector") as p_build,
     ):
         gen = await _FixtureRunner.setup(plugin)
@@ -107,7 +107,7 @@ async def test_session_monitor_no_matching_hosts_skips(tmp_path):
         monitor_output=tmp_path / "m.json",
     )
     with (
-        patch("otto.configmodule.all_hosts", return_value=iter([])) as p_hosts,
+        patch("otto.config.all_hosts", return_value=iter([])) as p_hosts,
         patch("otto.monitor.factory.build_monitor_collector") as p_build,
     ):
         gen = await _FixtureRunner.setup(plugin)
@@ -141,7 +141,7 @@ async def test_session_monitor_publishes_collector_and_exports_json(tmp_path):
     fake_collector.export_json = MagicMock()
 
     with (
-        patch("otto.configmodule.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.all_hosts", return_value=iter([fake_host])),
         patch(
             "otto.monitor.factory.build_monitor_collector", return_value=fake_collector
         ) as p_build,
@@ -176,7 +176,7 @@ async def test_session_monitor_db_output_skips_export_json(tmp_path):
     fake_collector.export_json = MagicMock()
 
     with (
-        patch("otto.configmodule.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.all_hosts", return_value=iter([fake_host])),
         patch(
             "otto.monitor.factory.build_monitor_collector", return_value=fake_collector
         ) as p_build,
@@ -208,7 +208,7 @@ async def test_session_monitor_does_not_start_run_task(tmp_path):
     fake_collector.export_json = MagicMock()
 
     with (
-        patch("otto.configmodule.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.all_hosts", return_value=iter([fake_host])),
         patch("otto.monitor.factory.build_monitor_collector", return_value=fake_collector),
     ):
         gen = await _FixtureRunner.setup(plugin)
@@ -401,7 +401,7 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
 
     fake_host = MagicMock(spec=UnixHost, id="host1")
     with (
-        patch("otto.configmodule.all_hosts", return_value=iter([fake_host])),
+        patch("otto.config.all_hosts", return_value=iter([fake_host])),
         patch("otto.monitor.factory.build_monitor_collector", return_value=real_collector),
     ):
         try:

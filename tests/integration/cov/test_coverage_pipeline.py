@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.coverage.fetcher.remote import GcdaFetcher
 from otto.coverage.reporter import CoverageReporter, discover_gcda_dirs
 from otto.host.local_host import LocalHost
@@ -55,7 +55,7 @@ async def _compile_product() -> None:
     """Compile the C product with --coverage."""
     localhost = LocalHost()
     try:
-        result = await localhost.oneshot(f"make -C {PRODUCT_DIR} clean all", timeout=30)
+        result = await localhost.exec(f"make -C {PRODUCT_DIR} clean all", timeout=30)
         assert result.status == Status.Success, f"Compilation failed:\n{result.value}"
     finally:
         await localhost.close()
@@ -63,8 +63,8 @@ async def _compile_product() -> None:
 
 async def _install_on_host(host: UnixHost) -> None:
     """Deploy the product binary to a remote host."""
-    await host.oneshot(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
-    await host.oneshot(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    await host.exec(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    await host.exec(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
 
     binary = PRODUCT_DIR / "product"
     res = await host.put(
@@ -72,12 +72,12 @@ async def _install_on_host(host: UnixHost) -> None:
         dest_dir=Path(REMOTE_INSTALL_DIR),
     )
     assert res.is_ok, f"Deploy to {host.id} failed: {res.msg}"
-    await host.oneshot(f"chmod +x {REMOTE_INSTALL_DIR}/product", timeout=10)
+    await host.exec(f"chmod +x {REMOTE_INSTALL_DIR}/product", timeout=10)
 
 
 async def _uninstall_from_host(host: UnixHost) -> None:
     """Remove the product and coverage data from a remote host."""
-    await host.oneshot(f"sudo rm -rf {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    await host.exec(f"sudo rm -rf {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
 
 
 async def _run_product(host: UnixHost, op: str, *args: int) -> str:
@@ -89,7 +89,7 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
         f"GCOV_PREFIX_STRIP={strip} "
         f"{REMOTE_INSTALL_DIR}/product {op} {str_args}"
     )
-    result = await host.oneshot(cmd, timeout=10)
+    result = await host.exec(cmd, timeout=10)
     return result.value.strip()
 
 
@@ -217,7 +217,7 @@ class TestCoverageReport:
             cov1_dir = run1_dir / "cov"
 
             # Clean previous .gcda files
-            await carrot.oneshot(
+            await carrot.exec(
                 f"find {GCDA_REMOTE_DIR} -name '*.gcda' -delete 2>/dev/null; true",
                 timeout=10,
             )
@@ -232,7 +232,7 @@ class TestCoverageReport:
             run2_dir = tmp_path / "run2"
             cov2_dir = run2_dir / "cov"
 
-            await tomato.oneshot(
+            await tomato.exec(
                 f"find {GCDA_REMOTE_DIR} -name '*.gcda' -delete 2>/dev/null; true",
                 timeout=10,
             )

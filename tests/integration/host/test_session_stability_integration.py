@@ -74,13 +74,13 @@ _NC_TELNET = pytest.mark.parametrize(
 )
 
 
-# ── 1. Oneshot pool fan-out ───────────────────────────────────────────────────
+# ── 1. Exec pool fan-out ──────────────────────────────────────────────────────
 
 
 @_SSH_AND_TELNET
 @pytest.mark.asyncio
-async def test_real_oneshot_pool_high_fanout(host1: UnixHost) -> None:
-    """8 concurrent oneshots over real transport must complete with intact output.
+async def test_real_exec_pool_high_fanout(host1: UnixHost) -> None:
+    """8 concurrent execs over real transport must complete with intact output.
 
     Mangled output (call ``i``'s marker showing up in call ``j``'s result)
     is the smoking gun for double-checkout of a pooled telnet session or
@@ -93,19 +93,19 @@ async def test_real_oneshot_pool_high_fanout(host1: UnixHost) -> None:
     """
     N = 8  # noqa: N806 — single-letter math dimension
     results = await asyncio.gather(
-        *(host1.oneshot(f"echo concurrent_{i}") for i in range(N)),
+        *(host1.exec(f"echo concurrent_{i}") for i in range(N)),
         return_exceptions=True,
     )
 
     exceptions = [r for r in results if isinstance(r, BaseException)]
-    assert not exceptions, f"{len(exceptions)} oneshots raised; first: {exceptions[0]!r}"
+    assert not exceptions, f"{len(exceptions)} execs raised; first: {exceptions[0]!r}"
 
     statuses = cast("list[CommandResult]", results)
     failed = [(i, r) for i, r in enumerate(statuses) if not r.status.is_ok]
     assert not failed, f"{len(failed)} non-ok statuses; first: {failed[0]}"
 
     for i, r in enumerate(statuses):
-        assert f"concurrent_{i}" in r.value, f"oneshot {i} got mangled output: {r.value!r}"
+        assert f"concurrent_{i}" in r.value, f"exec {i} got mangled output: {r.value!r}"
 
 
 # ── 2. Named session resurrection ─────────────────────────────────────────────
@@ -185,39 +185,39 @@ async def test_real_default_session_recreate_under_load(host1: UnixHost) -> None
         )
 
 
-# ── 4. Long telnet oneshot vs concurrent short oneshots ───────────────────────
+# ── 4. Long telnet exec vs concurrent short execs ───────────────────────
 
 
 @_TELNET_ONLY
 @pytest.mark.asyncio
-async def test_real_long_telnet_oneshot_vs_concurrent(host1: UnixHost) -> None:
-    """Real-transport version of the test_oneshot_telnet_concurrent regression.
+async def test_real_long_telnet_exec_vs_concurrent(host1: UnixHost) -> None:
+    """Real-transport version of the test_exec_telnet_concurrent regression.
 
     The mocked counterpart in ``test_unix_host.py`` proves the manager's
     pool dispatch is sane; this version proves the *actual* telnetlib3
     reader/writer state holds up under the same workload.
     """
-    long_task = asyncio.create_task(host1.oneshot("sleep 5", timeout=None))
+    long_task = asyncio.create_task(host1.exec("sleep 5", timeout=None))
     try:
-        # Give the long oneshot a moment to acquire its session.
+        # Give the long exec a moment to acquire its session.
         await asyncio.sleep(0.5)
 
-        # 10 short oneshots must complete while the long one is still pinned.
+        # 10 short execs must complete while the long one is still pinned.
         results = await asyncio.wait_for(
             asyncio.gather(
-                *(host1.oneshot(f"echo short_{i}", timeout=10.0) for i in range(10)),
+                *(host1.exec(f"echo short_{i}", timeout=10.0) for i in range(10)),
                 return_exceptions=True,
             ),
             timeout=15.0,
         )
         exceptions = [r for r in results if isinstance(r, BaseException)]
-        assert not exceptions, f"{len(exceptions)} short oneshots raised; first: {exceptions[0]!r}"
+        assert not exceptions, f"{len(exceptions)} short execs raised; first: {exceptions[0]!r}"
         statuses = cast("list[CommandResult]", results)
         for i, r in enumerate(statuses):
-            assert r.status.is_ok, f"short oneshot {i} failed: {r}"
+            assert r.status.is_ok, f"short exec {i} failed: {r}"
             assert f"short_{i}" in r.value
     finally:
-        # Wait for the long oneshot to finish so the pool isn't left mid-flight.
+        # Wait for the long exec to finish so the pool isn't left mid-flight.
         await asyncio.wait_for(long_task, timeout=15.0)
 
 

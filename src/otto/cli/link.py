@@ -10,8 +10,8 @@ refusals) lives in the library — this module only parses CLI strings via the
 import typer
 from rich import print as rprint
 
-from ..configmodule import get_lab, get_repos
-from ..configmodule.completion_cache import collect_link_ids
+from ..config import get_lab, get_repos
+from ..config.completion_cache import collect_link_ids
 from ..link import (
     FlowDirection,
     ImpairmentParams,

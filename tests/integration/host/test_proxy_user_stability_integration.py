@@ -12,7 +12,7 @@ to flush intermittent flakiness in:
 - proxied-user file transfer across ALL Unix backends (scp/sftp/ftp/nc) —
   content AND ownership together, a real coverage gap the design doc found
   (only ``nc`` had ownership coverage before this file);
-- ``oneshot`` fan-out as the proxied user (pooled-session cross-contamination
+- ``exec`` fan-out as the proxied user (pooled-session cross-contamination
   guard).
 
 FINDING (confirmed on the live bed, not a flake): ``scp``/``sftp``/``ftp``
@@ -59,9 +59,9 @@ import pytest
 import pytest_asyncio
 
 from otto import register_login_proxy
+from otto.host.factory import create_host_from_dict
 from otto.host.unix_host import UnixHost
 from otto.result import CommandResult
-from otto.storage.factory import create_host_from_dict
 from otto.utils import Status
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
@@ -304,15 +304,15 @@ async def test_proxied_transfer_content_and_ownership(
 
 
 # ---------------------------------------------------------------------------
-# 4. oneshot fan-out as the proxied user (pooled-session double-checkout guard)
+# 4. exec fan-out as the proxied user (pooled-session double-checkout guard)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_proxied_oneshot_fanout(leased_host: tuple[str, str]) -> None:
-    """8 concurrent proxied-user oneshots must complete with intact, uncontaminated output.
+async def test_proxied_exec_fanout(leased_host: tuple[str, str]) -> None:
+    """8 concurrent proxied-user execs must complete with intact, uncontaminated output.
 
-    Mirrors ``test_real_oneshot_pool_high_fanout``
+    Mirrors ``test_real_exec_pool_high_fanout``
     (``test_session_stability_integration.py``); here the pooled sessions are
     all proxied through ``sudo-su-shell``, so a double-checkout would surface
     as one call's marker leaking into another's result.
@@ -322,18 +322,18 @@ async def test_proxied_oneshot_fanout(leased_host: tuple[str, str]) -> None:
     try:
         N = 8  # noqa: N806 — single-letter math dimension
         results = await asyncio.gather(
-            *(host.oneshot(f"echo mysql_{i}") for i in range(N)),
+            *(host.exec(f"echo mysql_{i}") for i in range(N)),
             return_exceptions=True,
         )
 
         exceptions = [r for r in results if isinstance(r, BaseException)]
-        assert not exceptions, f"{len(exceptions)} oneshots raised; first: {exceptions[0]!r}"
+        assert not exceptions, f"{len(exceptions)} execs raised; first: {exceptions[0]!r}"
 
         statuses = cast("list[CommandResult]", results)
         failed = [(i, r) for i, r in enumerate(statuses) if not r.status.is_ok]
         assert not failed, f"{len(failed)} non-ok statuses; first: {failed[0]}"
 
         for i, r in enumerate(statuses):
-            assert f"mysql_{i}" in r.value, f"oneshot {i} got mangled output: {r.value!r}"
+            assert f"mysql_{i}" in r.value, f"exec {i} got mangled output: {r.value!r}"
     finally:
         await host.close()

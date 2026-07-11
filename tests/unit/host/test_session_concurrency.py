@@ -1,7 +1,7 @@
 """Tier 1 stability tests for ``SessionManager`` — pure asyncio, no real transports.
 
 Targets the three race hotspots in :mod:`otto.host.session`:
-``_oneshot_pool``, ``_named_sessions`` get-or-create, and
+``_exec_pool``, ``_named_sessions`` get-or-create, and
 ``_ensure_session()`` default-session recreation.
 
 Tests are expected to land RED until lock fixes are applied to
@@ -85,8 +85,8 @@ class _Factory:
 def _make_mgr(factory: _Factory, term: str = "telnet") -> SessionManager:
     """Build a ``SessionManager`` wired to the factory.
 
-    ``term='telnet'`` makes ``oneshot()`` go through ``_oneshot_pool``;
-    SSH's ``oneshot`` bypasses the pool (uses asyncssh ``create_process``
+    ``term='telnet'`` makes ``exec()`` go through ``_exec_pool``;
+    SSH's ``exec`` bypasses the pool (uses asyncssh ``create_process``
     directly) and isn't relevant to these tests.
     """
     return SessionManager(
@@ -100,7 +100,7 @@ def _make_mgr(factory: _Factory, term: str = "telnet") -> SessionManager:
 class _SlowConnectFakeSession(_StabilityFakeSession):
     """Fake session with a configurable, non-trivial ``_open()`` delay.
 
-    Real telnet ``oneshot()`` pool sessions spend ~1-2 s in the connect
+    Real telnet ``exec()`` pool sessions spend ~1-2 s in the connect
     handshake.  A fake that connects instantly can't tell a manager that
     connects pool sessions *concurrently* from one that connects them
     *serially* — both finish in ~0 s.  This fake makes that distinction
@@ -127,17 +127,17 @@ class _SlowConnectFactory(_Factory):
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(10)
-async def test_oneshot_pool_connects_concurrently() -> None:
-    """Concurrent ``oneshot()`` calls must connect their pool sessions in parallel.
+async def test_exec_pool_connects_concurrently() -> None:
+    """Concurrent ``exec()`` calls must connect their pool sessions in parallel.
 
     Regression for the telnet pool serialization bug: every concurrent
-    ``oneshot()`` acquires a *uniquely named* ``__oneshot_pool_N__`` session
+    ``exec()`` acquires a *uniquely named* ``__exec_pool_N__`` session
     via ``open_session()``.  When ``open_session()`` guarded the whole
     get-or-create body (including the slow connect) with a single shared
-    lock, those N connects ran one after another — N short oneshots took
+    lock, those N connects ran one after another — N short execs took
     ``N x connect_delay`` instead of ~one ``connect_delay``.  On real telnet
-    hosts that turned 10 parallel oneshots into a ~16 s serial chain and
-    blew the 15 s budget in ``test_real_long_telnet_oneshot_vs_concurrent``.
+    hosts that turned 10 parallel execs into a ~16 s serial chain and
+    blew the 15 s budget in ``test_real_long_telnet_exec_vs_concurrent``.
 
     With per-name locks, distinct names connect concurrently.
     """
@@ -149,15 +149,15 @@ async def test_oneshot_pool_connects_concurrently() -> None:
 
     loop = asyncio.get_running_loop()
     start = loop.time()
-    results = await asyncio.gather(*(mgr.oneshot(f"echo {i}") for i in range(N)))
+    results = await asyncio.gather(*(mgr.exec(f"echo {i}") for i in range(N)))
     elapsed = loop.time() - start
 
-    assert all(r.status.is_ok for r in results), "some oneshots returned non-ok status"
+    assert all(r.status.is_ok for r in results), "some execs returned non-ok status"
     # Serial connects would take >= N * delay.  Parallel connects take ~delay;
     # allow generous slack for scheduling/event-loop overhead but stay well
     # below the serial figure.
     assert elapsed < (N * delay) / 2, (
-        f"{N} concurrent oneshots took {elapsed:.2f}s with a {delay:.2f}s "
+        f"{N} concurrent execs took {elapsed:.2f}s with a {delay:.2f}s "
         f"per-connect delay — pool connects serialized instead of running "
         f"in parallel (serial would be ~{N * delay:.2f}s)"
     )
@@ -165,8 +165,8 @@ async def test_oneshot_pool_connects_concurrently() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.timeout(10)
-async def test_oneshot_pool_high_fanout() -> None:
-    """200 concurrent ``oneshot()`` calls must not corrupt ``_oneshot_pool``.
+async def test_exec_pool_high_fanout() -> None:
+    """200 concurrent ``exec()`` calls must not corrupt ``_exec_pool``.
 
     Catches: ``IndexError`` from concurrent pop on a draining pool,
     duplicate sessions returned to multiple in-flight callers, dead
@@ -177,25 +177,25 @@ async def test_oneshot_pool_high_fanout() -> None:
 
     N = 200  # noqa: N806 — single-letter math dimension
     results = await asyncio.gather(
-        *(mgr.oneshot(f"echo {i}") for i in range(N)),
+        *(mgr.exec(f"echo {i}") for i in range(N)),
         return_exceptions=True,
     )
 
     exceptions = [r for r in results if isinstance(r, BaseException)]
-    assert not exceptions, f"{len(exceptions)} oneshot() calls raised; first: {exceptions[0]!r}"
+    assert not exceptions, f"{len(exceptions)} exec() calls raised; first: {exceptions[0]!r}"
     statuses = cast("list[CommandResult]", results)
-    assert all(r.status.is_ok for r in statuses), "some oneshots returned non-ok status"
+    assert all(r.status.is_ok for r in statuses), "some execs returned non-ok status"
 
     # Every session left in the pool should still be alive.
-    dead_in_pool = [s for s in mgr._oneshot_pool if not s.alive]
+    dead_in_pool = [s for s in mgr._exec_pool if not s.alive]
     assert not dead_in_pool, f"{len(dead_in_pool)} dead session(s) left in pool"
 
     # No duplicates in the pool — would indicate a session was returned twice.
-    pool_ids = [id(s) for s in mgr._oneshot_pool]
+    pool_ids = [id(s) for s in mgr._exec_pool]
     assert len(pool_ids) == len(set(pool_ids)), "duplicate session detected in pool"
 
     # Pool size must not exceed factory creation count (sanity).
-    assert len(mgr._oneshot_pool) <= factory.created_count
+    assert len(mgr._exec_pool) <= factory.created_count
 
     await mgr.close_all()
 
@@ -289,7 +289,7 @@ async def test_ensure_default_session_recreation_race() -> None:
 
 # ── Hypothesis property test ──────────────────────────────────────────────────
 
-_OPS = ["open_a", "open_b", "oneshot", "run_default", "kill_default", "kill_a", "kill_b", "close_a"]
+_OPS = ["open_a", "open_b", "exec", "run_default", "kill_default", "kill_a", "kill_b", "close_a"]
 
 
 async def _exec_ops(ops: list[str]) -> None:
@@ -301,8 +301,8 @@ async def _exec_ops(ops: list[str]) -> None:
                 await mgr.open_session("A")
             elif op == "open_b":
                 await mgr.open_session("B")
-            elif op == "oneshot":
-                await mgr.oneshot("echo")
+            elif op == "exec":
+                await mgr.exec("echo")
             elif op == "run_default":
                 await mgr.run_cmd("echo", timeout=5.0)
             elif op == "kill_default" and mgr._session is not None:
@@ -314,25 +314,24 @@ async def _exec_ops(ops: list[str]) -> None:
             elif op == "close_a" and "A" in mgr._named_sessions:
                 await mgr._named_sessions["A"].close()
 
-            # Invariant: no *user-named* session lives in the oneshot pool.
-            # The pool holds HostSessions registered under `__oneshot_pool_N__`
-            # keys (this is by design — oneshot reuses open_session for the
+            # Invariant: no *user-named* session lives in the exec pool.
+            # The pool holds HostSessions registered under `__exec_pool_N__`
+            # keys (this is by design — exec reuses open_session for the
             # creation path), so those don't count as a violation.
-            pool_shells = {id(hs._session) for hs in mgr._oneshot_pool}
+            pool_shells = {id(hs._session) for hs in mgr._exec_pool}
             user_named_shells = {
                 id(hs._session)
                 for name, hs in mgr._named_sessions.items()
-                if not name.startswith("__oneshot_pool_")
+                if not name.startswith("__exec_pool_")
             }
             overlap = pool_shells & user_named_shells
             assert not overlap, (
-                f"after {op!r}: user-named ShellSession id(s) {overlap} also "
-                f"appear in _oneshot_pool"
+                f"after {op!r}: user-named ShellSession id(s) {overlap} also appear in _exec_pool"
             )
 
             # Invariant: factory creation is bounded by total operations + 1
             # (the +1 covers the initial default session's lazy creation).
-            assert factory.created_count <= len(ops) + 2 + len(mgr._oneshot_pool), (
+            assert factory.created_count <= len(ops) + 2 + len(mgr._exec_pool), (
                 f"factory.created_count={factory.created_count} after "
                 f"{op!r} — unbounded session growth"
             )

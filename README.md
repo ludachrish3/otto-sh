@@ -103,11 +103,12 @@ becomes a subcommand of `otto run`. Instructions have full access to the
 lab's hosts and can accept their own CLI options via Typer annotations:
 
 ```python
-from otto.cli.run import instruction
-from otto.configmodule.configmodule import all_hosts
-from otto.logger import getOttoLogger
+import logging
 
-logger = getOttoLogger()
+from otto import all_hosts
+from otto.cli.run import instruction
+
+logger = logging.getLogger("otto")
 
 @instruction()
 async def deploy(

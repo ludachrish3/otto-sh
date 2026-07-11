@@ -63,7 +63,7 @@ class FakeHost:
     calls: list | None = None
     _launch_calls: int = field(default=0, init=False, repr=False)
 
-    async def oneshot(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
+    async def exec(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
         self.commands.append(cmd)
         if self.calls is not None:
             self.calls.append((self.id, cmd))
@@ -457,7 +457,7 @@ class TestInternals:
         class ExplodingHost:
             id: str
 
-            async def oneshot(self, cmd: str, timeout: float | None = None, **_: object) -> Any:
+            async def exec(self, cmd: str, timeout: float | None = None, **_: object) -> Any:
                 raise ConnectionError("host is gone")
 
         asyncio.run(_kill_tunnel_on([ExplodingHost("ghost")], "tun-deadbeefdead-8080"))  # no raise

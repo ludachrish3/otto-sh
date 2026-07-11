@@ -95,7 +95,7 @@ class OttoSuite(Generic[TOptions]):
         # conftest.py
         @pytest.fixture
         async def primary_host():
-            from otto.configmodule import get_host
+            from otto.config import get_host
 
             host = get_host("primary")
             yield host
@@ -104,7 +104,7 @@ class OttoSuite(Generic[TOptions]):
 
         # test_device.py
         async def test_with_host(self, primary_host) -> None:
-            result = await primary_host.oneshot("echo hello")
+            result = await primary_host.exec("echo hello")
             assert result.status == Status.Success
 
     Inheriting repo-wide options
@@ -377,7 +377,7 @@ class OttoSuite(Generic[TOptions]):
         (``loop_scope='class'``). A persistent shell session — and the single
         socket of an RTOS telnet console — is bound to the loop that opened it.
         Under ``--cov`` the coverage collector runs *after* pytest on a separate
-        ``asyncio.run`` loop (see ``cli/test.py``'s ``_run_coverage``); a session
+        ``asyncio.run`` loop (see ``otto.coverage.collect.collect_coverage``); a session
         opened here and reused from that loop hangs — its reads await futures on
         the now-closed class loop — and the stale single-client socket still
         holds the device's only telnet slot, blocking the collector's reconnect.
@@ -394,7 +394,7 @@ class OttoSuite(Generic[TOptions]):
         if not request.config.stash.get(otto_cov_key, False):
             return
 
-        from ..configmodule import all_hosts
+        from ..config import all_hosts
 
         # include_local: this teardown flushes sessions (which is what makes
         # remotes write .gcda) — close everything the suite may have touched,

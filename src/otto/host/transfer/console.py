@@ -4,6 +4,7 @@ Registers ``console`` into the shared transfer registry on import.
 """
 
 import errno
+import logging
 import os
 import re
 from collections.abc import Callable, Coroutine
@@ -12,7 +13,6 @@ from typing import Any
 
 from typing_extensions import override
 
-from ...logger import get_logger
 from ...result import CommandResult, Result
 from ...utils import Status
 from ..embedded_filesystem import EmbeddedFileSystem
@@ -46,7 +46,7 @@ def _label_errno(retcode: int) -> str:
     return f"{retcode} (-{name}, {os.strerror(code)})"
 
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 # Bytes per `fs write` invocation. Each byte costs three characters of hex
 # ("XX ") on the command line, so the chunk size must stay within the target's

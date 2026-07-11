@@ -72,6 +72,6 @@ def test_e2e_conftest_autostamps_e2e():
         def add_marker(self, marker) -> None:
             self.added.append(getattr(marker, "name", str(marker)))
 
-    item = _FakeItem(e2e_root / "configmodule" / "test_example.py")
+    item = _FakeItem(e2e_root / "config" / "test_example.py")
     e2e.pytest_collection_modifyitems(config=None, items=[item])
     assert "e2e" in item.added

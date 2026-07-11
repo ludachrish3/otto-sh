@@ -404,9 +404,9 @@ def test_run_and_login_exposed_on_base_host():
     from otto.host.host import BaseHost
 
     base = collect_exposed_methods(BaseHost)
-    # login maps to the 'interact' attribute; run maps to 'run'
+    # login maps to the 'login' attribute; run maps to 'run'
     assert "login" in base
-    assert base["login"] == "interact"
+    assert base["login"] == "login"
     assert "run" in base
     assert base["run"] == "run"
 
@@ -434,8 +434,8 @@ def test_login_as_user_flag_dispatches_end_to_end(monkeypatch):
     class _Host:
         id = "h1"
 
-        @cli_exposed(name="login")
-        async def interact(self, as_user: str | None = None) -> None:
+        @cli_exposed
+        async def login(self, as_user: str | None = None) -> None:
             captured["as_user"] = as_user
 
         async def close(self) -> None:
@@ -894,7 +894,7 @@ async def test_make_method_command_not_implemented_exits_cleanly(capsys):
         id = "local"
         close = AsyncMock()
 
-        async def interact(self):
+        async def login(self):
             raise NotImplementedError("The 'LocalHost' class does not support interactive sessions")
 
     host = _Host()
@@ -903,9 +903,9 @@ async def test_make_method_command_not_implemented_exits_cleanly(capsys):
         obj = host
 
     @cli_exposed
-    async def interact(self): ...
+    async def login(self): ...
 
-    cmd = make_method_command("interact", interact)
+    cmd = make_method_command("login", login)
 
     with pytest.raises(typer.Exit) as ei:
         await cmd(_Ctx())
@@ -917,7 +917,7 @@ async def test_make_method_command_not_implemented_exits_cleanly(capsys):
     captured = capsys.readouterr()
     combined = captured.out + captured.err
     assert "does not support" in combined
-    assert "interact" in combined
+    assert "login" in combined
 
 
 # ---------------------------------------------------------------------------

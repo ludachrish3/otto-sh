@@ -1,6 +1,6 @@
 """Impair/repair/list orchestration — kernel qdisc state is the ONLY state.
 
-Reads go through ``host.oneshot`` (no privilege needed); mutations through
+Reads go through ``host.exec`` (no privilege needed); mutations through
 ``host.run(cmd, sudo=host.current_user != "root")``. Every host call is
 wrapped in ``asyncio.wait_for(..., _IMPAIR_HOST_TIMEOUT)`` and a down host is
 a loud, host-named ``RuntimeError`` — never a skip (spec §9, dev-VM rule).
@@ -39,7 +39,7 @@ from .sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel, parse_impair_ps
 if TYPE_CHECKING:
     from ipaddress import IPv4Interface
 
-    from ..configmodule.lab import Lab
+    from ..config.lab import Lab
 
 _IMPAIR_HOST_TIMEOUT = 30.0
 _BOTH = frozenset({FlowDirection.A_TO_B, FlowDirection.B_TO_A})
@@ -101,10 +101,10 @@ def find_link(lab: Any, ident: str) -> Link:
     raise ValueError(f"no link {ident!r} in the loaded lab (known: {known})")
 
 
-async def _oneshot(host: Any, cmd: str) -> Any:
+async def _exec(host: Any, cmd: str) -> Any:
     """Run a read-only *cmd* on *host*; timeout/transport errors are host-named."""
     try:
-        result = await asyncio.wait_for(host.oneshot(cmd, log=LogMode.QUIET), _IMPAIR_HOST_TIMEOUT)
+        result = await asyncio.wait_for(host.exec(cmd, log=LogMode.QUIET), _IMPAIR_HOST_TIMEOUT)
     except (TimeoutError, asyncio.TimeoutError, OSError, ConnectionError) as e:
         raise RuntimeError(f"host {host.id!r} unreachable running {cmd!r}: {e!r}") from e
     if not result.is_ok:
@@ -212,7 +212,7 @@ async def _resolve_placements(
     tables: dict[str, dict[str, list["IPv4Interface"]]] = {}
     if link.impair:
         middlebox = _host(lab, link.impair)
-        table = parse_ip_addr((await _oneshot(middlebox, _ADDR_SHOW_COMMAND)).value)
+        table = parse_ip_addr((await _exec(middlebox, _ADDR_SHOW_COMMAND)).value)
         tables[link.impair] = table
         placements = inpath_placements(link, link.impair, table, directions)
     else:
@@ -221,7 +221,7 @@ async def _resolve_placements(
     for placement in placements:
         host = _host(lab, placement.host_id)
         if placement.host_id not in tables:
-            addr_output = (await _oneshot(host, _ADDR_SHOW_COMMAND)).value
+            addr_output = (await _exec(host, _ADDR_SHOW_COMMAND)).value
             tables[placement.host_id] = parse_ip_addr(addr_output)
         if placement.host_id not in dependents:
             dependents[placement.host_id] = _hop_dependents(lab, placement.host_id)
@@ -234,7 +234,7 @@ async def _read_placement(
     host: Any, impairer: LinkImpairer, netdev: str
 ) -> ImpairmentParams | None:
     """Read + parse *netdev*'s current impairment on *host* (``None`` = clean)."""
-    result = await _oneshot(host, impairer.read_command(netdev))
+    result = await _exec(host, impairer.read_command(netdev))
     return impairer.parse_read(result.value)
 
 
@@ -255,7 +255,7 @@ async def _cancel_timers(host: Any, link_id: str, netdev: str) -> int:
     than raising — cancellation is a hygiene step, not the operation itself.
     """
     try:
-        result = await _oneshot(host, IMPAIR_PS_COMMAND)
+        result = await _exec(host, IMPAIR_PS_COMMAND)
     except RuntimeError:
         return 0
     pids = sorted(
@@ -463,7 +463,7 @@ async def read_link_states(lab: "Lab") -> list[LinkState]:
 
     This is the ``list``/GUI-overlay feed.
 
-    Reads only (``oneshot``, no sudo); never raises per-link, so one bad host
+    Reads only (``exec``, no sudo); never raises per-link, so one bad host
     can't hide the rest of the fleet's state from a caller like ``otto link
     list`` or a topology overlay.
     """

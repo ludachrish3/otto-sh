@@ -8,7 +8,17 @@ actually used. ``from otto import options`` then ``@options`` on an Options
 class still works (re-export of ``pydantic.dataclasses.dataclass``).
 """
 
+import logging as _logging
 from typing import TYPE_CHECKING
+
+# Library-citizen default: attach a NullHandler to the 'otto' logger so a bare
+# `import otto` is silent unless the application configures handlers. Lives
+# here (not otto.logger) so it fires on ANY import of the otto package, not
+# only on `import otto.logger` / access to a lazy export that pulls it in.
+# stdlib-only; idempotent (safe under repeated import / reload).
+_otto_logger = _logging.getLogger("otto")
+if not any(isinstance(h, _logging.NullHandler) for h in _otto_logger.handlers):
+    _otto_logger.addHandler(_logging.NullHandler())
 
 if TYPE_CHECKING:
     from pydantic.dataclasses import dataclass as options
@@ -17,10 +27,10 @@ if TYPE_CHECKING:
     from otto.cli.registry import cli_command, register_cli_command
     from otto.host.app_shell import AppShell, Parsed
     from otto.host.login_proxy import Cred, register_login_proxy
-    from otto.logger import get_logger
     from otto.result import CommandResult, Result, Results, ShellResult
+    from otto.suite.run import RunOptions, run_suite
 
-    from .configmodule import all_hosts, get_host, get_lab, load_lab, run_on_all_hosts
+    from .config import all_hosts, get_host, get_lab, load_lab, run_on_all_hosts
     from .context import OttoContext, get_context, open_context, try_get_context
 
 __all__ = [
@@ -31,6 +41,7 @@ __all__ = [
     "Parsed",
     "Result",
     "Results",
+    "RunOptions",
     "ShellResult",
     "all_hosts",
     "app",
@@ -38,13 +49,13 @@ __all__ = [
     "get_context",
     "get_host",
     "get_lab",
-    "get_logger",
     "load_lab",
     "open_context",
     "options",
     "register_cli_command",
     "register_login_proxy",
     "run_on_all_hosts",
+    "run_suite",
     "try_get_context",
 ]
 
@@ -52,12 +63,11 @@ __all__ = [
 _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "options": ("pydantic.dataclasses", "dataclass"),
     "app": ("otto.cli", "app"),
-    "get_logger": ("otto.logger", "get_logger"),
-    "all_hosts": ("otto.configmodule", "all_hosts"),
-    "get_host": ("otto.configmodule", "get_host"),
-    "get_lab": ("otto.configmodule", "get_lab"),
-    "load_lab": ("otto.configmodule", "load_lab"),
-    "run_on_all_hosts": ("otto.configmodule", "run_on_all_hosts"),
+    "all_hosts": ("otto.config", "all_hosts"),
+    "get_host": ("otto.config", "get_host"),
+    "get_lab": ("otto.config", "get_lab"),
+    "load_lab": ("otto.config", "load_lab"),
+    "run_on_all_hosts": ("otto.config", "run_on_all_hosts"),
     "OttoContext": ("otto.context", "OttoContext"),
     "get_context": ("otto.context", "get_context"),
     "open_context": ("otto.context", "open_context"),
@@ -72,6 +82,8 @@ _LAZY_EXPORTS: dict[str, tuple[str, str]] = {
     "AppShell": ("otto.host.app_shell", "AppShell"),
     "Parsed": ("otto.host.app_shell", "Parsed"),
     "ShellResult": ("otto.result", "ShellResult"),
+    "run_suite": ("otto.suite.run", "run_suite"),
+    "RunOptions": ("otto.suite.run", "RunOptions"),
 }
 
 

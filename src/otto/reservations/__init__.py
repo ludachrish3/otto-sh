@@ -14,13 +14,13 @@ from .check import (
     ReservationBackendError as ReservationBackendError,
 )
 from .check import (
-    ReservationState as ReservationState,
+    ReservationGate as ReservationGate,
+)
+from .check import (
+    ReservationGateOutcome as ReservationGateOutcome,
 )
 from .check import (
     check_reservations as check_reservations,
-)
-from .check import (
-    gate as gate,
 )
 from .check import (
     required_resources as required_resources,
@@ -130,14 +130,14 @@ def build_backend(
     return cls(**extra_kwargs)  # type: ignore[no-any-return]
 
 
-def build_reservation_state(
+def build_reservation_gate(
     repos: list[Any],
     *,
     as_user: str | None,
     skip_reservation_check: bool,
     cwd_fallback: Path,
-) -> ReservationState:
-    """Resolve the per-invocation reservation state from the active repos.
+) -> ReservationGate:
+    """Resolve the per-invocation reservation gate from the active repos.
 
     The first repo with a ``[reservations]`` section wins. With
     ``skip_reservation_check`` (the ``-R`` break-glass flag) the backend is
@@ -166,7 +166,7 @@ def build_reservation_state(
         backend = _factory()  # may raise ReservationBackendError
 
     identity = resolve_username(as_user)
-    return ReservationState(
+    return ReservationGate(
         backend=backend,
         identity=identity,
         skip_check=skip_reservation_check,

@@ -125,6 +125,10 @@ otto test --list-tests                      # list every registered test
 otto test --list-tests --markers slow TestDevice   # narrow by marker and/or suite
 ```
 
+Suites can also run as a plain library call, with no CLI/Typer involved — see
+[Running suites from Python](library-usage.md#running-suites-from-python) in
+the library usage guide.
+
 ## Running without a suite name
 
 `otto test` doesn't require a suite subcommand. Passing `--tests` and/or

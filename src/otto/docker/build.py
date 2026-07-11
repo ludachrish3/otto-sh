@@ -6,17 +6,17 @@ CLI (``otto docker build``) and directly from instructions/suites; both
 share the exact same code path so semantics never diverge.
 """
 
+import logging
 import shlex
 from collections.abc import Iterable
 
-from ..configmodule.repo import DockerImage, DockerSettings, Repo
+from ..config.repo import DockerImage, DockerSettings, Repo
 from ..host.host import Host
-from ..logger import get_logger
 from ..utils import Status
 from ._context_hash import context_hash
 from .staging import stage_image_context
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 _IMPLICIT_REGISTRIES = {"", "docker.io"}
@@ -47,7 +47,7 @@ def image_latest_tag(registry_url: str, project: str, image: DockerImage) -> str
 
 
 async def _image_exists(parent: Host, full_tag: str) -> bool:
-    result = await parent.oneshot(f"docker image inspect {shlex.quote(full_tag)}")
+    result = await parent.exec(f"docker image inspect {shlex.quote(full_tag)}")
     return result.status.is_ok
 
 
@@ -67,7 +67,7 @@ async def _build_one(
     if not rebuild and await _image_exists(parent, full_tag):
         logger.info(f"[docker] {full_tag}: already built, skipping")
         # Make sure :latest also points at the cached digest.
-        await parent.oneshot(f"docker tag {shlex.quote(full_tag)} {shlex.quote(latest_tag)}")
+        await parent.exec(f"docker tag {shlex.quote(full_tag)} {shlex.quote(latest_tag)}")
         return Status.Skipped, full_tag
 
     logger.info(f"[docker] building {full_tag}")
@@ -95,7 +95,7 @@ async def _build_one(
         flags.extend(["--build-arg", shlex.quote(f"{arg_name}={arg_value}")])
 
     cmd = f"docker build {' '.join(flags)} {shlex.quote(str(remote_ctx))}"
-    result = await parent.oneshot(cmd, timeout=None)
+    result = await parent.exec(cmd, timeout=None)
     if not result.status.is_ok:
         return result.status, result.value
     return Status.Success, full_tag
@@ -111,7 +111,7 @@ async def build_images(
     """Build all (or selected) images for *repo* on *parent*.
 
     Args:
-        repo: The :class:`~otto.configmodule.repo.Repo` whose ``[docker]`` settings
+        repo: The :class:`~otto.config.repo.Repo` whose ``[docker]`` settings
             declare the images.
         parent: A docker-capable lab host. Builds happen here.
         image_names: Optional filter — only build images whose ``name`` is

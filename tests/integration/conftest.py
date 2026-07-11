@@ -27,7 +27,7 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker("integration")
 
 
-# Must be set before any otto imports -- configmodule reads OTTO_SUT_DIRS at
+# Must be set before any otto imports -- config reads OTTO_SUT_DIRS at
 # import time to compute the module-level _repos singleton.
 ensure_sut_dirs()
 
@@ -74,15 +74,15 @@ async def _reap_orphan_docker_stacks() -> None:
     try:
         for frag in _ORPHAN_PROJECT_FRAGMENTS:
             containers = (
-                await host.oneshot(f"docker ps -aq --filter 'name={frag}'", timeout=30)
+                await host.exec(f"docker ps -aq --filter 'name={frag}'", timeout=30)
             ).value.split()
             if containers:
-                await host.oneshot(f"docker rm -f {' '.join(containers)}", timeout=60)
+                await host.exec(f"docker rm -f {' '.join(containers)}", timeout=60)
             networks = (
-                await host.oneshot(f"docker network ls -q --filter 'name={frag}'", timeout=30)
+                await host.exec(f"docker network ls -q --filter 'name={frag}'", timeout=30)
             ).value.split()
             if networks:
-                await host.oneshot(f"docker network rm {' '.join(networks)}", timeout=60)
+                await host.exec(f"docker network rm {' '.join(networks)}", timeout=60)
     finally:
         await host.close()
 

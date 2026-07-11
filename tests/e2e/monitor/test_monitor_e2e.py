@@ -345,7 +345,7 @@ def test_per_host_parser_scoping_via_init_module(monitor_host: str, tmp_path: Pa
     # board="seed", so RemoteHost._generate_id() composes "<element>_seed" —
     # e.g. "carrot_seed" for the leased element "carrot" (verified against
     # UnixHost directly; also assumed elsewhere, e.g.
-    # tests/e2e/configmodule/test_completion_cache.py's host-id tuple).
+    # tests/e2e/config/test_completion_cache.py's host-id tuple).
     host_id = f"{monitor_host}_seed"
 
     # Run 1: registration targets the leased host -> Uptime present.

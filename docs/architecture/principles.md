@@ -69,7 +69,7 @@ chatter can't hide failures. ({doc}`utilities/logging`)
 ## One event loop, stateless strategies
 
 Concurrency is asyncio only — no thread pools mixed into the loop; fan-out
-uses `oneshot`/`gather` with per-host error isolation. Strategy objects
+uses `exec`/`gather` with per-host error isolation. Strategy objects
 (command frames, binary loaders, filesystems) are small stateless values a
 session or host *holds*, keeping them unit-testable without live hardware.
 ({doc}`subsystems/hosts`)

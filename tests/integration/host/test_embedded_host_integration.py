@@ -2,7 +2,7 @@
 Zephyr-specific live integration tests for :class:`EmbeddedHost`.
 
 The OS-agnostic contract (every backend must satisfy a basic ``run`` /
-``oneshot`` / file-transfer shape) lives in :mod:`test_host_contract` and is
+``exec`` / file-transfer shape) lives in :mod:`test_host_contract` and is
 parametrized over Unix and Zephyr backends both. This file covers Zephyr
 **implementation-detail** behavior the contract suite intentionally does
 not assert on:
@@ -29,7 +29,7 @@ from pathlib import Path
 import pytest
 
 from otto.host.embedded_host import EmbeddedHost
-from otto.storage.factory import create_host_from_dict
+from otto.host.factory import create_host_from_dict
 from otto.utils import Status
 from tests.conftest import (
     _ZEPHYR_BACKEND_NE as _BACKEND_NE,
@@ -268,8 +268,8 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
     host_b = create_host_from_dict(data)
     try:
         results = await asyncio.gather(
-            host_a.oneshot("kernel uptime"),
-            host_b.oneshot("kernel uptime"),
+            host_a.exec("kernel uptime"),
+            host_b.exec("kernel uptime"),
             return_exceptions=True,
         )
     finally:
@@ -293,7 +293,7 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
     #     released, not left wedged.
     host_c = create_host_from_dict(data)
     try:
-        recovered = await host_c.oneshot("kernel uptime")
+        recovered = await host_c.exec("kernel uptime")
     finally:
         await host_c.close()
     assert recovered.status == Status.Success, (
@@ -310,7 +310,7 @@ async def test_concurrent_clients_to_one_console_contend_and_recover():
 # so the multi-target fan-out path that `do_for_all_hosts` takes had no
 # coverage. These tests reproduce the fan-out semantics directly via
 # `asyncio.gather` — that is what `do_for_all_hosts` does internally —
-# without relying on the lab/configmodule layer.
+# without relying on the lab/config layer.
 # ---------------------------------------------------------------------------
 
 

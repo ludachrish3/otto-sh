@@ -247,7 +247,7 @@ timeout — pass an `*_options=` keyword to `get_host()` or
 `all_hosts()` instead of editing the lab definition:
 
 ```python
-from otto.configmodule import get_host, all_hosts
+from otto.config import get_host, all_hosts
 from otto.host.options import SshOptions, TelnetOptions
 
 # A single host with a one-off SSH override.
@@ -278,7 +278,7 @@ The same kwargs are accepted by `do_for_all_hosts()` and
 `run_on_all_hosts()`:
 
 ```python
-from otto.configmodule import run_on_all_hosts
+from otto.config import run_on_all_hosts
 from otto.host.options import SshOptions
 
 results = await run_on_all_hosts(

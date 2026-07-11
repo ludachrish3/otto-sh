@@ -23,12 +23,12 @@ transport with a test double — no monkeypatching of library functions needed.
 
 import asyncio
 import contextlib
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from typing_extensions import override
 
-from ..logger import get_logger
 from ..registry import Registry, caller_module
 from .login_proxy import Cred, resolve_chain
 from .options import FtpOptions, SftpOptions, SshOptions, TelnetOptions
@@ -61,7 +61,7 @@ class TermContext:
     ftp_options: FtpOptions | None = None
 
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 _tunneled_ftp_client_cls: type | None = None

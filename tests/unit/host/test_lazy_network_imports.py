@@ -4,7 +4,7 @@
 opens a connection or transfers a file. They must NOT be imported merely by
 importing the host package and its concrete host classes — that path is on the
 critical path of *every* invocation (tab-completion, ``--help``, ``schema``,
-and the front of every real command) because ``storage.factory`` imports
+and the front of every real command) because ``host.factory`` imports
 ``host.os_profile``, which registers the built-in host classes at import.
 
 The dynamic ``otto host`` CLI discovers exposed verbs purely by class

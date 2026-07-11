@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host import UnixHost
 from otto.host.login_proxy import Cred
@@ -40,7 +40,7 @@ pytestmark = [pytest.mark.timeout(30)]
 
 # ---------------------------------------------------------------------------
 # Lab setup — the config module must be populated so that hop resolution
-# (configmodule.get_host) can find the hop hosts by ID.
+# (config.get_host) can find the hop hosts by ID.
 # ---------------------------------------------------------------------------
 
 

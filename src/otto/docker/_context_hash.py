@@ -20,7 +20,7 @@ import hashlib
 from collections.abc import Iterable
 from pathlib import Path
 
-from ..configmodule.repo import DockerImage
+from ..config.repo import DockerImage
 
 
 def _read_dockerignore(context: Path) -> list[str]:

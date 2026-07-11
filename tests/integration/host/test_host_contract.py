@@ -71,7 +71,7 @@ pytestmark = pytest.mark.timeout(45)
 
 
 # ---------------------------------------------------------------------------
-# run / oneshot
+# run / exec
 # ---------------------------------------------------------------------------
 
 
@@ -98,12 +98,12 @@ class TestRunContract:
         assert result.retcode != 0
 
     @pytest.mark.asyncio
-    async def test_oneshot_works_cold(self, host1, host1_kit):
-        """``oneshot`` must succeed without a prior ``run`` warming the
+    async def test_exec_works_cold(self, host1, host1_kit):
+        """``exec`` must succeed without a prior ``run`` warming the
         session. On UnixHost this exercises the stateless exec primitive;
         on EmbeddedHost it shares the persistent session (documented
         single-console caveat) but is still expected to work cold."""
-        result = await host1.oneshot(host1_kit.successful_cmd)
+        result = await host1.exec(host1_kit.successful_cmd)
         assert result.status == Status.Success
         assert result.retcode == 0
 

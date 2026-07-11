@@ -5,6 +5,7 @@ import dataclasses
 import pytest
 from pydantic import ValidationError
 
+from otto.host.factory import create_host_from_dict
 from otto.host.options import (
     FtpOptions,
     LocalPortForward,
@@ -16,7 +17,6 @@ from otto.host.options import (
     SshOptions,
     TelnetOptions,
 )
-from otto.storage.factory import create_host_from_dict
 
 
 def test_local_port_forward_validates_and_is_frozen():

@@ -73,7 +73,7 @@ import time
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.host.interface import Interface
 from otto.host.unix_host import UnixHost
 from otto.link import (
@@ -191,7 +191,7 @@ async def _add_vlan(host: UnixHost, dev: str, vlan_id: int, ip_cidr: str) -> Non
 
 async def _avg_rtt_ms(host: UnixHost, target_ip: str) -> float:
     """Ping *target_ip* from *host* three times and return the average RTT in ms."""
-    result = await host.oneshot(
+    result = await host.exec(
         f"ping -c 3 -i 0.3 -W 2 {target_ip}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
     )
     assert result.is_ok, f"ping {target_ip} from {host.id!r} failed: {result.value!r}"
@@ -237,7 +237,7 @@ async def impair_lab():
     await _add_vlan(pepper, _VLAN200_DEV, _VLAN200_ID, f"{_PEPPER_VLAN200_IP}/24")
 
     prior_ip_forward = (
-        await pepper.oneshot(
+        await pepper.exec(
             "sysctl -n net.ipv4.ip_forward", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
     ).value.strip()
@@ -298,14 +298,14 @@ async def _assert_bed_hygiene() -> None:
     try:
         leaks: list[str] = []
         for host in hosts:
-            ps_result = await host.oneshot(
+            ps_result = await host.exec(
                 IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
             timers = parse_impair_ps(ps_result.value or "")
             if timers:
                 leaks.append(f"{host.id}: leftover otto-impair timers {timers!r}")
 
-            qdisc_result = await host.oneshot(
+            qdisc_result = await host.exec(
                 "tc qdisc show dev eth1", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
             if parse_qdisc_show(qdisc_result.value or "") is not None:
@@ -314,7 +314,7 @@ async def _assert_bed_hygiene() -> None:
                     f"{qdisc_result.value!r}"
                 )
 
-            link_result = await host.oneshot(
+            link_result = await host.exec(
                 "ip -o link show", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
             )
             link_text = link_result.value or ""
@@ -423,7 +423,7 @@ async def test_inpath_placements_and_endpoint_purity(impair_lab: Lab) -> None:
 
         # purity: the in-path target's own facing netdev stays pure -- the whole
         # point of in-path mode is that the impairment lives on the middlebox.
-        purity = await carrot.oneshot(
+        purity = await carrot.exec(
             f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         assert parse_qdisc_show(purity.value or "") is None, (
@@ -469,7 +469,7 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
             f"{edge_state.by_direction!r}"
         )
 
-        ps_result = await carrot.oneshot(
+        ps_result = await carrot.exec(
             IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
         timers = [t for t in parse_impair_ps(ps_result.value or "") if t[1] == "edge"]

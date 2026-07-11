@@ -5,12 +5,12 @@ typically via a telnet connection, often through an SSH hop.  Shell I/O is
 wrapped in a *command frame* that encodes each command and parses the
 output/return-code back from the plain telnet byte stream.
 
-Embedded hosts expose the same `Host` API as Unix hosts (`run` / `oneshot` /
+Embedded hosts expose the same `Host` API as Unix hosts (`run` / `exec` /
 `send` / `expect` / `put` / `get`), so test code does not branch on host type.
 The key differences are:
 
 - **One console.** An embedded target exposes a single shell.  There is no
-  second channel and no stateless exec primitive, so `oneshot` shares the
+  second channel to run commands out-of-band, so `exec` shares the
   persistent session with `run` and is **not** concurrency-safe.
 - **No bash.** No `$?`, no command substitution, no `scp`/`ftp`/`nc`.  Command
   framing and file transfer use a device-shell protocol, not Unix tools.

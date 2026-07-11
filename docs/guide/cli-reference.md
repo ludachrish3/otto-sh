@@ -329,7 +329,7 @@ otto cov report [OUTPUT_DIR...] [OPTIONS]
 
 | Subcommand | Description |
 | ---------- | ----------- |
-| `get` | Fetch `.gcda` counters from the lab and write one pinned `capture.json` per board (also run implicitly by `otto test --cov`) |
+| `get` | Fetch `.gcda` counters from the lab and write one `capture.json` per board, anchored to `base_commit` (also run implicitly by `otto test --cov`) |
 | `clean` | Zero remote `.gcda` counters ahead of a fresh session (Unix coverage hosts only — embedded reset is a later phase) |
 | `report` | Assemble every tier — e2e captures, unit harvest, committed manual store — into an HTML report |
 
@@ -345,7 +345,7 @@ otto cov report [OUTPUT_DIR...] [OPTIONS]
 | `--tester-email STR` | `git config user.email` | Tester email (`manual`-kind only) |
 | `--clean` | off | Zero the fetched Unix hosts' counters after a successful retrieval |
 
-Retrieval requires a git repository (captures are pinned to `HEAD`);
+Retrieval requires a git repository (captures are anchored to `HEAD` via `base_commit`);
 a dirty working tree is remapped onto committed-code coordinates
 automatically.
 
@@ -400,8 +400,8 @@ logs an error naming the searched locations and exits non-zero.
 ### Collecting coverage (`otto test --cov`)
 
 `otto test --cov` collects coverage as part of a test run — it fetches
-counters after the suite and produces the same pinned per-board
-captures as `otto cov get`:
+counters after the suite and produces the same per-board captures
+(anchored to `base_commit`) as `otto cov get`:
 
 | Option | Description |
 | ------ | ----------- |

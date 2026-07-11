@@ -5,13 +5,13 @@ filesystem, so the full CLI dispatch path runs end-to-end — repo discovery,
 lab loading, host resolution, command execution, file transfer — without any
 network transport or remote VM.
 
-The ``local`` host ID is a built-in host: :func:`otto.configmodule.lab.load_lab`
+The ``local`` host ID is a built-in host: :func:`otto.config.lab.load_lab`
 injects a ``LocalHost()`` into every lab it returns, on any backend, so
 ``otto host local`` resolves without a custom lab-repository. This fixture repo
 uses the standard ``json`` backend (``[lab] backend = "json"`` in
 ``.otto/settings.toml``); the ``local`` host comes from the built-in injection.
 
-Login note: ``LocalHost._interact`` is not implemented — ``otto host local
+Login note: ``LocalHost._login`` is not implemented — ``otto host local
 login`` exits non-zero with a clean "does not support" message (no traceback)
 thanks to the ``NotImplementedError`` handler in ``otto.cli.expose``.
 """
@@ -97,7 +97,7 @@ def test_local_put_get_roundtrip(tmp_path: Path) -> None:
 def test_local_login_exits_cleanly(tmp_path: Path) -> None:
     """``otto host local login`` exits non-zero with a clean error message.
 
-    ``LocalHost`` does not override ``_interact``, so the CLI call hits the
+    ``LocalHost`` does not override ``_login``, so the CLI call hits the
     ``NotImplementedError`` handler in ``otto.cli.expose`` and exits 1 with a
     human-readable "does not support" message — no traceback, no crash.
     """

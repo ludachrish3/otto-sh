@@ -57,7 +57,7 @@ from typing import (
 from typing_extensions import override
 
 if TYPE_CHECKING:
-    from ..configmodule.lab import Lab
+    from ..config.lab import Lab
 
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
@@ -437,7 +437,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
                     nc_options=self.nc_options,
                     scp_options=self.scp_options,
                     get_local_ip=lambda: self._get_local_ip(),  # noqa: PLW0108 — late-bind self for monkeypatching
-                    exec_cmd=lambda *a, **kw: self.oneshot(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
+                    exec_cmd=lambda *a, **kw: self.exec(*a, **kw),  # noqa: PLW0108 — late-bind self for monkeypatching
                     max_filename_len=self.max_filename_len,
                 )
             ),
@@ -486,7 +486,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
     # TODO: Make sync versions of cmd and file methods that just wraps the async def
 
     @override
-    async def _interact(self, as_user: str | None = None) -> None:
+    async def _login(self, as_user: str | None = None) -> None:
         """Open an interactive shell on this host, bridged to the local terminal.
 
         Dispatches on ``self.term``:
@@ -523,7 +523,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             via_login, _ = self._connections.credentials
             if direct.login != via_login:
                 raise LoginProxyError(
-                    f"{self.name}: interact is authenticated as {via_login!r}, "
+                    f"{self.name}: login is authenticated as {via_login!r}, "
                     f"but --as-user {target!r} resolves to a direct login of "
                     f"{direct.login!r}; starting a fresh connection as "
                     f"{direct.login!r} is not supported."
@@ -541,7 +541,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         user, password = self._connections.credentials
         if direct.login != user:
             raise LoginProxyError(
-                f"{self.name}: interact is authenticated as {user!r}, but "
+                f"{self.name}: login is authenticated as {user!r}, but "
                 f"--as-user {target!r} resolves to a direct login of "
                 f"{direct.login!r}; starting a fresh connection as "
                 f"{direct.login!r} is not supported."
@@ -594,7 +594,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         Limitations:
             - **Sequential only.** The session is a single shell — calling ``run()``
               concurrently from multiple coroutines will corrupt the session output.
-              Use :meth:`oneshot` instead when you need concurrent execution.
+              Use :meth:`exec` instead when you need concurrent execution.
             - **Stateful.** Commands affect each other; a ``cd`` in one call changes
               the directory for the next.
 
@@ -619,7 +619,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         )
 
     @override
-    async def oneshot(
+    async def exec(
         self,
         cmd: str,
         timeout: float | None = None,
@@ -628,19 +628,19 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """Run a single command concurrent-safely, independent of the persistent shell.
 
         Unlike :meth:`~otto.host.host.BaseHost.run`, this method is **concurrent-safe**: multiple
-        ``oneshot()`` calls can run simultaneously via ``asyncio.gather()`` or
+        ``exec()`` calls can run simultaneously via ``asyncio.gather()`` or
         ``asyncio.create_task()`` without corrupting each other or the
         persistent shell session.
 
         Key differences from ``run()``:
 
         +------------------+------------------------------+----------------------------+
-        | Property         | ``run()``                    | ``oneshot()``              |
+        | Property         | ``run()``                    | ``exec()``                 |
         +==================+==============================+============================+
         | Shell state      | Persistent (cd, env persist) | Stateless (fresh each call)|
         | Concurrency      | Sequential only              | Safe for asyncio.gather()  |
         | Expect support   | Yes                          | No                         |
-        | Connection cost  | Reuses existing session      | Reuses cached oneshot pool |
+        | Connection cost  | Reuses existing session      | Reuses cached exec pool    |
         | Best for         | Multi-step workflows, state  | One-off / parallel cmds    |
         +------------------+------------------------------+----------------------------+
 
@@ -674,7 +674,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
-        return await self._session_mgr.oneshot(cmd, timeout=timeout, log=self._effective_log(log))
+        return await self._session_mgr.exec(cmd, timeout=timeout, log=self._effective_log(log))
 
     @override
     async def open_session(self, name: str) -> HostSession:
@@ -701,7 +701,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
             ``expect``, and ``close``.
 
         See Also:
-            :meth:`~otto.host.unix_host.UnixHost.oneshot`: stateless one-shot alternative.
+            :meth:`~otto.host.unix_host.UnixHost.exec`: stateless alternative for one-off commands.
             :meth:`~otto.host.host.BaseHost.run`: default persistent session.
         """
         if is_dry_run():
@@ -803,7 +803,7 @@ class UnixHost(PosixPrivilege, PosixFileOps, RemoteHost):
         """
         if is_dry_run():
             return Result(Status.Skipped, value=[])
-        result = await self.oneshot("cat /proc/modules", log=LogMode.QUIET)
+        result = await self.exec("cat /proc/modules", log=LogMode.QUIET)
         if not result.status.is_ok:
             return Result(
                 Status.Error, value=[], msg=f"reading /proc/modules failed: {result.value.strip()}"

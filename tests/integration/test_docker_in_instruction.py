@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.lab import Lab
-from otto.configmodule.repo import Repo
+from otto.config.lab import Lab
+from otto.config.repo import Repo
 from otto.docker import build_images, composed
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
@@ -69,7 +69,7 @@ async def test_instruction_uses_composed_context_manager(parent_lab):
     async def my_workflow() -> str:
         async with composed(repo, lab, on=parent.id, own=True) as containers:
             api = containers["api"]
-            res = await api.oneshot("hostname")
+            res = await api.exec("hostname")
             assert res.status is Status.Success
             return res.value.strip()
 
@@ -99,7 +99,7 @@ async def test_session_fixture_holds_stack_for_inner_users(parent_lab):
 
         # Container must still be running after inner exit.
         assert container_id in lab.hosts
-        still = await outer_hosts["api"].oneshot("echo still-here")
+        still = await outer_hosts["api"].exec("echo still-here")
         assert still.status is Status.Success
 
     # After outer exit (own=True), it's gone.

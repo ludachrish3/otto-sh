@@ -1,14 +1,14 @@
 coverage
 ========
 
-The coverage package collects, correlates, and renders code-coverage
+The coverage package collects, merges, and renders code-coverage
 data from embedded and remote targets.
 
 .. toctree::
 
    reporter
    store_model
-   correlator
+   merge
    fetcher
    renderer
    capture

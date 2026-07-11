@@ -84,6 +84,7 @@ for _var in [k for k in os.environ if k.startswith("OTTO_") and k not in _OTTO_A
 
 import asyncio
 import contextlib
+import logging
 import sys
 import weakref
 from dataclasses import dataclass
@@ -91,16 +92,15 @@ from dataclasses import dataclass
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
+from otto.host.factory import create_host_from_dict
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
-from otto.logger import get_logger
-from otto.storage.factory import create_host_from_dict
 from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise
 
-_logger = get_logger()
+_logger = logging.getLogger(__name__)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -553,7 +553,7 @@ async def host1(request):
     - ``"ssh"`` / ``"telnet"`` -> UnixHost on `carrot`, with the matching term.
     - ``"local"``              -> LocalHost.
     - any id in :data:`EMBEDDED_BACKENDS` -> EmbeddedHost on the matching
-      Zephyr QEMU target, built via the storage factory from its lab-data
+      Zephyr QEMU target, built via the host factory from its lab-data
       entry. The matrix anchors the full {FAT-on-RAM, LittleFS, no-FS} set on
       3.7, with a single fs cell on 2.7 and 4.4; see :data:`_ZEPHYR_BACKEND_NE`
       for the id -> `ne` mapping and the trim rationale.

@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING
 import typer
 from rich import print as rprint
 
-from ..configmodule import get_lab, get_repos
-from ..configmodule.completion_cache import read_tunnel_ids, record_tunnel_ids
+from ..config import get_lab, get_repos
+from ..config.completion_cache import read_tunnel_ids, record_tunnel_ids
 from ..tunnel import add_tunnel, discover_tunnels, remove_all_tunnels, remove_tunnel
 from ..utils import async_typer_command, complete_comma_list
 
 if TYPE_CHECKING:
-    from ..configmodule.repo import Repo
+    from ..config.repo import Repo
     from ..tunnel import Tunnel
 
 tunnel_app = typer.Typer(
@@ -72,15 +72,15 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
     """Best-effort ``{host_id: ip}`` map read straight from each repo's lab.json.
 
     Feeds :func:`_l2_reachable`'s completion narrowing. Reuses the same
-    per-host construction :func:`~otto.configmodule.completion_cache.collect_host_ids`
+    per-host construction :func:`~otto.config.completion_cache.collect_host_ids`
     relies on (``create_host_from_dict``), so ids line up with what the base
     completer offers, while also keeping each host's top-level ``ip`` field
     around. Malformed / unvalidatable entries are silently skipped — this
     only ever feeds a narrowing that falls back to the full host list on any
     error, so it must never raise on bad user data.
     """
-    from ..configmodule.completion_cache import LAB_FILENAME, _read_lab_hosts
-    from ..storage.factory import create_host_from_dict, validate_host_dict
+    from ..config.completion_cache import LAB_FILENAME, _read_lab_hosts
+    from ..host.factory import create_host_from_dict, validate_host_dict
 
     ip_by_host: dict[str, str] = {}
     for repo in repos:
@@ -101,7 +101,7 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
 
 
 def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001
-    from ..configmodule.completion_cache import collect_host_ids
+    from ..config.completion_cache import collect_host_ids
 
     try:
         ids = collect_host_ids(get_repos())

@@ -27,6 +27,7 @@ Additional hooks:
 """
 
 import asyncio
+import logging
 import re
 import time
 from collections.abc import AsyncGenerator, Generator
@@ -38,9 +39,7 @@ import pytest
 import pytest_asyncio
 from _pytest.runner import call_and_report, show_test_item
 
-from ..logger import get_logger
-
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 #: Stash key indicating that ``--cov`` was passed to ``otto test``.
 #: Fixtures can read this to decide whether to preserve ``.gcda`` files
@@ -328,7 +327,7 @@ class OttoPlugin:
             yield
             return
 
-        from ..configmodule import all_hosts
+        from ..config import all_hosts
         from ..host import UnixHost
         from ..monitor.factory import build_monitor_collector
         from .suite import OttoSuite

@@ -216,20 +216,20 @@ def _init_repo(tmp_path: Path) -> Path:
     return repo
 
 
-_PIN_GUARD_COV = {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}
+_BASE_COMMIT_GUARD_COV = {"tiers": {"system": {"kind": "e2e", "precedence": 1}}}
 
 
-class TestE2ePinGuard:
-    """A board capture pinned to a different commit than HEAD is a hard error."""
+class TestE2eBaseCommitGuard:
+    """A board capture anchored to a different commit than HEAD is a hard error."""
 
     @pytest.mark.asyncio
-    async def test_capture_pin_mismatch_raises_naming_both_shas(self, tmp_path):
+    async def test_capture_base_commit_mismatch_raises_naming_both_shas(self, tmp_path):
         repo = _init_repo(tmp_path)
         head = head_commit(repo)
 
         cap = Capture(
             tier="system",
-            pin="f" * 40,
+            base_commit="f" * 40,
             files={"f.c": CaptureFileCov(lines={2: 1})},
         )
         cov = tmp_path / "out" / "cov"
@@ -240,22 +240,22 @@ class TestE2ePinGuard:
                 [cov],
                 tmp_path / "report",
                 repo_root=repo,
-                tier_configs=load_tiers(_PIN_GUARD_COV),
+                tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV),
             )
 
         message = str(excinfo.value)
-        assert "f" * 12 in message  # capture pin (short)
+        assert "f" * 12 in message  # capture base_commit (short)
         assert head[:12] in message  # tree HEAD (short)
         assert "re-run" in message  # remedy
 
     @pytest.mark.asyncio
-    async def test_capture_pin_matches_head_loads_into_store(self, tmp_path):
+    async def test_capture_base_commit_matches_head_loads_into_store(self, tmp_path):
         repo = _init_repo(tmp_path)
         head = head_commit(repo)
 
         cap = Capture(
             tier="system",
-            pin=head,
+            base_commit=head,
             files={"f.c": CaptureFileCov(lines={2: 7})},
         )
         cov = tmp_path / "out" / "cov"
@@ -265,7 +265,7 @@ class TestE2ePinGuard:
             [cov],
             tmp_path / "report",
             repo_root=repo,
-            tier_configs=load_tiers(_PIN_GUARD_COV),
+            tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV),
         )
         assert store is not None
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -273,29 +273,31 @@ class TestE2ePinGuard:
 
 
 class TestE2eDirtyTreeRemap:
-    """A dirty working tree at report time: pin==HEAD still holds (nothing was
+    """A dirty working tree at report time: base_commit == HEAD still holds (nothing was
     committed), but the renderer reads the edited on-disk source, so every e2e
     hit past a local edit must be remapped HEAD -> worktree, and hits on
     locally-modified lines dropped.
     """
 
     @pytest.mark.asyncio
-    async def test_dirty_tree_remaps_pin_to_worktree_and_drops_edited_lines(self, tmp_path, caplog):
+    async def test_dirty_tree_remaps_base_commit_to_worktree_and_drops_edited_lines(
+        self, tmp_path, caplog
+    ):
         repo = _init_repo(tmp_path)  # f.c: "int a;\nint b;\nint c;\n"
         head = head_commit(repo)
 
-        # Capture in HEAD (pin) coordinates: all three lines covered.
+        # Capture in HEAD (base_commit) coordinates: all three lines covered.
         cap = Capture(
             tier="system",
-            pin=head,
+            base_commit=head,
             files={"f.c": CaptureFileCov(lines={1: 5, 2: 3, 3: 9})},
         )
         cov = tmp_path / "out" / "cov"
         cap.save(cov / "board1" / "capture.json")
 
-        # Dirty the worktree WITHOUT committing (HEAD, and thus the pin guard,
-        # is unaffected): insert a line at the top (shifts every line down one)
-        # and edit line 3 ("int c;" -> "int CHANGED;").
+        # Dirty the worktree WITHOUT committing (HEAD, and thus the
+        # base_commit guard, is unaffected): insert a line at the top
+        # (shifts every line down one) and edit line 3 ("int c;" -> "int CHANGED;").
         (repo / "f.c").write_text("int NEW;\nint a;\nint b;\nint CHANGED;\n")
 
         with caplog.at_level("WARNING"):
@@ -303,7 +305,7 @@ class TestE2eDirtyTreeRemap:
                 [cov],
                 tmp_path / "report",
                 repo_root=repo,
-                tier_configs=load_tiers(_PIN_GUARD_COV),
+                tier_configs=load_tiers(_BASE_COMMIT_GUARD_COV),
             )
 
         (frec,) = [f for f in store.files() if f.path.name == "f.c"]
@@ -322,7 +324,7 @@ class TestUnitHarvest:
 
     @pytest.mark.asyncio
     async def test_harvest_dir_loads_under_unit_tier(self, tmp_path, monkeypatch):
-        from otto.coverage.correlator import merger as merger_mod
+        from otto.coverage.merge import merger as merger_mod
 
         repo = _init_repo(tmp_path)
         # A harvest dir that is both the gcda and gcno root.
@@ -360,7 +362,7 @@ class TestUnitHarvest:
 
     @pytest.mark.asyncio
     async def test_missing_harvest_dir_warns_and_skips(self, tmp_path, monkeypatch, caplog):
-        from otto.coverage.correlator import merger as merger_mod
+        from otto.coverage.merge import merger as merger_mod
 
         repo = _init_repo(tmp_path)
 
@@ -394,7 +396,7 @@ class TestUnitHarvest:
     async def test_empty_harvest_dir_warns_and_skips(self, tmp_path, monkeypatch, caplog):
         """A harvest dir that exists but has no .gcda files under it warns and is skipped
         (distinct from the missing-dir case above)."""
-        from otto.coverage.correlator import merger as merger_mod
+        from otto.coverage.merge import merger as merger_mod
 
         repo = _init_repo(tmp_path)
         hdir = tmp_path / "unit_build_empty"
@@ -429,7 +431,7 @@ class TestUnitHarvest:
     async def test_stale_counters_warn_but_still_load(self, tmp_path, monkeypatch, caplog):
         """A .gcda older than the newest .gcno is flagged in the report but still loaded
         (Task 10's `_warn_if_stale_counters`, deferred-untested finding closed here)."""
-        from otto.coverage.correlator import merger as merger_mod
+        from otto.coverage.merge import merger as merger_mod
 
         repo = _init_repo(tmp_path)
         hdir = tmp_path / "unit_build_stale"
@@ -476,7 +478,7 @@ class TestUnitHarvest:
         """A relative ``harvest_dirs`` entry is repo-relative (spec §4), not
         CWD-relative — it must resolve even when ``otto cov report`` runs
         from a directory other than the repo root."""
-        from otto.coverage.correlator import merger as merger_mod
+        from otto.coverage.merge import merger as merger_mod
 
         repo = _init_repo(tmp_path)
         hdir = repo / "unit_build"
@@ -517,10 +519,10 @@ class TestUnitHarvest:
 
 
 @pytest.mark.asyncio
-async def test_duplicate_capture_across_sources_registers_one_context(tmp_path):
+async def test_duplicate_capture_across_sources_registers_one_run(tmp_path):
     """The same capture in a cov dir AND the manual store folds in once.
 
-    Dedupe key: (tier, pin, board, captured_at). The manual-store copy
+    Dedupe key: (tier, base_commit, board, captured_at). The manual-store copy
     (validity-aware anchor chain) wins because its run key is pre-seeded
     into the dedupe set before the cov-dir captures fold.
     """
@@ -534,7 +536,7 @@ async def test_duplicate_capture_across_sources_registers_one_context(tmp_path):
 
     cap = Capture(
         tier="manual",
-        pin=head_commit(repo),
+        base_commit=head_commit(repo),
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-1",
         labs=["lab1"],
@@ -559,14 +561,14 @@ async def test_duplicate_capture_across_sources_registers_one_context(tmp_path):
     )
     store = await reporter.run()
 
-    assert len(store.contexts) == 1  # deduped to one run
+    assert len(store.runs) == 1  # deduped to one run
     (fr,) = [f for f in store.files() if f.path.name == "f.c"]
     assert fr.lines[1].hits.for_tier("manual") == 2  # folded once, not twice
-    assert fr.lines[1].context_hits == {0: 2}
+    assert fr.lines[1].run_hits == {0: 2}
 
 
 @pytest.mark.asyncio
-async def test_explicit_info_tier_gets_synthetic_context(tmp_path):
+async def test_explicit_info_tier_gets_synthetic_run(tmp_path):
     from otto.coverage.reporter import CoverageReporter
 
     src = tmp_path / "src"
@@ -578,20 +580,20 @@ async def test_explicit_info_tier_gets_synthetic_context(tmp_path):
     reporter = CoverageReporter([], src, tmp_path / "report", tiers=[("unit", info)])
     store = await reporter.run()
 
-    (rec,) = store.contexts
-    assert (rec.tier, rec.label, rec.pin) == ("unit", "unit", "")
+    (rec,) = store.runs
+    assert (rec.tier, rec.label, rec.base_commit) == ("unit", "unit", "")
     (fr,) = [f for f in store.files() if f.path.name == "f.c"]
-    assert fr.lines[1].context_hits == {rec.id: 7}
+    assert fr.lines[1].run_hits == {rec.id: 7}
 
 
 @pytest.mark.asyncio
 async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
     """Fold-order regression (manual folds LAST): a manual capture whose
-    covered line was edited since its pin goes stale under the anchor chain,
+    covered line was edited since its base_commit goes stale under the anchor chain,
     but when an e2e capture at the current HEAD also covers that exact line,
     the line itself must NOT read as stale — only the manual run's own
-    evidence is recorded as revoked (``stale_contexts``), while the e2e
-    context's hit is credited normally. Folding manual first (reading the
+    evidence is recorded as revoked (``stale_runs``), while the e2e
+    run's hit is credited normally. Folding manual first (reading the
     stale guard before the e2e hit lands) would incorrectly stale the line.
     """
     from otto.coverage.capture.gitio import blob_sha, head_commit
@@ -605,7 +607,7 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
 
     manual_cap = Capture(
         tier="manual",
-        pin=head1,
+        base_commit=head1,
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-1",
         labs=["lab1"],
@@ -620,11 +622,11 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
     _git(repo, tmp_path, "commit", "-aqm", "edit")
     head2 = head_commit(repo)
 
-    # An e2e capture pinned at the new HEAD covers the same (now-current)
+    # An e2e capture anchored at the new HEAD covers the same (now-current)
     # line 3.
     e2e_cap = Capture(
         tier="system",
-        pin=head2,
+        base_commit=head2,
         captured_at="2026-07-02T00:00:00Z",
         board="b2",
         files={"f.c": CaptureFileCov(lines={3: 4})},
@@ -652,20 +654,20 @@ async def test_e2e_hit_suppresses_manual_stale_mark_same_line(tmp_path):
 
     (fr,) = [f for f in store.files() if f.path.name == "f.c"]
     line3 = fr.lines[3]
-    manual_ctx = next(c.id for c in store.contexts if c.tier == "manual")
-    e2e_ctx = next(c.id for c in store.contexts if c.tier == "system")
+    manual_run = next(c.id for c in store.runs if c.tier == "manual")
+    e2e_run = next(c.id for c in store.runs if c.tier == "system")
 
     assert line3.state is None  # e2e hit suppresses the stale mark
-    assert line3.stale_contexts == [manual_ctx]  # manual's own evidence still revoked
-    assert line3.context_hits.get(e2e_ctx) == 4  # e2e context credited
+    assert line3.stale_runs == [manual_run]  # manual's own evidence still revoked
+    assert line3.run_hits.get(e2e_run) == 4  # e2e run credited
 
 
 @pytest.mark.asyncio
-async def test_duplicate_survives_stale_pin_via_key_hoist(tmp_path):
+async def test_duplicate_survives_stale_base_commit_via_key_hoist(tmp_path):
     """The dedupe guarantee the key-hoist design advertises: a cov-dir
     duplicate of an already-committed manual run is skipped by *key* before
-    the e2e pin guard ever runs against it — even once the repo has moved
-    past the duplicate's pin. Without cross-source dedupe this raised
+    the e2e base_commit guard ever runs against it — even once the repo has
+    moved past the duplicate's base_commit. Without cross-source dedupe this raised
     ``CoverageDataMismatchError``; the manual anchor-chain copy stays the
     sole source of truth for the run.
     """
@@ -680,20 +682,20 @@ async def test_duplicate_survives_stale_pin_via_key_hoist(tmp_path):
 
     cap = Capture(
         tier="manual",
-        pin=head1,
+        base_commit=head1,
         captured_at="2026-07-01T00:00:00Z",
         ticket="T-1",
         labs=["lab1"],
         board="b1",
         files={"f.c": CaptureFileCov(blob=blob_sha(repo, Path("f.c")), lines={1: 2})},
     )
-    write_manual_capture(cap, repo)  # committed manual-store copy, pinned to head1
+    write_manual_capture(cap, repo)  # committed manual-store copy, anchored to head1
 
     dup = tmp_path / "out" / "cov" / "b1" / "capture.json"
     cap.save(dup)  # verbatim cov-dir duplicate of the same run
 
     # Advance the repo past head1 -- an unrelated commit so the duplicate's
-    # pin no longer matches HEAD, but f.c's blob is untouched.
+    # base_commit no longer matches HEAD, but f.c's blob is untouched.
     (repo / "unrelated.txt").write_text("x\n")
     _git(repo, tmp_path, "add", "unrelated.txt")
     _git(repo, tmp_path, "commit", "-qm", "unrelated")
@@ -713,10 +715,10 @@ async def test_duplicate_survives_stale_pin_via_key_hoist(tmp_path):
     )
     # Pre-fix (load-order dedupe): this would raise CoverageDataMismatchError
     # because the cov-dir duplicate is folded via _load_captures against the
-    # now-stale pin before the manual copy ever gets a chance to dedupe it.
+    # now-stale base_commit before the manual copy ever gets a chance to dedupe it.
     store = await reporter.run()
 
-    assert len(store.contexts) == 1  # deduped to exactly one run
+    assert len(store.runs) == 1  # deduped to exactly one run
     (fr,) = [f for f in store.files() if f.path.name == "f.c"]
     # f.c's blob is unchanged across the unrelated commit -> anchor fast
     # path -> valid, not stale.

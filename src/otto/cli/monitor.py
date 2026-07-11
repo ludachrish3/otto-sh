@@ -13,6 +13,7 @@ Historical mode (views saved data files):
 """
 
 import asyncio
+import logging
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -21,15 +22,14 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 
 # TODO: Create a SqlPath class that automatically adds the correct slashes and stuff in the front (something like sqlite:////path/to/file)  # noqa: E501 — TODO comment
-from ..configmodule import all_hosts
-from ..logger import get_logger
+from ..config import all_hosts
 from ..monitor.collector import MetricCollector
 from ..monitor.factory import build_monitor_collector
 
 if TYPE_CHECKING:
     from ..monitor.server import MonitorServer
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 monitor_app = typer.Typer(
     help="Launch an interactive performance dashboard.",
@@ -96,9 +96,9 @@ def monitor(
         asyncio.run(_serve_historical(file))
         return
 
-    from ..reservations import gate
+    from .invoke import present_reservation_gate
 
-    gate(ctx)
+    present_reservation_gate(ctx)
 
     from ..host import UnixHost
 

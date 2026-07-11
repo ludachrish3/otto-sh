@@ -50,8 +50,8 @@ import pytest_asyncio
 
 from otto import AppShell, Parsed, register_login_proxy
 from otto.host.app_shell import AppShellActiveError
+from otto.host.factory import create_host_from_dict
 from otto.host.local_host import LocalHost
-from otto.storage.factory import create_host_from_dict
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.labdata import host_data

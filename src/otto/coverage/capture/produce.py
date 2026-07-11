@@ -1,13 +1,13 @@
 """Per-board ``capture.json`` production from fetched ``.gcda`` counters.
 
 Turns the raw ``.gcda`` counters collected by ``otto test --cov`` into a
-pinned :class:`~otto.coverage.capture.model.Capture` per board.  For each
-board directory under ``cov_dir`` this:
+:class:`~otto.coverage.capture.model.Capture` per board, anchored to
+``base_commit``.  For each board directory under ``cov_dir`` this:
 
 1. Resolves the board's toolchain and gcno (build) source root from the
    ``.otto_cov_meta.json`` sidecar via the :mod:`otto.coverage.reporter`
    helpers.
-2. Runs :meth:`~otto.coverage.correlator.merger.LcovMerger.capture` for
+2. Runs :meth:`~otto.coverage.merge.merger.LcovMerger.capture` for
    that board alone, producing ``<board>/board.info``.
 3. Auto-discovers path mappings and rewrites the embedded ``SF:`` paths
    to their local, ``repo_root``-relative form, producing
@@ -22,8 +22,8 @@ on disk as debug artifacts (spec decision 18).
 import logging
 from pathlib import Path
 
-from ..correlator.merger import LcovMerger
-from ..correlator.paths import PathCorrelator, discover_path_mappings
+from ..merge.merger import LcovMerger
+from ..merge.paths import PathRemapper, discover_path_mappings
 from ..reporter import read_cov_source_root, read_cov_source_roots, read_cov_toolchains
 from .model import build_capture
 
@@ -48,12 +48,12 @@ def _board_dirs(cov_dir: Path) -> list[Path]:
     return boards
 
 
-def _write_resolved_info(raw_info: Path, resolved_info: Path, correlator: PathCorrelator) -> None:
-    """Rewrite ``SF:`` lines in *raw_info* to their correlated local paths.
+def _write_resolved_info(raw_info: Path, resolved_info: Path, remapper: PathRemapper) -> None:
+    """Rewrite ``SF:`` lines in *raw_info* to their remapped local paths.
 
     Lines whose path cannot be resolved are kept as-is (with a warning)
     so downstream parsing degrades the same way
-    :class:`~otto.coverage.correlator.lcov_loader.LCOVLoader` does.
+    :class:`~otto.coverage.merge.lcov_loader.LCOVLoader` does.
     """
     out_lines: list[str] = []
     with raw_info.open() as f:
@@ -61,7 +61,7 @@ def _write_resolved_info(raw_info: Path, resolved_info: Path, correlator: PathCo
             line = raw_line.rstrip("\n")
             if line.startswith("SF:"):
                 raw_path = line[3:]
-                resolved = correlator.resolve(raw_path)
+                resolved = remapper.resolve(raw_path)
                 if resolved is None:
                     logger.warning("Unmapped path in %s, keeping raw: %s", raw_info, raw_path)
                     out_lines.append(line)
@@ -83,7 +83,7 @@ async def produce_captures(
     note: str | None = None,
     display_names: dict[str, str] | None = None,
 ) -> list[Path]:
-    """Produce a pinned ``capture.json`` for each board dir under *cov_dir*.
+    """Produce a ``capture.json`` anchored to ``base_commit`` for each board dir under *cov_dir*.
 
     A board dir is any direct subdirectory of *cov_dir* containing at
     least one ``.gcda`` file (recursively).  Boards with no ``.gcda``
@@ -93,15 +93,15 @@ async def produce_captures(
         cov_dir: Coverage directory written by ``otto test --cov``,
             containing per-board subdirs and a ``.otto_cov_meta.json``
             sidecar.
-        tier: Coverage tier name to stamp onto each capture.
-        repo_root: SUT git repo root, used for pin/blob resolution and
-            as the path-correlation target.
-        labs: Lab identifiers to stamp onto each capture.
-        tester: Optional tester identity to stamp onto each capture.
-        ticket: Optional ticket reference to stamp onto each capture.
-        note: Optional free-text note to stamp onto each capture.
+        tier: Coverage tier name to annotate onto each capture.
+        repo_root: SUT git repo root, used for base_commit/blob resolution
+            and as the path-remapping target.
+        labs: Lab identifiers to annotate onto each capture.
+        tester: Optional tester identity to annotate onto each capture.
+        ticket: Optional ticket reference to annotate onto each capture.
+        note: Optional free-text note to annotate onto each capture.
         display_names: Board-dir name (host id) → host display name; boards
-            without an entry are stamped ``None``.
+            without an entry are annotated ``None``.
 
     Returns:
         Paths of the ``capture.json`` files written, one per board, in
@@ -131,9 +131,9 @@ async def produce_captures(
             await merger.capture(board_dir, gcno_dir, raw_info, toolchain=toolchain)
 
             mappings = await discover_path_mappings(raw_info, repo_root, localhost)
-            correlator = PathCorrelator(mappings)
+            remapper = PathRemapper(mappings)
             resolved_info = board_dir / "board.resolved.info"
-            _write_resolved_info(raw_info, resolved_info, correlator)
+            _write_resolved_info(raw_info, resolved_info, remapper)
 
             capture = build_capture(
                 info_path=resolved_info,

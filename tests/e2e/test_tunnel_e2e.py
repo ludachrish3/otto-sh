@@ -64,8 +64,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.lab import Lab
-from otto.configmodule.repo import DockerCompose, DockerImage, DockerSettings, Repo
+from otto.config.lab import Lab
+from otto.config.repo import DockerCompose, DockerImage, DockerSettings, Repo
 from otto.docker.compose import compose_down, compose_up
 from otto.host.docker_host import DockerContainerHost
 from otto.host.unix_host import UnixHost
@@ -175,7 +175,7 @@ async def _assert_no_leftover_tunnel_processes() -> None:
     try:
         leaks: list[str] = []
         for host in hosts:
-            result = await host.oneshot(DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
+            result = await host.exec(DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
             observed = parse_process_discovery(result.value or "")
             if observed:
                 detail = ", ".join(f"pid={o.pid} tunnel={o.parsed.tunnel.id}" for o in observed)
@@ -231,7 +231,7 @@ async def _wait_for_udp_bound(
 ) -> None:
     """Poll until a UDP socket is bound to *ip*:*port* on *host*.
 
-    Closes a real launch race (found live): ``host.oneshot`` returns as soon
+    Closes a real launch race (found live): ``host.exec`` returns as soon
     as the remote shell has *accepted* the backgrounded ``setsid python3 ...
     &`` command, which is well before the python3 interpreter has actually
     started and called ``bind()``. A UDP datagram sent in that gap arrives at
@@ -242,7 +242,7 @@ async def _wait_for_udp_bound(
     deadline = time.monotonic() + timeout
     needle = f"{ip}:{port}"
     while time.monotonic() < deadline:
-        result = await host.oneshot(
+        result = await host.exec(
             "ss -H -u -a -n 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         if needle in (result.value or ""):
@@ -258,7 +258,7 @@ async def _spawn_udp_listener(host: UnixHost, port: int, outfile: str, timeout: 
     """
     script = _listener_script(port, outfile, timeout)
     cmd = f"setsid python3 -c {shlex.quote(script)} </dev/null >/dev/null 2>&1 &"
-    await host.oneshot(cmd, timeout=15, log=LogMode.QUIET)
+    await host.exec(cmd, timeout=15, log=LogMode.QUIET)
     await _wait_for_udp_bound(host, "127.0.0.1", port)
 
 
@@ -272,7 +272,7 @@ async def _wait_for_listener_output(
     deadline = time.monotonic() + timeout
     last = ""
     while time.monotonic() < deadline:
-        result = await host.oneshot(
+        result = await host.exec(
             f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         last = (result.value or "").strip()
@@ -287,7 +287,7 @@ async def _wait_for_listener_output(
 
 async def _rm(host: UnixHost, path: str) -> None:
     """Best-effort remote cleanup of a scratch file."""
-    await host.oneshot(f"rm -f {shlex.quote(path)}", timeout=15, log=LogMode.QUIET)
+    await host.exec(f"rm -f {shlex.quote(path)}", timeout=15, log=LogMode.QUIET)
 
 
 def _send_udp(ip: str, port: int, payload: bytes) -> None:
@@ -482,12 +482,12 @@ async def _spawn_container_listener(
     was installed -- so this parses ``/proc/net/udp`` instead, which needs no
     extra tooling).
     """
-    await container.oneshot(f"rm -f {shlex.quote(outfile)}", timeout=15, log=LogMode.QUIET)
+    await container.exec(f"rm -f {shlex.quote(outfile)}", timeout=15, log=LogMode.QUIET)
     cmd = (
         f"setsid socat -u UDP4-RECVFROM:{port},bind=127.0.0.1 CREATE:{shlex.quote(outfile)} "
         "</dev/null >/dev/null 2>&1 &"
     )
-    await container.oneshot(cmd, timeout=15, log=LogMode.QUIET)
+    await container.exec(cmd, timeout=15, log=LogMode.QUIET)
     await _wait_for_container_udp_bound(container, "127.0.0.1", port)
 
 
@@ -511,7 +511,7 @@ async def _wait_for_container_udp_bound(
     deadline = time.monotonic() + timeout
     needle = _proc_net_udp_needle(ip, port)
     while time.monotonic() < deadline:
-        result = await container.oneshot(
+        result = await container.exec(
             "cat /proc/net/udp 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         if needle in (result.value or ""):
@@ -533,7 +533,7 @@ async def _wait_for_container_file(
     deadline = time.monotonic() + timeout
     last = ""
     while time.monotonic() < deadline:
-        result = await container.oneshot(
+        result = await container.exec(
             f"cat {shlex.quote(path)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
         )
         last = (result.value or "").strip()
@@ -622,7 +622,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
     foreign_cmd = (
         f"setsid socat TCP4-LISTEN:{foreign_port},fork,reuseaddr - </dev/null >/dev/null 2>&1 &"
     )
-    await tomato.oneshot(foreign_cmd, timeout=15, log=LogMode.QUIET)
+    await tomato.exec(foreign_cmd, timeout=15, log=LogMode.QUIET)
     try:
         mid = await discover_tunnels(tunnel_lab)
         assert {d.tunnel.id for d in mid.tunnels} == before_ids, (
@@ -646,7 +646,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
         ]
         assert killed_pids, f"expected tagged processes on {_INGRESS!r} before kill"
         kill_cmd = f"kill {' '.join(str(p) for p in killed_pids)}"
-        result = await carrot.oneshot(kill_cmd, timeout=15, log=LogMode.QUIET)
+        result = await carrot.exec(kill_cmd, timeout=15, log=LogMode.QUIET)
         assert result.is_ok, f"out-of-band kill on {_INGRESS!r} failed: {result.value!r}"
 
         degraded = await discover_tunnels(tunnel_lab)
@@ -660,7 +660,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
-        await tomato.oneshot(
+        await tomato.exec(
             f"pkill -f {shlex.quote(f'TCP4-LISTEN:{foreign_port},')} || true",
             timeout=15,
             log=LogMode.QUIET,

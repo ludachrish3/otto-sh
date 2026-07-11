@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ...configmodule.configmodule import do_for_all_hosts
+from ...config.fleet import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -25,7 +25,7 @@ async def _clean_one_host(
 ) -> None:
     """Delete .gcda files on a single host, logging the outcome."""
     label = host.id
-    result = await host.oneshot(
+    result = await host.exec(
         f"find {gcda_remote_dir} -name '*.gcda' -type f -delete",
         timeout=60,
     )
@@ -67,7 +67,7 @@ async def _fetch_one_host(
     label = host.id
 
     logger.info("Discovering .gcda files on %s:%s", label, gcda_remote_dir)
-    find_result = await host.oneshot(
+    find_result = await host.exec(
         f"find {gcda_remote_dir} -name '*.gcda' -type f",
         timeout=60,
     )
@@ -111,7 +111,7 @@ class GcdaFetcher:
             host2_ne/
                 foo.gcda
 
-    Hosts are selected via :func:`~otto.configmodule.configmodule.all_hosts`,
+    Hosts are selected via :func:`~otto.config.fleet.all_hosts`,
     optionally filtered by a compiled regex *pattern* matched against each host's ``id``.
     """
 

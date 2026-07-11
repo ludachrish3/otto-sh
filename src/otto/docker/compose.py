@@ -14,20 +14,20 @@ import asyncio
 import contextlib
 import getpass
 import json
+import logging
 import shlex
 from collections.abc import AsyncIterator
 from typing import Any
 
-from ..configmodule.lab import Lab
-from ..configmodule.repo import DockerCompose, Repo
+from ..config.lab import Lab
+from ..config.repo import DockerCompose, Repo
 from ..host.docker_host import DockerContainerHost
 from ..host.host import Host
 from ..host.unix_host import UnixHost
-from ..logger import get_logger
 from ..models.settings import OttoEnvSettings
 from ..utils import Status
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 # Brief pause before re-running `up -d` after a transient libnetwork race so
 # the daemon's freshly-created network has settled. Module-level so tests can
@@ -122,13 +122,13 @@ async def _compose_cmd(
     cmd = f"docker compose -p {shlex.quote(project_name)} {file_args} {action}"
     if extra:
         cmd += f" {extra}"
-    result = await parent.oneshot(cmd, timeout=None)
+    result = await parent.exec(cmd, timeout=None)
     return result.status, result.value
 
 
 async def _stack_already_up(parent: Host, project_name: str) -> bool:
     """Return True if any container is running under *project_name* on *parent*."""
-    result = await parent.oneshot(
+    result = await parent.exec(
         f"docker ps -q --filter label=com.docker.compose.project={shlex.quote(project_name)}"
     )
     return result.status.is_ok and bool(result.value.strip())
@@ -151,7 +151,7 @@ async def _resolve_container_id(
     Returns ``None`` if it never becomes visible within the bounded polls.
     """
     for attempt in range(_CONTAINER_ID_RESOLVE_ATTEMPTS):
-        result = await parent.oneshot(
+        result = await parent.exec(
             f"docker ps -q "
             f"--filter label=com.docker.compose.project={shlex.quote(project_name)} "
             f"--filter label=com.docker.compose.service={shlex.quote(service)}"
@@ -391,7 +391,7 @@ async def compose_ps(parent: Host) -> list[dict[str, Any]]:
 
     Uses ``docker ps --format '{{json .}}'`` so the output is structured.
     """
-    result = await parent.oneshot("docker ps --format '{{json .}}'")
+    result = await parent.exec("docker ps --format '{{json .}}'")
     if not result.status.is_ok:
         return []
     out: list[dict[str, Any]] = []
@@ -452,7 +452,7 @@ def register_declared_container_hosts(lab: Lab, repos: list[Repo]) -> int:
 
 def get_container_host(host_id: str) -> DockerContainerHost:
     """Look up a registered container host by id. Raises if not present."""
-    from ..configmodule import get_lab
+    from ..config import get_lab
 
     lab = get_lab()
     host = lab.hosts.get(host_id)

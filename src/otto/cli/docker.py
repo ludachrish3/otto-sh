@@ -11,14 +11,15 @@ All four are thin wrappers around the library API in :mod:`otto.docker`,
 which is also what instructions and suites import directly.
 """
 
+import logging
 from typing import Annotated, Any
 
 import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..configmodule import Repo, get_lab, get_repos
-from ..configmodule.lab import Lab
+from ..config import Repo, get_lab, get_repos
+from ..config.lab import Lab
 from ..docker import (
     build_images,
     compose_down,
@@ -27,10 +28,9 @@ from ..docker import (
     get_user_compose_project,
 )
 from ..host.unix_host import UnixHost
-from ..logger import get_logger
 from ..utils import Status, async_typer_command
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 docker_app = typer.Typer(
     name="docker",
@@ -69,8 +69,8 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:  #
     (``cache['docker_hosts']``); falls through to a live ``lab.json``
     scan on cache miss so first-run completion still works.
     """
-    from ..configmodule import get_completion_names, get_repos
-    from ..configmodule.completion_cache import collect_docker_capable_host_ids
+    from ..config import get_completion_names, get_repos
+    from ..config.completion_cache import collect_docker_capable_host_ids
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("docker_hosts"), list):

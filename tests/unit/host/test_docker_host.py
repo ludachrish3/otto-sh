@@ -39,7 +39,7 @@ def _mock_parent(parent_id: str = "pepper_seed", *, term: str = "ssh"):
     parent.name = parent_id
     parent.term = term
     parent.resources = set()
-    parent.oneshot = AsyncMock(return_value=_ok())
+    parent.exec = AsyncMock(return_value=_ok())
     parent.put = AsyncMock(return_value=Result(Status.Success, value={}))
     parent.get = AsyncMock(return_value=Result(Status.Success, value={}))
     return parent
@@ -112,33 +112,33 @@ def test_is_virtual_default():
 
 
 # ---------------------------------------------------------------------------
-# oneshot — single command
+# exec — single command
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_oneshot_wraps_in_docker_exec():
+async def test_exec_wraps_in_docker_exec():
     parent = _mock_parent()
     h = _make_container(parent)
-    parent.oneshot.return_value = _ok(out="hello")
+    parent.exec.return_value = _ok(out="hello")
 
-    result = await h.oneshot("echo hello")
+    result = await h.exec("echo hello")
 
     assert result.status == Status.Success
     assert result.command == "echo hello"  # caller-visible command, not the wrapper
-    parent.oneshot.assert_awaited_once()
-    sent = parent.oneshot.call_args.args[0]
+    parent.exec.assert_awaited_once()
+    sent = parent.exec.call_args.args[0]
     assert sent.startswith(f"docker exec -i {h.container_id} sh -c ")
     assert "'echo hello'" in sent or "echo hello" in sent  # quoted
 
 
 @pytest.mark.asyncio
-async def test_oneshot_quotes_dangerous_chars():
+async def test_exec_quotes_dangerous_chars():
     """Single quotes / spaces / semicolons must be safely escaped via shlex."""
     parent = _mock_parent()
     h = _make_container(parent)
-    await h.oneshot("echo 'hi' ; rm -rf /")
-    sent = parent.oneshot.call_args.args[0]
+    await h.exec("echo 'hi' ; rm -rf /")
+    sent = parent.exec.call_args.args[0]
     # The whole thing must be wrapped so the parent's shell doesn't see
     # ; as a command separator.
     assert "rm -rf /" in sent
@@ -197,7 +197,7 @@ async def test_session_factory_resolves_container_id_lazily():
     """The cid_getter closure reads the host's current container_id at session-open
     time — not the value at construction time. This means a placeholder host
     constructed with `container_id=""` works correctly once `_ensure_running`
-    populates the id (e.g., via parent.oneshot lookup)."""
+    populates the id (e.g., via parent.exec lookup)."""
     parent = _build_fake_ssh_remote_host()
     h = DockerContainerHost(
         parent=parent,
@@ -235,10 +235,10 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.get_repos", _mock_repos)
-    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
+    monkeypatch.setattr("otto.config.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
 
-    result = await h.oneshot("echo hi")
+    result = await h.exec("echo hi")
 
     compose_up.assert_awaited_once()
     assert compose_up.call_args.kwargs["build"] is False
@@ -256,10 +256,10 @@ async def test_placeholder_auto_ups_stack(monkeypatch):
 async def test_placeholder_no_repo_raises(monkeypatch):
     """No configured repo to auto-start -> clear 'not running' error."""
     h = _make_container(container_id="")
-    monkeypatch.setattr("otto.configmodule.get_repos", lambda: _mock_repos(repo_name=None))
-    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
+    monkeypatch.setattr("otto.config.get_repos", lambda: _mock_repos(repo_name=None))
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
-        await h.oneshot("echo hi")
+        await h.exec("echo hi")
 
 
 @pytest.mark.asyncio
@@ -268,10 +268,10 @@ async def test_placeholder_auto_up_failure_raises(monkeypatch):
     h = _make_container(container_id="")
     compose_up = AsyncMock(side_effect=RuntimeError("compose boom"))
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.get_repos", _mock_repos)
-    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
+    monkeypatch.setattr("otto.config.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
     with pytest.raises(RuntimeError, match="not running"):
-        await h.oneshot("echo hi")
+        await h.exec("echo hi")
 
 
 @pytest.mark.asyncio
@@ -285,10 +285,10 @@ async def test_concurrent_access_triggers_single_auto_up(monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.get_repos", _mock_repos)
-    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
+    monkeypatch.setattr("otto.config.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
 
-    await asyncio.gather(h.oneshot("echo a"), h.oneshot("echo b"))
+    await asyncio.gather(h.exec("echo a"), h.exec("echo b"))
 
     compose_up.assert_awaited_once()
     assert h.container_id == "freshcid"
@@ -305,8 +305,8 @@ async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
     started = _make_container(parent, container_id="freshcid")
     compose_up = AsyncMock(return_value={"api": started})
     monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
-    monkeypatch.setattr("otto.configmodule.get_repos", _mock_repos)
-    monkeypatch.setattr("otto.configmodule.get_lab", MagicMock())
+    monkeypatch.setattr("otto.config.get_repos", _mock_repos)
+    monkeypatch.setattr("otto.config.get_lab", MagicMock())
 
     status, _ = _sm(await h.put([f], Path("/tmp")))
 
@@ -356,8 +356,8 @@ async def test_put_stages_then_docker_cps_then_cleans_up(tmp_path):
 
     assert status == Status.Success
     parent.put.assert_awaited_once()
-    # Verify the calls to oneshot in order: mkdir, docker cp, rm -rf
-    cmds = [c.args[0] for c in parent.oneshot.call_args_list]
+    # Verify the calls to exec in order: mkdir, docker cp, rm -rf
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert any("mkdir -p" in c for c in cmds), cmds
     assert any("docker cp" in c and h.container_id in c and "/srv/in" in c for c in cmds), cmds
     assert any("rm -rf" in c for c in cmds), cmds
@@ -371,17 +371,17 @@ async def test_put_failure_still_cleans_up(tmp_path):
     h = _make_container(parent)
 
     # Make docker cp fail; the surrounding mkdir & rm -rf should still both run.
-    def oneshot_side_effect(cmd, *_, **__):
+    def exec_side_effect(cmd, *_, **__):
         if "docker cp" in cmd:
             return _fail(cmd, out="cp failed")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot_side_effect
+    parent.exec.side_effect = exec_side_effect
 
     status, msg = _sm(await h.put([f], Path("/srv/in")))
     assert status == Status.Error
     assert "cp failed" in msg
-    cmds = [c.args[0] for c in parent.oneshot.call_args_list]
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert any("rm -rf" in c for c in cmds), "cleanup must run on failure"
 
 
@@ -393,7 +393,7 @@ async def test_get_two_step_via_parent():
     status, _ = _sm(await h.get(Path("/etc/os-release"), Path("./out")))
 
     assert status == Status.Success
-    cmds = [c.args[0] for c in parent.oneshot.call_args_list]
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert any("docker cp" in c and h.container_id in c for c in cmds), cmds
     parent.get.assert_awaited_once()
     args, _ = parent.get.call_args
@@ -401,26 +401,26 @@ async def test_get_two_step_via_parent():
 
 
 # ---------------------------------------------------------------------------
-# interact() preconditions
+# login() preconditions
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_interact_requires_remote_ssh_parent():
+async def test_login_requires_remote_ssh_parent():
     # Parent is a MagicMock, NOT a UnixHost — the isinstance check should reject it.
     h = _make_container()
     with pytest.raises(NotImplementedError, match="SSH-based parent"):
-        await h._interact()
+        await h._login()
 
 
 @pytest.mark.asyncio
-async def test_interact_as_user_raises_not_implemented():
+async def test_login_as_user_raises_not_implemented():
     """Task 9: DockerContainerHost has no login-proxy chain of its own —
     passing --as-user must raise loudly rather than being silently ignored
     or (worse) silently forwarded to the container's default shell."""
     h = _make_container()
     with pytest.raises(NotImplementedError, match="--as-user"):
-        await h._interact(as_user="mysql")
+        await h._login(as_user="mysql")
 
 
 # ---------------------------------------------------------------------------
@@ -429,12 +429,12 @@ async def test_interact_as_user_raises_not_implemented():
 
 
 @pytest.mark.asyncio
-async def test_oneshot_dry_run_skips_parent():
+async def test_exec_dry_run_skips_parent():
     parent = _mock_parent()
     h = _make_container(parent=parent)
     with active_context(dry_run=True):
-        result = await h.oneshot("echo hi")
-    parent.oneshot.assert_not_awaited()
+        result = await h.exec("echo hi")
+    parent.exec.assert_not_awaited()
     assert result.status == Status.Skipped
     assert result.command == "echo hi"
     assert "[DRY RUN]" in result.value
@@ -447,7 +447,7 @@ async def test_run_dry_run_skips_session():
     h = _make_container(parent=parent)
     with active_context(dry_run=True):
         result = await h.run("ls /")
-    parent.oneshot.assert_not_awaited()
+    parent.exec.assert_not_awaited()
     assert result.only.status == Status.Skipped
     assert result.only.command == "ls /"
 
@@ -460,7 +460,7 @@ async def test_send_dry_run_returns_without_session():
         await h.send("some text")
     # No session should be touched — parent is a MagicMock so open_session
     # would raise NotImplementedError if called.
-    parent.oneshot.assert_not_awaited()
+    parent.exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -470,7 +470,7 @@ async def test_expect_dry_run_returns_empty_string():
     with active_context(dry_run=True):
         result = await h.expect("prompt> ")
     assert result == ""
-    parent.oneshot.assert_not_awaited()
+    parent.exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -481,7 +481,7 @@ async def test_put_dry_run_skips_transfer(tmp_path):
     f.write_text("hello")
     with active_context(dry_run=True):
         status, msg = _sm(await h.put([f], Path("/dest")))
-    parent.oneshot.assert_not_awaited()
+    parent.exec.assert_not_awaited()
     parent.put.assert_not_awaited()
     assert status == Status.Skipped
     assert "[DRY RUN]" in msg
@@ -494,7 +494,7 @@ async def test_get_dry_run_skips_transfer():
     h = _make_container(parent=parent)
     with active_context(dry_run=True):
         status, msg = _sm(await h.get(Path("/etc/hosts"), Path("./out")))
-    parent.oneshot.assert_not_awaited()
+    parent.exec.assert_not_awaited()
     parent.get.assert_not_awaited()
     assert status == Status.Skipped
     assert "[DRY RUN]" in msg
@@ -529,12 +529,12 @@ async def test_put_mkdir_failure_returns_error(tmp_path):
     f = tmp_path / "payload.bin"
     f.write_bytes(b"data")
 
-    def oneshot_side_effect(cmd, *args, **kwargs):
+    def exec_side_effect(cmd, *args, **kwargs):
         if "mkdir" in cmd:
             return _fail(cmd, out="Permission denied")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot_side_effect
+    parent.exec.side_effect = exec_side_effect
 
     status, msg = _sm(await h.put([f], Path("/dest")))
     assert status == Status.Error
@@ -595,12 +595,12 @@ async def test_put_docker_cp_failure_returns_error(tmp_path):
     f = tmp_path / "payload.bin"
     f.write_bytes(b"data")
 
-    def oneshot_side_effect(cmd, *args, **kwargs):
+    def exec_side_effect(cmd, *args, **kwargs):
         if "docker cp" in cmd:
             return _fail(cmd, out="no such container")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot_side_effect
+    parent.exec.side_effect = exec_side_effect
 
     status, msg = _sm(await h.put([f], Path("/dest")))
     assert status == Status.Error
@@ -612,12 +612,12 @@ async def test_get_mkdir_failure_returns_error():
     parent = _mock_parent()
     h = _make_container(parent=parent)
 
-    def oneshot_side_effect(cmd, *args, **kwargs):
+    def exec_side_effect(cmd, *args, **kwargs):
         if "mkdir" in cmd:
             return _fail(cmd, out="read-only filesystem")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot_side_effect
+    parent.exec.side_effect = exec_side_effect
 
     status, msg = _sm(await h.get(Path("/etc/os-release"), Path("./out")))
     assert status == Status.Error
@@ -629,12 +629,12 @@ async def test_get_docker_cp_failure_returns_error():
     parent = _mock_parent()
     h = _make_container(parent=parent)
 
-    def oneshot_side_effect(cmd, *args, **kwargs):
+    def exec_side_effect(cmd, *args, **kwargs):
         if "docker cp" in cmd:
             return _fail(cmd, out="container not found")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot_side_effect
+    parent.exec.side_effect = exec_side_effect
 
     status, msg = _sm(await h.get(Path("/etc/os-release"), Path("./out")))
     assert status == Status.Error
@@ -654,12 +654,12 @@ async def test_get_mid_batch_docker_cp_failure_keeps_every_source_key(tmp_path):
     first = Path("/remote/first.bin")
     second = Path("/remote/second.bin")
 
-    def oneshot_side_effect(cmd, *args, **kwargs):
+    def exec_side_effect(cmd, *args, **kwargs):
         if "docker cp" in cmd and "second.bin" in cmd:
             return _fail(cmd, out="no such file or directory")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot_side_effect
+    parent.exec.side_effect = exec_side_effect
 
     result = await h.get([first, second], tmp_path)
     assert result.status == Status.Error
@@ -670,12 +670,12 @@ async def test_get_mid_batch_docker_cp_failure_keeps_every_source_key(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _interact — non-ssh parent rejection + ssh happy path
+# _login — non-ssh parent rejection + ssh happy path
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_interact_rejects_non_ssh_parent():
+async def test_login_rejects_non_ssh_parent():
     """telnet parent raises NotImplementedError (parent is UnixHost but term != ssh)."""
     from otto.host.connections import ConnectionManager
     from otto.host.unix_host import UnixHost
@@ -699,17 +699,17 @@ async def test_interact_rejects_non_ssh_parent():
     )
     h = _make_container(parent=telnet_parent)
     with pytest.raises(NotImplementedError):
-        await h._interact()
+        await h._login()
 
 
 @pytest.mark.asyncio
-async def test_interact_ssh_runs_docker_exec():
-    """SSH parent: _interact calls run_ssh_login with docker exec -it command."""
+async def test_login_ssh_runs_docker_exec():
+    """SSH parent: _login calls run_ssh_login with docker exec -it command."""
     parent = _build_fake_ssh_remote_host()
     h = _make_container(parent=parent, container_id="mycontainer123")
 
     with patch("otto.host.interact.run_ssh_login", new_callable=AsyncMock) as mock_login:
-        await h._interact()
+        await h._login()
 
     mock_login.assert_awaited_once()
     call_kwargs = mock_login.call_args.kwargs

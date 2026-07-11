@@ -6,11 +6,11 @@ Emulates the real user workflow::
     otto -l veggies cov <log_dir> --report ./report
 
 Both stages run as real subprocesses so every code path a user exercises
-(argv parsing, Typer wiring, ``--lab`` resolution, configmodule init,
-logger output-dir creation, ``_run_coverage`` fetch, ``CoverageReporter``)
+(argv parsing, Typer wiring, ``--lab`` resolution, config init,
+logger output-dir creation, ``collect_coverage`` fetch, ``CoverageReporter``)
 is covered. Subprocess coverage is captured via ``coverage.process_startup()``
 invoked from ``tests/_coverage_bootstrap/sitecustomize.py`` — the same
-mechanism ``tests/unit/configmodule/test_completion_cache.py`` uses.
+mechanism ``tests/unit/config/test_completion_cache.py`` uses.
 
 **Prerequisites**:
 
@@ -24,8 +24,8 @@ mechanism ``tests/unit/configmodule/test_completion_cache.py`` uses.
 
 All tests carry ``@pytest.mark.xdist_group("coverage_e2e")`` so pytest-xdist
 pins them to a single worker. Without this pinning, concurrent workers
-would race on the shared Vagrant VMs (both running ``_cov_clean_remotes``
-and ``_run_coverage`` against the same ``/var/coverage/product`` directory),
+would race on the shared Vagrant VMs (both running ``clean_remote_gcda``
+and ``collect_coverage`` against the same ``/var/coverage/product`` directory),
 which deadlocks asyncssh transfers.
 """
 
@@ -504,7 +504,7 @@ class TestCoverageIntegrity:
 
 # Expected host layout from tests/lab_data/tech1/lab.json for lab "veggies".
 # Discovering the list from disk rather than calling all_hosts() keeps this
-# test process free of otto.configmodule singletons.
+# test process free of otto.config singletons.
 EXPECTED_HOST_IDS = {"carrot_seed", "tomato_seed", "pepper_seed"}
 
 
@@ -657,7 +657,7 @@ class TestPollutedBuildTree:
     Coverage data (.gcda) embeds a build stamp that must match the build
     tree's .gcno notes files, so raw counters cannot be re-merged after a
     rebuild. Run dirs produced by this branch are immune: their per-board
-    ``capture.json`` pins the merge result at collection time, so the
+    ``capture.json`` anchors the merge result at collection time, so the
     report never touches the polluted tree. Pre-capture run dirs (older
     otto versions) still re-merge and must fail with a helpful error
     naming the likely cause — never a traceback, never silent zeros.

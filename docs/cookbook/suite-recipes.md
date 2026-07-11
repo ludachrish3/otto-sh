@@ -17,7 +17,7 @@ class TestInterfaces(OttoSuite):
     @pytest.mark.parametrize("interface", ["eth0", "eth1", "mgmt0"])
     async def test_interface_up(self, interface: str) -> None:
         """Runs 3 times — once per interface."""
-        result = await host.oneshot(f"ip link show {interface}")
+        result = await host.exec(f"ip link show {interface}")
         assert "UP" in result.value
 ```
 

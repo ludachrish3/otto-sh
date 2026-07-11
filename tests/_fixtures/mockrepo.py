@@ -1,4 +1,4 @@
-from otto.configmodule.repo import Repo
+from otto.config.repo import Repo
 
 
 class MockRepo(Repo):

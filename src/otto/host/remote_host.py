@@ -24,13 +24,13 @@ concrete subclass supplies the real ``@dataclass`` fields.
 """
 
 import asyncio
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, cast
 
 from typing_extensions import override
 
-from ..logger import get_logger
 from ..logger.mode import LogMode
 from .host import BaseHost
 from .login_proxy import Cred
@@ -38,7 +38,7 @@ from .login_proxy import Cred
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
 
-    from ..configmodule.lab import Lab
+    from ..config.lab import Lab
     from ..result import CommandResult
     from .connections import ConnectionManager
     from .interface import Interface
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from .session import SessionManager
     from .transport import SshHopTransport
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 _SLUG_RUN = re.compile(r"[^a-z0-9]+")
@@ -380,12 +380,12 @@ class RemoteHost(BaseHost):
         host_name = self.name
 
         # The outer SshHopTransport — its ``_parent`` is set lazily on the
-        # first call to ``_create_tunnel`` (when the configmodule is
+        # first call to ``_create_tunnel`` (when the config is
         # available and we can resolve the hop chain). Linking ``_parent``
         # makes ``close()`` walk the chain so every intermediate SSH
         # connection's asyncio transport gets explicitly closed.
         # placeholder factory is replaced below; needed to satisfy the
-        # constructor without doing anything that requires the configmodule.
+        # constructor without doing anything that requires the config.
         async def _placeholder(*args: object, **kwargs: object) -> NoReturn:  # noqa: ARG001 — required by SshHopTransport factory callback signature (Callable[..., Awaitable[SSHClientConnection]])
             raise RuntimeError("SshHopTransport factory not initialized")
 

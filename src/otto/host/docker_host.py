@@ -4,23 +4,24 @@ Docker container host.
 A :class:`~otto.host.docker_host.DockerContainerHost` satisfies the otto
 :class:`~otto.host.host.Host` protocol by
 delegating most operations through a *parent* host that runs the docker
-daemon. ``oneshot`` becomes ``parent.oneshot("docker exec ...")``;
+daemon. ``exec`` becomes ``parent.exec("docker exec ...")``;
 ``get`` / ``put`` are two-step ``docker cp`` via the parent's filesystem;
-``interact`` opens a PTY-backed ``docker exec -it`` over the parent's
+``login`` opens a PTY-backed ``docker exec -it`` over the parent's
 existing SSH connection.
 
 ``run`` (and ``open_session`` / ``send`` / ``expect``) use a persistent
 ``docker exec -it <ctr> sh`` session multiplexed on the parent's SSH
 connection — shell state (``cd``, env vars, shell vars) persists across
 calls, matching :class:`~otto.host.local_host.LocalHost` and
-:class:`~otto.host.unix_host.UnixHost`. ``oneshot`` stays stateless and concurrent-safe.
+:class:`~otto.host.unix_host.UnixHost`. ``exec`` stays stateless and concurrent-safe.
 
 Persistent-shell support requires an SSH-based :class:`~otto.host.unix_host.UnixHost` parent.
 Local-host parents and telnet parents are rejected at session-open time —
-the per-call ``oneshot`` path still works against any parent.
+the per-call ``exec`` path still works against any parent.
 """
 
 import asyncio
+import logging
 import shlex
 from dataclasses import (
     dataclass,
@@ -31,7 +32,6 @@ from typing import TYPE_CHECKING, Annotated
 
 from typing_extensions import override
 
-from ..logger import get_logger
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Status, cli_exposed
@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 from .power import PowerController
 from .session import Expect, HostSession, SessionManager, ShellSession, _DockerSshSession
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -62,10 +62,10 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     """The lab host running the docker daemon. Owns auth, hop chain, and
     the SSH connection used to reach the daemon. Typed as
     :class:`~otto.host.host.Host` (the protocol) so the type-system surface stays narrow,
-    but ``run`` / ``open_session`` / ``send`` / ``expect`` / ``interact``
+    but ``run`` / ``open_session`` / ``send`` / ``expect`` / ``login``
     additionally require an SSH-based :class:`~otto.host.unix_host.UnixHost` at runtime —
     they open a persistent ``docker exec`` channel on the parent's
-    asyncssh connection. ``oneshot`` and file transfer work against any
+    asyncssh connection. ``exec`` and file transfer work against any
     parent."""
 
     container_id: str
@@ -154,7 +154,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     f"DockerContainerHost persistent shell requires an SSH-based "
                     f"UnixHost parent; got {type(self.parent).__name__}"
                     + (f" with term={term!r}" if term is not None else "")
-                    + ". Use oneshot() with chained `&&` commands instead, or "
+                    + ". Use exec() with chained `&&` commands instead, or "
                     "configure an SSH-based parent."
                 )
             return _DockerSshSession(
@@ -167,7 +167,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             log_command=self._log_command,
             log_output=self._log_output,
             session_factory=_make_session,
-            oneshot_factory=self._oneshot_via_parent,
+            exec_factory=self._exec_via_parent,
             creds=[],
             host_id=self.id,
         )
@@ -210,7 +210,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
     async def _resolve_container_id(self) -> str:
         """Return the running container id for this service, or ``""``."""
-        result = await self.parent.oneshot(
+        result = await self.parent.exec(
             f"docker ps -q "
             f"--filter label=com.docker.compose.project={shlex.quote(self.compose_project)} "
             f"--filter label=com.docker.compose.service={shlex.quote(self.service)}"
@@ -226,8 +226,8 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         :func:`compose_up` with ``build=False`` so access never triggers an
         image rebuild — a missing image fails fast with an actionable error.
         """
-        from ..configmodule import get_lab as _get_lab
-        from ..configmodule import get_repos as _get_repos
+        from ..config import get_lab as _get_lab
+        from ..config import get_repos as _get_repos
         from ..docker.compose import compose_up
 
         logger.info(
@@ -276,7 +276,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         return f"docker exec {flags} {self.container_id} sh -c {shlex.quote(cmd)}"
 
     @override
-    async def oneshot(
+    async def exec(
         self,
         cmd: str,
         timeout: float | None = None,
@@ -290,9 +290,9 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
         """
         if is_dry_run():
             return self._dry_run_result(cmd)
-        return await self._oneshot_via_parent(cmd, timeout, log=log)
+        return await self._exec_via_parent(cmd, timeout, log=log)
 
-    async def _oneshot_via_parent(
+    async def _exec_via_parent(
         self,
         cmd: str,
         timeout: float | None = None,
@@ -300,7 +300,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     ) -> CommandResult:
         """Wrap *cmd* in ``docker exec`` and dispatch through the parent."""
         wrapped = await self._docker_exec(cmd)
-        result = await self.parent.oneshot(wrapped, timeout=timeout, log=self._effective_log(log))
+        result = await self.parent.exec(wrapped, timeout=timeout, log=self._effective_log(log))
         # Replace the wrapped command in the result so callers see what
         # they asked for, not the docker-exec wrapper.
         return CommandResult(
@@ -371,7 +371,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
     ####################
 
     @override
-    async def _interact(self, as_user: str | None = None) -> None:
+    async def _login(self, as_user: str | None = None) -> None:
         """Open an interactive shell inside the container via the parent's SSH conn.
 
         ``as_user`` (Task 9) is not supported here — a container exec has no
@@ -388,12 +388,12 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
         if not isinstance(self.parent, UnixHost):
             raise NotImplementedError(
-                f"DockerContainerHost.interact() requires an SSH-based parent host; "
+                f"DockerContainerHost.login() requires an SSH-based parent host; "
                 f"got parent of type {type(self.parent).__name__}."
             )
         if self.parent.term != "ssh":
             raise NotImplementedError(
-                f"DockerContainerHost.interact() requires parent.term == 'ssh'; "
+                f"DockerContainerHost.login() requires parent.term == 'ssh'; "
                 f"got {self.parent.term!r}. Telnet parents cannot tunnel an "
                 f"interactive docker exec."
             )
@@ -443,7 +443,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
         stage = self._stage_dir(self.container_id)
         try:
-            mkdir = await self.parent.oneshot(f"mkdir -p {shlex.quote(str(stage))}")
+            mkdir = await self.parent.exec(f"mkdir -p {shlex.quote(str(stage))}")
             if not mkdir.status.is_ok:
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
                 return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
@@ -468,7 +468,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             per_file: dict[Path, Result] = {}
             for f in files:
                 staged = stage / f.name
-                cp = await self.parent.oneshot(
+                cp = await self.parent.exec(
                     f"docker cp {shlex.quote(str(staged))} "
                     f"{shlex.quote(self.container_id)}:{shlex.quote(str(dest_dir))}"
                 )
@@ -478,7 +478,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                     per_file[f] = Result(Status.Success, value=dest_dir / f.name)
             return aggregate_transfer(per_file)
         finally:
-            await self.parent.oneshot(f"rm -rf {shlex.quote(str(stage))}")
+            await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
 
     @override
     @cli_exposed(success="Download complete.")
@@ -508,7 +508,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
 
         stage = self._stage_dir(self.container_id)
         try:
-            mkdir = await self.parent.oneshot(f"mkdir -p {shlex.quote(str(stage))}")
+            mkdir = await self.parent.exec(f"mkdir -p {shlex.quote(str(stage))}")
             if not mkdir.status.is_ok:
                 msg = f"failed to create staging dir on parent: {mkdir.value}"
                 return aggregate_transfer({f: Result(Status.Error, msg=msg) for f in files})
@@ -516,7 +516,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             staged_paths: list[Path] = []
             for i, f in enumerate(files):
                 staged = stage / f.name
-                cp = await self.parent.oneshot(
+                cp = await self.parent.exec(
                     f"docker cp {shlex.quote(self.container_id)}:{shlex.quote(str(f))} "
                     f"{shlex.quote(str(staged))}"
                 )
@@ -551,7 +551,7 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
             per_file = {f: staged_map.get(stage / f.name, fallback) for f in files}
             return aggregate_transfer(per_file)
         finally:
-            await self.parent.oneshot(f"rm -rf {shlex.quote(str(stage))}")
+            await self.parent.exec(f"rm -rf {shlex.quote(str(stage))}")
 
     def rebuild_connections(self) -> None:
         """Drop any persistent session so the next call reopens it.

@@ -32,6 +32,7 @@ message because the remote kernel has no link to the local terminal.
 
 import asyncio
 import contextlib
+import logging
 import os
 import re
 import signal
@@ -43,11 +44,10 @@ from pathlib import Path
 from typing import Any
 
 from ..context import try_get_context
-from ..logger import get_logger
 from ..logger.mode import LogMode
 from .login_proxy import Cred, run_proxy
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 # Ctrl+] — the classic telnet(1) escape character. Single byte, no common

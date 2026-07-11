@@ -1519,17 +1519,17 @@ class TestLoginProxyAtSessionEstablishment:
 
 
 # ---------------------------------------------------------------------------
-# Proxied oneshot routing (Task 8)
+# Proxied exec routing (Task 8)
 # ---------------------------------------------------------------------------
 
 from otto.result import CommandResult
 
 
-class _StubOneshotSession(ShellSession):
+class _StubExecSession(ShellSession):
     """Immediate-handshake session with a canned, call-recording ``run_cmd``.
 
     Mirrors ``_AliveStubSession`` in test_session_logging.py — these tests
-    only care about *which path* ``oneshot()`` takes (raw exec factory vs.
+    only care about *which path* ``exec()`` takes (raw exec factory vs.
     pooled named session), not real transport/frame parsing.
     """
 
@@ -1544,7 +1544,7 @@ class _StubOneshotSession(ShellSession):
         self.writes.append(data)
 
     async def _read_until_pattern(self, pattern: re.Pattern[str]) -> str:
-        # Resync-aware (see _ImmediateSession): the proxied-oneshot tests
+        # Resync-aware (see _ImmediateSession): the proxied-exec tests
         # below use a passwordless built-in `su` hop, so the only expect()
         # call this stub ever sees is the engine's post-transition echo-proof
         # `$?`-digit resync probe.
@@ -1575,16 +1575,16 @@ class _StubOneshotSession(ShellSession):
         return CommandResult(status=Status.Success, value="OUT", command=cmd, retcode=0)
 
 
-class TestOneshotProxyRouting:
-    """Task 8: ``oneshot()`` must route through the proxied pool — not a raw
+class TestExecProxyRouting:
+    """Task 8: ``exec()`` must route through the proxied pool — not a raw
     SSH exec channel — whenever the login is proxied (non-empty ``proxy_hops``).
 
-    Both raw-exec fast paths (the ``_oneshot_factory`` callable, and the
+    Both raw-exec fast paths (the ``_exec_factory`` callable, and the
     inline ``ssh_conn.create_process`` in the ``case "ssh":`` branch)
     authenticate as the resolved DIRECT cred and cannot replay proxy hops —
-    so a proxied oneshot on either fast path would silently run as the
+    so a proxied exec on either fast path would silently run as the
     via-user instead of the target. Only the pooled named-session path
-    (``_acquire_oneshot_session`` -> ``open_session``) replays hops, via
+    (``_acquire_exec_session`` -> ``open_session``) replays hops, via
     ``_apply_login_proxy`` (Task 7).
     """
 
@@ -1600,16 +1600,16 @@ class TestOneshotProxyRouting:
         conn = _proxy_connections([], login_target="alice", credentials=("alice", "alicepw"))
         mgr = SessionManager(
             connections=conn,
-            session_factory=_StubOneshotSession,
-            oneshot_factory=fake_factory,
+            session_factory=_StubExecSession,
+            exec_factory=fake_factory,
             host_id="h",
         )
 
-        result = await mgr.oneshot("id")
+        result = await mgr.exec("id")
 
         assert factory_calls == ["id"]
         assert result.value == "factory"
-        assert mgr._oneshot_pool == []  # pool never touched
+        assert mgr._exec_pool == []  # pool never touched
 
     @pytest.mark.asyncio
     async def test_hops_present_skips_factory_uses_pool(self):
@@ -1624,19 +1624,19 @@ class TestOneshotProxyRouting:
         conn = _proxy_connections([hop], login_target="mysql", credentials=("admin", "adminpw"))
         mgr = SessionManager(
             connections=conn,
-            session_factory=_StubOneshotSession,
-            oneshot_factory=fake_factory,
+            session_factory=_StubExecSession,
+            exec_factory=fake_factory,
             host_id="h",
         )
 
-        result = await mgr.oneshot("id")
+        result = await mgr.exec("id")
 
         assert factory_calls == []  # the raw exec factory must NOT run
         assert result.value == "OUT"
         # the pooled session actually ran the command and ended up stamped
         # as the proxied target, not the direct-auth via-user
-        assert len(mgr._oneshot_pool) == 1
-        pooled = mgr._oneshot_pool[0]
+        assert len(mgr._exec_pool) == 1
+        pooled = mgr._exec_pool[0]
         assert pooled.current_user == "mysql"
         assert pooled._session.run_cmd_calls == ["id"]
 
@@ -1655,12 +1655,12 @@ class TestOneshotProxyRouting:
         )
         mgr = SessionManager(
             connections=conn,
-            session_factory=_StubOneshotSession,
+            session_factory=_StubExecSession,
             host_id="h",
         )
 
-        result = await mgr.oneshot("id")
+        result = await mgr.exec("id")
 
         conn.ssh.assert_not_awaited()  # the raw exec channel must NOT be opened
         assert result.value == "OUT"
-        assert mgr._oneshot_pool[0].current_user == "mysql"
+        assert mgr._exec_pool[0].current_user == "mysql"

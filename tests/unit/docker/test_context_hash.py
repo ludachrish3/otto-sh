@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from otto.configmodule.repo import DockerImage
+from otto.config.repo import DockerImage
 from otto.docker._context_hash import context_hash
 
 

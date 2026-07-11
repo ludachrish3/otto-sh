@@ -9,8 +9,8 @@ import pytest
 import typer
 
 from otto.cli import docker as docker_cli
-from otto.configmodule.lab import Lab
-from otto.configmodule.repo import Repo
+from otto.config.lab import Lab
+from otto.config.repo import Repo
 from otto.host.unix_host import UnixHost
 from otto.utils import Status
 
@@ -585,7 +585,7 @@ async def test_ps_accepts_positional_handle_for_on(tmp_path):
 def test_completer_cache_hit():
     """_docker_host_completer returns sorted cached docker_hosts on cache hit."""
     with patch(
-        "otto.configmodule.get_completion_names",
+        "otto.config.get_completion_names",
         return_value={"docker_hosts": ["h2", "h1"]},
     ):
         result = docker_cli._docker_host_completer(MagicMock(), "")
@@ -596,12 +596,12 @@ def test_completer_cache_hit():
 def test_completer_cache_miss_falls_back():
     """_docker_host_completer falls back to collect_docker_capable_host_ids on cache miss."""
     with (
-        patch("otto.configmodule.get_completion_names", return_value=None),
+        patch("otto.config.get_completion_names", return_value=None),
         patch(
-            "otto.configmodule.completion_cache.collect_docker_capable_host_ids",
+            "otto.config.completion_cache.collect_docker_capable_host_ids",
             return_value=["h2", "h1"],
         ),
-        patch("otto.configmodule.get_repos", return_value=[]),
+        patch("otto.config.get_repos", return_value=[]),
     ):
         result = docker_cli._docker_host_completer(MagicMock(), "")
 
@@ -611,7 +611,7 @@ def test_completer_cache_miss_falls_back():
 def test_completer_prefix_filter():
     """_docker_host_completer filters by incomplete prefix."""
     with patch(
-        "otto.configmodule.get_completion_names",
+        "otto.config.get_completion_names",
         return_value={"docker_hosts": ["alpha", "beta", "almond"]},
     ):
         result = docker_cli._docker_host_completer(MagicMock(), "al")

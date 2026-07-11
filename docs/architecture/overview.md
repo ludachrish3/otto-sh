@@ -51,7 +51,7 @@ digraph bigpicture {
         hosts [label="host subsystem\nsessions · connections · transfer"];
         suites [label="suite subsystem\n+ pytest plugin"];
         observers [label="monitor + coverage\npipelines"];
-        data [label="data boundary\nmodels · storage · settings"];
+        data [label="data boundary\nmodels · labs · settings"];
     }
 
     subgraph cluster_foundation {
@@ -91,8 +91,8 @@ a lower layer never imports from a higher one.
 | Module | Responsibility |
 | --- | --- |
 | `otto.models` | Pydantic specs for lab.json, settings.toml, env vars, monitor records |
-| `otto.storage` | The lab-repository (host source) protocol and the default JSON backend |
-| `otto.configmodule` | Repo/lab discovery, settings parsing, fleet accessors |
+| `otto.labs` | The lab-repository (host source) protocol and the default JSON backend |
+| `otto.config` | Repo/lab discovery, settings parsing, fleet accessors |
 
 **Domain** — the subsystems that do the actual work:
 
@@ -101,7 +101,7 @@ a lower layer never imports from a higher one.
 | `otto.host` | Host classes, sessions, connections, transfers, privilege, power |
 | `otto.suite` | Test-suite base class, auto-registration, the pytest plugin, `expect()` |
 | `otto.monitor` | Metric collection, parsers, SNMP, the live dashboard |
-| `otto.coverage` | The embedded gcov pipeline: fetch, correlate, render, report |
+| `otto.coverage` | The embedded gcov pipeline: fetch, merge, render, report |
 | {mod}`otto.docker` | Image builds and compose lifecycles on parent hosts |
 | {mod}`otto.reservations` | The reservation gate and its pluggable backends |
 

@@ -2,8 +2,9 @@
 
 One engine, two uses (spec §6): retrieval-time dirty-tree correction
 (NEW = modified working tree → OLD = HEAD) and report-time manual
-validity (OLD = pinned capture → NEW = current source).  Lines inside a
-hunk on either side have no counterpart and map to ``None``.
+validity (OLD = capture anchored at ``base_commit`` → NEW = current
+source).  Lines inside a hunk on either side have no counterpart and
+map to ``None``.
 """
 
 import re

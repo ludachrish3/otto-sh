@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from otto.host.command_frame import ZephyrFrame
 from otto.host.embedded_filesystem import NoFileSystem
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.factory import create_host_from_dict
 from otto.host.interface import Interface
 from otto.host.options import TelnetOptions
 from otto.host.toolchain import Toolchain
@@ -21,7 +22,6 @@ from otto.models.host import (
     ToolchainSpec,
     UnixHostSpec,
 )
-from otto.storage.factory import create_host_from_dict
 
 
 def _minimal_unix_kwargs() -> dict:

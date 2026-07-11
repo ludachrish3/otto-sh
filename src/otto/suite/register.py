@@ -8,10 +8,10 @@ suite subcommands lazily from that registry through a shared
 ``RegistryBackedGroup`` (see ``cli/invoke.py``), so no Typer app mutation
 happens here or at ``cli/test.py`` import time.
 
-No circular imports: this module never imports from ``otto.cli.test`` at module
-level.  The runner function uses a lazy import so the actual test execution can
-reach ``run_suite`` only when the CLI command is invoked, by which time
-``cli/test.py`` is fully loaded.
+No heavy imports at module load: the runner reaches the suite-run engine
+(:func:`otto.suite.run.run_suite`) through a lazy import so the pytest-touching
+core is pulled only when a suite command actually runs, not at registration
+(import) time.
 """
 
 import dataclasses
@@ -26,11 +26,12 @@ from ..registry import Registry
 
 @dataclasses.dataclass(frozen=True)
 class SuiteEntry:
-    """One registered suite: its Typer sub-app + source file for attribution."""
+    """One registered suite: its Typer sub-app + source file + suite class."""
 
     name: str
     sub_app: typer.Typer
     file: str
+    cls: type
 
 
 # ---------------------------------------------------------------------------
@@ -92,7 +93,6 @@ def register_suite_class(suite_class: type) -> None:
     # Capture values for the closure — avoids late-binding bugs
     _opts_cls = opts_cls
     _suite_cls = suite_class
-    _suite_file = suite_file
 
     def runner(**kw: Any) -> None:
         ctx = kw.pop("ctx")
@@ -102,10 +102,24 @@ def register_suite_class(suite_class: type) -> None:
             else None
         )
 
-        # Lazy import — cli/test.py is fully loaded by the time any command runs
-        from ..cli.test import run_suite
+        # Call the suite-run library directly (class-first). The engine derives
+        # the suite's source file itself (inspect.getfile) and returns a
+        # SuiteRunResult; translate a non-zero exit code into typer.Exit so the
+        # CLI/CI sees the failure. Lazy import keeps the pytest-touching engine
+        # off the import-time path.
+        from ..context import get_context
+        from .run import RUN_OPTIONS_KEY, RunOptions, run_suite
 
-        run_suite(_suite_cls, _suite_file, opts_instance, ctx)
+        stored = ctx.meta.get(RUN_OPTIONS_KEY)
+        run_options = stored if isinstance(stored, RunOptions) else RunOptions()
+        result = run_suite(
+            _suite_cls,
+            options=opts_instance,
+            run_options=run_options,
+            output_dir=get_context().output_dir,
+        )
+        if result.exit_code != 0:
+            raise typer.Exit(code=result.exit_code)
 
     runner.__signature__ = inspect.Signature(params)  # ty: ignore[unresolved-attribute]
     runner.__name__ = suite_class.__name__
@@ -128,7 +142,7 @@ def register_suite_class(suite_class: type) -> None:
     )
     SUITES.register(
         suite_class.__name__,
-        SuiteEntry(name=suite_class.__name__, sub_app=sub_app, file=suite_file),
+        SuiteEntry(name=suite_class.__name__, sub_app=sub_app, file=suite_file, cls=suite_class),
         origin=suite_class.__module__,
         overwrite=same_file,
     )

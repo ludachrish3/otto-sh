@@ -372,7 +372,7 @@ class HostSpec(OttoModel):
 
         Overridden by the concrete family specs (:class:`UnixHostSpec`,
         :class:`EmbeddedHostSpec`), each of which knows the runtime class to
-        construct. The abstract base carries the contract so the storage
+        construct. The abstract base carries the contract so the host
         factory can call ``spec.to_host(cls)`` against a ``HostSpec`` reference.
         """
         raise NotImplementedError(

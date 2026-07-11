@@ -23,6 +23,7 @@ independently of product code; declaring products *in* lab data is deliberately
 **not** supported.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -31,13 +32,12 @@ from typing import TYPE_CHECKING
 
 from typing_extensions import override
 
-from ..logger import get_logger
 from ..utils import Status
 
 if TYPE_CHECKING:
     from .host import Host
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 class Product(ABC):
@@ -129,7 +129,7 @@ def apply_product_providers(host: "Host") -> None:
     """Run every registered provider against *host*, attaching their products.
 
     Called at the single lab-ingest chokepoint
-    (:func:`otto.storage.factory.create_host_from_dict`). Providers run in
+    (:func:`otto.host.factory.create_host_from_dict`). Providers run in
     registration order and their results are concatenated onto
     ``host.products``. A product whose :attr:`Product.name` already appears on
     the host is skipped (deduplication guards two overlapping providers). A

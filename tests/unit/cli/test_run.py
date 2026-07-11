@@ -519,7 +519,7 @@ async def test_inject_ctx_supplies_active_context():
     import inspect
 
     from otto.cli.invoke import _inject_ctx
-    from otto.configmodule.lab import Lab
+    from otto.config.lab import Lab
     from otto.context import OttoContext, reset_context, set_context
 
     seen: dict[str, object] = {}

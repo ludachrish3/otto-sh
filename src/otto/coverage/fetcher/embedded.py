@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ...configmodule.configmodule import do_for_all_hosts
+from ...config.fleet import do_for_all_hosts
 from ...utils import Status
 
 if TYPE_CHECKING:
@@ -109,7 +109,7 @@ async def _collect_one_embedded_host(
     label = host.id
 
     logger.info("Dumping embedded coverage from %s via %r", label, dump_command)
-    result = await host.oneshot(dump_command, timeout=_DUMP_TIMEOUT)
+    result = await host.exec(dump_command, timeout=_DUMP_TIMEOUT)
     if result.status != Status.Success:
         logger.error("cov_dump failed on %s: %s", label, result.value)
         return None

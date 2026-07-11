@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.lab import Lab
-from otto.configmodule.repo import Repo
+from otto.config.lab import Lab
+from otto.config.repo import Repo
 from otto.docker import build_images, compose_down, compose_up
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
@@ -73,15 +73,15 @@ async def stack(pepper_lease):
 
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_oneshot_returns_output_from_container(stack):
-    result = await stack.oneshot("echo hello-from-container")
+async def test_exec_returns_output_from_container(stack):
+    result = await stack.exec("echo hello-from-container")
     assert result.status is Status.Success
     assert "hello-from-container" in result.value
 
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_oneshot_failing_command_reports_nonzero(stack):
-    result = await stack.oneshot("false")
+async def test_exec_failing_command_reports_nonzero(stack):
+    result = await stack.exec("false")
     assert result.status is Status.Failed
     assert result.retcode != 0
 
@@ -89,7 +89,7 @@ async def test_oneshot_failing_command_reports_nonzero(stack):
 @pytest.mark.asyncio(loop_scope="module")
 async def test_marker_file_present(stack):
     """The Dockerfile bakes in /etc/repo1-marker.txt — it should be readable."""
-    result = await stack.oneshot("cat /etc/repo1-marker.txt")
+    result = await stack.exec("cat /etc/repo1-marker.txt")
     assert result.status is Status.Success
     assert "repo1-fixture" in result.value
 
@@ -103,7 +103,7 @@ async def test_put_then_get_roundtrip(stack, tmp_path):
     assert res.status is Status.Success, res.msg
 
     # Verify the bytes inside the container.
-    cat = await stack.oneshot("wc -c /tmp/payload.bin")
+    cat = await stack.exec("wc -c /tmp/payload.bin")
     assert cat.status is Status.Success
     assert "/tmp/payload.bin" in cat.value
 
@@ -117,7 +117,7 @@ async def test_put_then_get_roundtrip(stack, tmp_path):
 @pytest.mark.asyncio(loop_scope="module")
 async def test_run_chained_commands_in_one_string(stack):
     """Multiple commands in a single string share state via shell `&&`."""
-    result = await stack.oneshot("cd /tmp && echo $PWD")
+    result = await stack.exec("cd /tmp && echo $PWD")
     assert result.status is Status.Success
     assert "/tmp" in result.value
 
@@ -163,26 +163,26 @@ async def test_run_timeout_recovers_session(stack):
 
 
 @pytest.mark.asyncio(loop_scope="module")
-async def test_oneshot_remains_concurrent_safe(stack):
-    """oneshot() must stay stateless and concurrent — two parallel sleeps
+async def test_exec_remains_concurrent_safe(stack):
+    """exec() must stay stateless and concurrent — two parallel sleeps
     must finish materially faster than two serial sleeps."""
     import asyncio
     import time
 
     # Self-calibrating: a hardcoded wall-clock threshold is flaky on busy
     # CI hosts where `docker exec` startup balloons. Compare parallel to
-    # serial in the same run instead — if oneshot were serialized internally,
+    # serial in the same run instead — if exec were serialized internally,
     # parallel would be ~equal to serial; with real concurrency it's roughly
     # half plus one startup cost.
     start = time.monotonic()
-    s1 = await stack.oneshot("sleep 0.2")
-    s2 = await stack.oneshot("sleep 0.2")
+    s1 = await stack.exec("sleep 0.2")
+    s2 = await stack.exec("sleep 0.2")
     serial = time.monotonic() - start
 
     start = time.monotonic()
     a, b = await asyncio.gather(
-        stack.oneshot("sleep 0.2"),
-        stack.oneshot("sleep 0.2"),
+        stack.exec("sleep 0.2"),
+        stack.exec("sleep 0.2"),
     )
     parallel = time.monotonic() - start
 
@@ -194,5 +194,5 @@ async def test_oneshot_remains_concurrent_safe(stack):
     # ≥120ms savings — generous enough to absorb scheduling jitter, tight
     # enough that genuine serialization (savings ≈ 0) fails.
     assert serial - parallel > 0.12, (
-        f"oneshot serialized: serial={serial:.2f}s parallel={parallel:.2f}s"
+        f"exec serialized: serial={serial:.2f}s parallel={parallel:.2f}s"
     )

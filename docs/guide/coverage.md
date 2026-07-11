@@ -6,8 +6,8 @@ multi-tier HTML coverage reports.  Coverage tiers — `system` (e2e),
 `.otto/settings.toml`; three commands drive the workflow:
 
 1. **`otto cov get`** (also run implicitly by `otto test --cov`) —
-   fetches `.gcda` counters from the lab and writes a pinned
-   `capture.json` per board.
+   fetches `.gcda` counters from the lab and writes a `capture.json`
+   per board, anchored to `base_commit`.
 2. **`otto cov clean`** — zeroes remote `.gcda` counters ahead of a
    fresh collection session.
 3. **`otto cov report`** — assembles every tier's data (e2e captures,
@@ -191,8 +191,8 @@ note that ``llvm-cov``'s branch *counts* are coarser than GNU gcov's
 `otto cov get` is the single retrieval command.  It fetches `.gcda`
 counters from every host matched by `[coverage].hosts` — Unix hosts
 over the network, embedded boards over the console — parses them with
-the discovered toolchain, and writes one pinned `capture.json` per
-board plus debug artifacts (the raw `.gcda` and the toolchain's
+the discovered toolchain, and writes one `capture.json` per board
+(anchored to `base_commit`) plus debug artifacts (the raw `.gcda` and the toolchain's
 `.gcov`/`.info` intermediates) into the command's output directory:
 
 ```text
@@ -209,7 +209,7 @@ By default `otto cov get` targets the lab's sole `e2e`-kind tier and
 writes a capture that is **not** committed anywhere — it lives in the
 output directory, the same as a run's other artifacts.  Selecting a
 `manual`-kind tier switches the command into manual-capture mode: it
-requires `--ticket`, stamps tester identity onto the capture, and
+requires `--ticket`, annotates tester identity onto the capture, and
 additionally copies the capture into the repo's committed store at
 `.otto/coverage/manual/`:
 
@@ -217,7 +217,7 @@ additionally copies the capture into the repo's committed store at
 # Default: retrieve against the sole e2e-kind tier.
 otto cov get
 
-# Manual session: pin a capture, attach a ticket, commit it.
+# Manual session: anchor a capture, attach a ticket, commit it.
 otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
 ```
 
@@ -226,11 +226,11 @@ otto cov get --tier manual --ticket PROJ-123 --note "verified failover via GDB"
 | Option | Description | Default |
 |--------|-------------|---------|
 | `--output, -o PATH` | Directory to write fetched coverage and per-board captures into | the command's standard per-invocation output directory |
-| `--tier NAME` | Coverage tier to stamp onto each capture | the lab's sole `e2e`-kind tier (error if ambiguous or unknown, listing the configured tiers) |
-| `--ticket STR` | Ticket reference stamped onto each capture. **Required** when `--tier` resolves to a `manual`-kind tier | none |
-| `--note STR` | Free-text note stamped onto each capture (`manual`-kind tiers only) | none |
-| `--tester-name STR` | Tester name stamped onto each capture (`manual`-kind tiers only) | `getpass.getuser()` |
-| `--tester-email STR` | Tester email stamped onto each capture (`manual`-kind tiers only) | `git config user.email`, omitted entirely (not stamped empty) when unset |
+| `--tier NAME` | Coverage tier to annotate onto each capture | the lab's sole `e2e`-kind tier (error if ambiguous or unknown, listing the configured tiers) |
+| `--ticket STR` | Ticket reference annotated onto each capture. **Required** when `--tier` resolves to a `manual`-kind tier | none |
+| `--note STR` | Free-text note annotated onto each capture (`manual`-kind tiers only) | none |
+| `--tester-name STR` | Tester name annotated onto each capture (`manual`-kind tiers only) | `getpass.getuser()` |
+| `--tester-email STR` | Tester email annotated onto each capture (`manual`-kind tiers only) | `git config user.email`, omitted entirely (not annotated empty) when unset |
 | `--clean` | Zero the fetched Unix hosts' remote `.gcda` counters after a successful retrieval — for use before starting a manual session | off |
 
 `--ticket`, `--note`, `--tester-name`, and `--tester-email` are only
@@ -238,15 +238,15 @@ meaningful for a `manual`-kind retrieval; passing them against an
 `e2e`-kind tier has no effect (an automated pull has no human tester to
 attribute).
 
-Retrieval requires a git repository — the pin and, for a dirty tree,
-the offset remap both need it.  Outside a git repo, `otto cov get`
-refuses with a clean error; `otto cov report`'s `--tier NAME=PATH`
-escape hatch remains available for git-less flows (see
-{ref}`coverage-tier-name-path`).  The SUT directory does not have to
-be the repository root: a SUT checked out as a subdirectory of a
+Retrieval requires a git repository — resolving `base_commit` and, for
+a dirty tree, the offset remap both need it.  Outside a git repo,
+`otto cov get` refuses with a clean error; `otto cov report`'s
+`--tier NAME=PATH` escape hatch remains available for git-less flows
+(see {ref}`coverage-tier-name-path`).  The SUT directory does not have
+to be the repository root: a SUT checked out as a subdirectory of a
 larger repository (a monorepo layout) anchors its captures against the
-enclosing repo — its `HEAD` is the pin, and its working-tree state
-decides dirtiness.
+enclosing repo — its `HEAD` is the `base_commit`, and its working-tree
+state decides dirtiness.
 
 (coverage-dirty-remap)=
 ### Locally-modified builds
@@ -261,20 +261,20 @@ retrieved hits onto **committed-code line numbers** before writing the
 capture — added/changed lines' hits are dropped (crediting untested
 code would be wrong), unchanged lines remap exactly even when they've
 shifted.  The capture records `dirty_remap: true`, which shows up in
-the report's run table (see {ref}`coverage-run-contexts`); no diff is
+the report's run table (see {ref}`coverage-runs`); no diff is
 stored.
 
 ### The capture file
 
 Each board's `capture.json` records line/branch hits in
-committed-code coordinates, the commit they're pinned to, and — for a
-manual capture — the human metadata:
+committed-code coordinates, the commit they're anchored to, and — for
+a manual capture — the human metadata:
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "tier": "manual",
-  "pin": "<commit sha>",
+  "base_commit": "<commit sha>",
   "dirty_remap": true,
   "captured_at": "2026-07-02T18:40:00Z",
   "tester": {"name": "chris", "email": "chriscoll93@gmail.com"},
@@ -284,7 +284,7 @@ manual capture — the human metadata:
   "board": "mps2_an385",
   "files": {
     "src/foo.c": {
-      "blob": "<git blob sha of src/foo.c at pin>",
+      "blob": "<git blob sha of src/foo.c at base_commit>",
       "lines": {"12": 3, "13": 1},
       "branches": {"12": [[0, 0, 2], [0, 1, 0]]}
     }
@@ -292,12 +292,12 @@ manual capture — the human metadata:
 }
 ```
 
-`pin` is the commit whose coordinates the line numbers mean; each
-file's `blob` is the git blob SHA of that file at the pin — the
-rebase-tolerant anchor {ref}`coverage-validity` checks against.  An
-`e2e`-kind capture has the same shape but omits `tester`/`ticket`/
-`note`; at report time its `pin` acts as a strict guard — it must
-equal the tree's current `HEAD` — and a dirty working tree only
+`base_commit` is the commit whose coordinates the line numbers mean;
+each file's `blob` is the git blob SHA of that file at `base_commit`
+— the rebase-tolerant anchor {ref}`coverage-validity` checks against.
+An `e2e`-kind capture has the same shape but omits `tester`/`ticket`/
+`note`; at report time its `base_commit` acts as a strict guard — it
+must equal the tree's current `HEAD` — and a dirty working tree only
 triggers a line-number remap onto the current tree, never the manual
 tier's validity pass (see {ref}`coverage-report-stale-builds`).
 
@@ -308,8 +308,8 @@ otto test --cov TestMyDevice
 ```
 
 This runs the test suite normally, fetches `.gcda` files from every
-matched host, and — on a best-effort basis — produces a pinned
-`capture.json` per board against the lab's default `e2e`-kind tier
+matched host, and — on a best-effort basis — produces a `capture.json`
+per board, anchored to `base_commit`, against the lab's default `e2e`-kind tier
 using the same capture-production machinery as `otto cov get`.  This
 tail never fails an otherwise-successful test run: a non-git SUT,
 misconfigured tiers, or a stamp mismatch during merge are logged and
@@ -326,6 +326,14 @@ the suite's output directory, organized by board:
     <board_id_2>/
       capture.json
       *.gcda
+```
+
+```{note}
+Both `otto cov get` and this `otto test --cov` tail wrap one async library
+function — `collect_coverage()` — paired with `run_coverage_report()` for the
+HTML report. To drive collection and reporting from your own Python (CI glue or
+a custom pipeline), see the *Collecting coverage from Python* section of
+{doc}`library-usage`.
 ```
 
 ### Choosing a Destination
@@ -399,12 +407,13 @@ Every tier's `kind` selects how `otto cov report` collects its data:
 |------|---------------|---------|
 | `e2e` | `otto test --cov` / `otto cov get` | `<output_dir>/cov/<board_id>/capture.json` — not committed, same lifecycle as other run artifacts |
 | `unit` | Nothing otto runs for you — build and run your instrumented unit tests as usual; `otto cov report` harvests `.gcda` from the tier's `harvest_dirs` in the **current build tree** at report time | no capture file |
-| `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-stamp>-<ticket-slug>-<board-slug>.json`, committed to the SUT repo |
+| `manual` | `otto cov get --tier <name> --ticket <ref>` | `.otto/coverage/manual/<utc-timestamp>-<ticket-slug>-<board-slug>.json`, committed to the SUT repo |
 
-**Only manual captures are pinned and committed to the repo.**  E2E
-data comes from the output directories of previous otto runs; unit
-data is swept fresh from the build tree every time a report is
-generated — there is no run discipline imposed on it.
+**Only manual captures are committed to the repo** — every capture
+(manual or e2e) is anchored to a `base_commit`.  E2E data comes from
+the output directories of previous otto runs; unit data is swept fresh
+from the build tree every time a report is generated — there is no run
+discipline imposed on it.
 
 ### Three-tier walkthrough
 
@@ -429,7 +438,7 @@ No lcov invocation and no `--tier unit=...` flag are needed — as long
 as `[coverage.tiers.unit].harvest_dirs` points at `build`, `otto cov
 report` finds and merges the counters itself.
 
-**manual** — retrieve and pin a session against the instrumented
+**manual** — retrieve and anchor a session against the instrumented
 target, attaching a ticket:
 
 ```bash
@@ -452,17 +461,17 @@ no path arguments needed for the unit or manual tiers.
 (coverage-validity)=
 ### Staleness and aging
 
-Manual captures are pinned evidence — as the repo moves on, otto must
+Manual captures are anchored evidence — as the repo moves on, otto must
 decide whether that evidence still applies.  A per-file anchor chain
-(current blob SHA → blob diff → pin-commit diff → unverifiable)
+(current blob SHA → blob diff → base_commit diff → unverifiable)
 resolves each capture's lines to one of these states at report time:
 
 | State | Meaning | Effect on coverage |
 |-------|---------|---------------------|
-| **valid** | Line unchanged since the capture's pin (verified by blob SHA, which survives rebases, or by diffing against the pin commit when the blob is unreachable) | Counts normally |
+| **valid** | Line unchanged since the capture's `base_commit` (verified by blob SHA, which survives rebases, or by diffing against `base_commit` when the blob is unreachable) | Counts normally |
 | **stale** | Code changed since the capture — the evidence no longer describes this line | Coverage is **revoked**; rendered as "needs re-verification" |
 | **aging** | Code is unchanged (still *valid*), but the capture is older than the tier's `max_age` | Coverage is **retained** (flag-only — `max_age` never silently drops data) and tallied/rendered separately, flagging the line for re-verification because surrounding behavior may have drifted |
-| **unverifiable** | Neither the blob nor the pin commit can be resolved | Treated as **stale**, with a loud per-capture warning naming the remedy (re-capture) |
+| **unverifiable** | Neither the blob nor `base_commit` can be resolved | Treated as **stale**, with a loud per-capture warning naming the remedy (re-capture) |
 
 Stale vs. aging, precisely: **stale = the code changed** out from under
 the evidence; **aging = the code is unchanged but the evidence is
@@ -477,25 +486,25 @@ whitespace is not semantically load-bearing; the single case this also
 forgives — a whitespace change *inside a string literal* — is treated as
 immaterial to coverage.)
 
-(coverage-run-contexts)=
-### Run contexts: which run covered this line?
+(coverage-runs)=
+### Runs: which run covered this line?
 
-Every coverage input becomes a **run context** at report time: each manual
+Every coverage input becomes a **run** at report time: each manual
 or e2e capture is one run (labelled by the host's display name; hover for
-tier, ticket, note, date, and pin), and each unit-tier harvest or legacy
+tier, ticket, note, date, and base_commit), and each unit-tier harvest or legacy
 `.info` load gets a synthetic per-tier run.  On a file's annotated page,
 the right-hand **runs** column expands per line to list every run that hit
 it, colored by tier, with per-run hit counts.  A stale line lists the
 revoked run struck through — the ticket to re-verify.  The index's
 Captures table is the full run table, and `store.json` carries it
-(`contexts` plus per-line `ctx`/`stale_ctx`) for downstream consumers.
+(`runs` plus per-line `run`/`stale_run`) for downstream consumers.
 
 `--ticket` and `--note` on `otto cov get` annotate captures of **every**
 tier kind (`--ticket` remains required for manual-kind tiers; tester
 attribution stays manual-only).
 
 Validity only applies to the **manual** tier. E2E captures use a
-strict pin **merge guard** instead — see
+strict `base_commit` **merge guard** instead — see
 {ref}`coverage-report-stale-builds`.  Unit tiers carry no validity
 states; they're harvested fresh every report, so there's nothing to go
 stale (a `.gcda` older than its `.gcno` only produces a "may be stale"
@@ -510,7 +519,7 @@ otto cov report <output_dir> --report ./my_report
 `otto cov report` assembles a store from every source available:
 
 1. **E2E captures** — `capture.json` files under each given output
-   directory's `cov/<board_id>/`, subject to the pin guard below. Board
+   directory's `cov/<board_id>/`, subject to the base_commit guard below. Board
    directories with no `capture.json` fall back to the legacy
    `.gcda`-merge path (back-compat with pre-tier output directories).
 2. **Unit harvest** — every `unit`-kind tier's `harvest_dirs`, swept
@@ -546,7 +555,7 @@ otto cov report run1_output/ run2_output/ run3_output/ --report ./combined_repor
 | `--tier NAME[=PATH]`      | Git-less escape hatch (see below); repeatable, order = precedence    | the configured tiers (or `system` with none configured) |
 
 (coverage-report-stale-builds)=
-### Stale Builds: "stamp mismatch" and the e2e pin guard
+### Stale Builds: "stamp mismatch" and the e2e base_commit guard
 
 gcov embeds a build stamp in both the `.gcno` notes files (written at
 compile time) and the `.gcda` data files (written at run time).  Raw
@@ -572,8 +581,8 @@ The same rebuild against a *pre-capture* run directory (an older otto's
 output, loaded via the legacy `.gcda`-merge fallback) still re-pairs
 raw counters at report time and fails with the error above.
 
-A capture carries its own, git-based guard instead: its recorded `pin`
-must equal the tree's current `HEAD`.  A capture taken at a different
+A capture carries its own, git-based guard instead: its recorded
+`base_commit` must equal the tree's current `HEAD`.  A capture taken at a different
 commit — the tree moved on since collection — fails the report with a
 clean error naming both commits, rather than silently reporting
 numbers for the wrong tree; the recovery is to collect fresh coverage
@@ -703,8 +712,8 @@ The HTML report is written to the `--report` directory (default:
   plus per-file stale/aging/excluded counts.
 - **Legend** mapping tier names and line states to their colors.
 - **Captures table** — the full run table (see
-  {ref}`coverage-run-contexts`), shown whenever the store has at least
-  one context: every contributing manual and e2e capture (tier, board,
+  {ref}`coverage-runs`), shown whenever the store has at least
+  one run: every contributing manual and e2e capture (tier, board,
   labs, date, tester, ticket, note, and whether the dirty-tree remap
   applied), plus one synthetic row per unit tier harvested.
 - **Sortable file table** with one column per configured tier.
@@ -712,10 +721,10 @@ The HTML report is written to the `--report` directory (default:
   source: per-tier hit counts, branch pills (taken/not-taken/
   unreachable), winner-take-all row coloring per
   {ref}`coverage-colors`, and the per-line **runs** drilldown from
-  {ref}`coverage-run-contexts`.
+  {ref}`coverage-runs`.
 
 `store.json` is written alongside the HTML report with the same data —
-validity states, colors, run contexts, and each file's excluded lines
+validity states, colors, runs, and each file's excluded lines
 included — as the explicit data contract for tooling built on top of
 a report (e.g. a future frontend) without touching the pipeline.
 

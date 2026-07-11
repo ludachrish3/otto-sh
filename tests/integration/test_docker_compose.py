@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.lab import Lab
-from otto.configmodule.repo import Repo
+from otto.config.lab import Lab
+from otto.config.repo import Repo
 from otto.docker import build_images, compose_down, compose_up, composed
 from otto.host.docker_host import DockerContainerHost
 from otto.host.login_proxy import Cred

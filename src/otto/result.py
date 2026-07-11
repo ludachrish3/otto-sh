@@ -1,7 +1,7 @@
 """Unified result family for host verbs.
 
 Every ``@cli_exposed`` host verb returns a member of this family (except
-``interact()``, which returns ``None``): scalar verbs return :class:`Result`
+``login()``, which returns ``None``): scalar verbs return :class:`Result`
 or :class:`CommandResult`; ``run()`` returns :class:`Results`. The CLI derives
 its exit code from :attr:`Result.exit_code`.
 

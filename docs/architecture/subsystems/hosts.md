@@ -22,7 +22,7 @@ What each layer adds:
 | `Host` (Protocol) / {class}`~otto.host.host.BaseHost` | the structural contract; shared verb logic, dry-run + log gates |
 | {class}`~otto.host.remote_host.RemoteHost` | lazy-connect `ConnectionManager`, products |
 | {class}`~otto.host.unix_host.UnixHost` | SSH/Telnet sessions, file ops, privilege, kernel modules, toolchains |
-| {class}`~otto.host.embedded_host.EmbeddedHost` | console-only oneshot semantics, binary load/unload, on-device filesystems |
+| {class}`~otto.host.embedded_host.EmbeddedHost` | console-only exec semantics, binary load/unload, on-device filesystems |
 | {class}`~otto.host.embedded_host.ZephyrHost` | Zephyr RTOS defaults |
 | {class}`~otto.host.local_host.LocalHost` | subprocess on the machine otto runs on |
 | {class}`~otto.host.docker_host.DockerContainerHost` | `docker exec` via a parent `UnixHost` |
@@ -34,7 +34,7 @@ built-in `local` host, excluded from fleet iteration by default
 delegates everything to a parent `UnixHost` rather than duplicating the
 transport stack — that design has its own page: {doc}`docker-hosts`.
 
-## Sessions: persistent `run` vs stateless `oneshot`
+## Sessions: persistent `run` vs stateless `exec`
 
 {meth}`~otto.host.host.Host.run` executes on the host's **persistent shell
 session** ({class}`~otto.host.session.HostSession`): working directory,
@@ -43,9 +43,9 @@ environment, and elevation state survive across calls, and the session's
 sessions can be opened explicitly (`open_session`) for parallel stateful
 streams.
 
-{meth}`~otto.host.host.Host.oneshot` runs each call independently of the
-persistent session *and* of other concurrent `oneshot` calls, which is what
-makes `asyncio.gather()` fan-out safe. Embedded hosts are oneshot-only —
+{meth}`~otto.host.host.Host.exec` runs each call independently of the
+persistent session *and* of other concurrent `exec` calls, which is what
+makes `asyncio.gather()` fan-out safe. Embedded hosts are exec-only —
 a serial console has no multiplexed channels to hold a session on.
 
 Two pieces of per-session state matter architecturally:

@@ -92,6 +92,6 @@ class TestReadStates:
         async def _boom(cmd: str, **_: object) -> CommandResult:
             raise ConnectionError("down")
 
-        carrot.oneshot = _boom  # type: ignore[method-assign]
+        carrot.exec = _boom  # type: ignore[method-assign]
         (state,) = await read_link_states(lab)
         assert state.unreachable

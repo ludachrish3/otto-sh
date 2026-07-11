@@ -1,14 +1,14 @@
-"""In-memory reference :class:`~otto.storage.protocol.LabRepository` (sample).
+"""In-memory reference :class:`~otto.labs.protocol.LabRepository` (sample).
 
 A teaching/reference host-source backend: it holds a mapping of lab name to a
 list of host dicts and builds real hosts via
-:func:`otto.storage.create_host_from_dict`. It needs no files or network, so it
+:func:`otto.host.factory.create_host_from_dict`. It needs no files or network, so it
 runs inside doctests and the conformance suite, and SUT authors can copy it as a
 starting point.
 
 Register it from an ``init`` module and select it by name::
 
-    from otto.storage import register_lab_repository
+    from otto.labs import register_lab_repository
     from otto.examples.lab_repository import ExampleLabRepository
 
     register_lab_repository("example", ExampleLabRepository)
@@ -34,11 +34,9 @@ Direct usage:
 from pathlib import Path
 from typing import Any
 
-from ..configmodule.lab import Lab
-from ..storage import (
-    LabNotFoundError,
-    create_host_from_dict,
-)
+from ..config.lab import Lab
+from ..host.factory import create_host_from_dict
+from ..labs import LabNotFoundError
 
 # A tiny built-in dataset so the sample works out of the box (doctests +
 # conformance). Each value is a list of host dicts as they'd appear in a
@@ -65,12 +63,12 @@ _DEMO_LABS: dict[str, list[dict[str, Any]]] = {
 
 
 class ExampleLabRepository:
-    """In-memory :class:`~otto.storage.protocol.LabRepository` reference backend.
+    """In-memory :class:`~otto.labs.protocol.LabRepository` reference backend.
 
     Parameters
     ----------
     repo_dir : Path | None
-        Accepted for factory/registry uniformity — :func:`otto.storage.build_lab_repository`
+        Accepted for factory/registry uniformity — :func:`otto.labs.build_lab_repository`
         constructs a custom backend as ``cls(repo_dir=..., **kwargs)``. This
         in-memory sample has no files to resolve, so it is ignored.
     labs : dict[str, list[dict]] | None

@@ -208,7 +208,7 @@ async def proxy(io: ProxyIO, ctx: ProxyContext) -> None: ...
 
 {class}`~otto.host.login_proxy.ProxyIO` is the minimal handle a proxy drives —
 `send`/`expect` — satisfied alike by the raw session used at session
-establishment, the `interact --as-user` bridge, and the `switch_user`/`as_user`
+establishment, the `login --as-user` bridge, and the `switch_user`/`as_user`
 elevation path, so one proxy function runs unmodified over all three.
 {class}`~otto.host.login_proxy.ProxyContext` carries `target` (the
 {class}`~otto.host.login_proxy.Cred` being become — its `login`/`password`/`params`), `via`

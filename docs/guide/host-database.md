@@ -15,12 +15,12 @@ to your source of record.
 
 ## The interface
 
-A host source implements the [`LabRepository`](../api/storage.rst) protocol —
+A host source implements the [`LabRepository`](../api/labs.rst) protocol —
 two read-only methods:
 
 `load_lab(name, preferences=None) -> Lab`
 : Build and return the named lab. Raises
-  [`LabNotFoundError`](../api/storage.rst) if the name is unknown.
+  [`LabNotFoundError`](../api/labs.rst) if the name is unknown.
 
 `list_labs() -> list[str]`
 : The lab names this source can provide.
@@ -124,7 +124,7 @@ failing later mid-connection.
 
 ### Ownership when a login is proxied
 
-Every *command* surface (`run`, `oneshot`, named sessions) executes as the
+Every *command* surface (`run`, `exec`, named sessions) executes as the
 proxied user once a session has switched to it — but file **transfer** is not
 uniform, because not every transfer protocol rides a shell:
 
@@ -162,7 +162,7 @@ then name it in settings:
 
 ```python
 # my_lab_source.py  (listed in init = [...])
-from otto.storage import register_lab_repository
+from otto.labs import register_lab_repository
 from my_company.cmdb import CmdbLabRepository
 
 register_lab_repository("cmdb", CmdbLabRepository)
@@ -180,7 +180,7 @@ Otto constructs the backend as
 `CmdbLabRepository(repo_dir=<repo root>, url="https://cmdb.example.com")` — the
 `[lab.<name>]` sub-table becomes keyword arguments, plus `repo_dir` for
 resolving any relative paths. Selecting an unregistered name raises
-[`LabRepositoryError`](../api/storage.rst), listing the registered names.
+[`LabRepositoryError`](../api/labs.rst), listing the registered names.
 
 ```{note}
 This is the same named-registry mechanism otto uses everywhere else
@@ -196,7 +196,7 @@ dependency-free reference implementation —
 [`otto.examples.lab_repository.ExampleLabRepository`](../api/examples.rst) — that
 you can copy from `src/otto/examples/lab_repository.py` as a starting point. It
 holds a mapping of lab name to host dicts and builds real hosts with
-[`create_host_from_dict`](../api/storage.rst) so each becomes a `RemoteHost`
+[`create_host_from_dict`](../api/host/factory.rst) so each becomes a `RemoteHost`
 keyed by its `id` — which is what the rest of otto expects.
 
 The shipped sample works out of the box and demonstrates the contract:
@@ -217,7 +217,7 @@ Loading an unknown lab raises the contract's error — never a bare `KeyError` o
 `None`:
 
 ```{doctest}
->>> from otto.storage import LabNotFoundError
+>>> from otto.labs import LabNotFoundError
 >>> try:
 ...     repo.load_lab("does-not-exist")
 ... except LabNotFoundError:
@@ -228,13 +228,13 @@ not found
 ## Error contract
 
 A backend signals trouble through two exceptions (from
-[`otto.storage`](../api/storage.rst)):
+[`otto.labs`](../api/labs.rst)):
 
-[`LabNotFoundError`](../api/storage.rst)
+[`LabNotFoundError`](../api/labs.rst)
 : `load_lab` was asked for a name the backend does not know. Raise this — never
   return `None` or raise a bare `KeyError`.
 
-[`LabRepositoryError`](../api/storage.rst)
+[`LabRepositoryError`](../api/labs.rst)
 : Any other failure (I/O, network, parse, credentials) that prevents a
   definitive answer. `LabNotFoundError` is a subclass, so callers can catch the
   base.

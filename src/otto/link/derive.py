@@ -5,17 +5,17 @@ these functions hand back :class:`~otto.link.model.Link` objects. That keeps
 every rule here unit-testable without a lab.
 """
 
+import logging
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.remote_host import make_host_id
-from ..logger import get_logger
 from ..models.link import LinkSpec
 from .model import Link, LinkEndpoint, Provenance
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

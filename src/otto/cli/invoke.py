@@ -246,7 +246,7 @@ def ensure_cli_session(ctx: typer.Context) -> None:
     # explicit [logging] capture) so the per-subcommand create_output_dir attaches
     # the shared QueueHandler to them once it exists. Done here (after
     # init_cli_logging set the log level) so capture honours the verbose floor.
-    from ..configmodule import get_repos
+    from ..config import get_repos
 
     prefixes: set[str] = set()
     for repo in get_repos():
@@ -281,7 +281,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
 
     opts: RootOptions = meta["_otto_root_options"]
 
-    from ..configmodule import get_repos, load_lab
+    from ..config import get_repos, load_lab
 
     # `--lab` is no longer a hard-required Typer option (so lab-free subcommands
     # can run without it); enforce it here — before any lab side effects — for
@@ -331,7 +331,7 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
             lab_repo_dir = repo.sut_dir
             break
 
-    from ..storage import LabRepositoryError, build_lab_repository
+    from ..labs import LabRepositoryError, build_lab_repository
 
     try:
         lab_repository = build_lab_repository(
@@ -358,11 +358,11 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
     # or hanging scheduler can never block lab access (break-glass).
     from ..reservations import (
         ReservationBackendError,
-        build_reservation_state,
+        build_reservation_gate,
     )
 
     try:
-        reservation_state = build_reservation_state(
+        reservation_gate = build_reservation_gate(
             repos,
             as_user=opts.as_user,
             skip_reservation_check=opts.skip_reservation_check,
@@ -375,14 +375,14 @@ def ensure_lab_context(ctx: typer.Context) -> "OttoContext":
             exit_code=1,
         ) from e
 
-    identity = reservation_state.identity
+    identity = reservation_gate.identity
     if identity is not None and identity.source == "--as-user":
         getLogger("otto").info(
             f"[bold magenta][reservations] acting as {identity.username!r}"
             f" (--as-user)[/bold magenta]"
         )
 
-    meta["otto_reservation"] = reservation_state
+    meta["otto_reservation"] = reservation_gate
 
     # Install the runtime context: lab + dry_run flag.
     from ..context import OttoContext, set_context
@@ -421,6 +421,34 @@ def fail_loud_on_bootstrap_errors() -> None:
 
         rprint("[red]Cannot run commands while a repo fails to load (see warnings above).[/red]")
         raise typer.Exit(1)
+
+
+def present_reservation_gate(ctx: typer.Context) -> None:
+    """Evaluate the active reservation gate (if any) and present its warning.
+
+    Reads ``ctx.meta["otto_reservation"]`` — a no-op when absent (e.g. a
+    lab-free command, or a test that never populated it) — and calls
+    :meth:`~otto.reservations.check.ReservationGate.evaluate`. ``evaluate()``
+    returns a :class:`~otto.reservations.check.ReservationGateOutcome` whose
+    ``warning`` is deliberately plain text (the library has no Typer/rich
+    dependency); this function OWNS the presentation of that text — it is
+    the single place that wraps it in ``[bold red]...[/bold red]`` markup.
+    Both CLI call sites (``command_preamble`` here and the live branch of
+    ``otto monitor``) delegate to this one function rather than composing
+    the markup themselves.
+
+    ``MissingReservationError`` (raised by ``evaluate()`` when a required
+    resource isn't held) is not caught here — it propagates to the caller
+    unchanged, exactly as it did before this adapter existed.
+    """
+    res = ctx.meta.get("otto_reservation")
+    if res is None:
+        return
+    outcome = res.evaluate()
+    if outcome.warning:
+        from rich import print as rprint
+
+        rprint(f"[bold red]{outcome.warning}[/bold red]")
 
 
 def command_preamble(ctx: typer.Context) -> None:
@@ -462,9 +490,7 @@ def command_preamble(ctx: typer.Context) -> None:
         sub = None if leaf_name == spec.name else (leaf_name or spec.name)
         get_context().output_dir = management.create_output_dir(spec.name, sub)
     if spec.gate:
-        from ..reservations import gate
-
-        gate(ctx)
+        present_reservation_gate(ctx)
 
 
 def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:

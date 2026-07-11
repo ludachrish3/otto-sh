@@ -42,7 +42,7 @@ like `ssh_options`):
 ```
 
 Construction, driven by
-{func}`otto.storage.create_host_from_dict`, runs in a fixed order:
+{func}`otto.host.factory.create_host_from_dict`, runs in a fixed order:
 
 1. The entry's `os_type` selects an {class}`~otto.host.os_profile.OsProfile`,
    which names the base family — and thereby the host class and which spec
@@ -67,13 +67,13 @@ have spec models. `otto.models.settings` is deliberately a leaf module — it
 must not import the packages it configures, or validation would drag the app
 graph into every boundary crossing.
 
-## Where labs come from: the storage package
+## Where labs come from: the labs package
 
 Lab loading is behind a protocol so hosts don't have to come from JSON files:
-`LabRepository` (in {mod}`otto.storage.protocol`) is the host-source
+`LabRepository` (in {mod}`otto.labs.protocol`) is the host-source
 contract, the built-in `json` backend reads `lab.json` files from the
 configured lab paths, and alternatives (a database, an inventory service)
-register a name via {func}`otto.storage.register_lab_repository`.
+register a name via {func}`otto.labs.register_lab_repository`.
 {func}`otto.testing.assert_lab_repository_conforms` verifies a custom backend
 against the contract, and `otto.examples.lab_repository` is a copyable
 reference implementation. See {doc}`../../guide/host-database`.

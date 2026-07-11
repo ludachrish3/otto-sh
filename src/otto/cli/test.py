@@ -138,60 +138,30 @@ either limit is reached first.
     otto test -r --cov-report-dir /tmp/myreport TestMyDevice
 """
 
-import re
-import shutil
-from dataclasses import dataclass as _dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated
 
 if TYPE_CHECKING:
     from rich.panel import Panel
-
-    from ..suite.plugin import StabilityCollector
 
 import typer
 from rich import print as rprint
 from rich.table import Table
 
-from ..configmodule import get_repos
-from ..configmodule.repo import CollectedTest, Repo
+from ..config import get_repos
 from ..context import get_context
-from ..logger import get_logger
 from ..suite.register import SUITES
+
+# The suite-run engine lives in ``otto.suite.run`` (library-extraction Phase A):
+# ``run_suite`` is called there directly by the suite runner (see
+# ``otto.suite.register``). ``otto.cli.test`` keeps only the callback that
+# stores ``RunOptions`` in ``ctx.meta`` and the thin ``run_selection`` adapter,
+# so it imports just those names — the run-options record/key, the library
+# selection entrypoint, and the two selection exception types it translates.
+from ..suite.run import RUN_OPTIONS_KEY, NoTestsMatchedError, RunOptions
+from ..suite.run import run_selection as _run_selection_lib
+from ..suite.selection import UnknownSelectionError
 from .invoke import make_registry_group
-
-logger = get_logger()
-
-RUN_OPTIONS_KEY = "otto_test_run_options"
-
-
-@_dataclass(frozen=True)
-class TestRunOptions:
-    """Shared ``otto test`` run options, set by the suite_app callback and read by ``run_suite``.
-
-    Stored in Typer ``ctx.meta`` (shared across the whole
-    context chain by click's design) rather than ``ctx.obj`` (whose
-    parent->subcommand propagation broke under click 8.3).
-    """
-
-    markers: str = ""
-    tests: str = ""
-    iterations: int = 0
-    duration: int = 0
-    threshold: float = 100.0
-    results: str = ""
-    cov: bool = False
-    cov_dir: Path | None = None
-    cov_clean: bool = True  # matches the --cov-clean CLI default
-    cov_report: bool = False
-    cov_report_dir: Path | None = None
-    overwrite_cov_report_dir: bool = False
-    project_name: str = "Coverage Report"
-    monitor: bool = False
-    monitor_interval: float = 5.0
-    monitor_output: Path | None = None
-    monitor_hosts: str | None = None
-
 
 # ---------------------------------------------------------------------------
 # Helpers shared with register.py runner functions
@@ -202,7 +172,7 @@ def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     """Completion source for ``--tests``: static floor + pytest-collected names.
 
     The floor is the always-available ``ast`` scan
-    (:func:`~otto.configmodule.completion_cache.collect_test_names`, preferring
+    (:func:`~otto.config.completion_cache.collect_test_names`, preferring
     the cache snapshot) — every statically written ``def test_*`` / ``Test*``
     method, no test code run.
 
@@ -214,8 +184,8 @@ def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     completed. ``--tests`` matches by base name, so parametrizations collapse to
     their base (``test_x`` runs every ``test_x[...]``).
     """
-    from ..configmodule import get_completion_names, get_repos
-    from ..configmodule.completion_cache import (
+    from ..config import get_completion_names, get_repos
+    from ..config.completion_cache import (
         collect_test_names,
         maybe_warm_collected_tests,
         read_collected_tests,
@@ -238,429 +208,37 @@ def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     return complete_comma_list(sorted(names), incomplete)
 
 
-def resolve_suite(suite: str, repos: list[Repo]) -> str:
-    """Expand a sut_dir-relative suite path to an absolute path for pytest."""
-    file_part, _, suffix = suite.partition("::")
-    p = Path(file_part)
-    if p.is_absolute():
-        return suite
-    for repo in repos:
-        candidate = (repo.sut_dir / p).resolve()
-        if candidate.exists():
-            return f"{candidate}::{suffix}" if suffix else str(candidate)
-    return suite
-
-
-def _repo_confcutdir(suite_file: str, repos: list[Repo]) -> Path:
-    """Root for pytest's --confcutdir: the suite file's owning repo.
-
-    Cutting at the SUT repo root (the directory holding ``.otto/``) loads the
-    user repo's FULL conftest hierarchy — root, ``tests/``, per-subdir — while
-    still excluding otto's own ``tests/conftest.py`` for the in-tree example
-    repos (it sits above ``tests/repoN/``). Fallback for a file outside every
-    repo: the file's parent (the historical behavior).
-    """
-    resolved = Path(suite_file).resolve()
-    for repo in repos:
-        if resolved.is_relative_to(repo.sut_dir):
-            return repo.sut_dir
-    return resolved.parent
-
-
-def _base_test_name(name: str) -> str:
-    """``test_param[a-b]`` → ``test_param`` (parametrization-insensitive match)."""
-    return name.partition("[")[0]
-
-
-def _absolute_nodeid(item: CollectedTest) -> str:
-    """Rebuild a collected test's nodeid with an absolute file path.
-
-    ``CollectedTest.nodeid`` (from pytest's own ``item.nodeid``) is relative
-    to the collection rootdir chosen by :meth:`Repo.collect_tests` — not
-    otto's own process cwd — so it cannot be handed to a later, independent
-    ``pytest.main()`` call. ``CollectedTest.path`` is always absolute, so
-    rebuild the ``path::Class::name`` (or ``path::name``) suffix from it.
-    """
-    suffix = item.nodeid.split("::", 1)[1] if "::" in item.nodeid else ""
-    return f"{item.path}::{suffix}" if suffix else str(item.path)
-
-
-def _resolve_selection(
-    repos: list[Repo], names: list[str], markers: str
-) -> list[tuple[Repo, list[str]]]:
-    """Resolve --tests names to exact nodeids, one entry per matching repo.
-
-    A bare name matches every collected test with that function name (all
-    parametrizations); ``Class::name`` restricts to one suite. Unknown names
-    raise ``typer.BadParameter`` with did-you-mean suggestions — never a
-    silent empty run.
-    """
-    import difflib
-
-    per_repo: list[tuple[Repo, list[str]]] = []
-    matched: set[str] = set()
-    seen_names: set[str] = set()
-    for repo in repos:
-        items = repo.collect_tests(markers=markers or None)
-        nodeids: list[str] = []
-        for item in items:
-            base = _base_test_name(item.name)
-            seen_names.add(base)
-            if item.cls_name:
-                seen_names.add(f"{item.cls_name}::{base}")
-            for wanted in names:
-                cls_part, _, name_part = wanted.rpartition("::")
-                if base == name_part and (not cls_part or item.cls_name == cls_part):
-                    nodeids.append(_absolute_nodeid(item))
-                    matched.add(wanted)
-                    break
-        if nodeids:
-            per_repo.append((repo, nodeids))
-
-    unknown = [n for n in names if n not in matched]
-    if unknown:
-        hints = []
-        for n in unknown:
-            close = difflib.get_close_matches(n, sorted(seen_names), n=3)
-            hint = f" (did you mean: {', '.join(close)}?)" if close else ""
-            hints.append(f"{n!r}{hint}")
-        raise typer.BadParameter(
-            f"no collected test matches: {'; '.join(hints)}", param_hint="--tests"
-        )
-    return per_repo
-
-
-def _repos_with_marker_matches(repos: list[Repo], markers: str) -> list[Repo]:
-    """Filter to repos whose collection has >=1 item matching ``markers``.
-
-    Used by the ``-m``-alone branch of ``run_selection`` so a repo whose
-    suites don't carry the given marker never gets a pytest session of its
-    own — such a session would collect nothing and exit 5
-    (NO_TESTS_COLLECTED), which previously failed the whole multi-repo run
-    via ``worst = max(worst, rc)`` even when every other repo matched fine.
-    """
-    return [repo for repo in repos if repo.collect_tests(markers=markers or None)]
-
-
-async def _pre_run_cov_clean(repos: list[Repo], opts: TestRunOptions) -> None:
-    """Pre-run cleanup of .gcda files on remotes, when --cov and --cov-clean.
-
-    Extracted from ``run_suite`` so ``run_selection`` shares the exact same
-    once-per-invocation cleanup (never once-per-repo inside the session loop).
-    """
-    if not (opts.cov and opts.cov_clean):
-        return
-    await _cov_clean_remotes(repos)
-    # Rebuild host connections so pytest gets fresh ones on its own loop.
-    # rebuild_connections() only exists on UnixHost; embedded targets
-    # don't carry the same connection lifecycle so skip them.
-    from ..configmodule import all_hosts
-    from ..host import UnixHost
-
-    for host in all_hosts():
-        if isinstance(host, UnixHost):
-            host.rebuild_connections()
-
-
-async def _post_run_coverage(repos: list[Repo], log_dir: Path, opts: TestRunOptions) -> None:
-    """Post-run coverage collection and optional HTML report, shared by both run paths."""
-    if opts.cov:
-        await _run_coverage(repos, log_dir, opts.cov_dir)
-
-    if opts.cov_report:
-        from ..coverage.reporter import run_coverage_report
-        from ..coverage.tiers import load_tiers
-
-        cov_dir = opts.cov_dir or log_dir / "cov"
-        report_dir = (
-            opts.cov_report_dir if opts.cov_report_dir is not None else log_dir / "cov_report"
-        )
-        # Default path lives inside freshly-created log_dir → always empty;
-        # explicit path was validated in the callback. Safe to call either way.
-        _prepare_empty_dir(
-            report_dir, overwrite=opts.overwrite_cov_report_dir, flag_name="--cov-report-dir"
-        )
-        # Resolve the same collection-model inputs `otto cov report` uses
-        # (declared tiers/colors, exclusion markers, the committed manual
-        # store), from the repos already in hand — mirroring
-        # cov._resolve_cov_settings but without re-fetching. A tree with no
-        # [coverage] section falls back to (None, None, []), i.e. the legacy
-        # gcda-only report, exactly as before.
-        cov_repo = _get_cov_repo(repos)
-        repo_root = cov_repo.sut_dir if cov_repo is not None else None
-        cov_config = _get_cov_config(repos)
-        tier_configs = load_tiers(cov_config, repo_root) if cov_repo is not None else None
-        extra_markers = list(cov_config.get("exclusions", {}).get("markers") or [])
-        # Like the capture tail, in-run report generation must never fail an
-        # otherwise-successful test run: a non-git sut, a polluted tree, or a
-        # malformed manual capture are logged and swallowed, leaving the raw
-        # coverage artifacts on disk.
-        try:
-            store = await run_coverage_report(
-                [cov_dir],
-                report_dir,
-                project_name=opts.project_name,
-                repo_root=repo_root,
-                tier_configs=tier_configs,
-                extra_markers=extra_markers,
-            )
-        except (ValueError, RuntimeError, FileNotFoundError) as e:
-            logger.warning(
-                "Coverage report generation failed (%s); raw coverage artifacts remain in %s",
-                e,
-                cov_dir,
-            )
-            store = None
-        if store is not None:
-            logger.info(
-                "Coverage: %.1f%% overall (%d files)", store.overall_pct(), store.file_count()
-            )
-            logger.info("Report: %s", report_dir / "index.html")
-
-
-def _run_pytest_session(
-    targets: list[str],
-    keyword: str | None,
-    confcutdir: Path,
-    opts: TestRunOptions,
-    opts_instance: object | None,
-    results_path: str,
-    sut_test_dirs: list[Path],
-    log_dir: Path,
-    label: str,
-) -> int:
-    """One inner pytest session: base args + plugins + stability report. Returns rc."""
-    from ..suite.plugin import OttoPlugin
-    from ..suite.pytest_plugin import OttoOptionsPlugin
-
-    base_args: list[str] = [
-        *targets,
-        "-s",
-        "-o",
-        "asyncio_mode=auto",
-        # pytest-timeout honors @pytest.mark.timeout(N) on tests/classes. No
-        # global default is imposed here — timeouts in user suites stay opt-in,
-        # as they were before — but signal method ensures a fired timeout
-        # interrupts blocking calls and the session still reaches sessionfinish.
-        "-o",
-        "timeout_method=signal",
-        "--no-cov",
-        "--no-header",
-        "--override-ini",
-        "log_cli=false",
-        "--override-ini",
-        "addopts=",
-        # Cut conftest loading at the suite's repo root: the user repo's whole
-        # conftest hierarchy loads; otto's own tests/conftest.py (which resets
-        # logging management state) stays excluded for in-tree example repos
-        # because it lives above their sut_dir.
-        f"--confcutdir={confcutdir}",
-        # pytest-asyncio registers anyio for assertion rewriting, but anyio is
-        # already imported by the time pytest.main() is called from within otto.
-        # The warning is harmless (anyio's internals don't affect test results)
-        # so suppress it here rather than polluting suite output.
-        "--override-ini",
-        "filterwarnings=ignore::pytest.PytestAssertRewriteWarning",
-    ]
-    if keyword:
-        base_args += ["-k", keyword]
-    if opts.markers:
-        # Re-apply -m at run time: _resolve_selection() filtered by markers during
-        # collection, and we apply again here so name resolution and live session can
-        # never diverge. Belt-and-suspenders marker filtering ensures consistency.
-        base_args += ["-m", opts.markers]
-
-    is_stability = opts.iterations > 0 or opts.duration > 0
-    monitor_output = opts.monitor_output
-    if opts.monitor and monitor_output is None:
-        monitor_output = log_dir / "monitor.json"
-    otto_plugin = OttoPlugin(
-        sut_test_dirs=sut_test_dirs,
-        cov=opts.cov,
-        iterations=opts.iterations,
-        duration=opts.duration,
-        monitor=opts.monitor,
-        monitor_interval=opts.monitor_interval,
-        monitor_output=monitor_output,
-        monitor_hosts=opts.monitor_hosts,
-    )
-    options_plugin = OttoOptionsPlugin(opts_instance)
-
-    collector: "StabilityCollector | None" = None
-    if is_stability:
-        from ..suite.plugin import StabilityCollector as _StabilityCollector
-
-        collector = _StabilityCollector()
-        otto_plugin._stability_collector = collector  # noqa: SLF001 — intra-package write to stability plugin's collector slot
-
-    import pytest
-
-    # Capture the exit code so we can propagate it after post-run steps.
-    rc = pytest.main(
-        [*base_args, f"--junitxml={results_path}"],
-        plugins=[otto_plugin, options_plugin],
-    )
-
-    if is_stability and collector is not None:
-        _print_stability_report(
-            label, collector, opts.iterations, opts.duration, opts.threshold, log_dir
-        )
-
-    return int(rc)
-
-
-def run_suite(
-    suite_class: type,
-    suite_file: str,
-    opts_instance: object | None,
-    ctx: typer.Context,
-) -> None:
-    """Execute a registered suite via pytest.main().
-
-    Runner options (``--markers``, ``--iterations``, ``--duration``,
-    ``--threshold``, ``--results``) and coverage options (``--cov`` /
-    ``--cov-clean``) are read from the ``TestRunOptions`` the ``otto test``
-    callback stored in ``ctx.meta[RUN_OPTIONS_KEY]``. The context is passed in
-    by the suite runner (Typer injects it), so this function never reaches into
-    a global context stack.
-    """
-    import asyncio
-
-    stored = ctx.meta.get(RUN_OPTIONS_KEY)
-    opts = stored if isinstance(stored, TestRunOptions) else TestRunOptions()
-
-    repos = get_repos()
-    sut_test_dirs = [path for repo in repos for path in repo.tests]
-    _log_dir = get_context().output_dir
-    if _log_dir is None:
-        raise RuntimeError("output_dir is not set; create_output_dir must run before run_suite")
-    log_dir: Path = _log_dir
-    results_path = opts.results or str(log_dir / "junit.xml")
-
-    asyncio.run(_pre_run_cov_clean(repos, opts))
-
-    rc = _run_pytest_session(
-        [suite_file],
-        suite_class.__name__,
-        _repo_confcutdir(suite_file, repos),
-        opts,
-        opts_instance,
-        results_path,
-        sut_test_dirs,
-        log_dir,
-        suite_class.__name__,
-    )
-
-    asyncio.run(_post_run_coverage(repos, log_dir, opts))
-
-    # Propagate a non-zero pytest exit code so callers and CI scripts see
-    # failure.  rc=5 (NO_TESTS_COLLECTED) is also treated as an error: a
-    # named suite that collects nothing almost certainly indicates a
-    # misconfiguration or stale suite name.  The stability threshold violation
-    # path (SystemExit(1) from _print_stability_report) already exits before
-    # reaching this point, so there is no double-exit risk.
-    if rc != 0:
-        raise typer.Exit(code=int(rc))
-
-
 def run_selection(ctx: typer.Context) -> None:
-    """Run a suite-less selection (--tests and/or -m) — one session per repo."""
-    import asyncio
+    """Run a suite-less selection (--tests and/or -m) — one session per repo.
 
+    Thin CLI adapter over :func:`otto.suite.run.run_selection`: lifts run
+    options out of ``ctx.meta``, calls the library engine, and maps its
+    library exceptions onto Typer's conventions. An unknown ``--tests`` name
+    (library ``UnknownSelectionError``, carrying the did-you-mean message)
+    becomes ``typer.BadParameter`` with the same message and ``param_hint``.
+    The "nothing matched" case (library ``NoTestsMatchedError``) becomes the
+    historical red ``rprint`` + exit 1. Both subclass ``ValueError``; catching
+    them by their specific types (``UnknownSelectionError`` first, then
+    ``NoTestsMatchedError``) keeps an unrelated pipeline ``ValueError`` from
+    being misreported as a no-match — it propagates untouched.
+    """
     stored = ctx.meta.get(RUN_OPTIONS_KEY)
-    opts = stored if isinstance(stored, TestRunOptions) else TestRunOptions()
-
-    repos = get_repos()
-    names = [n.strip() for n in opts.tests.split(",") if n.strip()]
-    if names:
-        per_repo = _resolve_selection(repos, names, opts.markers)
-    else:  # -m alone: marker expression over each repo's test dirs
-        matching_repos = _repos_with_marker_matches(repos, opts.markers)
-        per_repo = [(r, [str(d) for d in r.tests if d.exists()]) for r in matching_repos]
-        per_repo = [(r, t) for r, t in per_repo if t]
-
-    if not per_repo:
-        rprint("[red]No tests matched the selection.[/red]")
-        raise typer.Exit(code=1)
+    opts = stored if isinstance(stored, RunOptions) else RunOptions()
 
     _log_dir = get_context().output_dir
     if _log_dir is None:
         raise RuntimeError("output_dir is not set; command_preamble must run before run_selection")
-    log_dir: Path = _log_dir
-    asyncio.run(_pre_run_cov_clean(repos, opts))
 
-    worst = 0
-    multi = len(per_repo) > 1
-    for repo, targets in per_repo:
-        default_junit = log_dir / (f"junit_{repo.name}.xml" if multi else "junit.xml")
-        if opts.results and multi:
-            # A single explicit --results path would otherwise have every
-            # participating repo's session overwrite the last one's junit
-            # output. Fan out from the same stem instead: PATH -> PATH_repo.
-            results_source = Path(opts.results)
-            results_path = str(results_source.with_stem(f"{results_source.stem}_{repo.name}"))
-        else:
-            results_path = opts.results or str(default_junit)
-        sut_test_dirs = [p for r in repos for p in r.tests]
-        rc = _run_pytest_session(
-            targets,
-            None,
-            repo.sut_dir,
-            opts,
-            None,  # no per-suite Options instance: Task 3's fixture default-constructs
-            results_path,
-            sut_test_dirs,
-            log_dir,
-            label=f"selection:{repo.name}",
-        )
-        worst = max(worst, int(rc))
+    try:
+        result = _run_selection_lib(run_options=opts, output_dir=_log_dir)
+    except UnknownSelectionError as e:
+        raise typer.BadParameter(str(e), param_hint=e.param_hint) from None
+    except NoTestsMatchedError:
+        rprint("[red]No tests matched the selection.[/red]")
+        raise typer.Exit(code=1) from None
 
-    asyncio.run(_post_run_coverage(repos, log_dir, opts))
-    if worst != 0:
-        raise typer.Exit(code=worst)
-
-
-def _print_stability_report(
-    suite_name: str,
-    collector: "StabilityCollector",
-    iterations: int,
-    duration: int,
-    threshold: float,
-    log_dir: Path,
-) -> None:
-    """Print and save a per-test pass-rate stability report.
-
-    Parameters
-    ----------
-    threshold :
-        Minimum pass rate as a percentage (0-100).
-    """
-    mode_parts: list[str] = []
-    if iterations > 0:
-        mode_parts.append(f"{iterations} iterations")
-    if duration > 0:
-        mode_parts.append(f"{duration}s duration")
-    mode = ", ".join(mode_parts) or "stability"
-
-    lines: list[str] = [
-        f"Stability Results for {suite_name} ({mode}, threshold {threshold:.0f}%):",
-    ]
-    any_unstable = False
-    for test_name, (passed, total) in collector.results.items():
-        rate_pct = (passed / total * 100) if total else 0.0
-        status = "STABLE" if rate_pct >= threshold else "UNSTABLE"
-        if status == "UNSTABLE":
-            any_unstable = True
-        lines.append(f"  {test_name:<40} {passed}/{total} ({rate_pct:.0f}%)  {status}")
-    lines.append(f"Overall: {'FAIL' if any_unstable else 'PASS'}")
-
-    report = "\n".join(lines)
-    logger.info(report)
-    report_path = log_dir / "stability_report.txt"
-    report_path.write_text(report)
-
-    if any_unstable:
-        raise SystemExit(1)
+    if result.exit_code != 0:
+        raise typer.Exit(code=result.exit_code)
 
 
 # ---------------------------------------------------------------------------
@@ -941,7 +519,7 @@ def main(  # noqa: PLR0913 — CLI command params
             # list, which would cache an incomplete set).
             import contextlib
 
-            from ..configmodule.completion_cache import record_collected_tests_from_items
+            from ..config.completion_cache import record_collected_tests_from_items
 
             with contextlib.suppress(Exception):
                 record_collected_tests_from_items(
@@ -950,17 +528,31 @@ def main(  # noqa: PLR0913 — CLI command params
         raise typer.Exit
 
     if cov_dir is not None:
-        _prepare_empty_dir(cov_dir, overwrite=overwrite_cov_dir, flag_name="--cov-dir")
+        # Lazy: pulling otto.coverage runs its package __init__ (the whole
+        # collection stack), so a plain `otto test` without --cov-dir/-report-dir
+        # never loads it. The gate raises ValueError; the CLI surfaces the
+        # identical BadParameter (message + param_hint) users saw before the move.
+        from ..coverage.config import prepare_empty_dir
+
+        try:
+            prepare_empty_dir(cov_dir, overwrite=overwrite_cov_dir, flag_name="--cov-dir")
+        except ValueError as e:
+            raise typer.BadParameter(str(e), param_hint="--cov-dir") from e
 
     cov_report_effective = cov_report or cov_report_dir is not None
     if cov_report_dir is not None:
-        _prepare_empty_dir(
-            cov_report_dir, overwrite=overwrite_cov_report_dir, flag_name="--cov-report-dir"
-        )
+        from ..coverage.config import prepare_empty_dir  # cached after the above
+
+        try:
+            prepare_empty_dir(
+                cov_report_dir, overwrite=overwrite_cov_report_dir, flag_name="--cov-report-dir"
+            )
+        except ValueError as e:
+            raise typer.BadParameter(str(e), param_hint="--cov-report-dir") from e
 
     monitor_effective = monitor or monitor_output is not None or monitor_hosts is not None
 
-    ctx.meta[RUN_OPTIONS_KEY] = TestRunOptions(
+    ctx.meta[RUN_OPTIONS_KEY] = RunOptions(
         markers=markers,
         tests=tests,
         iterations=iterations,
@@ -996,295 +588,3 @@ def main(  # noqa: PLR0913 — CLI command params
             raise typer.Exit
         rprint(ctx.get_help())
         raise typer.Exit
-
-
-# ---------------------------------------------------------------------------
-# Coverage helpers
-# ---------------------------------------------------------------------------
-
-
-def _prepare_empty_dir(path: Path, *, overwrite: bool, flag_name: str) -> None:
-    """Ensure ``path`` is an empty, existing directory.
-
-    Typer's ``click.Path(file_okay=False, dir_okay=True, resolve_path=True)``
-    has already rejected non-directory targets; this helper only handles
-    create-if-missing and the empty/overwrite contract.
-
-    ``flag_name`` is the user-visible flag (e.g. ``--cov-dir``) used in the
-    error message when the target is non-empty and overwrite is not set;
-    the corresponding overwrite flag name is derived from it.
-    """
-    path.mkdir(parents=True, exist_ok=True)
-    if not any(path.iterdir()):
-        return
-    if not overwrite:
-        overwrite_flag = f"--overwrite-{flag_name.lstrip('-')}"
-        raise typer.BadParameter(
-            f"{flag_name} target {path} is not empty; pass {overwrite_flag} to clear it.",
-            param_hint=flag_name,
-        )
-    for child in path.iterdir():
-        if child.is_dir() and not child.is_symlink():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
-
-
-async def _cov_clean_remotes(repos: list["Repo"]) -> None:
-    """Delete .gcda files on all configured remote hosts before a test run."""
-    from ..configmodule import all_hosts
-    from ..coverage.fetcher.remote import GcdaFetcher
-
-    cov_config = _get_cov_config(repos)
-    if not cov_config:
-        return
-
-    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
-    if not gcda_remote_dir:
-        logger.warning("coverage.gcda_remote_dir not configured — skipping pre-run cleanup")
-        return
-
-    if not any(all_hosts()):
-        return
-
-    fetcher = GcdaFetcher(Path("/tmp"))  # noqa: S108 — deliberate staging path
-    await fetcher.clean_remote(gcda_remote_dir)
-
-
-async def _write_cov_metadata(
-    repos: list["Repo"],
-    cov_config: dict[str, Any],
-    unix_hosts: list[Any],
-    unix_dirs: dict[str, Path],
-    cov_hosts: list[Any],
-    embedded_dirs: dict[str, Path],
-    cov_dir: Path,
-) -> None:
-    """Write ``.otto_cov_meta.json`` so ``otto cov report`` can find source roots and toolchains.
-
-    Extracted from ``_run_coverage`` to keep that function's cyclomatic complexity
-    below the project limit.  Behavior is identical to the original tail.
-    """
-    import json
-
-    cov_repo = _get_cov_repo(repos)
-    if not cov_repo:
-        return
-
-    toolchains: dict[str, dict[str, str]] = {}
-    for host in unix_hosts:
-        # Only hosts that actually produced coverage — skip infrastructure hosts
-        # (e.g. an SSH hop) that are in the lab solely for connectivity.
-        if host.id not in unix_dirs:
-            continue
-        tc = host.toolchain
-        toolchains[host.id] = {
-            "sysroot": str(tc.sysroot),
-            "lcov": str(tc.lcov),
-            "gcov": str(tc.gcov),
-        }
-
-    sut_dir = str(cov_repo.sut_dir.resolve())
-
-    # Embedded hosts now carry a per-host Toolchain (lab-data ``toolchain``),
-    # exactly like Unix hosts: the bed declares the cross-gcov for binaries it
-    # runs. Use it per host; fall back to scanning the build's .gcno only for a
-    # host left at the default (unconfigured) toolchain.
-    #
-    # The build dir is the report's source root when there are no Unix hosts
-    # (standalone-embedded). Multi-Zephyr-version labs declare per-version build
-    # dirs under [coverage.embedded.builds.<version>]; each host's os_version
-    # selects its own root, recorded in ``source_roots`` so the reporter can
-    # resolve the correct .gcno tree per host. The single ``build_dir`` remains
-    # supported as a legacy/fallback for single-version labs.
-    embedded_cfg = cov_config.get("embedded") or {}
-    embedded_build_dir = embedded_cfg.get("build_dir")  # single legacy/fallback
-    embedded_builds = embedded_cfg.get("builds") or {}  # {"3.7": {"build_dir": ...}}
-
-    def _resolve_build_dir(host: object) -> str | None:
-        ver = getattr(host, "os_version", None)
-        if ver and ver in embedded_builds:
-            bd = embedded_builds[ver].get("build_dir")
-            if bd:
-                return bd
-        return embedded_build_dir
-
-    source_roots: dict[str, str] = {}
-    if embedded_dirs and (embedded_build_dir or embedded_builds):
-        from ..host.embedded_host import EmbeddedHost
-        from ..host.toolchain import Toolchain
-        from ..host.toolchain_discovery import discover_toolchain_from_gcno
-
-        embedded_hosts = {h.id: h for h in cov_hosts if isinstance(h, EmbeddedHost)}
-        # Cache .gcno-discovery per build dir so hosts sharing a build dir do
-        # not re-trigger the (potentially slow) filesystem scan.
-        discovery_cache: dict[str, Toolchain | None] = {}
-        for host_id in embedded_dirs:
-            host = embedded_hosts.get(host_id)
-            host_build_dir = _resolve_build_dir(host) if host is not None else embedded_build_dir
-            if host_build_dir:
-                source_roots[host_id] = str(Path(host_build_dir).resolve())
-            tc = host.toolchain if host is not None and host.toolchain != Toolchain() else None
-            if tc is None:
-                bd_key = host_build_dir or ""
-                if bd_key not in discovery_cache:
-                    if host_build_dir:
-                        discovery_cache[bd_key] = discover_toolchain_from_gcno(Path(host_build_dir))
-                    else:
-                        discovery_cache[bd_key] = None
-                tc = discovery_cache[bd_key]
-            if tc is not None:
-                toolchains[host_id] = {
-                    "sysroot": str(tc.sysroot),
-                    "lcov": str(tc.lcov),
-                    "gcov": str(tc.gcov),
-                }
-        if not unix_dirs:
-            # Use the single fallback if present; otherwise the first resolved root.
-            if embedded_build_dir:
-                sut_dir = str(Path(embedded_build_dir).resolve())
-            elif source_roots:
-                sut_dir = next(iter(source_roots.values()))
-
-    meta: dict[str, object] = {
-        "repo_name": cov_repo.name,
-        "sut_dir": sut_dir,
-        "toolchains": toolchains,
-        "source_roots": source_roots,
-    }
-    (cov_dir / ".otto_cov_meta.json").write_text(json.dumps(meta, indent=2))
-
-
-async def _run_coverage(
-    repos: list["Repo"],
-    log_dir: Path,
-    cov_dir_override: Path | None = None,
-) -> None:
-    """Collect ``.gcda`` coverage from Unix and/or embedded hosts into the cov dir.
-
-    Unix hosts emit ``.gcda`` to a filesystem fetched by :class:`GcdaFetcher`;
-    embedded (Zephyr LLEXT) hosts have no filesystem and instead dump theirs
-    over the console, decoded by :func:`collect_embedded_coverage`.  Both land
-    under the same ``cov_dir`` so the merge/report step treats them identically.
-
-    When ``cov_dir_override`` is provided, coverage is written there; otherwise
-    the default ``<log_dir>/cov`` is used.
-    """
-    from ..configmodule import all_hosts
-    from ..coverage.fetcher.embedded import collect_embedded_coverage
-    from ..coverage.fetcher.remote import GcdaFetcher
-    from ..host import UnixHost
-
-    cov_config = _get_cov_config(repos)
-    if not cov_config:
-        logger.warning("--cov was specified but no [coverage] section found in .otto/settings.toml")
-        return
-
-    cov_dir = cov_dir_override or log_dir / "cov"
-    host_dirs: dict[str, Path] = {}
-
-    # The set of hosts to collect coverage from is repo-declared: an optional
-    # ``[coverage].hosts`` regex (matched against each host id) selects targets,
-    # defaulting to every host in the lab. This is how a lab's SSH **hop** (e.g.
-    # `basil` fronting `sprout_cov`) is kept out of the coverage set — it is
-    # excluded by the pattern, not inferred from the fact that it emits no .gcda.
-    hosts_pattern = cov_config.get("hosts")
-    cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
-
-    # Unix hosts compile the SUT and emit .gcda to a filesystem we fetch over
-    # the network. EmbeddedHost/DockerContainerHost are skipped by the fetcher.
-    cov_hosts = list(all_hosts(pattern=cov_pattern))
-    unix_hosts = [h for h in cov_hosts if isinstance(h, UnixHost)]
-    gcda_remote_dir = cov_config.get("gcda_remote_dir", "")
-    # Unix hosts that actually produced .gcda (host id -> dir). Keying the meta
-    # below off *collected coverage* (rather than lab membership) is a safety net
-    # behind the ``[coverage].hosts`` selector above: should an infrastructure
-    # host slip through the pattern, producing no .gcda keeps it from being
-    # mistaken for a Unix coverage target — which would otherwise flip the
-    # source-root choice (breaking embedded .gcno discovery) and write a bogus
-    # toolchain entry.
-    unix_dirs: dict[str, Path] = {}
-    if gcda_remote_dir and unix_hosts:
-        # Hosts may carry stale connections from pytest's event loop; rebuild
-        # their connection state so they reconnect on the current loop.
-        for host in unix_hosts:
-            host.rebuild_connections()
-        fetcher = GcdaFetcher(cov_dir)
-        unix_dirs = await fetcher.fetch_all(gcda_remote_dir)
-        host_dirs.update(unix_dirs)
-        if unix_dirs:
-            await fetcher.clean_remote(gcda_remote_dir)
-
-    # Embedded (RTOS) hosts dump .gcda over the console (no filesystem).
-    embedded_dirs = await collect_embedded_coverage(cov_config, cov_dir, pattern=cov_pattern)
-    host_dirs.update(embedded_dirs)
-
-    if not host_dirs:
-        logger.warning("No coverage data collected from any host")
-        return
-
-    logger.info("Coverage data collected to %s (%d hosts)", cov_dir, len(host_dirs))
-
-    await _write_cov_metadata(
-        repos=repos,
-        cov_config=cov_config,
-        unix_hosts=unix_hosts,
-        unix_dirs=unix_dirs,
-        cov_hosts=cov_hosts,
-        embedded_dirs=embedded_dirs,
-        cov_dir=cov_dir,
-    )
-
-    # Produce a pinned capture.json per board against the lab's default
-    # e2e-kind tier, so a bare `otto test --cov` run always leaves behind
-    # capture artifacts (not just raw .gcda) — the same production step
-    # `otto cov get` uses for a manual/on-demand pull. This tail must never
-    # fail an otherwise-successful test run: a non-git sut, ambiguous/
-    # misconfigured tiers (``resolve_get_tier`` raising ``ValueError``), or a
-    # stamp-mismatch during merge (``CoverageDataMismatchError``, a
-    # ``RuntimeError``) are all logged and swallowed, leaving the raw
-    # ``.gcda`` artifacts on disk for manual recovery via ``otto cov get``.
-    from ..coverage.capture.produce import produce_captures
-    from ..coverage.tiers import load_tiers, resolve_get_tier
-
-    cov_repo = _get_cov_repo(repos)
-    if cov_repo is None:
-        return
-
-    try:
-        tiers = load_tiers(cov_config)
-        e2e_tier = resolve_get_tier(tiers, None)
-        written = await produce_captures(
-            cov_dir,
-            tier=e2e_tier.name,
-            repo_root=cov_repo.sut_dir,
-            labs=[cov_repo.name],
-        )
-    except (ValueError, RuntimeError, FileNotFoundError) as e:
-        logger.warning(
-            "Coverage capture emission failed (%s); raw .gcda artifacts remain in %s", e, cov_dir
-        )
-        return
-
-    logger.info("Coverage captures produced: %d board(s)", len(written))
-
-
-def _has_cov_config(cov: dict[str, Any]) -> bool:
-    """Return True when the repo actually declared coverage settings."""
-    return bool(
-        cov.get("gcda_remote_dir") or cov.get("embedded") or cov.get("tiers") or cov.get("hosts")
-    )
-
-
-def _get_cov_repo(repos: list["Repo"]) -> "Repo | None":
-    """Return the first repo with a ``[coverage]`` section in its settings."""
-    for repo in repos:
-        if _has_cov_config(repo.settings.get("coverage") or {}):
-            return repo
-    return None
-
-
-def _get_cov_config(repos: list["Repo"]) -> dict[str, Any]:
-    """Extract the ``[coverage]`` config from the first repo that has one."""
-    repo = _get_cov_repo(repos)
-    return repo.settings["coverage"] if repo else {}

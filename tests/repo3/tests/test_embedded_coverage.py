@@ -26,6 +26,7 @@ Each distinct ``(build_dir, zver)`` pair is built exactly once even when multipl
 hosts share the same Zephyr version.
 """
 
+import logging
 import re
 from pathlib import Path
 
@@ -33,16 +34,15 @@ import pytest
 import pytest_asyncio
 
 from otto import options
-from otto.configmodule import get_repos
-from otto.configmodule.configmodule import all_hosts
+from otto.config import get_repos
+from otto.config.fleet import all_hosts
 from otto.host import LocalHost
 from otto.host.embedded_host import EmbeddedHost
-from otto.logger import get_logger
 from otto.suite import OttoSuite
 from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
 BUILD_SCRIPT = PRODUCT_DIR / "build.sh"
@@ -117,7 +117,7 @@ async def _build_extension_for(build_dir: str, zver: "str | None") -> None:
         cmd = f"{cmd} {zver}"
     localhost = LocalHost()
     try:
-        result = await localhost.oneshot(cmd, timeout=900)
+        result = await localhost.exec(cmd, timeout=900)
         if result.status != Status.Success:
             raise RuntimeError(f"extension build failed (see {BUILD_SCRIPT}):\n{result.value}")
         logger.info("Rebuilt %s into %s (zver=%s)", _extension(), build_dir, zver)
@@ -149,7 +149,7 @@ def _embedded_hosts() -> list[EmbeddedHost]:
 async def _call(host: EmbeddedHost, fn: str, timeout: float = 60) -> None:
     """Invoke an exported extension entry point over the console."""
     ext = _extension()
-    result = await host.oneshot(f"llext call_fn {ext} {fn}", timeout=timeout)
+    result = await host.exec(f"llext call_fn {ext} {fn}", timeout=timeout)
     if result.status != Status.Success:
         raise RuntimeError(f"call_fn {fn} failed on {host.id}: {result.value}")
 

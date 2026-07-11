@@ -2,7 +2,7 @@
 
 `otto test --cov` runs the suite via ``pytest.main()`` (each class on its own
 ``loop_scope='class'`` event loop), then runs coverage collection via a separate
-``asyncio.run(_run_coverage)``.  A persistent shell session — and the single
+``asyncio.run(collect_coverage)``.  A persistent shell session — and the single
 socket of an RTOS telnet console — is bound to the loop that opened it; reusing
 it from the collector's loop hangs (reads await futures on the now-closed class
 loop) and the stale single-client socket blocks the collector's reconnect.
@@ -40,7 +40,7 @@ async def _drive(request: MagicMock) -> None:
 async def test_release_connections_closes_hosts_under_cov():
     host = MagicMock(id="sprout_cov")
     host.close = AsyncMock()
-    with patch("otto.configmodule.all_hosts", return_value=[host]):
+    with patch("otto.config.all_hosts", return_value=[host]):
         await _drive(_request(cov=True))
     host.close.assert_awaited_once()
 
@@ -49,7 +49,7 @@ async def test_release_connections_closes_hosts_under_cov():
 async def test_release_connections_noop_without_cov():
     host = MagicMock(id="sprout_cov")
     host.close = AsyncMock()
-    with patch("otto.configmodule.all_hosts", return_value=[host]):
+    with patch("otto.config.all_hosts", return_value=[host]):
         await _drive(_request(cov=False))
     host.close.assert_not_awaited()
 
@@ -61,6 +61,6 @@ async def test_release_connections_tolerates_close_errors():
     bad.close = AsyncMock(side_effect=RuntimeError("boom"))
     good = MagicMock(id="good")
     good.close = AsyncMock()
-    with patch("otto.configmodule.all_hosts", return_value=[bad, good]):
+    with patch("otto.config.all_hosts", return_value=[bad, good]):
         await _drive(_request(cov=True))  # must not raise
     good.close.assert_awaited_once()

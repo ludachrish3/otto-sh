@@ -57,7 +57,7 @@
     </table>
   </section>
 
-  {% if contexts %}
+  {% if runs %}
   <section class="captures">
     <h2>Captures</h2>
     <table class="summary-table captures-table">
@@ -75,7 +75,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for cap in contexts %}
+        {% for cap in runs %}
         <tr>
           <td>{{ cap.label }}</td>
           <td>{{ cap.tier }}</td>

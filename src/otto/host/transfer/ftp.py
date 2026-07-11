@@ -13,9 +13,10 @@ if TYPE_CHECKING:
 
     from ..connections import ConnectionManager
 
+import logging
+
 from typing_extensions import override
 
-from ...logger import get_logger
 from ...result import CommandResult, Result
 from ...utils import Status
 from .base import (
@@ -26,7 +27,7 @@ from .base import (
 from .registry import register_transfer_backend
 from .unix_base import UnixFileTransfer
 
-_logger = get_logger()
+_logger = logging.getLogger(__name__)
 
 
 async def _ftp_size(ftp_conn: "aioftp.Client", path: str) -> int:

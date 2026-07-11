@@ -5,14 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from otto.configmodule.lab import load_lab
-from otto.storage import (
+from otto.config.lab import load_lab
+from otto.labs import (
     JsonFileLabRepository,
     LabRepositoryError,
     build_lab_repository,
     register_lab_repository,
 )
-from otto.storage.registry import LAB_REPOSITORIES
+from otto.labs.registry import LAB_REPOSITORIES
 
 
 def _hosts_file(path: Path, hosts: list[dict]) -> Path:
@@ -71,7 +71,7 @@ def test_custom_backend_selected_by_name(tmp_path):
             self._names = names or []
 
         def load_lab(self, name, preferences=None):
-            from otto.configmodule.lab import Lab
+            from otto.config.lab import Lab
 
             return Lab(name=name)
 

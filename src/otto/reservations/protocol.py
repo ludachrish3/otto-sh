@@ -122,7 +122,7 @@ class SupportsUsernameCompletion(Protocol):
     A backend that can list its users implements ``list_usernames``; otto
     detects it structurally (``isinstance(backend, SupportsUsernameCompletion)``)
     and feeds the values into ``--as-user`` tab-completion (cached, see
-    ``otto.configmodule.completion_cache.collect_reservation_usernames``).
+    ``otto.config.completion_cache.collect_reservation_usernames``).
     Backends that cannot enumerate users simply omit it.
     """
 

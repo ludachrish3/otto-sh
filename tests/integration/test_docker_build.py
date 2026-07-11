@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 
-from otto.configmodule.repo import Repo
+from otto.config.repo import Repo
 from otto.docker import build_images
 from otto.docker.build import image_latest_tag
 from otto.host.login_proxy import Cred
@@ -90,5 +90,5 @@ async def test_build_tags_locally(parent, repo1):
     # The :latest mirror should be pullable via `docker image inspect`.
     image = repo1.docker_settings.images[0]
     latest = image_latest_tag(repo1.docker_settings.registry_url, repo1.name, image)
-    result = await parent.oneshot(f"docker image inspect {latest}")
+    result = await parent.exec(f"docker image inspect {latest}")
     assert result.status.is_ok, f"latest tag missing: {result.value}"

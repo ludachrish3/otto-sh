@@ -2,7 +2,7 @@
 Integration tests for the test-file auto-scan → suite-registration pipeline,
 using the real tests/repo1 SUT repo.
 
-These tests cover the bug fix in ``configmodule.repo.import_test_files()``:
+These tests cover the bug fix in ``config.repo.import_test_files()``:
 the original implementation tried to derive a dotted module name from
 ``sys.path`` entries and silently skipped files whose parent directory was
 not on ``sys.path``.  The fix uses ``importlib.util.spec_from_file_location``
@@ -28,7 +28,7 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from otto.configmodule.repo import Repo
+from otto.config.repo import Repo
 from otto.suite.register import SUITES
 
 runner = CliRunner()

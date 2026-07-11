@@ -51,7 +51,7 @@ from collections.abc import Iterator
 import pytest
 
 from otto import AppShell, Parsed, register_login_proxy
-from otto.storage.factory import create_host_from_dict
+from otto.host.factory import create_host_from_dict
 from tests._fixtures._host_pool import UNIX_POOL as _UNIX_POOL
 from tests._fixtures._host_pool import lease_unix_host
 from tests._fixtures.labdata import host_data

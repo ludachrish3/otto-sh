@@ -5,7 +5,7 @@ stamped onto the constructed host's ``os_type`` attribute as the profile selecto
 A profile records which *base* registered host class to build (e.g.
 :class:`~otto.host.unix_host.UnixHost` or
 :class:`~otto.host.embedded_host.EmbeddedHost`) plus a bundle of *default field
-values* that the storage factory merges beneath each host's own fields. This
+values* that the host factory merges beneath each host's own fields. This
 lets many hosts that share a characteristic bundle (e.g. a particular Zephyr
 build's ``command_frame`` / ``filesystem`` / ``max_filename_len``) name that
 bundle once instead of copy-pasting it into every ``lab.json`` entry.
@@ -51,16 +51,16 @@ subclasses :class:`~otto.host.embedded_host.EmbeddedHost`, declares Zephyr-
 specific defaults, and is registered under ``"zephyr"`` at module load.
 """
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from ..logger import get_logger
 from ..registry import Registry, caller_module
 
 if TYPE_CHECKING:
     from ..models.host import HostSpec
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 BaseFamily = str
 """The name of a registered host class an :class:`OsProfile` builds.
@@ -94,7 +94,7 @@ class OsProfile:
 
     The ``defaults`` dict holds *raw* values exactly as a ``lab.json`` entry
     would (strings for ``command_frame`` / ``filesystem``, dicts for the
-    ``*_options`` tables, plain scalars otherwise). The storage factory merges
+    ``*_options`` tables, plain scalars otherwise). The host factory merges
     them beneath the host's own fields and runs its existing string→instance
     coercion, so the profile never has to build typed objects itself.
     """
@@ -126,7 +126,7 @@ def _all_slots(cls: type) -> frozenset[str]:
     A ``@dataclass(slots=True)`` subclass may not repeat inherited slot names
     (Python 3.11+ adds only *new* fields to the subclass ``__slots__``), so a
     single-class ``__slots__`` lookup can miss inherited fields. The union over
-    the MRO is what the storage factory filters host/profile dicts against.
+    the MRO is what the host factory filters host/profile dicts against.
     """
     names: set[str] = set()
     for klass in cls.__mro__:
@@ -249,7 +249,7 @@ def get_host_class(name: str) -> type | None:
     """Return the host class registered under *name*, or ``None``.
 
     Non-raising counterpart to :func:`build_host_class`, for callers that
-    produce their own error (e.g. :func:`otto.storage.factory.validate_host_dict`).
+    produce their own error (e.g. :func:`otto.host.factory.validate_host_dict`).
     """
     return HOST_CLASSES.get(name) if name in HOST_CLASSES else None
 
@@ -319,7 +319,7 @@ def register_os_profile(
 def build_os_profile(name: str) -> OsProfile:
     """Return the :class:`OsProfile` registered under *name*.
 
-    Used by :func:`otto.storage.factory.create_host_from_dict` to resolve a
+    Used by :func:`otto.host.factory.create_host_from_dict` to resolve a
     host's ``os_type`` to its base family and default bundle.
 
     Raises
@@ -335,7 +335,7 @@ def get_os_profile(name: str) -> OsProfile | None:
     """Return the registered :class:`OsProfile` for *name*, or ``None``.
 
     Non-raising counterpart to :func:`build_os_profile`, used by
-    :func:`otto.storage.factory.validate_host_dict` so validation can produce
+    :func:`otto.host.factory.validate_host_dict` so validation can produce
     its own error message.
     """
     return OS_PROFILES.get(name) if name in OS_PROFILES else None

@@ -15,10 +15,10 @@ API Reference
    link
    tunnel
    logger
-   configmodule
+   config
    registry
    reservations
-   storage
+   labs
    testing
    examples
    result

@@ -173,12 +173,14 @@ The built-ins span the whole matrix — read them as worked examples
 - **`monitor`** sets `gate=False` at the spec level, then gates *itself*,
   per-branch, inside the command body: a historical `--file` replay reads a
   local file and never touches live hardware, so it's gate-exempt by design,
-  while live collection still calls the gate explicitly. This is the
+  while live collection still evaluates the gate explicitly. This is the
   precedent to follow whenever a uniform `gate=True`/`gate=False` would be
   either too strict or too permissive for some of a command's branches —
-  declare `gate=False` on the spec and call
-  {func}`~otto.reservations.check.gate` explicitly wherever the branch actually
-  needs it.
+  declare `gate=False` on the spec and, wherever the branch actually needs
+  it, read `ctx.meta["otto_reservation"]` (a
+  {class}`~otto.reservations.check.ReservationGate`, or `None` if none was
+  built) and call its `.evaluate()` yourself — the same inline pattern
+  {func}`~otto.cli.invoke.command_preamble` uses for `gate=True` commands.
 - **`run`, `test`, `host`, `docker`** all keep the defaults (or override just
   `gate` for `docker`, which is `gate=False` because docker was never
   reservation-gated — the flag preserves that pre-existing behavior) —
@@ -217,7 +219,7 @@ shell tab completion — there is nothing extra to wire up. Two paths feed this:
   entirely for latency — completion never executes arbitrary user code. A
   cache file records each third-party command's name, help text, and
   `lab_free` flag from the most recent slow-path run (built by
-  `collect_cli_commands()` in `otto/configmodule/completion_cache.py`) —
+  `collect_cli_commands()` in `otto/config/completion_cache.py`) —
   plus, for a group, its subcommand tree (names, helps, option schemas), so
   `otto <your-group> <TAB>` completes children without importing your code.
   Built-in commands aren't cached — they re-register on every real

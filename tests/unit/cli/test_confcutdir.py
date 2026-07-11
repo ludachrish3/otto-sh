@@ -3,7 +3,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from otto.cli.test import _repo_confcutdir
+from otto.suite.run import _repo_confcutdir
 
 
 def test_file_inside_repo_maps_to_sut_dir(tmp_path: Path) -> None:

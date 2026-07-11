@@ -5,9 +5,9 @@ runtime objects (``DockerSettings``/``DockerImage``/``DockerCompose`` frozen
 dataclasses, ``OsProfile``, the reservation backend) via ``to_runtime()`` — the
 same two-type split the option/host specs use.
 
-Leaf isolation: this module must NOT import from ``otto.configmodule`` at module
-top — doing so triggers ``configmodule/__init__``'s app bootstrap. Runtime types
-from ``configmodule.repo`` are imported lazily inside ``to_runtime()`` and under
+Leaf isolation: this module must NOT import from ``otto.config`` at module
+top — doing so triggers ``config/__init__``'s app bootstrap. Runtime types
+from ``config.repo`` are imported lazily inside ``to_runtime()`` and under
 ``TYPE_CHECKING`` for annotations only.
 """
 
@@ -31,7 +31,7 @@ from .options import (
 )
 
 if TYPE_CHECKING:
-    from ..configmodule.repo import DockerCompose, DockerImage, DockerSettings
+    from ..config.repo import DockerCompose, DockerImage, DockerSettings
 
 
 class DockerImageSpec(OttoModel):
@@ -54,7 +54,7 @@ class DockerImageSpec(OttoModel):
 
     def to_runtime(self) -> "DockerImage":
         """Build the ``DockerImage`` runtime dataclass from the validated spec fields."""
-        from ..configmodule.repo import DockerImage
+        from ..config.repo import DockerImage
 
         return DockerImage(
             name=self.name,
@@ -82,7 +82,7 @@ class DockerComposeSpec(OttoModel):
 
     def to_runtime(self) -> "DockerCompose":
         """Build the ``DockerCompose`` runtime dataclass from the validated spec fields."""
-        from ..configmodule.repo import DockerCompose
+        from ..config.repo import DockerCompose
 
         return DockerCompose(
             path=self.path,
@@ -105,7 +105,7 @@ class DockerSettingsSpec(OttoModel):
 
     def to_runtime(self) -> "DockerSettings":
         """Build the ``DockerSettings`` runtime dataclass from the validated spec fields."""
-        from ..configmodule.repo import DockerSettings
+        from ..config.repo import DockerSettings
 
         return DockerSettings(
             registry_url=self.registry_url,
@@ -214,12 +214,12 @@ class ReservationFile(OttoModel):
 # SettingsModel — boundary model for .otto/settings.toml
 # ---------------------------------------------------------------------------
 
-# settings.toml version floor: X.Y.Z. Mirrors configmodule.version.version_re;
-# duplicated (not imported) so models/ stays free of the configmodule bootstrap.
+# settings.toml version floor: X.Y.Z. Mirrors config.version.version_re;
+# duplicated (not imported) so models/ stays free of the config bootstrap.
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+")
 
 # The six per-protocol option tables accepted under [host_preferences."<selector>"],
-# each mapped to the spec that validates it. Keys mirror storage.factory.OPTIONS_KEYS
+# each mapped to the spec that validates it. Keys mirror host.factory.OPTIONS_KEYS
 # (a drift test keeps them in lockstep).
 _HOST_DEFAULT_OPTION_SPECS: dict[str, type[OttoModel]] = {
     "ssh_options": SshOptionsSpec,
@@ -334,7 +334,7 @@ class SettingsModel(OttoModel):
     def _validate_version_format(cls, v: str) -> str:
         if _VERSION_RE.match(v) is None:
             # Prefix match (no ``$``) to stay consistent with the runtime
-            # ``configmodule.version.Version`` parser, which Repo builds from
+            # ``config.version.Version`` parser, which Repo builds from
             # this same string — a trailing SemVer suffix (``1.2.3-rc1``) is
             # accepted by both, so the message says "start with".
             raise ValueError(f"version {v!r} must start with MAJOR.MINOR.PATCH (e.g. 1.2.3)")
@@ -391,7 +391,7 @@ class SettingsModel(OttoModel):
 # ---------------------------------------------------------------------------
 
 # Split OTTO_SUT_DIRS on comma OR the OS path separator (':' on Linux), matching
-# the historical configmodule.env behavior.
+# the historical config.env behavior.
 _PATH_LIST_SEP = re.compile(rf"[,{re.escape(os.pathsep)}]")
 
 
@@ -402,7 +402,7 @@ class OttoEnvSettings(BaseSettings):
     documents the whole surface and is the reader for the non-CLI reads: sut_dirs,
     field_default, compose_suffix, and the completion-cache xdir.
 
-    sut_dirs existence-checking is done by ``configmodule.env.load_otto_env`` so a
+    sut_dirs existence-checking is done by ``config.env.load_otto_env`` so a
     missing dir raises ``FileNotFoundError`` (not a wrapped ValidationError).
     """
 

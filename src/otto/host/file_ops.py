@@ -2,7 +2,7 @@
 Posix remote file-management mixin.
 
 Mimics the unix CLI (``test``/``ls``/``mkdir``/``rm``/``cp``/``mv``/``cat``)
-over the host's shell via :meth:`~otto.host.host.Host.oneshot`. These manage
+over the host's shell via :meth:`~otto.host.host.Host.exec`. These manage
 files *already on / between locations on* the host — complementary to
 ``put``/``get`` (which move files local↔remote). Shared by the posix-shell hosts
 (:class:`~otto.host.unix_host.UnixHost`,
@@ -35,14 +35,14 @@ class PosixFileOps:
     @cli_exposed(output_dir=False)
     async def exists(self, path: "str | Path") -> bool:
         """Return True when *path* exists on the host (``test -e``)."""
-        result = await self.oneshot(f"test -e {self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"test -e {self._q(path)}")  # ty: ignore[unresolved-attribute]
         return result.status.is_ok
 
     @cli_exposed(output_dir=False)
     async def ls(self, path: "Annotated[str | Path, Arg()]" = ".", all: bool = False) -> list[str]:  # noqa: A002 — CLI-exposed param name, maps to --all flag
         """List entry names in *path* (``ls -1``; *all* adds ``-A`` for dotfiles)."""
         flags = "-1A" if all else "-1"
-        result = await self.oneshot(f"ls {flags} {self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"ls {flags} {self._q(path)}")  # ty: ignore[unresolved-attribute]
         if not result.status.is_ok:
             return []
         return [line for line in result.value.splitlines() if line]
@@ -51,7 +51,7 @@ class PosixFileOps:
     async def mkdir(self, path: "str | Path", parents: bool = True) -> Result:
         """Create directory *path* (``mkdir``; *parents* adds ``-p``)."""
         flag = "-p " if parents else ""
-        result = await self.oneshot(f"mkdir {flag}{self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"mkdir {flag}{self._q(path)}")  # ty: ignore[unresolved-attribute]
         return Result(result.status, msg=result.value)
 
     @cli_exposed
@@ -59,14 +59,14 @@ class PosixFileOps:
         """Remove *path* (``rm``; *recursive* → ``-r``, *force* → ``-f``)."""
         flags = "".join(f for f, on in (("r", recursive), ("f", force)) if on)
         opt = f"-{flags} " if flags else ""
-        result = await self.oneshot(f"rm {opt}{self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"rm {opt}{self._q(path)}")  # ty: ignore[unresolved-attribute]
         return Result(result.status, msg=result.value)
 
     @cli_exposed
     async def cp(self, src: "str | Path", dst: "str | Path", recursive: bool = False) -> Result:
         """Copy *src* to *dst* on the host (``cp``; *recursive* → ``-r``)."""
         opt = "-r " if recursive else ""
-        result = await self.oneshot(  # ty: ignore[unresolved-attribute]
+        result = await self.exec(  # ty: ignore[unresolved-attribute]
             f"cp {opt}{self._q(src)} {self._q(dst)}"
         )
         return Result(result.status, msg=result.value)
@@ -74,7 +74,7 @@ class PosixFileOps:
     @cli_exposed
     async def mv(self, src: "str | Path", dst: "str | Path") -> Result:
         """Move/rename *src* to *dst* on the host (``mv``)."""
-        result = await self.oneshot(  # ty: ignore[unresolved-attribute]
+        result = await self.exec(  # ty: ignore[unresolved-attribute]
             f"mv {self._q(src)} {self._q(dst)}"
         )
         return Result(result.status, msg=result.value)
@@ -85,11 +85,11 @@ class PosixFileOps:
 
         Reads via ``base64`` — the exact inverse of :meth:`write_file`'s base64
         transport — so content round-trips byte-exact regardless of trailing
-        newlines, trailing whitespace, or shell metacharacters (``oneshot``'s
+        newlines, trailing whitespace, or shell metacharacters (``exec``'s
         per-line ``rstrip``/rejoin would otherwise corrupt them). Raises
         :class:`FileNotFoundError` when the read fails (missing path, permissions).
         """
-        result = await self.oneshot(f"base64 {self._q(path)}")  # ty: ignore[unresolved-attribute]
+        result = await self.exec(f"base64 {self._q(path)}")  # ty: ignore[unresolved-attribute]
         if not result.status.is_ok:
             raise FileNotFoundError(f"read_file({path!r}) failed: {result.value}")
         return base64.b64decode(result.value).decode()
@@ -106,5 +106,5 @@ class PosixFileOps:
         encoded = base64.b64encode(data.encode()).decode()
         redirect = ">>" if append else ">"
         cmd = f"echo {encoded} | base64 -d {redirect} {self._q(path)}"
-        result = await self.oneshot(cmd, log=LogMode.QUIET)  # ty: ignore[unresolved-attribute]
+        result = await self.exec(cmd, log=LogMode.QUIET)  # ty: ignore[unresolved-attribute]
         return Result(result.status, msg=result.value)

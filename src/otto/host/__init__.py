@@ -22,6 +22,8 @@ from .connections import register_term_backend as register_term_backend
 from .docker_host import DockerContainerHost as DockerContainerHost
 from .embedded_host import EmbeddedHost as EmbeddedHost
 from .embedded_host import ZephyrHost as ZephyrHost
+from .factory import create_host_from_dict as create_host_from_dict
+from .factory import validate_host_dict as validate_host_dict
 from .file_ops import PosixFileOps as PosixFileOps
 from .host import Host as Host
 from .host import HostFilter as HostFilter

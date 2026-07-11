@@ -22,7 +22,7 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-from ..configmodule.repo import DockerCompose, DockerImage
+from ..config.repo import DockerCompose, DockerImage
 from ..host.host import Host
 from ..utils import Status
 
@@ -58,7 +58,7 @@ async def stage_image_context(
     remote_dir = image_build_dir(project, image.name)
 
     # Wipe and recreate to avoid mixing leftover files from an earlier build.
-    await parent.oneshot(
+    await parent.exec(
         f"rm -rf {shlex.quote(str(remote_dir))} && mkdir -p {shlex.quote(str(remote_dir))}"
     )
 
@@ -86,7 +86,7 @@ async def stage_image_context(
 
         # Extract on parent.
         remote_tar = remote_dir / tmp_path.name
-        result = await parent.oneshot(
+        result = await parent.exec(
             f"tar -xf {shlex.quote(str(remote_tar))} -C {shlex.quote(str(remote_dir))} "
             f"&& rm -f {shlex.quote(str(remote_tar))}"
         )
@@ -110,12 +110,12 @@ async def stage_compose_files(
     Returns the absolute paths on the parent in the same order.
     """
     base = compose_dir(project)
-    await parent.oneshot(f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}")
+    await parent.exec(f"rm -rf {shlex.quote(str(base))} && mkdir -p {shlex.quote(str(base))}")
 
     out: list[Path] = []
     for idx, compose in enumerate(composes):
         sub = base / str(idx)
-        await parent.oneshot(f"mkdir -p {shlex.quote(str(sub))}")
+        await parent.exec(f"mkdir -p {shlex.quote(str(sub))}")
         put_result = await parent.put([compose.path], sub)
         if not put_result.is_ok:
             raise RuntimeError(f"failed to stage compose file {compose.path}: {put_result.msg}")
@@ -125,5 +125,5 @@ async def stage_compose_files(
 
 async def cleanup_project(parent: Host, project: str) -> Status:
     """Remove the per-project staging tree on the parent. Best-effort."""
-    result = await parent.oneshot(f"rm -rf {shlex.quote(str(project_root(project)))}")
+    result = await parent.exec(f"rm -rf {shlex.quote(str(project_root(project)))}")
     return result.status

@@ -2,7 +2,7 @@
 
 
 def test_username_completer_prefers_cache(monkeypatch):
-    import otto.configmodule as cm
+    import otto.config as cm
 
     monkeypatch.setattr(
         cm,
@@ -15,8 +15,8 @@ def test_username_completer_prefers_cache(monkeypatch):
 
 
 def test_username_completer_falls_back_to_live(monkeypatch):
-    import otto.configmodule as cm
-    import otto.configmodule.completion_cache as cc
+    import otto.config as cm
+    import otto.config.completion_cache as cc
 
     monkeypatch.setattr(cm, "get_completion_names", lambda: None)
     monkeypatch.setattr(cm, "get_repos", list)

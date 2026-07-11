@@ -1,4 +1,4 @@
-"""Unit tests for build_reservation_state — the callback's reservation assembly."""
+"""Unit tests for build_reservation_gate — the callback's reservation assembly."""
 
 import types
 
@@ -8,7 +8,7 @@ import otto.reservations as r
 from otto.reservations import (
     NullReservationBackend,
     ReservationBackendError,
-    build_reservation_state,
+    build_reservation_gate,
 )
 
 
@@ -21,36 +21,36 @@ def test_skip_does_not_build_backend(tmp_path, monkeypatch):
         raise AssertionError("build_backend must not be called under -R")
 
     monkeypatch.setattr(r, "build_backend", _spy)
-    state = build_reservation_state(
+    gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
         as_user=None,
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
     )
-    assert state.backend is None
-    assert state.skip_check is True
-    assert state.backend_factory is not None
+    assert gate.backend is None
+    assert gate.skip_check is True
+    assert gate.backend_factory is not None
 
 
 def test_no_skip_builds_backend(tmp_path):
-    state = build_reservation_state(
+    gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
         as_user=None,
         skip_reservation_check=False,
         cwd_fallback=tmp_path,
     )
-    assert isinstance(state.backend, NullReservationBackend)
-    assert state.skip_check is False
+    assert isinstance(gate.backend, NullReservationBackend)
+    assert gate.skip_check is False
 
 
 def test_factory_builds_on_demand(tmp_path):
-    state = build_reservation_state(
+    gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
         as_user=None,
         skip_reservation_check=True,
         cwd_fallback=tmp_path,
     )
-    assert isinstance(state.backend_factory(), NullReservationBackend)
+    assert isinstance(gate.backend_factory(), NullReservationBackend)
 
 
 def test_build_failure_propagates(tmp_path, monkeypatch):
@@ -59,7 +59,7 @@ def test_build_failure_propagates(tmp_path, monkeypatch):
 
     monkeypatch.setattr(r, "build_backend", _boom)
     with pytest.raises(ReservationBackendError):
-        build_reservation_state(
+        build_reservation_gate(
             [_repo({"backend": "x"}, tmp_path)],
             as_user=None,
             skip_reservation_check=False,
@@ -68,11 +68,11 @@ def test_build_failure_propagates(tmp_path, monkeypatch):
 
 
 def test_as_user_sets_identity(tmp_path):
-    state = build_reservation_state(
+    gate = build_reservation_gate(
         [_repo({"backend": "none"}, tmp_path)],
         as_user="bob",
         skip_reservation_check=False,
         cwd_fallback=tmp_path,
     )
-    assert state.identity.username == "bob"
-    assert state.identity.source == "--as-user"
+    assert gate.identity.username == "bob"
+    assert gate.identity.source == "--as-user"

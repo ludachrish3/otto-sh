@@ -127,7 +127,7 @@ def test_bare_import_otto_is_lazy():
     code = (
         "import sys; import otto; "
         "print('otto.cli' in sys.modules, "
-        "'otto.configmodule' in sys.modules, "
+        "'otto.config' in sys.modules, "
         "'otto.context' in sys.modules)"
     )
     out = subprocess.run(
@@ -148,7 +148,7 @@ def test_library_use_populates_registries():
 
     code = (
         "import otto; "
-        "from otto import all_hosts; "  # triggers configmodule -> host graph
+        "from otto import all_hosts; "  # triggers config -> host graph
         "from otto.host.transfer.registry import build_transfer_backend; "
         "build_transfer_backend('scp'); build_transfer_backend('tftp'); "
         "print('registries OK')"

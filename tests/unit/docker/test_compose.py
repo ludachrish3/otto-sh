@@ -1,6 +1,6 @@
 """Unit tests for `otto.docker.compose` orchestration.
 
-These mock the parent host's `oneshot`/`put` so no real docker is invoked.
+These mock the parent host's `exec`/`put` so no real docker is invoked.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from otto.configmodule.lab import Lab
-from otto.configmodule.repo import (
+from otto.config.lab import Lab
+from otto.config.repo import (
     Repo,
 )
 from otto.docker.compose import (
@@ -98,7 +98,7 @@ def _capable_host(host_id: str = "pepper_seed", ne: str = "pepper") -> UnixHost:
 
 def _wire_parent_mock(host: UnixHost) -> UnixHost:
     """Replace the host's network methods with AsyncMocks so we never connect."""
-    host.oneshot = AsyncMock(return_value=_ok())  # type: ignore[method-assign]
+    host.exec = AsyncMock(return_value=_ok())  # type: ignore[method-assign]
     host.put = AsyncMock(return_value=Result(Status.Success, value={}))  # type: ignore[method-assign]
     host.get = AsyncMock(return_value=Result(Status.Success, value={}))  # type: ignore[method-assign]
     return host
@@ -185,7 +185,7 @@ async def test_compose_up_constructs_expected_command(tmp_path):
     lab = _make_lab()
     parent = lab.hosts["pepper_seed"]
 
-    # Sequence the parent's oneshot responses:
+    # Sequence the parent's exec responses:
     # 1) staging mkdir/rm calls — return ok
     # 2) `docker ps -q --filter ...project=...` — empty (not up)
     # 3) `docker compose ... up -d` — ok
@@ -193,7 +193,7 @@ async def test_compose_up_constructs_expected_command(tmp_path):
     # 5) docker ps -q --filter project + service — container id
     call_log: list[str] = []
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         call_log.append(cmd)
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("")  # stack not up
@@ -205,7 +205,7 @@ async def test_compose_up_constructs_expected_command(tmp_path):
             return _ok("abc123def456\n")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     hosts = await compose_up(repo, lab)
     assert "api" in hosts
@@ -228,7 +228,7 @@ async def test_compose_up_builds_images_first_by_default(tmp_path):
     parent = lab.hosts["pepper_seed"]
     call_log: list[str] = []
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         call_log.append(cmd)
         if cmd.startswith("docker image inspect"):
             return _ok()  # pretend the image is already built
@@ -242,7 +242,7 @@ async def test_compose_up_builds_images_first_by_default(tmp_path):
             return _ok("abc123\n")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     await compose_up(repo, lab)
     # The build path must have been consulted (docker image inspect on the
@@ -257,7 +257,7 @@ async def test_compose_up_skips_build_when_build_false(tmp_path):
     parent = lab.hosts["pepper_seed"]
     call_log: list[str] = []
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         call_log.append(cmd)
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("")
@@ -269,7 +269,7 @@ async def test_compose_up_skips_build_when_build_false(tmp_path):
             return _ok("abc123\n")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     await compose_up(repo, lab, build=False)
     assert not any(c.startswith("docker image inspect") for c in call_log), (
@@ -285,7 +285,7 @@ async def test_compose_up_idempotent_when_already_running(tmp_path):
     parent = lab.hosts["pepper_seed"]
     call_log: list[str] = []
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         call_log.append(cmd)
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("xyz\n")  # stack IS up
@@ -295,7 +295,7 @@ async def test_compose_up_idempotent_when_already_running(tmp_path):
             return _ok("xyz\n")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     hosts = await compose_up(repo, lab)
     assert "api" in hosts
@@ -319,7 +319,7 @@ async def test_compose_up_second_call_reregisters_without_raising(tmp_path):
     parent = lab.hosts["pepper_seed"]
     container_ids = iter(["abc111", "def222"])
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("xyz\n")  # stack always reports "up"
         if "config" in cmd and "--services" in cmd:
@@ -328,7 +328,7 @@ async def test_compose_up_second_call_reregisters_without_raising(tmp_path):
             return _ok(f"{next(container_ids)}\n")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     first = await compose_up(repo, lab, build=False)
     second = await compose_up(repo, lab, build=False)  # must NOT raise
@@ -351,7 +351,7 @@ async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monke
     up_attempts = 0
     call_log: list[str] = []
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         nonlocal up_attempts
         call_log.append(cmd)
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
@@ -367,7 +367,7 @@ async def test_compose_up_retries_once_on_transient_network_race(tmp_path, monke
             return _ok("abc123\n")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     hosts = await compose_up(repo, lab)
     assert "api" in hosts
@@ -386,7 +386,7 @@ async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypa
     parent = lab.hosts["pepper_seed"]
     call_log: list[str] = []
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         call_log.append(cmd)
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("")
@@ -394,7 +394,7 @@ async def test_compose_up_does_not_retry_real_compose_failure(tmp_path, monkeypa
             return _fail("Error response from daemon: pull access denied for repo1-api")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with pytest.raises(RuntimeError, match="docker compose up failed"):
         await compose_up(repo, lab)
@@ -413,7 +413,7 @@ async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypat
     parent = lab.hosts["pepper_seed"]
     resolve_calls = 0
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         nonlocal resolve_calls
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("")  # stack not up yet
@@ -428,7 +428,7 @@ async def test_compose_up_polls_for_container_id_after_start(tmp_path, monkeypat
             return _ok("abc123\n")  # now it appears
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     hosts = await compose_up(repo, lab)
     assert "api" in hosts, "service must register once the container becomes visible"
@@ -447,7 +447,7 @@ async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeyp
     parent = lab.hosts["pepper_seed"]
     resolve_calls = 0
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         nonlocal resolve_calls
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("")
@@ -460,7 +460,7 @@ async def test_compose_up_resolve_gives_up_after_bounded_polls(tmp_path, monkeyp
             return _ok("")  # never visible
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     hosts = await compose_up(repo, lab)
     assert "api" not in hosts
@@ -472,7 +472,7 @@ async def test_compose_down_removes_registered_hosts(tmp_path):
     repo = _make_repo(tmp_path)
     lab = _make_lab()
     parent = lab.hosts["pepper_seed"]
-    parent.oneshot.return_value = _ok()  # type: ignore[union-attr]
+    parent.exec.return_value = _ok()  # type: ignore[union-attr]
 
     # Pre-populate with a fake registered container host.
     fake = DockerContainerHost(
@@ -496,7 +496,7 @@ async def test_composed_does_not_teardown_when_already_running(tmp_path):
     lab = _make_lab()
     parent = lab.hosts["pepper_seed"]
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("xyz\n")  # always "up"
         if "config" in cmd and "--services" in cmd:
@@ -505,13 +505,13 @@ async def test_composed_does_not_teardown_when_already_running(tmp_path):
             return _ok("xyz\n")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
-    parent.oneshot_orig = parent.oneshot
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
+    parent.exec_orig = parent.exec
 
     async with composed(repo, lab):
         pass
 
-    cmds = [c.args[0] for c in parent.oneshot.call_args_list]  # type: ignore[union-attr]
+    cmds = [c.args[0] for c in parent.exec.call_args_list]  # type: ignore[union-attr]
     assert not any(("compose" in c and " down" in c) for c in cmds), (
         "composed(own=False) must skip teardown when stack was already running"
     )
@@ -523,7 +523,7 @@ async def test_composed_tears_down_when_own_true(tmp_path):
     lab = _make_lab()
     parent = lab.hosts["pepper_seed"]
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         if "label=com.docker.compose.project=" in cmd and "service=" not in cmd:
             return _ok("xyz\n")
         if "config" in cmd and "--services" in cmd:
@@ -532,12 +532,12 @@ async def test_composed_tears_down_when_own_true(tmp_path):
             return _ok("xyz\n")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     async with composed(repo, lab, own=True):
         pass
 
-    cmds = [c.args[0] for c in parent.oneshot.call_args_list]  # type: ignore[union-attr]
+    cmds = [c.args[0] for c in parent.exec.call_args_list]  # type: ignore[union-attr]
     assert any(("compose" in c and " down" in c) for c in cmds), (
         "composed(own=True) must tear down even if stack was already up"
     )
@@ -631,7 +631,7 @@ async def test_compose_ps_parses_json_lines(tmp_path):
     """Valid JSON lines are parsed; blank lines and non-JSON lines are skipped."""
     host = _capable_host()
     _wire_parent_mock(host)
-    host.oneshot.return_value = _ok('{"ID":"a"}\n\n{"ID":"b"}\nnot-json\n')  # type: ignore[union-attr]
+    host.exec.return_value = _ok('{"ID":"a"}\n\n{"ID":"b"}\nnot-json\n')  # type: ignore[union-attr]
     result = await compose_ps(host)
     assert result == [{"ID": "a"}, {"ID": "b"}]
 
@@ -641,7 +641,7 @@ async def test_compose_ps_non_ok_returns_empty():
     """A non-ok parent response returns an empty list without raising."""
     host = _capable_host()
     _wire_parent_mock(host)
-    host.oneshot.return_value = _fail("boom")  # type: ignore[union-attr]
+    host.exec.return_value = _fail("boom")  # type: ignore[union-attr]
     result = await compose_ps(host)
     assert result == []
 
@@ -664,7 +664,7 @@ def test_get_container_host_success(tmp_path):
     fake_lab = Lab(name="test")
     fake_lab.hosts[container.id] = container  # type: ignore[assignment]
 
-    with patch("otto.configmodule.get_lab", return_value=fake_lab):
+    with patch("otto.config.get_lab", return_value=fake_lab):
         result = get_container_host(container.id)
     assert result is container
 
@@ -672,7 +672,7 @@ def test_get_container_host_success(tmp_path):
 def test_get_container_host_missing_raises(tmp_path):
     """Raises KeyError when the host_id is not in the lab."""
     fake_lab = Lab(name="test")
-    with patch("otto.configmodule.get_lab", return_value=fake_lab), pytest.raises(KeyError):
+    with patch("otto.config.get_lab", return_value=fake_lab), pytest.raises(KeyError):
         get_container_host("does_not_exist")
 
 
@@ -681,7 +681,7 @@ def test_get_container_host_wrong_type_raises(tmp_path):
     parent = _wire_parent_mock(_capable_host())
     fake_lab = Lab(name="test")
     fake_lab.hosts[parent.id] = parent  # a UnixHost, not a DockerContainerHost
-    with patch("otto.configmodule.get_lab", return_value=fake_lab), pytest.raises(KeyError):
+    with patch("otto.config.get_lab", return_value=fake_lab), pytest.raises(KeyError):
         get_container_host(parent.id)
 
 
@@ -779,13 +779,13 @@ async def test_compose_down_failure_logs_error(tmp_path, caplog):
     lab = _make_lab()
     parent = lab.hosts["pepper_seed"]
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         # stage_compose_files uses mkdir/rm calls that should succeed
         if "compose" in cmd and " down" in cmd:
             return _fail("down boom")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot  # type: ignore[union-attr]
+    parent.exec.side_effect = exec_side_effect  # type: ignore[union-attr]
 
     with caplog.at_level(logging.ERROR):
         result = await compose_down(repo, lab)
@@ -804,7 +804,7 @@ async def test_compose_down_swallows_host_close_error(tmp_path):
     parent = lab.hosts["pepper_seed"]
 
     # Wire down command to succeed so we reach the host-close loop
-    parent.oneshot.return_value = _ok()  # type: ignore[union-attr]
+    parent.exec.return_value = _ok()  # type: ignore[union-attr]
 
     # Register a container host under this parent + repo whose close() raises
     noisy = DockerContainerHost(

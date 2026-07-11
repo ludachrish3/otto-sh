@@ -28,9 +28,9 @@ owns:
 - The hop chain — so a container behind a multi-hop SSH path "just
   works" with no special-casing in the docker code path
 
-`oneshot(cmd)` on a container becomes
-`parent.oneshot(f"docker exec {ctr} sh -c {shlex.quote(cmd)}")`.
-`interact()` opens a PTY-backed `docker exec -it ctr /bin/sh` over the
+`exec(cmd)` on a container becomes
+`parent.exec(f"docker exec {ctr} sh -c {shlex.quote(cmd)}")`.
+`login()` opens a PTY-backed `docker exec -it ctr /bin/sh` over the
 parent's SSH conn (we extended `run_ssh_login()` with an optional
 `command=` kwarg). `get`/`put` are two-step: `parent.put` to a per-
 container staging dir, then `parent.run("docker cp ...")`.
@@ -126,8 +126,8 @@ base class. `-it` is required for SIGINT semantics: without a TTY,
 interrupt the foreground process. asyncssh's `term_type='dumb'`
 allocates the PTY for free.
 
-`oneshot()` stays stateless — it keeps the original
-`parent.oneshot("docker exec ...")` path and remains concurrent-safe.
+`exec()` stays stateless — it keeps the original
+`parent.exec("docker exec ...")` path and remains concurrent-safe.
 
 The container id is resolved lazily at session-open time so that
 hosts pre-registered as placeholders (with `container_id=""`) work
@@ -145,7 +145,7 @@ parents.
 - Cross-host networking between containers on different parents.
 - Image push to a registry (only local tagging on the parent).
 - Non-SSH parents for `run` / `open_session` / `send` / `expect` /
-  `interact` — rejected with a clear `NotImplementedError`. Local
+  `login` — rejected with a clear `NotImplementedError`. Local
   docker is expected to be managed via Kubernetes rather than as a
-  first-class otto host. `oneshot()` (and `get` / `put`) still work
+  first-class otto host. `exec()` (and `get` / `put`) still work
   against any parent.

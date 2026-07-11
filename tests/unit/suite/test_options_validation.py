@@ -85,9 +85,30 @@ from typer.testing import CliRunner
 
 from otto import options
 from otto.cli.test import suite_app
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.suite.register import register_suite_class
+
+
+def _ok_result():
+    """A zero-exit SuiteRunResult stub for faked ``run_suite`` calls.
+
+    The suite runner now consumes the library ``run_suite`` (which returns a
+    ``SuiteRunResult``) and raises ``typer.Exit`` on a non-zero exit code, so a
+    fake must return a result carrying ``exit_code == 0``.
+    """
+    from pathlib import Path
+
+    from otto.suite.run import SuiteRunResult
+
+    return SuiteRunResult(
+        exit_code=0,
+        junit_paths=[],
+        stability_report=None,
+        stability_unstable=False,
+        output_dir=Path(),
+    )
+
 
 # suite_app resolves suite subcommands lazily from the SUITES registry (via
 # its RegistryBackedGroup), so a freshly registered class is already
@@ -121,7 +142,7 @@ def test_suite_pydantic_options_reject_bad_value(monkeypatch):
     register_suite_class(_ValSuite)
 
     # run_suite is never reached — validation fails first at construction.
-    monkeypatch.setattr("otto.cli.test.run_suite", lambda *a, **k: None)
+    monkeypatch.setattr("otto.suite.run.run_suite", lambda *a, **k: None)
     result = CliRunner().invoke(suite_app, ["_ValSuite", "--count", "-5"])
     assert result.exit_code == 2, result.output
     assert "count" in result.stderr
@@ -139,10 +160,10 @@ def test_suite_pydantic_options_accept_good_value(monkeypatch):
 
     register_suite_class(_OkSuite)
 
-    # run_suite signature: (suite_cls, suite_file, opts_instance, ctx).
+    # Library run_suite signature: run_suite(suite, *, options, run_options, output_dir).
     monkeypatch.setattr(
-        "otto.cli.test.run_suite",
-        lambda cls, f, opts, ctx: seen.update(count=opts.count),
+        "otto.suite.run.run_suite",
+        lambda suite, **kw: seen.update(count=kw["options"].count) or _ok_result(),
     )
     result = CliRunner().invoke(suite_app, ["_OkSuite", "--count", "5"])
     assert result.exit_code == 0, result.output
@@ -163,8 +184,8 @@ def test_suite_field_default_used_when_flag_omitted(monkeypatch):
     register_suite_class(_DefSuite)
 
     monkeypatch.setattr(
-        "otto.cli.test.run_suite",
-        lambda cls, f, opts, ctx: seen.update(count=opts.count),
+        "otto.suite.run.run_suite",
+        lambda suite, **kw: seen.update(count=kw["options"].count) or _ok_result(),
     )
     result = CliRunner().invoke(suite_app, ["_DefSuite"])  # no --count
     assert result.exit_code == 0, result.output
@@ -185,8 +206,8 @@ def test_suite_plain_dataclass_options_still_work(monkeypatch):
     register_suite_class(_PlainSuite)
 
     monkeypatch.setattr(
-        "otto.cli.test.run_suite",
-        lambda cls, f, opts, ctx: seen.update(label=opts.label),
+        "otto.suite.run.run_suite",
+        lambda suite, **kw: seen.update(label=kw["options"].label) or _ok_result(),
     )
     result = CliRunner().invoke(suite_app, ["_PlainSuite", "--label", "y"])
     assert result.exit_code == 0, result.output

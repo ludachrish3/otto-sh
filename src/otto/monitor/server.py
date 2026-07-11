@@ -13,6 +13,7 @@ POST /api/event     Record a manual event from the dashboard UI
 
 import asyncio
 import json
+import logging
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from logging import Filter, LogRecord, getLogger
@@ -27,14 +28,13 @@ from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 from typing_extensions import override
 
-from ..logger import get_logger
 from ..models.base import OttoModel
 from .collector import MetricCollector
 from .events import VALID_DASH_STYLES
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 def _dist_index_path() -> Path:

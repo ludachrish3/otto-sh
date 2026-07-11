@@ -2,8 +2,8 @@
 
 import pytest
 
-from otto.coverage.correlator.lcov_loader import LCOVLoader
-from otto.coverage.correlator.paths import PathCorrelator, PathMapping
+from otto.coverage.merge.lcov_loader import LCOVLoader
+from otto.coverage.merge.paths import PathMapping, PathRemapper
 from otto.coverage.store.model import CoverageStore
 
 SAMPLE_INFO = """\
@@ -40,12 +40,12 @@ def source_tree(tmp_path):
 class TestLCOVLoader:
     def test_load_basic(self, info_file, source_tree):
         store = CoverageStore()
-        correlator = PathCorrelator(
+        remapper = PathRemapper(
             [
                 PathMapping("/build", str(source_tree)),
             ]
         )
-        loader = LCOVLoader(store, correlator)
+        loader = LCOVLoader(store, remapper)
         n = loader.load(info_file, "system")
         assert n == 2
         assert store.file_count() == 2
@@ -54,8 +54,8 @@ class TestLCOVLoader:
 
     def test_line_hits(self, info_file, source_tree):
         store = CoverageStore()
-        correlator = PathCorrelator([PathMapping("/build", str(source_tree))])
-        loader = LCOVLoader(store, correlator)
+        remapper = PathRemapper([PathMapping("/build", str(source_tree))])
+        loader = LCOVLoader(store, remapper)
         loader.load(info_file, "system")
 
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
@@ -65,8 +65,8 @@ class TestLCOVLoader:
 
     def test_branch_data(self, info_file, source_tree):
         store = CoverageStore()
-        correlator = PathCorrelator([PathMapping("/build", str(source_tree))])
-        loader = LCOVLoader(store, correlator)
+        remapper = PathRemapper([PathMapping("/build", str(source_tree))])
+        loader = LCOVLoader(store, remapper)
         loader.load(info_file, "system")
 
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
@@ -88,8 +88,8 @@ class TestLCOVLoader:
         unit_info.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,7\nDA:2,1\nend_of_record\n")
 
         store = CoverageStore()
-        correlator = PathCorrelator([])  # paths already local
-        loader = LCOVLoader(store, correlator)
+        remapper = PathRemapper([])  # paths already local
+        loader = LCOVLoader(store, remapper)
         loader.load(system_info, "system")
         loader.load(unit_info, "unit")
 
@@ -106,24 +106,24 @@ class TestLCOVLoader:
         info = tmp_path / "smoke.info"
         info.write_text(f"TN:\nSF:{source_tree}/src/foo.c\nDA:1,2\nend_of_record\n")
         store = CoverageStore()
-        loader = LCOVLoader(store, PathCorrelator([]))
+        loader = LCOVLoader(store, PathRemapper([]))
         loader.load(info, "smoke")
 
         foo = store.get_or_create_file(source_tree / "src" / "foo.c")
         assert foo.lines[1].hits.for_tier("smoke") == 2
         assert "smoke" in store.tier_order
 
-    def test_load_credits_context_id_for_hit_lines(self, tmp_path):
+    def test_load_credits_run_id_for_hit_lines(self, tmp_path):
         from otto.coverage.store.model import CoverageStore
 
         info = tmp_path / "x.info"
         info.write_text(f"TN:\nSF:{tmp_path / 'f.c'}\nDA:1,3\nDA:2,0\nend_of_record\n")
         store = CoverageStore()
-        ctx = store.add_context(tier="unit")
-        loader = LCOVLoader(store, PathCorrelator([]))
-        loader.load(info, "unit", ctx_id=ctx)
+        run_id = store.add_run(tier="unit")
+        loader = LCOVLoader(store, PathRemapper([]))
+        loader.load(info, "unit", run_id=run_id)
 
         (fr,) = list(store.files())
-        assert fr.lines[1].context_hits == {ctx: 3}
-        assert fr.lines[2].context_hits == {}  # zero-count line: no context credit
+        assert fr.lines[1].run_hits == {run_id: 3}
+        assert fr.lines[2].run_hits == {}  # zero-count line: no run credit
         assert fr.lines[1].hits.for_tier("unit") == 3

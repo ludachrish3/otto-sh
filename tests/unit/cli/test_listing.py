@@ -1,14 +1,13 @@
 """
 Tests for the --list-* options on otto test and otto run.
 
-Unit tests exercise panel methods and resolve_suite directly using
-pre-built CollectedTest objects and tmp_path-backed Repo instances.
+Unit tests exercise panel methods directly using pre-built CollectedTest
+objects and tmp_path-backed Repo instances.
 
 Integration tests create an external SUT repo in tmp_path (outside the
 otto project root) and verify the full pipeline:
   - CollectedTest.path is always absolute
   - Panels display paths relative to sut_dir
-  - resolve_suite maps those display paths back to absolute pytest paths
 """
 
 import io
@@ -19,8 +18,8 @@ import pytest
 from rich.console import Console
 from typer.testing import CliRunner
 
-from otto.cli.test import resolve_suite, suite_app
-from otto.configmodule.repo import CollectedTest, Repo, _test_run_syntax
+from otto.cli.test import suite_app
+from otto.config.repo import CollectedTest, Repo, _test_run_syntax
 
 runner = CliRunner()
 
@@ -93,6 +92,7 @@ class TestGetTestSuitesPanel:
                     name=n,
                     sub_app=__import__("typer").Typer(),
                     file=str((sut_dir / "tests" / f"{n}.py").resolve()),
+                    cls=object,
                 ),
                 origin="test_listing",
             )
@@ -135,7 +135,12 @@ class TestRegisteredSuites:
         # Seed the registry directly (no real import needed).
         SUITES.register(
             "TestThing",
-            SuiteEntry(name="TestThing", sub_app=__import__("typer").Typer(), file=suite_file),
+            SuiteEntry(
+                name="TestThing",
+                sub_app=__import__("typer").Typer(),
+                file=suite_file,
+                cls=object,
+            ),
             origin="test_listing",
         )
         try:
@@ -154,6 +159,7 @@ class TestRegisteredSuites:
                 name="Foreign",
                 sub_app=__import__("typer").Typer(),
                 file=str((tmp_path / "other" / "test_x.py").resolve()),
+                cls=object,
             ),
             origin="test_listing",
         )
@@ -191,71 +197,6 @@ class TestGetLabPanel:
 
 
 # ---------------------------------------------------------------------------
-# resolve_suite
-# ---------------------------------------------------------------------------
-
-
-class TestResolveSuite:
-    def test_sut_relative_file_resolves_to_absolute(self, tmp_path):
-        sut_dir = _make_sut(tmp_path)
-        test_file = _add_test_file(sut_dir)
-        repo = Repo(sut_dir=sut_dir)
-        result = resolve_suite("tests/test_example.py", [repo])
-        assert result == str(test_file.resolve())
-
-    def test_sut_relative_nodeid_resolves_to_absolute(self, tmp_path):
-        sut_dir = _make_sut(tmp_path)
-        test_file = _add_test_file(sut_dir)
-        repo = Repo(sut_dir=sut_dir)
-        result = resolve_suite("tests/test_example.py::test_pass", [repo])
-        assert result == f"{test_file.resolve()}::test_pass"
-
-    def test_class_nodeid_resolves_correctly(self, tmp_path):
-        sut_dir = _make_sut(tmp_path)
-        test_file = _add_test_file(sut_dir)
-        repo = Repo(sut_dir=sut_dir)
-        result = resolve_suite("tests/test_example.py::TestSuite::test_method", [repo])
-        assert result == f"{test_file.resolve()}::TestSuite::test_method"
-
-    def test_absolute_path_returned_unchanged(self, tmp_path):
-        sut_dir = _make_sut(tmp_path)
-        test_file = _add_test_file(sut_dir)
-        repo = Repo(sut_dir=sut_dir)
-        abs_path = str(test_file.resolve())
-        assert resolve_suite(abs_path, [repo]) == abs_path
-
-    def test_cwd_relative_existing_path_returned_unchanged(self, tmp_path):
-        sut_dir = _make_sut(tmp_path)
-        repo = Repo(sut_dir=sut_dir)
-        # pyproject.toml exists relative to the otto project CWD
-        assert resolve_suite("pyproject.toml", [repo]) == "pyproject.toml"
-
-    def test_unresolvable_path_returned_unchanged(self, tmp_path):
-        sut_dir = _make_sut(tmp_path)
-        repo = Repo(sut_dir=sut_dir)
-        assert resolve_suite("nonexistent/test_file.py", [repo]) == "nonexistent/test_file.py"
-
-    def test_first_matching_repo_wins(self, tmp_path):
-        sut_a = _make_sut(tmp_path / "a", name="repo_a")
-        sut_b = _make_sut(tmp_path / "b", name="repo_b")
-        file_a = _add_test_file(sut_a, "test_shared.py")
-        _add_test_file(sut_b, "test_shared.py")
-        repo_a = Repo(sut_dir=sut_a)
-        repo_b = Repo(sut_dir=sut_b)
-        result = resolve_suite("tests/test_shared.py::test_pass", [repo_a, repo_b])
-        assert result == f"{file_a.resolve()}::test_pass"
-
-    def test_falls_through_to_second_repo_if_first_has_no_match(self, tmp_path):
-        sut_a = _make_sut(tmp_path / "a", name="repo_a")  # no test file
-        sut_b = _make_sut(tmp_path / "b", name="repo_b")
-        file_b = _add_test_file(sut_b, "test_only_in_b.py")
-        repo_a = Repo(sut_dir=sut_a)
-        repo_b = Repo(sut_dir=sut_b)
-        result = resolve_suite("tests/test_only_in_b.py", [repo_a, repo_b])
-        assert result == str(file_b.resolve())
-
-
-# ---------------------------------------------------------------------------
 # --list-* CLI callbacks
 # ---------------------------------------------------------------------------
 
@@ -273,6 +214,7 @@ class TestListCallbacks:
                 name="TestRealSuite",
                 sub_app=__import__("typer").Typer(),
                 file=str((sut_dir / "tests" / "test_real.py").resolve()),
+                cls=object,
             ),
             origin="test_listing",
         )
@@ -440,7 +382,6 @@ class TestExternalRepoIntegration:
     The tests cover the absolute-vs-relative invariant end-to-end:
       - CollectedTest.path must be absolute
       - Panel display must be relative to sut_dir
-      - resolve_suite must map display path back to an existing absolute path
     """
 
     @pytest.fixture
@@ -502,6 +443,7 @@ class TestExternalRepoIntegration:
                 name="TestMyDevice",
                 sub_app=__import__("typer").Typer(),
                 file=str((sut_dir / "tests" / "test_class.py").resolve()),
+                cls=object,
             ),
             origin="test_listing",
         )
@@ -513,31 +455,16 @@ class TestExternalRepoIntegration:
         assert "test_class.py" not in text
         assert str(sut_dir) not in text
 
-    def test_resolve_suite_maps_display_path_to_absolute(self, sut: tuple[Path, Repo]):
-        sut_dir, repo = sut
-        resolved = resolve_suite("tests/test_suite.py::test_alpha", [repo])
-        expected = str((sut_dir / "tests" / "test_suite.py").resolve()) + "::test_alpha"
-        assert resolved == expected
-
-    def test_resolve_suite_directory_resolves_to_absolute(self, sut: tuple[Path, Repo]):
-        sut_dir, repo = sut
-        resolved = resolve_suite("tests", [repo])
-        assert resolved == str((sut_dir / "tests").resolve())
-
-    def test_round_trip_display_to_resolve(self, sut: tuple[Path, Repo]):
-        """
-        Simulate the user workflow: collect → read display path from panel →
-        pass back to resolve_suite → verify the result is an existing absolute path.
-        """
+    def test_collected_display_paths_are_relative_to_sut(self, sut: tuple[Path, Repo]):
+        """The panel display path is sut_dir-relative and resolves to an existing file."""
         sut_dir, repo = sut
         items = repo.collect_tests()
+        assert items
         for item in items:
             display_path = _test_run_syntax(item, sut_dir)
-            resolved = resolve_suite(display_path, [repo])
-            file_part, _, _ = resolved.partition("::")
-            resolved_path = Path(file_part)
-            assert resolved_path.is_absolute(), f"{file_part!r} is not absolute"
-            assert resolved_path.exists(), f"{file_part!r} does not exist"
+            file_part, _, _ = display_path.partition("::")
+            assert not Path(file_part).is_absolute(), f"{file_part!r} is absolute"
+            assert (sut_dir / file_part).exists(), f"{file_part!r} does not exist under sut_dir"
 
 
 # ---------------------------------------------------------------------------

@@ -33,7 +33,7 @@ functions; the class is the shared engine behind them.
 | `LOADER_CLASSES` | binary loader | `otto.host.binary_loader.register_binary_loader` | `llext-hex` |
 | `FILESYSTEM_CLASSES` | embedded filesystem type | `otto.host.embedded_filesystem.register_filesystem` | FAT-on-RAM, LittleFS, none |
 | `POWER_CONTROLLERS` | power controller | `otto.host.power.register_power_controller` | — |
-| `LAB_REPOSITORIES` | lab repository (host source) | {func}`otto.storage.register_lab_repository` | `json` |
+| `LAB_REPOSITORIES` | lab repository (host source) | {func}`otto.labs.register_lab_repository` | `json` |
 | `RESERVATION_BACKENDS` | reservation backend | `otto.reservations.registry.register_reservation_backend` | `json`, `none` |
 | `HOST_PARSERS` | monitor parser set | `otto.monitor.parsers.register_host_parsers` | default `/proc` parsers |
 | `SNMP_METRICS` | SNMP metric descriptor | `otto.monitor.snmp.register_snmp_metric` | standard OIDs |
@@ -88,7 +88,7 @@ The root group resolves commands in two tiers:
 
 Shell completion must be low-latency and must never traceback into the shell.
 Completion invocations first try a cache
-(`otto/configmodule/completion_cache.py`) of command, suite, instruction, and
+(`otto/config/completion_cache.py`) of command, suite, instruction, and
 host names snapshotted on previous runs. On a cache hit, completion runs
 *zero user code* — no bootstrap, no init modules. Cached third-party command
 names still appear in listings even though their registrations never ran;

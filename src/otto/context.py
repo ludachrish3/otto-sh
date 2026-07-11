@@ -2,7 +2,7 @@
 
 Owns the active Lab, the per-invocation runtime flags, and the host lifecycle
 scope. Propagated via a ContextVar so the bare module accessors
-(otto.configmodule.all_hosts/get_host) can stay zero-argument, while explicit
+(otto.config.all_hosts/get_host) can stay zero-argument, while explicit
 passing (OttoContext methods, open_context) is first-class.
 """
 
@@ -19,7 +19,7 @@ from typing_extensions import Self
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from .configmodule.lab import Lab
+    from .config.lab import Lab
     from .host import Results, UnixHost
     from .host.remote_host import RemoteHost
 
@@ -99,7 +99,7 @@ class OttoContext:
 
     def get_host(self, host_id: str, **overrides: Any) -> "UnixHost":
         """Look up *host_id* in the active lab, apply any keyword overrides, and register it."""
-        from .configmodule.configmodule import _apply_option_overrides
+        from .config.fleet import _apply_option_overrides
 
         host = self.lab.resolve_handle(host_id)
         if host is None:
@@ -127,7 +127,7 @@ class OttoContext:
         ``include_local=True`` to opt it in; ``get_host("local")`` always
         resolves it.
         """
-        from .configmodule.configmodule import _apply_option_overrides
+        from .config.fleet import _apply_option_overrides
         from .host.docker_host import DockerContainerHost
         from .host.local_host import LocalHost
 
@@ -261,8 +261,8 @@ async def open_context(
     from .bootstrap import bootstrap
 
     bootstrap()  # composition root — idempotent; registers user init-module components
-    from .configmodule import load_lab
-    from .configmodule.lab import Lab
+    from .config import load_lab
+    from .config.lab import Lab
 
     resolved_lab = lab if isinstance(lab, Lab) else load_lab(lab, search_paths or [])
     ctx = OttoContext(lab=resolved_lab, dry_run=dry_run, log_command_output=log_command_output)

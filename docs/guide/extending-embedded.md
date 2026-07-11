@@ -179,7 +179,7 @@ register_filesystem("nffs", NffsFileSystem)
 { "element": "mote_nffs", "os_type": "embedded", "ip": "192.0.2.7", "filesystem": "nffs" }
 ```
 
-That's the whole change. The storage factory resolves `"nffs"` through the
+That's the whole change. The host factory resolves `"nffs"` through the
 registry to an `NffsFileSystem` on `host.filesystem`; transfers go through
 `fs read`/`fs write` at the new mount, and the disk metric reports
 `fs statvfs /nffs`.
@@ -214,7 +214,7 @@ your filesystem can transfer but lacks `statvfs`, or vice versa.
 
 ### Validation
 
-The storage factory rejects an unknown `filesystem` before the host is
+The host factory rejects an unknown `filesystem` before the host is
 constructed, listing every registered type so a typo (`"fatram"` vs
 `"fat-ram"`) is diagnosable from the message alone. A host whose `filesystem`
 resolves to `NoFileSystem` short-circuits transfers with a clear, FS-aware

@@ -38,15 +38,15 @@ without any network connection.
 {class}`~otto.host.embedded_host.EmbeddedHost` (and its concrete {class}`~otto.host.embedded_host.ZephyrHost`) drives a firmware/RTOS target over a serial console; a `DockerContainerHost` targets a container.
 
 They all share a common `BaseHost` interface — {meth}`~otto.host.host.Host.run`,
-{meth}`~otto.host.host.Host.oneshot`, {meth}`~otto.host.host.Host.send` /
+{meth}`~otto.host.host.Host.exec`, {meth}`~otto.host.host.Host.send` /
 {meth}`~otto.host.host.Host.expect` — plus file-transfer methods
 ({meth}`~otto.host.host.Host.put`, {meth}`~otto.host.host.Host.get`) on the
 networked hosts.
 
 `run` executes a command on a host's persistent shell session (state
 like the working directory and environment variables are preserved between
-calls).  `oneshot` runs each call independently of the persistent shell and
-of other concurrent `oneshot` calls, making it safe to fan out via
+calls).  `exec` runs each call independently of the persistent shell and
+of other concurrent `exec` calls, making it safe to fan out via
 `asyncio.gather()`.
 
 Every lab automatically contains a built-in `local` host — a
@@ -109,11 +109,12 @@ An **instruction** is an async function decorated with
 their own CLI options via Typer annotations:
 
 ```python
-from otto.cli.run import instruction
-from otto.configmodule import all_hosts
-from otto.logger import get_logger
+import logging
 
-logger = get_logger()
+from otto.cli.run import instruction
+from otto.config import all_hosts
+
+logger = logging.getLogger(__name__)
 
 @instruction()
 async def deploy(

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from otto.configmodule.repo import DockerCompose, DockerImage, DockerSettings
+from otto.config.repo import DockerCompose, DockerImage, DockerSettings
 from otto.models.settings import (
     DockerComposeSpec,
     DockerImageSpec,
@@ -444,8 +444,8 @@ def test_settings_host_preferences_rejects_bad_selector_regex():
 
 
 def test_host_default_option_keys_match_factory_options_keys():
+    from otto.host.factory import OPTIONS_KEYS
     from otto.models.settings import _HOST_DEFAULT_OPTION_SPECS
-    from otto.storage.factory import OPTIONS_KEYS
 
     assert set(_HOST_DEFAULT_OPTION_SPECS) == OPTIONS_KEYS
 
@@ -457,7 +457,7 @@ def test_docker_spec_fields_match_runtime_dataclass():
     """
     import dataclasses
 
-    from otto.configmodule.repo import DockerCompose, DockerImage, DockerSettings
+    from otto.config.repo import DockerCompose, DockerImage, DockerSettings
     from otto.models.settings import (
         DockerSettingsSpec,
     )

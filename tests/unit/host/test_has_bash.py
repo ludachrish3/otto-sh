@@ -16,10 +16,10 @@ from unittest.mock import MagicMock
 from otto.host.command_frame import ZephyrFrame
 from otto.host.docker_host import DockerContainerHost
 from otto.host.embedded_host import EmbeddedHost
+from otto.host.factory import create_host_from_dict
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
-from otto.storage.factory import create_host_from_dict
 
 
 def _mock_parent(parent_id: str = "pepper_seed"):

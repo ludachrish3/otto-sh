@@ -318,17 +318,17 @@ footer {
   border-top: 1px solid var(--border);
 }
 
-/* Run-context drilldown (run-contexts spec §7) */
-.source-table th.ctx, .source-table td.ctx { text-align: right; white-space: nowrap; }
-.source-table td.ctx { position: relative; }
-details.ctx-details summary {
+/* Run drilldown (run-contexts spec §7) */
+.source-table th.run, .source-table td.run { text-align: right; white-space: nowrap; }
+.source-table td.run { position: relative; }
+details.run-details summary {
   cursor: pointer;
   list-style: none;
   color: var(--text-dim);
   font-size: 0.85em;
 }
-details.ctx-details summary::-webkit-details-marker { display: none; }
-.ctx-panel {
+details.run-details summary::-webkit-details-marker { display: none; }
+.run-panel {
   position: absolute;
   right: 0;
   z-index: 10;
@@ -343,13 +343,13 @@ details.ctx-details summary::-webkit-details-marker { display: none; }
   border-radius: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
-.ctx-chip { font-size: 0.85em; white-space: nowrap; }
-.ctx-dot {
+.run-chip { font-size: 0.85em; white-space: nowrap; }
+.run-dot {
   display: inline-block;
   width: 0.7em;
   height: 0.7em;
   margin-right: 0.4em;
   border-radius: 50%;
 }
-.ctx-chip.ctx-stale { color: var(--state-stale); text-decoration: line-through; }
-.ctx-chip.ctx-aging { color: var(--state-aging); }
+.run-chip.run-stale { color: var(--state-stale); text-decoration: line-through; }
+.run-chip.run-aging { color: var(--state-aging); }

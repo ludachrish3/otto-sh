@@ -421,7 +421,7 @@ otto loads each entry into a host object — the same dicts build the
 `router1` and `switch1` hosts:
 
 ```{doctest}
->>> from otto.storage.factory import create_host_from_dict
+>>> from otto.host.factory import create_host_from_dict
 >>> hosts = [create_host_from_dict(h) for h in [
 ...     {"ip": "192.168.1.1", "element": "router1", "os_type": "unix",
 ...      "valid_terms": ["ssh"], "creds": [{"login": "admin", "password": "secret"}],
@@ -457,15 +457,15 @@ Create `pylib/my_instructions.py` and add `"my_instructions"` to the `init`
 list in `settings.toml`:
 
 ```python
+import logging
 from typing import Annotated
 
 import typer
 
 from otto.cli.run import instruction
-from otto.configmodule import all_hosts
-from otto.logger import get_logger
+from otto.config import all_hosts
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @instruction()

@@ -24,6 +24,7 @@ session on top of that.
 """
 
 import hashlib
+import logging
 from pathlib import Path
 from typing import Annotated
 
@@ -32,14 +33,13 @@ from repo1_common.options import RepoOptions
 
 from otto import options
 from otto.cli.run import instruction
-from otto.configmodule.configmodule import get_host
+from otto.config.fleet import get_host
 from otto.context import get_context
 from otto.host import LocalHost
-from otto.logger import get_logger
 from otto.result import CommandResult
 from otto.utils import Status
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @options

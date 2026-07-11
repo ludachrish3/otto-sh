@@ -5,12 +5,12 @@ from pathlib import Path
 
 import pytest
 
+from otto.labs import JsonFileLabRepository
 from otto.reservations import (
     JsonReservationBackend,
     NullReservationBackend,
 )
 from otto.reservations.check import ReservationBackendError
-from otto.storage import JsonFileLabRepository
 from otto.testing import (
     assert_lab_repository_conforms,
     assert_reservation_backend_conforms,
@@ -92,7 +92,7 @@ class TestLabRepositoryConformance:
     def test_load_lab_raises_on_idempotency_recall_records_not_crashes(self):
         """A backend whose load_lab raises on the second call (idempotency re-call)
         must produce an aggregated AssertionError, not propagate the raw exception."""
-        from otto.configmodule.lab import Lab
+        from otto.config.lab import Lab
 
         class RaisesOnSecondCall:
             def __init__(self):

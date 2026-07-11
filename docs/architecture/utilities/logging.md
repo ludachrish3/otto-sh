@@ -47,10 +47,13 @@ problems.
 
 ## otto as a library citizen
 
-`otto.logger` attaches only a `NullHandler` to the `'otto'` logger —
+A bare `import otto` attaches only a `NullHandler` to the `'otto'` logger —
 importing otto never configures logging; the handler topology above is
 strictly CLI-side (`otto.logger.management` never imports `otto.context`, and
-nothing in the library configures handlers). The reverse direction is also
+nothing in the library configures handlers). otto's own modules emit via
+`logging.getLogger(__name__)` — module-qualified children of `'otto'` that
+propagate up to it — the same stdlib idiom recommended for library consumers;
+there is no otto-specific logger accessor. The reverse direction is also
 covered: `capture_external_loggers` routes named third-party logger trees
 (product code using `logging.getLogger(__name__)`) into otto's sinks, so
 suite and instruction logs land in the same transcript as otto's own.

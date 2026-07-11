@@ -4,14 +4,14 @@ Embedded (bare-metal / RTOS) host class.
 An :class:`~otto.host.embedded_host.EmbeddedHost` is a network-reached target whose "OS" is a
 real-time kernel or bare-metal firmware rather than a POSIX system — Zephyr is the first
 concrete example. It is exposed through the *same* :class:`~otto.host.host.Host`
-API as :class:`~otto.host.unix_host.UnixHost` (``run``/``oneshot``/``send``/
+API as :class:`~otto.host.unix_host.UnixHost` (``run``/``exec``/``send``/
 ``expect``/``put``/``get``) so test code does not care whether a target is a
 Linux box or a microcontroller.
 
 What makes an embedded target different from a Unix host:
 
 - **One console.** A Zephyr device exposes a *single* shell over telnet. There
-  is no second channel and no stateless exec primitive, so ``oneshot`` shares
+  is no second channel to run commands out-of-band, so ``exec`` shares
   the one persistent session with ``run`` and is therefore **not**
   concurrency-safe (it is on :class:`~otto.host.unix_host.UnixHost`).
 - **No bash.** No ``$?``, no command substitution, no ``scp``/``ftp``/``nc``.
@@ -40,7 +40,7 @@ as the default ``command_frame`` (along with ``os_type='zephyr'`` and
 File transfer (``get``/``put``) is delegated to
 :class:`~otto.host.transfer.EmbeddedFileTransfer`, which speaks the
 device shell only (the ``console`` backend uses Zephyr's ``fs`` commands).
-The interactive bridge (``_interact``) currently raises
+The interactive bridge (``_login``) currently raises
 :class:`NotImplementedError`.
 """
 
@@ -52,9 +52,10 @@ from typing import TYPE_CHECKING, Annotated, NoReturn, cast
 from typing_extensions import override
 
 if TYPE_CHECKING:
-    from ..configmodule.lab import Lab
+    from ..config.lab import Lab
 
-from ..logger import get_logger
+import logging
+
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Status, cli_exposed
@@ -84,7 +85,7 @@ from .transfer import (
     make_rich_progress_handler,
 )
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 # Readiness-handshake ceiling for an embedded telnet console. The Zephyr shell
 # under QEMU can take a few seconds after the TCP connection opens before it
@@ -176,7 +177,7 @@ class EmbeddedHost(RemoteHost):
     disk parser drive. See :mod:`otto.host.embedded_filesystem`.
 
     Lab data declares the variant by string in the ``filesystem`` field;
-    the storage factory resolves the string to a class. Projects can
+    the host factory resolves the string to a class. Projects can
     register custom variants via
     :func:`otto.host.embedded_filesystem.register_filesystem`."""
 
@@ -190,7 +191,7 @@ class EmbeddedHost(RemoteHost):
 
     Lab data declares the dialect by string in the ``command_frame`` field
     (e.g. a Zephyr 2.7 build that reports its retcode inline would name a
-    project-registered frame); the storage factory resolves the string to an
+    project-registered frame); the host factory resolves the string to an
     instance. Projects can register custom dialects via
     :func:`otto.host.command_frame.register_command_frame`. The dialect is
     independent of the transport, so it is handed straight to the
@@ -303,7 +304,7 @@ class EmbeddedHost(RemoteHost):
         if not self._name_overridden:
             self.name = self._generate_name()  # no lab context yet -> no number
 
-        # Lab JSON serializes ``filesystem`` as a string; the storage factory
+        # Lab JSON serializes ``filesystem`` as a string; the host factory
         # resolves it to a class instance for declared hosts, but a directly-
         # constructed EmbeddedHost may still pass a string here. Coerce.
         if isinstance(self.filesystem, str):
@@ -412,12 +413,12 @@ class EmbeddedHost(RemoteHost):
     ####################
 
     @override
-    async def _interact(self, as_user: str | None = None) -> None:
+    async def _login(self, as_user: str | None = None) -> None:
         """Open an interactive shell bridged to the local terminal.
 
         Not yet implemented for embedded hosts — the telnet bridge for a
         login-less RTOS shell lands in a later phase. ``as_user`` is accepted
-        for signature parity with :meth:`~otto.host.host.BaseHost._interact`
+        for signature parity with :meth:`~otto.host.host.BaseHost._login`
         but embedded hosts have no login-proxy chain to replay.
         """
         raise NotImplementedError(
@@ -445,7 +446,7 @@ class EmbeddedHost(RemoteHost):
         )
 
     @override
-    async def oneshot(
+    async def exec(
         self,
         cmd: str,
         timeout: float | None = None,
@@ -453,9 +454,9 @@ class EmbeddedHost(RemoteHost):
     ) -> CommandResult:
         """Run a single command on the embedded host.
 
-        Unlike :meth:`~otto.host.unix_host.UnixHost.oneshot`, this is **not** concurrency-safe: an
+        Unlike :meth:`~otto.host.unix_host.UnixHost.exec`, this is **not** concurrency-safe: an
         embedded target exposes a single console with no stateless exec
-        primitive, so ``oneshot`` runs on the same persistent session as
+        primitive, so ``exec`` runs on the same persistent session as
         ``run``. It exists for API parity; use ``run`` for stateful
         workflows.
         """

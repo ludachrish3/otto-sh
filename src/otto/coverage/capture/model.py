@@ -1,10 +1,11 @@
 """The per-board ``capture.json`` artifact (spec §3).
 
 A capture stores line/branch data in **committed-code coordinates**,
-pinned to the commit whose numbering they mean, with per-file blob SHAs
-as the rebase-tolerant validity anchor.
+anchored to the ``base_commit`` whose numbering they mean, with
+per-file blob SHAs as the rebase-tolerant validity anchor.
 """
 
+import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,11 +17,22 @@ from .remap import LineRemapper, parse_u0_hunks
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 1
+CAPTURE_FORMAT_VERSION = 2
+"""``capture.json`` schema version, bumped on breaking on-disk changes.
+
+Version 2 renames the git-anchor field from ``pin`` to ``base_commit``
+(JSON key and Python attribute alike) — clearer terminology for the
+commit whose line numbering a capture's coordinates mean. There is no
+migration shim: a file that does not declare this exact version fails
+loud in :meth:`Capture.load` with a message telling the caller to
+re-capture, rather than silently mis-reading the renamed key under its
+old name (or, worse, tripping pydantic's ``extra="forbid"`` on the
+now-unknown ``pin`` key with an unfriendly traceback).
+"""
 
 
 class CaptureFileCov(BaseModel):
-    """Coverage for one source file, keyed in pin coordinates."""
+    """Coverage for one source file, keyed in ``base_commit`` coordinates."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -34,9 +46,9 @@ class Capture(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    schema_version: int = Field(default=SCHEMA_VERSION, alias="schema")
+    schema_version: int = Field(default=CAPTURE_FORMAT_VERSION, alias="schema")
     tier: str
-    pin: str
+    base_commit: str
     dirty_remap: bool = False
     captured_at: str = ""
     tester: dict[str, str] | None = None
@@ -54,8 +66,25 @@ class Capture(BaseModel):
 
     @classmethod
     def load(cls, path: Path) -> "Capture":
-        """Deserialize a :class:`Capture` from *path* (unknown keys rejected)."""
-        return cls.model_validate_json(path.read_text())
+        """Deserialize a :class:`Capture` from *path* (unknown keys rejected).
+
+        Raises:
+            ValueError: The file's ``"schema"`` key does not match
+                :data:`CAPTURE_FORMAT_VERSION` (including files with no
+                ``"schema"`` key at all — everything predating this
+                capture-format version). There is no migration shim; the
+                message tells the caller to re-capture.
+        """
+        raw_text = path.read_text()
+        raw = json.loads(raw_text)
+        found_format = raw.get("schema") if isinstance(raw, dict) else None
+        if found_format != CAPTURE_FORMAT_VERSION:
+            found_label = f"v{found_format}" if isinstance(found_format, int) else "none"
+            raise ValueError(
+                f"capture format v{CAPTURE_FORMAT_VERSION} required; "
+                f"found {found_label} — re-capture with otto cov get"
+            )
+        return cls.model_validate_json(raw_text)
 
 
 def parse_info(
@@ -96,7 +125,7 @@ def _remap_file(
     branches: dict[int, list[tuple[int, int, int | None]]],
     remapper: LineRemapper,
 ) -> tuple[dict[int, int], dict[int, list[tuple[int, int, int | None]]]]:
-    """Worktree (NEW) coordinates → pin (OLD) coordinates; drop unmappables."""
+    """Worktree (NEW) coordinates → base_commit (OLD) coordinates; drop unmappables."""
     out_lines: dict[int, int] = {}
     for lineno, count in lines.items():
         old = remapper.new_to_old(lineno)
@@ -123,13 +152,13 @@ def build_capture(
     display_name: str | None = None,
     now: datetime | None = None,
 ) -> Capture:
-    """Build a pinned :class:`Capture` from an lcov ``.info`` file.
+    """Build a :class:`Capture` anchored to ``base_commit`` from an lcov ``.info`` file.
 
     Args:
-        display_name: Host display name to stamp; ``board`` stays the
-            staging-dir/host-id name.
+        display_name: Host display name to annotate onto the capture;
+            ``board`` stays the staging-dir/host-id name.
     """
-    pin = gitio.head_commit(repo_root)
+    base_commit = gitio.head_commit(repo_root)
     dirty = gitio.is_dirty(repo_root)
     repo_root = repo_root.resolve()
 
@@ -158,12 +187,12 @@ def build_capture(
             branches=branches,
         )
 
-    stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    captured_at = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return Capture(
         tier=tier,
-        pin=pin,
+        base_commit=base_commit,
         dirty_remap=dirty,
-        captured_at=stamp,
+        captured_at=captured_at,
         tester=tester,
         ticket=ticket,
         note=note,

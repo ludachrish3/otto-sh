@@ -74,13 +74,14 @@ class TestExcludedLinesPersisted:
         assert frec.excluded_lines == {2}
 
     def test_load_tolerates_absent_excluded_lines_key(self, tmp_path):
-        """Legacy store.json with no excluded_lines key loads to an empty set."""
+        """A v3 store.json with no excluded_lines key loads to an empty set."""
         import json
 
         store_json = tmp_path / "store.json"
         store_json.write_text(
             json.dumps(
                 {
+                    "format": 3,
                     "tier_order": ["system"],
                     "files": [{"path": "/x/f.c", "lines": {}}],
                 }
@@ -115,7 +116,7 @@ class TestIndexRunTableAndLegend:
         store = CoverageStore(tier_order=["system"])
         fr = store.get_or_create_file(src)
         fr.lines[1] = LineRecord(line_number=1, hits=LineHits(counts={"system": 1}))
-        store.add_context(
+        store.add_run(
             tier="manual",
             label="b1",
             board="b1",
@@ -125,7 +126,7 @@ class TestIndexRunTableAndLegend:
             ticket="T-42",
             note="note text",
             dirty_remap=True,
-            pin="f" * 40,
+            base_commit="f" * 40,
         )
 
         out_dir = tmp_path / "report"
@@ -170,21 +171,21 @@ class TestRunsDrilldown:
     def _store(self, tmp_path):
         src = _write(tmp_path, "f.c", "int a;\nint b;\nint c;\n")
         store = CoverageStore(tier_order=["system", "manual"])
-        manual_ctx = store.add_context(
+        manual_run = store.add_run(
             tier="manual",
             label="Rack 2 Slot 4",
             ticket="T-42",
             captured_at="2026-07-01T00:00:00Z",
         )
-        stale_ctx = store.add_context(tier="manual", label="oldrun", ticket="T-9")
+        stale_run = store.add_run(tier="manual", label="oldrun", ticket="T-9")
         fr = store.get_or_create_file(src)
         lr = fr.get_or_create_line(1)
         lr.hits.add("manual", 5)
-        lr.context_hits[manual_ctx] = 5
+        lr.run_hits[manual_run] = 5
         lr2 = fr.get_or_create_line(2)
         lr2.state = "stale"
-        lr2.stale_contexts.append(stale_ctx)
-        fr.get_or_create_line(3)  # uncovered, no contexts
+        lr2.stale_runs.append(stale_run)
+        fr.get_or_create_line(3)  # uncovered, no runs
         return store, fr
 
     def _render(self, tmp_path):
@@ -201,17 +202,17 @@ class TestRunsDrilldown:
 
     def test_stale_line_lists_revoked_run_chip(self, tmp_path):
         html = self._render(tmp_path)
-        assert "ctx-stale" in html
+        assert "run-stale" in html
         assert "oldrun" in html
 
-    def test_context_free_line_renders_no_details_element(self, tmp_path):
+    def test_run_free_line_renders_no_details_element(self, tmp_path):
         html = self._render(tmp_path)
         # 3 source rows, only 2 carry a drilldown
         assert html.count("<details") == 2
 
     def test_runs_column_header_present(self, tmp_path):
         html = self._render(tmp_path)
-        assert '<th class="ctx">runs</th>' in html
+        assert '<th class="run">runs</th>' in html
 
     def test_index_run_table_shows_labels(self, tmp_path):
         store, _ = self._store(tmp_path)

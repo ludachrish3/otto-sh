@@ -4,7 +4,7 @@ Fixtures local to tests/integration/host/.
 The parametrized ``host1`` / ``host1_kit`` fixtures live in
 :mod:`tests.conftest` (shared with the unit tree). This conftest exists
 only to populate the lab into an OttoContext so the embedded hosts'
-hop resolution (``configmodule.get_host('basil_seed')`` inside
+hop resolution (``config.get_host('basil_seed')`` inside
 ``RemoteHost._build_hop_transport``) can find the SSH hop.
 
 The same wiring is done in :mod:`tests.unit.host.test_hop_integration` for
@@ -13,7 +13,7 @@ multi-hop UnixHost tests.
 
 import pytest
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.context import OttoContext, set_context
 from otto.host.command_frame import FRAME_CLASSES, register_command_frame
 from otto.host.login_proxy import Cred

@@ -165,7 +165,7 @@ format, so it is **compiler-version-sensitive**. Current status and bounds:
 Host-side framework implemented and unit-tested (`tests/unit/cov/test_embedded_collector.py`):
 - `decode_cov_dump` (serial hexdump → `.gcda`, validated against the live capture),
   `EmbeddedGcdaCollector.collect_all`, `collect_embedded_coverage` (config-driven).
-- `_run_coverage` (`src/otto/cli/test.py`) routes Unix and/or embedded collection;
+- `collect_coverage` (`src/otto/coverage/collect.py`) routes Unix and/or embedded collection;
   embedded `.otto_cov_meta.json` cross-`gcov` via `discover_toolchain_from_gcno`.
 - Config schema: `[coverage.embedded].extension` (→ `llext call_fn <ext> cov_dump`)
   and `.build_dir`.
@@ -332,7 +332,7 @@ separate instance from the ARM serial-telnet `sprout_cov` and does not affect co
 
 1. **Cross-event-loop session reuse (the 120 s `cov_dump` hang).** `otto test` runs the
    suite via `pytest.main()` (each class on its own `loop_scope='class'` loop), then runs
-   collection via a separate `asyncio.run(_run_coverage)`. The cached embedded telnet
+   collection via a separate `asyncio.run(collect_coverage)`. The cached embedded telnet
    session is bound to the (now-closed) class loop; the collector reused it cross-loop, so
    every read awaited a future on the dead loop and hung — and the stale single-client QEMU
    socket blocked any reconnect (cross-loop `close()` is a no-op for the socket). Large
@@ -358,7 +358,7 @@ separate instance from the ARM serial-telnet `sprout_cov` and does not affect co
    `embedded` lab, so `otto … --lab embedded-cov` filtered it out and the hop couldn't
    resolve. Fix: add `embedded-cov` to basil's `labs` in `tests/lab_data/tech1/lab.json`.
 5. **Hop host mistaken for a Unix coverage target (`geninfo: skipping .gcda`).** With
-   basil now in the lab, `_run_coverage` (which iterated *every* Unix host) enrolled the
+   basil now in the lab, `collect_coverage` (which iterated *every* Unix host) enrolled the
    hop as a Unix coverage host: it flipped `if not unix_hosts:` so `sut_dir` became the
    repo dir instead of the embedded build dir (→ `geninfo` couldn't find the `.gcno`) and
    wrote a bogus native toolchain. Fix: key the meta off *collected coverage* (`unix_dirs`)

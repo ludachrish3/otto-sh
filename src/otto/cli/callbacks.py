@@ -2,7 +2,7 @@
 
 import typer
 
-from ..configmodule import get_lab
+from ..config import get_lab
 
 
 def list_hosts_callback(value: bool) -> None:

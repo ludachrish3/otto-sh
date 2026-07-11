@@ -1,7 +1,7 @@
 """Pure command/argv builders for host-resident socat tunnels — no I/O.
 
 Bidirectional ingress/relay/egress builders (#2b); every value is a string or
-list of strings destined for ``host.oneshot``; running nothing keeps the whole
+list of strings destined for ``host.exec``; running nothing keeps the whole
 module unit-testable (assert exact argv).
 """
 

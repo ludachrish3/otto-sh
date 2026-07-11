@@ -17,16 +17,19 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import click
 import pytest
+import typer
 from typer.testing import CliRunner
 
-from otto.cli.monitor import _load_historical, monitor_app
+from otto.cli.monitor import _load_historical, monitor, monitor_app
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector
 from otto.monitor.factory import build_monitor_collector
 from otto.monitor.parsers import LoadParser, MemParser
+from otto.reservations import ReservationGateOutcome
 from otto.result import CommandResult, Results
 from otto.utils import Status
 
@@ -207,28 +210,69 @@ class TestFileOption:
 # monitor registers gate=False (see builtin_commands.py) and gates itself:
 # historical --file replay reads a local file and never touches live
 # hardware, so it is gate-exempt by design; live collection still gates.
+#
+# monitor() reads ctx.meta["otto_reservation"] and calls .evaluate() inline
+# (there is no more standalone `gate(ctx)` callable to patch — see
+# otto.reservations.check.ReservationGate — so these tests call monitor()
+# directly with a hand-built click.Context, the same pattern
+# tests/unit/cli/test_reservation.py uses for its ctx-driven commands).
+
+
+def _make_ctx(meta: dict) -> typer.Context:
+    """Build a typer.Context (backed by click.Context) with the given meta."""
+    cmd = click.Command("monitor")
+    ctx = click.Context(cmd)
+    ctx.meta.update(meta)
+    return ctx  # type: ignore[return-value]
 
 
 class TestGatePerBranch:
     def test_file_replay_does_not_invoke_gate(self, tmp_path):
         json_file = tmp_path / "metrics.json"
         json_file.write_text('{"metrics": [], "events": []}')
-        # monitor() imports gate lazily (`from ..reservations import gate`
-        # inside the function body), so the patch target is the source
-        # module, not otto.cli.monitor.
-        with (
-            patch("otto.reservations.gate") as mock_gate,
-            patch("asyncio.run", side_effect=_close_coro),
-        ):
-            result = runner.invoke(monitor_app, ["--file", str(json_file)])
-        assert result.exit_code == 0
-        mock_gate.assert_not_called()
+        mock_res = MagicMock()
+        ctx = _make_ctx({"otto_reservation": mock_res})
+        with patch("asyncio.run", side_effect=_close_coro):
+            monitor(ctx, file=json_file)
+        mock_res.evaluate.assert_not_called()
 
     def test_live_mode_invokes_gate(self, live_mode_mocks):
-        with patch("otto.reservations.gate") as mock_gate:
-            result = runner.invoke(monitor_app, [])
-        assert result.exit_code == 0
-        mock_gate.assert_called_once()
+        mock_res = MagicMock()
+        mock_res.evaluate.return_value = ReservationGateOutcome(
+            checked=True, skipped=False, warning=None
+        )
+        ctx = _make_ctx({"otto_reservation": mock_res})
+
+        monitor(ctx)
+
+        mock_res.evaluate.assert_called_once()
+
+    def test_live_mode_prints_warning_from_gate(self, live_mode_mocks, capsys):
+        warning = (
+            "\N{WARNING SIGN}  Reservation check SKIPPED for user 'alice' "
+            "on lab 'x'. Required resources: []"
+        )
+        mock_res = MagicMock()
+        mock_res.evaluate.return_value = ReservationGateOutcome(
+            checked=False, skipped=True, warning=warning
+        )
+        ctx = _make_ctx({"otto_reservation": mock_res})
+
+        monitor(ctx)
+
+        out = capsys.readouterr().out
+        # rich strips the [bold red] markup and may word-wrap at the console
+        # width when rendering to the captured (non-tty) stream — compare
+        # with whitespace normalized so a wrap point can't fail the assertion.
+        assert " ".join(warning.split()) in " ".join(out.split())
+
+    def test_live_mode_without_reservation_state_is_noop(self, live_mode_mocks, capsys):
+        """No otto_reservation in ctx.meta (e.g. monitor invoked directly in tests, no preamble) -> no crash, no print."""  # noqa: E501 — descriptive docstring
+        ctx = _make_ctx({})
+
+        monitor(ctx)  # must not raise
+
+        assert capsys.readouterr().out == ""
 
 
 # ── _load_historical() unit tests ─────────────────────────────────────────────

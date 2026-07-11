@@ -67,7 +67,7 @@ class FakeHost:
             return CommandResult(status=Status.Success, value=text, command=cmd)
         return CommandResult(status=Status.Success, value="", command=cmd)
 
-    async def oneshot(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
+    async def exec(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
         self.commands.append(cmd)
         return self._result(cmd)
 
@@ -298,7 +298,7 @@ class TestRefusalsAndSafety:
         async def _boom(cmd: str, **_: object) -> CommandResult:
             raise ConnectionError("boom")
 
-        carrot.oneshot = _boom  # type: ignore[method-assign]
+        carrot.exec = _boom  # type: ignore[method-assign]
         with pytest.raises(RuntimeError, match="carrot_seed"):
             await impair_link(lab, "edge", ImpairmentParams(delay_ms=1.0))
 

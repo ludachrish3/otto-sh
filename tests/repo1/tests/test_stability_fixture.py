@@ -16,6 +16,7 @@ Usage::
     otto test --iterations 3 TestStabilityFixture
 """
 
+import logging
 from typing import ClassVar
 
 import pytest
@@ -24,13 +25,12 @@ from _pytest.fixtures import SubRequest
 from repo1_common.options import RepoOptions
 
 from otto import options
-from otto.configmodule import all_hosts
+from otto.config import all_hosts
 from otto.host.unix_host import UnixHost
-from otto.logger import get_logger
 from otto.suite import OttoSuite
 from otto.utils import Status
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @options
@@ -53,7 +53,7 @@ class TestStabilityFixture(OttoSuite[_Options]):
         host = hosts[0]
 
         # Run a command to force the SSH connection open
-        result = await host.oneshot("echo stability_setup_ok", timeout=10)
+        result = await host.exec("echo stability_setup_ok", timeout=10)
         assert result.status.is_ok, f"Failed to establish connection during setup: {result.value}"
 
         self.__class__._host = host
@@ -65,7 +65,7 @@ class TestStabilityFixture(OttoSuite[_Options]):
 
         logger.info(f"{suite_options=}")
 
-        result = await self._host.oneshot("echo iteration_ok", timeout=10)
+        result = await self._host.exec("echo iteration_ok", timeout=10)
         assert result.status == Status.Success, (
             f"SSH connection failed (likely torn down between iterations): {result.value}"
         )

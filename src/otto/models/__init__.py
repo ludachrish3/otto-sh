@@ -3,7 +3,7 @@
 These spec models depend on the runtime data modules they validate and build
 (``otto.host.options``, ``otto.host.transfer``); those runtime modules do not
 import from here, so the dependency runs one way (models -> runtime data) with
-no cycle. Higher layers (the storage factory, config, monitor collectors)
+no cycle. Higher layers (the host factory, config, monitor collectors)
 import their specs from this package. Each model mirroring a runtime type
 carries the ``Spec`` suffix.
 

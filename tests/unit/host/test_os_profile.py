@@ -211,7 +211,7 @@ class TestHostSpecRegistry:
 def test_custom_subclass_with_data_bundle_composes():
     """External pattern: register a subclass, then layer a data bundle over it."""
     from otto.host.embedded_host import EmbeddedHost
-    from otto.storage.factory import create_host_from_dict
+    from otto.host.factory import create_host_from_dict
 
     class MyRtosHost(EmbeddedHost):
         pass

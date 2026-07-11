@@ -22,6 +22,7 @@ local and remote machines.
    transport
    telnet
    os_profile
+   factory
    command_frame
    toolchain
    options

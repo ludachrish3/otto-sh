@@ -37,9 +37,9 @@ async with (await host.open_session("monitor")) as mon:
 # session is closed automatically
 ```
 
-### When to use named sessions vs oneshot
+### When to use named sessions vs exec
 
-| | Named session | `oneshot` |
+| | Named session | `exec` |
 | --- | --- | --- |
 | Shell state | Persistent (per session) | None (fresh process) |
 | Setup cost | One connection, reused | New process per call |

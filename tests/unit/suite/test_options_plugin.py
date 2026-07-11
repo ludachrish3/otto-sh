@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.suite.plugin import OttoPlugin
 

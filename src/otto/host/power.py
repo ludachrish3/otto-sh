@@ -67,7 +67,7 @@ class CommandPowerController(PowerController):
 
     Commands are ``str.format``-templated with the target host's ``name``/``ip``/
     ``id``. ``controller`` names the lab host the commands run on (via its
-    ``oneshot``); ``None`` runs them on the local otto machine.
+    ``exec``); ``None`` runs them on the local otto machine.
     """
 
     type_name: ClassVar[str] = "command"
@@ -101,7 +101,7 @@ class CommandPowerController(PowerController):
 
     async def _exec(self, template: str, host: "Host") -> "CommandResult":
         runner = await self._runner(host)
-        return await runner.oneshot(self._fmt(template, host))
+        return await runner.exec(self._fmt(template, host))
 
     @override
     async def on(self, host: "Host") -> Result:

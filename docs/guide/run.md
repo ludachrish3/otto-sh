@@ -10,15 +10,15 @@ Decorate an async function with `@instruction()` in a module listed in your
 settings file's `init` field:
 
 ```python
+import logging
 from typing import Annotated
 
 import typer
 
 from otto.cli.run import instruction
-from otto.configmodule import all_hosts
-from otto.logger import get_logger
+from otto.config import all_hosts
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @instruction()
@@ -57,7 +57,7 @@ module helpers:
 
 ```python
 import re
-from otto.configmodule import all_hosts, get_host
+from otto.config import all_hosts, get_host
 
 # Iterate (optionally filtered by a regex on host ID)
 for host in all_hosts():
@@ -73,8 +73,8 @@ result = await router.run("show version")
 
 For fan-out across the lab — running the same command or async
 operation on every host concurrently — use
-{func}`~otto.configmodule.configmodule.run_on_all_hosts` or
-{func}`~otto.configmodule.configmodule.do_for_all_hosts`.  These helpers
+{func}`~otto.config.fleet.run_on_all_hosts` or
+{func}`~otto.config.fleet.do_for_all_hosts`.  These helpers
 apply anywhere you have an async context (instructions, suite fixtures,
 monitors, ad-hoc scripts) and are documented in full on the
 [async patterns cookbook page](../cookbook/async-patterns.md).
@@ -169,17 +169,17 @@ class RepoOptions:
 
 ```python
 # pylib/my_instructions/deploy.py
+import logging
 from typing import Annotated
 
 import typer
 
 from otto import options
 from otto.cli.run import instruction
-from otto.logger import get_logger
 
 from .options import RepoOptions
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @options

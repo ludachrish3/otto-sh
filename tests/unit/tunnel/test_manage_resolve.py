@@ -88,7 +88,7 @@ def _container(cid: str, parent: FakeUnix, inspect_ip: str = "172.17.0.2"):
 
     Built via ``__new__`` so ``__post_init__`` (session manager, etc.) never
     runs; only the attributes the manage layer touches are set. The parent is
-    a small proxy whose ``oneshot`` answers the ``docker inspect`` with a real
+    a small proxy whose ``exec`` answers the ``docker inspect`` with a real
     ``CommandResult`` (global constraint: never SimpleNamespace fakes).
     """
     from otto.host.docker_host import DockerContainerHost
@@ -98,7 +98,7 @@ def _container(cid: str, parent: FakeUnix, inspect_ip: str = "172.17.0.2"):
             self.id = parent.id
             self.calls: list[str] = []
 
-        async def oneshot(self, cmd: str, timeout: float | None = None, **_: object):
+        async def exec(self, cmd: str, timeout: float | None = None, **_: object):
             self.calls.append(cmd)
             return CommandResult(status=Status.Success, value=f"{inspect_ip}\n", command=cmd)
 

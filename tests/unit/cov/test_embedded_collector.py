@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.coverage.fetcher.embedded import (
     EmbeddedGcdaCollector,
@@ -23,7 +23,7 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "embedded_coverage"
 def _mock_embedded_host(host_id: str, console_output: str) -> MagicMock:
     host = MagicMock(spec=EmbeddedHost)
     host.id = host_id
-    host.oneshot = AsyncMock(
+    host.exec = AsyncMock(
         return_value=CommandResult(Status.Success, value=console_output, command="dump", retcode=0),
     )
     return host
@@ -87,7 +87,7 @@ async def test_collect_one_host_lays_out_decoded_gcda_under_per_host_dir(tmp_pat
 
     assert dest == tmp_path / "sprout_cov"
     assert (dest / "cov_ext.c.gcda").read_bytes() == expected
-    host.oneshot.assert_awaited_once()
+    host.exec.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -95,7 +95,7 @@ async def test_collect_one_host_skips_non_embedded_hosts(tmp_path):
     """Unix/Docker hosts carry no console dumper — skip without touching them."""
     unix_host = MagicMock()  # not an EmbeddedHost
     unix_host.id = "carrot"
-    unix_host.oneshot = AsyncMock()
+    unix_host.exec = AsyncMock()
 
     dest = await _collect_one_embedded_host(
         unix_host,
@@ -104,7 +104,7 @@ async def test_collect_one_host_skips_non_embedded_hosts(tmp_path):
     )
 
     assert dest is None
-    unix_host.oneshot.assert_not_awaited()
+    unix_host.exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -122,7 +122,7 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
     )
     unix = MagicMock()  # not an EmbeddedHost
     unix.id = "carrot"
-    unix.oneshot = AsyncMock()
+    unix.exec = AsyncMock()
     fake_config_module(embedded, unix)
 
     collector = EmbeddedGcdaCollector(
@@ -134,7 +134,7 @@ async def test_collect_all_stages_embedded_hosts_and_skips_others(
     assert set(result) == {"sprout_cov"}
     expected = (FIXTURES / "cov_ext.c.gcda").read_bytes()
     assert (result["sprout_cov"] / "cov_ext.c.gcda").read_bytes() == expected
-    unix.oneshot.assert_not_awaited()
+    unix.exec.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -153,7 +153,7 @@ async def test_collect_embedded_coverage_drives_configured_extension(
     result = await collect_embedded_coverage(cov_config, tmp_path / "cov")
 
     assert set(result) == {"sprout_cov"}
-    assert embedded.oneshot.await_args[0][0] == "llext call_fn cov_ext cov_dump"
+    assert embedded.exec.await_args[0][0] == "llext call_fn cov_ext cov_dump"
 
 
 @pytest.mark.asyncio
@@ -193,4 +193,4 @@ async def test_collect_embedded_coverage_scopes_hosts_by_pattern(
     )
 
     assert set(result) == {"sprout_cov"}
-    other.oneshot.assert_not_awaited()
+    other.exec.assert_not_awaited()

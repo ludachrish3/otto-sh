@@ -54,7 +54,7 @@ phase 2 — {doc}`index`):
 ## Handing off to pytest
 
 The suite's synthesized subcommand builds the options instance and calls
-`run_suite` (`otto/cli/test.py`), which invokes `pytest.main()` scoped to the
+`run_suite` (`otto/suite/run.py`), which invokes `pytest.main()` scoped to the
 suite's source file, with otto's plugin installed. Conftest loading is cut at
 the *owning repo's root* (`--confcutdir`), so the user repo's full conftest
 hierarchy applies while otto's own never leaks in. pytest keeps what it is

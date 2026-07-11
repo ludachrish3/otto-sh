@@ -22,10 +22,10 @@ Usage::
         assert_reservation_backend_conforms(MyBackend(), known_user="alice", known_resources=["r1"])
 """
 
-from ..configmodule.lab import Lab
+from ..config.lab import Lab
 from ..host.remote_host import RemoteHost
+from ..labs import LabNotFoundError, LabRepository
 from ..reservations import ReservationBackend, SupportsUsernameCompletion
-from ..storage import LabNotFoundError, LabRepository
 from ..suite.expect import ExpectCollector
 
 # Sentinels for "this name definitely does not exist" probes.
@@ -39,11 +39,11 @@ def assert_lab_repository_conforms(
     *,
     expected_labs: list[str] | None = None,
 ) -> None:
-    """Assert *repo* satisfies the :class:`~otto.storage.protocol.LabRepository` contract.
+    """Assert *repo* satisfies the :class:`~otto.labs.protocol.LabRepository` contract.
 
     Runs structural rules unconditionally; for every listed lab, asserts it
-    loads to a valid :class:`~otto.configmodule.lab.Lab`; asserts an unknown
-    name raises :class:`~otto.storage.LabNotFoundError`. When *expected_labs*
+    loads to a valid :class:`~otto.config.lab.Lab`; asserts an unknown
+    name raises :class:`~otto.labs.LabNotFoundError`. When *expected_labs*
     is given, also asserts each appears in ``list_labs()`` and loads. Raises a
     single :class:`AssertionError` aggregating every violated rule.
 

@@ -154,9 +154,9 @@ class TestDryRun:
         assert result.only.status == Status.Skipped
 
     @pytest.mark.asyncio
-    async def test_oneshot_in_dry_run_skips(self, host: EmbeddedHost):
+    async def test_exec_in_dry_run_skips(self, host: EmbeddedHost):
         with active_context(dry_run=True):
-            result = await host.oneshot("kernel uptime")
+            result = await host.exec("kernel uptime")
         assert result.status == Status.Skipped
 
 
@@ -167,16 +167,16 @@ class TestDryRun:
 
 class TestNotImplemented:
     @pytest.mark.asyncio
-    async def test_interact_raises(self, host: EmbeddedHost):
+    async def test_login_raises(self, host: EmbeddedHost):
         with pytest.raises(NotImplementedError):
-            await host.interact()
+            await host.login()
 
     @pytest.mark.asyncio
-    async def test_interact_as_user_raises(self, host: EmbeddedHost):
+    async def test_login_as_user_raises(self, host: EmbeddedHost):
         """Task 9: embedded hosts accept `as_user` for signature parity but
         still raise — a login-less RTOS shell has nothing to proxy."""
         with pytest.raises(NotImplementedError):
-            await host.interact(as_user="root")
+            await host.login(as_user="root")
 
 
 # ---------------------------------------------------------------------------
@@ -322,8 +322,8 @@ class TestDelegation:
         host._session_mgr.run_cmd.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_oneshot_runs_on_persistent_session(self, host: EmbeddedHost):
-        """oneshot shares the single console — it goes through run_cmd, not a pool."""
+    async def test_exec_runs_on_persistent_session(self, host: EmbeddedHost):
+        """exec shares the single console — it goes through run_cmd, not a pool."""
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandResult(
             status=Status.Success,
@@ -331,7 +331,7 @@ class TestDelegation:
             command="kernel uptime",
             retcode=0,
         )
-        result = await host.oneshot("kernel uptime")
+        result = await host.exec("kernel uptime")
         assert result.value == "42"
         host._session_mgr.run_cmd.assert_awaited_once()
 
@@ -369,7 +369,7 @@ class TestDelegation:
         host._connections.close.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_oneshot_forwards_log_false(self, host):
+    async def test_exec_forwards_log_false(self, host):
 
         host._session_mgr = AsyncMock()
         host._session_mgr.run_cmd.return_value = CommandResult(
@@ -379,7 +379,7 @@ class TestDelegation:
             retcode=0,
         )
         # The QUIET command is composed with the host's standing mode into LogMode.QUIET.
-        await host.oneshot("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
+        await host.exec("llext load_hex foo DEADBEEF", log=LogMode.QUIET)
         host._session_mgr.run_cmd.assert_awaited_once_with(
             "llext load_hex foo DEADBEEF",
             timeout=None,

@@ -1,26 +1,21 @@
-"""Unit tests for the reservation check and the gate helper."""
+"""Unit tests for the reservation check.
 
-import types
+The library-facing gate (:class:`~otto.reservations.ReservationGate` and its
+``evaluate()`` outcome matrix) is tested separately in ``test_gate.py``.
+"""
+
 from dataclasses import dataclass
-from unittest.mock import patch
 
 import pytest
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.reservations import (
     MissingReservationError,
     NullReservationBackend,
-    ReservationState,
-    ResolvedIdentity,
     check_reservations,
-    gate,
     required_resources,
 )
 from tests.conftest import make_host
-
-
-def _fake_ctx(meta: dict) -> types.SimpleNamespace:
-    return types.SimpleNamespace(meta=meta)
 
 
 @dataclass
@@ -133,77 +128,3 @@ class TestCheckReservations:
         with pytest.raises(MissingReservationError) as exc_info:
             check_reservations(lab, "carol", backend)
         assert "held by alice, bob" in str(exc_info.value)
-
-
-class TestGate:
-    def test_no_backend_is_noop(self):
-        ctx = _fake_ctx(
-            {"otto_reservation": ReservationState(backend=None, identity=None, skip_check=False)}
-        )
-        gate(ctx)  # must not raise
-
-    def test_skip_flag_short_circuits(self, caplog):
-        import logging
-
-        lab = _lab_with_resources()
-        backend = _FakeBackend(owners={})  # would fail the check if called
-        identity = ResolvedIdentity(username="alice", source="$USER")
-        res = ReservationState(backend=backend, identity=identity, skip_check=True)
-        ctx = _fake_ctx({"otto_reservation": res})
-
-        with (
-            caplog.at_level(logging.WARNING, logger="otto"),
-            patch("otto.configmodule.get_lab", return_value=lab),
-        ):
-            gate(ctx)  # must not raise
-
-        assert any("skipped" in rec.message.lower() for rec in caplog.records)
-        assert any("alice" in rec.message for rec in caplog.records)
-        assert any("test_lab" in rec.message for rec in caplog.records)
-
-    def test_normal_path_calls_check(self):
-        lab = _lab_with_resources()
-        backend = _FakeBackend(
-            owners={
-                "rack1": "alice",
-                "carrot": "alice",
-                "tomato": "alice",
-            }
-        )
-        identity = ResolvedIdentity(username="alice", source="$USER")
-        res = ReservationState(backend=backend, identity=identity, skip_check=False)
-        ctx = _fake_ctx({"otto_reservation": res})
-
-        with patch("otto.configmodule.get_lab", return_value=lab):
-            gate(ctx)  # must not raise — full coverage
-
-    def test_failing_check_propagates(self):
-        lab = _lab_with_resources()
-        backend = _FakeBackend(owners={})  # no one has anything
-        identity = ResolvedIdentity(username="alice", source="$USER")
-        res = ReservationState(backend=backend, identity=identity, skip_check=False)
-        ctx = _fake_ctx({"otto_reservation": res})
-
-        with (
-            patch("otto.configmodule.get_lab", return_value=lab),
-            pytest.raises(MissingReservationError),
-        ):
-            gate(ctx)
-
-    def test_skip_flag_warns_even_when_backend_none(self, caplog):
-        import logging
-
-        lab = _lab_with_resources()
-        identity = ResolvedIdentity(username="alice", source="$USER")
-        # backend=None models the -R break-glass path (Task 5): construction skipped.
-        res = ReservationState(backend=None, identity=identity, skip_check=True)
-        ctx = _fake_ctx({"otto_reservation": res})
-
-        with (
-            caplog.at_level(logging.WARNING, logger="otto"),
-            patch("otto.configmodule.get_lab", return_value=lab),
-        ):
-            gate(ctx)  # must not raise
-
-        assert any("skipped" in rec.message.lower() for rec in caplog.records)
-        assert any("alice" in rec.message for rec in caplog.records)

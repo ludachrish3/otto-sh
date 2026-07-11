@@ -5,10 +5,10 @@ The CLI is a thin consumer of ``add_tunnel`` / ``remove_tunnel`` /
 """
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from ..logger import get_logger
 from ..logger.mode import LogMode
 from .discovery import (
     _TUNNEL_HOST_TIMEOUT,
@@ -30,9 +30,9 @@ from .socat import (
 )
 
 if TYPE_CHECKING:
-    from ..configmodule.lab import Lab
+    from ..config.lab import Lab
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 EndpointSpec = tuple[str, str | None]
 
@@ -68,7 +68,7 @@ async def _container_ip(container: Any) -> str:
     )
     try:
         result = await asyncio.wait_for(
-            container.parent.oneshot(cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
+            container.parent.exec(cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
         )
     except asyncio.TimeoutError as e:
         raise RuntimeError(
@@ -263,7 +263,7 @@ async def _require_tools(host: Any) -> None:
     """Fail loud + name the host when socat or bash is missing."""
     try:
         result = await asyncio.wait_for(
-            host.oneshot(
+            host.exec(
                 "command -v socat >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 "
                 "&& echo ok || echo no",
                 log=LogMode.QUIET,
@@ -287,7 +287,7 @@ async def _probe_used_ports(resolved: list[ResolvedHop]) -> set[int]:
     async def probe(r: ResolvedHop) -> set[int]:
         try:
             result = await asyncio.wait_for(
-                r.host.oneshot(FREE_PORT_PROBE_COMMAND, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
+                r.host.exec(FREE_PORT_PROBE_COMMAND, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
             )
         except asyncio.TimeoutError as e:
             raise RuntimeError(f"host {r.hop.host!r} timed out probing for free ports") from e
@@ -308,7 +308,7 @@ async def _kill_tunnel_on(hosts: list[Any], tunnel_id: str) -> None:
         kill_cmd = f"kill {' '.join(str(p) for p in sorted(pids))}"
         try:
             await asyncio.wait_for(
-                host_by_id[host_id].oneshot(kill_cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
+                host_by_id[host_id].exec(kill_cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
             )
         except Exception as e:  # noqa: BLE001 — rollback is best-effort by design
             logger.warning(f"otto tunnel: rollback reap failed on {host_id!r}: {e}")
@@ -362,7 +362,7 @@ async def add_tunnel(
     Launch order is downstream-first per direction; any launch failure or a
     failed post-add verify reaps everything already started — no half-tunnels
     survive a failed add. "Started" is tracked from the moment a launch is
-    *attempted*, not from a confirmed ack: a launch ``oneshot`` that times out
+    *attempted*, not from a confirmed ack: a launch ``exec`` that times out
     only bounds how long we waited for the reply, not whether the command
     reached the host, so even a first-launch timeout triggers rollback.
     """
@@ -416,7 +416,7 @@ async def add_tunnel(
             launched = True
             try:
                 result = await asyncio.wait_for(
-                    host.oneshot(launch_command(sentinel, proc.socat_args), log=LogMode.QUIET),
+                    host.exec(launch_command(sentinel, proc.socat_args), log=LogMode.QUIET),
                     _TUNNEL_HOST_TIMEOUT,
                 )
             except asyncio.TimeoutError as e:
@@ -469,7 +469,7 @@ async def _reap(lab: "Lab", predicate: Any) -> RemovedReport:
         kill_cmd = f"kill {' '.join(str(p) for p in sorted(pids))}"
         try:
             result = await asyncio.wait_for(
-                host.oneshot(kill_cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
+                host.exec(kill_cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
             )
         except asyncio.TimeoutError:
             logger.warning(f"otto tunnel: timed out reaping host {host_id!r}")

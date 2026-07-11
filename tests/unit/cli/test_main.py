@@ -19,7 +19,7 @@ from typer.testing import CliRunner
 
 from otto.cli.main import app
 from otto.cli.registry import register_cli_command
-from otto.logger import get_logger, management
+from otto.logger import management
 from otto.result import CommandResult
 from otto.utils import Status
 
@@ -69,13 +69,13 @@ def main_mocks(tmp_path):
 
     bs._reset()
     # The lab / session work is lazy (Task 7) and lives in otto.cli.invoke, which
-    # imports get_repos / load_lab from otto.configmodule at call time — patch the
+    # imports get_repos / load_lab from otto.config at call time — patch the
     # source so both the root-callback (--show-lab) and preamble paths see mocks.
     with (
         patch.dict(os.environ, clean_env, clear=True),
         patch("otto.logger.management.init_cli_logging") as p_logger,
-        patch("otto.configmodule.get_repos", return_value=[]),
-        patch("otto.configmodule.load_lab", return_value=mock_lab) as p_getlab,
+        patch("otto.config.get_repos", return_value=[]),
+        patch("otto.config.load_lab", return_value=mock_lab) as p_getlab,
     ):
         yield {
             "init_cli_logging": p_logger,
@@ -341,15 +341,15 @@ class TestLoggerArguments:
 
     def test_log_level_default_is_info(self, real_main_mocks):
         _invoke([])
-        assert get_logger().level == logging.INFO
+        assert logging.getLogger("otto").level == logging.INFO
 
     def test_log_level_custom(self, real_main_mocks):
         _invoke(["--log-level", "DEBUG"])
-        assert get_logger().level == logging.DEBUG
+        assert logging.getLogger("otto").level == logging.DEBUG
 
     def test_log_level_custom_lower_case(self, real_main_mocks):
         _invoke(["--log-level", "debug"])
-        assert get_logger().level == logging.DEBUG
+        assert logging.getLogger("otto").level == logging.DEBUG
 
     def test_log_days_default(self, real_main_mocks):
         _invoke([])
@@ -399,7 +399,7 @@ class TestLabLoading:
     def test_single_lab_loads_correct_hosts(self, real_main_mocks):
         result = _invoke([])
         assert result.exit_code == 0
-        from otto.configmodule import get_lab
+        from otto.config import get_lab
 
         lab = get_lab()
         assert lab.name == "test_lab"
@@ -410,7 +410,7 @@ class TestLabLoading:
         # Append the probe leaf so the lazy preamble loads the lab (Task 7).
         result = runner.invoke(app, ["--lab", "test_lab,lab2", "_main_probe"])
         assert result.exit_code == 0
-        from otto.configmodule import get_lab
+        from otto.config import get_lab
 
         lab = get_lab()
         assert set(lab.hosts.keys()) == {"host1", "host2", "host3", "local"}
@@ -419,14 +419,14 @@ class TestLabLoading:
         # Append the probe leaf so the lazy preamble loads the lab (Task 7).
         result = runner.invoke(app, ["--lab", "test_lab", "--lab", "lab2", "_main_probe"])
         assert result.exit_code == 0
-        from otto.configmodule import get_lab
+        from otto.config import get_lab
 
         lab = get_lab()
         assert set(lab.hosts.keys()) == {"host1", "host2", "host3", "local"}
 
     def test_host_objects_have_correct_ip(self, real_main_mocks):
         _invoke([])
-        from otto.configmodule import get_lab
+        from otto.config import get_lab
 
         lab = get_lab()
         assert lab.hosts["host1"].ip == "10.0.0.1"

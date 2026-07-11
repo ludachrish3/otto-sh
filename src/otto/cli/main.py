@@ -15,11 +15,11 @@ import typer
 from typer.core import TyperGroup
 from typing_extensions import override
 
-from ..configmodule import (
+from ..config import (
     get_completion_names,
     get_repos,
 )
-from ..configmodule.env import (
+from ..config.env import (
     DEFAULT_LOG_RETENTION_DAYS,
     FIELD_DEFAULT_ENV_VAR,
     FIELD_PRODUCT_ENV_VAR,
@@ -77,7 +77,7 @@ def clear_autocomplete_cache_callback(value: bool) -> None:
         return
     from rich import print as rprint
 
-    from ..configmodule.completion_cache import _cache_path, clear_cache
+    from ..config.completion_cache import _cache_path, clear_cache
 
     cache_path = _cache_path()
     removed = clear_cache()
@@ -123,8 +123,8 @@ def _username_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # 
     built in the completion fast path); falls back to a live best-effort
     collection on a cache miss. Empty when the backend can't enumerate users.
     """
-    from ..configmodule import get_completion_names, get_repos
-    from ..configmodule.completion_cache import collect_reservation_usernames
+    from ..config import get_completion_names, get_repos
+    from ..config.completion_cache import collect_reservation_usernames
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("usernames"), list):
@@ -138,12 +138,12 @@ def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa:
     """Completion source for ``--lab``: lab names referenced by the lab.json files.
 
     Prefers the completion-cache snapshot; falls back to a live, data-only scan
-    (:func:`~otto.configmodule.completion_cache.collect_lab_names`, no user
+    (:func:`~otto.config.completion_cache.collect_lab_names`, no user
     code). ``--lab`` is comma-separated, so only the in-progress segment is
     completed and already-named labs are dropped.
     """
-    from ..configmodule import get_completion_names, get_repos
-    from ..configmodule.completion_cache import collect_lab_names
+    from ..config import get_completion_names, get_repos
+    from ..config.completion_cache import collect_lab_names
     from ..utils import complete_comma_list
 
     cached = get_completion_names()
@@ -299,7 +299,7 @@ class _OttoGroup(TyperGroup):
             cache = getattr(self, "_stub_cache", None) or {}
             self._stub_cache = cache
             if cmd_name not in cache:
-                from ..configmodule.completion_stubs import build_stub_command, build_stub_group
+                from ..config.completion_stubs import build_stub_command, build_stub_group
 
                 if children:
                     tmp = build_stub_group(cmd_name, entry.get("help"), children)
@@ -544,7 +544,7 @@ def _attach_cached_stubs(
     Imports are local so the cache module isn't pulled in during tests or
     non-completion invocations that don't exercise this path.
     """
-    from ..configmodule.completion_stubs import build_stub_command
+    from ..config.completion_stubs import build_stub_command
 
     for entry in commands:
         name = entry.get("name")
@@ -569,7 +569,7 @@ def entry() -> None:
     import contextlib
 
     from .. import bootstrap as bs
-    from ..configmodule.completion_cache import (
+    from ..config.completion_cache import (
         DUMP_TESTS_ENV_VAR,
         dump_collected_test_names,
         is_completion_mode,
@@ -609,7 +609,7 @@ def entry() -> None:
             raise SystemExit(1) from e
         for err in result.errors:
             typer.echo(f"warning: {err}", err=True)
-        from ..configmodule.completion_cache import (
+        from ..config.completion_cache import (
             collect_backend_names,
             collect_cli_commands,
             collect_current_commands,

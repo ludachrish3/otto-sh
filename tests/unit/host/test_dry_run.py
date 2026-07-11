@@ -51,10 +51,10 @@ class TestGlobalDryRun:
             assert result.status == Status.Success
 
     @pytest.mark.asyncio
-    async def test_localhost_oneshot_returns_skipped(self):
+    async def test_localhost_exec_returns_skipped(self):
         with active_context(dry_run=True):
             host = LocalHost()
-            result = await host.oneshot("echo hello")
+            result = await host.exec("echo hello")
 
             assert result.status == Status.Skipped
             assert result.retcode == 0
@@ -118,7 +118,7 @@ class TestGlobalDryRun:
             assert host._connections._ssh_conn is None
 
     @pytest.mark.asyncio
-    async def test_remotehost_oneshot_returns_skipped(self):
+    async def test_remotehost_exec_returns_skipped(self):
         with active_context(dry_run=True):
             host = UnixHost(
                 ip="10.0.0.1",
@@ -126,7 +126,7 @@ class TestGlobalDryRun:
                 creds=[Cred(login="user", password="pass")],
                 log=LogMode.QUIET,
             )
-            result = await host.oneshot("uname -a")
+            result = await host.exec("uname -a")
 
             assert result.status == Status.Skipped
             assert result.retcode == 0

@@ -13,16 +13,15 @@ entire chain from the outermost hop inward.
 """
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Protocol
-
-from ..logger import get_logger
 
 if TYPE_CHECKING:
     from asyncssh import SSHClientConnection
     from asyncssh.listener import SSHListener
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 class HopTransport(Protocol):

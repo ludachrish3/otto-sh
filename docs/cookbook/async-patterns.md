@@ -47,27 +47,27 @@ aggregate status plus individual per-command results:
 
 ## Running commands concurrently with asyncio.gather
 
-Use {meth}`~otto.host.host.Host.oneshot` for concurrent-safe execution.
-Unlike `run`, each `oneshot` call opens an independent process and does
+Use {meth}`~otto.host.host.Host.exec` for concurrent-safe execution.
+Unlike `run`, each `exec` call opens an independent process and does
 not share state:
 
 ```{doctest}
 >>> import asyncio
 >>> host = LocalHost()
->>> async def concurrent_oneshot():
+>>> async def concurrent_exec():
 ...     results = await asyncio.gather(
-...         host.oneshot("echo one"),
-...         host.oneshot("echo two"),
-...         host.oneshot("echo three"),
+...         host.exec("echo one"),
+...         host.exec("echo two"),
+...         host.exec("echo three"),
 ...     )
 ...     return [r.value.strip() for r in results]
->>> run(concurrent_oneshot())
+>>> run(concurrent_exec())
 ['one', 'two', 'three']
 ```
 
-### When to use run vs oneshot
+### When to use run vs exec
 
-| | `run` | `oneshot` |
+| | `run` | `exec` |
 | --- | --- | --- |
 | Session | Persistent (state carries over) | Fresh process per call |
 | Concurrent-safe | No (shares one shell) | Yes |
@@ -79,9 +79,9 @@ A common real-world pattern is running the same command on every host in the
 lab concurrently.  Otto ships two helpers for this so you don't have to
 hand-roll `asyncio.gather` every time:
 
-- {func}`~otto.configmodule.configmodule.run_on_all_hosts` — the simplest
+- {func}`~otto.config.fleet.run_on_all_hosts` — the simplest
   case: run one or more shell commands on every matching host.
-- {func}`~otto.configmodule.configmodule.do_for_all_hosts` — the general
+- {func}`~otto.config.fleet.do_for_all_hosts` — the general
   form: call any async `UnixHost` method (including user-defined
   coroutines that take a host as their first argument).
 
@@ -99,7 +99,7 @@ without pre-filtering yourself.
 
 ```python
 import re
-from otto.configmodule import run_on_all_hosts
+from otto.config import run_on_all_hosts
 
 async def check_all_hosts():
     """Run 'uname -a' on every host concurrently."""
@@ -132,7 +132,7 @@ your own.
 
 ```python
 from pathlib import Path
-from otto.configmodule import do_for_all_hosts
+from otto.config import do_for_all_hosts
 from otto.host.unix_host import UnixHost
 
 async def deploy_firmware():
@@ -157,8 +157,8 @@ argument — handy for multi-step workflows:
 
 ```python
 async def install_and_verify(host: UnixHost, package: str) -> str:
-    await host.oneshot(f"sudo apt-get install -y {package}")
-    result = await host.oneshot(f"dpkg -s {package}")
+    await host.exec(f"sudo apt-get install -y {package}")
+    result = await host.exec(f"dpkg -s {package}")
     return result.value
 
 results = await do_for_all_hosts(install_and_verify, "nginx")
@@ -173,14 +173,14 @@ coordinating cross-host synchronization inside the same task graph.
 
 ```python
 import asyncio
-from otto.configmodule import all_hosts
+from otto.config import all_hosts
 
 async def mixed_workload():
     hosts = list(all_hosts())
     # Each host runs a different command
     cmds = {"switch-a": "show vlan", "switch-b": "show mac"}
     results = await asyncio.gather(
-        *(h.oneshot(cmds[h.id]) for h in hosts if h.id in cmds),
+        *(h.exec(cmds[h.id]) for h in hosts if h.id in cmds),
         return_exceptions=True,
     )
 ```

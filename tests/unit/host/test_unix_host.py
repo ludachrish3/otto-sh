@@ -1,6 +1,6 @@
 """
 Unit tests for UnixHost — pure, no-VM coverage of the class internals
-(initialization, run/oneshot dispatch, mocked file-transfer paths, session
+(initialization, run/exec dispatch, mocked file-transfer paths, session
 creation and the HostSession proxy/lifecycle).
 
 The behavior that needs a live Vagrant bed lives in
@@ -388,11 +388,11 @@ class TestCommandExecution:
 
 
 # ---------------------------------------------------------------------------
-# oneshot() — concurrent-safe command execution
+# exec() — concurrent-safe command execution
 # ---------------------------------------------------------------------------
 
 
-class TestOneshot:
+class TestExec:
     def _mock_ssh_conn(self) -> MagicMock:
         conn = MagicMock()
         conn.wait_closed = AsyncMock()
@@ -423,30 +423,30 @@ class TestOneshot:
         return process
 
     @pytest.mark.asyncio
-    async def test_oneshot_ssh_success(self, host: UnixHost):
+    async def test_exec_ssh_success(self, host: UnixHost):
         process = self._mock_ssh_process(["hello\n"])
         host._connections._ssh_conn = self._mock_ssh_conn()
         host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
 
-        result = await host.oneshot("echo hello")
+        result = await host.exec("echo hello")
 
         assert result.status == Status.Success
         assert result.retcode == 0
         assert result.value == "hello"
 
     @pytest.mark.asyncio
-    async def test_oneshot_ssh_nonzero_exit(self, host: UnixHost):
+    async def test_exec_ssh_nonzero_exit(self, host: UnixHost):
         process = self._mock_ssh_process(["not found\n"], exit_status=1)
         host._connections._ssh_conn = self._mock_ssh_conn()
         host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
 
-        result = await host.oneshot("badcmd")
+        result = await host.exec("badcmd")
 
         assert result.status == Status.Failed
         assert result.retcode == 1
 
     @pytest.mark.asyncio
-    async def test_oneshot_telnet_success(self):
+    async def test_exec_telnet_success(self):
         h = UnixHost(
             ip="10.0.0.1",
             element="box",
@@ -473,7 +473,7 @@ class TestOneshot:
             patch("otto.host.session.TelnetClient", return_value=mock_client),
             patch("otto.host.session.TelnetSession", return_value=mock_session),
         ):
-            result = await h.oneshot("echo hello")
+            result = await h.exec("echo hello")
 
         assert result.status == Status.Success
         assert result.value == "hello"
@@ -489,14 +489,14 @@ class TestOneshot:
 
     @pytest.mark.concurrency
     @pytest.mark.asyncio
-    async def test_oneshot_telnet_concurrent_does_not_deadlock(self):
-        """Regression: concurrent telnet ``oneshot()`` calls must not serialize.
+    async def test_exec_telnet_concurrent_does_not_deadlock(self):
+        """Regression: concurrent telnet ``exec()`` calls must not serialize.
 
-        ``_put_files_nc`` launches ``nc -l <port>`` via ``oneshot(timeout=None)``
+        ``_put_files_nc`` launches ``nc -l <port>`` via ``exec(timeout=None)``
         to start a listener, then — when multiple files are transferred in
-        parallel via ``asyncio.gather`` — other concurrent ``oneshot()`` calls
+        parallel via ``asyncio.gather`` — other concurrent ``exec()`` calls
         run alongside it (port discovery for the next file, additional
-        listeners, etc.).  The documented contract of ``oneshot()`` is that
+        listeners, etc.).  The documented contract of ``exec()`` is that
         concurrent calls run independently.  When the telnet cache serializes
         all calls through a single session, the second call blocks waiting
         for the first to finish; the paired ``_connect_with_retry`` on the
@@ -544,21 +544,21 @@ class TestOneshot:
             patch("otto.host.session.TelnetSession", side_effect=_new_session),
         ):
             listener_task = asyncio.create_task(
-                h.oneshot("nc -l 45681 < /dev/null > /tmp/x 2>/dev/null", timeout=None),
+                h.exec("nc -l 45681 < /dev/null > /tmp/x 2>/dev/null", timeout=None),
             )
             # Wait until the listener is actually running inside its
             # session, so we know it's holding whatever resource the
             # cache uses.
             await asyncio.wait_for(listener_running.wait(), timeout=1.0)
 
-            # A concurrent oneshot() call must NOT block on the listener.
+            # A concurrent exec() call must NOT block on the listener.
             # Under the bug this deadlocks and wait_for raises TimeoutError.
             try:
-                await asyncio.wait_for(h.oneshot("echo concurrent"), timeout=1.0)
+                await asyncio.wait_for(h.exec("echo concurrent"), timeout=1.0)
             except asyncio.TimeoutError:
                 pytest.fail(
-                    "h.oneshot() deadlocked waiting for a concurrent long-"
-                    "running telnet oneshot — reproduces the "
+                    "h.exec() deadlocked waiting for a concurrent long-"
+                    "running telnet exec — reproduces the "
                     "'Remote nc listener on <ip>:<port> not ready' "
                     "failure in _put_files_nc on telnet hosts",
                 )
@@ -570,17 +570,17 @@ class TestOneshot:
         await h.close()
 
     @pytest.mark.asyncio
-    async def test_oneshot_timeout_forwarded(self, host: UnixHost):
+    async def test_exec_timeout_forwarded(self, host: UnixHost):
         process = self._mock_ssh_process([])
         host._connections._ssh_conn = self._mock_ssh_conn()
         host._connections._ssh_conn.create_process = AsyncMock(return_value=process)
 
-        await host.oneshot("sleep 5", timeout=30.0)
+        await host.exec("sleep 5", timeout=30.0)
 
         host._connections._ssh_conn.create_process.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_oneshot_forwards_log_false(self):
+    async def test_exec_forwards_log_false(self):
         from unittest.mock import AsyncMock
 
         from otto.host.unix_host import UnixHost
@@ -594,15 +594,15 @@ class TestOneshot:
             log=LogMode.QUIET,
         )
         h._session_mgr = AsyncMock()
-        h._session_mgr.oneshot.return_value = CommandResult(
+        h._session_mgr.exec.return_value = CommandResult(
             command="c",
             value="",
             status=Status.Success,
             retcode=0,
         )
         # QUIET command composes with the host's standing mode (also QUIET) → QUIET.
-        await h.oneshot("base64 /bin/ls", log=LogMode.QUIET)
-        h._session_mgr.oneshot.assert_awaited_once_with(
+        await h.exec("base64 /bin/ls", log=LogMode.QUIET)
+        h._session_mgr.exec.assert_awaited_once_with(
             "base64 /bin/ls",
             timeout=None,
             log=LogMode.QUIET,
@@ -735,9 +735,9 @@ class TestNotConnectedFileTransfer:
             log=LogMode.QUIET,
         )
 
-        # The file-size stat succeeds; the nc send oneshot fails (not
+        # The file-size stat succeeds; the nc send exec fails (not
         # connected) — get must surface that as an error, not raise.
-        async def mock_oneshot(cmd: str, **kw) -> CommandResult:
+        async def mock_exec(cmd: str, **kw) -> CommandResult:
             if cmd.startswith("stat -c %s"):
                 return _cs(command=cmd, output="0", status=Status.Success, retcode=0)
             raise RuntimeError("not connected")
@@ -752,7 +752,7 @@ class TestNotConnectedFileTransfer:
 
         with (
             patch.object(h, "_get_local_ip", return_value="127.0.0.1"),
-            patch.object(h, "oneshot", new_callable=AsyncMock, side_effect=mock_oneshot),
+            patch.object(h, "exec", new_callable=AsyncMock, side_effect=mock_exec),
             patch("otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server),
         ):
             status, _ = _sm(await h.get([Path("/remote/file.txt")], Path("/tmp")))
@@ -772,7 +772,7 @@ class TestNotConnectedFileTransfer:
         src.write_bytes(b"data")
         with (
             patch.object(
-                h, "oneshot", new_callable=AsyncMock, side_effect=RuntimeError("not connected")
+                h, "exec", new_callable=AsyncMock, side_effect=RuntimeError("not connected")
             ),
             patch(
                 "otto.host.transfer.nc._connect_with_retry",
@@ -916,8 +916,8 @@ class TestNcFileTransfer:
         send_cs = _cs(command="nc ...", output="", status=Status.Success, retcode=0)
 
         # Control-plane ops (the file-size stat) and the nc send all route
-        # through `oneshot` now — no dedicated monitor session.
-        async def mock_oneshot(cmd: str, **kw) -> CommandResult:
+        # through `exec` now — no dedicated monitor session.
+        async def mock_exec(cmd: str, **kw) -> CommandResult:
             if cmd.startswith("stat -c %s"):
                 return _cs(command=cmd, output="1024", status=Status.Success, retcode=0)
             return send_cs
@@ -943,7 +943,7 @@ class TestNcFileTransfer:
             return mock_server
 
         with (
-            patch.object(h, "oneshot", AsyncMock(side_effect=mock_oneshot)) as mock_os,
+            patch.object(h, "exec", AsyncMock(side_effect=mock_exec)) as mock_os,
             patch.object(h, "_get_local_ip", return_value="127.0.0.1"),
             patch("otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server),
         ):
@@ -952,7 +952,7 @@ class TestNcFileTransfer:
         assert status == Status.Success
         assert msg == ""
         assert (dest / "file.txt").read_bytes() == file_data
-        # The file-size stat ran as a control-plane oneshot.
+        # The file-size stat ran as a control-plane exec.
         assert any(
             c.args and c.args[0] == "stat -c %s /remote/file.txt" for c in mock_os.await_args_list
         )
@@ -974,8 +974,8 @@ class TestNcFileTransfer:
         # Command-dispatched responses instead of a positional side_effect list:
         # _put_files_nc now also runs `_wait_for_remote_listener`, which
         # probes for `ss`/`netstat` and then polls the listener — several
-        # extra oneshot calls whose order a positional list can't capture.
-        async def mock_oneshot(cmd: str, **kw) -> CommandResult:
+        # extra exec calls whose order a positional list can't capture.
+        async def mock_exec(cmd: str, **kw) -> CommandResult:
             if "nc -l" in cmd:
                 return _cs(command=cmd, output="", status=Status.Success, retcode=0)
             if cmd.startswith("type "):
@@ -998,7 +998,7 @@ class TestNcFileTransfer:
         mock_reader = AsyncMock(spec=asyncio.StreamReader)
 
         with (
-            patch.object(h, "oneshot", AsyncMock(side_effect=mock_oneshot)),
+            patch.object(h, "exec", AsyncMock(side_effect=mock_exec)),
             patch(
                 "otto.host.transfer.nc._connect_with_retry",
                 AsyncMock(return_value=(mock_reader, mock_writer)),
@@ -1031,7 +1031,7 @@ class TestNcFileTransfer:
 
         log_states: list[object] = []
 
-        async def oneshot_capturing_log(cmd: str, **_kw) -> CommandResult:
+        async def exec_capturing_log(cmd: str, **_kw) -> CommandResult:
             log_states.append(h.log)
             # Compound strategy probe runs first (warm-up); return a valid
             # port+listener pair so the cascades don't fire.
@@ -1057,7 +1057,7 @@ class TestNcFileTransfer:
 
         assert h.log is LogMode.NORMAL
         with (
-            patch.object(h, "oneshot", AsyncMock(side_effect=oneshot_capturing_log)),
+            patch.object(h, "exec", AsyncMock(side_effect=exec_capturing_log)),
             patch(
                 "otto.host.transfer.nc._connect_with_retry",
                 AsyncMock(return_value=(mock_reader, mock_writer)),
@@ -1073,7 +1073,7 @@ class TestNcFileTransfer:
 
     @pytest.mark.asyncio
     async def test_nc_get_suppresses_host_logging_during_transfer(self, tmp_path: Path):
-        """Symmetric check for get — the file-size stat and the send oneshot
+        """Symmetric check for get — the file-size stat and the send exec
         must both run with host.log == LogMode.QUIET."""
         h = UnixHost(
             ip="10.0.0.1",
@@ -1103,7 +1103,7 @@ class TestNcFileTransfer:
             asyncio.get_running_loop().call_soon(lambda: asyncio.ensure_future(cb(reader, writer)))
             return mock_server
 
-        async def oneshot_capturing_log(cmd: str, *_a, **_kw) -> CommandResult:
+        async def exec_capturing_log(cmd: str, *_a, **_kw) -> CommandResult:
             log_states.append(h.log)
             if cmd.startswith("stat -c %s"):
                 return _cs(command=cmd, output="11", status=Status.Success, retcode=0)
@@ -1111,7 +1111,7 @@ class TestNcFileTransfer:
 
         assert h.log is LogMode.NORMAL
         with (
-            patch.object(h, "oneshot", AsyncMock(side_effect=oneshot_capturing_log)),
+            patch.object(h, "exec", AsyncMock(side_effect=exec_capturing_log)),
             patch.object(h, "_get_local_ip", return_value="127.0.0.1"),
             patch("otto.host.transfer.nc.asyncio.start_server", side_effect=fake_start_server),
         ):
@@ -1670,7 +1670,7 @@ async def test_loaded_modules_parses_proc_modules_column_one():
 
     host = _unix_host()
     proc = "ext4 737280 2 - Live 0x0\nnvme 49152 3 nvme_core, Live 0x0\n"
-    host.oneshot = AsyncMock(
+    host.exec = AsyncMock(
         return_value=CommandResult(
             command="cat /proc/modules", value=proc, status=Status.Success, retcode=0
         )
@@ -1688,7 +1688,7 @@ async def test_loaded_modules_empty_when_read_fails():
     from otto.utils import Status
 
     host = _unix_host()
-    host.oneshot = AsyncMock(
+    host.exec = AsyncMock(
         return_value=CommandResult(
             command="cat /proc/modules", value="", status=Status.Error, retcode=1
         )

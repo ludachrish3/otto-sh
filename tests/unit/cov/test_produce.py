@@ -96,7 +96,7 @@ async def test_produce_skips_boardless_dirs(
 
 
 @pytest.mark.asyncio
-async def test_produce_stamps_display_names_by_board(
+async def test_produce_annotates_display_names_by_board(
     tmp_path: Path, repo: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cov_dir = tmp_path / "out" / "cov"
@@ -123,4 +123,4 @@ async def test_produce_stamps_display_names_by_board(
 
     by_board = {p.parent.name: Capture.load(p) for p in written}
     assert by_board["board1"].display_name == "Rack 2 Slot 4"
-    assert by_board["board2"].display_name is None  # no entry -> not stamped
+    assert by_board["board2"].display_name is None  # no entry -> not annotated

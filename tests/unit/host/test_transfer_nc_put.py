@@ -238,7 +238,7 @@ class TestNcPutListenerWait:
 
         ``_control_run`` routes every control op (port-find, listener probe,
         strategy probe, file-size stats) through ``_exec_cmd`` — the same
-        oneshot exec path the listeners use. ``_control_lock`` serializes
+        exec path the listeners use. ``_control_lock`` serializes
         them so they reuse one warm pooled session instead of fanning out
         and each paying a cold telnet auth handshake.
         """

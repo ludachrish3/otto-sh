@@ -300,11 +300,11 @@ class TestRunBridge:
 
 
 # ---------------------------------------------------------------------------
-# UnixHost._interact dispatch — verifies CLI path reaches the right runner
+# UnixHost._login dispatch — verifies CLI path reaches the right runner
 # ---------------------------------------------------------------------------
 
 
-class TestUnixHostInteractDispatch:
+class TestUnixHostLoginDispatch:
     @pytest.mark.asyncio
     async def test_ssh_dispatch_uses_cached_connection(self):
         from otto.host.unix_host import UnixHost
@@ -321,7 +321,7 @@ class TestUnixHostInteractDispatch:
         host._connections.ssh = AsyncMock(return_value=fake_conn)  # type: ignore[method-assign]
 
         with patch("otto.host.unix_host.run_ssh_login", new=AsyncMock()) as mock_ssh_login:
-            await host._interact()
+            await host._login()
 
         mock_ssh_login.assert_awaited_once()
         call_kwargs = mock_ssh_login.await_args.kwargs
@@ -349,7 +349,7 @@ class TestUnixHostInteractDispatch:
             patch("otto.host.unix_host.TelnetClient", return_value=fake_client) as mock_cls,
             patch("otto.host.unix_host.run_telnet_login", new=AsyncMock()) as mock_login,
         ):
-            await host._interact()
+            await host._login()
 
         # A fresh client was constructed with auto_window_resize=True.
         construct_kwargs = mock_cls.call_args.kwargs
@@ -364,11 +364,11 @@ class TestUnixHostInteractDispatch:
 
 
 # ---------------------------------------------------------------------------
-# Task 9: UnixHost._interact(as_user=...) — resolve_chain + direct-cred guard
+# Task 9: UnixHost._login(as_user=...) — resolve_chain + direct-cred guard
 # ---------------------------------------------------------------------------
 
 
-class TestUnixHostInteractAsUser:
+class TestUnixHostLoginAsUser:
     @pytest.mark.asyncio
     async def test_ssh_as_user_passes_resolved_hops_and_via_login(self):
         from otto.host.unix_host import UnixHost
@@ -389,7 +389,7 @@ class TestUnixHostInteractAsUser:
         host._connections.ssh = AsyncMock(return_value=fake_conn)  # type: ignore[method-assign]
 
         with patch("otto.host.unix_host.run_ssh_login", new=AsyncMock()) as mock_ssh_login:
-            await host._interact(as_user="mysql")
+            await host._login(as_user="mysql")
 
         mock_ssh_login.assert_awaited_once()
         kwargs = mock_ssh_login.await_args.kwargs
@@ -427,7 +427,7 @@ class TestUnixHostInteractAsUser:
             patch("otto.host.unix_host.run_ssh_login", new=AsyncMock()) as mock_ssh_login,
             pytest.raises(LoginProxyError, match=r"other.*admin"),
         ):
-            await host._interact(as_user="admin")
+            await host._login(as_user="admin")
 
         mock_ssh_login.assert_not_awaited()
         await host.close()
@@ -453,7 +453,7 @@ class TestUnixHostInteractAsUser:
             patch("otto.host.unix_host.TelnetClient", return_value=fake_client),
             patch("otto.host.unix_host.run_telnet_login", new=AsyncMock()) as mock_login,
         ):
-            await host._interact(as_user="mysql")
+            await host._login(as_user="mysql")
 
         mock_login.assert_awaited_once()
         kwargs = mock_login.await_args.kwargs
@@ -486,7 +486,7 @@ class TestUnixHostInteractAsUser:
             patch("otto.host.unix_host.run_telnet_login", new=AsyncMock()) as mock_login,
             pytest.raises(LoginProxyError, match=r"other.*admin"),
         ):
-            await host._interact(as_user="admin")
+            await host._login(as_user="admin")
 
         # Failed before ever building a dedicated telnet client/connection.
         mock_cls.assert_not_called()

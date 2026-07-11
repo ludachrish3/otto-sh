@@ -94,7 +94,7 @@ console/tftp transfer path; see {doc}`../embedded`.
 Every `otto host <name> <verb>` invocation derives its exit code from the
 verb's returned {class}`~otto.result.Result` family, via `Result.exit_code`.
 Command results are ssh-like: the shell's retcode when the command ran,
-255 when it never ran.  (`oneshot` is Python-only — it is not a CLI verb,
+255 when it never ran.  (`exec` is Python-only — it is not a CLI verb,
 so these rows apply to `run`.)
 
 | Situation | Exit code |

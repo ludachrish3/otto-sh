@@ -48,7 +48,6 @@ def preamble_naming(monkeypatch):
     monkeypatch.setattr("otto.bootstrap.bootstrap", lambda: SimpleNamespace(errors=[], repos=[]))
     monkeypatch.setattr("otto.logger.management.create_output_dir", _create_output_dir)
     monkeypatch.setattr("otto.context.get_context", lambda: SimpleNamespace(output_dir=None))
-    monkeypatch.setattr("otto.reservations.gate", _noop)
     return calls
 
 

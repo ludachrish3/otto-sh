@@ -1,10 +1,10 @@
-"""Tests for path correlator and auto-discovery."""
+"""Tests for path remapper and auto-discovery."""
 
 import pytest
 
-from otto.coverage.correlator.paths import (
-    PathCorrelator,
+from otto.coverage.merge.paths import (
     PathMapping,
+    PathRemapper,
     discover_path_mappings,
 )
 
@@ -23,10 +23,10 @@ class TestPathMapping:
         assert m.apply("/build/sub/file.c") == "/local/sub/file.c"
 
 
-class TestPathCorrelator:
+class TestPathRemapper:
     def test_resolve_first_match_wins(self, tmp_path):
         (tmp_path / "a.c").touch()
-        c = PathCorrelator(
+        c = PathRemapper(
             [
                 PathMapping("/first", str(tmp_path)),
                 PathMapping("/second", str(tmp_path)),
@@ -38,7 +38,7 @@ class TestPathCorrelator:
 
     def test_resolve_fallthrough(self, tmp_path):
         (tmp_path / "a.c").touch()
-        c = PathCorrelator(
+        c = PathRemapper(
             [
                 PathMapping("/nomatch", "/does/not/exist"),
                 PathMapping("/real", str(tmp_path)),
@@ -48,11 +48,11 @@ class TestPathCorrelator:
         assert result is not None
 
     def test_resolve_none_when_no_match(self):
-        c = PathCorrelator([PathMapping("/x", "/y")])
+        c = PathRemapper([PathMapping("/x", "/y")])
         assert c.resolve("/z/file.c") is None
 
     def test_resolve_strict_raises(self):
-        c = PathCorrelator([])
+        c = PathRemapper([])
         with pytest.raises(FileNotFoundError):
             c.resolve_strict("/missing/file.c")
 

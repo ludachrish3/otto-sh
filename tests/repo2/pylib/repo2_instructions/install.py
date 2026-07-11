@@ -1,3 +1,4 @@
+import logging
 from typing import (
     Annotated,
 )
@@ -5,9 +6,8 @@ from typing import (
 import typer
 
 from otto.cli.run import instruction
-from otto.logger import get_logger
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @instruction()

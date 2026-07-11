@@ -16,7 +16,7 @@ from otto.coverage.capture.store_dir import (
 def _capture(ticket: str = "PROJ-123") -> Capture:
     return Capture(
         tier="manual",
-        pin="0" * 40,
+        base_commit="0" * 40,
         captured_at="2026-07-02T18:40:00Z",
         tester={"name": "chris", "email": "c@x"},
         ticket=ticket,

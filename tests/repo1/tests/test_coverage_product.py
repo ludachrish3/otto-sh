@@ -15,6 +15,7 @@ merged coverage across hosts is greater than any single host's
 coverage alone.
 """
 
+import logging
 import re
 from pathlib import Path
 
@@ -22,18 +23,17 @@ import pytest
 import pytest_asyncio
 
 from otto import options
-from otto.configmodule.configmodule import (
+from otto.config.fleet import (
     all_hosts,
     do_for_all_hosts,
 )
 from otto.host import LocalHost
 from otto.host.unix_host import UnixHost
-from otto.logger import get_logger
 from otto.suite import OttoSuite
 from otto.suite.plugin import otto_cov_key
 from otto.utils import Status
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 PRODUCT_DIR = Path(__file__).resolve().parent.parent / "product"
 REMOTE_INSTALL_DIR = "/opt/coverage_product"
@@ -43,7 +43,7 @@ GCDA_REMOTE_DIR = "/var/coverage/product"
 # dotted ``<parent>.<project>.<service>`` ids of DockerContainerHost
 # placeholders that ``register_declared_container_hosts`` synthesizes
 # at lab-load time. Coverage runs target compile-and-run hosts only —
-# placeholders fail oneshot until ``otto docker up`` populates them.
+# placeholders fail exec until ``otto docker up`` populates them.
 _REAL_HOSTS = re.compile(r"^[^.]+$")
 
 
@@ -64,7 +64,7 @@ async def _compile_product() -> None:
     """
     localhost = LocalHost()
     try:
-        result = await localhost.oneshot(f"make -C {PRODUCT_DIR} all", timeout=30)
+        result = await localhost.exec(f"make -C {PRODUCT_DIR} all", timeout=30)
         if result.status != Status.Success:
             raise RuntimeError(f"Product compilation failed:\n{result.value}")
         logger.info("Product build up to date")
@@ -75,8 +75,8 @@ async def _compile_product() -> None:
 async def _install_on_host(host: UnixHost) -> None:
     """Deploy the compiled product binary to a remote host."""
     # Create directories on remote
-    await host.oneshot(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
-    await host.oneshot(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    await host.exec(f"sudo mkdir -p {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    await host.exec(f"sudo chmod 777 {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
 
     # Upload the binary
     binary = PRODUCT_DIR / "product"
@@ -87,13 +87,13 @@ async def _install_on_host(host: UnixHost) -> None:
     if not put_result.is_ok:
         raise RuntimeError(f"Failed to deploy to {host.id}: {put_result.msg}")
 
-    await host.oneshot(f"chmod +x {REMOTE_INSTALL_DIR}/product", timeout=10)
+    await host.exec(f"chmod +x {REMOTE_INSTALL_DIR}/product", timeout=10)
     logger.info("Installed product on %s", host.id)
 
 
 async def _uninstall_from_host(host: UnixHost) -> None:
     """Remove the product and coverage data from a remote host."""
-    await host.oneshot(f"sudo rm -rf {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
+    await host.exec(f"sudo rm -rf {REMOTE_INSTALL_DIR} {GCDA_REMOTE_DIR}", timeout=10)
     logger.info("Uninstalled product from %s", host.id)
 
 
@@ -112,7 +112,7 @@ async def _run_product(host: UnixHost, op: str, *args: int) -> str:
         f"GCOV_PREFIX_STRIP={strip} "
         f"{REMOTE_INSTALL_DIR}/product {op} {str_args}"
     )
-    result = await host.oneshot(cmd, timeout=10)
+    result = await host.exec(cmd, timeout=10)
     if result.status != Status.Success:
         raise RuntimeError(f"Product run failed on {host.id}: {result.value}")
     return result.value.strip()
@@ -149,7 +149,7 @@ class TestCoverageProduct(OttoSuite[_Options]):
         if cov_active:
             # Only remove the binary; leave .gcda files for post-test fetch.
             await do_for_all_hosts(
-                UnixHost.oneshot,
+                UnixHost.exec,
                 f"sudo rm -rf {REMOTE_INSTALL_DIR}",
                 timeout=10,
                 pattern=_REAL_HOSTS,
@@ -201,7 +201,7 @@ class TestCoverageProduct(OttoSuite[_Options]):
         when coverage from multiple hosts is merged.
         """
         host = self._hosts[0]
-        result = await host.oneshot(
+        result = await host.exec(
             f"GCOV_PREFIX={GCDA_REMOTE_DIR} "
             f"GCOV_PREFIX_STRIP={len(PRODUCT_DIR.parts) - 1} "
             f"{REMOTE_INSTALL_DIR}/product div 1 0",

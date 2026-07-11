@@ -1,6 +1,6 @@
 """Unit tests for `otto.docker.build`.
 
-These mock the parent's `oneshot` so we never invoke real `docker build`.
+These mock the parent's `exec` so we never invoke real `docker build`.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from otto.configmodule.repo import DockerImage, DockerSettings
+from otto.config.repo import DockerImage, DockerSettings
 from otto.docker.build import (
     _build_one,
     image_full_tag,
@@ -30,7 +30,7 @@ def _fail(out: str = "boom") -> CommandResult:
 
 def _mock_parent():
     parent = MagicMock()
-    parent.oneshot = AsyncMock(return_value=_ok())
+    parent.exec = AsyncMock(return_value=_ok())
     parent.put = AsyncMock(return_value=Result(Status.Success, value={}))
     return parent
 
@@ -76,19 +76,19 @@ async def test_build_one_skipped_when_image_exists(tmp_path):
     img = _img(tmp_path)
 
     # docker image inspect succeeds → skip path.
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         if cmd.startswith("docker image inspect"):
             return _ok()
         return _ok()
 
-    parent.oneshot.side_effect = oneshot
+    parent.exec.side_effect = exec_side_effect
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
     status, msg = await _build_one(parent, "repo1", settings, img, rebuild=False)
     assert status is Status.Skipped
     assert msg.startswith("repo1-api:")
     # Must NOT have called `docker build`.
-    cmds = [c.args[0] for c in parent.oneshot.call_args_list]
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert not any(c.startswith("docker build ") for c in cmds), cmds
 
 
@@ -97,17 +97,17 @@ async def test_build_one_runs_when_image_missing(tmp_path):
     parent = _mock_parent()
     img = _img(tmp_path)
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         if cmd.startswith("docker image inspect"):
             return _fail("not found")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot
+    parent.exec.side_effect = exec_side_effect
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
     status, _msg = await _build_one(parent, "repo1", settings, img, rebuild=False)
     assert status is Status.Success
-    cmds = [c.args[0] for c in parent.oneshot.call_args_list]
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
     assert any(c.startswith("docker build ") for c in cmds), cmds
 
 
@@ -115,12 +115,12 @@ async def test_build_one_runs_when_image_missing(tmp_path):
 async def test_rebuild_forces_build_even_when_image_exists(tmp_path):
     parent = _mock_parent()
     img = _img(tmp_path)
-    parent.oneshot.return_value = _ok()  # everything succeeds
+    parent.exec.return_value = _ok()  # everything succeeds
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
     status, _ = await _build_one(parent, "repo1", settings, img, rebuild=True)
     assert status is Status.Success
-    cmds = [c.args[0] for c in parent.oneshot.call_args_list]
+    cmds = [c.args[0] for c in parent.exec.call_args_list]
     # Critical: we must have built even though inspect would have succeeded.
     assert any(c.startswith("docker build ") for c in cmds), cmds
 
@@ -130,14 +130,14 @@ async def test_build_failure_propagates(tmp_path):
     parent = _mock_parent()
     img = _img(tmp_path)
 
-    async def oneshot(cmd, *_, **__):
+    async def exec_side_effect(cmd, *_, **__):
         if cmd.startswith("docker image inspect"):
             return _fail()
         if cmd.startswith("docker build "):
             return _fail("syntax error in dockerfile")
         return _ok()
 
-    parent.oneshot.side_effect = oneshot
+    parent.exec.side_effect = exec_side_effect
 
     settings = DockerSettings(registry_url="docker.io", images=(img,), composes=())
     status, msg = await _build_one(parent, "repo1", settings, img, rebuild=False)

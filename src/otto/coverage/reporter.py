@@ -32,11 +32,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from .correlator.lcov_loader import LCOVLoader
-from .correlator.merger import LcovMerger
-from .correlator.paths import (
-    PathCorrelator,
+from .merge.lcov_loader import LCOVLoader
+from .merge.merger import LcovMerger
+from .merge.paths import (
     PathMapping,
+    PathRemapper,
     discover_from_gcno,
     discover_path_mappings,
 )
@@ -69,11 +69,11 @@ class CollectionInputs:
     collection-model step becomes a no-op.
 
     - ``repo_root``: SUT git repo root.  Enables e2e captures + the manual
-      store; also the pin-guard reference and the exclusion source.
+      store; also the base_commit-guard reference and the exclusion source.
     - ``tier_configs``: Declared coverage tiers (precedence order).  Seeds
       ``tier_order`` / ``tier_colors`` and drives unit-harvest.
     - ``capture_paths``: ``capture.json`` files (one per board) to fold in
-      under their own tier, subject to the HEAD pin guard.
+      under their own tier, subject to the HEAD base_commit guard.
     - ``extra_markers``: Extra source exclusion markers (spec §8).
     """
 
@@ -288,7 +288,7 @@ class CoverageReporter:
             # source_root. Note: a host with its own ``source_roots`` entry
             # (a different build tree) but no explicit ``toolchains`` entry
             # would get a toolchain sniffed from this fallback root, which may
-            # be wrong. The metadata writer (``_run_coverage``) emits a per-host
+            # be wrong. The metadata writer (``collect_coverage``) emits a per-host
             # toolchain whenever it emits a per-host source root, so this path
             # is not reached for per-version embedded hosts.
             if not fallback_computed:
@@ -369,15 +369,15 @@ class CoverageReporter:
 
             # 3. Load coverage into store
             logger.info("=== Loading coverage into store ===")
-            correlator = PathCorrelator(mappings)
-            loader = LCOVLoader(store, correlator)
+            remapper = PathRemapper(mappings)
+            loader = LCOVLoader(store, remapper)
 
             for tier_name, tier_path in self.tiers:
                 if tier_path is None:
                     # Implicit system tier from the merged .gcda pipeline
                     if system_info is not None:
-                        ctx = store.add_context(tier=tier_name)
-                        loader.load(system_info, tier_name, ctx_id=ctx)
+                        run_id = store.add_run(tier=tier_name)
+                        loader.load(system_info, tier_name, run_id=run_id)
                     else:
                         # Still register so the renderer shows the column
                         store.register_tier(tier_name)
@@ -390,8 +390,8 @@ class CoverageReporter:
                         )
                         store.register_tier(tier_name)
                         continue
-                    ctx = store.add_context(tier=tier_name)
-                    loader.load(tier_path, tier_name, ctx_id=ctx)
+                    run_id = store.add_run(tier=tier_name)
+                    loader.load(tier_path, tier_name, run_id=run_id)
 
             # 3b. Collection-model inputs (Task 10). No-ops for legacy
             #     callers: every step is gated on the new constructor
@@ -400,7 +400,7 @@ class CoverageReporter:
             #     run keys are computed up front and seeded into
             #     ``seen_runs`` before anything folds, so a verbatim
             #     cov-dir duplicate of an already-committed manual run is
-            #     skipped before the pin guard gets a chance to raise —
+            #     skipped before the base_commit guard gets a chance to raise —
             #     but the manual captures themselves still fold LAST.
             #     That preserves ``apply_manual_capture``'s stale guard
             #     (it reads all tiers' hits at fold time): a line the e2e
@@ -445,34 +445,36 @@ class CoverageReporter:
 
     @staticmethod
     def _run_key(capture: "Capture") -> tuple[str, str, str, str]:
-        """Dedupe key: one context per distinct run across all capture sources."""
-        return (capture.tier, capture.pin, capture.board, capture.captured_at)
+        """Dedupe key: one run-table entry per distinct capture across all capture sources."""
+        return (capture.tier, capture.base_commit, capture.board, capture.captured_at)
 
     def _load_captures(
         self, store: CoverageStore, seen_runs: set[tuple[str, str, str, str]]
     ) -> None:
-        """Fold e2e board ``capture.json`` files in under a strict HEAD pin guard.
+        """Fold e2e board ``capture.json`` files in under a strict HEAD base_commit guard.
 
-        Each capture is pinned to the exact commit whose line numbering it
-        means; unlike a manual capture it carries no anchor chain, so it is
-        only valid against a matching tree.  A pin that differs from HEAD is
-        a hard error (the product was rebuilt or the tree moved after the
-        capture was taken).
+        Each capture is anchored to the exact commit (``base_commit``)
+        whose line numbering it means; unlike a manual capture it carries
+        no anchor chain, so it is only valid against a matching tree.  A
+        ``base_commit`` that differs from HEAD is a hard error (the
+        product was rebuilt or the tree moved after the capture was
+        taken).
 
-        The pin guard proves ``capture.pin == HEAD`` but says nothing about
-        the *working tree*: a dirty tree at report time means the renderer
-        reads edited on-disk source while the capture holds HEAD coordinates,
-        silently misaligning every hit past a local edit. When the tree is
-        dirty each capture is remapped HEAD → working tree (hits on
-        locally-modified lines dropped) so the annotation lines up.
+        The guard proves ``capture.base_commit == HEAD`` but says nothing
+        about the *working tree*: a dirty tree at report time means the
+        renderer reads edited on-disk source while the capture holds HEAD
+        coordinates, silently misaligning every hit past a local edit.
+        When the tree is dirty each capture is remapped HEAD → working
+        tree (hits on locally-modified lines dropped) so the annotation
+        lines up.
 
         *seen_runs* is the cross-source dedupe set, pre-seeded by the
         caller (:meth:`run`) with every committed manual capture's run
         key before this method runs: a cov-dir capture that duplicates an
-        already-committed manual run is skipped here, before the pin
-        guard gets a chance to raise — even though the manual copy itself
-        does not fold into the store until :meth:`_load_manual_store` runs
-        later.
+        already-committed manual run is skipped here, before the
+        base_commit guard gets a chance to raise — even though the manual
+        copy itself does not fold into the store until
+        :meth:`_load_manual_store` runs later.
         """
         if not self.capture_paths or self.repo_root is None:
             return
@@ -482,7 +484,7 @@ class CoverageReporter:
         from .validity import (
             load_capture_into_store,
             load_dirty_capture_into_store,
-            register_capture_context,
+            register_capture_run,
         )
 
         head = gitio.head_commit(self.repo_root)
@@ -501,17 +503,17 @@ class CoverageReporter:
                 logger.info("Skipping duplicate capture %s (already folded)", cap_path)
                 continue
             seen_runs.add(key)
-            ctx = register_capture_context(store, capture)
-            if capture.pin != head:
+            run_id = register_capture_run(store, capture)
+            if capture.base_commit != head:
                 raise CoverageDataMismatchError(
-                    f"e2e capture {cap_path} was taken at {capture.pin[:12]} "
+                    f"e2e capture {cap_path} was taken at {capture.base_commit[:12]} "
                     f"but the tree is at {head[:12]}; re-run the test or "
                     f"report from the matching commit"
                 )
             if dirty:
-                load_dirty_capture_into_store(store, capture, self.repo_root, ctx_id=ctx)
+                load_dirty_capture_into_store(store, capture, self.repo_root, run_id=run_id)
             else:
-                load_capture_into_store(store, capture, self.repo_root, ctx_id=ctx)
+                load_capture_into_store(store, capture, self.repo_root, run_id=run_id)
 
     async def _harvest_unit_tiers(
         self,
@@ -529,11 +531,11 @@ class CoverageReporter:
         unit_tiers = [t for t in self.tier_configs if t.kind == "unit" and t.harvest_dirs]
         if not unit_tiers:
             return
-        from .correlator.merger import LcovMerger
+        from .merge.merger import LcovMerger
 
         merger = LcovMerger(localhost)
         for tier in unit_tiers:
-            tier_ctx: int | None = None
+            tier_run_id: int | None = None
             for idx, raw_hdir in enumerate(tier.harvest_dirs):
                 hdir = (
                     self.repo_root / raw_hdir
@@ -557,10 +559,10 @@ class CoverageReporter:
                     continue
                 self._warn_if_stale_counters(tier.name, hdir, gcda_files)
                 info_out = work_dir / f"unit_{tier.name}_{idx}.info"
-                if tier_ctx is None:
-                    tier_ctx = loader.store.add_context(tier=tier.name)
+                if tier_run_id is None:
+                    tier_run_id = loader.store.add_run(tier=tier.name)
                 await merger.capture(hdir, hdir, info_out)
-                loader.load(info_out, tier.name, ctx_id=tier_ctx)
+                loader.load(info_out, tier.name, run_id=tier_run_id)
 
     @staticmethod
     def _warn_if_stale_counters(tier_name: str, hdir: Path, gcda_files: list[Path]) -> None:
@@ -611,7 +613,7 @@ class CoverageReporter:
         """
         if self.repo_root is None or not manual_captures:
             return
-        from .validity import apply_manual_capture, register_capture_context
+        from .validity import apply_manual_capture, register_capture_run
 
         max_age_by_tier = {t.name: t.max_age_days for t in self.tier_configs}
         seen: set[tuple[str, str, str, str]] = set()
@@ -621,13 +623,13 @@ class CoverageReporter:
                 logger.info("Skipping duplicate manual capture %s (already folded)", key)
                 continue
             seen.add(key)
-            ctx = register_capture_context(store, capture)
+            run_id = register_capture_run(store, capture)
             apply_manual_capture(
                 store,
                 capture,
                 self.repo_root,
                 max_age_days=max_age_by_tier.get(capture.tier),
-                ctx_id=ctx,
+                run_id=run_id,
             )
 
     def _fill_tier_colors(self, store: CoverageStore) -> None:
@@ -639,9 +641,10 @@ class CoverageReporter:
 def _partition_board_dirs(cov_dirs: list[Path]) -> tuple[list[Path], list[Path]]:
     """Split each cov dir's board subdirs into (gcda dirs, capture.json paths).
 
-    A board dir holding a ``capture.json`` is an already-pinned e2e capture
-    and loads via the capture path; every other board dir keeps today's
-    ``.gcda``-merge path (back-compat).  Mixed cov dirs are supported.
+    A board dir holding a ``capture.json`` is an e2e capture already
+    anchored to base_commit and loads via the capture path; every other
+    board dir keeps today's ``.gcda``-merge path (back-compat).  Mixed
+    cov dirs are supported.
     """
     gcda_dirs: list[Path] = []
     capture_paths: list[Path] = []
@@ -688,7 +691,7 @@ async def run_coverage_report(
     **collection-model** path, which additionally consumes, in order:
 
     1. **e2e captures** — board dirs holding a ``capture.json`` load under a
-       strict HEAD pin guard (:class:`~otto.coverage.errors.CoverageDataMismatchError`
+       strict HEAD base_commit guard (:class:`~otto.coverage.errors.CoverageDataMismatchError`
        on mismatch); board dirs without one keep the legacy gcda-merge.
     2. **unit harvest** — each ``kind == "unit"`` tier's ``harvest_dirs``.
     3. **manual store** — every committed capture under *repo_root*'s

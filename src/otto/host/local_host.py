@@ -9,6 +9,7 @@ works uniformly across all host backends.
 """
 
 import asyncio
+import logging
 import re
 import shutil
 from dataclasses import (
@@ -24,7 +25,6 @@ from typing import Annotated
 
 from typing_extensions import override
 
-from ..logger import get_logger
 from ..logger.mode import LogMode
 from ..result import CommandResult, Result
 from ..utils import Arg, Exclude, Status, cli_exposed
@@ -102,7 +102,7 @@ class LocalFileTransfer(BaseFileTransfer):
         return await self._do_copy(src_files, dest_dir, progress_factory)
 
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(
@@ -111,11 +111,11 @@ logger = get_logger()
 class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
     """A host that runs commands on the local machine via a persistent shell session.
 
-    Implements the full :class:`~otto.host.host.BaseHost` API (run, oneshot, put,
+    Implements the full :class:`~otto.host.host.BaseHost` API (run, exec, put,
     get, open_session, send, expect, is_reachable) without any network transport.
     Shell state (working directory, environment variables) persists across ``run``
     calls through a :class:`~otto.host.session.SessionManager`-backed local
-    session; ``oneshot`` bypasses it and spawns an independent subprocess, making
+    session; ``exec`` bypasses it and spawns an independent subprocess, making
     concurrent calls safe. File transfers delegate to :class:`LocalFileTransfer`.
     """
 
@@ -157,7 +157,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
             log_command=self._log_command,
             log_output=self._log_output,
             session_factory=LocalSession,
-            oneshot_factory=self._exec_subprocess,
+            exec_factory=self._exec_subprocess,
             creds=[],
             host_id=self.id,
         )
@@ -187,7 +187,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         )
 
     @override
-    async def oneshot(
+    async def exec(
         self,
         cmd: str,
         timeout: float | None = None,
@@ -196,7 +196,7 @@ class LocalHost(PosixPrivilege, PosixFileOps, BaseHost):
         """Run a command in a fresh subprocess (stateless, concurrent-safe).
 
         Each call spawns an independent process — no state persists between
-        calls, and multiple oneshot() calls can run concurrently via
+        calls, and multiple exec() calls can run concurrently via
         asyncio.gather().
         """
         if is_dry_run():

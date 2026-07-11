@@ -74,7 +74,7 @@ otto host pepper_seed.repo1.api get /etc/os-release ./
 
 Container ids are also synthesized at lab-load time **before** any
 `otto docker up` so tab completion works immediately. Accessing a
-declared-but-stopped container (`otto host <id>`, oneshot, run, or file
+declared-but-stopped container (`otto host <id>`, exec, run, or file
 transfer) auto-starts its compose stack on demand via `compose_up`
 (`build=False`, so access never triggers an image rebuild). If the stack
 can't be started — for example its image hasn't been built — the command
@@ -120,11 +120,11 @@ match short-circuits the build; `--rebuild` forces it.
   SSH-based `UnixHost` parent — they open a persistent
   `docker exec -it` channel multiplexed on the parent's SSH
   connection. Telnet parents and `LocalHost` parents are rejected with
-  `NotImplementedError`. `oneshot()` (and `get` / `put`) still work
+  `NotImplementedError`. `exec()` (and `get` / `put`) still work
   through any parent.
 - The container must provide `/bin/sh`. Distroless or minimal images
   without a shell will fail at session-open time.
-- `interact()` requires `parent.term == 'ssh'`. Telnet parents are
+- `login()` requires `parent.term == 'ssh'`. Telnet parents are
   rejected.
 
 ## Persistent shell state
@@ -138,7 +138,7 @@ await api.run("export FOO=bar")
 await api.run("echo $FOO")                # prints bar
 ```
 
-`oneshot()` is the stateless, concurrent-safe counterpart — each call
-spawns a fresh `docker exec` against the parent. Use `oneshot()` when
+`exec()` is the stateless, concurrent-safe counterpart — each call
+spawns a fresh `docker exec` against the parent. Use `exec()` when
 you want to fan out independent commands; use `run()` when you need
 stateful or interactive flows.

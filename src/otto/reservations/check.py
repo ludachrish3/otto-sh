@@ -8,32 +8,50 @@ holders (via :meth:`~otto.reservations.protocol.ReservationBackend.who_reserved`
 deliberately does NOT advertise ``--skip-reservation-check`` — that flag is surfaced only when
 the backend itself is unreachable, where proceeding requires it.
 
-:func:`gate` is the subcommand-facing entry point that wires the check into
-the CLI: it reads the per-invocation reservation state from Typer's
-``ctx.meta["otto_reservation"]``, honors the top-level skip flag, emits the
-bold-red skip warning when used, and otherwise runs the check.
+:class:`ReservationGate` is the library-facing, framework-free entry point:
+:meth:`ReservationGate.evaluate` honors the skip flag (returning a
+plain-text warning for the caller to present however it likes) and
+otherwise runs the check. It has no dependency on Typer or any other CLI
+framework — the CLI adapter that presents ``evaluate()``'s output lives in
+``otto.cli``.
 """
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-
-import typer
-
-from ..logger import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from ..configmodule.lab import Lab
+    from ..config.lab import Lab
     from .identity import ResolvedIdentity
     from .protocol import ReservationBackend
 
-logger = get_logger()
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class ReservationState:
-    """Per-invocation reservation state stored in Typer's ``ctx.meta["otto_reservation"]``."""
+class ReservationGateOutcome:
+    """Result of :meth:`ReservationGate.evaluate`.
+
+    ``warning`` is plain text (no rich markup) — CLI callers decide how to
+    present it (e.g. wrapping it in ``[bold red]...[/bold red]``).
+    """
+
+    checked: bool
+    skipped: bool
+    warning: "str | None"
+
+
+@dataclass(frozen=True)
+class ReservationGate:
+    """Per-invocation reservation gate: framework-free, callable from any Python caller.
+
+    Typically built by :func:`~otto.reservations.build_reservation_gate` and,
+    in the CLI, stashed on Typer's ``ctx.meta["otto_reservation"]`` — but
+    nothing here depends on Typer or ``ctx.meta``; construct one directly and
+    call :meth:`evaluate` from any script.
+    """
 
     backend: "ReservationBackend | None" = None
     identity: "ResolvedIdentity | None" = None
@@ -41,6 +59,52 @@ class ReservationState:
     # Builds the backend on demand. Set even under -R (where ``backend`` is
     # None) so reservation subcommands can construct it only when needed.
     backend_factory: "Callable[[], ReservationBackend] | None" = None
+
+    def evaluate(self) -> ReservationGateOutcome:
+        """Run the reservation check (or the skip path) and report the outcome.
+
+        When ``skip_check`` (``-R``) is set, a loud warning is always
+        produced — regardless of whether a backend was configured — and no
+        check runs. Otherwise, a ``backend`` of ``None`` (no ``[reservations]``
+        section resolved, or nothing to check) is a silent no-op. The active
+        lab is fetched lazily so the no-op paths never require an
+        :class:`~otto.context.OttoContext`.
+
+        Raises
+        ------
+        MissingReservationError
+            If any required resource is not held by the resolved identity.
+        RuntimeError
+            If a backend is configured but ``identity`` was never resolved —
+            a construction invariant, not a runtime condition callers should
+            handle.
+        """
+        from ..config import get_lab
+
+        if self.skip_check:
+            lab = get_lab()
+            username = self.identity.username if self.identity is not None else "<unknown>"
+            needed = required_resources(lab)
+            warning = (
+                f"\N{WARNING SIGN}  Reservation check SKIPPED for user {username!r} "
+                f"on lab {lab.name!r}. Required resources: {sorted(needed)!r}"
+            )
+            logger.warning(
+                "Reservation check skipped for user %r on lab %r. Required: %r",
+                username,
+                lab.name,
+                sorted(needed),
+            )
+            return ReservationGateOutcome(checked=False, skipped=True, warning=warning)
+
+        if self.backend is None:
+            return ReservationGateOutcome(checked=False, skipped=False, warning=None)
+
+        lab = get_lab()
+        if self.identity is None:
+            raise RuntimeError("identity must be resolved before evaluate() runs")
+        check_reservations(lab, self.identity.username, self.backend)
+        return ReservationGateOutcome(checked=True, skipped=False, warning=None)
 
 
 class ReservationBackendError(Exception):
@@ -125,47 +189,3 @@ def check_reservations(
         else:
             lines.append(f"  - {resource} (held by {', '.join(who)})")
     raise MissingReservationError("\n".join(lines))
-
-
-def gate(ctx: typer.Context) -> None:
-    """Run the reservation check for this invocation, reading state from ctx.meta.
-
-    When ``-R`` (skip_check) is set, a loud warning is emitted regardless of
-    whether a backend was configured. No-ops when no reservation state is
-    present (e.g. unit tests invoking a subcommand app directly) or, after the
-    skip-warning path, when no backend is configured. The active lab is fetched
-    lazily so the no-op paths never require an OttoContext.
-    """
-    res = ctx.meta.get("otto_reservation")
-    if res is None:
-        return
-
-    from ..configmodule import get_lab
-
-    # A skipped check (-R) must be loud and is independent of whether a backend
-    # was constructed — under -R no backend is built (backend is None).
-    if res.skip_check:
-        lab = get_lab()
-        username = res.identity.username if res.identity is not None else "<unknown>"
-        needed = required_resources(lab)
-        from rich import print as rprint
-
-        rprint(
-            f"[bold red]\N{WARNING SIGN}  Reservation check SKIPPED for user "
-            f"{username!r} on lab {lab.name!r}. Required resources: {sorted(needed)!r}[/bold red]"
-        )
-        logger.warning(
-            "Reservation check skipped for user %r on lab %r. Required: %r",
-            username,
-            lab.name,
-            sorted(needed),
-        )
-        return
-
-    if res.backend is None:
-        return
-
-    lab = get_lab()
-    if res.identity is None:
-        raise RuntimeError("identity must be resolved before gate() runs")
-    check_reservations(lab, res.identity.username, res.backend)

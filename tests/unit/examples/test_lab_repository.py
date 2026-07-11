@@ -2,11 +2,11 @@
 
 import pytest
 
-from otto.configmodule.lab import Lab
+from otto.config.lab import Lab
 from otto.examples.lab_repository import ExampleLabRepository
 from otto.host.remote_host import RemoteHost
-from otto.storage import LabNotFoundError, register_lab_repository
-from otto.storage.registry import LAB_REPOSITORIES
+from otto.labs import LabNotFoundError, register_lab_repository
+from otto.labs.registry import LAB_REPOSITORIES
 from otto.testing import assert_lab_repository_conforms
 
 

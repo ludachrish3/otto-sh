@@ -13,8 +13,6 @@ Tests verify:
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from otto.suite.plugin import OttoPlugin, StabilityCollector
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -213,7 +211,7 @@ class TestStabilityCollector:
 
 class TestStabilityReport:
     def test_report_uses_percentage_threshold(self, tmp_path):
-        from otto.cli.test import _print_stability_report
+        from otto.suite.run import _print_stability_report
 
         collector = StabilityCollector()
         for _ in range(9):
@@ -221,7 +219,7 @@ class TestStabilityReport:
         collector.record("test_a", passed=False)  # 90% pass rate
 
         # threshold=90 → exactly meets threshold → STABLE
-        with patch("otto.cli.test.logger"):
+        with patch("otto.suite.run.logger"):
             _print_stability_report("MySuite", collector, 10, 0, 90.0, tmp_path)
 
         report_text = (tmp_path / "stability_report.txt").read_text()
@@ -230,7 +228,7 @@ class TestStabilityReport:
         assert "PASS" in report_text
 
     def test_report_fails_below_threshold(self, tmp_path):
-        from otto.cli.test import _print_stability_report
+        from otto.suite.run import _print_stability_report
 
         collector = StabilityCollector()
         for _ in range(8):
@@ -238,43 +236,47 @@ class TestStabilityReport:
         for _ in range(2):
             collector.record("test_a", passed=False)  # 80% pass rate
 
-        with patch("otto.cli.test.logger"), pytest.raises(SystemExit, match="1"):
-            _print_stability_report("MySuite", collector, 10, 0, 90.0, tmp_path)
+        # Report-as-data: a sub-threshold run returns the unstable verdict
+        # (True) rather than raising SystemExit; the caller folds it into the
+        # invocation's exit code (see _final_exit_code).
+        with patch("otto.suite.run.logger"):
+            unstable = _print_stability_report("MySuite", collector, 10, 0, 90.0, tmp_path)
 
+        assert unstable is True
         report_text = (tmp_path / "stability_report.txt").read_text()
         assert "UNSTABLE" in report_text
 
     def test_report_header_shows_iterations(self, tmp_path):
-        from otto.cli.test import _print_stability_report
+        from otto.suite.run import _print_stability_report
 
         collector = StabilityCollector()
         collector.record("test_a", passed=True)
 
-        with patch("otto.cli.test.logger"):
+        with patch("otto.suite.run.logger"):
             _print_stability_report("MySuite", collector, 5, 0, 100.0, tmp_path)
 
         report_text = (tmp_path / "stability_report.txt").read_text()
         assert "5 iterations" in report_text
 
     def test_report_header_shows_duration(self, tmp_path):
-        from otto.cli.test import _print_stability_report
+        from otto.suite.run import _print_stability_report
 
         collector = StabilityCollector()
         collector.record("test_a", passed=True)
 
-        with patch("otto.cli.test.logger"):
+        with patch("otto.suite.run.logger"):
             _print_stability_report("MySuite", collector, 0, 300, 100.0, tmp_path)
 
         report_text = (tmp_path / "stability_report.txt").read_text()
         assert "300s duration" in report_text
 
     def test_report_header_shows_both(self, tmp_path):
-        from otto.cli.test import _print_stability_report
+        from otto.suite.run import _print_stability_report
 
         collector = StabilityCollector()
         collector.record("test_a", passed=True)
 
-        with patch("otto.cli.test.logger"):
+        with patch("otto.suite.run.logger"):
             _print_stability_report("MySuite", collector, 50, 120, 100.0, tmp_path)
 
         report_text = (tmp_path / "stability_report.txt").read_text()

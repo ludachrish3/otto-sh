@@ -41,7 +41,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from ...version import get_version
-from ..store.model import BranchHits, ContextRecord, CoverageStore, FileRecord, LineRecord
+from ..store.model import BranchHits, CoverageStore, FileRecord, LineRecord, RunRecord
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +135,7 @@ class HtmlRenderer:
                 tier_colors,
                 STATE_COLORS,
                 otto_version,
-                store.contexts,
+                store.runs,
                 tier_index,
             )
             files_data.append(self._build_file_row(file_record, tier_order, excluded_count))
@@ -212,7 +212,7 @@ class HtmlRenderer:
                 tier_labels=tier_labels,
                 tier_colors=tier_colors,
                 state_colors=state_colors,
-                contexts=store.contexts,
+                runs=store.runs,
                 otto_version=otto_version,
             )
         )
@@ -247,7 +247,7 @@ class HtmlRenderer:
         tier_colors: dict[str, str],
         state_colors: dict[str, str],
         otto_version: str,
-        contexts: list[ContextRecord],
+        runs: list[RunRecord],
         tier_index: dict[str, int],
     ) -> int:
         """Render one annotated-source page; returns its excluded-line count.
@@ -284,7 +284,7 @@ class HtmlRenderer:
                 record.lines.get(i),
                 tier_order,
                 i in excluded_linenos,
-                contexts,
+                runs,
                 tier_index,
             )
             for i, text in enumerate(source_lines, start=1)
@@ -318,7 +318,7 @@ class HtmlRenderer:
         lr: LineRecord | None,
         tier_order: list[str],
         excluded: bool,
-        contexts: list[ContextRecord],
+        runs: list[RunRecord],
         tier_index: dict[str, int],
     ) -> dict[str, Any]:
         """Build the template context for one row of the source table."""
@@ -337,56 +337,56 @@ class HtmlRenderer:
             "tier_hits": tier_hits,
             "branches": branches,
             "row_class": self._row_class_for(lr, tier_order, excluded),
-            "contexts": self._build_ctx_entries(lr, contexts, tier_index),
+            "runs": self._build_run_entries(lr, runs, tier_index),
         }
 
     @staticmethod
-    def _ctx_tooltip(c: ContextRecord) -> str:
-        """Tier + ticket/note/date/pin — tells same-host runs apart on hover."""
-        parts = [c.tier]
-        if c.ticket:
-            parts.append(f"ticket {c.ticket}")
-        if c.note:
-            parts.append(c.note)
-        if c.captured_at:
-            parts.append(c.captured_at)
-        if c.pin:
-            parts.append(f"pin {c.pin[:12]}")
+    def _run_tooltip(r: RunRecord) -> str:
+        """Tier + ticket/note/date/base_commit — tells same-host runs apart on hover."""
+        parts = [r.tier]
+        if r.ticket:
+            parts.append(f"ticket {r.ticket}")
+        if r.note:
+            parts.append(r.note)
+        if r.captured_at:
+            parts.append(r.captured_at)
+        if r.base_commit:
+            parts.append(f"commit {r.base_commit[:12]}")
         return " · ".join(parts)
 
     @classmethod
-    def _build_ctx_entries(
+    def _build_run_entries(
         cls,
         lr: LineRecord | None,
-        contexts: list[ContextRecord],
+        runs: list[RunRecord],
         tier_index: dict[str, int],
     ) -> list[dict[str, Any]]:
         """Drilldown entries for one line: valid runs first, then revoked ones."""
-        if lr is None or not contexts:
+        if lr is None or not runs:
             return []
         entries: list[dict[str, Any]] = []
-        for ctx_id in sorted(lr.context_hits):
-            c = contexts[ctx_id]
+        for run_id in sorted(lr.run_hits):
+            r = runs[run_id]
             entries.append(
                 {
-                    "label": c.label,
-                    "count": lr.context_hits[ctx_id],
-                    "tier_index": tier_index.get(c.tier, 0),
+                    "label": r.label,
+                    "count": lr.run_hits[run_id],
+                    "tier_index": tier_index.get(r.tier, 0),
                     "stale": False,
-                    "aging": c.aging,
-                    "tooltip": cls._ctx_tooltip(c),
+                    "aging": r.aging,
+                    "tooltip": cls._run_tooltip(r),
                 }
             )
-        for ctx_id in lr.stale_contexts:
-            c = contexts[ctx_id]
+        for run_id in lr.stale_runs:
+            r = runs[run_id]
             entries.append(
                 {
-                    "label": c.label,
+                    "label": r.label,
                     "count": 0,
-                    "tier_index": tier_index.get(c.tier, 0),
+                    "tier_index": tier_index.get(r.tier, 0),
                     "stale": True,
-                    "aging": c.aging,
-                    "tooltip": cls._ctx_tooltip(c),
+                    "aging": r.aging,
+                    "tooltip": cls._run_tooltip(r),
                 }
             )
         return entries

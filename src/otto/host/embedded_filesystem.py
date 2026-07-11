@@ -16,7 +16,7 @@ defaults assume the stock Zephyr ``fs`` shell; a custom filesystem can
 override any subset of the hooks.
 
 Lab data declares the variant by string — ``"filesystem": "fat-ram"`` etc. —
-and :func:`otto.storage.factory.create_host_from_dict` instantiates the
+and :func:`otto.host.factory.create_host_from_dict` instantiates the
 right class. A project can register additional types via
 :func:`register_filesystem`; see :doc:`/guide/extending-embedded`
 for the extension walkthrough.
@@ -60,7 +60,7 @@ class EmbeddedFileSystem(ABC):
     type_name: ClassVar[str]
     """Lab-data string for this variant (e.g. ``'fat-ram'``).
 
-    Looked up against ``FILESYSTEM_CLASSES`` by the storage factory.
+    Looked up against ``FILESYSTEM_CLASSES`` by the host factory.
     Must be unique across all registered subclasses.
     """
 
@@ -190,7 +190,7 @@ def register_filesystem(
     pattern :func:`otto.monitor.parsers.register_host_parsers` follows.
     Once registered, lab-data entries can reference the subclass by
     *type_name* in the ``filesystem`` field, and
-    :func:`otto.storage.factory.create_host_from_dict` will instantiate it.
+    :func:`otto.host.factory.create_host_from_dict` will instantiate it.
 
     *overwrite* replaces an existing registration under *type_name*
     deliberately (e.g. a built-in); by default a duplicate name raises.
@@ -212,7 +212,7 @@ def register_filesystem(
 def build_filesystem(type_name: str) -> EmbeddedFileSystem:
     """Construct the :class:`EmbeddedFileSystem` registered under *type_name*.
 
-    Used by :func:`otto.storage.factory.create_host_from_dict` to resolve
+    Used by :func:`otto.host.factory.create_host_from_dict` to resolve
     the lab-data ``filesystem`` string into a typed instance.
 
     Raises

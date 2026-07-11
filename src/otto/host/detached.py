@@ -25,7 +25,7 @@ _SYSTEMD_RUN_PROBE_TIMEOUT = 5
 
 
 def launch_command(sentinel: str, socat_args: list[str]) -> str:
-    """Build the ``host.oneshot`` line for a detached, tagged, session-surviving tunnel.
+    """Build the ``host.exec`` line for a detached, tagged, session-surviving tunnel.
 
     ``bash -c 'exec -a "$1" "${@:2}"' _ <sentinel> <socat argv…>`` sets the
     process's ``argv[0]`` to the sentinel (``exec -a`` — a bash builtin; bash is

@@ -1,6 +1,6 @@
 """otto's composition root: repo discovery + contained user-code registration.
 
-Replaces ``configmodule``'s import-time side effects. Phase 1 (*discovery*)
+Replaces ``config``'s import-time side effects. Phase 1 (*discovery*)
 parses the environment and repo ``settings.toml`` files — no user code runs.
 Phase 2 (*registration*) imports each repo's init modules and test files,
 wrapping every user-module exec so one broken file becomes a framed
@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .configmodule.repo import Repo
+    from .config.repo import Repo
     from .models.settings import OttoEnvSettings
 
 
@@ -59,8 +59,8 @@ def discover() -> "tuple[OttoEnvSettings, list[Repo]]":
     """
     global _discovered  # noqa: PLW0603 — module-level singleton/cache
     if _discovered is None:
-        from .configmodule.env import load_otto_env
-        from .configmodule.repo import TOML_SETTINGS_PATH, Repo
+        from .config.env import load_otto_env
+        from .config.repo import TOML_SETTINGS_PATH, Repo
 
         env = load_otto_env()
         repos: list[Repo] = []

@@ -1,4 +1,4 @@
-"""Built-in hosts otto injects into every lab, regardless of storage backend.
+"""Built-in hosts otto injects into every lab, regardless of lab-repository backend.
 
 Kept import-light: the completion fast path consumes :func:`builtin_host_ids`
 without paying the (heavy) ``LocalHost`` import, which happens lazily inside
