@@ -1,97 +1,63 @@
-// Bootstraps the dashboard: mirrors dashboard.js's init() — fetch /api/meta
-// + /api/data, hydrate the store, then open the SSE stream. Renders the
-// chrome (Header/TabBar) and the chart grid (ChartGrid), which gates its own
-// chart creation on host selection in live mode (mirrors dashboard.js's
-// populateHostSelect change handler).
-import { useEffect, useState } from "react";
+// The redesigned shell (plan 2026-07-11). Review-first: no backend fetch
+// on boot — the Import front door hydrates the review store. Live mode
+// (SSE, /api/meta) returns at the live-hookup phase; the legacy live data
+// layer (store.ts/api/sse.ts) is intentionally kept, unreferenced, for it.
 
-import { fetchData, fetchMeta } from "./api/client";
-import { startSse } from "./api/sse";
-import ChartGrid from "./components/ChartGrid";
-import EventPopover from "./components/EventPopover";
-import EventToolbar from "./components/EventToolbar";
-import Header from "./components/Header";
-import TabBar from "./components/TabBar";
-import { useMonitorActions } from "./store";
+import { Route, Router, Switch } from "wouter";
+import { useHashLocation } from "wouter/use-hash-location";
+
+import { useReviewStore } from "./data/reviewStore";
+import { OverviewPage } from "./pages/OverviewPage";
+import { SubjectPage } from "./pages/SubjectPage";
+import { TopologyPage } from "./pages/TopologyPage";
+import { AppBar } from "./shell/AppBar";
+import { EmptyState } from "./shell/EmptyState";
+import { ImportProvider } from "./shell/ImportExport";
+import { ReviewBar } from "./shell/ReviewBar";
 
 function App() {
-  const { applyData, applyMeta } = useMonitorActions();
-  // dashboard.js's `init().catch(err => { ... })` — set once the bootstrap
-  // fetch/parse fails, and rendered into `#tab-bar` in place of `<TabBar/>`
-  // below (legacy overwrites `#tab-bar`'s `textContent` directly, since it
-  // has no component tree to branch on).
-  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let sse: EventSource | undefined;
-
-    async function bootstrap() {
-      try {
-        // Both requests fire concurrently (as `Promise.all` did), but each
-        // is awaited separately so `document.body.classList` gets the
-        // `historical` toggle the instant /api/meta resolves — mirroring
-        // dashboard.js's `init()`, which awaits `metaRes.json()` and adds
-        // the class BEFORE awaiting `dataRes.json()`, rather than gating it
-        // on whichever of the two is slower. This write is imperative DOM
-        // (not React state) specifically so it can happen independently of
-        // `applyMeta`/`applyData` below, which — unlike this class toggle —
-        // MUST land in the same tick: ChartGrid's one-shot chart-build
-        // effect keys off `meta` alone, so if `applyMeta` committed a
-        // render before `applyData` populated `series`/`chartMap`, it would
-        // build historical chart groups against empty data and never
-        // retry (see grouping.ts's `initSeriesFromData` / ChartGrid's
-        // `builtRef`). React 18+ auto-batches same-tick `set()` calls with
-        // no `await` between them, so keeping these two adjacent (as the
-        // original `Promise.all`-then-apply-both code did) preserves that
-        // atomicity.
-        const metaPromise = fetchMeta();
-        const dataPromise = fetchData();
-        // If `metaPromise` rejects, the catch below fires and `await
-        // dataPromise` is never reached — when the backend is fully down
-        // (BOTH fetches rejecting, the common case), that would leave
-        // dataPromise's rejection UNHANDLED. Legacy's `Promise.all` attached
-        // rejection handling to both promises atomically; this no-op handler
-        // restores that guarantee. It marks the promise handled without
-        // swallowing anything: the success path's `await dataPromise` below
-        // awaits the ORIGINAL promise, so a data-only failure still throws
-        // into the same catch.
-        void dataPromise.catch(() => {
-          // no-op — the real error surfaces via `await dataPromise` below
-        });
-        const meta = await metaPromise;
-        if (cancelled) return;
-        document.body.classList.toggle("historical", !meta.live);
-        const data = await dataPromise;
-        if (cancelled) return;
-        applyMeta(meta);
-        applyData(data);
-        sse = startSse();
-      } catch (err) {
-        if (!cancelled) setBootstrapError(String(err));
-      }
-    }
-
-    void bootstrap();
-
-    return () => {
-      cancelled = true;
-      sse?.close();
-    };
-  }, [applyData, applyMeta]);
-
+  const hasData = useReviewStore((s) => s.sessions.length > 0);
+  const importError = useReviewStore((s) => s.importError);
+  const clearImportError = useReviewStore((s) => s.actions.clearImportError);
   return (
-    <>
-      <Header />
-      {bootstrapError !== null ? (
-        <nav id="tab-bar">{`Error loading dashboard: ${bootstrapError}`}</nav>
+    <ImportProvider>
+      <AppBar />
+      {hasData ? (
+        <Router hook={useHashLocation}>
+          <ReviewBar />
+          {importError !== null && (
+            <div
+              data-testid="import-error"
+              className="flex items-center justify-between gap-3 border-b border-status-warn/30
+                bg-status-warn/10 px-4 py-2 text-sm text-status-warn dark:bg-status-warn/15"
+            >
+              <span>{importError}</span>
+              <button
+                type="button"
+                data-testid="import-error-dismiss"
+                onClick={clearImportError}
+                className="cursor-pointer rounded-md px-2 py-0.5 font-medium underline-offset-2
+                  hover:underline"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
+          <Switch>
+            <Route path="/" component={OverviewPage} />
+            <Route path="/host/:id" component={SubjectPage} />
+            <Route path="/topology" component={TopologyPage} />
+            <Route>
+              <main data-testid="not-found" className="p-4 text-sm text-gray-500">
+                Not found.
+              </main>
+            </Route>
+          </Switch>
+        </Router>
       ) : (
-        <TabBar />
+        <EmptyState />
       )}
-      <EventToolbar />
-      <EventPopover />
-      <ChartGrid />
-    </>
+    </ImportProvider>
   );
 }
 

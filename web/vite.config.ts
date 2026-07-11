@@ -2,6 +2,7 @@
 // key below type-checks; it re-exports vite's own config type merged with
 // vitest's, and is a drop-in for plain `vite build`/`vite dev` too.
 
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
@@ -13,7 +14,7 @@ import { defineConfig } from "vitest/config";
 const OTTO_TARGET = process.env.VITE_OTTO_TARGET ?? "http://127.0.0.1:8080";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   base: "/static/dist/",
   build: {
     outDir: "../src/otto/monitor/static/dist",
@@ -58,15 +59,20 @@ export default defineConfig({
         "src/covreport/main.ts",
       ],
       // Ratchet floor: ~2-3% below the current measured baseline
-      // (stmts 67.1 / branch 55.6 / funcs 68.6 / lines 67.7), mirroring the
+      // (stmts 83.3 / branch 80.11 / funcs 82.03 / lines 83.53), mirroring the
       // Python gate's headroom (CI floor 92 vs ~94.7 actual). Catches
       // regressions without breaking on trivial refactors; raise it as
       // component test coverage grows (see the tooling follow-ups).
+      // Re-ratcheted post monitor-ui-scaffold: the legacy shell wipe removed
+      // large partially-covered files, and the new review-shell components
+      // came in near-fully tested, pushing coverage up ~15-18 points across
+      // the board (previous baseline: stmts 67.1 / branch 55.6 / funcs 68.6 /
+      // lines 67.7).
       thresholds: {
-        statements: 65,
-        branches: 53,
-        functions: 66,
-        lines: 65,
+        statements: 81,
+        branches: 78,
+        functions: 79,
+        lines: 81,
       },
     },
   },

@@ -1,0 +1,26 @@
+/* The redesigned monitor's single stylesheet: Tailwind v4 + theme tokens.
+   Replaces dashboard.css when the new shell lands (Task 4). Theme is a
+   `dark` class on <html> (theme.ts v2), not media-query-only, so the
+   in-app toggle can override the OS preference. */
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "Inter Variable", system-ui, sans-serif;
+  /* Brand: violet, matching the existing event-default #7c5cff family. */
+  --color-brand-50: #f3f1ff;
+  --color-brand-300: #b3a5ff;
+  --color-brand-500: #7c5cff;
+  --color-brand-600: #6a4be6;
+  --color-brand-700: #5940bf;
+  /* Status colors (UX spec §7: live green / historical blue / warn amber). */
+  --color-status-live: #2f9e6e;
+  --color-status-historical: #4c8dff;
+  --color-status-warn: #e8a13c;
+}
+
+body {
+  @apply bg-white font-sans text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100;
+}

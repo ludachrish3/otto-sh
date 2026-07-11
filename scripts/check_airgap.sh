@@ -60,6 +60,11 @@ ALLOWLIST=(
     #     links (constants, surfaced only in developer-facing error text).
     'https://github.com/d3/d3-format/tree/v1.4.5#d3-format'
     'https://github.com/d3/d3-time-format/tree/v2.2.3#locale_format'
+    # tailwindcss v4 (Task 5): its bundled `/*! tailwindcss vX.Y.Z | MIT
+    # License | https://tailwindcss.com */` banner comment atop the built
+    # CSS — a license attribution string baked in by the tailwind compiler,
+    # never fetched by anything at runtime.
+    'https://tailwindcss.com'
 )
 
 # One match per output line, with file:line: prefix for diagnostics. The

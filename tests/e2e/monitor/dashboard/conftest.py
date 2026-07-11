@@ -1,4 +1,11 @@
-"""Dashboard e2e fixtures: a scripted live server and a historical server."""
+"""Dashboard e2e fixtures: a scripted live server and a historical server.
+
+``live_dash``/``historical_dash`` back the wire-contract pins in
+``test_harness.py`` (untouchable — see that module's docstring) as well as
+the harness's own self-tests; they stay even though the browser-marked
+DOM-parity specs that used to exercise them through a page were retired in
+the Playwright pivot (plan 2026-07-11) in favor of ``shell_dash`` below.
+"""
 
 import asyncio
 from collections.abc import Coroutine, Iterator
@@ -10,9 +17,6 @@ from typing import Any, TypeVar
 import pytest
 
 from otto.monitor.collector import MetricCollector
-from otto.monitor.db import MetricDB
-from otto.monitor.log_sourced import RegexLogEventParser
-from otto.monitor.parsers import default_catalog
 from otto.monitor.server import _dist_index_path
 from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._dashboard_harness import DashboardHarness
@@ -159,72 +163,11 @@ def historical_dash() -> Iterator[DashboardHarness[MetricCollector]]:
     harness.stop()
 
 
-SYSLOG_PATTERN = r"^(?P<ts>\S+) (?P<loghost>\S+) (?P<proc>[^:\[]+)(?:\[\d+\])?: (?P<message>.*)$"
-
-
-def _table_parser() -> RegexLogEventParser:
-    return RegexLogEventParser(
-        "tail -n 200 /var/log/syslog",
-        SYSLOG_PATTERN,
-        tab="syslog",
-        tab_label="Syslog",
-    )
-
-
-def _preload_table(harness: DashboardHarness[FakeCollector]) -> None:
-    """Three syslog rows for host1 plus one for host2 (host-scoping pin)."""
-    t0 = datetime.now(tz=timezone.utc) - timedelta(seconds=15)
-    rows = [
-        (
-            t0 + timedelta(seconds=5 * i),
-            {"loghost": "vm1", "proc": "sshd", "message": f"session {i} opened"},
-        )
-        for i in range(3)
-    ]
-    harness.run(harness.collector.push_log_events("host1", tab="syslog", rows=rows))
-    harness.run(
-        harness.collector.push_log_events(
-            "host2",
-            tab="syslog",
-            rows=[(t0, {"loghost": "vm2", "proc": "cron", "message": "job ran"})],
-        )
-    )
-
-
 @pytest.fixture
-def table_dash() -> Iterator[DashboardHarness[FakeCollector]]:
-    harness = DashboardHarness(FakeCollector(extra_parsers=[_table_parser()])).start()
-    _preload(harness)
-    _preload_table(harness)
-    yield harness
-    harness.stop()
-
-
-@pytest.fixture
-def historical_table_dash(tmp_path: Path) -> Iterator[DashboardHarness[MetricCollector]]:
-    """A --db-mode server whose SQLite file carries log events."""
-    db_path = tmp_path / "metrics.db"
-
-    async def _seed() -> None:
-        db = MetricDB(str(db_path))
-        await db.open()
-        t0 = datetime(2026, 7, 4, 12, 0, 0, tzinfo=timezone.utc)
-        await db.write_point(t0, "host1", "Overall CPU", 42.0)
-        for i in range(3):
-            await db.write_log_event(
-                t0 + timedelta(seconds=i),
-                "host1",
-                "syslog",
-                {"loghost": "vm1", "proc": "sshd", "message": f"historical row {i}"},
-            )
-        await db.close()
-
-    _run_isolated(_seed())
-    collector = _run_isolated(
-        MetricCollector.from_sqlite(
-            str(db_path), parsers=[*default_catalog().values(), _table_parser()]
-        )
-    )
-    harness = DashboardHarness(collector).start()
+def shell_dash() -> Iterator[DashboardHarness[FakeCollector]]:
+    """A dist-serving harness with an empty collector — the review shell
+    makes no boot-time API calls; data arrives via client-side Import."""
+    harness = DashboardHarness(FakeCollector())
+    harness.start()
     yield harness
     harness.stop()
