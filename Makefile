@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -228,12 +228,13 @@ web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfil
 	done
 
 web: ## (Build & Release) Build the web/ React dashboard + the covreport bundle (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh)
-	# Regenerate web/src/api/types.gen.ts from the live pydantic models and fail
-	# BEFORE the vite build if the committed file has drifted — a stale wire
-	# contract should be caught by its own diff, not surface later as a build
-	# or runtime type error with no clue which model changed.
+	# Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
+	# the live pydantic models and fail BEFORE the vite build if either
+	# committed file has drifted — a stale wire contract should be caught by
+	# its own diff, not surface later as a build or runtime type error with
+	# no clue which model changed.
 	scripts/gen_web_types.sh
-	git diff --exit-code web/src/api/types.gen.ts
+	git diff --exit-code web/src/api/types.gen.ts web/src/api/export.gen.ts
 	cd web && npm run build
 	cd web && npm run build:covreport
 	scripts/check_airgap.sh
@@ -475,6 +476,9 @@ typecheck-ts: web-typecheck ## (Quality) Type-check web/ with tsc --noEmit (alia
 
 schema: ## (Dev) Generate JSON Schema for lab.json / settings.toml / reservations into schemas/ (git-ignored; for editor autocomplete)
 	uv run otto schema export --out schemas
+
+monitor-fixtures: ## (Dev) Regenerate the committed monitor dummy-data fixtures in web/fixtures/ (spec 2026-07-10)
+	uv run python scripts/gen_monitor_fixtures.py web/fixtures
 
 import-snapshot: ## (Dev) Regenerate import-budget golden snapshots + print per-surface counts (run after an intentional import change, then review the diff and update caps)
 	uv run python scripts/import_budget.py --update

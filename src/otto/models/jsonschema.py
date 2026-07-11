@@ -20,6 +20,10 @@ Emitted documents (default):
 - ``monitor-meta`` — the monitor dashboard's ``/api/meta`` payload
   (:class:`~otto.models.monitor.MonitorMeta`); not user-edited, it feeds the
   web dashboard's generated TS types (``scripts/gen_web_types.sh``).
+- ``monitor-export`` — the versioned historical export document
+  (:class:`~otto.models.monitor.MonitorExport`, ``format: 1``); not
+  user-edited, it feeds the web dashboard's generated TS types like
+  ``monitor-meta``.
 """
 
 import re
@@ -32,7 +36,7 @@ from ..host.os_profile import registered_host_specs
 from ..host.transfer import TRANSFER_BACKENDS
 from .host import HostSpec
 from .link import LinkSpec
-from .monitor import MonitorMeta
+from .monitor import MonitorExport, MonitorMeta
 from .settings import ReservationFile, SettingsModel
 
 _SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -212,5 +216,10 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
         MonitorMeta.model_json_schema(),
         "monitor-meta",
         "Monitor dashboard /api/meta payload",
+    )
+    docs["monitor-export"] = _decorate(
+        MonitorExport.model_json_schema(),
+        "monitor-export",
+        "Monitor historical export document",
     )
     return docs

@@ -17,6 +17,7 @@ def test_default_set_of_documents():
         "settings",
         "reservations",
         "monitor-meta",
+        "monitor-export",
     }
 
 
@@ -208,3 +209,11 @@ class TestSelectorEnums:
             jsonschema.validate("bogus", vt_schema)  # out-of-enum scalar
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(["bogus"], vt_schema)  # out-of-enum in list
+
+
+def test_monitor_export_schema_shape():
+    docs = build_schemas(builtins_only=True)
+    doc = docs["monitor-export"]
+    assert doc["title"] == "Monitor historical export document"
+    assert set(doc["required"]) == {"format", "sessions"}
+    assert doc["properties"]["format"]["const"] == 1

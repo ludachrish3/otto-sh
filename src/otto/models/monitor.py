@@ -122,6 +122,11 @@ class MetricRecord(RowModel):
     label: str
     value: float
     meta: dict[str, Any] | None = None
+    source: str | None = None
+    """Host id of the *reporting* host when this series came from an external
+    management host (spec 2026-07-10 §3.1); ``None``/absent = self-reported.
+    Rides only in JSON for now — the SQLite ``metrics`` table gains its column
+    with the backend catch-up (spec §7)."""
 
 
 class EventRecord(RowModel):
@@ -158,3 +163,142 @@ class LogEventRecord(RowModel):
     host: str = ""
     tab: str = ""
     fields: dict[str, str] = Field(default_factory=dict)
+
+
+class ElementRecord(RowModel):
+    """One optional ``lab.elements`` entry in the export snapshot.
+
+    ``id`` is the element name — the same string member hosts carry in
+    :attr:`HostSnapshot.element`. Elements *not* listed are derived from hosts
+    (any member with a ``slot`` → physical presentation; a single member →
+    singleton behavior). An explicit entry with zero member hosts renders as an
+    empty element (e.g. an unpopulated chassis). ``singleton`` is always
+    derived from membership count, never stored (spec 2026-07-10 §2).
+    """
+
+    id: str
+    type: Literal["physical", "logical"] = "logical"
+    description: str | None = None
+
+
+class HostSnapshot(RowModel):
+    """The view-relevant subset of a host's config, frozen into a session.
+
+    Deliberately **never** credentials (spec 2026-07-10 §3.1). ``interfaces``
+    is flattened to ``netdev -> ip`` (the frontend needs no more). Lenient
+    read-back like every export row (:class:`RowModel`).
+    """
+
+    id: str
+    element: str
+    name: str | None = None
+    board: str | None = None
+    slot: int | None = None
+    hop: str | None = None
+    os_type: str = "unix"
+    os_name: str | None = None
+    os_version: str | None = None
+    ip: str = ""
+    interfaces: dict[str, str] = Field(default_factory=dict)
+    labs: list[str] = Field(default_factory=list)
+    is_virtual: bool = False
+
+
+class LinkEndpointSnapshot(RowModel):
+    """One end of a snapshotted link (mirrors ``otto.link.model.LinkEndpoint``)."""
+
+    host: str
+    interface: str | None = None
+    ip: str = ""
+    port: int | None = None
+
+
+class LinkSnapshot(RowModel):
+    """One static link frozen into a session's lab snapshot.
+
+    Mirrors the runtime ``otto.link.model.Link``. Real exporters write only
+    ``implicit`` + ``declared`` provenances — the snapshot is a static-config
+    document and dynamic tunnels are runtime state (spec 2026-07-10 §2); the
+    ``dynamic`` value stays for parity with the runtime enum (and the live
+    topology view). ``impair`` is the *declared* in-path middlebox host id —
+    static config, unlike applied netem parameters.
+    """
+
+    id: str
+    endpoints: list[LinkEndpointSnapshot] = Field(min_length=2, max_length=2)
+    protocol: str = "tcp"
+    provenance: Literal["implicit", "declared", "dynamic"] = "declared"
+    name: str | None = None
+    impair: str | None = None
+
+
+class LabSnapshot(RowModel):
+    """A session's lab config as it was at run time (spec 2026-07-10 §3)."""
+
+    elements: list[ElementRecord] = Field(default_factory=list)
+    hosts: list[HostSnapshot] = Field(default_factory=list)
+    links: list[LinkSnapshot] = Field(default_factory=list)
+
+
+class ChartSpecRecord(ChartSpec):
+    """Lenient read-back variant of :class:`ChartSpec` for export documents.
+
+    Same fields; ``extra="ignore"`` so an older otto can read exports written
+    by a newer one whose chart specs carry new fields (the :class:`RowModel`
+    boundary philosophy). :class:`ChartSpec` itself stays ``extra="forbid"``
+    as the otto-built live ``/api/meta`` contract.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class TabSpecRecord(TabSpec):
+    """Lenient read-back variant of :class:`TabSpec` (see :class:`ChartSpecRecord`)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class SessionMeta(RowModel):
+    """Presentation meta frozen at run time: chart/tab specs + intervals.
+
+    Client-side Import has no parser catalog to rebuild specs from, derived
+    health needs per-series cadences, and chart definitions drift over months
+    exactly like lab configs (spec 2026-07-10 §2, §4) — hence the lenient
+    ``*Record`` spec variants, not the strict live-meta classes.
+    """
+
+    interval: float | None = None
+    charts: list[ChartSpecRecord] = Field(default_factory=list)
+    tabs: list[TabSpecRecord] = Field(default_factory=list)
+
+
+class SessionRecord(RowModel):
+    """One self-contained monitoring session: config snapshot + data.
+
+    ``end=None`` means a still-open session. ``chart_map`` maps bare series
+    labels to chart keys (:attr:`ChartSpec.label`), as ``/api/data`` does today.
+    """
+
+    id: str
+    label: str | None = None
+    note: str | None = None
+    start: datetime
+    end: datetime | None = None
+    lab: LabSnapshot = Field(default_factory=LabSnapshot)
+    meta: SessionMeta = Field(default_factory=SessionMeta)
+    metrics: list[MetricRecord] = Field(default_factory=list)
+    events: list[EventRecord] = Field(default_factory=list)
+    log_events: list[LogEventRecord] = Field(default_factory=list)
+    chart_map: dict[str, str] = Field(default_factory=dict)
+
+
+class MonitorExport(RowModel):
+    """The versioned historical-export document (spec 2026-07-10 §3).
+
+    ``format`` is **required with no default**: a legacy unversioned document
+    (the field's absence is its marker) must fail loud here, never validate as
+    an empty modern one. ``Literal[1]`` rejects future formats loud too.
+    """
+
+    format: Literal[1]
+    sessions: list[SessionRecord]
