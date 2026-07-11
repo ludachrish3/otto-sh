@@ -14,6 +14,7 @@ from otto.tunnel.manage import (
     _resolve_chain,
 )
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
+from otto.tunnel.socat import SocatCarrier
 from otto.utils import Status
 
 
@@ -193,6 +194,7 @@ class TestProcessPlan:
             p_fwd=50001,
             p_rev=50002,
             deliver_fwd="127.0.0.1",
+            carrier=SocatCarrier(),
         )
         keys = [(p.hop_index, p.direction, p.role) for p in plan]
         # FWD downstream-first (egress, relay, ingress), then REV downstream-first.
@@ -205,25 +207,30 @@ class TestProcessPlan:
             (2, Direction.REV, Role.INGRESS),
         ]
         by_key = {(p.hop_index, p.direction): p for p in plan}
-        assert by_key[(0, Direction.FWD)].socat_args[1] == (
+        assert by_key[(0, Direction.FWD)].argv[1] == (
             "UDP4-LISTEN:5000,bind=10.0.0.1,fork,reuseaddr"
         )
-        assert by_key[(0, Direction.FWD)].socat_args[2] == "TCP4:10.0.0.2:50001"
-        assert by_key[(1, Direction.FWD)].socat_args[2] == "TCP4:10.0.0.3:50001"
-        assert by_key[(2, Direction.FWD)].socat_args[2] == "UDP4:127.0.0.1:5000"
-        assert by_key[(2, Direction.REV)].socat_args[1] == (
+        assert by_key[(0, Direction.FWD)].argv[2] == "TCP4:10.0.0.2:50001"
+        assert by_key[(1, Direction.FWD)].argv[2] == "TCP4:10.0.0.3:50001"
+        assert by_key[(2, Direction.FWD)].argv[2] == "UDP4:127.0.0.1:5000"
+        assert by_key[(2, Direction.REV)].argv[1] == (
             "UDP4-LISTEN:5000,bind=10.0.0.3,fork,reuseaddr"
         )
-        assert by_key[(1, Direction.REV)].socat_args[2] == "TCP4:10.0.0.1:50002"
-        assert by_key[(0, Direction.REV)].socat_args[2] == "UDP4:127.0.0.1:5000"
+        assert by_key[(1, Direction.REV)].argv[2] == "TCP4:10.0.0.1:50002"
+        assert by_key[(0, Direction.REV)].argv[2] == "UDP4:127.0.0.1:5000"
 
     def test_dest_overrides_fwd_delivery_only(self) -> None:
         t = Tunnel(
             protocol="udp", service_port=5000, path=(TunnelHop("a"), TunnelHop("b")), dest="x"
         )
         plan = _process_plan(
-            t, ips=["10.0.0.1", "10.0.0.2"], p_fwd=50001, p_rev=50002, deliver_fwd="10.9.9.9"
+            t,
+            ips=["10.0.0.1", "10.0.0.2"],
+            p_fwd=50001,
+            p_rev=50002,
+            deliver_fwd="10.9.9.9",
+            carrier=SocatCarrier(),
         )
         by_key = {(p.hop_index, p.direction): p for p in plan}
-        assert by_key[(1, Direction.FWD)].socat_args[2] == "UDP4:10.9.9.9:5000"
-        assert by_key[(0, Direction.REV)].socat_args[2] == "UDP4:127.0.0.1:5000"
+        assert by_key[(1, Direction.FWD)].argv[2] == "UDP4:10.9.9.9:5000"
+        assert by_key[(0, Direction.REV)].argv[2] == "UDP4:127.0.0.1:5000"

@@ -5,10 +5,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from otto.result import CommandResult
+from otto.tunnel.discovery import DISCOVERY_PS_COMMAND
 from otto.tunnel.manage import RemovedReport, remove_all_tunnels, remove_tunnel
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import encode_sentinel
-from otto.tunnel.socat import DISCOVERY_PS_COMMAND
 from otto.utils import Status
 
 _LO = 49152

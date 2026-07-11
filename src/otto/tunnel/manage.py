@@ -9,7 +9,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..host.daemon import kill_command, launch_command
 from ..logger.mode import LogMode
+from .carrier import DEFAULT_CARRIER, TunnelCarrier, build_carrier
 from .discovery import (
     _TUNNEL_HOST_TIMEOUT,
     TunnelDiscovery,
@@ -19,15 +21,7 @@ from .discovery import (
 )
 from .model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from .sentinel import encode_sentinel
-from .socat import (
-    FREE_PORT_PROBE_COMMAND,
-    egress_socat_args,
-    ingress_socat_args,
-    launch_command,
-    parse_listening_ports,
-    pick_free_port,
-    relay_socat_args,
-)
+from .socat import FREE_PORT_PROBE_COMMAND, parse_listening_ports, pick_free_port
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
@@ -38,8 +32,6 @@ EndpointSpec = tuple[str, str | None]
 
 _VERIFY_RETRY_DELAY = 1.0
 """One settle-then-retry before declaring a just-launched process missing."""
-
-_SUPPORTED_PROTOCOLS = ("tcp", "udp")
 
 _LOOPBACK = "127.0.0.1"
 
@@ -181,11 +173,16 @@ class _ProcSpec:
     direction: Direction
     role: Role
     carrier_port: int
-    socat_args: list[str]
+    argv: list[str]
 
 
 def _process_plan(
-    tunnel: Tunnel, ips: list[str], p_fwd: int, p_rev: int, deliver_fwd: str
+    tunnel: Tunnel,
+    ips: list[str],
+    p_fwd: int,
+    p_rev: int,
+    deliver_fwd: str,
+    carrier: TunnelCarrier,
 ) -> list[_ProcSpec]:
     """Build the 2n launch specs, downstream-first per direction (spec §6.1/§6.4).
 
@@ -203,12 +200,12 @@ def _process_plan(
             Direction.FWD,
             Role.EGRESS,
             p_fwd,
-            egress_socat_args(proto, svc, deliver_fwd, p_fwd),
+            carrier.egress_args(proto, svc, deliver_fwd, p_fwd),
         )
     )
     plan.extend(
         [
-            _ProcSpec(i, Direction.FWD, Role.RELAY, p_fwd, relay_socat_args(p_fwd, ips[i + 1]))
+            _ProcSpec(i, Direction.FWD, Role.RELAY, p_fwd, carrier.relay_args(p_fwd, ips[i + 1]))
             for i in range(last - 1, 0, -1)
         ]
     )
@@ -218,18 +215,18 @@ def _process_plan(
             Direction.FWD,
             Role.INGRESS,
             p_fwd,
-            ingress_socat_args(proto, svc, ips[0], ips[1], p_fwd),
+            carrier.ingress_args(proto, svc, ips[0], ips[1], p_fwd),
         )
     )
     # REV: egress at 0, relays 1..last-1, ingress at `last`.
     plan.append(
         _ProcSpec(
-            0, Direction.REV, Role.EGRESS, p_rev, egress_socat_args(proto, svc, _LOOPBACK, p_rev)
+            0, Direction.REV, Role.EGRESS, p_rev, carrier.egress_args(proto, svc, _LOOPBACK, p_rev)
         )
     )
     plan.extend(
         [
-            _ProcSpec(i, Direction.REV, Role.RELAY, p_rev, relay_socat_args(p_rev, ips[i - 1]))
+            _ProcSpec(i, Direction.REV, Role.RELAY, p_rev, carrier.relay_args(p_rev, ips[i - 1]))
             for i in range(1, last)
         ]
     )
@@ -239,7 +236,7 @@ def _process_plan(
             Direction.REV,
             Role.INGRESS,
             p_rev,
-            ingress_socat_args(proto, svc, ips[last], ips[last - 1], p_rev),
+            carrier.ingress_args(proto, svc, ips[last], ips[last - 1], p_rev),
         )
     )
     return plan
@@ -259,21 +256,27 @@ def _proc_host_name(resolved: list[ResolvedHop], proc: "_ProcSpec") -> str:
     return resolved[proc.hop_index].hop.host
 
 
-async def _require_tools(host: Any) -> None:
-    """Fail loud + name the host when socat or bash is missing."""
+async def _require_tools(host: Any, carrier: TunnelCarrier) -> None:
+    """Fail loud + name the host when the carrier's required tools are missing.
+
+    Satisfied means a bare ``ok`` line in the probe's output (the carrier
+    contract) — a whole-line match, NOT a substring check, so a carrier whose
+    failure text happens to contain ``ok`` ("not ok", "broken") cannot slip
+    past the fail-fast check and die opaquely at launch time instead.
+    """
     try:
         result = await asyncio.wait_for(
-            host.exec(
-                "command -v socat >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 "
-                "&& echo ok || echo no",
-                log=LogMode.QUIET,
-            ),
+            host.exec(carrier.requirements_command, log=LogMode.QUIET),
             _TUNNEL_HOST_TIMEOUT,
         )
     except asyncio.TimeoutError as e:
-        raise RuntimeError(f"host {host.id!r} timed out checking for socat/bash") from e
-    if "ok" not in result.value:
-        raise RuntimeError(f"host {host.id!r} is missing socat and/or bash (required for tunnels)")
+        raise RuntimeError(
+            f"host {host.id!r} timed out checking for {carrier.tools_description}"
+        ) from e
+    if not any(line.strip() == "ok" for line in result.value.splitlines()):
+        raise RuntimeError(
+            f"host {host.id!r} is missing {carrier.tools_description} (required for tunnels)"
+        )
 
 
 async def _probe_used_ports(resolved: list[ResolvedHop]) -> set[int]:
@@ -305,7 +308,7 @@ async def _kill_tunnel_on(hosts: list[Any], tunnel_id: str) -> None:
         if obs.parsed.tunnel.id == tunnel_id:
             by_host.setdefault(origin, []).append(obs.pid)
     for host_id, pids in by_host.items():
-        kill_cmd = f"kill {' '.join(str(p) for p in sorted(pids))}"
+        kill_cmd = kill_command(pids)
         try:
             await asyncio.wait_for(
                 host_by_id[host_id].exec(kill_cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
@@ -356,6 +359,7 @@ async def add_tunnel(
     port: int,
     protocol: str = "tcp",
     dest: EndpointSpec | None = None,
+    carrier: str = DEFAULT_CARRIER,
 ) -> AddedTunnel:
     """Build a bidirectional host-resident tunnel and verify it came up (spec §6).
 
@@ -365,10 +369,16 @@ async def add_tunnel(
     *attempted*, not from a confirmed ack: a launch ``exec`` that times out
     only bounds how long we waited for the reply, not whether the command
     reached the host, so even a first-launch timeout triggers rollback.
+    The *carrier* names a registered :class:`~otto.tunnel.carrier.TunnelCarrier`
+    (chain-wide; default ``"socat"``).
     """
     protocol = protocol.lower()
-    if protocol not in _SUPPORTED_PROTOCOLS:
-        raise ValueError(f"unsupported protocol {protocol!r} (use tcp or udp)")
+    carrier_obj = build_carrier(carrier)()
+    if protocol not in carrier_obj.supported_protocols:
+        supported = ", ".join(sorted(carrier_obj.supported_protocols))
+        raise ValueError(
+            f"carrier {carrier!r} does not support protocol {protocol!r} (use {supported})"
+        )
     resolved = await _resolve_chain(lab, hosts)
     dest_hop = await _resolve_one(lab, dest) if dest else None
     if dest_hop is not None:
@@ -389,7 +399,7 @@ async def add_tunnel(
     )
     _check_conflicts(await discover_tunnels(lab), tunnel)
     for r in resolved:
-        await _require_tools(r.host)
+        await _require_tools(r.host, carrier_obj)
 
     used = await _probe_used_ports(resolved) | {port}
     carrier_fwd = pick_free_port(used)
@@ -397,7 +407,7 @@ async def add_tunnel(
 
     ips = [r.ip for r in resolved]
     deliver_fwd = dest_hop.ip if dest_hop else _LOOPBACK
-    plan = _process_plan(tunnel, ips, carrier_fwd, carrier_rev, deliver_fwd)
+    plan = _process_plan(tunnel, ips, carrier_fwd, carrier_rev, deliver_fwd, carrier_obj)
 
     launched = False
     try:
@@ -416,7 +426,7 @@ async def add_tunnel(
             launched = True
             try:
                 result = await asyncio.wait_for(
-                    host.exec(launch_command(sentinel, proc.socat_args), log=LogMode.QUIET),
+                    host.exec(launch_command(sentinel, proc.argv), log=LogMode.QUIET),
                     _TUNNEL_HOST_TIMEOUT,
                 )
             except asyncio.TimeoutError as e:
@@ -466,7 +476,7 @@ async def _reap(lab: "Lab", predicate: Any) -> RemovedReport:
     unreachable: set[str] = set(unreachable_discovery)
     for host_id, pids in by_host.items():
         host = lab.hosts[host_id]
-        kill_cmd = f"kill {' '.join(str(p) for p in sorted(pids))}"
+        kill_cmd = kill_command(pids)
         try:
             result = await asyncio.wait_for(
                 host.exec(kill_cmd, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT

@@ -67,12 +67,16 @@ import pytest_asyncio
 from otto.config.lab import Lab
 from otto.config.repo import DockerCompose, DockerImage, DockerSettings, Repo
 from otto.docker.compose import compose_down, compose_up
+from otto.host.daemon import kill_command
 from otto.host.docker_host import DockerContainerHost
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
-from otto.tunnel.discovery import discover_observations, parse_process_discovery
-from otto.tunnel.socat import DISCOVERY_PS_COMMAND
+from otto.tunnel.discovery import (
+    DISCOVERY_PS_COMMAND,
+    discover_observations,
+    parse_process_discovery,
+)
 from tests._fixtures.labdata import host_data, make_host
 
 pytestmark = [
@@ -556,7 +560,7 @@ async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
     Doubles as the docker-endpoint proof and the old-OS/setsid proof: the
     centos:7 container has no systemd, so every tunnel process launched
     inside it exercises the ``setsid`` fallback in
-    ``otto.tunnel.socat.launch_command`` rather than ``systemd-run --user``.
+    ``otto.host.daemon.launch_command`` rather than ``systemd-run --user``.
     """
     repo = _oldos_repo()
     hosts = await compose_up(
@@ -645,8 +649,7 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
             if obs.parsed.tunnel.id == added.tunnel.id and origin == _INGRESS
         ]
         assert killed_pids, f"expected tagged processes on {_INGRESS!r} before kill"
-        kill_cmd = f"kill {' '.join(str(p) for p in killed_pids)}"
-        result = await carrot.exec(kill_cmd, timeout=15, log=LogMode.QUIET)
+        result = await carrot.exec(kill_command(killed_pids), timeout=15, log=LogMode.QUIET)
         assert result.is_ok, f"out-of-band kill on {_INGRESS!r} failed: {result.value!r}"
 
         degraded = await discover_tunnels(tunnel_lab)

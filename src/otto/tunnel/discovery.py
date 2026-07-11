@@ -1,10 +1,10 @@
 """Live tunnel discovery — the processes on the hosts ARE the record (spec §9).
 
-``_scan_hosts`` gathers :data:`otto.tunnel.socat.DISCOVERY_PS_COMMAND` across
-hosts (best-effort, bounded, transparent about unreachables);
-``parse_process_discovery`` decodes each tagged process; and
-``discover_tunnels`` groups observations by tunnel id, comparing what was
-observed against what the sentinel-encoded path says must exist.
+``_scan_hosts`` gathers :data:`DISCOVERY_PS_COMMAND` across hosts (best-effort,
+bounded, transparent about unreachables); ``parse_process_discovery`` decodes
+each tagged process; and ``discover_tunnels`` groups observations by tunnel
+id, comparing what was observed against what the sentinel-encoded path says
+must exist.
 """
 
 import asyncio
@@ -12,10 +12,10 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from ..host.daemon import parse_ps_output, ps_scan_command
 from ..logger.mode import LogMode
 from .model import ProcKey, Tunnel
 from .sentinel import SENTINEL_PREFIX, ParsedSentinel, parse_sentinel
-from .socat import DISCOVERY_PS_COMMAND
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
@@ -25,28 +25,11 @@ logger = logging.getLogger(__name__)
 _TUNNEL_HOST_TIMEOUT = 30.0
 """Ceiling on any single-host ``exec`` on the discovery path (spec §6.4)."""
 
-_ETIME_MAX_FIELDS = 3
-_PS_MIN_FIELDS = 3
-
-
-def parse_etime(text: str) -> int:
-    """Procps ``etime`` (``[[DD-]HH:]MM:SS`` or bare ``SS``) → seconds.
-
-    Returns ``0`` for anything unparseable rather than raising — one host
-    emitting a malformed ``etime`` must not take down the whole scan.
-    """
-    try:
-        days = 0
-        if "-" in text:
-            d, _, text = text.partition("-")
-            days = int(d)
-        parts = [int(p) for p in text.split(":")]
-        while len(parts) < _ETIME_MAX_FIELDS:
-            parts.insert(0, 0)
-        h, m, s = parts[-3], parts[-2], parts[-1]
-        return days * 86400 + h * 3600 + m * 60 + s
-    except ValueError:
-        return 0
+DISCOVERY_PS_COMMAND: str = ps_scan_command(SENTINEL_PREFIX)
+"""The lab-wide daemon scan for tunnel processes. Built by
+:func:`otto.host.daemon.ps_scan_command` — see it for the procps
+portability story. The bytes are pinned by TestPsScanCommand in
+tests/unit/host/test_daemon.py (STABILITY CONTRACT)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,21 +42,13 @@ class Observation:
 
 
 def parse_process_discovery(ps_output: str) -> list[Observation]:
-    """Reconstruct observations from ``ps -eo pid=,etime=,args=`` output."""
+    """Reconstruct observations from :data:`DISCOVERY_PS_COMMAND` output."""
     out: list[Observation] = []
-    for line in ps_output.splitlines():
-        fields = line.split()
-        if len(fields) < _PS_MIN_FIELDS or not fields[0].isdigit():
-            continue
-        token = next((w for w in fields[2:] if w.startswith(f"{SENTINEL_PREFIX}:")), None)
-        if token is None:
-            continue
-        parsed = parse_sentinel(token)
+    for proc in parse_ps_output(ps_output, SENTINEL_PREFIX):
+        parsed = parse_sentinel(proc.token)
         if parsed is None:
             continue
-        out.append(
-            Observation(pid=int(fields[0]), age_seconds=parse_etime(fields[1]), parsed=parsed)
-        )
+        out.append(Observation(pid=proc.pid, age_seconds=proc.age_seconds, parsed=parsed))
     return out
 
 

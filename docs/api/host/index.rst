@@ -24,6 +24,7 @@ local and remote machines.
    os_profile
    factory
    command_frame
+   daemon
    toolchain
    options
    interface

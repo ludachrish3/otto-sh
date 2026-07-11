@@ -3,12 +3,9 @@
 import asyncio
 from dataclasses import dataclass, field
 
-import pytest
-
 from otto.result import CommandResult
 from otto.tunnel.discovery import (
     discover_tunnels,
-    parse_etime,
     parse_process_discovery,
 )
 from otto.tunnel.model import Direction, Role, Tunnel, TunnelHop
@@ -59,13 +56,6 @@ class FakeLab:
 
 
 class TestParsing:
-    @pytest.mark.parametrize(
-        ("text", "seconds"),
-        [("05:03", 303), ("1-02:03:04", 93784), ("42", 42), ("garbage", 0), ("", 0)],
-    )
-    def test_parse_etime(self, text: str, seconds: int) -> None:
-        assert parse_etime(text) == seconds
-
     def test_parse_skips_non_otto_and_malformed(self) -> None:
         text = "\n".join(
             [

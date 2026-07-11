@@ -103,3 +103,25 @@ class TestRejection:
         parts = _token().split(":")
         parts[10] = "onlyone"
         assert parse_sentinel(":".join(parts)) is None
+
+
+class TestWireGolden:
+    def test_encode_produces_the_exact_v1_bytes(self):
+        # STABILITY CONTRACT (spec §5): these bytes are what live processes
+        # carry in argv[0]. If this test fails, the refactor broke the wire.
+        tunnel = Tunnel(
+            protocol="tcp",
+            service_port=8080,
+            path=(TunnelHop(host="h1", interface="eth0"), TunnelHop(host="h2")),
+            dest=None,
+            id="tun-abc-8080",
+        )
+        token = encode_sentinel(
+            tunnel, direction=Direction.FWD, role=Role.INGRESS, hop_index=0, carrier_port=50000
+        )
+        assert token == (
+            "otto-tunnel:v1:tun-abc-8080:tcp:8080:50000:fwd:ingress:0::h1%2540eth0%2Ch2"
+        )
+        parsed = parse_sentinel(token)
+        assert parsed is not None
+        assert parsed.tunnel == tunnel

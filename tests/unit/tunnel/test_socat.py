@@ -2,11 +2,11 @@
 
 import pytest
 
+from otto.host.daemon import launch_command
+from otto.tunnel.discovery import DISCOVERY_PS_COMMAND
 from otto.tunnel.socat import (
-    DISCOVERY_PS_COMMAND,
     egress_socat_args,
     ingress_socat_args,
-    launch_command,
     parse_listening_ports,
     pick_free_port,
     relay_socat_args,

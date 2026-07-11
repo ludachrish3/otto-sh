@@ -2,8 +2,9 @@
 
 A tunnel is what one ``otto tunnel add`` builds: service port + protocol +
 ordered host path (+ optional far-end delivery override). Its per-hop
-segments ride links (``otto.link`` edges); ``otto.tunnel`` imports from
-``otto.link``, never the reverse.
+segments conceptually ride links (``otto.link`` edges), but the
+packages are fully decoupled: NEITHER imports the other; shared daemon
+machinery lives in ``otto.host.daemon``.
 """
 
 import enum

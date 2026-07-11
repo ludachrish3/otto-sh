@@ -9,6 +9,7 @@ import pytest
 
 from otto.result import CommandResult
 from otto.tunnel import manage
+from otto.tunnel.discovery import DISCOVERY_PS_COMMAND
 from otto.tunnel.manage import (
     AddedTunnel,
     ResolvedHop,
@@ -20,7 +21,7 @@ from otto.tunnel.manage import (
 )
 from otto.tunnel.model import Direction, ProcKey, Role, Tunnel, TunnelHop
 from otto.tunnel.sentinel import ParsedSentinel, encode_sentinel, parse_sentinel
-from otto.tunnel.socat import DISCOVERY_PS_COMMAND, FREE_PORT_PROBE_COMMAND
+from otto.tunnel.socat import FREE_PORT_PROBE_COMMAND, SocatCarrier
 from otto.utils import Status
 
 _LAUNCH_PREFIX = "bash -c 'if command -v systemd-run"
@@ -46,6 +47,8 @@ class FakeHost:
     interfaces: dict = field(default_factory=dict)
     has_bash: bool = True
     tools_ok: bool = True
+    tools_output: str | None = None
+    """Verbatim tools-probe reply; overrides the ``tools_ok`` ok/no shorthand."""
     probe_ports: str = ""
     probe_ok: bool = True
     probe_timeout: bool = False
@@ -68,6 +71,8 @@ class FakeHost:
         if self.calls is not None:
             self.calls.append((self.id, cmd))
         if "command -v socat" in cmd:
+            if self.tools_output is not None:
+                return CommandResult(status=Status.Success, value=self.tools_output, command=cmd)
             return CommandResult(
                 status=Status.Success, value="ok" if self.tools_ok else "no", command=cmd
             )
@@ -238,7 +243,7 @@ class TestAddThreeHop:
 class TestRejectedBeforeLaunch:
     def test_unsupported_protocol_rejected(self) -> None:
         lab, calls, _tunnel = _pair()
-        with pytest.raises(ValueError, match="unsupported protocol"):
+        with pytest.raises(ValueError, match="carrier 'socat' does not support protocol 'icmp'"):
             asyncio.run(add_tunnel(lab, [("a", None), ("b", None)], port=8080, protocol="icmp"))
         assert calls == []
 
@@ -437,7 +442,21 @@ class TestRollback:
 class TestInternals:
     def test_require_tools_ok_host_passes(self) -> None:
         host = FakeHost("a", ip="10.0.0.1")
-        asyncio.run(_require_tools(host))  # no raise
+        asyncio.run(_require_tools(host, SocatCarrier()))  # no raise
+
+    def test_require_tools_rejects_ok_substring_in_failure_output(self) -> None:
+        # The carrier contract is "prints ok on a line of its own iff
+        # satisfied": failure text that merely CONTAINS the substring "ok"
+        # (e.g. "not ok", "broken") must not pass the fail-fast tools check.
+        host = FakeHost("a", ip="10.0.0.1", tools_output="tools not ok")
+        with pytest.raises(RuntimeError, match="missing socat and/or bash"):
+            asyncio.run(_require_tools(host, SocatCarrier()))
+
+    def test_require_tools_accepts_a_bare_ok_line_among_noise(self) -> None:
+        # Session output may surround the probe's reply with other lines; a
+        # bare `ok` line anywhere satisfies the contract.
+        host = FakeHost("a", ip="10.0.0.1", tools_output="motd banner\nok\n")
+        asyncio.run(_require_tools(host, SocatCarrier()))  # no raise
 
     def test_probe_used_ports_gathers_across_hosts(self) -> None:
         a = FakeHost("a", ip="10.0.0.1", probe_ports="LISTEN 0 0.0.0.0:49200 *:*\n")
@@ -497,3 +516,15 @@ class TestInternals:
 
         with pytest.raises(RuntimeError, match="unreachable during verify: b"):
             manage._raise_verify_failure(tunnel, missing, ["b"])
+
+
+class TestCarrierSelection:
+    def test_unknown_carrier_is_a_rich_error_before_any_host_io(self) -> None:
+        with pytest.raises(ValueError, match="Unknown carrier 'wireguard'"):
+            asyncio.run(
+                add_tunnel(_lab(), [("a", None), ("b", None)], port=8080, carrier="wireguard")
+            )
+
+    def test_protocol_unsupported_by_carrier_names_the_carrier(self) -> None:
+        with pytest.raises(ValueError, match="carrier 'socat' does not support protocol 'sctp'"):
+            asyncio.run(add_tunnel(_lab(), [("a", None), ("b", None)], port=8080, protocol="sctp"))

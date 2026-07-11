@@ -20,7 +20,7 @@ from .params import (
 )
 from .placement import FlowDirection, Placement
 
-# .manage pulls in otto.host.detached (+ otto.link.sentinel); only the future
+# .manage pulls in otto.host.daemon (+ otto.link.sentinel); only the future
 # `otto link` CLI actually calls it. Every other importer of otto.link (8 of
 # the 9 CLI surfaces, via otto.models.host -> otto.link.IMPAIRERS) never
 # touches these names, so re-export them lazily to keep those surfaces out of
@@ -86,7 +86,7 @@ _MANAGE_NAMES = frozenset(
 def __getattr__(name: str) -> object:
     """Lazily resolve the ``.manage`` orchestration API on first access.
 
-    Keeps ``otto.host.detached``/``otto.link.sentinel`` off every otto.link
+    Keeps ``otto.host.daemon``/``otto.link.sentinel`` off every otto.link
     importer that only wants the model/impairer/placement layer.
     """
     if name in _MANAGE_NAMES:

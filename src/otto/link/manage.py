@@ -19,7 +19,7 @@ from dataclasses import field as dc_field
 from typing import TYPE_CHECKING, Any
 
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
-from ..host.detached import launch_command
+from ..host.daemon import kill_command, launch_command
 from ..logger.mode import LogMode
 from .impairer import LinkImpairer, build_impairer
 from .model import Link
@@ -258,12 +258,12 @@ async def _cancel_timers(host: Any, link_id: str, netdev: str) -> int:
         result = await _exec(host, IMPAIR_PS_COMMAND)
     except RuntimeError:
         return 0
-    pids = sorted(
+    pids = [
         pid for pid, lid, dev in parse_impair_ps(result.value) if lid == link_id and dev == netdev
-    )
+    ]
     if not pids:
         return 0
-    await _root_run(host, f"kill {' '.join(str(pid) for pid in pids)}")
+    await _root_run(host, kill_command(pids))
     return len(pids)
 
 

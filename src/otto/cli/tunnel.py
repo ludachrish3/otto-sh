@@ -12,7 +12,13 @@ from rich import print as rprint
 
 from ..config import get_lab, get_repos
 from ..config.completion_cache import read_tunnel_ids, record_tunnel_ids
-from ..tunnel import add_tunnel, discover_tunnels, remove_all_tunnels, remove_tunnel
+from ..tunnel import (
+    DEFAULT_CARRIER,
+    add_tunnel,
+    discover_tunnels,
+    remove_all_tunnels,
+    remove_tunnel,
+)
 from ..utils import async_typer_command, complete_comma_list
 
 if TYPE_CHECKING:
@@ -165,17 +171,20 @@ async def add(
     port: int = typer.Option(..., "--port", help="Service port (both ends)."),
     protocol: str = typer.Option("tcp", "--protocol", help="tcp or udp."),
     dest: str | None = typer.Option(None, "--dest", help="Far-end delivery target host\\[@if]."),
+    carrier: str = typer.Option(
+        DEFAULT_CARRIER, "--carrier", help="Tunnel transport carrier (registered name)."
+    ),
 ) -> None:
     """Create a bidirectional tunnel along an explicit host path. See spec §6."""
     lab = get_lab()
     try:
         dest_spec = _parse_endpoint(dest) if dest else None
         added = await add_tunnel(
-            lab, _parse_hosts(hosts), port=port, protocol=protocol, dest=dest_spec
+            lab, _parse_hosts(hosts), port=port, protocol=protocol, dest=dest_spec, carrier=carrier
         )
     except (ValueError, RuntimeError) as e:
         # Known, expected failures (unknown host, ambiguous/empty interface,
-        # an "already exists" conflict, missing socat/bash, a bad protocol):
+        # an "already exists" conflict, missing carrier tools, a bad protocol):
         # a normal user outcome, never a traceback.
         rprint(f"[red]{e}[/red]")
         raise typer.Exit(1) from e

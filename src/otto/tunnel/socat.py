@@ -1,4 +1,4 @@
-"""Pure command/argv builders for host-resident socat tunnels — no I/O.
+"""The socat carrier: pure command/argv builders + the SocatCarrier registrant — no I/O.
 
 Bidirectional ingress/relay/egress builders (#2b); every value is a string or
 list of strings destined for ``host.exec``; running nothing keeps the whole
@@ -6,30 +6,17 @@ module unit-testable (assert exact argv).
 """
 
 import re
+from typing import ClassVar
 
-from ..host.detached import launch_command  # noqa: F401  # back-compat re-export (#3 Task 1)
+from typing_extensions import override
+
+from .carrier import TunnelCarrier, register_carrier
 
 # Old-stable socat address keywords only (compatible down to procps/socat on
 # Linux 2.6.32). ``fork`` lets one listener serve repeated datagrams/connections;
 # ``reuseaddr`` avoids TIME_WAIT bind failures on teardown+re-add.
 _LISTEN = {"udp": "UDP4-LISTEN", "tcp": "TCP4-LISTEN"}
 _DELIVER = {"udp": "UDP4", "tcp": "TCP4"}
-
-DISCOVERY_PS_COMMAND: str = (
-    "ps -eo pid= -eo etime= -eo args= 2>/dev/null | grep -a ' otto-tunnel:' || true"
-)
-"""Portable ``ps`` used by discovery (formatted ``etime`` — ``etimes`` is
-procps>=3.3, too new for 2.6.32-era userland); ``|| true`` so a no-match grep
-(exit 1) is not treated as a command failure.
-
-Each field is its own ``-eo`` flag rather than one comma-joined
-``-eo pid=,etime=,args=`` (found via live-bed e2e against a centos:7
-container): procps-ng 3.3.10 -- the version centos:7 ships -- silently
-mis-parses the comma-combined form (each column bleeds into the next,
-producing garbage), while the separate-flag form also produces identical
-output on modern procps (4.x), so this portable form is a strict
-improvement, not a tradeoff.
-"""
 
 FREE_PORT_PROBE_COMMAND: str = "ss -Htln 2>/dev/null || netstat -tln 2>/dev/null || true"
 """Free-port probe run on each chain host — ``ss`` preferred, ``netstat``
@@ -91,3 +78,35 @@ def pick_free_port(used: set[int], lo: int = 49152, hi: int = 65535) -> int:
         if port not in used:
             return port
     raise RuntimeError(f"no free TCP port in [{lo}, {hi}]")
+
+
+class SocatCarrier(TunnelCarrier):
+    """socat over a TCP4 carrier — the first-party tunnel transport (#2b)."""
+
+    supported_protocols: ClassVar[frozenset[str]] = frozenset({"tcp", "udp"})
+    requirements_command: ClassVar[str] = (
+        "command -v socat >/dev/null 2>&1 && command -v bash >/dev/null 2>&1 && echo ok || echo no"
+    )
+    tools_description: ClassVar[str] = "socat and/or bash"
+
+    @override
+    def ingress_args(
+        self, protocol: str, service_port: int, bind_ip: str, next_ip: str, carrier_port: int
+    ) -> list[str]:
+        """Delegate to :func:`ingress_socat_args` (the proven builder)."""
+        return ingress_socat_args(protocol, service_port, bind_ip, next_ip, carrier_port)
+
+    @override
+    def relay_args(self, carrier_port: int, next_ip: str) -> list[str]:
+        """Delegate to :func:`relay_socat_args`."""
+        return relay_socat_args(carrier_port, next_ip)
+
+    @override
+    def egress_args(
+        self, protocol: str, service_port: int, deliver_ip: str, carrier_port: int
+    ) -> list[str]:
+        """Delegate to :func:`egress_socat_args`."""
+        return egress_socat_args(protocol, service_port, deliver_ip, carrier_port)
+
+
+register_carrier("socat", SocatCarrier)

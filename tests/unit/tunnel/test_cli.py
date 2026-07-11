@@ -217,6 +217,29 @@ def test_add_command_happy_path_prints_id_endpoints_and_carriers():
     assert "carriers 49200/49201" in result.output
 
 
+def test_add_passes_carrier_through():
+    tunnel = Tunnel(
+        protocol="tcp",
+        service_port=161,
+        path=(TunnelHop(host="test1"), TunnelHop(host="test2")),
+    )
+    added = AddedTunnel(tunnel=tunnel, carrier_fwd=49200, carrier_rev=49201)
+    fake_add = AsyncMock(return_value=added)
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.add_tunnel", fake_add),
+    ):
+        result = runner.invoke(
+            tunnel_app,
+            # A NON-default carrier name: with the default ("socat") this test
+            # could not tell a plumbed flag from a hardcoded/ignored one.
+            # add_tunnel is mocked, so the name needn't be registered.
+            ["add", "--hosts", "test1,test2", "--port", "161", "--carrier", "custom"],
+        )
+    assert result.exit_code == 0, result.output
+    assert fake_add.await_args.kwargs["carrier"] == "custom"
+
+
 # ── `list` ───────────────────────────────────────────────────────────────────
 
 

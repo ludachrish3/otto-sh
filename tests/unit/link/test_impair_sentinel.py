@@ -41,3 +41,14 @@ class TestPsScan:
             ]
         )
         assert parse_impair_ps(text) == [(4242, "lnk-abc123", "eth1.100")]
+
+
+class TestWireGolden:
+    def test_ps_command_is_byte_identical_to_the_retired_literal(self):
+        assert IMPAIR_PS_COMMAND == (
+            "ps -eo pid= -eo etime= -eo args= 2>/dev/null | grep -a ' otto-impair:' || true"
+        )
+
+    def test_encode_produces_the_exact_v1_bytes(self):
+        assert encode_impair_sentinel("lnk-1", "eth0.100") == "otto-impair:v1:lnk-1:eth0.100"
+        assert encode_impair_sentinel("a:b", "e/th") == "otto-impair:v1:a%3Ab:e%2Fth"

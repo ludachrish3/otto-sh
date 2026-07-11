@@ -41,8 +41,9 @@ otto --lab veggies tunnel add --hosts carrot_seed,compost,tomato_seed --port 600
 | ------ | -------- | ----------- |
 | `--hosts` | yes | Ordered, comma-separated `host[@iface]` path — **two or more entries**. The first and last entries are the tunnel's two endpoints; anything between is an explicit intermediate hop. |
 | `--port` | yes | The service port, used at **both** endpoints — a client sends to `--port` on either endpoint host, and (absent `--dest`) it's delivered to `--port` on the other. One value keeps the tunnel traceable by port at every hop. |
-| `--protocol` | no (default `tcp`) | `tcp` or `udp`. Selects the `socat` address family the two endpoints speak; every intermediate hop always relays the carrier stream over plain TCP regardless. |
+| `--protocol` | no (default `tcp`) | The service protocol the endpoints speak, validated against the selected carrier's supported protocols. The default `socat` carrier supports `tcp` and `udp` and always relays between hops over a plain-TCP carrier stream. |
 | `--dest` | no (default: loopback on the far endpoint) | Deliver the far endpoint's traffic on to a **third** host instead of terminating on that host's loopback — see *Relaying with `--dest`*, next. |
+| `--carrier` | no (default `socat`) | Tunnel transport — a registered `TunnelCarrier` name, applied chain-wide. See [Custom carriers](#custom-carriers) below. |
 
 ### `@iface` interface pinning
 
@@ -299,6 +300,61 @@ way out; `otto tunnel add` does not touch it. `otto tunnel remove` empties
 it rather than repopulating it, so a `list` right after a `remove` is what
 re-warms completion for what's left. A cold or emptied cache simply offers
 no suggestions until the next `list`.
+
+## Custom carriers
+
+Tunnel transport is pluggable the same way link impairment is — see
+{doc}`extending-backends` for the shared registration philosophy. A
+`TunnelCarrier` builds the argv for one tagged process's role:
+
+```python
+class TunnelCarrier:
+    supported_protocols: ClassVar[frozenset[str]] = frozenset()
+    requirements_command: ClassVar[str] = ""
+    tools_description: ClassVar[str] = ""
+
+    def ingress_args(self, protocol, service_port, bind_ip, next_ip, carrier_port) -> list[str]: ...
+    def relay_args(self, carrier_port, next_ip) -> list[str]: ...
+    def egress_args(self, protocol, service_port, deliver_ip, carrier_port) -> list[str]: ...
+```
+
+`otto.tunnel.socat.SocatCarrier` (`supported_protocols = {"tcp", "udp"}`) is
+the only first-party registrant, built on `socat`. A custom carrier
+registers from an `init` module, before any lab data loads:
+
+```python
+# .otto/init.py — registered via [init] in .otto/settings.toml
+from typing import ClassVar
+
+from otto.tunnel import TunnelCarrier, register_carrier
+
+
+class MyCarrier(TunnelCarrier):
+    supported_protocols: ClassVar[frozenset[str]] = frozenset({"tcp"})
+    requirements_command: ClassVar[str] = (
+        "command -v my-tool >/dev/null 2>&1 && echo ok || echo no"
+    )
+    tools_description: ClassVar[str] = "my-tool"
+
+    def ingress_args(self, protocol, service_port, bind_ip, next_ip, carrier_port):
+        return ["my-tool", "listen", f"{bind_ip}:{service_port}", f"{next_ip}:{carrier_port}"]
+
+    def relay_args(self, carrier_port, next_ip):
+        return ["my-tool", "relay", str(carrier_port), next_ip]
+
+    def egress_args(self, protocol, service_port, deliver_ip, carrier_port):
+        return ["my-tool", "deliver", str(carrier_port), f"{deliver_ip}:{service_port}"]
+
+
+register_carrier("my_carrier", MyCarrier)
+```
+
+`supported_protocols` is mandatory and non-empty — a carrier that could
+never validate any tunnel is rejected at registration time. Select it per
+tunnel with `otto tunnel add --carrier my_carrier`; the carrier applies
+chain-wide (every hop in that one tunnel), and the choice isn't part of a
+tunnel's identity or wire format — `remove` reaps a tunnel's processes by
+pid regardless of which carrier built them.
 
 ## Library API
 

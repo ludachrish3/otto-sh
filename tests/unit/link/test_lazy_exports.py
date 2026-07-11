@@ -2,7 +2,7 @@
 
 Only the future `otto link` CLI calls impair_link/repair_link/etc; every other
 otto.link importer (8 of 9 CLI surfaces, via otto.models.host -> IMPAIRERS)
-must not pay for otto.host.detached / otto.link.sentinel. See
+must not pay for otto.host.daemon / otto.link.sentinel. See
 tests/unit/import_budget/ for the surface-level snapshot guard; this test
 proves the runtime attribute-resolution path directly.
 """
@@ -47,12 +47,12 @@ def test_unknown_attribute_raises_attribute_error():
 
 def test_bare_import_does_not_pull_manage():
     """Fresh subprocess: importing otto.link alone must not import .manage,
-    otto.host.detached, or otto.link.sentinel until a manage-only name is
+    otto.host.daemon, or otto.link.sentinel until a manage-only name is
     actually accessed."""
     code = (
         "import sys; import otto.link; "
         "print('otto.link.manage' in sys.modules, "
-        "'otto.host.detached' in sys.modules, "
+        "'otto.host.daemon' in sys.modules, "
         "'otto.link.sentinel' in sys.modules)"
     )
     out = subprocess.run(
@@ -66,7 +66,7 @@ def test_bare_import_does_not_pull_manage():
     code_after_access = (
         "import sys; import otto.link; otto.link.impair_link; "
         "print('otto.link.manage' in sys.modules, "
-        "'otto.host.detached' in sys.modules, "
+        "'otto.host.daemon' in sys.modules, "
         "'otto.link.sentinel' in sys.modules)"
     )
     out = subprocess.run(

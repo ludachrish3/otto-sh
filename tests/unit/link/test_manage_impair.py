@@ -318,7 +318,7 @@ class TestExpireTimers:
         assert "sleep 30 && tc qdisc del dev eth1.100 root" in launch
         # Whole conditional wrapped in an outer `bash -c` so the launch string
         # is one opaque word, safe for `_root_run`'s sudo-prefixing to compose
-        # with (see otto.host.detached.launch_command's docstring).
+        # with (see otto.host.daemon.launch_command's docstring).
         assert launch.startswith("bash -c 'if command -v systemd-run")
 
     @pytest.mark.asyncio

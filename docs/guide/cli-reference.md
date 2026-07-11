@@ -506,7 +506,7 @@ Create, list, and remove host-resident bidirectional tunnels. See
 requirements, tunnel identity).
 
 ```text
-otto tunnel add    --hosts <h0[@if],h1[@if],...,hn-1[@if]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>]
+otto tunnel add    --hosts <h0[@if],h1[@if],...,hn-1[@if]> --port <P> [--protocol tcp|udp] [--dest <host[@if]>] [--carrier <name>]
 otto tunnel list
 otto tunnel remove [<id>] [--all] [-y]
 ```
