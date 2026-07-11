@@ -182,6 +182,12 @@ jobs:
       # does (see .readthedocs.yaml) — placeholder mode stays reserved for
       # its documented emergency case (e.g. a broken Chromium install), not
       # routine CI.
+      #
+      # KEEP THESE STEPS. The dashboard capture is temporarily stubbed
+      # (`_LIVE_DASHBOARD_RETIRED` — the review-first shell has no live mode
+      # to photograph), so no MonitorServer starts and `dist/` is not strictly
+      # required *right now*. It is required again the moment that capture is
+      # restored at monitor-view parity, and RTD builds the dist regardless.
       - name: Install web/ dependencies (npm ci)
         run: make web-install
       - name: Build the React dashboard (needed by capture_docs_media.py)

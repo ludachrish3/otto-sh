@@ -13,6 +13,10 @@ the real dashboard over the production store/SSE paths, seeded with
 deterministic dummy data, and headless Chromium captures it. When the
 frontend (or the harness) changes, the media regenerates on the next build.
 
+The dashboard half of that pipeline is currently STUBBED — the review-first
+shell has no live mode for it to photograph. See ``_LIVE_DASHBOARD_RETIRED``
+below; the coverage-report capture is unaffected and still runs for real.
+
 Modes — ``--mode`` flag, or the ``OTTO_DOCS_MEDIA`` env var:
 
 - ``auto`` (default): regenerate only when the stamp says the inputs changed
@@ -59,6 +63,26 @@ _STAMP_INPUTS = [
 
 # The files this script promises to produce (docs pages reference them).
 ARTIFACTS = ["dashboard-live.png", "dashboard-live.webm", "coverage-report.png"]
+
+# TEMPORARY (plan 2026-07-11 review-first monitor shell, commit e950dd7).
+#
+# The live dashboard this script photographs no longer exists. The shell now
+# boots to an Import front door, makes no backend calls, and never reaches the
+# "Live" status `_open_dashboard` waits for — so the capture timed out and
+# failed EVERY HTML build (local, CI, RTD alike; CI issues #126-#128).
+#
+# Until the monitor's views reach parity and docs/guide/monitor.md is rewritten
+# around review-first, the two dashboard artifacts are stubbed with
+# placeholders: docs build green, dashboard imagery degraded (a known, tracked
+# debt — see todo/TODO.md), coverage-report.png still captured for real.
+#
+# Clearing this flag is NOT enough to restore the capture: `_seed` /
+# `_open_dashboard` drive a server-seeded live page, and the review shell can
+# only be fed client-side, through Import. See `_capture_dashboard` for the
+# shape the rewrite takes. dashboard-live.webm has no successor at all until
+# live mode returns at the live-hookup phase; drop it from ARTIFACTS and from
+# the guide then, or re-record it.
+_LIVE_DASHBOARD_RETIRED = True
 
 _VIEWPORT = {"width": 1280, "height": 720}
 
@@ -119,6 +143,18 @@ def _write_placeholders() -> None:
     print("docs media: wrote PLACEHOLDERS (no browser run) — media is degraded", flush=True)
 
 
+def _stub_dashboard_media() -> None:
+    """Write placeholder dashboard artifacts — see ``_LIVE_DASHBOARD_RETIRED``."""
+    (OUT_DIR / "dashboard-live.png").write_bytes(_PLACEHOLDER_PNG)
+    (OUT_DIR / "dashboard-live.webm").write_bytes(b"")
+    print(
+        "docs media: dashboard capture SKIPPED — the review-first shell has no live "
+        "mode to photograph; dashboard-live.{png,webm} are PLACEHOLDERS until the "
+        "monitor views reach parity (see _LIVE_DASHBOARD_RETIRED in this script)",
+        flush=True,
+    )
+
+
 def _seed(harness) -> None:  # noqa: ANN001 — DashboardHarness import is deferred
     """Five minutes of smooth, deterministic history for two hosts."""
     rng = random.Random(42)  # noqa: S311 — deterministic dummy data, not cryptography
@@ -165,6 +201,56 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
         page.close()
 
 
+def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred imports
+    """Photograph the seeded live dashboard: one still, one live clip.
+
+    Retired with the review-first pivot and unreachable while
+    ``_LIVE_DASHBOARD_RETIRED`` is set — kept as the shape the parity rewrite
+    starts from, not as code that currently runs.
+
+    Both captures below open the page and wait for it to go *Live*, which a
+    server-seeded collector drives. The review shell has no such path: it
+    boots empty and is fed client-side, through Import. So the rewrite seeds
+    nothing, leaves the harness collector EMPTY, and loads one of the
+    committed Plan-1 fixtures (``web/fixtures/``) exactly the way the browser
+    e2e suite already does — see
+    ``tests/e2e/monitor/dashboard/test_review_shell.py::_import_fixture``::
+
+        page.goto(harness.url)
+        page.locator('[data-testid="import-input"]').set_input_files(fixture)
+        page.locator('[data-testid="review-bar"]').wait_for()
+    """
+    # Still screenshot of the seeded dashboard.
+    page = browser.new_page(viewport=_VIEWPORT)
+    _open_dashboard(page, harness.url)
+    page.screenshot(path=OUT_DIR / "dashboard-live.png", full_page=True)
+    page.close()
+
+    # Live clip: keep pushing points while Playwright records, so the
+    # traces visibly extend — the "live lab monitoring" money shot.
+    ctx = browser.new_context(
+        viewport=_VIEWPORT, record_video_dir=OUT_DIR, record_video_size=_VIEWPORT
+    )
+    page = ctx.new_page()
+    _open_dashboard(page, harness.url)
+    rng = random.Random(7)  # noqa: S311 — deterministic dummy data, not cryptography
+    push = harness.collector.push
+    for tick in range(_CLIP_TICKS):
+        cpu = 45 + 25 * math.sin(tick / 6) + rng.uniform(-4, 4)
+        harness.run(push("router1", "Overall CPU", cpu))
+        harness.run(push("router1", "proc/101", cpu * 0.55, meta=_PROC_META))
+        harness.run(push("router1", "Load (1m)", 1.2 + rng.uniform(-0.2, 0.2), chart="load"))
+        if tick == _CLIP_TICKS // 2:  # an event landing mid-clip, for the timeline marker
+            harness.run(harness.collector.add_event(label="test_load start", color="#d62728"))
+        time.sleep(_CLIP_TICK_SECONDS)
+    video = page.video
+    page.close()
+    ctx.close()  # finalizes the recording
+    if video is None:
+        raise SystemExit("docs media: Playwright returned no video for the live clip")
+    shutil.move(video.path(), OUT_DIR / "dashboard-live.webm")
+
+
 def _capture(harness) -> None:  # noqa: ANN001 — DashboardHarness import is deferred
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import sync_playwright
@@ -179,41 +265,17 @@ def _capture(harness) -> None:  # noqa: ANN001 — DashboardHarness import is de
                 "(or `make dev`). To ship degraded docs in an emergency, "
                 "set OTTO_DOCS_MEDIA=placeholder."
             ) from e
+        try:
+            if _LIVE_DASHBOARD_RETIRED:
+                _stub_dashboard_media()
+            else:
+                _capture_dashboard(browser, harness)
 
-        # Still screenshot of the seeded dashboard.
-        page = browser.new_page(viewport=_VIEWPORT)
-        _open_dashboard(page, harness.url)
-        page.screenshot(path=OUT_DIR / "dashboard-live.png", full_page=True)
-        page.close()
-
-        # Still shot of the coverage HTML report (same fixture the
-        # report_browser Playwright suite pins).
-        _capture_coverage_report(browser)
-
-        # Live clip: keep pushing points while Playwright records, so the
-        # traces visibly extend — the "live lab monitoring" money shot.
-        ctx = browser.new_context(
-            viewport=_VIEWPORT, record_video_dir=OUT_DIR, record_video_size=_VIEWPORT
-        )
-        page = ctx.new_page()
-        _open_dashboard(page, harness.url)
-        rng = random.Random(7)  # noqa: S311 — deterministic dummy data, not cryptography
-        push = harness.collector.push
-        for tick in range(_CLIP_TICKS):
-            cpu = 45 + 25 * math.sin(tick / 6) + rng.uniform(-4, 4)
-            harness.run(push("router1", "Overall CPU", cpu))
-            harness.run(push("router1", "proc/101", cpu * 0.55, meta=_PROC_META))
-            harness.run(push("router1", "Load (1m)", 1.2 + rng.uniform(-0.2, 0.2), chart="load"))
-            if tick == _CLIP_TICKS // 2:  # an event landing mid-clip, for the timeline marker
-                harness.run(harness.collector.add_event(label="test_load start", color="#d62728"))
-            time.sleep(_CLIP_TICK_SECONDS)
-        video = page.video
-        page.close()
-        ctx.close()  # finalizes the recording
-        browser.close()
-        if video is None:
-            raise SystemExit("docs media: Playwright returned no video for the live clip")
-        shutil.move(video.path(), OUT_DIR / "dashboard-live.webm")
+            # Still shot of the coverage HTML report (same fixture the
+            # report_browser Playwright suite pins).
+            _capture_coverage_report(browser)
+        finally:
+            browser.close()
 
 
 def main() -> None:
@@ -236,19 +298,26 @@ def main() -> None:
         print("docs media: up to date (stamp matches) — skipping capture", flush=True)
         return
 
-    from tests._fixtures._dashboard_harness import DashboardHarness
-    from tests._fixtures._fake_collector import FakeCollector
-
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    harness = DashboardHarness(FakeCollector()).start()
-    try:
-        _seed(harness)
-        _capture(harness)
-    finally:
-        harness.stop()
+    if _LIVE_DASHBOARD_RETIRED:
+        # No live page to serve, so no server to run: the coverage capture
+        # drives a file:// report and never touches the harness.
+        _capture(None)
+        captured = ["coverage-report.png"]
+    else:
+        from tests._fixtures._dashboard_harness import DashboardHarness
+        from tests._fixtures._fake_collector import FakeCollector
+
+        harness = DashboardHarness(FakeCollector()).start()
+        try:
+            _seed(harness)
+            _capture(harness)
+        finally:
+            harness.stop()
+        captured = ARTIFACTS
     STAMP.write_text(digest + "\n")
-    names = ", ".join(ARTIFACTS)
+    names = ", ".join(captured)
     print(f"docs media: captured {names} in {time.monotonic() - started:.1f}s", flush=True)
 
 
