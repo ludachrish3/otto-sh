@@ -1,4 +1,42 @@
-"""Root test conftest — shared fixtures across unit and integration tests."""
+"""Root test conftest — shared fixtures across every test tree.
+
+WHERE A FIXTURE BELONGS
+-----------------------
+A guard that protects **process-global state** belongs HERE, never in a package
+conftest. The trees are not separate processes: ``tests_hostless`` runs
+``tests/unit`` and ``tests/e2e`` in one pytest session (``make coverage`` adds
+``tests/integration``), and one xdist worker runs tests from several trees in
+one process. So a guard parked in ``tests/unit/conftest.py`` leaves every other
+tree exposed to a hazard that is not remotely unit-specific.
+
+This is not hypothetical — it is the single most repeated defect in this suite:
+
+* #132 — the hermetic web dist lived in ``tests/unit/monitor/conftest.py``, so
+  tests booting a ``MonitorServer`` from ``tests/unit/suite`` and ``tests/e2e/cli``
+  demanded a real ``make web`` build that CI never produces. Green locally
+  (every checkout has a dist), red in CI, by construction.
+* #133 — the issue-#110 CliRunner shield lived in ``tests/unit/conftest.py``, so
+  ``tests/e2e/cli`` drove the same runner unprotected and died on the same
+  "I/O operation on closed file" the shield exists to prevent.
+
+The rule, then:
+
+* State owned by the PROCESS (global registries, the ``otto`` logger, the
+  OttoContext ContextVar, click's captured streams, the built web dist,
+  ``sys.modules`` identity) → root conftest. Every tree gets it.
+* Setup owned by a RESOURCE or a local technique (docker stacks, the lab, a
+  Playwright page, a package's own ``sys.modules`` delitem trick) → that
+  package's conftest.
+
+If a guard must NOT apply somewhere (the Playwright lane serves the REAL dist,
+so it must never be handed the hermetic marker), express that as an explicit
+opt-out where the exception lives — an opt-in fixture, or a same-named override
+in that package's conftest — never by narrowing the guard's home.
+
+``tests/e2e/cli/test_registry_isolation_e2e.py`` pins this: it asserts the
+process-global guards are actually active in the e2e tree, and fails if one is
+moved back into a package conftest.
+"""
 
 # ---------------------------------------------------------------------------
 # xdist dispatch front-loading (Phase-3 spike: KEEP decision)
@@ -99,6 +137,7 @@ from otto.host.factory import create_host_from_dict
 from otto.host.local_host import LocalHost
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.registry import Registry
 from tests._fixtures._loop_reaper import classify_loop_origin, reap_or_raise
 
 _logger = logging.getLogger(__name__)
@@ -826,3 +865,213 @@ def hermetic_monitor_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     (dist_dir / "index.html").write_text("<html>HERMETIC_TEST_DIST_MARKER</html>")
     monkeypatch.setattr(server_module, "_STATIC_DIR", static_dir)
     return static_dir
+
+
+@pytest.fixture(autouse=True)
+def _clirunner_live_log_capture_guard():
+    """Detach pytest's live-log handlers from the root logger during every ``CliRunner.invoke``.
+
+    With ``log_cli = true`` (our pyproject default), any log record reaching the
+    ROOT logger *while a ``CliRunner.invoke`` is in flight* makes pytest's
+    ``_LiveLoggingStreamHandler`` suspend stdout capture to print the line.
+    Suspending capture drops click's isolated ``_NamedTextIOWrapper``, whose
+    ``TextIOWrapper.__del__`` closes the underlying ``BytesIOCopy`` — so typer's
+    finally-block ``outstreams[0].getvalue()`` raises ``ValueError: I/O
+    operation on closed file``. The close is GC-timing-dependent, which is why it
+    surfaced just once, on the nightly ``--repeat-scope=session`` 3.12 job
+    (issue #110), and never in a single ``make coverage`` pass.
+
+    This guard lives in the ROOT conftest, not the unit tree's, ON PURPOSE: it
+    must cover every tree that drives a ``CliRunner``. It was originally scoped
+    to ``tests/unit`` and so never reached ``tests/e2e/cli``, which invokes the
+    same runner against commands (``otto monitor``) whose non-otto loggers
+    (uvicorn, asyncio) log mid-invoke — issue #133, two e2e tests dying on this
+    exact #110 signature once ``otto monitor``'s review branch began really
+    booting a server. ``tests/e2e/cli/test_clirunner_capture_guard_e2e.py`` and
+    ``tests/unit/cli/test_clirunner_capture_guard.py`` each pin the guard's
+    reach into their own tree.
+
+    ``tests/unit/cli``'s ``no_logger_output_dir`` sets ``otto.propagate=False``,
+    but that only blocks the ``otto`` hierarchy; a record from ANY other logger
+    (a third-party lib, ``asyncio``, ``py.warnings``) still reaches root and
+    trips it. Removing only the live-log handlers for the invoke window closes
+    the whole class without changing observable behavior: ``caplog``'s separate
+    ``LogCaptureHandler`` and otto's console handler are left attached, so log
+    capture and console output during the invoke still work.
+
+    The patch is applied/restored manually rather than via the ``monkeypatch``
+    fixture ON PURPOSE: depending on ``monkeypatch`` here would pull its setup
+    earlier than ``no_logger_output_dir`` and thus flip their teardown order, so
+    a cli/suite test that ``monkeypatch.setattr``s ``create_output_dir`` would
+    have that undo run *after* ``no_logger_output_dir`` restores it — re-leaking
+    the mock into later (e.g. logger) tests.
+    """
+    from typer.testing import CliRunner
+
+    try:
+        from _pytest.logging import _LiveLoggingNullHandler, _LiveLoggingStreamHandler
+    except ImportError:  # pragma: no cover - pytest renamed its live-log handlers
+        # Guard is best-effort: if pytest's internal handler classes move, skip
+        # it rather than error every unit test. The flake reappears but is rare.
+        yield
+        return
+
+    real_invoke = CliRunner.invoke
+
+    def _invoke_without_live_log(self, *args, **kwargs):
+        root = logging.getLogger()
+        live = [
+            h
+            for h in root.handlers
+            if isinstance(h, (_LiveLoggingNullHandler, _LiveLoggingStreamHandler))
+        ]
+        for handler in live:
+            root.removeHandler(handler)
+        try:
+            return real_invoke(self, *args, **kwargs)
+        finally:
+            for handler in live:
+                root.addHandler(handler)
+
+    CliRunner.invoke = _invoke_without_live_log
+    try:
+        yield
+    finally:
+        CliRunner.invoke = real_invoke
+
+
+_cached_registries: list[Registry] = []
+_cached_module_count: int = -1
+
+
+def _loaded_registries() -> list[Registry]:
+    """Return every ``Registry`` reachable from a loaded ``otto.*`` module.
+
+    Discovery is dynamic (scans ``sys.modules``) rather than a hand-maintained
+    list, so a registry added in the future is isolated automatically without a
+    matching test-side edit. Instances are de-duplicated by ``id`` because a
+    single registry is often re-exported from several modules. The result is
+    memoized and only re-scanned when ``sys.modules`` grows (a new module —
+    possibly carrying a new registry — was imported); registries are import-time
+    singletons that are never torn down, so this keeps the per-test snapshot cost
+    negligible across the ~15k-test unit run.
+    """
+    global _cached_registries, _cached_module_count  # noqa: PLW0603 — memoized discovery
+    module_count = len(sys.modules)
+    if module_count != _cached_module_count:
+        found: dict[int, Registry] = {}
+        for module in list(sys.modules.values()):
+            mod_name = getattr(module, "__name__", "")
+            if mod_name != "otto" and not mod_name.startswith("otto."):
+                continue
+            try:
+                members = vars(module)
+            except TypeError:  # pragma: no cover - namespace without __dict__
+                continue
+            for value in members.values():
+                if isinstance(value, Registry):
+                    found[id(value)] = value
+        _cached_module_count = module_count
+        _cached_registries = list(found.values())
+    return _cached_registries
+
+
+@pytest.fixture(autouse=True)
+def _isolate_registries():
+    """Snapshot every global otto ``Registry`` before each test; restore after.
+
+    The ``otto.registry.Registry`` singletons (``INSTRUCTIONS``,
+    ``LOADER_CLASSES``, ``FRAME_CLASSES``, ``CLI_COMMANDS``, …) live for the
+    whole process. Tests that register entries into them — via ``@instruction``,
+    ``register_binary_loader``, ``register_cli_command``, etc. — never clean up,
+    so under the nightly ``--count=N --repeat-scope=session`` repeat the second
+    pass re-registers the same name and the registry's loud collision guard
+    raises ``ValueError: already registered`` (issue #108). A single CI pass
+    registers each name exactly once and never trips this, which is why the leak
+    only surfaces in the nightly repeat job — never in ``make nox`` /
+    ``make coverage`` (both single-pass by default).
+
+    Snapshotting each registry's entries before the test and, on teardown,
+    dropping anything the test added and restoring the originals keeps every
+    registry byte-for-byte stable across tests and across repeat iterations of
+    the same test in one process. Built-in registrations (present at import)
+    survive because they are part of the snapshot.
+
+    The ``tests/unit/suite`` package additionally keeps its own
+    ``_isolate_suites`` fixture: it *clears* ``SUITES`` to an empty baseline that
+    those tests assert against, which this snapshot/restore alone does not do.
+
+    This guard lives in the ROOT conftest, not the unit tree's, ON PURPOSE. The
+    registries are process-global, so the hazard is too: ``tests_hostless`` runs
+    ``tests/unit`` and ``tests/e2e`` in ONE session (and ``make coverage`` adds
+    ``tests/integration``), so a single xdist worker runs tests from several
+    trees in one process — an entry leaked by an e2e test lands in the very
+    registry the next unit test asserts against. Scoped to ``tests/unit`` the
+    guard could not see any of that.
+
+    The move is PREVENTIVE, not a fix for an observed leak: no e2e test today
+    happens to register into a global registry (measured, baselining after
+    collection so that import-time registrations are not miscounted as leaks).
+    But nothing stops the next one from doing so, and a guard scoped narrower
+    than the state it guards is exactly the defect behind issues #132 and #133.
+    ``tests/e2e/cli/test_registry_isolation_e2e.py`` pins the guard's reach into
+    the e2e tree.
+
+    Higher-scoped fixtures are unaffected: pytest sets up module- and
+    session-scoped fixtures BEFORE function-scoped ones, so anything they
+    register is already inside every per-test snapshot and survives the restore.
+    """
+    snapshots = [
+        (reg, {name: (reg.get(name), reg.origin(name)) for name in reg.names()})
+        for reg in _loaded_registries()
+    ]
+    modules_before = frozenset(sys.modules)
+
+    yield
+
+    _restore_registries(snapshots, modules_before)
+
+
+def _restore_registries(
+    snapshots: list[tuple[Registry, dict[str, tuple[object, str]]]],
+    modules_before: frozenset[str],
+) -> None:
+    """Drop entries a test added, restore the snapshot, evict side-effect origins.
+
+    A test that imports an extension module listed in a repo's ``init`` (e.g.
+    ``custom_hosts``, which calls ``register_command_frame`` at import) registers
+    into an isolated registry as an **import side effect**. Dropping the entry
+    on teardown is not enough: the origin module stays in ``sys.modules``, so a
+    later ``importlib.import_module`` of it is a no-op and never re-runs the
+    registration — leaving the module imported but its registry entry gone. A
+    downstream test that relies on re-import to re-register (e.g.
+    ``Repo.import_init_modules`` mirroring bootstrap order) then fails with
+    ``... is not a registered frame``. This surfaces only single-process
+    (``-n0``); ``-n auto`` scatters the importer and the victim across workers.
+
+    So after restoring each registry, evict from ``sys.modules`` the origin
+    module of every entry the test added — but ONLY origins the test itself
+    imported (absent from *modules_before*), mirroring ``purge_tmp_imports``.
+    A module already loaded before the test (a pytest-collected test module
+    registering a locally-defined class via ``register_suite_class``, or a core
+    ``otto`` module) must never be evicted: it isn't a re-importable extension,
+    and dropping the running test file breaks ``inspect.getfile`` for every
+    later registration in it.
+    """
+    evict_origins: set[str] = set()
+    for reg, parked in snapshots:
+        for name in list(reg.names()):
+            if name not in parked:
+                origin = reg.origin(name)
+                if (
+                    origin
+                    and origin not in modules_before
+                    and origin != "otto"
+                    and not origin.startswith("otto.")
+                ):
+                    evict_origins.add(origin)
+                reg.unregister(name)
+        for name, (entry, origin) in parked.items():
+            reg.register(name, entry, overwrite=True, origin=origin)
+    for origin in evict_origins:
+        sys.modules.pop(origin, None)

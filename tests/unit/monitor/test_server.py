@@ -9,6 +9,7 @@ Covers:
 """
 
 import asyncio
+import contextlib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -289,8 +290,9 @@ class TestDashboardRoute:
             await asyncio.sleep(0.05)
         try:
             url = f"http://127.0.0.1:{server._port}/"
-            body = (await asyncio.to_thread(urllib.request.urlopen, url)).read()
-            assert b"DIST_MARKER" in body
+            resp = await asyncio.to_thread(urllib.request.urlopen, url)
+            with contextlib.closing(resp):
+                assert b"DIST_MARKER" in resp.read()
         finally:
             server.stop()
             await task

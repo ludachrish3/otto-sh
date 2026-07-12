@@ -1,6 +1,6 @@
 """Regression for the registry / ``sys.modules`` isolation gap.
 
-The "other half" of issue #108: ``_isolate_registries`` (tests/unit/conftest.py)
+The "other half" of issue #108: ``_isolate_registries`` (tests/conftest.py)
 snapshots each global otto ``Registry`` and drops entries a test added on
 teardown. But an extension module listed in a repo's ``init`` (e.g.
 ``custom_hosts``, which calls ``register_command_frame`` at import) registers as
@@ -19,7 +19,7 @@ import sys
 import types
 
 from otto.registry import Registry
-from tests.unit.conftest import _restore_registries
+from tests.conftest import _restore_registries
 
 
 def _snapshot(reg: Registry) -> dict[str, tuple[object, str]]:

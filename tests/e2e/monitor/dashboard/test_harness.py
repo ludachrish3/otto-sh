@@ -293,9 +293,15 @@ def test_mode_wire_contract_live(live_dash: DashboardHarness[FakeCollector]) -> 
 def test_document_404_in_live_mode(live_dash: DashboardHarness[FakeCollector]) -> None:
     with pytest.raises(urllib.error.HTTPError) as exc_info:
         urllib.request.urlopen(live_dash.url + "/api/document", timeout=10)
-    assert exc_info.value.code == 404
-    body = json.loads(exc_info.value.read())
-    assert body == {"detail": "no document in live mode"}
+    # An HTTPError IS the response object, holding an open socket. Closing it is
+    # not hygiene-for-its-own-sake: `filterwarnings = error` turns the
+    # ResourceWarning it emits when garbage-collected into an exception raised
+    # inside a __del__, which pytest reports as an unraisable against whichever
+    # test happens to be running when GC fires (issue #133). Same idiom as
+    # tests/unit/monitor/test_server.py's DELETE-404 test.
+    with contextlib.closing(exc_info.value) as err:
+        assert err.code == 404
+        assert json.loads(err.read()) == {"detail": "no document in live mode"}
 
 
 def test_export_json_emits_format_1(
