@@ -35,10 +35,12 @@
   --topo-edge-declared: #4b5563;
   --topo-edge-local: #d1d5db;
   --topo-edge-reports: #9ca3af;
+  --topo-edge-tunnel-casing: #9ca3af;
 }
 .dark {
   --topo-edge-declared: #9ca3af;
   --topo-edge-local: #374151;
+  --topo-edge-tunnel-casing: #4b5563;
 }
 
 body {

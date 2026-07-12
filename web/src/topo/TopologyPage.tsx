@@ -24,6 +24,7 @@ import { LinkEdge } from "./LinkEdge";
 import { LinkInspector } from "./LinkInspector";
 import { layoutTopo } from "./layout";
 import { ElementNode, HostNode, LocalNode } from "./nodes";
+import { TopoLegend } from "./TopoLegend";
 
 const nodeTypes = {
   local: LocalNode,
@@ -70,6 +71,7 @@ export function TopologyPage() {
   const viewKey = `${session?.id ?? ""}:${expand ?? ""}`;
   const [selected, setSelected] = useState<{ key: string; edge: TopoEdge } | null>(null);
   const selectedEdge = selected?.key === viewKey ? selected.edge : null;
+  const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
 
   const graph = useMemo(() => {
     if (!session) return null;
@@ -108,6 +110,14 @@ export function TopologyPage() {
     }));
     return { nodes, edges };
   }, [graph, session, expand]);
+
+  // Hover lives here, not in LinkEdge: React Flow already hit-tests each
+  // edge's interaction path, so its own callbacks give us the affordance
+  // without hanging mouse handlers off a static SVG group.
+  const edges = useMemo(
+    () => flow.edges.map((e) => ({ ...e, data: { ...e.data, hovered: e.id === hoveredEdge } })),
+    [flow.edges, hoveredEdge],
+  );
 
   if (!session) return null;
   if (expand && !session.elementIds.has(expand)) {
@@ -164,7 +174,7 @@ export function TopologyPage() {
         <div className="min-h-0 grow rounded-lg border border-gray-200 dark:border-gray-800">
           <ReactFlow
             nodes={flow.nodes}
-            edges={flow.edges}
+            edges={edges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             colorMode={dark ? "dark" : "light"}
@@ -179,8 +189,11 @@ export function TopologyPage() {
               const data = edge.data as { edge?: TopoEdge } | undefined;
               if (data?.edge && data.edge.provenance !== "local") onSelectEdge(data.edge);
             }}
+            onEdgeMouseEnter={(_evt, edge) => setHoveredEdge(edge.id)}
+            onEdgeMouseLeave={() => setHoveredEdge(null)}
           >
             <Controls showInteractive={false} />
+            <TopoLegend />
           </ReactFlow>
         </div>
         <LinkInspector edge={selectedEdge} onClose={() => setSelected(null)} />

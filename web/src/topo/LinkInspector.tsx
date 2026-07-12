@@ -14,8 +14,8 @@
 // so it never needs background interactivity while open.
 import { useEffect } from "react";
 
-import type { LinkSnapshot } from "../api/export.gen";
 import type { TopoEdge } from "../data/topology";
+import { endpointText } from "./linkText";
 
 function Row(props: { label: string; testId: string; children: React.ReactNode }) {
   return (
@@ -24,16 +24,6 @@ function Row(props: { label: string; testId: string; children: React.ReactNode }
       {props.children}
     </p>
   );
-}
-
-function endpointText(link: LinkSnapshot): string {
-  return link.endpoints
-    .map((ep) => {
-      const iface = ep.interface ? ` ${ep.interface}` : "";
-      const addr = ep.ip ? ` · ${ep.ip}${ep.port != null ? `:${ep.port}` : ""}` : "";
-      return `${ep.host}${iface}${addr}`;
-    })
-    .join("  ⇄  ");
 }
 
 export function LinkInspector(props: { edge: TopoEdge | null; onClose: () => void }) {

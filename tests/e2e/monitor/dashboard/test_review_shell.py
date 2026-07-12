@@ -27,23 +27,26 @@ def _import_fixture(page, name: str) -> None:
     page.locator('[data-testid="review-bar"]').wait_for()
 
 
-def _click_edge(page, edge_id: str) -> None:
-    """Click a topology edge's actual rendered stroke, not its naive
-    bounding-box center.
+def _point_on_edge(page, edge_id: str) -> dict:
+    """Find a point on a topology edge's actual rendered stroke, not its
+    naive bounding-box center.
 
-    React Flow's parallel/diagonal edges can lay node cards directly over a
-    curved edge's bbox-center point (verified empirically against
-    kitchen-sink's layout: the impaired ``metrics-udp`` edge's bbox center
-    sits under the unrelated ``mgmt-01`` node card) — a plain
-    ``locator.click()`` or even ``click(force=True)`` there silently lands on
-    whatever element the browser's real hit-test resolves to at that pixel
-    (``force`` only skips Playwright's own actionability checks, not the
-    browser's actual hit-testing), which was observed to navigate to
-    ``#/host/mgmt-01`` instead of opening the inspector. React Flow renders a
-    wide invisible ``react-flow__edge-interaction`` path specifically to be
-    the edge's click target; this samples points along its actual curve and
-    clicks the first one that the browser's own ``elementFromPoint`` still
-    resolves back to this edge.
+    React Flow's parallel/diagonal edges can lay node cards — or just empty
+    pane — directly over a curved edge's bbox-center point (verified
+    empirically against kitchen-sink's layout: the impaired ``metrics-udp``
+    edge's bbox center sits under the unrelated ``mgmt-01`` node card, and
+    the declared ``app-db`` edge's bbox center sits over bare pane) — a plain
+    ``locator.click()``/``locator.hover()``, even with ``force=True``, lands
+    on whatever element the browser's real hit-test resolves to at that
+    pixel (``force`` only skips Playwright's own actionability checks, not
+    the browser's actual hit-testing). For a click this was observed to
+    navigate to ``#/host/mgmt-01`` instead of opening the inspector; for a
+    hover it silently fires no ``mouseenter`` at all, since the pane isn't
+    the edge. React Flow renders a wide invisible
+    ``react-flow__edge-interaction`` path specifically to be the edge's
+    pointer target; this samples points along its actual curve and returns
+    the first one that the browser's own ``elementFromPoint`` still resolves
+    back to this edge.
     """
     path = page.locator(f'[data-testid="topo-link-{edge_id}"] path.react-flow__edge-interaction')
     point = path.evaluate(
@@ -60,7 +63,13 @@ def _click_edge(page, edge_id: str) -> None:
             return null;
         }"""
     )
-    assert point is not None, f"no clickable point found along edge {edge_id}'s stroke"
+    assert point is not None, f"no pointer-target point found along edge {edge_id}'s stroke"
+    return point
+
+
+def _click_edge(page, edge_id: str) -> None:
+    """Click a topology edge's actual rendered stroke (see ``_point_on_edge``)."""
+    point = _point_on_edge(page, edge_id)
     page.mouse.click(point["x"], point["y"])
 
 
@@ -680,3 +689,58 @@ def test_link_inspector_survives_range_change(shell_dash, page):
     page.locator('[data-testid="topo-node-chassis-a"]').click()
     page.locator('[data-testid="topo-breadcrumb"]').wait_for()
     panel.wait_for(state="detached")
+
+
+def test_topology_legend_hover_and_tunnel_casing(shell_dash, page):
+    """The canvas explains itself: an anchored key decodes every line style and
+    status colour, hovering an edge names the link under the cursor without
+    opening the inspector, and a tunnel carries its casing."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topology-page"]').wait_for()
+    _wait_for_links(page, 6)
+
+    legend = page.locator('[data-testid="topo-legend"]')
+    legend.wait_for()
+    for provenance in ("declared", "implicit", "dynamic", "reports-for", "local"):
+        assert legend.locator(f'[data-testid="topo-legend-link-{provenance}"]').count() == 1
+    for status in ("ok", "down", "unreachable", "no-data", "unknown"):
+        assert legend.locator(f'[data-testid="topo-legend-status-{status}"]').count() == 1
+
+    toggle = page.locator('[data-testid="topo-legend-toggle"]')
+    assert toggle.get_attribute("aria-expanded") == "true"
+    toggle.click()
+    page.wait_for_function(
+        "() => document.querySelector('[data-testid=\"topo-legend-toggle\"]')"
+        ".getAttribute('aria-expanded') === 'false'"
+    )
+
+    # The tunnel's casing: a second, wider, translucent stroke on the same
+    # path. No other provenance draws one. React Flow's BaseEdge always adds
+    # its own invisible `react-flow__edge-interaction` hit-target path, which
+    # (verified against the live DOM) *also* carries a `stroke-opacity`
+    # attribute (`"0"`, to stay invisible) on every edge, tunnel or not — a
+    # bare `path[stroke-opacity]` selector matches that library boilerplate
+    # too and overcounts by one, so the casing has to be picked out by name.
+    tunnel = page.locator(
+        '[data-testid="topo-link-tun-demo"] path[stroke-opacity]'
+        ":not(.react-flow__edge-interaction)"
+    )
+    assert tunnel.count() == 1
+    other = page.locator(
+        '[data-testid="topo-link-app-db"] path[stroke-opacity]:not(.react-flow__edge-interaction)'
+    )
+    assert other.count() == 0
+
+    # Hovering an edge names it — and does NOT open the inspector. app-db's
+    # curve bows well clear of its own bounding-box center (verified against
+    # the live DOM: that point sits over bare pane), so the mouse has to
+    # land on a real point along the rendered stroke (_point_on_edge) rather
+    # than a naive hover — the same trap _click_edge documents for clicks.
+    point = _point_on_edge(page, "app-db")
+    page.mouse.move(point["x"], point["y"])
+    card = page.locator('[data-testid="topo-hover-app-db"]')
+    card.wait_for()
+    assert "app-db" in card.inner_text()
+    assert page.locator('[data-testid="link-inspector"]').count() == 0
