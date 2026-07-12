@@ -15,6 +15,7 @@ import {
 import { useMemo, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 
+import { useIsDark } from "../charts/useIsDark";
 import { healthForHosts } from "../data/health";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { buildTopoGraph, deriveReachability, type TopoEdge } from "../data/topology";
@@ -58,6 +59,11 @@ export function TopologyPage() {
   const session = useActiveSession();
   const range = useReviewStore((s) => s.range);
   const [sources, setSources] = useState(false);
+  // React Flow's stock chrome (the zoom controls) reads its dark tokens from a
+  // `dark` class on ITS OWN container, which the class theme.ts toggles on
+  // <html> can't reach — the library only sets it from `colorMode`. Same reason
+  // charts need this hook: a surface CSS `dark:` variants don't reach.
+  const dark = useIsDark();
   const expand = params.elementId;
   // Selection is scoped to the view identity — survives range/sources changes
   // (a selected link is static config) and nulls on session/element change.
@@ -161,6 +167,7 @@ export function TopologyPage() {
             edges={flow.edges}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
+            colorMode={dark ? "dark" : "light"}
             fitView
             minZoom={0.2}
             proOptions={{ hideAttribution: true }}

@@ -64,6 +64,24 @@ def _click_edge(page, edge_id: str) -> None:
     page.mouse.click(point["x"], point["y"])
 
 
+def _set_theme(page, *, dark: bool) -> None:
+    """Drive the overflow menu's two-state toggle to a known theme."""
+    if page.evaluate("document.documentElement.classList.contains('dark')") is dark:
+        return
+    page.locator('[data-testid="overflow-menu"]').click()
+    page.locator('[data-testid="menu-theme"]').click()
+    page.wait_for_function(
+        "(want) => document.documentElement.classList.contains('dark') === want", arg=dark
+    )
+
+
+def _mean_channel(color: str) -> float:
+    """Mean RGB channel of a computed ``rgb(...)``/``rgba(...)`` color."""
+    channels = [float(v) for v in re.findall(r"[\d.]+", color)[:3]]
+    assert len(channels) == 3, f"unparseable color {color!r}"
+    return sum(channels) / 3
+
+
 def test_empty_state_then_import(page, shell_dash):
     page.goto(shell_dash.url)
     page.locator('[data-testid="empty-review"]').wait_for()
@@ -441,6 +459,29 @@ def test_topology_toggle_and_map(shell_dash, page):
     assert page.locator('[data-testid="topo-node-chassis-a"] [data-status-segment]').count() == 3
     page.get_by_text("Grid", exact=True).click()
     page.locator('[data-testid="overview-page"]').wait_for()
+
+
+def test_topology_zoom_controls_follow_theme(shell_dash, page):
+    """React Flow's stock chrome (the zoom controls) is themed by the library's
+    own ``.react-flow.dark`` token block, which keys off a `dark` class on the
+    React Flow CONTAINER — the `dark` class theme.ts toggles on <html> cannot
+    reach that selector. The page must hand React Flow an explicit colorMode;
+    without it the zoom buttons keep their light-mode white background while
+    the rest of the app is dark.
+    """
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    zoom_in = page.locator("button.react-flow__controls-zoomin")
+    zoom_in.wait_for()
+
+    for want_dark, bound in ((True, 128), (False, 200)):
+        _set_theme(page, dark=want_dark)
+        mean = _mean_channel(zoom_in.evaluate("(el) => getComputedStyle(el).backgroundColor"))
+        if want_dark:
+            assert mean < bound, f"zoom button stayed light in dark mode (mean channel {mean})"
+        else:
+            assert mean > bound, f"zoom button is not light in light mode (mean channel {mean})"
 
 
 def test_topology_drill_in_and_singleton(shell_dash, page):
