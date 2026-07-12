@@ -109,9 +109,14 @@ jobs:
         run: make web
       # Unit tests + coverage run in the dedicated web-quality job; this job
       # builds the dashboard purely for the browser e2e that follows. Install
-      # only this leg's engine (+ its system libs).
+      # only this leg's engine (+ its system libs). --with-deps runs apt-get
+      # update, which refreshes every source on the runner image — including a
+      # Google Chrome repo we never use — so a mirror sync there can fail this
+      # step before a single test runs (issue #129). Drop it first.
       - name: Install ${{ matrix.browser }} with system dependencies
-        run: uv run --group dev playwright install --with-deps ${{ matrix.browser }}
+        run: |
+          scripts/ci_drop_unused_apt_sources.sh
+          uv run --group dev playwright install --with-deps ${{ matrix.browser }}
       - name: Run dashboard browser e2e (${{ matrix.browser }})
         run: uv run nox -k ${{ matrix.browser }}
 
@@ -190,8 +195,12 @@ jobs:
         run: make web
       # Headless Chromium captures the build-time GUI media (screenshots)
       # via scripts/capture_docs_media.py, hooked from docs/conf.py.
-      # --with-deps also apt-installs the browser's runtime libraries.
-      - run: uv run playwright install --with-deps chromium
+      # --with-deps also apt-installs the browser's runtime libraries, so this
+      # job carries the same third-party-apt-source exposure as dashboard-e2e
+      # (issue #129) and takes the same guard.
+      - run: |
+          scripts/ci_drop_unused_apt_sources.sh
+          uv run playwright install --with-deps chromium
       - run: uv run nox -s docs
 
   # If any job above fails on a push to main, open (or update) a tracking
