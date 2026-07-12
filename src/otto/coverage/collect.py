@@ -182,7 +182,7 @@ async def collect_coverage(
     # defaulting to every host in the lab. This is how a lab's SSH **hop** (e.g.
     # `basil` fronting `sprout_cov`) is kept out of the coverage set — it is
     # excluded by the pattern, not inferred from the fact that it emits no .gcda.
-    hosts_pattern = cov_config.get("hosts")
+    hosts_pattern: str | None = cov_config.get("hosts")
     cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
 
     # Unix hosts compile the SUT and emit .gcda to a filesystem we fetch over

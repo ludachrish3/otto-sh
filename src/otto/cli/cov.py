@@ -488,7 +488,7 @@ async def _connect_cov_hosts() -> tuple[
 
     # Same repo-declared selector collect_coverage uses to keep infrastructure
     # hosts (e.g. an SSH hop) out of the coverage set.
-    hosts_pattern = cov_config.get("hosts")
+    hosts_pattern: str | None = cov_config.get("hosts")
     cov_pattern = re.compile(hosts_pattern) if hosts_pattern else None
 
     cov_hosts = list(all_hosts(pattern=cov_pattern))
