@@ -27,6 +27,43 @@ def _import_fixture(page, name: str) -> None:
     page.locator('[data-testid="review-bar"]').wait_for()
 
 
+def _click_edge(page, edge_id: str) -> None:
+    """Click a topology edge's actual rendered stroke, not its naive
+    bounding-box center.
+
+    React Flow's parallel/diagonal edges can lay node cards directly over a
+    curved edge's bbox-center point (verified empirically against
+    kitchen-sink's layout: the impaired ``metrics-udp`` edge's bbox center
+    sits under the unrelated ``mgmt-01`` node card) — a plain
+    ``locator.click()`` or even ``click(force=True)`` there silently lands on
+    whatever element the browser's real hit-test resolves to at that pixel
+    (``force`` only skips Playwright's own actionability checks, not the
+    browser's actual hit-testing), which was observed to navigate to
+    ``#/host/mgmt-01`` instead of opening the inspector. React Flow renders a
+    wide invisible ``react-flow__edge-interaction`` path specifically to be
+    the edge's click target; this samples points along its actual curve and
+    clicks the first one that the browser's own ``elementFromPoint`` still
+    resolves back to this edge.
+    """
+    path = page.locator(f'[data-testid="topo-link-{edge_id}"] path.react-flow__edge-interaction')
+    point = path.evaluate(
+        """(el) => {
+            const total = el.getTotalLength();
+            for (let i = 1; i < 20; i++) {
+                const pt = el.getPointAtLength(total * (i / 20));
+                const ctm = el.getScreenCTM();
+                const x = ctm.a * pt.x + ctm.c * pt.y + ctm.e;
+                const y = ctm.b * pt.x + ctm.d * pt.y + ctm.f;
+                const top = document.elementFromPoint(x, y);
+                if (top === el || el.parentElement.contains(top)) return { x, y };
+            }
+            return null;
+        }"""
+    )
+    assert point is not None, f"no clickable point found along edge {edge_id}'s stroke"
+    page.mouse.click(point["x"], point["y"])
+
+
 def test_empty_state_then_import(page, shell_dash):
     page.goto(shell_dash.url)
     page.locator('[data-testid="empty-review"]').wait_for()
@@ -389,3 +426,190 @@ def test_theme_toggle_with_charts_open(shell_dash, page):
         "(prev) => document.documentElement.classList.contains('dark') !== prev", arg=before_dark
     )
     page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
+
+
+def test_topology_toggle_and_map(shell_dash, page):
+    """Grid <-> Topology toggle (UX §6); map renders elements at hop depths
+    rooted at local (UX §10)."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.get_by_text("Topology", exact=True).click()
+    page.locator('[data-testid="topology-page"]').wait_for()
+    for node in ("local", "edge-gw", "chassis-a", "workers", "db-01", "mgmt-01"):
+        assert page.locator(f'[data-testid="topo-node-{node}"]').count() == 1
+    # Rollup segments on the chassis element node (3 members: lc1, lc2, sup).
+    assert page.locator('[data-testid="topo-node-chassis-a"] [data-status-segment]').count() == 3
+    page.get_by_text("Grid", exact=True).click()
+    page.locator('[data-testid="overview-page"]').wait_for()
+
+
+def test_topology_drill_in_and_singleton(shell_dash, page):
+    """Element enter -> intra view with slot badges; singleton goes straight
+    to the host page."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topo-node-chassis-a"]').click()
+    page.locator('[data-testid="topo-breadcrumb"]').wait_for()
+    lc1 = page.locator('[data-testid="topo-node-chassis-a_lc1"]')
+    lc1.wait_for()
+    assert "slot 1" in lc1.inner_text()
+    lc1.click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+    # Singleton: db-01's element node lands on the host page directly.
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topo-node-db-01"]').click()
+    page.locator('[data-testid="subject-page"]').wait_for()
+
+
+def test_link_inspector_and_parallel_edges(shell_dash, page):
+    """Links are first-class: declared edges select into the inspector; the
+    workers~db pair fans out as two parallel edges; impair pill shows."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topology-page"]').wait_for()
+    assert page.locator('[data-testid^="topo-link-"]').count() >= 6
+    impair = page.locator('[data-testid^="topo-impair-"]')
+    assert impair.count() == 1
+    assert "edge-gw" in impair.inner_text()
+    # Click the impaired edge's stroke and inspect (see _click_edge's
+    # docstring: a naive bbox-center click lands on an unrelated node here).
+    marker_testid = impair.get_attribute("data-testid")
+    edge_id = marker_testid.removeprefix("topo-impair-")
+    _click_edge(page, edge_id)
+    panel = page.locator('[data-testid="link-inspector"]')
+    panel.wait_for()
+    assert "udp" in page.locator('[data-testid="inspector-protocol"]').inner_text()
+    assert "coming soon" in page.locator('[data-testid="inspector-netem"]').inner_text()
+    page.get_by_label("Close").click()
+    panel.wait_for(state="detached")
+
+
+def test_sources_overlay_toggles_reports_edges(shell_dash, page):
+    """Sources overlay (UX §10): default off; toggling reveals the mgmt
+    reports-for edge and toggling again removes it."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topology-page"]').wait_for()
+    reports = page.locator('[data-testid^="topo-link-reports:"]')
+    assert reports.count() == 0
+    page.locator('[data-testid="sources-toggle"]').click()
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-testid^=\"topo-link-reports:\"]').length === 1"
+    )
+    page.locator('[data-testid="sources-toggle"]').click()
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-testid^=\"topo-link-reports:\"]').length === 0"
+    )
+
+
+def test_cascade_unreachable_vs_down(shell_dash, page):
+    """Reachability cascade (spec headline): dead gateway renders down; the
+    silent hosts behind it render unreachable, and the rack element node's
+    worst-status rollup reports unreachable (not down — the whole point of
+    the cascade is to distinguish "genuinely down" from "silent because an
+    ancestor is down"); the intra view's member nodes carry unreachable
+    themselves, and both declared parallel links between them still render."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "cascade.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    gw = page.locator('[data-testid="topo-node-gw-a"]')
+    gw.wait_for()
+    assert gw.get_attribute("data-status") == "down"
+    rack = page.locator('[data-testid="topo-node-rack-a"]')
+    # Verified against the running DOM: rack-a's two members (n1, n2) are
+    # both "unreachable" (silent + dead ancestor gw-a), and worst() only
+    # promotes to "down" if a member is itself down — neither is, so the
+    # rollup's worst status is "unreachable", not "down".
+    assert rack.get_attribute("data-status") == "unreachable"
+    assert rack.locator('[data-status-segment="unreachable"]').count() == 2
+    # Intra view: the member nodes carry unreachable themselves.
+    rack.click()
+    n1 = page.locator('[data-testid="topo-node-rack-a_n1"]')
+    n1.wait_for()
+    assert n1.get_attribute("data-status") == "unreachable"
+    # Parallel rack pair (cascade.json's "pair-a"/"pair-b" declared links
+    # between rack-a_n1 and rack-a_n2) fans out as two distinct declared
+    # edges — link ids pass through as edge ids verbatim (data/topology.ts).
+    assert page.locator('[data-testid="topo-link-pair-a"]').count() == 1
+    assert page.locator('[data-testid="topo-link-pair-b"]').count() == 1
+
+
+def test_topology_pan_zoom_fit(shell_dash, page):
+    """Pan/zoom smoke: dragging the pane moves the viewport; Fit restores."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topo-node-local"]').wait_for()
+    viewport = page.locator(".react-flow__viewport")
+    before = viewport.get_attribute("style")
+    pane = page.locator(".react-flow__pane")
+    box = pane.bounding_box()
+    page.mouse.move(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(box["x"] + box["width"] / 2 + 180, box["y"] + box["height"] / 2 + 60)
+    page.mouse.up()
+    page.wait_for_function(
+        "(prev) => document.querySelector('.react-flow__viewport').getAttribute('style') !== prev",
+        arg=before,
+    )
+    page.locator('[data-testid="topo-fit"]').click()
+    page.locator('[data-testid="topo-node-local"]').wait_for()
+
+
+def test_link_inspector_survives_range_change(shell_dash, page):
+    """Inspector selection is scoped to the view identity: it survives a
+    review-bar range apply (a selected link is static config) and closes
+    on navigation to another view.
+
+    Desktop-width viewport: the non-modal inspector is a fixed full-height
+    right aside, 384px wide (LinkInspector.tsx). At Playwright's default
+    1280px width the panel's span (x >= 896) physically covers the review
+    bar's right end where Apply sits (center x ~1016) — plain visual
+    occlusion, not a focus trap or backdrop; everything left of the panel
+    is fully interactive. Real desktop widths put the whole review bar left
+    of the panel edge; 1600px reproduces that."""
+    page.set_viewport_size({"width": 1600, "height": 900})
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topology-page"]').wait_for()
+    impair = page.locator('[data-testid^="topo-impair-"]')
+    marker_testid = impair.get_attribute("data-testid")
+    edge_id = marker_testid.removeprefix("topo-impair-")
+    _click_edge(page, edge_id)
+    panel = page.locator('[data-testid="link-inspector"]')
+    panel.wait_for()
+
+    # Custom range apply — same from-input-derived idiom as
+    # test_custom_range_apply_and_reset: narrow +10..+20min off the
+    # pre-populated LOCAL from-input (datetime-local is local wall-clock).
+    start_local = page.locator('[data-testid="range-from"]').input_value()
+    t0 = datetime.strptime(start_local, "%Y-%m-%dT%H:%M")  # noqa: DTZ007 — naive local wall-clock by design
+    page.locator('[data-testid="range-from"]').fill(
+        (t0 + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M")
+    )
+    page.locator('[data-testid="range-to"]').fill(
+        (t0 + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M")
+    )
+    # Before Apply: the default "Full" range preset is still selected
+    # (react-aria's Radio marks the active one with a `data-selected` attr).
+    assert page.locator('[data-testid="range-presets"] [data-selected]').count() == 1
+    page.locator('[data-testid="range-apply"]').click()
+    # Discriminating proof the apply actually landed (not just that the
+    # inputs hold the typed text): a custom window matches none of the
+    # presets, so the "Full" pill loses its selected state once the store's
+    # range is genuinely applied.
+    page.wait_for_function(
+        "() => document.querySelectorAll("
+        "'[data-testid=\"range-presets\"] [data-selected]').length === 0"
+    )
+    assert panel.is_visible()
+
+    # Navigating into an element view is a different view identity ->
+    # the inspector detaches.
+    page.locator('[data-testid="topo-node-chassis-a"]').click()
+    page.locator('[data-testid="topo-breadcrumb"]').wait_for()
+    panel.wait_for(state="detached")

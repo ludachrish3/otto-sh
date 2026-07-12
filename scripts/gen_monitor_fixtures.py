@@ -468,6 +468,68 @@ def minimal() -> MonitorExport:
     return MonitorExport(format=1, sessions=[session])
 
 
+def cascade() -> MonitorExport:
+    """Dead-gateway reachability scenario (topology spec 2026-07-11).
+
+    ``gw-a`` and both rack hosts behind it go silent at 60 min: raw health
+    reads down x3, the topology cascade must read down x1 (the gateway) +
+    unreachable x2 (its children). ``solo-ok`` proves healthy branches are
+    untouched. The rack pair also carries two declared links between the
+    SAME endpoint pair -- the parallel-edge fan-out case.
+    """
+    rng = random.Random(20260711)  # noqa: S311 — deterministic dummy data, not cryptography
+    hosts = [
+        _host("gw-a", "gw-a", "10.30.0.1", interfaces={"eth0": "10.30.0.1", "eth1": "10.30.1.1"}),
+        _host("rack-a_n1", "rack-a", "10.30.1.11", board="n1", slot=1, hop="gw-a"),
+        _host("rack-a_n2", "rack-a", "10.30.1.12", board="n2", slot=2, hop="gw-a"),
+        _host("solo-ok", "solo-ok", "10.30.2.21"),
+    ]
+    links = [
+        *_implicit_links(hosts),
+        _link(
+            ("rack-a_n1", "eth0", "10.30.1.11"), ("rack-a_n2", "eth0", "10.30.1.12"), name="pair-a"
+        ),
+        _link(
+            ("rack-a_n1", "eth0", "10.30.1.11"),
+            ("rack-a_n2", "eth0", "10.30.1.12"),
+            protocol="udp",
+            name="pair-b",
+        ),
+    ]
+    cadence = 30.0
+    # _series ticks are inclusive of t == duration_s (the session-end sample),
+    # but the gap test is half-open (lo <= t < hi): a hi of exactly
+    # _DURATION_S would NOT catch that final tick, leaving one spurious
+    # sample at session end and undoing "silent through session end". Push
+    # hi one cadence past the end so the boundary tick is caught too.
+    dead = (3600.0, _DURATION_S + cadence)
+    gaps_for = {"gw-a": (dead,), "rack-a_n1": (dead,), "rack-a_n2": (dead,)}
+    metrics: list[MetricRecord] = []
+    for h in hosts:
+        metrics += _series(
+            rng,
+            h.id,
+            "CPU %",
+            _diurnal(rng, base=35.0, amp=20.0),
+            start=BASE,
+            duration_s=_DURATION_S,
+            cadence_s=cadence,
+            gaps=gaps_for.get(h.id, ()),
+        )
+    meta = _meta([("CPU %", "%", "cpu", 30.0)], tables=False)
+    session = SessionRecord(
+        id="2026-07-01T08-00-00-cascade",
+        label="cascade",
+        start=BASE,
+        end=BASE + timedelta(seconds=_DURATION_S),
+        lab=LabSnapshot(hosts=hosts, links=links),
+        meta=meta,
+        chart_map=_chart_map(meta),
+        metrics=metrics,
+    )
+    return MonitorExport(format=1, sessions=[session])
+
+
 def drift() -> MonitorExport:
     """Three sessions across months over one evolving lab (spec §5)."""
     rng = random.Random(77)  # noqa: S311 — deterministic dummy data, not cryptography
@@ -593,7 +655,12 @@ def dumps(doc: MonitorExport) -> str:
 
 def build_all() -> dict[str, MonitorExport]:
     """All fixture documents, keyed by file stem."""
-    return {"kitchen-sink": kitchen_sink(), "minimal": minimal(), "drift": drift()}
+    return {
+        "kitchen-sink": kitchen_sink(),
+        "minimal": minimal(),
+        "drift": drift(),
+        "cascade": cascade(),
+    }
 
 
 def main(out_dir: str) -> None:

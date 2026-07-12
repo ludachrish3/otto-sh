@@ -9,11 +9,11 @@ import { useHashLocation } from "wouter/use-hash-location";
 import { useReviewStore } from "./data/reviewStore";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SubjectPage } from "./pages/SubjectPage";
-import { TopologyPage } from "./pages/TopologyPage";
 import { AppBar } from "./shell/AppBar";
 import { EmptyState } from "./shell/EmptyState";
 import { ImportProvider } from "./shell/ImportExport";
 import { ReviewBar } from "./shell/ReviewBar";
+import { TopologyPage } from "./topo/TopologyPage";
 
 function App() {
   const hasData = useReviewStore((s) => s.sessions.length > 0);
@@ -47,6 +47,7 @@ function App() {
             <Route path="/" component={OverviewPage} />
             <Route path="/host/:id" component={SubjectPage} />
             <Route path="/topology" component={TopologyPage} />
+            <Route path="/topology/:elementId" component={TopologyPage} />
             <Route>
               <main data-testid="not-found" className="p-4 text-sm text-gray-500">
                 Not found.

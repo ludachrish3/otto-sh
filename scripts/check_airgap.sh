@@ -65,6 +65,24 @@ ALLOWLIST=(
     # CSS — a license attribution string baked in by the tailwind compiler,
     # never fetched by anything at runtime.
     'https://tailwindcss.com'
+    # @xyflow/react (topology, Plan 4): bundled unconditionally by mounting
+    # <ReactFlow>, but none of these strings are ever fetched at runtime.
+    #   - the Attribution component's link constant: a module-level const,
+    #     so it ships in the bundle regardless of props, but the component
+    #     returns null under `proOptions.hideAttribution` (which the
+    #     topology page sets), so the <a href> never reaches the DOM (same
+    #     category as the plotly.com attribution entry above).
+    'https://reactflow.dev?utm_source=attribution'
+    #   - the default onError handler's docs pointer, interpolated only
+    #     into console.warn message text (same category as
+    #     react.dev/errors/).
+    'https://reactflow.dev/'
+    #   - xyflow's error-help URL builder, a template literal whose `${e}`
+    #     survives minification verbatim (the gate matches the extracted
+    #     string exactly as it appears in the dist); only ever interpolated
+    #     into thrown-error/console messages (same category as
+    #     react.dev/errors/).
+    'https://${e}flow.dev/error#001'
 )
 
 # One match per output line, with file:line: prefix for diagnostics. The

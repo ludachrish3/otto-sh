@@ -24,6 +24,23 @@
   --color-status-error: #d03b3b;
 }
 
+/* Topology edge strokes (Plan 4, provenance table): consumed by inline SVG
+   style objects in LinkEdge.tsx, which can't use Tailwind dark: variants —
+   so plain custom properties (not @theme tokens), flipped by the same
+   `dark` class on <html> that drives everything else. implicit/reports
+   have no dark alternate in the binding table; dynamic shares declared's
+   variable. */
+:root {
+  --topo-edge-implicit: #9ca3af;
+  --topo-edge-declared: #4b5563;
+  --topo-edge-local: #d1d5db;
+  --topo-edge-reports: #9ca3af;
+}
+.dark {
+  --topo-edge-declared: #9ca3af;
+  --topo-edge-local: #374151;
+}
+
 body {
   @apply bg-white font-sans text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100;
 }

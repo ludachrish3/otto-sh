@@ -2,11 +2,12 @@
 // host status tiles — status dot · name · board·slot · labeled headline
 // metric; down tiles show the outage duration instead. All health is
 // derived, range-scoped (data/health.ts) — nothing here is stored state.
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 
 import { elementRollup, headlineFor, healthForHosts, type SubjectHealth } from "../data/health";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { formatSpan } from "../data/time";
+import { ToggleGroup } from "../ui/ToggleGroup";
 
 const DOT_CLASS: Record<SubjectHealth["status"], string> = {
   ok: "bg-status-ok",
@@ -23,6 +24,7 @@ const SEGMENT_CLASS: Record<SubjectHealth["status"], string> = {
 };
 
 export function OverviewPage() {
+  const [, navigate] = useLocation();
   const session = useActiveSession();
   const range = useReviewStore((s) => s.range);
   if (!session) return null;
@@ -32,6 +34,20 @@ export function OverviewPage() {
 
   return (
     <main data-testid="overview-page" className="flex flex-col gap-6 p-4">
+      <div className="flex items-center gap-3">
+        <ToggleGroup
+          testId="view-toggle"
+          label="View"
+          selectedId="grid"
+          onSelect={(id) => {
+            if (id === "topology") navigate("/topology");
+          }}
+          options={[
+            { id: "grid", label: "Grid" },
+            { id: "topology", label: "Topology" },
+          ]}
+        />
+      </div>
       {session.elements.map((el) => {
         const rollup = elementRollup(el, healths, session);
         const memberIds = [...el.hostIds].sort((a, b) => {

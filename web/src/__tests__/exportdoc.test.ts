@@ -3,6 +3,7 @@
 // imported directly (vite/vitest resolve JSON imports).
 import { describe, expect, it } from "vitest";
 
+import cascadeDoc from "../../fixtures/cascade.json";
 import driftDoc from "../../fixtures/drift.json";
 import kitchenDoc from "../../fixtures/kitchen-sink.json";
 import minimalDoc from "../../fixtures/minimal.json";
@@ -30,8 +31,8 @@ describe("parseExportDocument", () => {
     expect(() => parse({ format: 2, sessions: [] })).toThrow(/format 2/);
   });
 
-  it("parses all three committed fixtures without warnings", () => {
-    for (const doc of [kitchenDoc, minimalDoc, driftDoc]) {
+  it("parses every committed fixture without warnings", () => {
+    for (const doc of [kitchenDoc, minimalDoc, driftDoc, cascadeDoc]) {
       const result = parse(doc);
       expect(result.warnings).toEqual([]);
       expect(result.sessions.length).toBeGreaterThan(0);

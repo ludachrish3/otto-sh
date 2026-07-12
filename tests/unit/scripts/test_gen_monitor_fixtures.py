@@ -27,7 +27,7 @@ def test_deterministic():
 
 def test_documents_round_trip_and_stems():
     docs = build_all()
-    assert set(docs) == {"kitchen-sink", "minimal", "drift"}
+    assert set(docs) == {"kitchen-sink", "minimal", "drift", "cascade"}
     for doc in docs.values():
         assert MonitorExport.model_validate(json.loads(dumps(doc))) is not None
 
