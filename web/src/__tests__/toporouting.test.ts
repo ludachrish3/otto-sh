@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import { COL_W, ROW_H } from "../topo/layout";
-import { type Rect, routeEdge } from "../topo/routing";
+import { INTERACTION_WIDTH, type Rect, routeEdge } from "../topo/routing";
 
 const W = 208; // element node: w-52
 const H = 72; // element node height
@@ -139,6 +139,74 @@ describe("routeEdge — occlusion invariant across row spans", () => {
           expect(inside).toBe(false);
         }
       }
+    }
+  });
+});
+
+describe("routeEdge — parallel edges stay independently clickable", () => {
+  // The bug this pins (found in CI, issue #131): React Flow's pointer target for
+  // an edge is a 20px-wide invisible `react-flow__edge-interaction` path, NOT the
+  // 2px visible stroke. Two parallel edges whose centrelines are closer than half
+  // of that share one hit target — the one painted last wins and the other becomes
+  // completely unclickable: its inspector and hover card are unreachable, and no
+  // amount of aiming helps. Shipped constants put app-db 6px from metrics-udp; it
+  // was reachable at 0 of 19 sampled points on its own stroke.
+  //
+  // Occlusion tests could not see this: both edges were perfectly visible and
+  // cleared every box. They were simply drawn on top of each other.
+  /** How many of 19 evenly-spaced points along `inner` sit far enough from
+   * `outer` to escape its hit band — deliberately mirroring the 19-sample scan
+   * `_point_on_edge` runs in the Playwright lane, so this fails for the same
+   * reason the browser does.
+   *
+   * Note two parallel edges NECESSARILY converge at their shared endpoints, so
+   * some points are always buried. What matters is that a usable stretch in the
+   * middle is not. */
+  function clickablePoints(inner: string, outer: string): number {
+    const innerPts = samplePath(inner, 20);
+    const outerPts = samplePath(outer, 200);
+    let clear = 0;
+    for (let i = 1; i < 20; i++) {
+      // Distance from this point on the inner curve to the NEAREST point on the
+      // outer curve — the outer edge's hit band is centred on its own stroke.
+      let nearest = Number.POSITIVE_INFINITY;
+      for (const [ox, oy] of outerPts) {
+        nearest = Math.min(nearest, Math.hypot(innerPts[i][0] - ox, innerPts[i][1] - oy));
+      }
+      if (nearest > INTERACTION_WIDTH / 2) clear++;
+    }
+    return clear;
+  }
+
+  const top: Rect = { x: COL_W, y: 0, width: W, height: H };
+
+  it.each([
+    [2, 3],
+    [3, 4],
+    [4, 6],
+  ])("leaves %i parallel links each with a reachable stretch (row span %i)", (groupSize, rowSpan) => {
+    const bottom: Rect = { x: COL_W, y: rowSpan * ROW_H, width: W, height: H };
+    const paths = Array.from(
+      { length: groupSize },
+      (_, i) => routeEdge(top, bottom, i, groupSize).path,
+    );
+    for (let i = 1; i < groupSize; i++) {
+      // The inner sibling is the one that gets buried (the outer paints later),
+      // so it is the one that must survive. 5 of 19 is roughly the middle
+      // quarter of the curve — enough to hit, and far more than the ZERO the
+      // shipped constants left it with.
+      expect(clickablePoints(paths[i - 1], paths[i])).toBeGreaterThanOrEqual(5);
+    }
+  });
+
+  it("never emits two identical paths for one parallel group", () => {
+    const bottom: Rect = { x: COL_W, y: 4 * ROW_H, width: W, height: H };
+    for (const groupSize of [2, 3, 4]) {
+      const paths = Array.from(
+        { length: groupSize },
+        (_, i) => routeEdge(top, bottom, i, groupSize).path,
+      );
+      expect(new Set(paths).size).toBe(groupSize);
     }
   });
 });

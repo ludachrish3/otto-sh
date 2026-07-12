@@ -724,8 +724,7 @@ def test_topology_legend_hover_and_tunnel_casing(shell_dash, page):
     # bare `path[stroke-opacity]` selector matches that library boilerplate
     # too and overcounts by one, so the casing has to be picked out by name.
     tunnel = page.locator(
-        '[data-testid="topo-link-tun-demo"] path[stroke-opacity]'
-        ":not(.react-flow__edge-interaction)"
+        '[data-testid="topo-link-tun-demo"] path[stroke-opacity]:not(.react-flow__edge-interaction)'
     )
     assert tunnel.count() == 1
     other = page.locator(

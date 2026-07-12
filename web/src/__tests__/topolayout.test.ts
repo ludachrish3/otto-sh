@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { TopoNode } from "../data/topology";
-import { layoutTopo } from "../topo/layout";
+import { COL_W, layoutTopo, ROW_H } from "../topo/layout";
 
 function node(id: string, depth: number, kind: TopoNode["kind"] = "element"): TopoNode {
   return { id, kind, depth, label: id };
@@ -16,12 +16,12 @@ describe("layoutTopo", () => {
       node("deep", 2),
     ]);
     expect(pos.get("local")).toEqual({ x: 0, y: 0 });
-    expect(pos.get("alpha")?.x).toBe(280);
-    expect(pos.get("beta")?.x).toBe(280);
-    expect(pos.get("deep")?.x).toBe(560);
+    expect(pos.get("alpha")?.x).toBe(COL_W);
+    expect(pos.get("beta")?.x).toBe(COL_W);
+    expect(pos.get("deep")?.x).toBe(2 * COL_W);
     // alpha sorts before beta -> row 0 vs row 1
     expect(pos.get("alpha")?.y).toBe(0);
-    expect(pos.get("beta")?.y).toBe(110);
+    expect(pos.get("beta")?.y).toBe(ROW_H);
   });
 
   it("orders hosts by slot then id within a column", () => {
@@ -41,7 +41,7 @@ describe("layoutTopo", () => {
     };
     const pos = layoutTopo([b, a]);
     expect(pos.get("za")?.y).toBe(0); // slot 1 before slot 2 despite id order
-    expect(pos.get("ab")?.y).toBe(110);
+    expect(pos.get("ab")?.y).toBe(ROW_H);
   });
 
   it("is deterministic across input order", () => {

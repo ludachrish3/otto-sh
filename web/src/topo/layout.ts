@@ -3,7 +3,19 @@
 // stay reproducible. O(n log n); fine for lab scale (tens of nodes).
 import type { TopoNode } from "../data/topology";
 
-export const COL_W = 280;
+/** Column pitch. The gutter it leaves (COL_W minus the 208px element node) has
+ * to hold TWO things at once: a bow wide enough to carry a same-column edge
+ * clear of the boxes between its endpoints, AND enough spread between parallel
+ * edges that each one keeps its own pointer target. React Flow gives every edge
+ * a 20px-wide invisible hit path, so two parallel edges whose centrelines are
+ * less than ~10px apart share a single hit target — the inner one becomes
+ * unclickable, its inspector unreachable.
+ *
+ * At 280 the gutter was 72px, which fits the bow but leaves only ~4px of spread:
+ * `app-db` was literally unreachable under `metrics-udp` (0 of 19 sampled points
+ * on its own stroke resolved back to it). 320 leaves 112px, which carries both,
+ * and holds up to FOUR parallel links between one pair. See routing.ts. */
+export const COL_W = 320;
 export const ROW_H = 110;
 
 function rowOrder(a: TopoNode, b: TopoNode): number {

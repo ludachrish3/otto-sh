@@ -43,12 +43,28 @@ const CTRL_Y_MAX = 28;
  * distance still left to clear is LEAN_INSET + margin regardless of how
  * wide the box is; a wider box just means the anchor itself sits further
  * along the shared face. Clamped per-edge to what the gutter can hold, see
- * `maxBulge` in routeSameColumn. */
-const BOW_BASE = 104;
+ * `maxBulge` in routeSameColumn.
+ *
+ * 112 is the measured minimum that clears every intervening box for row spans
+ * up to 20, plus a small margin. */
+const BOW_BASE = 112;
 
 /** Extra bow per parallel index. OUTWARD ONLY: a centred fan pushes the inner
- * sibling back under the very box the bow exists to clear. */
-const FAN_STEP = 12;
+ * sibling back under the very box the bow exists to clear.
+ *
+ * This is a CEILING, not the step actually used — routeSameColumn spreads the
+ * group across whatever bow range the gutter leaves, so a big group fans
+ * tighter rather than colliding. The floor that matters is INTERACTION_WIDTH/2
+ * (below): fall under it and the inner edge loses its pointer target entirely. */
+const FAN_STEP = 28;
+
+/** React Flow gives every edge a 20px-wide invisible `react-flow__edge-interaction`
+ * path — that, not the 2px visible stroke, is what the pointer actually hits.
+ * Two parallel edges whose centrelines are closer than half of it share one hit
+ * target: the one painted last wins, and the other becomes unclickable, its
+ * inspector and hover card unreachable. This is not a cosmetic threshold, and
+ * `toporouting.test.ts` pins it. */
+export const INTERACTION_WIDTH = 20;
 
 /** How much of the gutter to leave unused on the far side when clamping the
  * bow — keeps the curve's apex from touching the next column's boxes. */

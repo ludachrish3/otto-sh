@@ -21,6 +21,50 @@ from tests._fixtures._fake_collector import FakeCollector
 
 HISTORICAL_JSON = Path(__file__).parent / "data" / "historical.json"
 
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+_WEB_SRC = _REPO_ROOT / "web" / "src"
+
+
+def _stale_dist_reason() -> str | None:
+    """Report the newest ``web/src`` file that post-dates the built bundle.
+
+    These tests drive the BUILT dashboard, not the sources — and ``pytest``
+    does not build it. Only ``make web`` (and CI, which runs ``make web``
+    ahead of the nox call) does. So editing ``web/src`` and re-running pytest
+    directly silently re-tests the PREVIOUS bundle, and every assertion about
+    the change passes or fails for reasons that have nothing to do with the
+    code under test.
+
+    That is not hypothetical: it is how issue #131 shipped. The final edge
+    routing constants were verified green in this lane three times without the
+    bundle ever being rebuilt; CI, which does build, was the first place they
+    ran, and they were broken. A green browser test against a stale bundle is
+    worse than no test — it actively certifies the wrong artifact.
+
+    Returns ``None`` when the bundle is current (or when there are no web
+    sources to compare against, e.g. an installed sdist).
+    """
+    if not _WEB_SRC.is_dir():
+        return None
+    try:
+        built = _dist_index_path().stat().st_mtime
+    except RuntimeError:
+        return None  # missing entirely — the existing guard below reports that
+    newest, newest_path = 0.0, None
+    for path in _WEB_SRC.rglob("*"):
+        if not path.is_file():
+            continue
+        mtime = path.stat().st_mtime
+        if mtime > newest:
+            newest, newest_path = mtime, path
+    if newest_path is None or newest <= built:
+        return None
+    return (
+        f"The built dashboard is STALE: {newest_path.relative_to(_REPO_ROOT)} is newer "
+        f"than the bundle these tests serve. pytest does not build the web dist — run "
+        f"`make web` first, or you will be testing the previous bundle (see issue #131)."
+    )
+
 
 def pytest_configure(config: pytest.Config) -> None:
     """Session guard: fail fast with one clear message if the React build is missing.
@@ -78,6 +122,9 @@ def pytest_configure(config: pytest.Config) -> None:
         _dist_index_path()
     except RuntimeError as exc:
         pytest.exit(str(exc), returncode=1)
+    stale = _stale_dist_reason()
+    if stale is not None:
+        pytest.exit(stale, returncode=1)
 
 
 @pytest.fixture(autouse=True)
