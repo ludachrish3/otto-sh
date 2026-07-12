@@ -43,12 +43,32 @@
             "source.organizeImports.biome": "explicit"
         }
     },
+    // Each git worktree under .claude/worktrees/ is a FULL checkout carrying its
+    // own .venv and node_modules. Three worktrees = 15,559 directories = 96% of
+    // everything the file watcher was tracking (the repo itself is ~633). Against
+    // an fs.inotify.max_user_watches ceiling of 28,800, a handful of worktrees
+    // blows straight through it and the watcher process balloons.
     "files.watcherExclude": {
         ".pytest_cache/**": true,
         ".nox/**": true,
         ".ruff_cache/**": true,
         ".venv/**": true,
-        "web/node_modules/**": true,
-        "web/coverage/**": true
+        "**/node_modules/**": true,
+        "web/coverage/**": true,
+        ".claude/worktrees/**": true,
+        ".superpowers/**": true,
+        "reports/**": true
     },
+    "search.exclude": {
+        ".nox/**": true,
+        ".venv/**": true,
+        "**/node_modules/**": true,
+        ".claude/worktrees/**": true,
+        ".superpowers/**": true,
+        "reports/**": true
+    },
+    // tsserver defaults to a 3072 MB heap, which is most of this 3.7 GB box's RAM.
+    // web/ is small and does not need it. NOTE the key: the older
+    // `typescript.tsserver.maxTsServerMemory` is deprecated in favour of this one.
+    "js/ts.tsserver.maxMemory": 1024,
 }
