@@ -1,21 +1,25 @@
 #!/usr/bin/env python3
-"""Generate the docs' GUI media — screenshots and video clips — at build time.
+"""Generate the docs' GUI media — screenshots — at build time.
 
 Nothing under ``docs/_static/generated/`` is committed: docs/conf.py invokes
 this script on every HTML build (dev VM, CI, Read the Docs), so the media is
-produced from the *live* dashboard code and can never drift from what otto
+produced from the *live* frontend code and can never drift from what otto
 actually looks like — the same zero-rot property the architecture tree gets
 from ``inheritance_diagram``.
 
-The pipeline reuses the browser-e2e fixtures (``DashboardHarness`` +
+The pipeline reuses the browser-e2e harness (``DashboardHarness`` +
 ``FakeCollector`` from ``tests/_fixtures``): the real ``MonitorServer`` serves
-the real dashboard over the production store/SSE paths, seeded with
-deterministic dummy data, and headless Chromium captures it. When the
-frontend (or the harness) changes, the media regenerates on the next build.
+the real review shell (the built ``web/`` dist) with an EMPTY collector — no
+server-seeded data, no boot-time API calls, exactly the production shell's
+own boot behavior — and headless Chromium feeds it client-side through the
+Import front door with a committed ``web/fixtures/`` document, the same way
+``tests/e2e/monitor/dashboard/test_review_shell.py`` does. When the frontend
+(or the fixture) changes, the media regenerates on the next build.
 
-The dashboard half of that pipeline is currently STUBBED — the review-first
-shell has no live mode for it to photograph. See ``_LIVE_DASHBOARD_RETIRED``
-below; the coverage-report capture is unaffected and still runs for real.
+Live monitoring has no capture of its own: the review-first shell has no live
+page to photograph, and that mode returns at a later phase (see
+``docs/guide/monitor.md``). The coverage-report capture is unrelated to any
+of this and always runs for real.
 
 Modes — ``--mode`` flag, or the ``OTTO_DOCS_MEDIA`` env var:
 
@@ -33,14 +37,10 @@ browser is a loud error naming that target, per the dev-environment contract.
 import argparse
 import base64
 import hashlib
-import math
 import os
-import random
-import shutil
 import sys
 import tempfile
 import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -50,69 +50,38 @@ OUT_DIR = REPO_ROOT / "docs" / "_static" / "generated"
 STAMP = OUT_DIR / ".stamp"
 
 # Inputs whose change invalidates the media: this script, the harness
-# fixtures it drives, and the whole monitor subsystem (server, collector,
-# static frontend assets).
+# fixtures it drives, the fixture document it imports, and the whole monitor
+# subsystem (server, collector, static frontend assets).
 _STAMP_INPUTS = [
     Path(__file__).resolve(),
     REPO_ROOT / "tests" / "_fixtures" / "_dashboard_harness.py",
     REPO_ROOT / "tests" / "_fixtures" / "_fake_collector.py",
     REPO_ROOT / "tests" / "_fixtures" / "_report_fixture.py",
+    REPO_ROOT / "web" / "fixtures" / "kitchen-sink.json",
     REPO_ROOT / "src" / "otto" / "monitor",
     REPO_ROOT / "src" / "otto" / "coverage" / "renderer",
 ]
 
 # The files this script promises to produce (docs pages reference them).
-ARTIFACTS = ["dashboard-live.png", "dashboard-live.webm", "coverage-report.png"]
-
-# TEMPORARY (plan 2026-07-11 review-first monitor shell, commit e950dd7).
-#
-# The live dashboard this script photographs no longer exists. The shell now
-# boots to an Import front door, makes no backend calls, and never reaches the
-# "Live" status `_open_dashboard` waits for — so the capture timed out and
-# failed EVERY HTML build (local, CI, RTD alike; CI issues #126-#128).
-#
-# Until the monitor's views reach parity and docs/guide/monitor.md is rewritten
-# around review-first, the two dashboard artifacts are stubbed with
-# placeholders: docs build green, dashboard imagery degraded (a known, tracked
-# debt — see todo/TODO.md), coverage-report.png still captured for real.
-#
-# Clearing this flag is NOT enough to restore the capture: `_seed` /
-# `_open_dashboard` drive a server-seeded live page, and the review shell can
-# only be fed client-side, through Import. See `_capture_dashboard` for the
-# shape the rewrite takes. dashboard-live.webm has no successor at all until
-# live mode returns at the live-hookup phase; drop it from ARTIFACTS and from
-# the guide then, or re-record it.
-_LIVE_DASHBOARD_RETIRED = True
+ARTIFACTS = ["dashboard-review.png", "dashboard-review-charts.png", "coverage-report.png"]
 
 _VIEWPORT = {"width": 1280, "height": 720}
 
 # Per-operation Playwright ceiling for the capture. Playwright's 30s default is
-# tight for a full-page screenshot of the live Plotly dashboard — the heaviest
-# step in the docs build. On a busy host (e.g. a dev VM also running the test
-# suite) the render can be starved past 30s and fail the whole `make docs`/
-# `make release` on transient CPU load, not a real fault (an idle run finishes
-# in ~15s). This generous ceiling keeps the build tolerant of a loaded box while
-# still failing eventually if a capture genuinely wedges.
+# tight for a full-page screenshot of the dashboard with its ECharts canvases
+# rendered — the heaviest step in the docs build. On a busy host (e.g. a dev
+# VM also running the test suite) the render can be starved past 30s and fail
+# the whole `make docs`/`make release` on transient CPU load, not a real fault
+# (an idle run finishes in ~15s). This generous ceiling keeps the build
+# tolerant of a loaded box while still failing eventually if a capture
+# genuinely wedges.
 _CAPTURE_TIMEOUT_MS = 90_000
-
-# Live-clip shape: ticks pushed while recording, and the pacing between them.
-_CLIP_TICKS = 18
-_CLIP_TICK_SECONDS = 0.4
 
 # 1x1 transparent PNG for placeholder mode.
 _PLACEHOLDER_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
     "YPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 )
-
-_PROC_META = {
-    "Command": "stress",
-    "User": "root",
-    "Mem": "1.0%",
-    "RSS": "10 M",
-    "Stat": "R",
-    "CPU Time": "0:01.00",
-}
 
 
 def _input_digest() -> str:
@@ -136,56 +105,10 @@ def _is_fresh(digest: str) -> bool:
 
 def _write_placeholders() -> None:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    (OUT_DIR / "dashboard-live.png").write_bytes(_PLACEHOLDER_PNG)
-    (OUT_DIR / "dashboard-live.webm").write_bytes(b"")
-    (OUT_DIR / "coverage-report.png").write_bytes(_PLACEHOLDER_PNG)
+    for name in ARTIFACTS:
+        (OUT_DIR / name).write_bytes(_PLACEHOLDER_PNG)
     STAMP.unlink(missing_ok=True)  # placeholders are never "fresh"
     print("docs media: wrote PLACEHOLDERS (no browser run) — media is degraded", flush=True)
-
-
-def _stub_dashboard_media() -> None:
-    """Write placeholder dashboard artifacts — see ``_LIVE_DASHBOARD_RETIRED``."""
-    (OUT_DIR / "dashboard-live.png").write_bytes(_PLACEHOLDER_PNG)
-    (OUT_DIR / "dashboard-live.webm").write_bytes(b"")
-    print(
-        "docs media: dashboard capture SKIPPED — the review-first shell has no live "
-        "mode to photograph; dashboard-live.{png,webm} are PLACEHOLDERS until the "
-        "monitor views reach parity (see _LIVE_DASHBOARD_RETIRED in this script)",
-        flush=True,
-    )
-
-
-def _seed(harness) -> None:  # noqa: ANN001 — DashboardHarness import is deferred
-    """Five minutes of smooth, deterministic history for two hosts."""
-    rng = random.Random(42)  # noqa: S311 — deterministic dummy data, not cryptography
-    t0 = datetime.now(tz=timezone.utc) - timedelta(minutes=5)
-    push = harness.collector.push
-    for tick in range(60):
-        ts = t0 + timedelta(seconds=5 * tick)
-        for i, host in enumerate(("router1", "server1")):
-            phase = tick / 60 * 2 * math.pi + i
-            cpu = 45 + 25 * math.sin(phase) + rng.uniform(-4, 4)
-            mem = 35 + tick / 4 + rng.uniform(-1, 1)
-            load = max(0.1, 1.2 + math.sin(phase / 2) + rng.uniform(-0.2, 0.2))
-            harness.run(push(host, "Overall CPU", cpu, ts=ts))
-            harness.run(push(host, "proc/101", cpu * 0.55, meta=_PROC_META, ts=ts))
-            harness.run(push(host, "proc/202", cpu * 0.25, meta=_PROC_META, ts=ts))
-            harness.run(push(host, "Memory Usage", mem, chart="memory", ts=ts))
-            harness.run(push(host, "Load (1m)", load, chart="load", ts=ts))
-    harness.run(harness.collector.add_event(label="deploy complete", color="#2ca02c"))
-
-
-def _open_dashboard(page, url: str) -> None:  # noqa: ANN001 — playwright import is deferred
-    from playwright.sync_api import expect
-
-    # set_default_timeout governs goto/select/screenshot; expect() assertions
-    # keep their own default, so raise those explicitly too.
-    page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
-    page.goto(url)
-    expect(page.locator("#status-label")).to_have_text("Live", timeout=_CAPTURE_TIMEOUT_MS)
-    page.select_option("#host-select", "router1")
-    expect(page.locator("#tab-cpu .metric-plot").first).to_be_visible(timeout=_CAPTURE_TIMEOUT_MS)
-    page.wait_for_timeout(750)  # let Plotly finish its initial layout pass
 
 
 def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright import is deferred
@@ -202,53 +125,32 @@ def _capture_coverage_report(browser) -> None:  # noqa: ANN001 — playwright im
 
 
 def _capture_dashboard(browser, harness) -> None:  # noqa: ANN001 — deferred imports
-    """Photograph the seeded live dashboard: one still, one live clip.
+    """Photograph the review shell fed through the Import front door.
 
-    Retired with the review-first pivot and unreachable while
-    ``_LIVE_DASHBOARD_RETIRED`` is set — kept as the shape the parity rewrite
-    starts from, not as code that currently runs.
+    The review shell has no server-seeded page to open (see the module
+    docstring): it boots to an empty Import front door and is fed
+    client-side, exactly the way the browser e2e suite does — see
+    ``tests/e2e/monitor/dashboard/test_review_shell.py::_import_fixture``.
+    The harness's collector stays empty; ``web/fixtures/kitchen-sink.json``
+    supplies every session, host, and metric these captures show.
 
-    Both captures below open the page and wait for it to go *Live*, which a
-    server-seeded collector drives. The review shell has no such path: it
-    boots empty and is fed client-side, through Import. So the rewrite seeds
-    nothing, leaves the harness collector EMPTY, and loads one of the
-    committed Plan-1 fixtures (``web/fixtures/``) exactly the way the browser
-    e2e suite already does — see
-    ``tests/e2e/monitor/dashboard/test_review_shell.py::_import_fixture``::
-
-        page.goto(harness.url)
-        page.locator('[data-testid="import-input"]').set_input_files(fixture)
-        page.locator('[data-testid="review-bar"]').wait_for()
+    Two stills: the fleet grid overview, then a subject page's synced chart
+    stack (a same-document hash navigation, so the imported data survives).
     """
-    # Still screenshot of the seeded dashboard.
+    fixture = REPO_ROOT / "web" / "fixtures" / "kitchen-sink.json"
     page = browser.new_page(viewport=_VIEWPORT)
-    _open_dashboard(page, harness.url)
-    page.screenshot(path=OUT_DIR / "dashboard-live.png", full_page=True)
-    page.close()
+    page.set_default_timeout(_CAPTURE_TIMEOUT_MS)
+    page.goto(harness.url)
+    page.locator('[data-testid="import-input"]').set_input_files(fixture)
+    page.locator('[data-testid="review-bar"]').wait_for()
+    page.locator('[data-testid="host-tile-chassis-a_lc1"]').wait_for()
+    page.screenshot(path=OUT_DIR / "dashboard-review.png", full_page=True)
 
-    # Live clip: keep pushing points while Playwright records, so the
-    # traces visibly extend — the "live lab monitoring" money shot.
-    ctx = browser.new_context(
-        viewport=_VIEWPORT, record_video_dir=OUT_DIR, record_video_size=_VIEWPORT
-    )
-    page = ctx.new_page()
-    _open_dashboard(page, harness.url)
-    rng = random.Random(7)  # noqa: S311 — deterministic dummy data, not cryptography
-    push = harness.collector.push
-    for tick in range(_CLIP_TICKS):
-        cpu = 45 + 25 * math.sin(tick / 6) + rng.uniform(-4, 4)
-        harness.run(push("router1", "Overall CPU", cpu))
-        harness.run(push("router1", "proc/101", cpu * 0.55, meta=_PROC_META))
-        harness.run(push("router1", "Load (1m)", 1.2 + rng.uniform(-0.2, 0.2), chart="load"))
-        if tick == _CLIP_TICKS // 2:  # an event landing mid-clip, for the timeline marker
-            harness.run(harness.collector.add_event(label="test_load start", color="#d62728"))
-        time.sleep(_CLIP_TICK_SECONDS)
-    video = page.video
+    page.goto(f"{harness.url}#/host/chassis-a_lc1")
+    page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
+    page.wait_for_timeout(400)  # let ECharts finish its initial render pass
+    page.screenshot(path=OUT_DIR / "dashboard-review-charts.png", full_page=True)
     page.close()
-    ctx.close()  # finalizes the recording
-    if video is None:
-        raise SystemExit("docs media: Playwright returned no video for the live clip")
-    shutil.move(video.path(), OUT_DIR / "dashboard-live.webm")
 
 
 def _capture(harness) -> None:  # noqa: ANN001 — DashboardHarness import is deferred
@@ -266,10 +168,7 @@ def _capture(harness) -> None:  # noqa: ANN001 — DashboardHarness import is de
                 "set OTTO_DOCS_MEDIA=placeholder."
             ) from e
         try:
-            if _LIVE_DASHBOARD_RETIRED:
-                _stub_dashboard_media()
-            else:
-                _capture_dashboard(browser, harness)
+            _capture_dashboard(browser, harness)
 
             # Still shot of the coverage HTML report (same fixture the
             # report_browser Playwright suite pins).
@@ -300,24 +199,18 @@ def main() -> None:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
-    if _LIVE_DASHBOARD_RETIRED:
-        # No live page to serve, so no server to run: the coverage capture
-        # drives a file:// report and never touches the harness.
-        _capture(None)
-        captured = ["coverage-report.png"]
-    else:
-        from tests._fixtures._dashboard_harness import DashboardHarness
-        from tests._fixtures._fake_collector import FakeCollector
 
-        harness = DashboardHarness(FakeCollector()).start()
-        try:
-            _seed(harness)
-            _capture(harness)
-        finally:
-            harness.stop()
-        captured = ARTIFACTS
+    from tests._fixtures._dashboard_harness import DashboardHarness
+    from tests._fixtures._fake_collector import FakeCollector
+
+    harness = DashboardHarness(FakeCollector()).start()
+    try:
+        _capture(harness)
+    finally:
+        harness.stop()
+
     STAMP.write_text(digest + "\n")
-    names = ", ".join(captured)
+    names = ", ".join(ARTIFACTS)
     print(f"docs media: captured {names} in {time.monotonic() - started:.1f}s", flush=True)
 
 

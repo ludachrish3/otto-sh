@@ -182,18 +182,12 @@ jobs:
       # does (see .readthedocs.yaml) — placeholder mode stays reserved for
       # its documented emergency case (e.g. a broken Chromium install), not
       # routine CI.
-      #
-      # KEEP THESE STEPS. The dashboard capture is temporarily stubbed
-      # (`_LIVE_DASHBOARD_RETIRED` — the review-first shell has no live mode
-      # to photograph), so no MonitorServer starts and `dist/` is not strictly
-      # required *right now*. It is required again the moment that capture is
-      # restored at monitor-view parity, and RTD builds the dist regardless.
       - name: Install web/ dependencies (npm ci)
         run: make web-install
       - name: Build the React dashboard (needed by capture_docs_media.py)
         run: make web
-      # Headless Chromium captures the build-time GUI media (screenshots +
-      # clips) via scripts/capture_docs_media.py, hooked from docs/conf.py.
+      # Headless Chromium captures the build-time GUI media (screenshots)
+      # via scripts/capture_docs_media.py, hooked from docs/conf.py.
       # --with-deps also apt-installs the browser's runtime libraries.
       - run: uv run playwright install --with-deps chromium
       - run: uv run nox -s docs

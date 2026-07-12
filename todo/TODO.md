@@ -70,7 +70,6 @@
 - Add an import button and a clear data button so that users can launch a server once and keep viewing different data sets.
 - Default database should be `otto.db` in the xdir/`monitor` directory.
 - Plots do not dynamically resize when the window changes size
-- **Docs media capture is stubbed — owed at monitor-view parity.** The review-first pivot removed live mode, so `scripts/capture_docs_media.py` can no longer photograph the dashboard it was written for (it waited for the page to go "Live"); it failed every HTML build until `_LIVE_DASHBOARD_RETIRED` stubbed the two dashboard artifacts with placeholders. Owed once the views land: rewrite the capture to feed the shell through the Import front door (a `web/fixtures/` document, as the browser e2e suite does), and rewrite `docs/guide/monitor.md`, whose prose and embedded media still describe live monitoring. `dashboard-live.webm` has no successor until live mode returns at the live-hookup phase — re-record or drop it. Until then the guide ships a 1x1 placeholder screenshot and an empty video.
 
 ### Human work
 

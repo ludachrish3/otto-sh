@@ -1,20 +1,23 @@
 # otto monitor
 
-`otto monitor` launches an interactive performance dashboard that collects
-CPU, memory, disk, and network metrics from remote hosts in real time.
+`otto monitor` collects CPU, memory, disk, and network metrics from remote
+hosts, and serves a web dashboard for reviewing what it collected.
 
-![The live monitor dashboard: per-host CPU, process, and load charts with a
-marked event](../_static/generated/dashboard-live.png)
+![The review dashboard's fleet grid: element-grouped host tiles with a
+status dot, a health-rollup bar per element, and a labeled headline
+metric](../_static/generated/dashboard-review.png)
 
-Charts extend in place as new samples stream in over SSE, and events mark
-moments on the shared timeline:
+<!-- Generated AT BUILD TIME by scripts/capture_docs_media.py (hooked from
+docs/conf.py): the real review shell, fed the committed
+web/fixtures/kitchen-sink.json export document through the Import front
+door, captured with headless Chromium. Do not commit media into
+docs/_static/generated/. -->
 
-<video src="../_static/generated/dashboard-live.webm" autoplay loop muted playsinline width="100%"></video>
-
-<!-- Both assets above are produced AT BUILD TIME by
-scripts/capture_docs_media.py (hooked from docs/conf.py): the real dashboard,
-seeded with deterministic dummy data, captured with headless Chromium. Do not
-commit media into docs/_static/generated/. -->
+The dashboard is **review-first**: see [Web dashboard](#web-dashboard) below
+for what it shows and how data gets into it. Live streaming from a running
+`otto monitor` isn't wired into it yet — that's a later phase; the CLI
+sections below (collection, `--db`, `--file`) describe what runs today
+regardless.
 
 ## Live mode
 
@@ -85,25 +88,68 @@ its default behaviour.
 
 ## Historical mode
 
-View previously collected data by passing `--file`:
+`--file` loads a previously collected run into the monitor server without
+touching any hosts:
 
 ```bash
 otto --lab my_lab monitor --file metrics.db
 otto --lab my_lab monitor --file metrics.json
 ```
 
-Supported formats: `.db` (SQLite) and `.json`.
+Supported formats: `.db` (SQLite) and `.json`. This serves the same
+review-first web UI as live mode (see [Web dashboard](#web-dashboard)
+below) — today that means the loaded run isn't shown automatically; the
+review UI only ever renders a document you Import client-side.
 
 ## Web dashboard
 
-In both modes, otto serves an interactive web dashboard.  The server binds
-an OS-assigned free port and logs the dashboard URL at startup (`Server
-running at http://<ip>:<port>`, one URL per non-loopback interface).  The
-dashboard shows:
+In both modes, `otto monitor` serves a web server: it binds an OS-assigned
+free port and logs the dashboard URL at startup (`Server running at
+http://<ip>:<port>`, one URL per non-loopback interface).
 
-- Live metric graphs (CPU, memory, disk, network)
-- Timeline with events
-- Per-host breakdowns
+The dashboard itself is **review-first**: it opens to an empty Import
+screen and makes no calls back to that server on load. Feed it a monitor
+export document — drag a file onto the window, or use the **⋯** overflow
+menu's *Import* — and it renders that document entirely in the browser:
+
+- **Fleet grid.** Element-grouped host tiles, each with a status dot, an
+  element-level health-rollup bar, and a labeled headline metric; a down
+  tile shows its outage duration instead.
+- **Health, scoped to the viewed range.** Every status, rollup, and
+  headline reflects whichever time window the review bar is currently
+  showing — narrow the range and a host that's healthy across the full
+  session can show down (or vice versa) if that's what the narrower
+  window actually contains.
+- **Per-subject charts.** Drilling into a host (or an element) stacks its
+  metrics as synced chart panels — panning or zooming one follows the
+  rest of the stack, so a spike is easy to correlate across series.
+
+  ![A subject page's synced chart stack: one panel per metric group and a
+  kernel log table, all sharing one time axis with event
+  markers](../_static/generated/dashboard-review-charts.png)
+
+- **Series and source filtering.** A per-subject series tree toggles
+  individual metrics on and off; chip filters narrow by metric group or
+  by data source (a series' own host vs. an external management host —
+  externally-sourced series carry a provenance badge).
+- **Events.** A reverse-chronological slide-over lists every event in the
+  loaded document; clicking a row re-scopes the review bar's range to
+  that event's span.
+- **Multiple sessions.** A document spanning more than one session (a
+  config change captured mid-run, for example) exposes a session picker;
+  each session renders under the lab configuration it was captured
+  under, so drift between sessions never bleeds into the wrong one's
+  view.
+- **Export.** The **⋯** menu re-downloads whatever document is currently
+  loaded, unchanged.
+
+Live streaming from a running `otto monitor` isn't wired into this UI yet,
+and neither is a path from a `--db`/`--file` run into the Import flow
+above — connecting the dashboard to otto's own collection is later,
+"live-hookup phase" work. Everything described above is real today and
+covered by the browser e2e suite (`tests/e2e/monitor/dashboard/`, see the
+[behavior-spec contract](#frontend-development) below); it's the bridge
+from collected data to an importable document that doesn't exist yet.
 
 ### Frontend development
 
@@ -126,15 +172,18 @@ make web-test      # vitest — store reducers, SSE handling, chart-series
                     # grouping, PID-trace retirement, etc.
 ```
 
-Point `make web-dev` at a live `otto monitor` (or a `--file` replay) for the
-fast edit/reload loop; `make web` is what actually ships in the wheel.
+`make web-dev`'s proxy target is a running server process (a live `otto
+monitor` or a `--file` replay both serve `/api/*`); the current review-first
+UI doesn't call those routes on its own, but pointing at one is still useful
+for developing against real backend responses ahead of the live-hookup
+work. `make web` is what actually ships in the wheel.
 
-**DOM-parity contract.** `tests/e2e/monitor/dashboard/` is a Playwright suite
-that pins the dashboard's observable surface — element ids and classes,
-Plotly trace/layout internals, status text, `localStorage` keys — the
-contract the frontend was ported to React against. Those pins adjudicate,
-not this page or the source: if a doc description and a pin ever disagree,
-fix the doc. Run them locally with `make dashboard` (Chromium only — the fast
+**Behavior-spec contract.** `tests/e2e/monitor/dashboard/` is a Playwright
+suite that pins the dashboard's observable surface through `data-testid`
+attributes only — styling and DOM structure are free to change underneath
+them. Those pins adjudicate, not this page or the source: if a doc
+description and a pin ever disagree, fix the doc. Run them locally with
+`make dashboard` (Chromium only — the fast
 per-task check; needs `make browsers` once) or `make dashboard-all` for the
 full cross-engine matrix: Chromium (Blink), Firefox (Gecko), and WebKit
 (Safari). The one Safari-specific test runs on WebKit only via
@@ -153,7 +202,10 @@ otto --lab my_lab test --monitor --monitor-interval 2 --monitor-hosts router Tes
 otto --lab my_lab test --monitor --monitor-output run.db TestPerformance
 ```
 
-Reload a captured run in the dashboard via `otto monitor --file <path>`.
+`otto --lab my_lab monitor --file <path>` replays a captured `.db`/`.json`
+run through the same historical server as [Historical mode](#historical-mode)
+above; loading it into the [Web dashboard](#web-dashboard)'s review UI
+itself isn't wired up yet (see that section).
 
 ## Monitoring from test suites
 
