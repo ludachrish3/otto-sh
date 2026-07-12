@@ -177,3 +177,34 @@ class TestTickQuantizationTolerance:
             ImpairmentParams(rate=parse_rate("10mbit")),
             ImpairmentParams(rate=parse_rate("10000001bit")),
         )
+
+
+class TestSelector:
+    def test_fields_and_describe(self) -> None:
+        from otto.link.params import Selector
+
+        assert Selector(5201).describe() == "5201"
+        assert Selector(5201, "tcp").describe() == "5201/tcp"
+        assert Selector(53, "udp").describe() == "53/udp"
+
+    def test_distinct_keys_proto_none_vs_tcp(self) -> None:
+        from otto.link.params import Selector
+
+        assert Selector(5201) != Selector(5201, "tcp")
+        assert len({Selector(5201), Selector(5201, "tcp"), Selector(5201)}) == 2
+
+    def test_port_range_validated(self) -> None:
+        from otto.link.params import Selector
+
+        with pytest.raises(ValueError, match="port 0 out of range"):
+            Selector(0)
+        with pytest.raises(ValueError, match="port 65536 out of range"):
+            Selector(65536)
+        Selector(1)
+        Selector(65535)
+
+    def test_proto_vocabulary_validated(self) -> None:
+        from otto.link.params import Selector
+
+        with pytest.raises(ValueError, match="must be tcp or udp"):
+            Selector(80, "icmp")

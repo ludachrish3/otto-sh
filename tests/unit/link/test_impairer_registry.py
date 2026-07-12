@@ -47,3 +47,48 @@ class TestRegistry:
         ):
             with pytest.raises(NotImplementedError):
                 call()
+
+
+class TestScopedContract:
+    def test_base_impairer_does_not_support_selectors(self) -> None:
+        from otto.link.impairer import LinkImpairer
+
+        assert LinkImpairer.supports_selectors is False
+
+    def test_scoped_methods_default_to_not_implemented(self) -> None:
+        import pytest
+
+        from otto.link.impairer import LinkImpairer
+        from otto.link.params import ImpairmentParams, Selector
+
+        imp = LinkImpairer()
+        sel = Selector(5201, "tcp")
+        with pytest.raises(NotImplementedError):
+            imp.scoped_root_command("eth1")
+        with pytest.raises(NotImplementedError):
+            imp.scoped_band_command("eth1", 4, ImpairmentParams(delay_ms=1.0))
+        with pytest.raises(NotImplementedError):
+            imp.scoped_filter_commands("eth1", 4, sel)
+        with pytest.raises(NotImplementedError):
+            imp.scoped_clear_selector_commands("eth1", 4, sel)
+        with pytest.raises(NotImplementedError):
+            imp.scoped_read_commands("eth1")
+        with pytest.raises(NotImplementedError):
+            imp.parse_scoped("", "")
+
+    def test_scoped_state_constructors(self) -> None:
+        from otto.link.impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, ScopedState
+        from otto.link.params import ImpairmentParams, Selector
+
+        assert FIRST_SELECTOR_BAND == 4
+        assert MAX_SELECTORS == 8
+        assert ScopedState.clean().kind == "clean"
+        params = ImpairmentParams(delay_ms=50.0)
+        whole = ScopedState.whole_link(params)
+        assert whole.kind == "whole"
+        assert whole.whole == params
+        mapping = {Selector(5201, "tcp"): (4, params)}
+        scoped = ScopedState.from_selectors(mapping)
+        assert scoped.kind == "scoped"
+        assert scoped.selectors == mapping
+        assert ScopedState.foreign().kind == "foreign"

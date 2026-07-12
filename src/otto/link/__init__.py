@@ -7,11 +7,12 @@ in ``otto.tunnel``.
 
 from typing import TYPE_CHECKING
 
-from .impairer import IMPAIRERS, LinkImpairer, build_impairer, register_impairer
+from .impairer import IMPAIRERS, LinkImpairer, ScopedState, build_impairer, register_impairer
 from .model import Link, LinkEndpoint, Provenance, make_link_id, make_static_link_id
 from .netem import NetEmImpairer
 from .params import (
     ImpairmentParams,
+    Selector,
     canonical_key,
     equivalent,
     parse_percent,
@@ -28,6 +29,7 @@ from .placement import FlowDirection, Placement
 if TYPE_CHECKING:
     from .manage import (
         AppliedPlacement,
+        DirectionState,
         ImpairReport,
         LinkState,
         RepairReport,
@@ -41,6 +43,7 @@ if TYPE_CHECKING:
 __all__ = [
     "IMPAIRERS",
     "AppliedPlacement",
+    "DirectionState",
     "FlowDirection",
     "ImpairReport",
     "ImpairmentParams",
@@ -52,6 +55,8 @@ __all__ = [
     "Placement",
     "Provenance",
     "RepairReport",
+    "ScopedState",
+    "Selector",
     "build_impairer",
     "canonical_key",
     "equivalent",
@@ -71,6 +76,7 @@ __all__ = [
 _MANAGE_NAMES = frozenset(
     {
         "AppliedPlacement",
+        "DirectionState",
         "ImpairReport",
         "LinkState",
         "RepairReport",

@@ -133,6 +133,11 @@ _EXPIRE_POLL_MAX = 60.0
 _RTT_DELTA_MIN_MS = 150.0  # 100ms delay each way -> ~200ms RTT delta, generous margin
 _RTT_RESTORE_TOLERANCE_MS = 20.0
 
+_SCOPED_PORT = 5201
+_CLEAN_PORT = 5202
+_SCOPED_DELAY_MS = 200.0
+_TCP_DELTA_MIN_MS = 150.0
+
 _VLAN_INTERFACES: dict[str, dict[str, Interface]] = {
     "carrot": {_VLAN100_DEV: Interface(ip=_CARROT_VLAN_IP)},
     "tomato": {_VLAN200_DEV: Interface(ip=_TOMATO_VLAN_IP)},
@@ -378,8 +383,16 @@ async def test_endpoint_impair_delay_and_repair(impair_lab: Lab) -> None:
 
         states = await read_link_states(impair_lab)
         edge_state = next(s for s in states if s.link.id == "edge")
-        assert edge_state.by_direction[FlowDirection.A_TO_B] == ImpairmentParams(delay_ms=100.0)
-        assert edge_state.by_direction[FlowDirection.B_TO_A] == ImpairmentParams(delay_ms=100.0)
+        a_to_b = edge_state.by_direction[FlowDirection.A_TO_B]
+        b_to_a = edge_state.by_direction[FlowDirection.B_TO_A]
+        assert a_to_b is not None, "a->b direction unreadable"
+        assert b_to_a is not None, "b->a direction unreadable"
+        assert a_to_b.whole == ImpairmentParams(delay_ms=100.0), (
+            f"expected a->b whole-link state 100ms delay, got {a_to_b!r}"
+        )
+        assert b_to_a.whole == ImpairmentParams(delay_ms=100.0), (
+            f"expected b->a whole-link state 100ms delay, got {b_to_a!r}"
+        )
     finally:
         await repair_link(impair_lab, "edge")
 
@@ -453,7 +466,9 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
     try:
         states = await read_link_states(impair_lab)
         edge_state = next(s for s in states if s.link.id == "edge")
-        assert edge_state.by_direction[FlowDirection.A_TO_B] == ImpairmentParams(delay_ms=100.0)
+        a_to_b = edge_state.by_direction[FlowDirection.A_TO_B]
+        assert a_to_b is not None, "a->b direction unreadable"
+        assert a_to_b.whole == ImpairmentParams(delay_ms=100.0)
 
         deadline = time.monotonic() + _EXPIRE_POLL_MAX
         healed = False
@@ -461,7 +476,8 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
             await asyncio.sleep(_EXPIRE_POLL_INTERVAL)
             states = await read_link_states(impair_lab)
             edge_state = next(s for s in states if s.link.id == "edge")
-            if edge_state.by_direction[FlowDirection.A_TO_B] is None:
+            a_to_b = edge_state.by_direction[FlowDirection.A_TO_B]
+            if a_to_b is not None and a_to_b.whole is None and not a_to_b.scoped:
                 healed = True
                 break
         assert healed, (
@@ -472,7 +488,7 @@ async def test_expire_self_heals(impair_lab: Lab) -> None:
         ps_result = await carrot.exec(
             IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
         )
-        timers = [t for t in parse_impair_ps(ps_result.value or "") if t[1] == "edge"]
+        timers = [t for t in parse_impair_ps(ps_result.value or "") if t.link_id == "edge"]
         assert not timers, f"expire timer for 'edge' still running on carrot: {timers!r}"
     finally:
         await repair_link(impair_lab, "edge")
@@ -517,7 +533,9 @@ async def test_merge_and_out_of_band_clear(impair_lab: Lab) -> None:
     try:
         states = await read_link_states(impair_lab)
         edge_state = next(s for s in states if s.link.id == "edge")
-        observed = edge_state.by_direction[FlowDirection.A_TO_B]
+        observed_state = edge_state.by_direction[FlowDirection.A_TO_B]
+        assert observed_state is not None, "a->b direction unreadable"
+        observed = observed_state.whole
         assert observed is not None, "expected the merged impairment to be present on the kernel"
         expected = ImpairmentParams(delay_ms=0.7, loss_pct=5.0, rate="10mbps")
         assert equivalent(observed, expected), (
@@ -534,8 +552,15 @@ async def test_merge_and_out_of_band_clear(impair_lab: Lab) -> None:
 
         states = await read_link_states(impair_lab)
         edge_state = next(s for s in states if s.link.id == "edge")
-        assert edge_state.by_direction[FlowDirection.A_TO_B] is None, (
-            "read_link_states must reflect the out-of-band clear, not stale otto-side state"
+        healed_state = edge_state.by_direction[FlowDirection.A_TO_B]
+        assert healed_state is not None, "a->b direction unreadable"
+        assert healed_state.whole is None, (
+            "read_link_states must reflect the out-of-band clear, not stale otto-side state: "
+            f"{healed_state!r}"
+        )
+        assert not healed_state.scoped, (
+            "read_link_states must reflect the out-of-band clear, not stale otto-side state: "
+            f"{healed_state!r}"
         )
     finally:
         await repair_link(impair_lab, "edge")  # no-op clean: a->b already clear out-of-band
@@ -560,3 +585,179 @@ async def test_mgmt_link_refused(impair_lab: Lab) -> None:
     impair_lab.links.append(mgmt_link)
     with pytest.raises(ValueError, match="management interface"):
         await impair_link(impair_lab, mgmt_link.id, ImpairmentParams(delay_ms=10.0))
+
+
+# ---------------------------------------------------------------------------
+# Test 6: scoped read-back equivalence + repair to pristine
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_scoped_impair_readback_and_pristine_repair(impair_lab: Lab) -> None:
+    """A scoped impair round-trips through kernel read-back by MEANING, and a
+    bare repair returns the netdev to pristine (no root qdisc artifacts)."""
+    from otto.link import DirectionState, Selector
+
+    carrot = impair_lab.hosts[_CARROT]
+    sel = Selector(_SCOPED_PORT, "tcp")
+    report = await impair_link(
+        impair_lab,
+        "edge",
+        ImpairmentParams(delay_ms=_SCOPED_DELAY_MS),
+        from_host=_CARROT,
+        selector=sel,
+    )
+    try:
+        assert report.applied[0].selector == sel
+        states = await read_link_states(impair_lab)
+        edge_state = next(s for s in states if s.link.id == "edge")
+        a = edge_state.by_direction[FlowDirection.A_TO_B]
+        assert isinstance(a, DirectionState)
+        assert set(a.scoped) == {sel}
+        assert equivalent(a.scoped[sel], ImpairmentParams(delay_ms=_SCOPED_DELAY_MS))
+        assert a.whole is None
+        assert not a.foreign
+    finally:
+        await repair_link(impair_lab, "edge")
+    qdisc = await carrot.exec(
+        f"tc qdisc show dev {_VLAN100_DEV}", timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+    )
+    line = (qdisc.value or "").splitlines()[0] if (qdisc.value or "").strip() else ""
+    assert "prio 1:" not in line, f"expected pristine root after bare repair, got: {qdisc.value!r}"
+    assert "netem" not in line, f"expected pristine root after bare repair, got: {qdisc.value!r}"
+
+
+# ---------------------------------------------------------------------------
+# Test 7: differential traffic proof + two concurrent selectors
+# ---------------------------------------------------------------------------
+
+
+async def _tcp_rtt_ms(host: UnixHost, target_ip: str, port: int) -> float:
+    """Wall-clock ms for one tiny TCP echo exchange, timed ON the host so ssh
+    overhead cancels out of the differential comparison."""
+    cmd = (
+        "python3 - <<'EOF'\n"
+        "import socket, time\n"
+        f"t0 = time.monotonic()\n"
+        f"s = socket.create_connection(('{target_ip}', {port}), timeout=10)\n"
+        "s.sendall(b'x')\n"
+        "s.recv(1)\n"
+        "s.close()\n"
+        "print((time.monotonic() - t0) * 1000)\n"
+        "EOF"
+    )
+    result = await host.exec(cmd, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET)
+    assert result.is_ok, f"tcp echo to {target_ip}:{port} failed: {result.value!r}"
+    return float((result.value or "").strip().splitlines()[-1])
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_scoped_differential_and_two_selectors(impair_lab: Lab) -> None:
+    """The impaired port is measurably slower than an unimpaired port on the
+    SAME link (the spec's differential traffic proof), and a second concurrent
+    selector applies independently."""
+    from otto.link import DirectionState, Selector
+
+    carrot = impair_lab.hosts[_CARROT]
+    pepper = impair_lab.hosts[_PEPPER]
+    for port in (_SCOPED_PORT, _CLEAN_PORT):
+        await _root_best_effort(pepper, f"pkill -f 'TCP4-LISTEN:{port}'")
+        await pepper.exec(
+            f"setsid socat TCP4-LISTEN:{port},fork,reuseaddr EXEC:cat </dev/null >/dev/null 2>&1 &",
+            timeout=_HOST_CMD_TIMEOUT,
+            log=LogMode.QUIET,
+        )
+    try:
+        base_scoped = await _tcp_rtt_ms(carrot, _PEPPER_VLAN100_IP, _SCOPED_PORT)
+        base_clean = await _tcp_rtt_ms(carrot, _PEPPER_VLAN100_IP, _CLEAN_PORT)
+
+        await impair_link(
+            impair_lab,
+            "edge",
+            ImpairmentParams(delay_ms=_SCOPED_DELAY_MS),
+            selector=Selector(_SCOPED_PORT, "tcp"),
+        )
+        try:
+            impaired = await _tcp_rtt_ms(carrot, _PEPPER_VLAN100_IP, _SCOPED_PORT)
+            clean = await _tcp_rtt_ms(carrot, _PEPPER_VLAN100_IP, _CLEAN_PORT)
+            delta = impaired - base_scoped
+            assert delta >= _TCP_DELTA_MIN_MS, (
+                f"impaired port {_SCOPED_PORT} should be >= {_TCP_DELTA_MIN_MS}ms slower "
+                f"(baseline {base_scoped:.1f}ms, impaired {impaired:.1f}ms)"
+            )
+            assert clean - base_clean < _TCP_DELTA_MIN_MS, (
+                f"unimpaired port {_CLEAN_PORT} must stay fast "
+                f"(baseline {base_clean:.1f}ms, now {clean:.1f}ms)"
+            )
+
+            await impair_link(
+                impair_lab,
+                "edge",
+                ImpairmentParams(loss_pct=5.0),
+                selector=Selector(_CLEAN_PORT, "tcp"),
+            )
+            states = await read_link_states(impair_lab)
+            edge_state = next(s for s in states if s.link.id == "edge")
+            a = edge_state.by_direction[FlowDirection.A_TO_B]
+            assert isinstance(a, DirectionState)
+            assert set(a.scoped) == {
+                Selector(_SCOPED_PORT, "tcp"),
+                Selector(_CLEAN_PORT, "tcp"),
+            }
+        finally:
+            await repair_link(impair_lab, "edge")
+    finally:
+        for port in (_SCOPED_PORT, _CLEAN_PORT):
+            await _root_best_effort(pepper, f"pkill -f 'TCP4-LISTEN:{port}'")
+
+
+# ---------------------------------------------------------------------------
+# Test 8: per-selector expiry clears only its selector
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_scoped_expire_clears_only_its_selector(impair_lab: Lab) -> None:
+    """--expire on one selector self-heals just that selector; its sibling and
+    the scoped root survive until an explicit repair."""
+    from otto.link import DirectionState, Selector
+
+    carrot = impair_lab.hosts[_CARROT]
+    keep, expire_sel = Selector(_SCOPED_PORT, "tcp"), Selector(_CLEAN_PORT, "tcp")
+    await impair_link(
+        impair_lab, "edge", ImpairmentParams(delay_ms=50.0), from_host=_CARROT, selector=keep
+    )
+    try:
+        await impair_link(
+            impair_lab,
+            "edge",
+            ImpairmentParams(delay_ms=80.0),
+            from_host=_CARROT,
+            selector=expire_sel,
+            expire=_EXPIRE_SECONDS,
+        )
+        deadline = time.monotonic() + _EXPIRE_POLL_MAX
+        remaining: set = set()
+        while time.monotonic() < deadline:
+            await asyncio.sleep(_EXPIRE_POLL_INTERVAL)
+            states = await read_link_states(impair_lab)
+            edge_state = next(s for s in states if s.link.id == "edge")
+            a = edge_state.by_direction[FlowDirection.A_TO_B]
+            remaining = set(a.scoped) if isinstance(a, DirectionState) else set()
+            if remaining == {keep}:
+                break
+        assert remaining == {keep}, (
+            f"expected only {keep.describe()} to survive expiry, got "
+            f"{sorted(s.describe() for s in remaining)!r}"
+        )
+        ps_result = await carrot.exec(
+            IMPAIR_PS_COMMAND, timeout=_HOST_CMD_TIMEOUT, log=LogMode.QUIET
+        )
+        stale = [
+            t
+            for t in parse_impair_ps(ps_result.value or "")
+            if t.link_id == "edge" and t.selector == expire_sel
+        ]
+        assert not stale, f"expired selector's timer still running: {stale!r}"
+    finally:
+        await repair_link(impair_lab, "edge")

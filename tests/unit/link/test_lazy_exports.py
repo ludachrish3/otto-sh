@@ -26,6 +26,7 @@ def test_manage_names_all_resolve():
 
     for name in (
         "AppliedPlacement",
+        "DirectionState",
         "ImpairReport",
         "LinkState",
         "RepairReport",

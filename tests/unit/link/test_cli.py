@@ -86,13 +86,15 @@ class TestRepairCommand:
 
 class TestListCommand:
     def test_rows_and_partial_scan_warning(self) -> None:
+        from otto.link import DirectionState
+
         state = LinkState(
             link=LINK,
             impairable=True,
             unreachable=False,
             by_direction={
-                FlowDirection.A_TO_B: ImpairmentParams(delay_ms=50.0),
-                FlowDirection.B_TO_A: None,
+                FlowDirection.A_TO_B: DirectionState(whole=ImpairmentParams(delay_ms=50.0)),
+                FlowDirection.B_TO_A: DirectionState(),
             },
         )
         down = LinkState(
@@ -109,6 +111,98 @@ class TestListCommand:
         assert result.exit_code == 0
         assert "delay 50ms" in result.output
         assert "partial scan" in result.output
+
+
+from otto.link import DirectionState, Selector
+
+
+class TestScopedCli:
+    def test_impair_with_port_passes_selector(self) -> None:
+        report = ImpairReport(link_id="lnk-abc", applied=[])
+        mock = AsyncMock(return_value=report)
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.impair_link", mock),
+        ):
+            result = runner.invoke(
+                link_app,
+                ["impair", "edge", "--delay", "200", "--port", "5201", "--proto", "tcp"],
+            )
+        assert result.exit_code == 0, result.output
+        assert mock.call_args.kwargs["selector"] == Selector(5201, "tcp")
+
+    def test_impair_report_row_includes_selector(self) -> None:
+        report = ImpairReport(
+            link_id="lnk-abc",
+            applied=[
+                AppliedPlacement(
+                    Placement("carrot_seed", "eth1.100", FlowDirection.A_TO_B),
+                    ImpairmentParams(delay_ms=200.0),
+                    Selector(5201, "tcp"),
+                ),
+            ],
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.impair_link", AsyncMock(return_value=report)),
+        ):
+            result = runner.invoke(link_app, ["impair", "edge", "--delay", "200", "--port", "5201"])
+        assert "carrot_seed/eth1.100: 5201/tcp delay 200ms" in result.output
+
+    def test_proto_without_port_is_usage_error(self) -> None:
+        result = runner.invoke(link_app, ["impair", "edge", "--delay", "1", "--proto", "tcp"])
+        assert result.exit_code == 2
+        assert "--proto needs --port" in result.output
+
+    def test_bad_proto_is_usage_error(self) -> None:
+        result = runner.invoke(
+            link_app, ["impair", "edge", "--delay", "1", "--port", "80", "--proto", "icmp"]
+        )
+        assert result.exit_code == 2
+
+    def test_repair_with_port_passes_selector(self) -> None:
+        from otto.link import RepairReport
+
+        mock = AsyncMock(return_value=RepairReport("lnk-abc"))
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.repair_link", mock),
+        ):
+            result = runner.invoke(link_app, ["repair", "edge", "--port", "53", "--proto", "udp"])
+        assert result.exit_code == 0, result.output
+        assert mock.call_args.kwargs["selector"] == Selector(53, "udp")
+
+    def test_repair_all_with_port_is_usage_error(self) -> None:
+        result = runner.invoke(link_app, ["repair", "--all", "--port", "53"])
+        assert result.exit_code == 2
+
+    def test_list_renders_selector_rows_and_foreign(self) -> None:
+        scoped = LinkState(
+            link=LINK,
+            impairable=True,
+            unreachable=False,
+            by_direction={
+                FlowDirection.A_TO_B: DirectionState(
+                    scoped={
+                        Selector(5201, "tcp"): ImpairmentParams(delay_ms=200.0),
+                        Selector(53, "udp"): ImpairmentParams(loss_pct=5.0),
+                    }
+                ),
+                FlowDirection.B_TO_A: DirectionState(foreign=True),
+            },
+        )
+        with (
+            patch("otto.cli.link.get_lab", return_value=object()),
+            patch("otto.cli.link.read_link_states", AsyncMock(return_value=[scoped])),
+        ):
+            result = runner.invoke(link_app, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "a->b: port-scoped (2)" in result.output
+        assert "b->a: foreign qdisc — not otto's" in result.output
+        assert "  a->b  53/udp  loss 5%" in result.output
+        assert "  a->b  5201/tcp  delay 200ms" in result.output
+        # rows sort by (port, proto): 53/udp before 5201/tcp, not insertion order
+        assert result.output.index("53/udp") < result.output.index("5201/tcp")
 
 
 class TestCompleter:

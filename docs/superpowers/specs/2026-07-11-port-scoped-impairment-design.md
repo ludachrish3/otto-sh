@@ -20,6 +20,14 @@ read-back parser, and expire timers all assume exactly one impairment per netdev
   traffic whose SOURCE OR DESTINATION port is N (proto omitted = both). One flag
   covers both directions of a service's traffic; otto never needs to know which
   endpoint is the server.
+- **No `--port` = whole-interface impairment, exactly as today.** Omitting
+  `--port` is not a new mode and not a default selector: it is today's
+  whole-link impairment, byte-identical commands and semantics. Port scoping is
+  strictly opt-in per invocation.
+- **Links only — this feature does not apply to tunnels.** It operates on link
+  placements (`otto.link`) exclusively; `otto.tunnel` is untouched by this
+  workstream. There is no tunnel-aware selector, no impairment of tunnels as
+  entities, and no coupling added between the packages.
 - **Exclusive with whole-link impairment, per link (v1).** A netdev is either
   whole-link impaired (today's exact root-netem shape, zero change) or
   port-scoped (classful tree). Mixing is a loud error naming the remedy. The
@@ -159,7 +167,8 @@ API predates external users. `read_link_states` stays never-raising;
 
 - `otto link impair <link> --port 5201 [--proto tcp|udp] <param flags> [--expire N] [--from H]`
   — one selector per invocation; `--proto` without `--port` is a usage error;
-  `--from` composes orthogonally (direction narrowing as today).
+  `--from` composes orthogonally (direction narrowing as today). Without
+  `--port`, the command is today's whole-interface impairment, unchanged.
 - `otto link repair <link> [--port N [--proto P]]` — bare clears everything,
   port form clears one selector.
 - `otto link list`: one row per selector under its link
@@ -187,6 +196,11 @@ API predates external users. `read_link_states` stays never-raising;
 
 ## Out of scope
 
+- **Tunnels, in any form.** This feature is per-link only. `otto.tunnel` code,
+  models, CLI, and behavior are untouched; there is no "impair a tunnel"
+  surface and none is planned by this spec. (Impairing a link that tunnel
+  traffic happens to traverse remains possible exactly as it is today — tc
+  cannot know what a port belongs to — but otto adds no tunnel integration.)
 - Whole-link/scoped coexistence (unified classful tree) — future evolution; the
   selector model already accommodates it.
 - Port ranges, port lists, full 5-tuple selectors.

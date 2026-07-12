@@ -164,6 +164,166 @@ interface; in the common one-interface-per-segment middlebox layout,
 placements never collide.
 ```
 
+## Port-scoped impairments
+
+Everything above this section impairs a placement's **entire interface** —
+every packet traversing that netdev, degraded the same way. `--port` narrows
+one `impair` call to a single service's traffic, leaving everything else on
+the link clean:
+
+```bash
+otto --lab veggies link impair edge --port 5201 --delay 200
+otto --lab veggies link impair edge --port 53 --proto udp --loss 5
+```
+
+### Selector semantics
+
+`--port N` matches traffic whose **source OR destination** port is `N` —
+otto never needs to know which endpoint of the link is running the server,
+so one flag covers both directions of a service's traffic. `--proto tcp` or
+`--proto udp` narrows to one L4 protocol; omitted, both tcp and udp match.
+`--proto` without `--port` is a usage error (exit code 2, `--proto needs
+--port.`) — there's nothing for it to narrow.
+
+Omitting `--port` is **not** a new mode: it's exactly today's
+whole-interface impairment, byte-identical commands and semantics. Port
+scoping is strictly opt-in, per invocation.
+
+| Option | Description |
+| ------ | ----------- |
+| `--port` | Scope this impairment to one service port (1-65535), matching source OR destination. |
+| `--proto` | With `--port`: narrow to `tcp` or `udp`. Omitted, both match. Requires `--port`. |
+
+### Exclusivity: whole-link and port-scoped never mix (v1)
+
+A placement's netdev is either whole-link impaired (today's exact
+root-netem shape) or port-scoped (a classful tree of per-selector bands) —
+never both. Otto refuses to mix the two on the same placement, and the
+error names the remedy:
+
+```bash
+otto --lab veggies link impair edge --delay 50
+# ... placement now has a whole-link impairment ...
+otto --lab veggies link impair edge --port 5201 --delay 200
+# Error: link edge has a whole-link impairment — repair it first
+```
+
+```bash
+otto --lab veggies link impair edge --port 5201 --delay 200
+# ... placement now has a port-scoped impairment ...
+otto --lab veggies link impair edge --delay 50
+# Error: link edge has port-scoped impairments — repair them first or impair with --port
+```
+
+Repair enforces the same rule from the other side: `otto link repair edge
+--port 5201` against a whole-link impairment raises `link edge has a
+whole-link impairment — repair it without --port` — use a bare `otto link
+repair edge` instead.
+
+### Multiple selectors: independent params, per-selector merge, cap 8
+
+Each selector carries its own parameter set. Re-impairing a selector merges
+over **that selector's own** current state, not the whole netdev's — same
+per-param last-one-wins and explicit-zero-clears rules as whole-link
+impairment (see [Re-impairing](#re-impairing-merge-per-param-last-one-wins)
+and [Zero clears](#zero-clears) above), just scoped narrower:
+
+```bash
+otto --lab veggies link impair edge --port 5201 --proto tcp --delay 20
+# 5201/tcp is now: delay 20ms
+
+otto --lab veggies link impair edge --port 5201 --proto tcp --loss 2 --delay 10
+# 5201/tcp is now: delay 10ms loss 2%  — delay overridden, loss added; other selectors untouched
+```
+
+`Selector(5201)` (both protocols) and `Selector(5201, "tcp")` are **distinct
+selectors** — the former's filters simply match a superset of the latter's
+traffic, so both can coexist on the same port at once, if unusual.
+
+A placement caps at **8 concurrent selectors**; a 9th raises a loud error
+naming the link, host, and netdev rather than silently dropping one or
+overwriting another. `--expire <seconds>` composes exactly as with
+whole-link impairment (see {ref}`auto-clearing <expire-auto-clearing>`
+above), but per selector: it auto-clears only that one selector, and a
+repeated `--expire` on it restarts only its own countdown — every other
+selector's timer (and any whole-link timer, which can't coexist with scoped
+state anyway) is untouched.
+
+### Repairing one selector
+
+```bash
+otto --lab veggies link repair edge --port 5201 --proto tcp
+otto --lab veggies link repair edge --port 5201
+otto --lab veggies link repair edge
+```
+
+`repair <link> --port N [--proto P]` clears just that one selector —
+deleting the whole classful tree if it was the last selector standing — and
+cancels only its own timer, leaving every other selector on the placement
+untouched. A bare `repair` (no `--port`) still clears **everything**, as
+described in [Repairing: `otto link repair`](#repairing-otto-link-repair)
+below. `--port` and `--all` don't compose: `--port` repairs one selector on
+one link, `--all` sweeps every static link, and passing both is a usage
+error.
+
+### Listing: selector rows
+
+`otto link list` prints one indented line per active selector under its
+link's normal summary row:
+
+```text
+edge  carrot_seed@eth1.100 <-> tomato_seed@eth1.200  via -  a->b: port-scoped (1)  b->a: -
+  a->b  5201/tcp  delay 200ms
+dataplane  carrot_seed@eth1.100 <-> tomato_seed@eth1.200  via pepper_seed  a->b: foreign qdisc — not otto's  b->a: -
+```
+
+A direction's summary column reads `port-scoped (N)` when that placement
+carries N active selectors, in place of a parameter summary or `-`. A
+placement carrying a root qdisc otto did not create renders `foreign qdisc —
+not otto's` instead: `list` reports a foreign tree, but `impair`/`repair`
+refuse to mutate **or** clear it — a root qdisc otto didn't generate could be
+anything, and otto only ever touches trees whose shape it recognizes as its
+own — so clear it manually with `tc` if it's expendable.
+
+### Mechanism
+
+A scoped placement is a `prio` qdisc with the kernel-default 3 bands —
+**unmatched traffic behaves exactly as with no qdisc**, pfifo_fast
+equivalence — plus one extra band per selector, each carrying its own
+`netem` leaf and a pair of `u32` filters (dport, sport) steering that port's
+traffic into it. This all lives inside `otto.link.netem`, behind the same
+`LinkImpairer` contract as whole-link impairment; the only state is still the
+kernel's — `otto link list` reconstructs the entire scoped tree from `tc
+qdisc show` + `tc filter show`, nothing is cached otto-side.
+
+```{note}
+**u32 caveat.** The `dport`/`sport` filters match by assuming a standard
+20-byte IP header (no IP options) on a non-fragmented packet — the same
+assumption `tc`'s own `u32 match ip dport/sport` shorthand makes. Acceptable
+for lab traffic; a packet carrying IP options, or an IP fragment, won't
+match a selector's filters and falls through to the unmatched bands (i.e.
+behaves as clean for that one packet).
+```
+
+### Custom impairers and `--port`
+
+The scoped surface — `supports_selectors` plus the `scoped_*` command
+builders and the scoped parser — is **optional** on a `LinkImpairer` (see
+[Custom impairers](#custom-impairers) below) and defaults off, so an
+existing third-party impairer is unaffected by this feature. A `--port`
+request routed to a host whose impairer doesn't declare
+`supports_selectors = True` is a loud capability error naming the impairer
+and the host — never a silent fallback to whole-link impairment.
+
+```{note}
+**Tunnels are out of scope.** Port-scoped impairment is a link-only
+feature: it operates on `otto.link` placements exclusively, and
+`otto.tunnel` is untouched by it — there is no "impair a tunnel" surface,
+and none is planned. Impairing a link that tunnel traffic happens to ride
+remains possible exactly as it is today (`tc` cannot know what a port
+belongs to), with no added coupling between the two packages.
+```
+
 ## Repairing: `otto link repair`
 
 ```bash
@@ -174,7 +334,11 @@ otto --lab veggies link repair --all
 `repair <link>` clears **every** currently-impaired placement of that link
 unconditionally (no merge — a placement with anything applied gets a
 `tc qdisc del`) and cancels any live `--expire` timer for it, whether or not
-that placement actually had an impairment to clear.
+that placement actually had an impairment to clear. This bare form clears a
+whole-link impairment OR an entire port-scoped tree, whichever the placement
+carries. Adding `--port N [--proto P]` narrows `repair` to one selector
+instead of the whole placement — see
+[Repairing one selector](#repairing-one-selector) above.
 
 `repair --all` walks every static link in the lab and never raises: a link
 that structurally can't be impaired (no named endpoint interface, the
@@ -201,9 +365,12 @@ dataplane  carrot_seed@eth1.100 <-> tomato_seed@eth1.200  via pepper_seed  a->b:
 
 - **via** is the link's `impair` middlebox host id, or `-` for endpoint mode.
 - Each direction's text is either a compact parameter summary (`delay 10ms
-  loss 2%`), `-` for a clean (unimpaired) placement, or `?` when that
-  placement's host couldn't be reached this pass — absence there means
-  "unknown," not "clean."
+  loss 2%`) for a whole-link impairment, `port-scoped (N)` for N active
+  selectors (each printed on its own indented row below — see
+  [Listing: selector rows](#listing-selector-rows) above), `foreign qdisc —
+  not otto's` for a root qdisc otto did not generate, `-` for a clean
+  (unimpaired) placement, or `?` when that placement's host couldn't be
+  reached this pass — absence there means "unknown," not "clean."
 - A link that structurally can't be impaired shows `n/a` in both direction
   columns rather than attempting to resolve a placement.
 
@@ -331,7 +498,27 @@ states = await read_link_states(lab)  # every link's current impairment, list's 
 await repair_link(lab, "edge")
 ```
 
-`find_link`, `repair_all`, and the `ImpairReport`/`RepairReport`/`LinkState`
+`selector` is the same optional keyword on both mutators — pass a `Selector`
+to route through the port-scoped path instead of the whole-interface one;
+omitted (the default), behavior is unchanged:
+
+```python
+from otto.link import Selector, impair_link, repair_link
+
+report = await impair_link(
+    lab, "edge", ImpairmentParams(delay_ms=200.0), selector=Selector(5201, "tcp")
+)
+await repair_link(lab, "edge", selector=Selector(5201, "tcp"))
+```
+
+`read_link_states`'s result shape follows: each `LinkState.by_direction`
+value is a `DirectionState` (`whole: ImpairmentParams | None`, `scoped: dict[Selector,
+ImpairmentParams]`, `foreign: bool` — at most one of `whole`/`scoped` is
+ever populated, since the two are exclusive per placement) or `None` when
+that direction's host couldn't be read this pass.
+
+`find_link`, `repair_all`, and the
+`ImpairReport`/`RepairReport`/`LinkState`/`Selector`/`DirectionState`/`ScopedState`
 result types round out the surface. Nothing in this layer prints or knows
 about exit codes — see the {doc}`API reference <../api/link>` for full
 signatures.

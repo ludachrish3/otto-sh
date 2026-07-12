@@ -21,9 +21,9 @@ from typing import TYPE_CHECKING, Any
 from ..host.builtin_hosts import BUILTIN_LOCAL_HOST_ID
 from ..host.daemon import kill_command, launch_command
 from ..logger.mode import LogMode
-from .impairer import LinkImpairer, build_impairer
+from .impairer import FIRST_SELECTOR_BAND, MAX_SELECTORS, LinkImpairer, ScopedState, build_impairer
 from .model import Link
-from .params import ImpairmentParams, equivalent
+from .params import ImpairmentParams, Selector, equivalent
 from .placement import (
     FlowDirection,
     Placement,
@@ -34,7 +34,12 @@ from .placement import (
     inpath_placements,
     parse_ip_addr,
 )
-from .sentinel import IMPAIR_PS_COMMAND, encode_impair_sentinel, parse_impair_ps
+from .sentinel import (
+    IMPAIR_PS_COMMAND,
+    encode_impair_sentinel,
+    encode_impair_sentinel_v2,
+    parse_impair_ps,
+)
 
 if TYPE_CHECKING:
     from ipaddress import IPv4Interface
@@ -56,6 +61,9 @@ class AppliedPlacement:
     params: ImpairmentParams
     """The merged params actually verified present after the mutation."""
 
+    selector: Selector | None = None
+    """Set when this was a port-scoped application (``--port``)."""
+
 
 @dataclass(frozen=True, slots=True)
 class ImpairReport:
@@ -75,11 +83,27 @@ class RepairReport:
 
 
 @dataclass(frozen=True, slots=True)
+class DirectionState:
+    """One direction's full impairment shape (the ``list``/GUI read feed).
+
+    At most one of :attr:`whole` / :attr:`scoped` / :attr:`foreign` is
+    populated (whole-link and port-scoped are exclusive per netdev in v1;
+    a foreign tree is opaque). All three empty = clean.
+    """
+
+    whole: ImpairmentParams | None = None
+    scoped: dict[Selector, ImpairmentParams] = dc_field(default_factory=dict)
+    foreign: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class LinkState:
     """One link's current impairment state, direction by direction (for ``list``)."""
 
     link: Link
-    by_direction: dict[FlowDirection, ImpairmentParams | None] = dc_field(default_factory=dict)
+    by_direction: dict[FlowDirection, "DirectionState | None"] = dc_field(default_factory=dict)
+    """Per-direction shape; ``None`` = that direction's host couldn't be read."""
+
     impairable: bool = True
     """``False`` when the link structurally can't be impaired (refusal/unnamed/etc)."""
 
@@ -230,12 +254,29 @@ async def _resolve_placements(
     return placements
 
 
-async def _read_placement(
-    host: Any, impairer: LinkImpairer, netdev: str
-) -> ImpairmentParams | None:
-    """Read + parse *netdev*'s current impairment on *host* (``None`` = clean)."""
-    result = await _exec(host, impairer.read_command(netdev))
-    return impairer.parse_read(result.value)
+async def _read_state(host: Any, impairer: LinkImpairer, netdev: str) -> ScopedState:
+    """Read *netdev*'s full impairment shape on *host* as a :class:`ScopedState`.
+
+    Scoped-capable impairers read qdisc + filters and discriminate all four
+    kinds; legacy impairers keep their single-command read and can only ever
+    report ``clean`` or ``whole`` (their read contract predates selectors).
+    """
+    if impairer.supports_selectors:
+        qdisc_cmd, filter_cmd = impairer.scoped_read_commands(netdev)
+        qdisc_out = (await _exec(host, qdisc_cmd)).value
+        filter_out = (await _exec(host, filter_cmd)).value
+        return impairer.parse_scoped(qdisc_out, filter_out)
+    params = impairer.parse_read((await _exec(host, impairer.read_command(netdev))).value)
+    return ScopedState.whole_link(params) if params is not None else ScopedState.clean()
+
+
+def _ensure_not_foreign(host: Any, netdev: str, state: ScopedState) -> None:
+    """Refuse to mutate a root qdisc otto did not generate (spec §1)."""
+    if state.kind == "foreign":
+        raise RuntimeError(
+            f"{host.id}/{netdev} has a foreign qdisc otto did not create — "
+            "refusing to modify it (clear it manually with tc if it is expendable)"
+        )
 
 
 async def _apply_or_clear(
@@ -248,18 +289,31 @@ async def _apply_or_clear(
         await _root_run(host, impairer.apply_command(netdev, merged))
 
 
-async def _cancel_timers(host: Any, link_id: str, netdev: str) -> int:
-    """Kill any live expire-timer tagged for (*link_id*, *netdev*) on *host*.
+async def _cancel_timers(
+    host: Any,
+    link_id: str,
+    netdev: str,
+    *,
+    selector: Selector | None = None,
+    everything: bool = False,
+) -> int:
+    """Kill live expire-timers for (*link_id*, *netdev*) on *host*, scoped.
 
-    Best-effort: a scan failure (host flaky mid-operation) returns 0 rather
-    than raising — cancellation is a hygiene step, not the operation itself.
+    ``everything=True`` reaps every v1 AND v2 timer (bare repair). Otherwise
+    ``selector=None`` matches only v1 whole-link timers (today's exact
+    semantics — scoped state can't hold v1 timers, exclusivity guarantees
+    it) and ``selector=S`` matches only S's own v2 timer. Best-effort: a
+    scan failure returns 0 rather than raising — cancellation is a hygiene
+    step, not the operation itself.
     """
     try:
         result = await _exec(host, IMPAIR_PS_COMMAND)
     except RuntimeError:
         return 0
     pids = [
-        pid for pid, lid, dev in parse_impair_ps(result.value) if lid == link_id and dev == netdev
+        t.pid
+        for t in parse_impair_ps(result.value)
+        if t.link_id == link_id and t.netdev == netdev and (everything or t.selector == selector)
     ]
     if not pids:
         return 0
@@ -276,23 +330,180 @@ async def _launch_timer(
     await _root_run(host, launch_command(sentinel, argv))
 
 
-_RollbackEntry = tuple[Placement, Any, LinkImpairer, ImpairmentParams | None]
+def _assign_band(link_id: str, host: Any, netdev: str, state: ScopedState) -> int:
+    """Lowest free selector band; a full tree is a loud cap error (spec §1)."""
+    used = {band for band, _params in state.selectors.values()}
+    for band in range(FIRST_SELECTOR_BAND, FIRST_SELECTOR_BAND + MAX_SELECTORS):
+        if band not in used:
+            return band
+    raise ValueError(
+        f"link {link_id} already has {MAX_SELECTORS} port-scoped impairments on "
+        f"{host.id}/{netdev} (limit {MAX_SELECTORS}) — repair one first"
+    )
 
 
-async def _rollback(link_id: str, entries: list[_RollbackEntry]) -> None:
+def _ensure_selector_capable(host: Any, impairer: LinkImpairer) -> None:
+    """--port routed to a non-supporting impairer is a loud capability error."""
+    if not impairer.supports_selectors:
+        name = getattr(host, "impairer", None) or type(impairer).__name__
+        raise ValueError(
+            f"impairer {name!r} does not support port-scoped impairment (--port); "
+            f"host {host.id!r} needs a selector-capable impairer"
+        )
+
+
+async def _launch_selector_timer(
+    host: Any,
+    link: Link,
+    placement: Placement,
+    impairer: LinkImpairer,
+    selector: Selector,
+    band: int,
+    expire: int,
+) -> None:
+    """Detached v2 timer clearing one selector after *expire* seconds.
+
+    The timer can't know whether it will be the LAST selector when it fires,
+    so the script ends with a conditional root cleanup: if no filters remain
+    under the scoped root, delete the root — restoring pristine, per spec §2
+    'clearing the last selector deletes the root'.
+    """
+    sentinel = encode_impair_sentinel_v2(link.id, placement.netdev, selector)
+    clear_seq = " && ".join(
+        impairer.scoped_clear_selector_commands(placement.netdev, band, selector)
+    )
+    filter_show = impairer.scoped_read_commands(placement.netdev)[1]
+    root_del = impairer.clear_command(placement.netdev)
+    script = (
+        f'sleep {int(expire)} && {clear_seq} && if [ -z "$({filter_show})" ]; then {root_del}; fi'
+    )
+    await _root_run(host, launch_command(sentinel, ["bash", "-c", script]))
+
+
+def _expected_scoped_mapping(
+    state: ScopedState, selector: Selector, merged: ImpairmentParams
+) -> dict[Selector, ImpairmentParams]:
+    """Build the post-mutation selector->params mapping the verify re-read must show."""
+    expected = {sel: params for sel, (_band, params) in state.selectors.items()}
+    if merged.is_empty():
+        expected.pop(selector, None)
+    else:
+        expected[selector] = merged
+    return expected
+
+
+def _verify_scoped(
+    host: Any,
+    placement: Placement,
+    expected: dict[Selector, ImpairmentParams],
+    observed: ScopedState,
+) -> None:
+    """Post-apply verify for a scoped mutation: same selectors, equivalent params."""
+    observed_map = {sel: params for sel, (_band, params) in observed.selectors.items()}
+    ok = (
+        (observed.kind == "scoped" or (observed.kind == "clean" and not expected))
+        and set(observed_map) == set(expected)
+        and all(equivalent(observed_map[sel], expected[sel]) for sel in expected)
+    )
+    if not ok:
+        exp_text = ", ".join(f"{s.describe()} [{p.describe()}]" for s, p in expected.items()) or (
+            "clean"
+        )
+        obs_text = (
+            ", ".join(f"{s.describe()} [{p.describe()}]" for s, p in observed_map.items())
+            or observed.kind
+        )
+        raise RuntimeError(
+            f"post-apply verify failed on {host.id}/{placement.netdev}: "
+            f"expected [{exp_text}], observed [{obs_text}]"
+        )
+
+
+async def _apply_selector(
+    host: Any,
+    link: Link,
+    placement: Placement,
+    impairer: LinkImpairer,
+    state: ScopedState,
+    selector: Selector,
+    merged: ImpairmentParams,
+) -> int | None:
+    """One selector's mutation on one placement (state already exclusivity-checked).
+
+    Returns the band the selector landed in, or ``None`` when the call was a
+    clear (merged-to-empty). The caller launches any expire timer AFTER its
+    own verify succeeds — the fresh-timer-only-after-verify invariant is
+    today's rule, unchanged.
+    """
+    netdev = placement.netdev
+    prior = state.selectors.get(selector)
+    if merged.is_empty():
+        if prior is None:
+            return None
+        if len(state.selectors) == 1:
+            await _root_run(host, impairer.clear_command(netdev))
+        else:
+            for cmd in impairer.scoped_clear_selector_commands(netdev, prior[0], selector):
+                await _root_run(host, cmd)
+        return None
+    band = prior[0] if prior is not None else _assign_band(link.id, host, netdev, state)
+    if state.kind == "clean":
+        await _root_run(host, impairer.scoped_root_command(netdev))
+    await _root_run(host, impairer.scoped_band_command(netdev, band, merged))
+    if prior is None:
+        for cmd in impairer.scoped_filter_commands(netdev, band, selector):
+            await _root_run(host, cmd)
+    return band
+
+
+_RollbackEntry = tuple[Placement, Any, LinkImpairer, ScopedState]
+
+
+async def _restore_state(
+    host: Any, impairer: LinkImpairer, netdev: str, state: ScopedState
+) -> None:
+    """Rebuild *netdev* to exactly *state* (clean / whole params / full scoped mapping)."""
+    if state.kind == "whole" and state.whole is not None:
+        await _root_run(host, impairer.apply_command(netdev, state.whole))
+        return
+    await _root_run(host, impairer.clear_command(netdev))
+    if state.kind != "scoped":
+        return
+    await _root_run(host, impairer.scoped_root_command(netdev))
+    for selector, (band, params) in state.selectors.items():
+        await _root_run(host, impairer.scoped_band_command(netdev, band, params))
+        for cmd in impairer.scoped_filter_commands(netdev, band, selector):
+            await _root_run(host, cmd)
+
+
+async def _rollback(
+    link_id: str, entries: list[_RollbackEntry], *, selector: Selector | None
+) -> None:
     """Best-effort restoration of already-applied placements after a mid-way failure.
 
-    Restores in reverse application order: prior params re-applied where they
-    existed, cleared where there was nothing before. Any timer this run may
-    have launched on the placement is cancelled first, matching the ordinary
-    cancel-before-mutate invariant. One placement's restore failing must not
-    stop the others from being attempted.
+    Restores in reverse application order to each placement's full pre-call
+    shape — clean, whole-link params, or a complete scoped mapping. Any timer
+    this run may have launched on the placement is cancelled first, matching
+    the ordinary cancel-before-mutate invariant — scoped to the SAME
+    *selector* the run's own pre-mutation cancel used (spec: a bare run only
+    ever owns v1 timers, a scoped run only ever owns its own selector's v2
+    timer), so a sibling selector's still-live expire timer is left running.
+
+    Note the inherent, acceptable race this leaves: if a sibling's detached
+    timer fires between this run's read and its verify, the post-apply
+    verify will observe the sibling's now-cleared state, fail, and this
+    rollback will resurrect the selector that just legitimately expired —
+    loud (a verify-mismatch RuntimeError), vanishingly unlikely, and
+    unavoidable under the kernel-qdisc-is-the-only-state model (no locking
+    primitive spans "read state" and "verify state" across a detached timer).
+
+    One placement's restore failing must not stop the others from being
+    attempted.
     """
     for placement, host, impairer, prior in reversed(entries):
         with contextlib.suppress(Exception):
-            await _cancel_timers(host, link_id, placement.netdev)
-            restore = prior if prior is not None else ImpairmentParams()
-            await _apply_or_clear(host, impairer, placement.netdev, restore)
+            await _cancel_timers(host, link_id, placement.netdev, selector=selector)
+            await _restore_state(host, impairer, placement.netdev, prior)
 
 
 def _describe_state(params: ImpairmentParams | None) -> str:
@@ -313,6 +524,18 @@ def _raise_verify_mismatch(
     )
 
 
+def _raise_scoped_exclusivity(link_id: str) -> None:
+    """Raise for a bare impair hitting port-scoped state (TRY301: kept out of the try body)."""
+    raise ValueError(
+        f"link {link_id} has port-scoped impairments — repair them first or impair with --port"
+    )
+
+
+def _raise_whole_link_exclusivity(link_id: str) -> None:
+    """Raise for a scoped impair hitting whole-link state (TRY301: kept out of the try body)."""
+    raise ValueError(f"link {link_id} has a whole-link impairment — repair it first")
+
+
 async def impair_link(
     lab: "Lab",
     ident: str,
@@ -320,6 +543,7 @@ async def impair_link(
     *,
     from_host: str | None = None,
     expire: int | None = None,
+    selector: Selector | None = None,
 ) -> ImpairReport:
     """Impair link *ident* with *params* (merge-read-modify-replace, verified).
 
@@ -333,6 +557,21 @@ async def impair_link(
     originating at that host; omitted, both directions are impaired. In-path
     links (``link.impair`` set) ignore endpoint selection and always place on
     the middlebox's facing interfaces.
+
+    *selector* (``--port``) routes the mutation through the port-scoped path
+    instead: *params* merges over just THAT selector's currently-applied
+    state (not the whole netdev's), landing in its own prio band (assigned on
+    first use, kept across re-impairs, capped at :data:`~otto.link.impairer.MAX_SELECTORS`
+    per netdev) with its own pair of u32 filters. Whole-link and port-scoped
+    impairment are exclusive per netdev (spec §1): a bare impair against
+    scoped state, or a scoped impair against whole-link state, is a loud
+    :class:`ValueError` telling the operator to repair first. A host whose
+    impairer doesn't declare :attr:`~otto.link.impairer.LinkImpairer.supports_selectors`
+    is also a loud capability error — never a silent fallback to whole-link.
+    Expire-timers follow the same split: a bare impair only ever cancels/launches
+    v1 whole-link timers; a scoped impair only ever cancels/launches its OWN
+    selector's v2 timer, leaving every other selector's timer (and any v1
+    timer, which scoped state can't have anyway) untouched.
 
     No half-impairments: if any placement fails mid-way (mutation doesn't
     verify, host unreachable, etc.), every placement touched in this call —
@@ -349,17 +588,42 @@ async def impair_link(
         for placement in placements:
             host = _host(lab, placement.host_id)
             impairer = _impairer_for(host)
-            await _cancel_timers(host, link.id, placement.netdev)
-            prior = await _read_placement(host, impairer, placement.netdev)
+            if selector is not None:
+                _ensure_selector_capable(host, impairer)
+            await _cancel_timers(host, link.id, placement.netdev, selector=selector)
+            state = await _read_state(host, impairer, placement.netdev)
+            _ensure_not_foreign(host, placement.netdev, state)
+            if selector is None and state.kind == "scoped":
+                _raise_scoped_exclusivity(link.id)
+            if selector is not None and state.kind == "whole":
+                _raise_whole_link_exclusivity(link.id)
             # Register the rollback entry BEFORE mutating: a verify or timer
             # failure on THIS placement must roll its own just-applied mutation
             # back too, not only the earlier placements' (final-review 2026-07-10).
-            rollback_entries.append((placement, host, impairer, prior))
-            base = prior if prior is not None else ImpairmentParams()
+            rollback_entries.append((placement, host, impairer, state))
+            if selector is not None:
+                prior_entry = state.selectors.get(selector)
+                base = prior_entry[1] if prior_entry is not None else ImpairmentParams()
+                merged = params.merged_over(base)
+                merged.validate()
+                band = await _apply_selector(
+                    host, link, placement, impairer, state, selector, merged
+                )
+                expected_map = _expected_scoped_mapping(state, selector, merged)
+                observed_state = await _read_state(host, impairer, placement.netdev)
+                _verify_scoped(host, placement, expected_map, observed_state)
+                if expire is not None and band is not None:
+                    await _launch_selector_timer(
+                        host, link, placement, impairer, selector, band, expire
+                    )
+                applied.append(AppliedPlacement(placement, merged, selector))
+                continue
+            base = state.whole if state.whole is not None else ImpairmentParams()
             merged = params.merged_over(base)
             merged.validate()
             await _apply_or_clear(host, impairer, placement.netdev, merged)
-            observed = await _read_placement(host, impairer, placement.netdev)
+            observed_state = await _read_state(host, impairer, placement.netdev)
+            observed = observed_state.whole
             expected = None if merged.is_empty() else merged
             # tc canonicalizes on display, so `observed` may spell the same
             # impairment differently than `expected`; compare by MEANING.
@@ -371,19 +635,22 @@ async def impair_link(
                 await _launch_timer(host, link, placement, impairer, expire)
             applied.append(AppliedPlacement(placement, merged))
     except Exception:
-        await _rollback(link.id, rollback_entries)
+        await _rollback(link.id, rollback_entries, selector=selector)
         raise
     return ImpairReport(link.id, applied)
 
 
-async def repair_link(lab: "Lab", ident: str) -> RepairReport:
-    """Clear every impaired placement of link *ident* and cancel its timers.
+async def repair_link(lab: "Lab", ident: str, *, selector: Selector | None = None) -> RepairReport:
+    """Clear link *ident*'s impairment state and cancel its timers.
 
-    Unlike :func:`impair_link`, a clear is unconditional per placement that
-    currently has ANY impairment present — no merge. The ``tc qdisc del`` is
-    still verified by a post-clear re-read: a clear that silently didn't take
-    (state still present) is a loud, host-named failure, never reported as
-    ``cleared``.
+    Bare (``selector=None``): clears EVERYTHING per placement that has any
+    otto state — whole-link or the entire scoped tree, each a single root
+    delete — and cancels every v1 and v2 timer. With *selector*: clears just
+    that selector (deleting the root when it is the last one) and cancels
+    only its own v2 timer; a selector that isn't present clears nothing.
+
+    Every clear is verified by a post-clear re-read: a clear that silently
+    didn't take is a loud, host-named failure, never reported as ``cleared``.
     """
     link = find_link(lab, ident)
     directions = _directions(link, None)
@@ -394,19 +661,44 @@ async def repair_link(lab: "Lab", ident: str) -> RepairReport:
     for placement in placements:
         host = _host(lab, placement.host_id)
         impairer = _impairer_for(host)
-        timers_cancelled += await _cancel_timers(host, link.id, placement.netdev)
-        current = await _read_placement(host, impairer, placement.netdev)
-        if current is not None:
+        if selector is not None:
+            _ensure_selector_capable(host, impairer)
+        timers_cancelled += await _cancel_timers(
+            host, link.id, placement.netdev, selector=selector, everything=selector is None
+        )
+        state = await _read_state(host, impairer, placement.netdev)
+        _ensure_not_foreign(host, placement.netdev, state)
+        if selector is None:
+            if state.kind == "clean":
+                continue
             await _root_run(host, impairer.clear_command(placement.netdev))
-            # _root_run ignores command-level failure, so re-read: a clear that
-            # silently didn't take (still parses as impaired) is a loud,
-            # host-named failure, never reported as `cleared` (final-review 2026-07-10).
-            still = await _read_placement(host, impairer, placement.netdev)
-            if still is not None:
+            still = await _read_state(host, impairer, placement.netdev)
+            if still.kind != "clean":
                 raise RuntimeError(
                     f"repair failed on {host.id}/{placement.netdev}: impairment still present"
                 )
             cleared.append(placement)
+            continue
+        if state.kind == "whole":
+            raise ValueError(
+                f"link {link.id} has a whole-link impairment — repair it without --port"
+            )
+        entry = state.selectors.get(selector)
+        if entry is None:
+            continue
+        if len(state.selectors) == 1:
+            await _root_run(host, impairer.clear_command(placement.netdev))
+        else:
+            for cmd in impairer.scoped_clear_selector_commands(
+                placement.netdev, entry[0], selector
+            ):
+                await _root_run(host, cmd)
+        still = await _read_state(host, impairer, placement.netdev)
+        if selector in still.selectors or still.kind in ("whole", "foreign"):
+            raise RuntimeError(
+                f"repair failed on {host.id}/{placement.netdev}: impairment still present"
+            )
+        cleared.append(placement)
     return RepairReport(link.id, cleared, timers_cancelled)
 
 
@@ -439,14 +731,17 @@ async def _link_state(lab: Any, link: Link) -> LinkState:
     """
     try:
         placements = await _resolve_placements(lab, link, _BOTH)
-        by_direction: dict[FlowDirection, ImpairmentParams | None] = {}
+        by_direction: dict[FlowDirection, DirectionState | None] = {}
         unreachable = False
         for placement in placements:
             host = _host(lab, placement.host_id)
             impairer = _impairer_for(host)
             try:
-                by_direction[placement.direction] = await _read_placement(
-                    host, impairer, placement.netdev
+                state = await _read_state(host, impairer, placement.netdev)
+                by_direction[placement.direction] = DirectionState(
+                    whole=state.whole,
+                    scoped={sel: params for sel, (_band, params) in state.selectors.items()},
+                    foreign=state.kind == "foreign",
                 )
             except RuntimeError:
                 unreachable = True

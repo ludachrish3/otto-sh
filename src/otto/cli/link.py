@@ -8,16 +8,19 @@ refusals) lives in the library — this module only parses CLI strings via the
 """
 
 import typer
+from rich import get_console
 from rich import print as rprint
 
 from ..config import get_lab, get_repos
 from ..config.completion_cache import collect_link_ids
 from ..link import (
+    DirectionState,
     FlowDirection,
     ImpairmentParams,
     ImpairReport,
     LinkState,
     RepairReport,
+    Selector,
     impair_link,
     parse_percent,
     parse_rate,
@@ -81,6 +84,8 @@ def _print_impair_report(report: ImpairReport) -> None:
     for applied in report.applied:
         placement = applied.placement
         desc = applied.params.describe() or "cleared"
+        if applied.selector is not None:
+            desc = f"{applied.selector.describe()} {desc}"
         rprint(
             f"[green]impaired[/green] {report.link_id} {placement.direction.value} "
             f"on {placement.host_id}/{placement.netdev}: {desc}"
@@ -89,7 +94,7 @@ def _print_impair_report(report: ImpairReport) -> None:
 
 @link_app.command()
 @async_typer_command
-async def impair(
+async def impair(  # noqa: PLR0913 — CLI command params
     link: str = typer.Argument(..., help="Link id or name.", autocompletion=_link_completer),
     delay: str | None = typer.Option(
         None, "--delay", help="Delay: bare number = ms, or an explicit us/ms/s suffix."
@@ -118,6 +123,16 @@ async def impair(
     expire: int | None = typer.Option(
         None, "--expire", min=1, help="Auto-clear this impairment after N seconds."
     ),
+    port: int | None = typer.Option(
+        None,
+        "--port",
+        min=1,
+        max=65535,
+        help="Scope to one service port (matches source OR dest; see the guide).",
+    ),
+    proto: str | None = typer.Option(
+        None, "--proto", help="With --port: narrow to tcp or udp (default: both)."
+    ),
 ) -> None:
     """Impair a static link (merge-read-modify-replace, verified). See spec §9/§10."""
     given: dict[str, str | None] = {
@@ -142,9 +157,21 @@ async def impair(
     if all(v is None for v in given.values()):
         rprint("[red]impair needs at least one parameter option (--delay/--loss/--rate/...).[/red]")
         raise typer.Exit(2)
+    if proto is not None and port is None:
+        rprint("[red]--proto needs --port.[/red]")
+        raise typer.Exit(2)
+    selector: Selector | None = None
+    if port is not None:
+        try:
+            selector = Selector(port, proto)
+        except ValueError as e:
+            rprint(f"[red]{e}[/red]")
+            raise typer.Exit(2) from e
     lab = get_lab()
     try:
-        report = await impair_link(lab, link, params, from_host=from_host, expire=expire)
+        report = await impair_link(
+            lab, link, params, from_host=from_host, expire=expire, selector=selector
+        )
     except (ValueError, RuntimeError) as e:
         rprint(f"[red]{e}[/red]")
         raise typer.Exit(1) from e
@@ -166,6 +193,16 @@ async def repair(
         None, help="Link id or name.", autocompletion=_link_completer
     ),
     all_: bool = typer.Option(False, "--all", help="Repair every static link in the lab."),
+    port: int | None = typer.Option(
+        None,
+        "--port",
+        min=1,
+        max=65535,
+        help="Repair only this service port's scoped impairment (single link only).",
+    ),
+    proto: str | None = typer.Option(
+        None, "--proto", help="With --port: narrow to tcp or udp (default: both)."
+    ),
 ) -> None:
     """Clear a link's impairment(s) and cancel its timers, or repair --all. See spec §9/§10."""
     # This usage-error exit is deliberately kept OUT of the try/except below,
@@ -173,6 +210,19 @@ async def repair(
     if bool(link) == bool(all_):
         rprint("[red]give a link id/name, or --all (not both).[/red]")
         raise typer.Exit(2)
+    if proto is not None and port is None:
+        rprint("[red]--proto needs --port.[/red]")
+        raise typer.Exit(2)
+    if all_ and port is not None:
+        rprint("[red]--port repairs one selector on one link; it cannot combine with --all.[/red]")
+        raise typer.Exit(2)
+    selector: Selector | None = None
+    if port is not None:
+        try:
+            selector = Selector(port, proto)
+        except ValueError as e:
+            rprint(f"[red]{e}[/red]")
+            raise typer.Exit(2) from e
     lab = get_lab()
     if all_:
         reports, failures = await repair_all(lab)
@@ -184,7 +234,7 @@ async def repair(
             raise typer.Exit(1)
         return
     try:
-        report = await repair_link(lab, link or "")
+        report = await repair_link(lab, link or "", selector=selector)
     except (ValueError, RuntimeError) as e:
         rprint(f"[red]{e}[/red]")
         raise typer.Exit(1) from e
@@ -192,10 +242,32 @@ async def repair(
 
 
 def _dir_text(state: LinkState, direction: FlowDirection) -> str:
-    params = state.by_direction.get(direction)
-    if params is not None:
-        return params.describe()
-    return "?" if state.unreachable else "-"
+    dstate: DirectionState | None = state.by_direction.get(direction)
+    if dstate is None:
+        return "?" if state.unreachable else "-"
+    if dstate.foreign:
+        return "foreign qdisc — not otto's"
+    if dstate.scoped:
+        return f"port-scoped ({len(dstate.scoped)})"
+    if dstate.whole is not None:
+        return dstate.whole.describe()
+    return "-"
+
+
+def _selector_rows(state: LinkState) -> list[str]:
+    """One indented row per selector, a->b first, sorted by (port, proto)."""
+    rows: list[str] = []
+    for direction in (FlowDirection.A_TO_B, FlowDirection.B_TO_A):
+        dstate = state.by_direction.get(direction)
+        if dstate is None or not dstate.scoped:
+            continue
+        rows.extend(
+            f"  {direction.value}  {sel.describe()}  {params.describe()}"
+            for sel, params in sorted(
+                dstate.scoped.items(), key=lambda kv: (kv[0].port, kv[0].proto or "")
+            )
+        )
+    return rows
 
 
 @link_app.command(name="list")
@@ -212,14 +284,22 @@ async def list_links() -> None:
             b_text = _dir_text(state, FlowDirection.B_TO_A)
         else:
             a_text = b_text = "n/a"
-        rprint(
+        # soft_wrap=True: rich's global console otherwise wraps at its
+        # detected width (80 cols under CliRunner/no-tty, since COLUMNS isn't
+        # set in CI) — long link ids/selector rows would get mangled
+        # mid-line without it.
+        get_console().print(
             f"{link.id}  {link.a.host}@{link.a.interface or '-'} <-> "
             f"{link.b.host}@{link.b.interface or '-'}  via {via}  "
-            f"a->b: {a_text}  b->a: {b_text}"
+            f"a->b: {a_text}  b->a: {b_text}",
+            soft_wrap=True,
         )
+        for row in _selector_rows(state):
+            get_console().print(row, soft_wrap=True)
     unreachable_ids = sorted(state.link.id for state in states if state.unreachable)
     if unreachable_ids:
-        rprint(
+        get_console().print(
             f"[yellow bold]partial scan[/yellow bold] — could not fully read: "
-            f"{', '.join(unreachable_ids)}"
+            f"{', '.join(unreachable_ids)}",
+            soft_wrap=True,
         )

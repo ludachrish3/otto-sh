@@ -146,6 +146,41 @@ class ImpairmentParams:
         return " ".join(parts)
 
 
+_PROTOS = ("tcp", "udp")
+_MAX_PORT = 65535
+
+
+@dataclass(frozen=True, slots=True)
+class Selector:
+    """One port-scoped impairment selector: a service port, EITHER side.
+
+    Matches traffic whose SOURCE OR DESTINATION port is :attr:`port` —
+    otto never needs to know which endpoint is the server. :attr:`proto`
+    narrows to one L4 protocol; ``None`` = both tcp and udp.
+    ``Selector(5201)`` and ``Selector(5201, "tcp")`` are DISTINCT keys;
+    the former's filters simply match a superset of the latter's traffic
+    (spec 2026-07-11 §1).
+    """
+
+    port: int
+    proto: str | None = None
+    """``"tcp"``, ``"udp"``, or ``None`` = both."""
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.port <= _MAX_PORT:
+            raise ValueError(f"selector port {self.port} out of range 1-{_MAX_PORT}")
+        if self.proto is not None and self.proto not in _PROTOS:
+            raise ValueError(f"selector proto {self.proto!r} must be tcp or udp")
+
+    def describe(self) -> str:
+        """Return the one string form for the selector.
+
+        The form (``5201`` / ``5201/tcp``) is used uniformly by the CLI,
+        ``list`` rows, error text, and the v2 sentinel payload.
+        """
+        return f"{self.port}/{self.proto}" if self.proto else str(self.port)
+
+
 def _canonical_rate_bps(rate: str | None) -> int | None:
     """Canonical integer bits-per-second for a stored rate string (``None`` stays ``None``)."""
     if rate is None:
