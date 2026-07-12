@@ -11,16 +11,27 @@ import json
 import socket
 import threading
 import time
+import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import pytest
 
+from otto.models import (
+    HostSnapshot,
+    LabSnapshot,
+    MetricRecord,
+    MonitorExport,
+    SessionMeta,
+    SessionRecord,
+)
 from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
+from otto.monitor.session import new_frame
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
@@ -52,6 +63,7 @@ def _tolerate_missing_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(server_module, "_STATIC_DIR", static_dir)
 
 
+MODE_KEYS = {"mode", "source"}
 META_KEYS = {"hosts", "live", "metrics", "tabs", "interval"}
 # "interval" (global cadence) added in Phase 2 — deliberate contract evolution.
 META_METRIC_KEYS = {"label", "y_title", "unit", "command", "chart", "interval"}
@@ -71,6 +83,70 @@ SSE_EVENT_DELETED_KEYS = {"type", "id"}
 def _get_json(url: str) -> Any:
     with urllib.request.urlopen(url, timeout=10) as resp:  # local test server
         return json.load(resp)
+
+
+_T0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
+_T1 = datetime(2026, 7, 2, tzinfo=timezone.utc)
+
+
+def _two_session_document() -> MonitorExport:
+    """A two-session ``format:1`` document, built inline via the models.
+
+    Stands in for a ``--db`` archive read back through ``build_db_export``
+    without a real SQLite file — the review-mode server only needs a valid
+    :class:`MonitorExport`, so constructing one directly is the more direct
+    pin for the wire contract this module owns.
+    """
+    return MonitorExport(
+        format=1,
+        sessions=[
+            SessionRecord(
+                id="2026-07-01T00-00-00Z",
+                label="run-1",
+                start=_T0,
+                end=_T0 + timedelta(hours=1),
+                lab=LabSnapshot(hosts=[HostSnapshot(id="h1", element="h1")]),
+                meta=SessionMeta(interval=5.0),
+                metrics=[MetricRecord(timestamp=_T0, host="h1", label="CPU %", value=42.0)],
+                chart_map={"CPU %": "CPU"},
+            ),
+            SessionRecord(
+                id="2026-07-02T00-00-00Z",
+                label="run-2",
+                note="second run",
+                start=_T1,
+            ),
+        ],
+    )
+
+
+@pytest.fixture
+def live_export_dash() -> Iterator[DashboardHarness[FakeCollector]]:
+    """A live-mode harness with ``frame``/``lab`` supplied, for ``/api/export/json``.
+
+    ``live_dash`` (conftest.py) deliberately omits ``frame``/``lab`` — every
+    pin that fixture backs hits ``/api/meta``/``/api/data``/``/api/stream``,
+    none of which need them. Only the export pin does, so it gets its own
+    minimal harness rather than widening ``live_dash`` for every consumer.
+    """
+    harness = DashboardHarness(
+        FakeCollector(), frame=new_frame(label=None, note=None), lab=LabSnapshot()
+    ).start()
+    yield harness
+    harness.stop()
+
+
+@pytest.fixture
+def review_dash() -> Iterator[DashboardHarness[MetricCollector]]:
+    """A review-mode harness serving :func:`_two_session_document` verbatim."""
+    harness = DashboardHarness(
+        MetricCollector(hosts=[], parsers=[]),
+        mode="review",
+        document=_two_session_document(),
+        source_name="x.db",
+    ).start()
+    yield harness
+    harness.stop()
 
 
 def test_serves_meta_and_data(live_dash: DashboardHarness[FakeCollector]) -> None:
@@ -207,14 +283,44 @@ def test_sse_stream_delivers_metric_messages_with_meta(
     assert payload["meta"] == {"Used": "1 G"}
 
 
-def test_historical_fixture_loads(historical_dash: DashboardHarness[MetricCollector]) -> None:
-    meta = _get_json(historical_dash.url + "/api/meta")
-    assert meta["live"] is False
-    assert meta["hosts"] == []  # bare labels → no host derived → historical UI
-    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk", "network"]
-    data = _get_json(historical_dash.url + "/api/data")
-    assert set(data["series"]) == {"Overall CPU", "Load (1m)", "Memory Usage"}
-    assert len(data["events"]) == 2
+def test_mode_wire_contract_live(live_dash: DashboardHarness[FakeCollector]) -> None:
+    payload = _get_json(live_dash.url + "/api/mode")
+    assert set(payload) == MODE_KEYS
+    assert payload["mode"] == "live"
+    assert payload["source"] is None
+
+
+def test_document_404_in_live_mode(live_dash: DashboardHarness[FakeCollector]) -> None:
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        urllib.request.urlopen(live_dash.url + "/api/document", timeout=10)
+    assert exc_info.value.code == 404
+    body = json.loads(exc_info.value.read())
+    assert body == {"detail": "no document in live mode"}
+
+
+def test_export_json_emits_format_1(
+    live_export_dash: DashboardHarness[FakeCollector],
+) -> None:
+    payload = _get_json(live_export_dash.url + "/api/export/json")
+    assert payload["format"] == 1
+    assert isinstance(payload["sessions"], list)
+    assert len(payload["sessions"]) == 1
+    session = payload["sessions"][0]
+    assert {"id", "start", "lab", "meta", "metrics", "chart_map"} <= set(session)
+
+
+def test_mode_wire_contract_review(review_dash: DashboardHarness[MetricCollector]) -> None:
+    payload = _get_json(review_dash.url + "/api/mode")
+    assert set(payload) == MODE_KEYS
+    assert payload["mode"] == "review"
+    assert payload["source"] == "x.db"
+
+
+def test_document_round_trips_in_review_mode(
+    review_dash: DashboardHarness[MetricCollector],
+) -> None:
+    payload = _get_json(review_dash.url + "/api/document")
+    assert MonitorExport.model_validate(payload) == _two_session_document()
 
 
 def test_stop_joins_server_thread(live_dash: DashboardHarness[FakeCollector]) -> None:
@@ -341,27 +447,3 @@ def test_sse_event_lifecycle_wire_contract(
         assert deleted == {"type": "event_deleted", "id": ev.id}
     finally:
         conn.close()
-
-
-def test_export_import_round_trip_preserves_values(
-    live_dash: DashboardHarness[FakeCollector], tmp_path: Path
-) -> None:
-    """Losslessness at the value level, not just key sets (hostless twin of the browser pin)."""
-    live_dash.run(live_dash.collector.add_event(label="evt", color="#112233", dash="dot"))
-    exported = live_dash.run_export()
-
-    out = tmp_path / "exported.json"
-    out.write_text(exported)
-    reloaded = MetricCollector.from_json(str(out))
-
-    original = live_dash.collector.get_series()
-    round_tripped = reloaded.get_series()
-    assert round_tripped.keys() == original.keys()
-    for key, pts in original.items():
-        assert [(p.ts, p.value, p.meta) for p in round_tripped[key]] == [
-            (p.ts, p.value, p.meta) for p in pts
-        ]
-    assert [e.to_dict() for e in reloaded.get_events()] == [
-        e.to_dict() for e in live_dash.collector.get_events()
-    ]
-    assert reloaded.get_chart_map() == live_dash.collector.get_chart_map()

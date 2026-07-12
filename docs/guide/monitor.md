@@ -13,18 +13,37 @@ web/fixtures/kitchen-sink.json export document through the Import front
 door, captured with headless Chromium. Do not commit media into
 docs/_static/generated/. -->
 
-The dashboard is **review-first**: see [Web dashboard](#web-dashboard) below
-for what it shows and how data gets into it. Live streaming from a running
-`otto monitor` isn't wired into it yet — that's a later phase; the CLI
-sections below (collection, `--db`, `--file`) describe what runs today
-regardless.
+Two commands live under one binary:
+
+- `otto monitor --live [OPTIONS]` — the only hardware-touching path (it runs
+  the reservation gate before touching any host, and needs `--lab` to
+  resolve which hosts to poll). Collects from lab hosts and serves the
+  dashboard against that live collector. Add `--db PATH` to persist the run
+  as a **session**; reusing the same `--db` path on a later run appends
+  another session to the same archive rather than overwriting it.
+- `otto monitor <SOURCE>` — review mode. `SOURCE` is a `.json` export or a
+  `.db` session archive; no hosts are touched, no reservation gate runs, and
+  no `--lab` is needed — `SOURCE` is a self-contained document, so this
+  works for a hand-carried archive on a machine with no lab configured at
+  all. The dashboard **auto-loads** the document the moment the page opens —
+  no Import click needed — and a multi-session archive gets a session
+  picker.
+
+Bare `otto monitor` (neither `--live` nor a source) prints usage and exits 2;
+`--live` together with a source is a mutually exclusive error, also exit 2.
+See [Web dashboard](#web-dashboard) below for what the dashboard shows and
+how a document gets into it either way; live streaming straight into an
+*open* dashboard tab — watching a running `--live` session's charts grow in
+real time rather than loading a document at boot or by hand — isn't wired up
+yet, see the note at the end of that section.
 
 ## Live mode
 
-By default, `otto monitor` polls every real host in the lab:
+`--live` is the explicit opt-in that touches hardware; it is never the
+default. By default it polls every real host in the lab:
 
 ```bash
-otto --lab my_lab monitor
+otto --lab my_lab monitor --live
 ```
 
 Docker container hosts are excluded — they aren't operated on as part of
@@ -39,8 +58,8 @@ Pass a regex to `--hosts` (matched against host IDs via `re.search`) to
 narrow the live host set:
 
 ```bash
-otto --lab my_lab monitor --hosts 'router|switch'
-otto --lab my_lab monitor --hosts router1
+otto --lab my_lab monitor --live --hosts 'router|switch'
+otto --lab my_lab monitor --live --hosts router1
 ```
 
 Omit the option to monitor every real host in the lab (Docker containers
@@ -52,16 +71,32 @@ Control how often metrics are collected with `--interval` (default: 5
 seconds, minimum: 1 second):
 
 ```bash
-otto --lab my_lab monitor --interval 2.0
+otto --lab my_lab monitor --live --interval 2.0
 ```
 
-### Persisting data
+### Persisting data — sessions
 
-Use `--db` to write collected metrics to a SQLite file for later viewing:
+Add `--db` to persist the run as a **session** — this run's lab snapshot,
+chart/tab layout, and every collected point — into a SQLite archive:
 
 ```bash
-otto --lab my_lab monitor --db metrics.db
+otto --lab my_lab monitor --live --db metrics.db
 ```
+
+Reusing the same `--db` path on a later run doesn't overwrite it: each
+`--live --db metrics.db` invocation appends one more session, so a single
+archive can accumulate a whole day's worth of separately-labeled runs. Tag a
+session for later review with `--label` (short, shown in the dashboard's
+session picker) and `--note` (free-form, shown as that picker entry's
+tooltip):
+
+```bash
+otto --lab my_lab monitor --live --db metrics.db \
+    --label "fan fix" --note "post-repair burn-in, rack 3"
+```
+
+Review a captured archive later with `otto monitor metrics.db` — see
+[Reviewing a capture](#reviewing-a-capture) below.
 
 ### Running otto on shared/NFS storage
 
@@ -86,20 +121,47 @@ otto is safe to run with its log/artifact root (`OTTO_XDIR`) on a shared mount
 If otto cannot determine the filesystem type, it assumes local disk and keeps
 its default behaviour.
 
-## Historical mode
+## Reviewing a capture
 
-`--file` loads a previously collected run into the monitor server without
-touching any hosts:
+The positional `<SOURCE>` argument serves a previously captured run without
+touching any hosts — no reservation gate, no collection, and no `--lab`:
 
 ```bash
-otto --lab my_lab monitor --file metrics.db
-otto --lab my_lab monitor --file metrics.json
+otto monitor metrics.db
+otto monitor metrics.json
 ```
 
-Supported formats: `.db` (SQLite) and `.json`. This serves the same
-review-first web UI as live mode (see [Web dashboard](#web-dashboard)
-below) — today that means the loaded run isn't shown automatically; the
-review UI only ever renders a document you Import client-side.
+That last point matters for a hand-carried archive: a teammate who receives
+`metrics.db` can open it with the command above on a machine with no lab
+configured anywhere — `SOURCE` is a self-contained document, and review mode
+never resolves, loads, or even looks for a lab.
+
+`SOURCE` must be a `.db` session archive written by `--live --db`, or a
+`.json` export — either downloaded from a running dashboard's **⋯ →
+Export**, or written by `otto test --monitor` (see [Monitoring during a
+test run](#monitoring-during-a-test-run) below). Anything else is a fast,
+clear CLI error — there is no silent partial load:
+
+- An **unrecognized suffix**, or a `.json`/`.db` that **doesn't parse as a
+  `format:1` document**, exits **1** with a message naming what was
+  expected.
+- A **path that doesn't exist** exits **2** with a usage banner — the
+  argument is validated before the command body runs, so it fails the same
+  way any other bad invocation does.
+
+**Breaking change, no migration.** A `.db`/`.json` written by an otto build
+before sessions existed used a different, unversioned shape and is no
+longer readable — `otto monitor` on one of those fails loud naming the
+expected format rather than misrendering silently. There is no converter;
+re-capture with the current build. The `GET /api/export/json` endpoint
+changed the same way (it now emits this same `format:1` shape), which is a
+breaking change for anything that scraped it directly. One narrower
+caveat, specific to this feature's early rollout: a `.db` archive captured
+by a pre-release build of `--live --db` (before its session metadata
+persistence was corrected) replays with no chart specs and a null
+interval — it looks like a valid archive but the dashboard renders it as
+one ungrouped, unit-less chart per series. That has no migration either;
+re-capture.
 
 ## Web dashboard
 
@@ -107,10 +169,24 @@ In both modes, `otto monitor` serves a web server: it binds an OS-assigned
 free port and logs the dashboard URL at startup (`Server running at
 http://<ip>:<port>`, one URL per non-loopback interface).
 
-The dashboard itself is **review-first**: it opens to an empty Import
-screen and makes no calls back to that server on load. Feed it a monitor
-export document — drag a file onto the window, or use the **⋯** overflow
-menu's *Import* — and it renders that document entirely in the browser:
+On load, the dashboard shell asks that same server one question — `GET
+/api/mode` — and if the answer is `{"mode": "review", ...}` (i.e. you're
+looking at `otto monitor <source>`), it immediately follows up with `GET
+/api/document` and renders the result, exactly as if you'd used Import
+yourself: no click needed. A `--live` server answers `{"mode": "live",
+...}` instead, so a browser pointed at a running capture still opens to the
+plain Import screen below — watching a `--live` session's chart data update
+as new points arrive isn't wired up yet (see the note at the end of this
+section). The same boot fetch is also why the dashboard still works when
+served by a bare static file server with no `/api/*` routes at all (used
+for the screenshots on this page, and for ad-hoc demos): any failure —
+connection refused, a non-JSON body, whatever a dumb server hands back —
+is swallowed and falls back to the same empty Import screen, never a
+broken page.
+
+Feed it a monitor export document yourself at any time — drag a file onto
+the window, or use the **⋯** overflow menu's *Import* — and it renders
+that document entirely in the browser:
 
 - **Fleet grid.** Element-grouped host tiles, each with a status dot, an
   element-level health-rollup bar, and a labeled headline metric; a down
@@ -136,20 +212,24 @@ menu's *Import* — and it renders that document entirely in the browser:
   loaded document; clicking a row re-scopes the review bar's range to
   that event's span.
 - **Multiple sessions.** A document spanning more than one session (a
-  config change captured mid-run, for example) exposes a session picker;
-  each session renders under the lab configuration it was captured
-  under, so drift between sessions never bleeds into the wrong one's
-  view.
+  config change captured mid-run, or a `--db` archive several `--live --db`
+  runs appended into, for example) exposes a session picker; each entry's
+  tooltip is that session's `--label`/`--note`, and each session renders
+  under the lab configuration it was captured under, so drift between
+  sessions never bleeds into the wrong one's view.
 - **Export.** The **⋯** menu re-downloads whatever document is currently
   loaded, unchanged.
 
-Live streaming from a running `otto monitor` isn't wired into this UI yet,
-and neither is a path from a `--db`/`--file` run into the Import flow
-above — connecting the dashboard to otto's own collection is later,
-"live-hookup phase" work. Everything described above is real today and
-covered by the browser e2e suite (`tests/e2e/monitor/dashboard/`, see the
-[behavior-spec contract](#frontend-development) below); it's the bridge
-from collected data to an importable document that doesn't exist yet.
+Loading a document — automatically at boot for `otto monitor <source>`, or
+by hand via Import — is real today and covered by the browser e2e suite
+(`tests/e2e/monitor/dashboard/`, see the [behavior-spec
+contract](#frontend-development) below). What isn't wired up yet is a
+*live* feed: watching a running `--live` session's charts grow in the
+browser in real time, via the collector's `/api/stream` SSE endpoint,
+rather than loading a finished document. That's later, "live-hookup phase"
+work — today, seeing a `--live` run's data in the dashboard means capturing
+it to a document first (`--db`, or `otto test --monitor`'s `.json`) and
+then opening that with `otto monitor <source>`.
 
 ### Frontend development
 
@@ -172,11 +252,11 @@ make web-test      # vitest — store reducers, SSE handling, chart-series
                     # grouping, PID-trace retirement, etc.
 ```
 
-`make web-dev`'s proxy target is a running server process (a live `otto
-monitor` or a `--file` replay both serve `/api/*`); the current review-first
-UI doesn't call those routes on its own, but pointing at one is still useful
-for developing against real backend responses ahead of the live-hookup
-work. `make web` is what actually ships in the wheel.
+`make web-dev`'s proxy target is a running server process — an `otto
+monitor --live` collector or an `otto monitor <source>` review server both
+serve `/api/*` — useful for developing against real backend responses
+ahead of the live-hookup work described above. `make web` is what actually
+ships in the wheel.
 
 **Behavior-spec contract.** `tests/e2e/monitor/dashboard/` is a Playwright
 suite that pins the dashboard's observable surface through `data-testid`
@@ -202,10 +282,10 @@ otto --lab my_lab test --monitor --monitor-interval 2 --monitor-hosts router Tes
 otto --lab my_lab test --monitor --monitor-output run.db TestPerformance
 ```
 
-`otto --lab my_lab monitor --file <path>` replays a captured `.db`/`.json`
-run through the same historical server as [Historical mode](#historical-mode)
-above; loading it into the [Web dashboard](#web-dashboard)'s review UI
-itself isn't wired up yet (see that section).
+`otto monitor <path>` opens either output in the same review dashboard
+described in [Reviewing a capture](#reviewing-a-capture) above — the
+document loads automatically the moment the page opens, no Import click
+needed.
 
 ## Monitoring from test suites
 
@@ -516,8 +596,9 @@ Each `RegexLogEventParser` contributes one `kind="table"` tab on the
 dashboard and no chart. Rows render newest-first with a client-side,
 case-insensitive substring filter; the browser keeps roughly the last 500
 rows on screen even though the database keeps every row ever collected —
-reload that database with `--db` (see [Historical mode](#historical-mode))
-and the full history replays as a table too, not just as charts.
+reload that database with `otto monitor <path>` (see [Reviewing a
+capture](#reviewing-a-capture)) and the full history replays as a table
+too, not just as charts.
 
 Table parsers must declare their own `tab` id: a table tab can't share an
 id with a chart tab, or with another table tab (see

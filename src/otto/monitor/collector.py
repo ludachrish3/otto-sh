@@ -3,20 +3,24 @@ MetricCollector — collects metrics from multiple UnixHosts via asyncio.gather(
 
 On each tick all hosts are polled simultaneously so results share one timestamp.
 
-Supports three data sources:
-  1. Live collection from multiple UnixHosts (asyncio.gather() per tick)
-  2. Historical JSON files
-  3. Historical SQLite databases (written by a previous live collection)
+Live collection only: a collector polls hosts via ``asyncio.gather()`` per
+tick, optionally persisting to a session-bound :class:`~otto.monitor.db.MetricDB`
+(schema v2). Review (historical) data is a separate concern — see
+:mod:`otto.monitor.export` (``build_db_export``/``build_live_export``) for the
+format:1 producer that reads/wraps collected data, and :mod:`otto.cli.monitor`
+for how a saved export is loaded back for review. A bare ``MetricCollector``
+with no live targets (e.g. ``MetricCollector(targets=[])``) still declares its
+parser catalog so ``get_meta_model()`` remains well-formed.
 """
 
 import asyncio
 import contextlib
 import copy
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..models import ChartSpec, MetricPoint, MonitorMeta, TabSpec
@@ -24,8 +28,6 @@ from ..result import CommandResult, Results
 from .broadcast import Broadcaster
 from .db import MetricDB
 from .events import MonitorEvent
-from .history import load_json_into, load_sqlite_into
-from .history import to_json as history_to_json
 from .parsers import (
     DEFAULT_PARSERS,
     LogEvent,
@@ -133,14 +135,18 @@ class MetricCollector:
     Args:
         hosts: Remote hosts to monitor. Pass ``None`` (or omit) when loading historical data.
         parsers: Metric parser instances. Defaults to DEFAULT_PARSERS (cpu, mem, disk, load).
-        db_path: Optional SQLite file for persistence. If ``None``, data is in-memory only.
+        db: Optional session-bound :class:`~otto.monitor.db.MetricDB` for persistence
+            (unopened — this collector opens it lazily via :meth:`init_db`). ``None``
+            means in-memory only. The collector itself stays session-blind: framing
+            (choosing the label/note and constructing the ``MetricDB``) is the
+            caller's job, not the collector's — one process run is one live session.
     """
 
     def __init__(
         self,
         hosts: "Sequence[RemoteHost] | None" = None,
         parsers: list[MetricParser] | None = None,
-        db_path: str | None = None,
+        db: MetricDB | None = None,
         targets: "list[MonitorTarget] | None" = None,
     ) -> None:
         parser_dict: dict[str, MetricParser] = {}
@@ -175,11 +181,13 @@ class MetricCollector:
                         unified.append(p)
         self._parsers: dict[str, MetricParser] = {p.command: p for p in unified}
 
-        # A collector with no live targets (historical --file/--db replay, or a
+        # A collector built via `hosts=[]` with no live targets (e.g. a
         # scripted test collector) still declares its parser CATALOG: /api/meta
-        # must describe tabs/charts so the dashboard can lay out loaded data.
-        # Without this, from_json/from_sqlite served `tabs: []` and historical
-        # mode rendered no charts at all.
+        # must describe tabs/charts even with nothing collected yet. This does
+        # NOT fire for review mode's `MetricCollector(targets=[])` (targets is
+        # explicitly `[]`, not `None`) — that collector intentionally serves
+        # empty meta, since review mode renders from the loaded `document`
+        # (see otto.monitor.export/otto.cli.monitor), not from /api/meta.
         if not self._targets and targets is None:
             unified = list(parser_dict.values())
             self._parsers = dict(parser_dict)
@@ -191,7 +199,7 @@ class MetricCollector:
         self._views.extend(snmp_views)
 
         self._hosts = [t.host for t in self._targets]
-        self._db_path = db_path
+        self._pending_db = db
 
         # All series keyed by "hostname/label" — e.g. "router1/CPU %" for regular
         # metrics or "router1/proc/python" for per-process CPU.  Each point is a
@@ -210,9 +218,10 @@ class MetricCollector:
         self._db: MetricDB | None = None
 
         # Global collection interval in seconds, recorded by run() before the
-        # collection loop starts. None until a live run happens — historical
-        # collectors (from_json/from_sqlite) and scripted test collectors that
-        # never call run() report it as None via get_meta_model().
+        # collection loop starts. None until a live run happens — a review
+        # collector (targets=[], see otto.cli.monitor) and scripted test
+        # collectors that never call run() report it as None via
+        # get_meta_model().
         self._global_interval: float | None = None
 
         # Parser-health state, keyed (host_name, command) — or (host_name, oid)
@@ -230,17 +239,16 @@ class MetricCollector:
     # ------------------------------------------------------------------
 
     async def init_db(self) -> None:
-        """Open the persistent DB (no-op without a --db path). See MetricDB.
+        """Open the persistent DB (no-op without a ``db`` at construction). See MetricDB.
 
         Must be awaited before any DB writes.  Called automatically by
         :meth:`run`; callers that skip ``run()`` (e.g. tests) should call
         this explicitly.
         """
-        if self._db is not None or not self._db_path:
+        if self._db is not None or self._pending_db is None:
             return
-        db = MetricDB(self._db_path)
-        await db.open()
-        self._db = db
+        await self._pending_db.open()
+        self._db = self._pending_db
 
     async def close_db(self) -> None:
         """Close the persistent DB connection and release the file lock."""
@@ -448,9 +456,20 @@ class MetricCollector:
         key = f"{host_name}/{label}"
         # Hot path: model_construct skips validation (the values are otto's own).
         point = MetricPoint.model_construct(ts=ts, value=dp.value, meta=dp.meta)
+        # The store's chart_map only learns a label when its first point lands
+        # (append_point), which is strictly AFTER the DB's session row was
+        # INSERTed by open() — so the map can never be seeded at construction
+        # and must be written out here instead. Fire only on the transition
+        # (new label, or a label re-charted), never per point: that is a
+        # handful of UPDATEs per run, and it means a session that CRASHES
+        # (end left NULL) still carries its grouping. Writing it at finalize
+        # instead would lose exactly that case.
+        map_changed = self._store.chart_map.get(label) != view.chart
         self._store.append_point(key, point, label=label, chart=view.chart)
         if self._db:
             await self._db.write_point(ts, host_name, label, dp.value)
+            if map_changed:
+                await self._db.write_chart_map(json.dumps(self._store.chart_map))
         msg: dict[str, Any] = {
             "type": "metric",
             "host": host_name,
@@ -733,7 +752,7 @@ class MetricCollector:
         ]
         return MonitorMeta(
             hosts=hosts,
-            live=bool(self._hosts),  # False when loaded from --file (no live collection)
+            live=bool(self._hosts),  # False for a review/scripted collector (no live hosts)
             metrics=metrics,
             tabs=list(tabs.values()),
             interval=self._global_interval,
@@ -757,56 +776,3 @@ class MetricCollector:
 
     def _publish(self, payload: dict[str, Any]) -> None:
         self._broadcast.publish(payload)
-
-    # ------------------------------------------------------------------
-    # Historical data loaders (class methods)
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def from_json(
-        cls,
-        path: str,
-        parsers: list[MetricParser] | None = None,
-    ) -> "MetricCollector":
-        """
-        Load historical metrics from a JSON file.
-
-        Expected format::
-
-            {
-                "metrics": [{"timestamp": "...", "label": "...", "value": 42.0}, ...],
-                "events": [
-                    {"timestamp": "...", "label": "...", "source": "...", "color": "..."},
-                    ...,
-                ],
-            }
-
-        The ``host`` field is optional for backward compatibility.
-        """
-        collector = cls(hosts=[], parsers=parsers)
-        load_json_into(collector._store, path)
-        return collector
-
-    @classmethod
-    async def from_sqlite(
-        cls,
-        path: str,
-        parsers: list[MetricParser] | None = None,
-    ) -> "MetricCollector":
-        """Load historical metrics and events from a SQLite database."""
-        collector = cls(hosts=[], parsers=parsers)
-        await load_sqlite_into(collector._store, path)
-        return collector
-
-    # ------------------------------------------------------------------
-    # Export helpers
-    # ------------------------------------------------------------------
-
-    def export_json(self, path: str) -> None:
-        """Export all collected data to a JSON file."""
-        with Path(path).open("w") as f:
-            f.write(self.to_json())
-
-    def to_json(self) -> str:
-        """Serialize all metrics and events to a JSON string compatible with ``--file``."""
-        return history_to_json(self._store)

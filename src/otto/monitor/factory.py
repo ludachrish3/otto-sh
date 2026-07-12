@@ -7,19 +7,19 @@ silencing, same target construction.
 """
 
 from collections.abc import Sequence
-from pathlib import Path
 from typing import cast
 
 from ..host.remote_host import RemoteHost
 from ..logger.mode import LogMode
 from .collector import MetricCollector, MonitorTarget
+from .db import MetricDB
 from .parsers import get_host_parsers
 from .snmp import SnmpClient, SnmpSource, SnmpVersion, expand_oid_bundles
 
 
 def build_monitor_collector(
     hosts: Sequence[RemoteHost],
-    db_path: Path | None = None,
+    db: MetricDB | None = None,
 ) -> MetricCollector:
     """Build a :class:`~otto.monitor.collector.MetricCollector` over *hosts*.
 
@@ -36,7 +36,10 @@ def build_monitor_collector(
 
     Args:
         hosts: Hosts to sample on each tick.
-        db_path: Optional SQLite file for persistence; ``None`` means in-memory.
+        db: Optional session-bound :class:`~otto.monitor.db.MetricDB` for persistence
+            (unopened); ``None`` means in-memory. The frame (session identity) is
+            the caller's job — this factory stays session-blind, same as the
+            collector it builds.
     """
     targets: list[MonitorTarget] = []
     for host in hosts:
@@ -61,5 +64,5 @@ def build_monitor_collector(
 
     return MetricCollector(
         targets=targets,
-        db_path=str(db_path) if db_path else None,
+        db=db,
     )

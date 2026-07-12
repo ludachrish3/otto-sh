@@ -76,7 +76,11 @@ export function ReviewBar() {
       {sessions.length > 1 && (
         <Select
           label="Session"
-          items={sessions.map((s) => ({ id: s.id, label: s.label ?? s.id }))}
+          items={sessions.map((s) => ({
+            id: s.id,
+            label: s.label ?? s.id,
+            title: s.note ?? undefined,
+          }))}
           selectedKey={activeSessionId ?? ""}
           onSelectionChange={selectSession}
           testId="session-picker"

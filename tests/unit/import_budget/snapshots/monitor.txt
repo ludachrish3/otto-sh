@@ -61,6 +61,7 @@ otto.labs.json_repository
 otto.labs.protocol
 otto.labs.registry
 otto.link
+otto.link.derive
 otto.link.impairer
 otto.link.model
 otto.link.netem
@@ -72,6 +73,7 @@ otto.logger.mode
 otto.models
 otto.models.base
 otto.models.host
+otto.models.link
 otto.models.monitor
 otto.models.options
 otto.models.settings
@@ -80,10 +82,11 @@ otto.monitor.broadcast
 otto.monitor.collector
 otto.monitor.db
 otto.monitor.events
+otto.monitor.export
 otto.monitor.factory
-otto.monitor.history
 otto.monitor.parsers
 otto.monitor.rates
+otto.monitor.session
 otto.monitor.snmp
 otto.monitor.store
 otto.params

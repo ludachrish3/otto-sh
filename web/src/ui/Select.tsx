@@ -1,3 +1,4 @@
+import type { ComponentPropsWithRef } from "react";
 import {
   Button as AriaButton,
   Select as AriaSelect,
@@ -11,6 +12,9 @@ import {
 export interface SelectItem {
   id: string;
   label: string;
+  /** Rendered as the `title` attribute on the option's DOM element (a
+   * hover tooltip) — e.g. a session's note. */
+  title?: string;
 }
 
 export function Select({
@@ -59,6 +63,21 @@ export function Select({
               className="cursor-pointer rounded-md px-3 py-1.5 text-sm text-gray-700
                 outline-none focus:bg-gray-100 data-[selected]:font-semibold dark:text-gray-200
                 dark:focus:bg-gray-800"
+              // react-aria-components' `filterDOMProps` only forwards a
+              // fixed global-attribute allowlist (dir/lang/hidden/inert/
+              // translate) onto the rendered option — `title` isn't one of
+              // them, so setting it directly as a prop above would be
+              // silently dropped before it ever reaches the DOM. `render`
+              // hands back the fully-computed option props (role, a11y
+              // attrs, the resolved children, the merged ref) so we can add
+              // `title` on the actual element that becomes the DOM option.
+              // The cast is safe: `render`'s prop type is a link/div union
+              // because ListBoxItem *could* render an `<a>` (when given an
+              // `href`, which this component never does), so it's always
+              // the div-shaped member at runtime here.
+              render={(optionProps) => (
+                <div {...(optionProps as ComponentPropsWithRef<"div">)} title={item.title} />
+              )}
             >
               {item.label}
             </ListBoxItem>

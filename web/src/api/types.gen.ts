@@ -25,8 +25,9 @@ export type Interval1 = number | null;
  *
  * ``interval`` is the global collection interval in seconds — ``None`` until
  * :meth:`~otto.monitor.collector.MetricCollector.run` has recorded one (a
- * collector that has not started live collection), or always for historical
- * (loaded from ``--file``/``--db``) data.
+ * collector that has not started live collection). Reviewed data (loaded
+ * from ``otto monitor <source>``) carries this in its own
+ * :class:`SessionMeta` instead — see :func:`otto.monitor.export.session_meta`.
  */
 export interface MonitorDashboardApiMetaPayload {
   hosts: Hosts;

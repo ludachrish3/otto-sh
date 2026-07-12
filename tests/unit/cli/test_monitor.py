@@ -3,12 +3,17 @@ Unit tests for the ``otto monitor`` subcommand.
 
 Covers:
   - Argument and option parsing / constraint validation
-  - ``_load_historical()`` helper for .db / .json / .csv files
   - ``build_monitor_collector()`` factory (parser selection, host.log suppression)
-  - Routing: live mode vs historical mode inside ``monitor()``
+  - Routing: ``--live`` vs a ``<source>`` review positional inside ``monitor()``
 
 The monitor command is tested via ``monitor_app`` directly so the main
 callback (which requires a real lab) is not involved.
+
+The CLI-shape tests (bare invocation, ``--live``/source mutual exclusion,
+source-suffix dispatch, reservation-gate ordering) live in the e2e suite —
+``tests/e2e/cli/test_monitor_cli.py`` — per spec 2026-07-12's CLI split.
+This file keeps the finer-grained option-parsing and factory/collector
+coverage.
 """
 
 import json
@@ -22,13 +27,16 @@ import pytest
 import typer
 from typer.testing import CliRunner
 
-from otto.cli.monitor import _load_historical, monitor, monitor_app
+from otto.cli.monitor import monitor, monitor_app
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.monitor.collector import MetricCollector
+from otto.monitor.db import MetricDB
+from otto.monitor.export import build_db_export
 from otto.monitor.factory import build_monitor_collector
 from otto.monitor.parsers import LoadParser, MemParser
+from otto.monitor.session import new_frame
 from otto.reservations import ReservationGateResult
 from otto.result import CommandResult, Results
 from otto.utils import Status
@@ -59,14 +67,19 @@ def _close_coro(coro):
 def live_mode_mocks():
     """
     Patch everything monitor() touches in live mode so no real SSH connections
-    or event loops are started.
+    or event loops are started, and no active OttoContext/lab is required
+    (``--live`` now always builds a session frame + lab snapshot, which needs
+    ``get_lab()`` — a bare ``CliRunner`` invocation has no active context).
     """
     mock_host = _make_host()
     mock_collector = MagicMock()
     mock_server = MagicMock()
+    mock_lab = MagicMock()
+    mock_lab.links = []
 
     with (
         patch("otto.cli.monitor.all_hosts", return_value=iter([mock_host])),
+        patch("otto.cli.monitor.get_lab", return_value=mock_lab),
         patch("otto.cli.monitor.build_monitor_collector", return_value=mock_collector),
         patch("otto.monitor.server.MonitorServer", return_value=mock_server),
         patch("asyncio.run", side_effect=_close_coro),
@@ -96,24 +109,26 @@ class TestMonitorHelp:
 
 class TestIntervalOption:
     def test_default_interval_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, [])
+        result = runner.invoke(monitor_app, ["--live"])
         # Default (5.0) is above min (1.0), so parsing succeeds
         assert result.exit_code == 0
 
     def test_custom_interval_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ["--interval", "10"])
+        result = runner.invoke(monitor_app, ["--live", "--interval", "10"])
         assert result.exit_code == 0
 
     def test_interval_short_flag(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ["-i", "3"])
+        result = runner.invoke(monitor_app, ["--live", "-i", "3"])
         assert result.exit_code == 0
 
     def test_interval_below_min_rejected(self):
+        # Typer's own `min=1.0` parameter validation fires during parsing,
+        # before monitor()'s body runs — --live is irrelevant here.
         result = runner.invoke(monitor_app, ["--interval", "0.5"])
         assert result.exit_code == 2
 
     def test_interval_at_min_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ["--interval", "1.0"])
+        result = runner.invoke(monitor_app, ["--live", "--interval", "1.0"])
         assert result.exit_code == 0
 
 
@@ -122,11 +137,11 @@ class TestIntervalOption:
 
 class TestHostsArgument:
     def test_single_host_regex_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ["--hosts", "host1"])
+        result = runner.invoke(monitor_app, ["--live", "--hosts", "host1"])
         assert result.exit_code == 0
 
     def test_alternation_regex_accepted(self, live_mode_mocks):
-        result = runner.invoke(monitor_app, ["--hosts", "host1|host2"])
+        result = runner.invoke(monitor_app, ["--live", "--hosts", "host1|host2"])
         assert result.exit_code == 0
 
     def test_no_hosts_option_uses_all_hosts(self, live_mode_mocks):
@@ -135,7 +150,7 @@ class TestHostsArgument:
             "otto.cli.monitor.all_hosts",
             return_value=iter([live_mode_mocks["host"]]),
         ) as p:
-            runner.invoke(monitor_app, [])
+            runner.invoke(monitor_app, ["--live"])
         p.assert_called_once()
         assert p.call_args.kwargs.get("pattern") is None
 
@@ -145,7 +160,7 @@ class TestHostsArgument:
             "otto.cli.monitor.all_hosts",
             return_value=iter([live_mode_mocks["host"]]),
         ) as p:
-            runner.invoke(monitor_app, ["--hosts", "router"])
+            runner.invoke(monitor_app, ["--live", "--hosts", "router"])
         p.assert_called_once()
         pattern = p.call_args.kwargs.get("pattern")
         assert pattern is not None
@@ -154,7 +169,7 @@ class TestHostsArgument:
 
     def test_no_matching_hosts_exits_nonzero(self, live_mode_mocks):
         with patch("otto.cli.monitor.all_hosts", return_value=iter([])):
-            result = runner.invoke(monitor_app, ["--hosts", "nope"])
+            result = runner.invoke(monitor_app, ["--live", "--hosts", "nope"])
         assert result.exit_code != 0
 
 
@@ -164,52 +179,110 @@ class TestHostsArgument:
 class TestDbOption:
     def test_db_option_accepted(self, live_mode_mocks, tmp_path):
         db_file = tmp_path / "metrics.db"
-        result = runner.invoke(monitor_app, ["--db", str(db_file)])
+        result = runner.invoke(monitor_app, ["--live", "--db", str(db_file)])
         assert result.exit_code == 0
 
+    def test_live_db_persists_real_meta_and_interval(self, tmp_path):
+        """``--live --db`` writes a session row carrying the REAL parser catalog.
 
-# ── --file option (historical mode) ──────────────────────────────────────────
+        The CALL-SITE guard for the ``meta_json`` seam. ``live_mode_mocks``
+        cannot serve here: it patches ``build_monitor_collector`` into a
+        MagicMock, so nothing the CLI hands to ``MetricDB`` is ever exercised
+        and the whole ``meta_json`` expression is unobserved — reverting it to
+        the raw ``get_meta_model().model_dump_json()`` dump (which silently
+        drops every chart; see otto.monitor.export.session_meta) left the
+        entire suite green. So drive the REAL collector/MetricDB the CLI
+        builds, and assert on the artifact read back out of the file.
+
+        Only the serve loop is replaced: ``_run_monitor`` is swapped for a stub
+        that opens the DB (``init_db`` INSERTs the session row), finalizes, and
+        closes — no uvicorn, no host I/O (``collector.run`` is never called).
+        """
+        db_file = tmp_path / "metrics.db"
+        mock_lab = MagicMock()
+        mock_lab.links = []
+
+        # Signature mirrors _run_monitor's; `server`/`interval`/`duration` are
+        # accepted and ignored — this stub replaces only the serve loop.
+        async def _fake_run_monitor(collector, server, interval, db=None, duration=None):
+            await collector.init_db()
+            if db is not None:
+                await db.finalize(datetime.now(tz=timezone.utc))
+            await collector.close()
+
+        with (
+            patch("otto.cli.monitor.all_hosts", return_value=iter([_make_host("router1")])),
+            patch("otto.cli.monitor.get_lab", return_value=mock_lab),
+            patch("otto.monitor.server.MonitorServer", return_value=MagicMock()),
+            patch("otto.cli.monitor._run_monitor", _fake_run_monitor),
+        ):
+            result = runner.invoke(
+                monitor_app,
+                ["--live", "--db", str(db_file), "--interval", "7"],
+            )
+        assert result.exit_code == 0, result.output
+
+        (session,) = build_db_export(str(db_file)).sessions
+        # The parser catalog survived the MonitorMeta -> SessionMeta reshape.
+        assert session.meta.charts, "session persisted with no chart specs"
+        assert "CPU" in [c.chart for c in session.meta.charts]
+        assert session.meta.tabs, "session persisted with no tabs"
+        # The interval the run was LAUNCHED with — the collector has not run at
+        # meta-write time, so this can only be right if the CLI threads its
+        # --interval through. A null here leaves derived health unresolvable on
+        # replay (web/src/data/health.ts's cadenceMs).
+        assert session.meta.interval == 7.0
+        # And the lab snapshot rode along.
+        assert [h.id for h in session.lab.hosts] == ["router1"]
 
 
-class TestFileOption:
-    def test_nonexistent_file_rejected(self):
-        result = runner.invoke(monitor_app, ["--file", "/nonexistent/path/data.db"])
-        assert result.exit_code != 0
+# ── <source> positional (review mode) ────────────────────────────────────────
+#
+# Rejection-path coverage (unknown suffix, legacy-flat JSON, missing file,
+# --live/source mutual exclusion) lives in tests/e2e/cli/test_monitor_cli.py.
+# These cover the ACCEPTANCE path: a well-formed .json/.db export dispatches
+# through to serving (asyncio.run mocked out — no uvicorn is started here).
 
+
+class TestSourceArgument:
     def test_json_file_accepted(self, tmp_path):
         json_file = tmp_path / "metrics.json"
-        json_file.write_text('{"metrics": [], "events": []}')
+        # A minimal, valid format:1 document (spec 2026-07-10 §3) — the flat
+        # legacy shape ({"metrics": [], "events": []}) is now REJECTED; see
+        # test_source_rejects_legacy_json in the e2e suite.
+        json_file.write_text(json.dumps({"format": 1, "sessions": []}))
         with patch("asyncio.run", side_effect=_close_coro):
-            result = runner.invoke(monitor_app, ["--file", str(json_file)])
+            result = runner.invoke(monitor_app, [str(json_file)])
         assert result.exit_code == 0
 
     def test_db_file_accepted(self, tmp_path):
+        import asyncio
+
         db_file = tmp_path / "metrics.db"
-        # Create a valid SQLite file with the expected schema
-        with closing(sqlite3.connect(str(db_file))) as conn, conn:
-            conn.executescript("""
-                CREATE TABLE metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
-                    label TEXT NOT NULL, value REAL NOT NULL
-                );
-                CREATE TABLE events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL, end_ts TEXT,
-                    label TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual',
-                    color TEXT NOT NULL DEFAULT '#888888', dash TEXT NOT NULL DEFAULT 'dash'
-                );
-            """)
+
+        async def _seed() -> None:
+            # A real (empty) schema-v2 session archive — the legacy flat
+            # sqlite shape is now refused loud (UnsupportedDBError); see
+            # test_source_rejects_unknown_suffix / test_db_v2.py's refusal
+            # tests for that path.
+            db = MetricDB(str(db_file), new_frame(label=None, note=None), "{}", "{}")
+            await db.open()
+            await db.close()
+
+        asyncio.run(_seed())
+
         with patch("asyncio.run", side_effect=_close_coro):
-            result = runner.invoke(monitor_app, ["--file", str(db_file)])
+            result = runner.invoke(monitor_app, [str(db_file)])
         assert result.exit_code == 0
 
 
 # ── Reservation gate: per-branch, not uniform ────────────────────────────────
 #
 # monitor registers gate=False (see builtin_commands.py) and gates itself:
-# historical --file replay reads a local file and never touches live
-# hardware, so it is gate-exempt by design; live collection still gates.
+# reviewing a saved <source> reads a local file and never touches live
+# hardware, so it is gate-exempt by design; --live collection still gates.
+# (Gate-ordering-before-host-selection is covered end to end in
+# tests/e2e/cli/test_monitor_cli.py.)
 #
 # monitor() reads ctx.meta["otto_reservation"] and calls .evaluate() inline
 # (there is no more standalone `gate(ctx)` callable to patch — see
@@ -227,13 +300,13 @@ def _make_ctx(meta: dict) -> typer.Context:
 
 
 class TestGatePerBranch:
-    def test_file_replay_does_not_invoke_gate(self, tmp_path):
+    def test_source_review_does_not_invoke_gate(self, tmp_path):
         json_file = tmp_path / "metrics.json"
-        json_file.write_text('{"metrics": [], "events": []}')
+        json_file.write_text(json.dumps({"format": 1, "sessions": []}))
         mock_res = MagicMock()
         ctx = _make_ctx({"otto_reservation": mock_res})
         with patch("asyncio.run", side_effect=_close_coro):
-            monitor(ctx, file=json_file)
+            monitor(ctx, source=json_file)
         mock_res.evaluate.assert_not_called()
 
     def test_live_mode_invokes_gate(self, live_mode_mocks):
@@ -243,7 +316,7 @@ class TestGatePerBranch:
         )
         ctx = _make_ctx({"otto_reservation": mock_res})
 
-        monitor(ctx)
+        monitor(ctx, live=True)
 
         mock_res.evaluate.assert_called_once()
 
@@ -258,7 +331,7 @@ class TestGatePerBranch:
         )
         ctx = _make_ctx({"otto_reservation": mock_res})
 
-        monitor(ctx)
+        monitor(ctx, live=True)
 
         out = capsys.readouterr().out
         # rich strips the [bold red] markup and may word-wrap at the console
@@ -270,104 +343,9 @@ class TestGatePerBranch:
         """No otto_reservation in ctx.meta (e.g. monitor invoked directly in tests, no preamble) -> no crash, no print."""  # noqa: E501 — descriptive docstring
         ctx = _make_ctx({})
 
-        monitor(ctx)  # must not raise
+        monitor(ctx, live=True)  # must not raise
 
         assert capsys.readouterr().out == ""
-
-
-# ── _load_historical() unit tests ─────────────────────────────────────────────
-
-
-class TestLoadHistorical:
-    """Direct unit tests for the private _load_historical() helper."""
-
-    @pytest.mark.asyncio
-    async def test_json_extension_uses_from_json(self, tmp_path):
-        json_file = tmp_path / "data.json"
-        json_file.write_text('{"metrics": [], "events": []}')
-        collector = await _load_historical(json_file)
-        assert collector is not None
-        assert collector.get_series() == {}
-
-    @pytest.mark.asyncio
-    async def test_sqlite_extension_uses_from_sqlite(self, tmp_path):
-        db_file = tmp_path / "data.db"
-        with closing(sqlite3.connect(str(db_file))) as conn, conn:
-            conn.executescript("""
-                CREATE TABLE metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
-                    label TEXT NOT NULL, value REAL NOT NULL
-                );
-                CREATE TABLE events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
-                    end_ts TEXT, label TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'manual',
-                    color TEXT NOT NULL DEFAULT '#888888',
-                    dash TEXT NOT NULL DEFAULT 'dash'
-                );
-            """)
-        collector = await _load_historical(db_file)
-        assert collector is not None
-
-    @pytest.mark.asyncio
-    async def test_unsupported_extension_raises_exit(self, tmp_path):
-        import typer
-
-        txt_file = tmp_path / "data.txt"
-        txt_file.write_text("garbage")
-        with pytest.raises(typer.Exit):
-            await _load_historical(txt_file)
-
-    @pytest.mark.asyncio
-    async def test_json_with_data_loads_metrics(self, tmp_path):
-        ts = "2024-01-01T12:00:00"
-        json_file = tmp_path / "data.json"
-        json_file.write_text(
-            json.dumps(
-                {
-                    "metrics": [
-                        {"timestamp": ts, "host": "router1", "label": "CPU %", "value": 42.0},
-                    ],
-                    "events": [],
-                }
-            )
-        )
-        collector = await _load_historical(json_file)
-        series = collector.get_series()
-        assert "router1/CPU %" in series
-        assert len(series["router1/CPU %"]) == 1
-        value = series["router1/CPU %"][0].value
-        assert value == 42.0
-
-    @pytest.mark.asyncio
-    async def test_sqlite_with_data_loads_metrics(self, tmp_path):
-        db_file = tmp_path / "data.db"
-        ts = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc).isoformat()
-        with closing(sqlite3.connect(str(db_file))) as conn, conn:
-            conn.executescript("""
-                CREATE TABLE metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
-                    label TEXT NOT NULL, value REAL NOT NULL
-                );
-                CREATE TABLE events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
-                    end_ts TEXT, label TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'manual',
-                    color TEXT NOT NULL DEFAULT '#888888',
-                    dash TEXT NOT NULL DEFAULT 'dash'
-                );
-            """)
-            conn.execute(
-                "INSERT INTO metrics (ts, host, label, value) VALUES (?, ?, ?, ?)",
-                (ts, "host1", "CPU %", 55.0),
-            )
-        collector = await _load_historical(db_file)
-        series = collector.get_series()
-        assert "host1/CPU %" in series
-        value = series["host1/CPU %"][0].value
-        assert value == 55.0
 
 
 # ── build_monitor_collector() unit tests ──────────────────────────────────────
@@ -383,18 +361,24 @@ class TestBuildCollector:
         assert host.log is LogMode.NEVER
 
     @pytest.mark.asyncio
-    async def test_db_path_forwarded(self, tmp_path):
+    async def test_db_forwarded(self, tmp_path):
         host = _make_host()
         db_file = tmp_path / "out.db"
-        collector = build_monitor_collector(hosts=[host], db_path=db_file)
+        db = MetricDB(
+            str(db_file),
+            new_frame(label=None, note=None),
+            lab_json="{}",
+            meta_json="{}",
+        )
+        collector = build_monitor_collector(hosts=[host], db=db)
         # DB is created lazily on init_db(), not on construction
         await collector.init_db()
         assert db_file.exists()
         await collector.close_db()
 
-    def test_no_db_path_leaves_no_file(self):
+    def test_no_db_leaves_no_file(self):
         host = _make_host()
-        collector = build_monitor_collector(hosts=[host], db_path=None)
+        collector = build_monitor_collector(hosts=[host], db=None)
         # Just verifies it doesn't raise
         assert collector is not None
 
@@ -499,10 +483,16 @@ class TestCollectorLiveRun:
     async def test_collection_stores_to_sqlite(self, tmp_path):
         host = _make_monitor_host("router1")
         db_file = tmp_path / "test_metrics.db"
+        db = MetricDB(
+            str(db_file),
+            new_frame(label=None, note=None),
+            lab_json="{}",
+            meta_json="{}",
+        )
         collector = MetricCollector(
             hosts=[host],
             parsers=[MemParser(), LoadParser()],
-            db_path=str(db_file),
+            db=db,
         )
 
         await collector.run(

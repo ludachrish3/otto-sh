@@ -300,18 +300,25 @@ otto host <HOST_ID> install [--stage-only]
 
 ## otto monitor
 
-Launch the interactive performance dashboard.
+Launch the interactive performance dashboard, or review a saved capture.
 
 ```text
-otto monitor [OPTIONS]
+otto monitor --live [OPTIONS]
+otto monitor <SOURCE>
 ```
+
+Exactly one of `--live` or `<SOURCE>` is required — bare `otto monitor`
+prints usage and exits 2; giving both is a mutually exclusive error.
 
 | Option | Default | Description |
 | ------ | ------- | ----------- |
+| `--live` | off | Collect from lab hosts (explicit opt-in; reservation-gated) |
 | `--hosts REGEX` | all hosts | Regex matched against host IDs via `re.search` |
 | `--interval, -i SECS` | `5.0` | Collection interval (minimum 1.0) |
-| `--file, -f PATH` | | Load historical data from `.db` or `.json` |
-| `--db PATH` | | Persist live data to SQLite for later viewing |
+| `--db PATH` | | Persist this `--live` run as a session in a SQLite archive; reusing a path appends another session |
+| `--label TEXT` | | Human-readable label stored with this session |
+| `--note TEXT` | | Free-form note stored with this session (shown as the dashboard's session-picker tooltip) |
+| `SOURCE` (argument) | | Review a saved `.json` export or `.db` session archive instead of collecting live |
 
 Docker container hosts are excluded from the default monitored fleet.
 

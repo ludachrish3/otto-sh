@@ -1,5 +1,5 @@
 """
-Unit/component tests for MetricCollector SQLite and JSON persistence.
+Unit/component tests for MetricCollector's schema-v2 SQLite persistence.
 
 These tests exercise the full read/write round-trip without any SSH connections
 or running event loops.  They are the primary coverage for the database
@@ -10,41 +10,70 @@ Covers:
   - Incremental metric writes via _db_write_point()
   - Event writes, updates, and deletes via add_event() / update_event() / delete_event()
   - Span events (end_timestamp)
-  - Schema migration (old tables without the end_ts column)
-  - from_sqlite() class method
-  - JSON export/import round-trip (export_json / from_json)
-  - get_meta() reports live=False for historical collectors
   - WAL mode and busy_timeout are set correctly
-  - Instance locking prevents two writers on the same database
+  - Instance locking prevents two writers on the same database (and that the
+    read-only v2 archive reader, read_sessions(), ignores that lock)
   - Display host resolution for MonitorServer
+
+The legacy JSON/pre-session-SQLite persistence formats (``MetricCollector.from_json``/
+``from_sqlite``/``export_json``/``to_json``, ``otto.monitor.history``) were retired in
+the sessionized-producer cutover (spec 2026-07-12) — schema v2 round-tripping is
+covered by ``test_db_v2.py`` and ``test_export_producer.py`` instead.
 """
 
-import json
+import itertools
 import sqlite3
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-import aiosqlite
 import pytest
 
 from otto.models import MetricPoint
 from otto.monitor.collector import MetricCollector
-from otto.monitor.db import MetricDB
-from otto.monitor.history import load_sqlite_into
-from otto.monitor.parsers import LogEvent, MemParser, TopCpuParser
-from otto.monitor.store import MetricStore
+from otto.monitor.db import MetricDB, read_sessions
+from otto.monitor.parsers import MemParser, TopCpuParser
+from otto.monitor.session import new_frame
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+_PROC_FD = Path("/proc/self/fd")
+
+
+def _open_fd_count() -> int:
+    """Number of fds this process currently holds open (Linux /proc)."""
+    return sum(1 for _ in _PROC_FD.iterdir())
+
+
+# new_frame's default (wall-clock) id has 1-second granularity; a test that
+# opens+closes+reopens a MetricDB on the same path within one wall-clock
+# second would otherwise mint two frames with the same id and collide on
+# the sessions.id PRIMARY KEY. Anonymous test frames count off a fixed,
+# always-advancing epoch instead so sequential opens never collide.
+_frame_clock = itertools.count()
+_FRAME_EPOCH = datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+
+def _anon_frame():
+    return new_frame(
+        label=None, note=None, now=_FRAME_EPOCH + timedelta(seconds=next(_frame_clock))
+    )
 
 
 def _empty_collector(db_path: str | None = None) -> MetricCollector:
     """Return a MetricCollector with no hosts (historical / test mode).
 
     DB is NOT initialised — call ``await collector.init_db()`` separately
-    for tests that need the database.
+    for tests that need the database. *db_path*, when given, is wrapped in a
+    session-bound MetricDB with an anonymous frame — these tests only care
+    about the write/read plumbing, not session identity.
     """
-    return MetricCollector(hosts=[], parsers=[TopCpuParser(), MemParser()], db_path=db_path)
+    db = (
+        MetricDB(db_path, _anon_frame(), lab_json="{}", meta_json="{}")
+        if db_path is not None
+        else None
+    )
+    return MetricCollector(hosts=[], parsers=[TopCpuParser(), MemParser()], db=db)
 
 
 async def _empty_collector_with_db(db_path: str) -> MetricCollector:
@@ -155,6 +184,28 @@ class TestInstanceLock:
             await _empty_collector_with_db(db_path)
         await collector_a.close_db()
 
+    @pytest.mark.skipif(not _PROC_FD.is_dir(), reason="fd accounting needs Linux /proc")
+    @pytest.mark.asyncio
+    async def test_refused_instance_does_not_leak_the_lock_fd(self, tmp_path):
+        """The contended path opens an fd before flock fails — it must close it.
+
+        ``self._lock_fd`` is only assigned on a SUCCESSFUL flock, so a leaked
+        fd here is unreclaimable: ``close()`` never sees it and every refused
+        instance burns one for the life of the process.
+        """
+        db_path = str(tmp_path / "locked.db")
+        collector_a = await _empty_collector_with_db(db_path)
+        try:
+            before = _open_fd_count()
+            for _ in range(5):
+                with pytest.raises(RuntimeError, match="Another otto monitor instance"):
+                    await _empty_collector_with_db(db_path)
+            after = _open_fd_count()
+            # Pre-fix this leaked exactly one fd per refusal (after == before + 5).
+            assert after <= before + 1, f"leaked {after - before} fds across 5 refusals"
+        finally:
+            await collector_a.close_db()
+
     @pytest.mark.asyncio
     async def test_lock_released_on_close(self, tmp_path):
         db_path = str(tmp_path / "locked.db")
@@ -168,9 +219,12 @@ class TestInstanceLock:
     async def test_read_only_loader_ignores_lock(self, tmp_path):
         db_path = str(tmp_path / "locked.db")
         collector_a = await _empty_collector_with_db(db_path)
-        # from_sqlite is read-only and should not be blocked by the write lock
-        historical = await MetricCollector.from_sqlite(db_path)
-        assert historical.get_series() == {}
+        # read_sessions() is a read-only, non-flock reader (plain sqlite3,
+        # opened `mode=ro`) — it must not be blocked by the write lock
+        # collector_a still holds via MetricDB's flock guard.
+        sessions = read_sessions(db_path)
+        assert len(sessions) == 1
+        assert sessions[0].metrics == []
         await collector_a.close_db()
 
     @pytest.mark.asyncio
@@ -193,7 +247,12 @@ class TestInstanceLock:
 
         monkeypatch.setattr(db_mod.aiosqlite, "connect", _selective_boom)
         db_path = str(tmp_path / "m.db")
-        failing = db_mod.MetricDB(db_path)
+        failing = db_mod.MetricDB(
+            db_path,
+            new_frame(label=None, note=None),
+            lab_json="{}",
+            meta_json="{}",
+        )
         with pytest.raises(RuntimeError, match="connect failed"):
             await failing.open()
         # After a failure during open(), the lock_fd must be cleaned up
@@ -201,7 +260,12 @@ class TestInstanceLock:
         assert failing._lock_fd is None
 
         # The lock must be free: a fresh open on the same path succeeds.
-        db = db_mod.MetricDB(db_path)
+        db = db_mod.MetricDB(
+            db_path,
+            new_frame(label=None, note=None),
+            lab_json="{}",
+            meta_json="{}",
+        )
         await db.open()
         await db.close()
 
@@ -298,404 +362,6 @@ class TestEventPersistence:
         with closing(sqlite3.connect(db_path)) as conn, conn:
             count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
         assert count == 0
-
-
-# ── Schema migration ──────────────────────────────────────────────────────────
-
-
-class TestSchemaMigration:
-    @pytest.mark.asyncio
-    async def test_old_schema_without_end_ts_gets_migrated(self, tmp_path):
-        """
-        A database created before span-event support (no end_ts column on events)
-        should be silently migrated when MetricCollector opens it.
-        """
-        db_path = str(tmp_path / "old.db")
-        # Create old-style schema without end_ts
-        with closing(sqlite3.connect(db_path)) as conn, conn:
-            conn.executescript("""
-                CREATE TABLE metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
-                    label TEXT NOT NULL, value REAL NOT NULL
-                );
-                CREATE TABLE events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL, label TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'manual',
-                    color TEXT NOT NULL DEFAULT '#888888',
-                    dash TEXT NOT NULL DEFAULT 'dash'
-                );
-            """)
-        # Opening via MetricCollector should migrate the schema
-        collector = await _empty_collector_with_db(db_path)
-        await collector.close_db()
-        with closing(sqlite3.connect(db_path)) as conn, conn:
-            cols = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
-        assert "end_ts" in cols
-
-
-# ── Log-event persistence ─────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_log_events_persist_and_reload(tmp_path: Path) -> None:
-    db_path = tmp_path / "m.db"
-    db = MetricDB(str(db_path))
-    await db.open()
-    ts = datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc)
-    await db.write_log_event(ts, "host1", "syslog", {"message": "hello"})
-    await db.close()
-
-    store = MetricStore()
-    await load_sqlite_into(store, str(db_path))
-    assert store.snapshot_log_events() == [
-        ("host1", "syslog", LogEvent(ts=ts, fields={"message": "hello"}))
-    ]
-
-
-@pytest.mark.asyncio
-async def test_pre_log_events_db_loads_without_the_table(tmp_path: Path) -> None:
-    """A DB written before this feature (no log_events table) still loads."""
-    db_path = tmp_path / "old.db"
-    conn = await aiosqlite.connect(str(db_path))
-    await conn.execute(
-        "CREATE TABLE metrics (id INTEGER PRIMARY KEY, ts TEXT, host TEXT, label TEXT, value REAL)"
-    )
-    await conn.execute(
-        "CREATE TABLE events (id INTEGER PRIMARY KEY, ts TEXT, end_ts TEXT, label TEXT, "
-        "source TEXT, color TEXT, dash TEXT)"
-    )
-    await conn.commit()
-    await conn.close()
-    store = MetricStore()
-    await load_sqlite_into(store, str(db_path))  # must not raise
-    assert store.snapshot_log_events() == []
-
-
-# ── from_sqlite() class method ────────────────────────────────────────────────
-
-
-class TestFromSqlite:
-    def _make_db(self, tmp_path, rows=None, events=None) -> str:
-        db_path = str(tmp_path / "data.db")
-        with closing(sqlite3.connect(db_path)) as conn, conn:
-            conn.executescript("""
-                CREATE TABLE metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
-                    label TEXT NOT NULL, value REAL NOT NULL
-                );
-                CREATE TABLE events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
-                    end_ts TEXT, label TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'manual',
-                    color TEXT NOT NULL DEFAULT '#888888',
-                    dash TEXT NOT NULL DEFAULT 'dash'
-                );
-            """)
-            for ts, host, label, value in rows or []:
-                conn.execute(
-                    "INSERT INTO metrics (ts, host, label, value) VALUES (?, ?, ?, ?)",
-                    (ts, host, label, value),
-                )
-            for ev in events or []:
-                conn.execute(
-                    "INSERT INTO events (ts, end_ts, label, source, color, dash) VALUES (?, ?, ?, ?, ?, ?)",  # noqa: E501 — SQL string
-                    ev,
-                )
-        return db_path
-
-    @pytest.mark.asyncio
-    async def test_empty_db_returns_empty_collector(self, tmp_path):
-        db_path = self._make_db(tmp_path)
-        collector = await MetricCollector.from_sqlite(db_path)
-        assert collector.get_series() == {}
-        assert collector.get_events() == []
-
-    @pytest.mark.asyncio
-    async def test_loads_metric_rows(self, tmp_path):
-        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
-        db_path = self._make_db(
-            tmp_path,
-            rows=[(ts, "router1", "CPU %", 33.3), (ts, "router1", "Memory %", 55.0)],
-        )
-        collector = await MetricCollector.from_sqlite(db_path)
-        series = collector.get_series()
-        assert "router1/CPU %" in series
-        assert "router1/Memory %" in series
-        value = series["router1/CPU %"][0].value
-        assert value == pytest.approx(33.3)
-
-    @pytest.mark.asyncio
-    async def test_loads_multiple_hosts(self, tmp_path):
-        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
-        db_path = self._make_db(
-            tmp_path,
-            rows=[
-                (ts, "host1", "CPU %", 10.0),
-                (ts, "host2", "CPU %", 20.0),
-            ],
-        )
-        collector = await MetricCollector.from_sqlite(db_path)
-        series = collector.get_series()
-        assert "host1/CPU %" in series
-        assert "host2/CPU %" in series
-
-    @pytest.mark.asyncio
-    async def test_loads_events(self, tmp_path):
-        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
-        db_path = self._make_db(
-            tmp_path,
-            events=[(ts, None, "test start", "auto", "#888888", "dash")],
-        )
-        collector = await MetricCollector.from_sqlite(db_path)
-        events = collector.get_events()
-        assert len(events) == 1
-        assert events[0].label == "test start"
-        assert events[0].source == "auto"
-
-    @pytest.mark.asyncio
-    async def test_loads_span_events(self, tmp_path):
-        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
-        end_ts = datetime(2024, 3, 1, 10, 5, 0, tzinfo=timezone.utc).isoformat()
-        db_path = self._make_db(
-            tmp_path,
-            events=[(ts, end_ts, "test span", "auto", "#2ca02c", "solid")],
-        )
-        collector = await MetricCollector.from_sqlite(db_path)
-        events = collector.get_events()
-        assert events[0].end_timestamp is not None
-        assert events[0].end_timestamp == datetime(2024, 3, 1, 10, 5, 0, tzinfo=timezone.utc)
-
-    @pytest.mark.asyncio
-    async def test_get_meta_reports_live_false(self, tmp_path):
-        db_path = self._make_db(tmp_path)
-        collector = await MetricCollector.from_sqlite(db_path)
-        meta = collector.get_meta()
-        assert meta["live"] is False
-
-    @pytest.mark.asyncio
-    async def test_old_schema_without_host_column(self, tmp_path):
-        """from_sqlite() should handle old DBs that lack the host column."""
-        db_path = str(tmp_path / "old.db")
-        ts = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
-        with closing(sqlite3.connect(db_path)) as conn, conn:
-            conn.executescript("""
-                CREATE TABLE metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL, label TEXT NOT NULL, value REAL NOT NULL
-                );
-                CREATE TABLE events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
-                    end_ts TEXT, label TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'manual',
-                    color TEXT NOT NULL DEFAULT '#888888', dash TEXT NOT NULL DEFAULT 'dash'
-                );
-            """)
-            conn.execute(
-                "INSERT INTO metrics (ts, label, value) VALUES (?, ?, ?)",
-                (ts, "CPU %", 75.0),
-            )
-        collector = await MetricCollector.from_sqlite(db_path)
-        series = collector.get_series()
-        # Without host, the key is just 'label' (no prefix)
-        assert any("CPU %" in k for k in series)
-
-    @pytest.mark.asyncio
-    async def test_from_sqlite_out_of_order_ids_keep_counter_collision_free(
-        self, tmp_path: Path
-    ) -> None:
-        """Ids out of ts-order: the next live event id stays above every import."""
-        # Two events whose sqlite ids are NOT in ts order: id=5 has the
-        # EARLIER ts, id=3 the later one, so ORDER BY ts yields 5 then 3.
-        ts0 = datetime(2024, 3, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat()
-        ts1 = datetime(2024, 3, 1, 10, 1, 0, tzinfo=timezone.utc).isoformat()
-        db_path = str(tmp_path / "data.db")
-        with closing(sqlite3.connect(db_path)) as conn, conn:
-            conn.executescript("""
-                CREATE TABLE metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    ts TEXT NOT NULL, host TEXT NOT NULL DEFAULT '',
-                    label TEXT NOT NULL, value REAL NOT NULL
-                );
-                CREATE TABLE events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
-                    end_ts TEXT, label TEXT NOT NULL,
-                    source TEXT NOT NULL DEFAULT 'manual',
-                    color TEXT NOT NULL DEFAULT '#888888',
-                    dash TEXT NOT NULL DEFAULT 'dash'
-                );
-            """)
-            # Insert with explicit ids to create out-of-order scenario
-            conn.execute(
-                "INSERT INTO events (id, ts, end_ts, label, source, color, dash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (5, ts0, None, "early-event", "manual", "#888888", "dash"),
-            )
-            conn.execute(
-                "INSERT INTO events (id, ts, end_ts, label, source, color, dash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (3, ts1, None, "late-event", "manual", "#888888", "dash"),
-            )
-        collector = await MetricCollector.from_sqlite(db_path)
-        imported_ids = {e.id for e in collector.get_events()}
-        assert imported_ids == {5, 3}
-
-        new_event = await collector.add_event(label="after-import")
-        assert new_event.id not in imported_ids
-        assert new_event.id > max(imported_ids)
-
-
-# ── JSON round-trip ───────────────────────────────────────────────────────────
-
-
-class TestJsonRoundTrip:
-    def test_empty_round_trip(self, tmp_path):
-        collector = _empty_collector()
-        path = str(tmp_path / "out.json")
-        collector.export_json(path)
-        loaded = MetricCollector.from_json(path)
-        assert loaded.get_series() == {}
-        assert loaded.get_events() == []
-
-    @pytest.mark.asyncio
-    async def test_metrics_preserved(self, tmp_path):
-        collector = _empty_collector()
-        ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
-        await _inject_point(collector, "host1", "CPU %", 77.7, ts)
-        path = str(tmp_path / "out.json")
-        collector.export_json(path)
-        loaded = MetricCollector.from_json(path)
-        series = loaded.get_series()
-        assert "host1/CPU %" in series
-        value = series["host1/CPU %"][0].value
-        assert value == pytest.approx(77.7)
-
-    @pytest.mark.asyncio
-    async def test_events_preserved(self, tmp_path):
-        collector = _empty_collector()
-        ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
-        await collector.add_event(
-            label="my event", timestamp=ts, color="#ff0000", source="user_code"
-        )
-        path = str(tmp_path / "out.json")
-        collector.export_json(path)
-        loaded = MetricCollector.from_json(path)
-        events = loaded.get_events()
-        assert len(events) == 1
-        assert events[0].label == "my event"
-        assert events[0].color == "#ff0000"
-        assert events[0].source == "user_code"
-
-    @pytest.mark.asyncio
-    async def test_span_events_preserved(self, tmp_path):
-        collector = _empty_collector()
-        start = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
-        end = datetime(2024, 6, 1, 12, 10, 0, tzinfo=timezone.utc)
-        await collector.add_event(label="span", timestamp=start, end_timestamp=end)
-        path = str(tmp_path / "out.json")
-        collector.export_json(path)
-        loaded = MetricCollector.from_json(path)
-        ev = loaded.get_events()[0]
-        assert ev.end_timestamp == end
-
-    @pytest.mark.asyncio
-    async def test_multiple_hosts_preserved(self, tmp_path):
-        collector = _empty_collector()
-        ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
-        await _inject_point(collector, "host1", "CPU %", 10.0, ts)
-        await _inject_point(collector, "host2", "CPU %", 20.0, ts)
-        path = str(tmp_path / "out.json")
-        collector.export_json(path)
-        loaded = MetricCollector.from_json(path)
-        assert "host1/CPU %" in loaded.get_series()
-        assert "host2/CPU %" in loaded.get_series()
-
-    @pytest.mark.asyncio
-    async def test_to_json_is_valid_json(self):
-        collector = _empty_collector()
-        await _inject_point(collector, "h1", "CPU %", 50.0)
-        raw = collector.to_json()
-        parsed = json.loads(raw)
-        assert "metrics" in parsed
-        assert "events" in parsed
-
-    def test_invalid_rows_skipped_gracefully(self, tmp_path):
-        """from_json() must skip malformed entries without raising."""
-        bad_json = json.dumps(
-            {
-                "metrics": [
-                    {"timestamp": "bad-date", "host": "h1", "label": "CPU %", "value": 1.0},
-                    {"host": "h1", "label": "CPU %", "value": 1.0},  # missing timestamp
-                    {
-                        "timestamp": "2024-01-01T00:00:00",
-                        "host": "h1",
-                        "label": "CPU %",
-                        "value": "NaN-bad",
-                    },
-                    {"timestamp": "2024-01-01T00:00:00", "host": "h1", "label": "OK", "value": 3.0},
-                ],
-                "events": [],
-            }
-        )
-        path = str(tmp_path / "partial.json")
-        Path(path).write_text(bad_json)
-        collector = MetricCollector.from_json(path)
-        series = collector.get_series()
-        # Only the last valid row should be loaded
-        assert sum(len(pts) for pts in series.values()) == 1
-
-
-# ── Full live-to-historical pipeline ─────────────────────────────────────────
-
-
-class TestLiveToHistoricalPipeline:
-    """
-    Simulate the full pipeline: write data during a 'live' run, then reload
-    it in historical mode (as the monitor --file flag would do).
-    """
-
-    @pytest.mark.asyncio
-    async def test_sqlite_write_then_reload(self, tmp_path):
-        db_path = str(tmp_path / "session.db")
-
-        # Simulate a live run writing data
-        live = await _empty_collector_with_db(db_path)
-        ts1 = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
-        ts2 = datetime(2024, 6, 1, 12, 0, 5, tzinfo=timezone.utc)
-        await _inject_point(live, "dut", "CPU %", 30.0, ts1)
-        await _inject_point(live, "dut", "CPU %", 35.0, ts2)
-        await live.add_event(label="test start", timestamp=ts1, source="auto", color="#888888")
-        await live.close_db()
-
-        # Reload as historical
-        historical = await MetricCollector.from_sqlite(db_path)
-        series = historical.get_series()
-        events = historical.get_events()
-
-        assert "dut/CPU %" in series
-        assert len(series["dut/CPU %"]) == 2
-        assert len(events) == 1
-        assert events[0].label == "test start"
-
-    @pytest.mark.asyncio
-    async def test_json_write_then_reload(self, tmp_path):
-        json_path = str(tmp_path / "session.json")
-
-        live = _empty_collector()
-        ts = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
-        await _inject_point(live, "dut", "Memory %", 60.0, ts)
-        await live.add_event(label="test pass", timestamp=ts, source="auto", color="#2ca02c")
-        live.export_json(json_path)
-
-        historical = MetricCollector.from_json(json_path)
-        series = historical.get_series()
-        events = historical.get_events()
-
-        assert "dut/Memory %" in series
-        assert len(events) == 1
-        assert events[0].color == "#2ca02c"
 
 
 # ── Display host / URL resolution ────────────────────────────────────────────

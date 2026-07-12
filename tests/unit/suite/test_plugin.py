@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from otto.host import UnixHost
+from otto.host.login_proxy import Cred
 from otto.models import MetricPoint
+from otto.monitor.collector import MetricCollector
 from otto.suite.plugin import OttoPlugin
 
 SUT_DIR = Path("/sut/repo1/tests")
@@ -19,6 +21,21 @@ def make_plugin(*sut_dirs: Path) -> OttoPlugin:
 
 def ignore(plugin: OttoPlugin, path: Path) -> bool | None:
     return plugin.pytest_ignore_collect(path, MagicMock())
+
+
+def _make_host(host_id: str = "router1") -> UnixHost:
+    """A real (unconnected — no I/O at construction) UnixHost.
+
+    ``--monitor``'s session fixture now unconditionally builds a
+    :func:`~otto.monitor.session.snapshot_lab` snapshot (spec 2026-07-12), and
+    ``HostSnapshot``'s fields are real ``str``s — a bare ``MagicMock(spec=
+    UnixHost)`` fails that pydantic validation because its unset attributes
+    (``element``, ``ip``, ...) are auto-vivified ``Mock`` objects, not
+    strings. A plain-element host slugs its ``id`` to itself (see
+    ``otto.host.remote_host.make_host_id``), so ``element=host_id`` also
+    pins ``host.id == host_id`` for tests that assert on it.
+    """
+    return UnixHost(ip="10.0.0.1", element=host_id, creds=[Cred(login="admin", password="secret")])
 
 
 def test_no_sut_dirs_allows_any_path():
@@ -121,10 +138,13 @@ async def test_session_monitor_no_matching_hosts_skips(tmp_path):
 async def test_session_monitor_publishes_collector_and_exports_json(tmp_path):
     """When enabled with hosts, the fixture must:
     - publish the collector on OttoSuite for per-test fixtures to find
-    - run the collector as a background task
-    - export JSON when monitor_output has a non-.db suffix
+    - export a format:1 monitor document (with a session) when monitor_output
+      has a non-.db suffix
+    - stamp that session's end on a clean teardown (a null end is the
+      producer's deliberate crash marker; see test_export_producer.py)
     - clear the class-level collector reference on teardown
     """
+    from otto.models import MonitorExport
     from otto.suite.suite import OttoSuite
 
     out_path = tmp_path / "monitor.json"
@@ -134,58 +154,90 @@ async def test_session_monitor_publishes_collector_and_exports_json(tmp_path):
         monitor_output=out_path,
     )
 
-    fake_host = MagicMock(spec=UnixHost, id="router1")
-    fake_collector = MagicMock()
-    fake_collector.run = AsyncMock()
-    fake_collector.close = AsyncMock()
-    fake_collector.export_json = MagicMock()
+    fake_host = _make_host("router1")
+    # A REAL (empty) collector: build_live_export() calls its get_series()/
+    # get_events()/get_meta_model()/etc for real, and a MagicMock's
+    # auto-vivified return values fail those reshapes' pydantic validation.
+    real_collector = MetricCollector(targets=[])
 
     with (
         patch("otto.config.all_hosts", return_value=iter([fake_host])),
         patch(
-            "otto.monitor.factory.build_monitor_collector", return_value=fake_collector
+            "otto.monitor.factory.build_monitor_collector", return_value=real_collector
         ) as p_build,
     ):
         gen = await _FixtureRunner.setup(plugin)
         # While the fixture body is suspended at yield the class attr is set.
-        assert OttoSuite._session_monitor_collector is fake_collector
+        assert OttoSuite._session_monitor_collector is real_collector
         await _FixtureRunner.teardown(gen)
 
-    # Build was invoked with the host list; db_path is None for .json output.
-    assert p_build.call_args.kwargs["db_path"] is None
-    fake_collector.export_json.assert_called_once_with(str(out_path))
-    fake_collector.close.assert_awaited_once()
+    # Build was invoked with the host list; db is None for .json output.
+    assert p_build.call_args.kwargs["db"] is None
+    # Verify the actual artifact — not a mock-call assertion: it must parse
+    # as a format:1 MonitorExport carrying exactly one (this run's) session.
+    export = MonitorExport.model_validate_json(out_path.read_text())
+    assert export.format == 1
+    assert len(export.sessions) == 1
+    assert export.sessions[0].end is not None, "a clean teardown left the session's end unstamped"
     assert OttoSuite._session_monitor_collector is None
 
 
 @pytest.mark.asyncio
-async def test_session_monitor_db_output_skips_export_json(tmp_path):
-    """A ``.db`` output must be forwarded as ``db_path`` (no JSON dump)."""
+async def test_session_monitor_db_output_persists_real_lab_and_meta(tmp_path):
+    """A ``.db`` output writes a session row carrying the REAL lab AND meta.
+
+    Asserts on the persisted artifact (round-tripped back out via
+    ``build_db_export``), not on the ``MetricDB``'s constructor args: an
+    empty ``meta_json`` would render a DB-backed suite run with no chart
+    specs and no units — the same degradation an empty ``chart_map`` caused
+    (see otto.monitor.export / web/src/data/seriesTree.ts).
+
+    Deliberately drives the REAL factory (no ``build_monitor_collector``
+    patch) so the collector under test is the one the plugin actually
+    builds: its parser catalog is what populates ``meta``, and a MagicMock
+    would prove nothing about it. ``init_db()`` is awaited by hand because
+    the session fixture does not drive ``run()`` (the class-scoped fixture
+    does) — that is what INSERTs the session row.
+
+    Also asserts the teardown stamps ``end`` on a clean run. Checked via
+    ``read_sessions()``'s RAW row, not ``build_db_export()``'s reshaped
+    ``SessionRecord``: the producer's ``_fallback_end`` deliberately papers
+    over a null ``end`` (falling back to the last metric's timestamp, or —
+    as here, where no tick ever ran — the session's own ``start``), so
+    ``SessionRecord.end`` is NEVER ``None`` and can't tell a finalized
+    session from a crashed one. Only the archive's own column can.
+    """
+    from otto.monitor.db import read_sessions
+    from otto.monitor.export import build_db_export
     from otto.suite.suite import OttoSuite
 
     out_path = tmp_path / "monitor.db"
-    plugin = OttoPlugin(
-        monitor=True,
-        monitor_output=out_path,
-    )
+    plugin = OttoPlugin(monitor=True, monitor_interval=3.0, monitor_output=out_path)
 
-    fake_host = MagicMock(spec=UnixHost, id="router1")
-    fake_collector = MagicMock()
-    fake_collector.run = AsyncMock()
-    fake_collector.close = AsyncMock()
-    fake_collector.export_json = MagicMock()
-
-    with (
-        patch("otto.config.all_hosts", return_value=iter([fake_host])),
-        patch(
-            "otto.monitor.factory.build_monitor_collector", return_value=fake_collector
-        ) as p_build,
-    ):
+    with patch("otto.config.all_hosts", return_value=iter([_make_host("router1")])):
         gen = await _FixtureRunner.setup(plugin)
-        await _FixtureRunner.teardown(gen)
+        collector = OttoSuite._session_monitor_collector
+        assert collector is not None
+        await collector.init_db()  # session row INSERTed here
+        await _FixtureRunner.teardown(gen)  # collector.close() closes the DB
 
-    assert p_build.call_args.kwargs["db_path"] == out_path
-    fake_collector.export_json.assert_not_called()
+    (session,) = build_db_export(str(out_path)).sessions
+    # lab: the real snapshot, not "{}"
+    assert [h.id for h in session.lab.hosts] == ["router1"]
+    # meta: the real parser catalog, not "{}" — chart specs carry the units
+    # and grouping the review shell renders from.
+    assert session.meta.charts, "session meta persisted with no chart specs"
+    assert "CPU" in [c.chart for c in session.meta.charts]
+    assert session.meta.tabs, "session meta persisted with no tabs"
+    # meta.interval: --monitor-interval, threaded through explicitly. The
+    # collector has not run() at meta-write time, so its own recorded interval
+    # is still None — a null here would persist forever and leave the replayed
+    # session's derived health unresolvable (web/src/data/health.ts).
+    assert session.meta.interval == 3.0
+    # end: a clean teardown must stamp the RAW column, not rely on the
+    # producer's crash-tolerant fallback to paper over a null one.
+    (raw_session,) = read_sessions(str(out_path))
+    assert raw_session.end is not None, "a clean teardown left the session's end unstamped"
     assert OttoSuite._session_monitor_collector is None
 
 
@@ -201,21 +253,23 @@ async def test_session_monitor_does_not_start_run_task(tmp_path):
         monitor=True,
         monitor_output=tmp_path / "monitor.json",
     )
-    fake_host = MagicMock(spec=UnixHost, id="router1")
-    fake_collector = MagicMock()
-    fake_collector.run = AsyncMock()
-    fake_collector.close = AsyncMock()
-    fake_collector.export_json = MagicMock()
+    fake_host = _make_host("router1")
+    # A real (empty) collector — see test_session_monitor_publishes_collector_
+    # and_exports_json for why a MagicMock can't stand in here (the .json
+    # output branch calls build_live_export() for real) — with .run swapped
+    # for a spy so this test can assert it was never awaited.
+    real_collector = MetricCollector(targets=[])
+    real_collector.run = AsyncMock()  # type: ignore[method-assign]
 
     with (
         patch("otto.config.all_hosts", return_value=iter([fake_host])),
-        patch("otto.monitor.factory.build_monitor_collector", return_value=fake_collector),
+        patch("otto.monitor.factory.build_monitor_collector", return_value=real_collector),
     ):
         gen = await _FixtureRunner.setup(plugin)
         await _FixtureRunner.teardown(gen)
 
-    fake_collector.run.assert_not_awaited()
-    fake_collector.run.assert_not_called()
+    real_collector.run.assert_not_awaited()
+    real_collector.run.assert_not_called()
 
 
 # ── --monitor class-scoped run task ─────────────────────────────────────────
@@ -360,9 +414,6 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
     from collections import deque
     from datetime import datetime
 
-    from otto.monitor.collector import MetricCollector
-    from otto.suite.plugin import OttoPlugin
-
     suite_path = tmp_path / "test_suite.py"
     suite_path.write_text(
         textwrap.dedent("""
@@ -399,7 +450,7 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
 
     real_collector.run = fake_run  # type: ignore[method-assign]
 
-    fake_host = MagicMock(spec=UnixHost, id="host1")
+    fake_host = _make_host("host1")
     with (
         patch("otto.config.all_hosts", return_value=iter([fake_host])),
         patch("otto.monitor.factory.build_monitor_collector", return_value=real_collector),
@@ -444,10 +495,11 @@ def test_e2e_monitor_collects_metrics_under_class_loop_scope(tmp_path):
     assert exit_code == 0, f"embedded pytest run failed: {exit_code}"
     assert out_path.exists(), "monitor.json was not written"
 
+    # format:1 document now — one session, its metrics nested underneath
+    # (not the legacy flat {"metrics": [...]} shape).
     payload = json.loads(out_path.read_text())
-    assert "metrics" in payload
-    assert len(payload["metrics"]) > 0, (
-        f"Regression: monitor.json contains no metrics. payload={payload}"
-    )
-    assert payload["metrics"][0]["host"] == "host1"
-    assert payload["metrics"][0]["label"] == "cpu"
+    assert payload["format"] == 1
+    metrics = payload["sessions"][0]["metrics"]
+    assert len(metrics) > 0, f"Regression: monitor.json contains no metrics. payload={payload}"
+    assert metrics[0]["host"] == "host1"
+    assert metrics[0]["label"] == "cpu"

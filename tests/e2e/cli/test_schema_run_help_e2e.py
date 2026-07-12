@@ -60,12 +60,12 @@ def test_group_help_dispatches(group: str, tmp_path: Path) -> None:
 
 def test_monitor_help_shows_flat_options(tmp_path: Path) -> None:
     # Regression: monitor_app is a single-command Typer app; flattening keeps its
-    # documented flat CLI so `otto monitor --help` surfaces --file / --hosts
+    # documented flat CLI so `otto monitor --help` surfaces --live / --hosts
     # directly instead of a spurious nested `monitor` subcommand (which broke
-    # `otto monitor --file x` with exit-2 "No such option").
+    # `otto monitor --live` with exit-2 "No such option").
     r = run_otto(["monitor", "--help"], xdir=tmp_path, sut_dirs=REPO_E2E)
     assert r.returncode == 0, r.stderr
-    assert "--file" in r.stdout, r.stdout
+    assert "--live" in r.stdout, r.stdout
     assert "--hosts" in r.stdout, r.stdout
     assert_no_output_dir(tmp_path)
 

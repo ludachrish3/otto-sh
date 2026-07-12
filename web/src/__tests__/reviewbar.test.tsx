@@ -107,6 +107,31 @@ describe("ReviewBar", () => {
     expect(useReviewStore.getState().range).toBeNull();
   });
 
+  it("carries a session's note as the picker option's title (tooltip)", async () => {
+    // Build a two-session document from MINIMAL rather than reusing the
+    // shared drift/kitchen-sink fixtures — this test owns exactly the shape
+    // it needs (one session with a note, one without) without risking
+    // collateral changes to fixtures other test files also assert against.
+    const base = JSON.parse(MINIMAL) as { format: number; sessions: Record<string, unknown>[] };
+    const [first] = base.sessions;
+    const second = {
+      ...first,
+      id: "2026-07-02T08-00-00-second",
+      label: "second",
+      note: "why this run",
+    };
+    const doc = JSON.stringify({ format: base.format, sessions: [first, second] });
+
+    render(<App />);
+    await importText(doc, "two-session.json");
+    fireEvent.click(screen.getByTestId("session-picker"));
+    const option = within(screen.getByRole("listbox")).getByText("second");
+    expect(option.getAttribute("title")).toBe("why this run");
+    // The un-noted session's option carries no title attribute at all.
+    const firstOption = within(screen.getByRole("listbox")).getByText("minimal");
+    expect(firstOption.getAttribute("title")).toBeNull();
+  });
+
   it("clamps a custom range that exceeds the session bounds (follow-up #2)", async () => {
     render(<App />);
     await importText(KITCHEN_SINK, "kitchen-sink.json");

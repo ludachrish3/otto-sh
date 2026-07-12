@@ -139,7 +139,7 @@ def _typer_app_flattens(app: typer.Typer) -> bool:
     callback (root or ``info``), no sub-groups, and exactly one registered
     command collapses into that single command rather than a group. ``monitor``
     (one ``@monitor_app.command()``, no callback) is the motivating case — its
-    documented flat CLI (``otto monitor --file …``) depends on this.
+    documented flat CLI (``otto monitor --live``) depends on this.
     """
     return not (
         app.registered_callback
@@ -183,8 +183,9 @@ def resolve_spec_command(spec: CommandSpec) -> Any:
         # Mirror Typer's native flattening rule (see ``_typer_app_flattens``):
         # a single-command, callback-free, subgroup-free app becomes a bare
         # leaf under the spec's own name — exactly what ``add_typer`` produces
-        # natively — so ``monitor`` keeps its documented flat ``--file`` CLI
-        # instead of gaining a spurious nested ``monitor`` subcommand.
+        # natively — so ``monitor`` keeps its documented flat ``--live``/
+        # ``<source>`` CLI instead of gaining a spurious nested ``monitor``
+        # subcommand.
         # Anything richer stays a group (callers branch on ``hasattr(.commands)``).
         if _typer_app_flattens(loader):
             # Suppress the sub-app's own ``--install/--show-completion`` params:

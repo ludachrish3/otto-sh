@@ -241,18 +241,18 @@ suite name on the command line (when a suite name is given at all — see
 : Collect host performance metrics for the entire test run.  Samples every
   host (or those matched by `--monitor-hosts`) on a fixed interval and
   emits per-test start/end events automatically.  At the end of the run a
-  JSON snapshot of all metrics and events is written to
+  `format:1` JSON snapshot of all metrics and events is written to
   `<output_dir>/monitor.json`.  The file is loadable in the dashboard via
-  `otto monitor --file <path>`.
+  `otto monitor <path>`.
 
 `--monitor-interval SECONDS`
 : Sampling interval for `--monitor` (minimum 1, default 5).
 
 `--monitor-output PATH`
 : Override the destination for the captured monitor data.  Format inferred
-  from the suffix: `.json` (default) writes a self-contained snapshot,
-  `.db` writes a SQLite database loadable via `otto monitor --file`.
-  Implies `--monitor`.
+  from the suffix: `.json` (default) writes a self-contained `format:1`
+  snapshot, `.db` writes a SQLite session archive — both loadable via
+  `otto monitor <path>`.  Implies `--monitor`.
 
 `--monitor-hosts REGEX`
 : Restrict `--monitor` to host IDs matching this regex (`re.search`).

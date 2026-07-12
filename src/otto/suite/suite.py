@@ -5,7 +5,7 @@ import contextlib
 import inspect
 import re
 from collections.abc import AsyncGenerator, Generator
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from logging import getLogger
 from pathlib import Path
 from typing import TYPE_CHECKING, Generic, TypeVar, cast
@@ -18,6 +18,7 @@ from otto.context import get_context
 if TYPE_CHECKING:
     from otto.host.unix_host import UnixHost
     from otto.monitor.collector import MetricCollector, MonitorTarget
+    from otto.monitor.db import MetricDB
     from otto.monitor.events import MonitorEvent
     from otto.monitor.parsers import MetricParser
     from otto.monitor.server import MonitorServer
@@ -203,6 +204,7 @@ class OttoSuite(Generic[TOptions]):
         self._monitor_collector: "MetricCollector | None" = None
         self._monitor_server: "MonitorServer | None" = None
         self._monitor_task: "asyncio.Task[None] | None" = None
+        self._monitor_db: "MetricDB | None" = None
 
     def _active_monitor_collector(self) -> "MetricCollector | None":
         """Return the per-suite collector if active, else the session-wide one."""
@@ -445,7 +447,9 @@ class OttoSuite(Generic[TOptions]):
             Dashboard URL, e.g. 'http://127.0.0.1:8080'.
         """
         from otto.monitor.collector import MetricCollector
+        from otto.monitor.export import build_session_metric_db
         from otto.monitor.server import MonitorServer
+        from otto.monitor.session import new_frame, snapshot_lab
 
         if targets is None and hosts is None:
             raise ValueError("Provide either hosts or targets")
@@ -453,16 +457,43 @@ class OttoSuite(Generic[TOptions]):
         if isinstance(interval, (int, float)):
             interval = timedelta(seconds=float(interval))
 
+        monitor_db = None
+        if db_path is not None:
+            # Real session identity + lab snapshot + meta (spec 2026-07-12) —
+            # see otto.monitor.export.build_session_metric_db for why a
+            # throwaway meta_collector (never run, never handed this
+            # MetricDB), built the SAME way (targets, or hosts+parsers) as
+            # the real collector below, is unavoidable here. No suite/run
+            # name is threaded through today, so `label`/`note` stay None
+            # (honest, not a placeholder) — same as otto.suite.plugin's
+            # --monitor --db path. chart_map is NOT built here either: it
+            # accumulates as points arrive, so the collector writes it into
+            # the session row itself (MetricDB.write_chart_map).
+            snapshot_hosts = (
+                [target.host for target in targets] if targets is not None else list(hosts or [])
+            )
+            frame = new_frame(label=None, note=None)
+            lab = snapshot_lab(snapshot_hosts, declared=[])
+            meta_collector = (
+                MetricCollector(targets=targets)
+                if targets is not None
+                else MetricCollector(hosts=hosts, parsers=parsers)
+            )
+            monitor_db = build_session_metric_db(
+                db_path, frame, lab, meta_collector, interval=interval.total_seconds()
+            )
+        self._monitor_db = monitor_db
+
         if targets is not None:
             self._monitor_collector = MetricCollector(
                 targets=targets,
-                db_path=db_path,
+                db=monitor_db,
             )
         else:
             self._monitor_collector = MetricCollector(
                 hosts=hosts,
                 parsers=parsers,
-                db_path=db_path,
+                db=monitor_db,
             )
         self._monitor_server = MonitorServer(
             self._monitor_collector,
@@ -504,10 +535,18 @@ class OttoSuite(Generic[TOptions]):
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._monitor_task, timeout=10)
             self._monitor_task = None
+        if self._monitor_db is not None:
+            # Stamp this session's end BEFORE closing the DB connection below
+            # (finalize() is a no-op once closed) — an unstamped end is the
+            # producer's deliberate crash marker (MetricDB.finalize /
+            # otto.monitor.export._fallback_end), so a clean stop_monitor()
+            # must not leave every archived suite run looking crashed.
+            await self._monitor_db.finalize(datetime.now(tz=timezone.utc))
         if self._monitor_collector is not None:
             await self._monitor_collector.close_db()
         self._monitor_server = None
         self._monitor_collector = None
+        self._monitor_db = None
 
     async def add_monitor_event(
         self,

@@ -101,7 +101,7 @@ either limit is reached first.
     Enable host performance monitoring for the duration of the run.  Samples
     every host (or those matched by ``--monitor-hosts``) on a fixed interval
     and emits per-test start/end events automatically.  At the end of the run
-    a JSON snapshot of all metrics and events is written to
+    a format:1 monitor export (one session) is written to
     ``<output_dir>/monitor.json``.
 
 ``--monitor-interval SECONDS``
@@ -109,8 +109,9 @@ either limit is reached first.
 
 ``--monitor-output PATH``
     Override the destination for the captured monitor data.  Format inferred
-    from the suffix: ``.json`` (default) writes a self-contained snapshot,
-    ``.db`` writes a SQLite database loadable via ``otto monitor --file``.
+    from the suffix: ``.json`` (default) writes a self-contained format:1
+    export, ``.db`` writes a SQLite database loadable via ``otto monitor
+    <path>``.
 
 ``--monitor-hosts REGEX``
     Restrict ``--monitor`` to host IDs matching this regex (``re.search``).

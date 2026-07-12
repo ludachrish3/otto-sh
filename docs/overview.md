@@ -177,10 +177,10 @@ The monitor collects live performance metrics (CPU, memory, disk, network)
 from one or more hosts and serves an interactive web dashboard:
 
 ```bash
-otto -l my_lab monitor                     # all hosts, default 5 s interval
-otto monitor host1,host2 --interval 2.0    # specific hosts, faster polling
-otto monitor --db metrics.db               # persist data for later viewing
-otto monitor --file metrics.db             # replay saved data
+otto -l my_lab monitor --live                     # all hosts, default 5 s interval
+otto monitor --live --hosts 'host1|host2' -i 2.0   # narrowed hosts, faster polling
+otto monitor --live --db metrics.db                # persist as a session for later viewing
+otto monitor metrics.db                            # review a captured session
 ```
 
 Monitoring can also be started from within a test suite using

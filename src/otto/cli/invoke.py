@@ -451,25 +451,22 @@ def present_reservation_gate(ctx: typer.Context) -> None:
         rprint(f"[bold red]{outcome.warning}[/bold red]")
 
 
-def command_preamble(ctx: typer.Context) -> None:
-    """Run once when a real (non-help) command invocation starts.
+def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
+    """Run the lab-requiring slice of the leaf-invoke preamble: session, lab, output dir.
 
-    Order: bootstrap errors fail loud → lab-free commands are done → CLI
-    session (banner/logging) → lab context → per-command output dir →
-    reservation gate. ``--help`` paths never reach this function: click's
-    help option exits during leaf parse, before ``Command.invoke``.
+    Shared by :func:`command_preamble` (every ordinary, non-``lab_free``
+    command) and any ``lab_free``-registered command whose ONE branch still
+    needs a lab — e.g. ``otto monitor --live`` (:mod:`otto.cli.monitor`),
+    which pulls this in itself the same loud way ``otto reservation check``
+    pulls in :func:`ensure_lab_context`, mirroring the per-branch
+    ``spec.gate`` pattern those commands already use for the reservation
+    gate. Idempotent (``ensure_cli_session``/``ensure_lab_context`` each
+    guard their own re-entry), except for the output-dir creation, which a
+    caller should therefore invoke at most once per command invocation.
+
+    Does not touch the reservation gate itself — callers decide when (or
+    whether) to call :func:`present_reservation_gate`.
     """
-    meta = ctx.meta
-    if meta.get("_otto_preamble_done"):
-        return
-    meta["_otto_preamble_done"] = True
-
-    fail_loud_on_bootstrap_errors()
-
-    spec: CommandSpec = meta["_otto_command_spec"]
-    if spec.lab_free:
-        return
-
     ensure_cli_session(ctx)
     try:
         ensure_lab_context(ctx)
@@ -489,6 +486,28 @@ def command_preamble(ctx: typer.Context) -> None:
         leaf_name = ctx.command.name
         sub = None if leaf_name == spec.name else (leaf_name or spec.name)
         get_context().output_dir = management.create_output_dir(spec.name, sub)
+
+
+def command_preamble(ctx: typer.Context) -> None:
+    """Run once when a real (non-help) command invocation starts.
+
+    Order: bootstrap errors fail loud → lab-free commands are done → CLI
+    session (banner/logging) → lab context → per-command output dir →
+    reservation gate. ``--help`` paths never reach this function: click's
+    help option exits during leaf parse, before ``Command.invoke``.
+    """
+    meta = ctx.meta
+    if meta.get("_otto_preamble_done"):
+        return
+    meta["_otto_preamble_done"] = True
+
+    fail_loud_on_bootstrap_errors()
+
+    spec: CommandSpec = meta["_otto_command_spec"]
+    if spec.lab_free:
+        return
+
+    ensure_lab_session(ctx, spec)
     if spec.gate:
         present_reservation_gate(ctx)
 

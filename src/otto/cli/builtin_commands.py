@@ -23,11 +23,18 @@ def register_builtin_commands() -> None:
         "monitor",
         "otto.cli.monitor:monitor_app",
         help="Launch an interactive performance dashboard.",
-        # monitor gates itself, per-branch: historical `--file` replay reads a
-        # local file and never touches live hardware, so it is gate-exempt by
-        # design, while live collection still gates. A uniform gate=True here
-        # would gate the replay branch too, which is a behavior regression.
+        # monitor gates AND loads its lab itself, per-branch: reviewing a saved
+        # `<source>` export reads a local file and never touches live hardware
+        # or a lab, so it is both gate-exempt and lab-free by design, while
+        # `--live` collection still gates and still requires a lab (it pulls
+        # one in itself via otto.cli.invoke.ensure_lab_session, the same loud
+        # way `otto reservation check` does). Uniform gate=True/lab_free=False
+        # here would gate/lab-require the review branch too, which is a
+        # behavior regression — and was, in fact, exactly the bug this
+        # lab_free=True fixed (review mode hard-required --lab despite never
+        # touching a lab).
         gate=False,
+        lab_free=True,
     )
     register_cli_command(
         "cov",

@@ -10,20 +10,28 @@ Tests verify:
   - ``suite_options`` fixture injection works in test method parameters
   - ``teardown_method`` is called after each test
   - ``expect()`` records non-fatal failures without stopping execution
+  - ``start_monitor(db_path=...)``/``stop_monitor()`` persist a real (not
+    degraded) session archive
 """
 
+import asyncio
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
+from otto.host.login_proxy import Cred
+from otto.host.unix_host import UnixHost
+from otto.monitor.collector import MetricCollector
+from otto.monitor.db import read_sessions
+from otto.monitor.export import build_db_export
 from otto.suite.plugin import OttoPlugin
 from otto.suite.pytest_plugin import OttoOptionsPlugin
-from otto.suite.suite import _sanitize_node_name
+from otto.suite.suite import OttoSuite, _sanitize_node_name
 
 # ── _sanitize_node_name ──────────────────────────────────────────────────────
 
@@ -498,3 +506,84 @@ class TestActiveMonitorCollector:
             assert s._active_monitor_collector() is session
         finally:
             OttoSuite._session_monitor_collector = None
+
+
+# ── start_monitor(db_path=...) / stop_monitor(): real archive shape ─────────
+#
+# Spec 2026-07-12: a --db-backed session must never persist the degraded
+# lab_json="{}"/meta_json="{}" scaffold — that renders with no chart specs,
+# no units, and no lab topology on replay. Mirrors otto.suite.plugin's own
+# db-output test (test_session_monitor_db_output_persists_real_lab_and_meta):
+# asserts on the round-tripped artifact via build_db_export, not on the
+# MetricDB constructor args.
+
+
+def _make_unconnected_host(host_id: str = "router1") -> UnixHost:
+    """A real UnixHost that makes no connection at construction.
+
+    ``snapshot_lab`` (called by ``start_monitor``'s db_path branch) validates
+    its result against pydantic's ``HostSnapshot`` — a bare
+    ``MagicMock(spec=UnixHost)`` fails that validation because its unset
+    attributes are auto-vivified ``Mock`` objects, not strings (see
+    ``tests/unit/suite/test_plugin.py``'s identical helper).
+    """
+    return UnixHost(ip="10.0.0.1", element=host_id, creds=[Cred(login="admin", password="secret")])
+
+
+async def _fake_collector_run(collector: MetricCollector, interval, duration=None) -> None:
+    """Stand in for ``MetricCollector.run``: open the real DB, then idle.
+
+    Exercises the exact same DB-opening call site (``init_db()``) a real run
+    does — so the session row really gets INSERTed/UPDATEd — without
+    attempting any host I/O: the host in these tests is a real, unconnected
+    UnixHost pointed at a bogus IP, and a genuine collection tick would try
+    to SSH to it. Blocks until ``stop_monitor()`` cancels the task that owns
+    this coroutine (see ``start_monitor``'s ``_run()`` wrapper).
+    """
+    await collector.init_db()
+    await asyncio.Event().wait()
+
+
+def _make_suite(tmp_path: Path) -> OttoSuite:
+    class _Suite(OttoSuite):
+        pass
+
+    ctx = OttoContext(lab=Lab(name="_test_stub"), output_dir=tmp_path)
+    token = set_context(ctx)
+    try:
+        suite = _Suite()
+        suite.setup_method()
+    finally:
+        reset_context(token)
+    return suite
+
+
+class TestStartMonitorArchive:
+    @pytest.mark.asyncio
+    async def test_db_output_persists_real_lab_meta_and_end_stamp(self, tmp_path: Path) -> None:
+        out_path = tmp_path / "monitor.db"
+        suite = _make_suite(tmp_path)
+
+        with patch.object(MetricCollector, "run", _fake_collector_run):
+            await suite.start_monitor(
+                hosts=[_make_unconnected_host("router1")],
+                db_path=str(out_path),
+                interval=1.0,
+            )
+            await suite.stop_monitor()
+
+        (session,) = build_db_export(str(out_path)).sessions
+        # lab: the real snapshot, not "{}"
+        assert [h.id for h in session.lab.hosts] == ["router1"]
+        # meta: the real parser catalog, not "{}" — chart specs carry the
+        # units and grouping the review shell renders from.
+        assert session.meta.charts, "session meta persisted with no chart specs"
+        assert session.meta.interval == 1.0
+        # end: a clean stop_monitor() must stamp the RAW column, not rely on
+        # the producer's crash-tolerant fallback to paper over a null one —
+        # build_db_export()'s SessionRecord.end is NEVER None (_fallback_end
+        # always synthesizes one: row.end, else the last sample, else start),
+        # so it can't tell a finalized session from a crashed one. Only the
+        # archive's own column can (mirrors test_plugin.py's identical check).
+        (raw_session,) = read_sessions(str(out_path))
+        assert raw_session.end is not None, "a clean stop_monitor() left end unstamped"

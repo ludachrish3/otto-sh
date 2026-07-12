@@ -78,7 +78,7 @@ reservation gate. Each first-party command declares what it needs on its
 | {doc}`run <run>` | yes | yes | yes |
 | {doc}`test <test>` | yes | yes | yes |
 | {doc}`host <host>` | yes | yes | yes |
-| {doc}`monitor <monitor>` | yes | yes | self-gated per branch: live collection gates, `--file` replay doesn't |
+| {doc}`monitor <monitor>` | yes | yes | self-gated per branch: `--live` collection gates, reviewing a saved source doesn't |
 | {doc}`docker <docker>` | yes | yes | no — containers ride the parent's reservation |
 | {doc}`cov <cov>` | yes | no — reads existing run dirs | no |
 | {doc}`reservation <reservation>` | no (`lab_free`) — `check` loads lab data itself | no | no — it *is* the gate, made inspectable |

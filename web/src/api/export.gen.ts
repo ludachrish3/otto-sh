@@ -230,9 +230,9 @@ export interface TabSpecRecord {
   [k: string]: unknown;
 }
 /**
- * One ``metrics`` row at the JSON / SQLite import-export boundary.
+ * One ``metrics`` row at the ``format:1`` JSON / v2 SQLite import-export boundary.
  *
- * The JSON ``--file`` format spells the time key ``timestamp``; the SQLite
+ * The JSON export format spells the time key ``timestamp``; the SQLite
  * ``metrics`` table column is ``ts``. The ``validation_alias`` accepts both, so
  * a single model validates either seam. ``host`` is optional for the
  * pre-host-column schema; ``meta`` rides only in JSON (the DB has no meta
@@ -269,11 +269,11 @@ export interface EventRecord {
   [k: string]: unknown;
 }
 /**
- * One ``log_events`` row at the JSON / SQLite import-export boundary.
+ * One ``log_events`` row at the ``format:1`` JSON / v2 SQLite import-export boundary.
  *
  * Mirrors the parser-emitted ``LogEvent`` plus the host/tab the collector
- * attaches. The JSON ``--file`` format spells the time key ``timestamp``;
- * the SQLite column is ``ts`` (its ``fields`` column is JSON-decoded by the
+ * attaches. The JSON export format spells the time key ``timestamp``; the
+ * SQLite column is ``ts`` (its ``fields`` column is JSON-decoded by the
  * loader before validation).
  */
 export interface LogEventRecord {

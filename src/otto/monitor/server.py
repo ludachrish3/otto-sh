@@ -5,10 +5,13 @@ Endpoints
 ---------
 GET  /              Serves the React dashboard's built index.html (``web/``, via ``make web``)
 GET  /static/...    Serves the built dist/ assets (JS/CSS bundles, etc.)
+GET  /api/mode      JSON ``{"mode": "live"|"review", "source": str|None}``
+GET  /api/document  Review-mode document (``format:1`` JSON); 404 in live mode
 GET  /api/meta      JSON metadata (host name, metric labels, units)
 GET  /api/data      JSON snapshot of all metric series and events
 GET  /api/stream    SSE stream — pushes metric updates and events in real time
 POST /api/event     Record a manual event from the dashboard UI
+GET  /api/export/json  Download the current data as a ``format:1`` document
 """
 
 import asyncio
@@ -18,19 +21,22 @@ from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 from starlette.requests import Request
 from typing_extensions import override
 
+from ..models import LabSnapshot, MonitorExport
 from ..models.base import OttoModel
 from .collector import MetricCollector
 from .events import VALID_DASH_STYLES
+from .export import build_live_export, document_json
+from .session import SessionFrame
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -81,17 +87,59 @@ class _EventUpdateBody(OttoModel):
     dash: str | None = None
 
 
-def _build_app(collector: MetricCollector) -> FastAPI:  # noqa: C901 — FastAPI route-factory; complexity is route count, not branching
+def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route count, not branching
+    collector: MetricCollector,
+    *,
+    mode: Literal["live", "review"] = "live",
+    document: MonitorExport | None = None,
+    source_name: str | None = None,
+    frame: SessionFrame | None = None,
+    lab: LabSnapshot | None = None,
+) -> FastAPI:
     dist_index = _dist_index_path()
 
     app = FastAPI(title="Otto Monitor")
 
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
+    # *document* never changes after construction, so serialize it once here
+    # rather than on every /api/document and /api/export/json hit — a --db
+    # archive's document can hold many sessions, and re-running
+    # model_dump_json() per request is pure waste for data that's already
+    # fixed.
+    _document_body = document_json(document) if document is not None else None
+
+    def _require_document_body() -> str:
+        """Return the precomputed document body, or fail loud.
+
+        A ``mode="review"`` server with no document is a caller bug (the CLI
+        always builds and passes one before construction), not a runtime
+        condition to degrade gracefully for.
+        """
+        if _document_body is None:
+            raise RuntimeError(
+                "MonitorServer built with mode='review' but no document — this "
+                "is a programming error: the CLI always supplies one for "
+                "review mode."
+            )
+        return _document_body
+
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:  # type: ignore[reportUnusedFunction]
         """Serve the React dashboard's built ``index.html``."""
         return HTMLResponse(dist_index.read_text())
+
+    @app.get("/api/mode")
+    async def get_mode() -> JSONResponse:  # type: ignore[reportUnusedFunction]
+        """Report whether this server serves live data or a loaded review document."""
+        return JSONResponse({"mode": mode, "source": source_name})
+
+    @app.get("/api/document")
+    async def get_document() -> Response:  # type: ignore[reportUnusedFunction]
+        """Serve the loaded review document verbatim; 404 in live mode."""
+        if mode != "review":
+            raise HTTPException(status_code=404, detail="no document in live mode")
+        return Response(content=_require_document_body(), media_type="application/json")
 
     @app.get("/api/meta")
     async def meta() -> JSONResponse:  # type: ignore[reportUnusedFunction]
@@ -173,11 +221,25 @@ def _build_app(collector: MetricCollector) -> FastAPI:  # noqa: C901 — FastAPI
 
     @app.get("/api/export/json")
     async def export_json() -> Response:  # type: ignore[reportUnusedFunction]
-        """Download all metrics and events as a JSON file (compatible with --file)."""
+        """Download the current data as a ``format:1`` document.
+
+        Review mode re-serves the loaded document verbatim; live mode builds
+        a fresh single-session document from *frame*/*collector*/*lab*.
+        """
+        if mode == "review":
+            body = _require_document_body()
+        else:
+            if frame is None or lab is None:
+                raise RuntimeError(
+                    "MonitorServer built with mode='live' but no frame/lab — this "
+                    "is a programming error: the CLI always supplies both for "
+                    "live mode."
+                )
+            body = document_json(build_live_export(frame, collector, lab))
         return Response(
-            content=collector.to_json(),
+            content=body,
             media_type="application/json",
-            headers={"Content-Disposition": 'attachment; filename="otto-metrics.json"'},
+            headers={"Content-Disposition": 'attachment; filename="monitor-export.json"'},
         )
 
     @app.delete("/api/event/{event_id}")
@@ -253,6 +315,17 @@ class MonitorServer:
     """
     Wraps a FastAPI/uvicorn server for the monitoring dashboard.
 
+    Two modes, chosen by the CLI at construction time:
+
+    * ``mode="live"`` (default) — serves a running
+      :class:`~otto.monitor.collector.MetricCollector`. ``frame`` and ``lab``
+      must both be supplied so ``/api/export/json`` can build a document on
+      demand; ``/api/document`` 404s.
+    * ``mode="review"`` — serves a pre-built ``document`` (a
+      ``format:1`` :class:`~otto.models.monitor.MonitorExport`, e.g. read back
+      from a ``--db`` session archive). ``source_name`` is the human-facing
+      origin (a file path) reported by ``/api/mode``.
+
     Call ``await serve()`` from an async context to run the server.
     Call ``stop()`` from any thread to trigger a graceful shutdown, or
     ``force_stop()`` to abort open SSE connections immediately instead of
@@ -264,11 +337,29 @@ class MonitorServer:
         collector: MetricCollector,
         host: str = "0.0.0.0",  # noqa: S104 — intentional all-interface bind
         port: int = 0,
+        *,
+        mode: Literal["live", "review"] = "live",
+        document: MonitorExport | None = None,
+        source_name: str | None = None,
+        frame: SessionFrame | None = None,
+        lab: LabSnapshot | None = None,
     ) -> None:
         self._collector = collector
         self._bind_host = host
         self._port = port
-        self._app = _build_app(collector)
+        self._mode = mode
+        self._document = document
+        self._source_name = source_name
+        self._frame = frame
+        self._lab = lab
+        self._app = _build_app(
+            collector,
+            mode=mode,
+            document=document,
+            source_name=source_name,
+            frame=frame,
+            lab=lab,
+        )
         self._server: uvicorn.Server | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 

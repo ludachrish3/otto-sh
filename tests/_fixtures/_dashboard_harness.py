@@ -10,10 +10,12 @@ import gc
 import threading
 import time
 from collections.abc import Coroutine
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
+from otto.models import LabSnapshot, MonitorExport
 from otto.monitor.collector import MetricCollector
 from otto.monitor.server import MonitorServer
+from otto.monitor.session import SessionFrame
 
 C = TypeVar("C", bound=MetricCollector)
 T = TypeVar("T")
@@ -22,11 +24,36 @@ _STARTUP_TIMEOUT = 15.0
 
 
 class DashboardHarness(Generic[C]):
-    """Serve *collector*'s dashboard on ``127.0.0.1:<ephemeral>``."""
+    """Serve *collector*'s dashboard on ``127.0.0.1:<ephemeral>``.
 
-    def __init__(self, collector: C) -> None:
+    The ``mode``/``document``/``source_name``/``frame``/``lab`` keywords pass
+    straight through to :class:`~otto.monitor.server.MonitorServer` (defaults
+    match its own: an unadorned live server) — kept explicit and typed here,
+    rather than a generic ``**kwargs``, so ``ty`` still catches a caller
+    passing the wrong shape.
+    """
+
+    def __init__(
+        self,
+        collector: C,
+        *,
+        mode: Literal["live", "review"] = "live",
+        document: MonitorExport | None = None,
+        source_name: str | None = None,
+        frame: SessionFrame | None = None,
+        lab: LabSnapshot | None = None,
+    ) -> None:
         self.collector: C = collector
-        self.server = MonitorServer(collector, host="127.0.0.1", port=0)
+        self.server = MonitorServer(
+            collector,
+            host="127.0.0.1",
+            port=0,
+            mode=mode,
+            document=document,
+            source_name=source_name,
+            frame=frame,
+            lab=lab,
+        )
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
 
@@ -139,14 +166,6 @@ class DashboardHarness(Generic[C]):
         if self._loop is None:
             raise RuntimeError("harness not started")
         return asyncio.run_coroutine_threadsafe(coro, self._loop).result(timeout=10)
-
-    def run_export(self) -> str:
-        """Serialize the collector to its --file JSON on the server loop."""
-
-        async def _export() -> str:
-            return self.collector.to_json()
-
-        return self.run(_export())
 
     def stop(self) -> None:
         """Signal shutdown and join the server thread (idempotent).

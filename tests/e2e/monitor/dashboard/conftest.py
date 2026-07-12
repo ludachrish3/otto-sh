@@ -1,25 +1,40 @@
 """Dashboard e2e fixtures: a scripted live server and a historical server.
 
-``live_dash``/``historical_dash`` back the wire-contract pins in
-``test_harness.py`` (untouchable — see that module's docstring) as well as
-the harness's own self-tests; they stay even though the browser-marked
-DOM-parity specs that used to exercise them through a page were retired in
-the Playwright pivot (plan 2026-07-11) in favor of ``shell_dash`` below.
+``live_dash`` backs the wire-contract pins in ``test_harness.py``
+(untouchable — see that module's docstring) as well as the harness's own
+self-tests; it stays even though the browser-marked DOM-parity specs that
+used to exercise it through a page were retired in the Playwright pivot
+(plan 2026-07-11) in favor of ``shell_dash`` below. ``historical_dash`` (the
+--file-replay historical server) was retired with it in the sessionized
+producer's review-mode cutover (plan 2026-07-12, Task 4) — the mode/document
+pins in ``test_harness.py`` exercise the same "not live" wire contract via
+its own ``review_dash`` there instead.
+
+This module also defines a ``review_dash`` (Task 7) — same name, deliberately
+distinct fixture. pytest resolves a same-named fixture defined directly in a
+test module (test_harness.py's) ahead of one from a conftest.py, so the two
+never collide: test_harness.py keeps its hand-built, hostless wire-contract
+document, while every other module here (test_review_shell.py) gets this
+one — a *renderable* document (built from the committed
+web/fixtures/minimal.json) for driving the real built page through
+Playwright, matching this file's own dist-serving ``shell_dash`` idiom.
 """
 
+import json
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
+from otto.models import MonitorExport
 from otto.monitor.collector import MetricCollector
 from otto.monitor.server import _dist_index_path
 from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
 
-HISTORICAL_JSON = Path(__file__).parent / "data" / "historical.json"
+_FIXTURES = Path(__file__).resolve().parents[4] / "web" / "fixtures"
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 _WEB_SRC = _REPO_ROOT / "web" / "src"
@@ -181,17 +196,50 @@ def live_dash() -> Iterator[DashboardHarness[FakeCollector]]:
 
 
 @pytest.fixture
-def historical_dash() -> Iterator[DashboardHarness[MetricCollector]]:
-    harness = DashboardHarness(MetricCollector.from_json(str(HISTORICAL_JSON))).start()
-    yield harness
-    harness.stop()
-
-
-@pytest.fixture
 def shell_dash() -> Iterator[DashboardHarness[FakeCollector]]:
     """A dist-serving harness with an empty collector — the review shell
     makes no boot-time API calls; data arrives via client-side Import."""
     harness = DashboardHarness(FakeCollector())
+    harness.start()
+    yield harness
+    harness.stop()
+
+
+def _review_boot_document() -> MonitorExport:
+    """A two-session ``format:1`` document for the boot-hydration specs.
+
+    Built from the committed ``web/fixtures/minimal.json`` — the same file
+    every Import-driven spec in this directory already trusts — duplicated
+    into a second, noted session (Task 7 brief: no new fixture file, no
+    generator change). ``model_copy`` is shallow, so both sessions share the
+    same lab/metrics/chart_map objects; that's fine here since nothing
+    mutates them and only the id/label/note need to differ for the picker.
+    """
+    raw = json.loads((_FIXTURES / "minimal.json").read_text(encoding="utf-8"))
+    doc = MonitorExport.model_validate(raw)
+    first = doc.sessions[0]
+    second = first.model_copy(
+        update={"id": f"{first.id}-2", "label": "second", "note": "second run"}
+    )
+    return MonitorExport(format=1, sessions=[first, second])
+
+
+@pytest.fixture
+def review_dash() -> Iterator[DashboardHarness[MetricCollector]]:
+    """A dist-serving, review-mode harness that boots already hydrated.
+
+    Unlike ``shell_dash`` (empty collector; data arrives via client-side
+    Import), this server answers ``/api/mode``/``/api/document`` (Task 6)
+    with a real two-session document — the browser-lane proof that
+    ``otto monitor <source>`` opens straight into the dashboard with no
+    Import interaction.
+    """
+    harness = DashboardHarness(
+        MetricCollector(hosts=[], parsers=[]),
+        mode="review",
+        document=_review_boot_document(),
+        source_name="minimal.json",
+    )
     harness.start()
     yield harness
     harness.stop()

@@ -9,8 +9,9 @@ Two seams:
   validation, hot loop) and the import path uses ``model_validate``.
 
 * :class:`MetricRecord` / :class:`EventRecord` / :class:`LogEventRecord` —
-  flat records at the JSON ``--file`` and SQLite import/export boundary.
-  These read *historical, external* data, so they are deliberately
+  flat records at the ``format:1`` JSON export and v2 SQLite session-archive
+  import/export boundary (``otto monitor <source>``/``otto monitor --live
+  --db``). These read *historical, external* data, so they are deliberately
   **lenient** (``extra='ignore'``, via :class:`RowModel`): an unknown column
   from a newer schema is dropped, not rejected, exactly as the old
   ``.get()``/``[]`` parsing did. Field names follow the JSON spelling; a
@@ -81,8 +82,9 @@ class MonitorMeta(OttoModel):
 
     ``interval`` is the global collection interval in seconds — ``None`` until
     :meth:`~otto.monitor.collector.MetricCollector.run` has recorded one (a
-    collector that has not started live collection), or always for historical
-    (loaded from ``--file``/``--db``) data.
+    collector that has not started live collection). Reviewed data (loaded
+    from ``otto monitor <source>``) carries this in its own
+    :class:`SessionMeta` instead — see :func:`otto.monitor.export.session_meta`.
     """
 
     hosts: list[str]
@@ -106,9 +108,9 @@ class RowModel(BaseModel):
 
 
 class MetricRecord(RowModel):
-    """One ``metrics`` row at the JSON / SQLite import-export boundary.
+    """One ``metrics`` row at the ``format:1`` JSON / v2 SQLite import-export boundary.
 
-    The JSON ``--file`` format spells the time key ``timestamp``; the SQLite
+    The JSON export format spells the time key ``timestamp``; the SQLite
     ``metrics`` table column is ``ts``. The ``validation_alias`` accepts both, so
     a single model validates either seam. ``host`` is optional for the
     pre-host-column schema; ``meta`` rides only in JSON (the DB has no meta
@@ -151,11 +153,11 @@ class EventRecord(RowModel):
 
 
 class LogEventRecord(RowModel):
-    """One ``log_events`` row at the JSON / SQLite import-export boundary.
+    """One ``log_events`` row at the ``format:1`` JSON / v2 SQLite import-export boundary.
 
     Mirrors the parser-emitted ``LogEvent`` plus the host/tab the collector
-    attaches. The JSON ``--file`` format spells the time key ``timestamp``;
-    the SQLite column is ``ts`` (its ``fields`` column is JSON-decoded by the
+    attaches. The JSON export format spells the time key ``timestamp``; the
+    SQLite column is ``ts`` (its ``fields`` column is JSON-decoded by the
     loader before validation).
     """
 

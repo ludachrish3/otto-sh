@@ -10,11 +10,12 @@ and serves an interactive web dashboard.
    collector
    db
    events
+   export
    factory
-   history
    log_sourced
    parsers
    rates
    server
+   session
    snmp
    store

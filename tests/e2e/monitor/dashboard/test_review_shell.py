@@ -3,7 +3,10 @@
 Contract: data-testid attributes only — styling and DOM structure are
 free to change. Fixtures are the committed Plan-1 dummy-data documents
 (web/fixtures/), imported through the client-side Import front door, so
-every test here runs with zero backend data and zero external network.
+every test here runs with zero backend data and zero external network —
+except the two Task-7 boot specs at the bottom, which exist specifically to
+prove the *other* path: a review-mode server hydrating the shell itself via
+``/api/mode``/``/api/document`` (Plan 5a Task 6), with no Import interaction.
 """
 
 import json
@@ -743,3 +746,50 @@ def test_topology_legend_hover_and_tunnel_casing(shell_dash, page):
     card.wait_for()
     assert "app-db" in card.inner_text()
     assert page.locator('[data-testid="link-inspector"]').count() == 0
+
+
+def test_review_mode_boots_hydrated(review_dash, page):
+    """Boot hydration (Plan 5a Task 6): a review-mode server opens straight
+    into the dashboard from its loaded document, with no Import interaction
+    — plus the session-note tooltip's end-to-end proof (Select.tsx: a bare
+    ``title=`` prop is silently stripped by react-aria's ``filterDOMProps``;
+    the ``render``-prop workaround only earns its keep if the attribute
+    actually survives to the rendered DOM option, which this asserts)."""
+    page.goto(review_dash.url)
+    page.locator('[data-testid="review-bar"]').wait_for()
+    assert page.locator('[data-testid="source-name"]').inner_text() == "minimal.json"
+
+    picker = page.locator('[data-testid="session-picker"]')
+    picker.wait_for()
+    picker.click()
+    # The click opens a react-aria Popover; Locator.count() does NOT
+    # auto-retry (unlike get_attribute/inner_text below), so counting the
+    # options straight after the click races the listbox committing to the
+    # DOM. Wait for the render transition first — the file's existing idiom.
+    page.get_by_role("option").first.wait_for()
+    assert page.get_by_role("option").count() == 2
+    plain = page.get_by_role("option", name="minimal", exact=True)
+    noted = page.get_by_role("option", name="second", exact=True)
+    assert plain.get_attribute("title") is None
+    assert noted.get_attribute("title") == "second run"
+    page.keyboard.press("Escape")
+    noted.wait_for(state="detached")  # popover closed
+
+    # Smoke that the hydrated data drives the whole shell, not just the
+    # review bar: the topology page renders off the same session, and the
+    # chrome (review bar) survives the round trip back to the overview.
+    page.goto(f"{review_dash.url}#/topology")
+    page.locator('[data-testid="topo-node-local"]').wait_for()
+    page.go_back()
+    page.locator('[data-testid="overview-page"]').wait_for()
+    assert page.locator('[data-testid="review-bar"]').is_visible()
+
+
+def test_live_mode_still_boots_empty(shell_dash, page):
+    """Pin: in live mode (``/api/mode`` -> ``"live"``), Task 6's boot fetch
+    is a no-op — the shell still opens to the Import front door exactly as
+    it did before that fetch existed."""
+    page.goto(shell_dash.url)
+    page.locator('[data-testid="empty-review"]').wait_for()
+    page.locator('[data-testid="import-input"]').wait_for(state="attached")
+    assert page.locator('[data-testid="review-bar"]').count() == 0

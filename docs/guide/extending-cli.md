@@ -99,7 +99,7 @@ A `register_cli_command()` loader can be one of three things:
   subcommands. A single-command, callback-free, subgroup-free app instead
   **flattens** into a bare leaf under the registered name — exactly the rule
   Typer itself applies to a name-less `add_typer`, so `otto monitor --help`
-  shows monitor's own `--file` / `--hosts` flags directly rather than hiding
+  shows monitor's own `--live` / `--hosts` flags directly rather than hiding
   them behind a spurious nested `monitor` subcommand;
 - a plain or `async` function &mdash; a **leaf** command, wrapped in a
   throwaway `Typer` the same way `@cli_command()`'s target is;
@@ -171,9 +171,9 @@ The built-ins span the whole matrix — read them as worked examples
   lab-aware (`lab_free` defaults to `False`) — they read lab state but write
   no per-invocation artifacts and gate nothing.
 - **`monitor`** sets `gate=False` at the spec level, then gates *itself*,
-  per-branch, inside the command body: a historical `--file` replay reads a
+  per-branch, inside the command body: reviewing a saved `<source>` reads a
   local file and never touches live hardware, so it's gate-exempt by design,
-  while live collection still evaluates the gate explicitly. This is the
+  while `--live` collection still evaluates the gate explicitly. This is the
   precedent to follow whenever a uniform `gate=True`/`gate=False` would be
   either too strict or too permissive for some of a command's branches —
   declare `gate=False` on the spec and, wherever the branch actually needs

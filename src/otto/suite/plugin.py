@@ -31,7 +31,7 @@ import logging
 import re
 import time
 from collections.abc import AsyncGenerator, Generator
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, cast
 
@@ -329,7 +329,10 @@ class OttoPlugin:
 
         from ..config import all_hosts
         from ..host import UnixHost
+        from ..monitor.db import MetricDB
+        from ..monitor.export import build_live_export, build_session_metric_db, document_json
         from ..monitor.factory import build_monitor_collector
+        from ..monitor.session import new_frame, snapshot_lab
         from .suite import OttoSuite
 
         pattern = re.compile(self._monitor_hosts) if self._monitor_hosts else None
@@ -344,17 +347,61 @@ class OttoPlugin:
 
         output = self._monitor_output
         db_path = output if output is not None and output.suffix.lower() == ".db" else None
-        collector = build_monitor_collector(hosts=hosts, db_path=db_path)
+        # Session identity + lab snapshot are built ONCE and shared by BOTH
+        # output branches (JSON export below, and the MetricDB passed to
+        # build_monitor_collector) so a --monitor run always carries real
+        # session framing, never an anonymous/empty one (spec 2026-07-12).
+        # No suite/run name is threaded into OttoPlugin today, so `label`
+        # stays None (honest, not a placeholder). Declared links aren't
+        # resolvable here — the pytest-suite context has no active lab config,
+        # only the monitored host objects — so `declared=[]`; implicit
+        # hop-links still derive from `hosts` itself.
+        frame = new_frame(label=None, note=None)
+        lab = snapshot_lab(hosts, declared=[])
+
+        monitor_db: MetricDB | None = None
+        if db_path is not None:
+            # Same construction-order knot the CLI's `--live --db` path has
+            # (see otto.cli.monitor): MetricDB needs meta_json up front, but
+            # the collector that will OWN this db can't be built until the db
+            # exists. So derive the meta from a throwaway collector over the
+            # same hosts — get_meta_model() depends only on hosts + the parser
+            # catalog, never on the db. build_session_metric_db is the ONE
+            # shared place this construction happens — see its docstring for
+            # why persisting "{}" here would render a DB-backed suite run with
+            # no chart specs and no units, the same degradation an empty
+            # chart_map caused.
+            #
+            # `interval` MUST be passed explicitly: the collector only records
+            # its own interval once run() starts (the class-scoped fixture
+            # below), which is after this row is written — so reading it off
+            # the model here would persist null forever and leave the replayed
+            # session's derived health unresolvable. We have the number right
+            # here: it's --monitor-interval.
+            meta_collector = build_monitor_collector(hosts=hosts)
+            monitor_db = build_session_metric_db(
+                str(db_path), frame, lab, meta_collector, interval=self._monitor_interval
+            )
+        collector = build_monitor_collector(hosts=hosts, db=monitor_db)
 
         OttoSuite._session_monitor_collector = collector  # noqa: SLF001 — intra-package write to OttoSuite class-level monitor collector slot
         try:
             yield
         finally:
+            # Stamp end BEFORE building/finalizing either output — an
+            # unstamped end is the producer's deliberate crash marker (see
+            # MetricDB.finalize / otto.monitor.export._fallback_end), so a
+            # clean teardown must not leave every session looking crashed.
+            end = datetime.now(tz=timezone.utc)
             if output is not None and output.suffix.lower() != ".db":
+                frame.end = end
                 output.parent.mkdir(parents=True, exist_ok=True)
-                collector.export_json(str(output))
+                export = build_live_export(frame, collector, lab)
+                output.write_text(document_json(export))
                 logger.info(f"Monitor data written to {output}")
             elif db_path is not None:
+                if monitor_db is not None:
+                    await monitor_db.finalize(end)
                 logger.info(f"Monitor data written to {db_path}")
             await collector.close()
             OttoSuite._session_monitor_collector = None  # noqa: SLF001 — intra-package clear of OttoSuite class-level monitor collector slot

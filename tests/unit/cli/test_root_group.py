@@ -33,13 +33,13 @@ def test_monitor_help_through_root_surfaces_flat_options():
     """``otto monitor --help`` (root dispatch) must show the leaf's own flags.
 
     Regression: ``monitor_app`` is a single-command, callback-free Typer app;
-    group-ifying it hid ``--file`` behind a spurious nested ``monitor``
-    subcommand (``otto monitor --file x`` then failed with exit 2 'No such
+    group-ifying it hid ``--live`` behind a spurious nested ``monitor``
+    subcommand (``otto monitor --live`` then failed with exit 2 'No such
     option'). The flattening rule keeps monitor's documented flat CLI.
     """
     result = runner.invoke(app, ["monitor", "--help"])
     assert result.exit_code == 0, result.output
-    assert "--file" in result.output
+    assert "--live" in result.output
     assert "--hosts" in result.output
     # No nested same-named subcommand row (the group-ified regression symptom).
     assert "COMMAND [ARGS]" not in result.output

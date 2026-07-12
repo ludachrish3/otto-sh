@@ -1,11 +1,18 @@
-// The redesigned shell (plan 2026-07-11). Review-first: no backend fetch
-// on boot — the Import front door hydrates the review store. Live mode
-// (SSE, /api/meta) returns at the live-hookup phase; the legacy live data
-// layer (store.ts/api/sse.ts) is intentionally kept, unreferenced, for it.
+// The redesigned shell (plan 2026-07-11). Review-first: the Import front
+// door hydrates the review store, same as always. The one addition (Plan
+// 5a Task 6) is a single soft-failing boot fetch — see
+// data/bootstrap.ts's header for the full contract — that hydrates from a
+// same-origin otto monitor server already sitting on a review document,
+// so an `otto monitor <source>` review server opens straight into the
+// dashboard. Live mode (SSE, /api/meta) returns at the live-hookup phase;
+// the legacy live data layer (store.ts/api/sse.ts) is intentionally kept,
+// unreferenced, for it.
 
+import { useEffect } from "react";
 import { Route, Router, Switch } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 
+import { bootstrapFromServer } from "./data/bootstrap";
 import { useReviewStore } from "./data/reviewStore";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SubjectPage } from "./pages/SubjectPage";
@@ -19,6 +26,11 @@ function App() {
   const hasData = useReviewStore((s) => s.sessions.length > 0);
   const importError = useReviewStore((s) => s.importError);
   const clearImportError = useReviewStore((s) => s.actions.clearImportError);
+  // One-shot, fire-and-forget: bootstrapFromServer never throws (see its
+  // header) and Import remains available whether or not it finds anything.
+  useEffect(() => {
+    void bootstrapFromServer();
+  }, []);
   return (
     <ImportProvider>
       <AppBar />

@@ -10,14 +10,16 @@ a filesystem that can't take it.
 
 The monitor backend was reworked behind a stable
 {class}`~otto.monitor.collector.MetricCollector` facade: the collector
-decomposes into `store`/`db`/`broadcast`/`history` modules, dashboard
-metadata is typed `TabSpec`/`ChartSpec` models served at `/api/meta`, and a
-project-level `register_parsers()` joins the per-host registry. The
-dashboard itself was ported from a single vanilla-JS file to a React + Vite
-+ TypeScript single-page app (`web/`, built to `static/dist/`) behind the
-same observable surface. See {doc}`../../guide/monitor` for the frontend dev
-workflow (`make web-dev`) — `tests/e2e/monitor/dashboard/` pins the exact
-ids/classes/behaviors that must survive any further change to either side.
+decomposes into `store`/`db`/`broadcast` modules — joined by `session` (a
+run's identity and lab snapshot) and `export` (the `format:1` producer) —
+dashboard metadata is typed `TabSpec`/`ChartSpec` models served at
+`/api/meta`, and a project-level `register_parsers()` joins the per-host
+registry. The dashboard itself was ported from a single vanilla-JS file to a
+React + Vite + TypeScript single-page app (`web/`, built to `static/dist/`)
+behind the same observable surface. See {doc}`../../guide/monitor` for the
+frontend dev workflow (`make web-dev`) — `tests/e2e/monitor/dashboard/` pins
+the exact ids/classes/behaviors that must survive any further change to
+either side.
 ```
 
 ```{graphviz}
@@ -29,9 +31,9 @@ digraph monitor {
     factory [label="factory\nMonitorTarget per host\nshell parsers or SNMP source\nhost.log → NEVER"];
     collector [label="collector tick loop\nconcurrent poll, one shared\ntimestamp per tick"];
     events [label="suite events\nstart_monitor / add_monitor_event", style=dashed];
-    db [label="SQLite (--db)\nWAL local / DELETE on network FS"];
+    db [label="SQLite session archive (--db)\nWAL local / DELETE on network FS"];
     dash [label="web dashboard\nOS-assigned port"];
-    replay [label="--file replay\n(no hosts touched)", style=dashed];
+    replay [label="otto monitor <source>\nreview (no hosts touched)", style=dashed];
 
     hosts -> factory -> collector;
     events -> collector;
@@ -71,13 +73,17 @@ so "CPU spiked" and "test_load started" correlate.
 **Serving and persistence.** A live dashboard
 ({class}`~otto.monitor.server.MonitorServer`) binds an OS-assigned port and
 serves the collector's buffer to the built React frontend. With `--db`,
-samples persist to SQLite — WAL journaling on local disks, DELETE on network
-filesystems ({doc}`../subsystems/data-boundary`) — and `--file` replays a
-saved run without touching any host.
+each run's samples persist as one session in a SQLite archive — WAL
+journaling on local disks, DELETE on network filesystems
+({doc}`../subsystems/data-boundary`); running against the same `--db` path
+again appends another session rather than overwriting the archive. The
+positional `otto monitor <source>` form instead replays a saved `.json`
+export or `.db` archive without touching any host.
 
 **Gating.** `otto monitor` gates itself per branch rather than in the
-preamble: live collection runs the reservation gate; `--file` replay reads a
-local file and is gate-exempt by design ({doc}`index`).
+preamble: live collection (`--live`) runs the reservation gate; reviewing a
+saved `<source>` reads a local file and is gate-exempt by design
+({doc}`index`).
 
 ## `otto monitor --help`
 
