@@ -48,13 +48,36 @@ class MetricView(Protocol):
     :class:`~otto.monitor.snmp.SnmpMetric` satisfy this structurally, so the
     record/publish path is identical whether a point came from a shell command
     or an SNMP OID.
+
+    The members are read-only properties, not plain attributes: the collector
+    only ever reads them, and a mutable attribute member would demand writes
+    that :class:`~otto.monitor.snmp.SnmpMetric` (``frozen=True``) cannot accept.
     """
 
-    chart: str
-    y_title: str
-    unit: str
-    tab: str
-    tab_label: str
+    @property
+    def chart(self) -> str:
+        """Title of the chart this series is drawn on."""
+        ...
+
+    @property
+    def y_title(self) -> str:
+        """Label for the chart's y-axis."""
+        ...
+
+    @property
+    def unit(self) -> str:
+        """Unit the values are expressed in (e.g. ``%``, ``MiB``)."""
+        ...
+
+    @property
+    def tab(self) -> str:
+        """Id of the dashboard tab the chart belongs to."""
+        ...
+
+    @property
+    def tab_label(self) -> str:
+        """Human-readable name of that dashboard tab."""
+        ...
 
 
 logger = logging.getLogger(__name__)
