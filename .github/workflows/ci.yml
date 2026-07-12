@@ -98,13 +98,14 @@ jobs:
       # Post-cutover, the browser suite exercises the built React dashboard
       # (src/otto/monitor/static/dist/) through a real MonitorServer — there
       # is no legacy static fallback anymore, so `dist/` must exist before
-      # the pytest steps below run. `make web` also re-runs the type-drift
-      # gate (web/src/api/types.gen.ts vs. the live pydantic models) and the
+      # the pytest steps below run. The nox session can't build it itself
+      # (its venv is Python-only — see the `dashboard` session docstring), so
+      # the build stays here. `make web` also re-runs the type-drift gate
+      # (web/src/api/types.gen.ts vs. the live pydantic models) and the
       # air-gap grep, so a wire-contract or CDN-URL regression fails here
-      # rather than surfacing later as a flaky e2e test.
-      - name: Install web/ dependencies (npm ci)
-        run: make web-install
-      - name: Build the React dashboard (type-drift + air-gap gates)
+      # rather than surfacing later as a flaky e2e test. It pulls in npm ci
+      # on its own via the node_modules stamp — no separate install step.
+      - name: Build the React dashboard (npm ci + type-drift + air-gap gates)
         run: make web
       # Unit tests + coverage run in the dedicated web-quality job; this job
       # builds the dashboard purely for the browser e2e that follows. Install
@@ -117,6 +118,8 @@ jobs:
   # web/ TypeScript quality gates (Biome lint + format, tsc, vitest v8
   # coverage) — the TS analogue of the lint/typecheck jobs. Node-only: no
   # Python, no browsers, no dashboard build, so it runs fast and in parallel.
+  # Each make target below takes the node_modules stamp as a prerequisite, so
+  # the first one runs npm ci and the rest reuse it — no explicit install step.
   web-quality:
     name: web-quality
     runs-on: ubuntu-latest
@@ -126,8 +129,6 @@ jobs:
         uses: actions/setup-node@v6.4.0
         with:
           node-version-file: .nvmrc
-      - name: Install web/ dependencies (npm ci)
-        run: make web-install
       - name: Lint (Biome)
         run: make web-lint
       - name: Format check (Biome)
@@ -181,9 +182,10 @@ jobs:
       # keeps this gate an honest rehearsal of what Read the Docs' own build
       # does (see .readthedocs.yaml) — placeholder mode stays reserved for
       # its documented emergency case (e.g. a broken Chromium install), not
-      # routine CI.
-      - name: Install web/ dependencies (npm ci)
-        run: make web-install
+      # routine CI. `make docs` encodes this same dist prerequisite for local
+      # builds; the step stays explicit here because CI runs the nox session,
+      # whose Python-only venv can't build the frontend. `make web` runs npm
+      # ci itself via the node_modules stamp — no separate install step.
       - name: Build the React dashboard (needed by capture_docs_media.py)
         run: make web
       # Headless Chromium captures the build-time GUI media (screenshots)

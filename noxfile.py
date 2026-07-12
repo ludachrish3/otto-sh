@@ -210,12 +210,14 @@ def dashboard(session: nox.Session, browser: str) -> None:
     This suite drives the built React dashboard (`src/otto/monitor/static/
     dist/`) through a real `MonitorServer` — there's no legacy static
     fallback since the Task 9 cutover, so `dist/` must already exist before
-    this session runs. Building it needs Node/npm (`make web-install` +
-    `make web`), which nox-uv's per-session venvs (Python-only, one per
-    `PYTHON_VERSIONS` entry) have no way to provision. Rather than bolt a
-    Node toolchain onto a nox session, that step lives directly in
+    this session runs. Building it needs Node/npm (`make web`, which installs
+    web/'s dependencies itself), which nox-uv's per-session venvs (Python-only,
+    one per `PYTHON_VERSIONS` entry) have no way to provision. Rather than bolt
+    a Node toolchain onto a nox session, that step lives directly in
     `.github/workflows/ci.yml`'s `dashboard` job, ahead of the nox call;
-    `make dashboard` (the local/dev entrypoint) carries the same prerequisite.
+    `make dashboard` (the local/dev entrypoint) carries the same prerequisite —
+    and, unlike this session, rebuilds a dist that has gone stale against
+    web/src/ rather than only one that is missing.
     Each engine's browser system libraries are installed by that job via
     `playwright install --with-deps <browser>` ahead of this session.
     """

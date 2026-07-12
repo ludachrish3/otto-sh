@@ -227,7 +227,21 @@ web-install: ## (Dev) Install web/'s npm dependencies from the committed lockfil
 	  sleep $$((n * 5)); n=$$((n + 1)); \
 	done
 
-web: ## (Build & Release) Build the web/ React dashboard + the covreport bundle (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh)
+# npm ci writes node_modules/.package-lock.json, so it doubles as the install
+# stamp: gating on it re-runs `npm ci` when (and only when) the lockfile moves.
+# That is what a checkout predating a new dependency needs — @xyflow landing
+# with the topology work left `make web` dying on an unresolved import until
+# node_modules caught up. Depending on the phony `web-install` directly would
+# instead pay a full wipe-and-reinstall on every single build.
+# (Defined here, ahead of its first use as a prerequisite: GNU Make expands
+# prerequisites when the rule is READ, so a later definition would expand to
+# nothing here and silently drop the dependency.)
+WEB_NODE_MODULES := web/node_modules/.package-lock.json
+
+$(WEB_NODE_MODULES): web/package.json web/package-lock.json
+	$(MAKE) web-install
+
+web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + the covreport bundle (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh)
 	# Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
 	# the live pydantic models and fail BEFORE the vite build if either
 	# committed file has drifted — a stale wire contract should be caught by
@@ -240,29 +254,36 @@ web: ## (Build & Release) Build the web/ React dashboard + the covreport bundle 
 	scripts/check_airgap.sh
 	scripts/check_airgap.sh src/otto/coverage/renderer/static/dist
 
-web-dev: ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to a running otto monitor (default target http://127.0.0.1:8080, override with VITE_OTTO_TARGET=http://host:port)
+web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to a running otto monitor (default target http://127.0.0.1:8080, override with VITE_OTTO_TARGET=http://host:port)
 	cd web && npm run dev
 
-web-test: ## (Dev) Run the web/ vitest suite once (store reducers, etc.) — no watch mode
+web-test: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once (store reducers, etc.) — no watch mode
 	cd web && npm run test
 
 # web/ quality lanes (Biome + tsc + vitest coverage) — the TS analogue of the
-# ruff/ty/pytest-cov Python gates. All assume `make web-install` (or `make dev`)
-# has populated web/node_modules. `web-check` is the umbrella the CI web-quality
+# ruff/ty/pytest-cov Python gates. `web-check` is the umbrella the CI web-quality
 # job and `make validate-ts` run.
-web-lint: ## (Quality) Lint web/ (TS + CSS) with Biome
+#
+# Every target here shells into `npm run`, so each takes the node_modules stamp
+# as a prerequisite rather than *assuming* someone ran `make web-install` first.
+# That assumption is what a caller forgets (and what a checkout predating a new
+# dependency violates silently); with the stamp, a lockfile change re-runs
+# `npm ci` exactly once and an unchanged tree pays nothing. It also means CI's
+# web-quality job no longer needs its own npm-ci step — the gate it invokes
+# brings its own dependencies.
+web-lint: $(WEB_NODE_MODULES) ## (Quality) Lint web/ (TS + CSS) with Biome
 	cd web && npm run lint
 
-web-format: ## (Quality) Apply the Biome formatter to web/ (writes changes)
+web-format: $(WEB_NODE_MODULES) ## (Quality) Apply the Biome formatter to web/ (writes changes)
 	cd web && npm run format
 
-web-format-check: ## (Quality) Check web/ formatting with Biome (no writes)
+web-format-check: $(WEB_NODE_MODULES) ## (Quality) Check web/ formatting with Biome (no writes)
 	cd web && npm run format:check
 
-web-typecheck: ## (Quality) Type-check web/ with tsc --noEmit (no build)
+web-typecheck: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit (no build)
 	cd web && npm run typecheck
 
-web-coverage: ## (Quality) Run the web/ vitest suite with v8 coverage and enforce the floor
+web-coverage: $(WEB_NODE_MODULES) ## (Quality) Run the web/ vitest suite with v8 coverage and enforce the floor
 	cd web && npm run test:coverage
 
 web-check: web-lint web-format-check web-typecheck web-coverage ## (Quality) All web/ gates: lint + format-check + typecheck + coverage (= validate-ts)
@@ -353,31 +374,56 @@ coverage-embedded: ## Run the embedded (Zephyr) resource slice with a coverage r
 # --cov-append, folding the browser-driven server/collector lines (e.g. the
 # dashboard HTML route, UI event round-trips) into the gated report.
 #
-# Both suites drive real build artifacts — the React dashboard
-# (src/otto/monitor/static/dist/) and the coverage-report bundle
-# (src/otto/coverage/renderer/static/dist/covreport.js) — that only exist
-# once `make web` has run (noxfile.py's `dashboard` session docstring
-# documents this as `make dashboard`'s prerequisite). Declaring them as real
-# file targets, built on demand by `make web`, lets a fresh checkout or
-# worktree self-heal on the first `make coverage`/`make dashboard` instead of
-# dying with "run `make web` first" — while a checkout that already has them
-# (the common case after the first build) pays nothing extra: `make coverage`
-# is the most-frequently-run target, and `make web` itself isn't incremental
-# (npm re-emits both bundles every time), so gating on file *existence* (not
-# an unconditional `$(MAKE) web` prerequisite) is what keeps repeat runs fast.
+# Both suites — and the docs build, whose GUI media is photographed from the
+# real shell (see docs/_build/html/index.html below) — drive real build
+# artifacts: the React dashboard (src/otto/monitor/static/dist/) and the
+# coverage-report bundle (src/otto/coverage/renderer/static/dist/covreport.js).
+# They exist only once `make web` has run (noxfile.py's `dashboard` session
+# docstring documents this as `make dashboard`'s prerequisite). Declaring them
+# as real file targets, built on demand by `make web`, lets a fresh checkout or
+# worktree self-heal on the first `make coverage`/`make dashboard`/`make docs`
+# instead of dying with "run `make web` first".
+#
+# They gate on the frontend SOURCES, not merely on the dist's existence. An
+# existence-only gate keeps repeat runs fast but silently serves a stale
+# bundle: every consumer here (browser e2e, coverage, docs media) drives the
+# built dist, so a dist older than web/src/ means the gates photograph and
+# assert against a frontend that no longer exists. That is not hypothetical —
+# a dist five days behind web/src/ sailed through `make clean` (which did not
+# remove it) and failed `make docs` in Playwright as a selector that "did not
+# exist", when in truth it existed in the source and merely had never been
+# built. Source prerequisites keep the fast path intact (unchanged sources =>
+# dist is newer than all prereqs => no rebuild, exactly as before) while making
+# the stale case impossible. `make web` is not incremental, but it does not
+# need to be: it re-emits both bundles only when make has already decided
+# something upstream moved.
+#
 # The `&:` grouped-target form (GNU Make 4.3+) runs the recipe once for both
-# outputs together, not once per missing file. Same caveat as `release`
-# above: because the recipe line names `$(MAKE)` literally, GNU Make always
-# runs it for real even under `make -n`, so a dry run against a checkout with
-# no dist yet will actually build it.
+# outputs together, not once per missing file. Same caveat as `release` above:
+# because the recipe line names `$(MAKE)` literally, GNU Make always runs it
+# for real even under `make -n`, so a dry run against a checkout with no dist
+# yet will actually build it.
 DASHBOARD_BROWSERS ?= chromium
 DASHBOARD_DIST := src/otto/monitor/static/dist/index.html
 COVREPORT_DIST := src/otto/coverage/renderer/static/dist/covreport.js
 
-$(DASHBOARD_DIST) $(COVREPORT_DIST) &:
+# Everything vite feeds into the two bundles: the app sources (including the
+# committed api/*.gen.ts, which is the seam through which a pydantic-model
+# change reaches the frontend — `make web` regenerates and diff-gates them),
+# the html entry, the tsc/vite configs, and the dependency manifests. Biome's
+# config and web/fixtures/ are deliberately absent: neither is a build input.
+WEB_SRCS := $(shell find web/src -type f) \
+            web/index.html               \
+            web/tsconfig.json            \
+            web/vite.config.ts           \
+            web/vite.covreport.config.ts \
+            web/package.json             \
+            web/package-lock.json
+
+$(DASHBOARD_DIST) $(COVREPORT_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 	$(MAKE) web
 
-dashboard: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; builds web/'s dist bundles on first run if missing (see `make web`).
+dashboard: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; (re)builds web/'s dist bundles when missing or older than web/src/ (see `make web`).
 	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m browser $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 
 dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit); invoked by `make release`. Needs `make browsers` once.
@@ -508,7 +554,13 @@ docs-inventories:
 
 # -E (fresh env, no stale doctrees) + -a (write all) make a local build match
 # CI's clean build, so incremental state can't mask or invent a warning.
-docs/_build/html/index.html: $(SPHINX_SRCS)
+#
+# The dist prerequisites are load-bearing, not decorative: docs/conf.py runs
+# scripts/capture_docs_media.py, which boots a real MonitorServer and
+# photographs the REAL frontend through headless Chromium. That server serves
+# the built dist, so without these the docs build happily photographs whatever
+# stale bundle is lying around — or, on a fresh worktree, none at all.
+docs/_build/html/index.html: $(SPHINX_SRCS) $(DASHBOARD_DIST) $(COVREPORT_DIST)
 	uv run sphinx-build -E -a -W -b html docs/ docs/_build/html
 
 doctest:
@@ -517,7 +569,15 @@ doctest:
 doctest-src:
 	uv run pytest -p no:cacheprovider -o addopts="--doctest-modules" src/otto
 
-clean: ## (Dev) Remove all generated artifacts
+# web-clean is a prerequisite because the built frontend IS a generated
+# artifact, and omitting it made this target quietly dishonest: a `make clean`
+# followed by `make docs` used to keep serving a stale dashboard dist, because
+# nothing in the clean removed it and the dist rule (see DASHBOARD_DIST) only
+# rebuilt a MISSING bundle. Source-gated dist prerequisites now catch the stale
+# case on their own, but "all generated artifacts" should still mean all of
+# them. docs/_static/generated/ is the media capture's own output and is
+# stamp-managed (it regenerates when its inputs move), so it stays.
+clean: web-clean ## (Dev) Remove all generated artifacts
 	@rm -rf dist
 	@rm -rf reports
 	@rm -rf docs/_build
