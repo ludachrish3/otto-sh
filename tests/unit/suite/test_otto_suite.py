@@ -560,7 +560,14 @@ def _make_suite(tmp_path: Path) -> OttoSuite:
 
 class TestStartMonitorArchive:
     @pytest.mark.asyncio
-    async def test_db_output_persists_real_lab_meta_and_end_stamp(self, tmp_path: Path) -> None:
+    async def test_db_output_persists_real_lab_meta_and_end_stamp(
+        self, tmp_path: Path, hermetic_monitor_dist: Path
+    ) -> None:
+        # start_monitor() launches the real dashboard server, which refuses to
+        # start without a built React dist — hence the hermetic one. pytest does
+        # not run `make web`, so without this the test passes on any developer
+        # checkout (which has a dist) and fails in CI (which does not).
+        del hermetic_monitor_dist
         out_path = tmp_path / "monitor.db"
         suite = _make_suite(tmp_path)
 

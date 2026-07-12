@@ -88,6 +88,7 @@ import logging
 import sys
 import weakref
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -796,3 +797,32 @@ def host1_kit(request) -> HostKit:
         )
     """
     return _KITS[request.param]
+
+
+@pytest.fixture
+def hermetic_monitor_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Stand in a throwaway React dist so a test can boot a ``MonitorServer``.
+
+    ``MonitorServer`` construction hard-requires a real ``dist/index.html``
+    under ``otto.monitor.server._STATIC_DIR`` (see ``_dist_index_path``) — a
+    deliberate fail-fast for deployments that skipped ``make web``. That check
+    is a trap for tests: **pytest never builds the web dist, but every
+    developer checkout has one**, so a test that boots a server passes locally
+    and fails in CI's ``tests_hostless``/``unit-repeat`` jobs, which run pytest
+    without ``make web``. Request this fixture from any test that boots a
+    server to exercise something other than the bundle itself (archive
+    persistence, console logging, port binding, ...).
+
+    Tests that serve the *real* bundle — the Playwright lane under
+    ``tests/e2e/monitor/dashboard`` — must NOT use this: a marker page would
+    silently certify the wrong artifact. That package keeps its own
+    real-and-fresh dist guard instead.
+    """
+    from otto.monitor import server as server_module
+
+    static_dir = tmp_path / "_hermetic_static"
+    dist_dir = static_dir / "dist"
+    dist_dir.mkdir(parents=True)
+    (dist_dir / "index.html").write_text("<html>HERMETIC_TEST_DIST_MARKER</html>")
+    monkeypatch.setattr(server_module, "_STATIC_DIR", static_dir)
+    return static_dir

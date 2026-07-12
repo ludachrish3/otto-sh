@@ -265,7 +265,9 @@ def test_live_without_lab_reports_missing_option(tmp_path: Path) -> None:
 # already calls `ensure_lab_session` for the lab-requiring piece.
 
 
-def test_review_mode_logs_server_url_to_console(tmp_path: Path) -> None:
+def test_review_mode_logs_server_url_to_console(
+    tmp_path: Path, hermetic_monitor_dist: Path
+) -> None:
     """``otto monitor <source>`` (review) must print the server URL to the console.
 
     Real end-to-end: dispatches through the full ``otto.cli.main.app`` (the
@@ -276,11 +278,14 @@ def test_review_mode_logs_server_url_to_console(tmp_path: Path) -> None:
     internal socket/request loop (``uvicorn.Server.serve``): replaced with a
     fake that flips ``started`` and fabricates a bound socket, so no real TCP
     listener opens and the invocation returns promptly (matching this
-    module's "no uvicorn server is ever started here" design). This fails
+    module's "no uvicorn server is ever started here" design), plus the
+    ``hermetic_monitor_dist`` stand-in the server's ``make web`` fail-fast
+    demands (pytest never builds the dist; CI runs without one). This fails
     RED against the pre-fix code (no "Server running at" anywhere in
     output — review mode printed nothing) and passes GREEN once review mode
     calls ``ensure_cli_session``.
     """
+    del hermetic_monitor_dist
     db_file = tmp_path / "metrics.db"
 
     async def _seed() -> None:
