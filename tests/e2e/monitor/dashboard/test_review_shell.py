@@ -64,6 +64,27 @@ def _click_edge(page, edge_id: str) -> None:
     page.mouse.click(point["x"], point["y"])
 
 
+def _wait_for_links(page, at_least: int) -> None:
+    """Wait until the topology canvas has actually rendered its edges.
+
+    React Flow renders an edge only once BOTH of its endpoint nodes have been
+    measured — ``getEdgePosition`` returns null while either is uninitialized,
+    and the edge wrapper then renders nothing — so ``topology-page`` (and even
+    the node cards) sit in the DOM a beat before any ``topo-link-*`` does.
+    ``locator.count()`` does not retry, so counting edges right after the shell
+    mounts samples that window: it read 0 on ~2 of 10 WebKit runs locally,
+    which is exactly how it failed CI on main (issue #130 — ``assert 0 >= 6``).
+
+    Every edge assertion has to let the canvas settle first — *including* ones
+    that assert an edge is ABSENT, which would otherwise pass vacuously inside
+    the window, for the wrong reason.
+    """
+    page.wait_for_function(
+        "(n) => document.querySelectorAll('[data-testid^=\"topo-link-\"]').length >= n",
+        arg=at_least,
+    )
+
+
 def _set_theme(page, *, dark: bool) -> None:
     """Drive the overflow menu's two-state toggle to a known theme."""
     if page.evaluate("document.documentElement.classList.contains('dark')") is dark:
@@ -510,7 +531,7 @@ def test_link_inspector_and_parallel_edges(shell_dash, page):
     _import_fixture(page, "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/topology")
     page.locator('[data-testid="topology-page"]').wait_for()
-    assert page.locator('[data-testid^="topo-link-"]').count() >= 6
+    _wait_for_links(page, 6)
     impair = page.locator('[data-testid^="topo-impair-"]')
     assert impair.count() == 1
     assert "edge-gw" in impair.inner_text()
@@ -534,6 +555,9 @@ def test_sources_overlay_toggles_reports_edges(shell_dash, page):
     _import_fixture(page, "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/topology")
     page.locator('[data-testid="topology-page"]').wait_for()
+    # Default-off is only a real claim once the canvas has drawn its other
+    # edges; asserting it against a still-empty canvas proves nothing.
+    _wait_for_links(page, 6)
     reports = page.locator('[data-testid^="topo-link-reports:"]')
     assert reports.count() == 0
     page.locator('[data-testid="sources-toggle"]').click()
@@ -574,6 +598,8 @@ def test_cascade_unreachable_vs_down(shell_dash, page):
     # Parallel rack pair (cascade.json's "pair-a"/"pair-b" declared links
     # between rack-a_n1 and rack-a_n2) fans out as two distinct declared
     # edges — link ids pass through as edge ids verbatim (data/topology.ts).
+    # The intra view mounts a fresh canvas, so its edges lag its nodes too.
+    _wait_for_links(page, 2)
     assert page.locator('[data-testid="topo-link-pair-a"]').count() == 1
     assert page.locator('[data-testid="topo-link-pair-b"]').count() == 1
 
