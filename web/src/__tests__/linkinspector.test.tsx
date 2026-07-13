@@ -46,10 +46,15 @@ describe("LinkInspector", () => {
     // Non-modal: no react-aria ModalOverlay backdrop (SlideOver's own
     // "fixed inset-0" overlay div) should exist behind the panel.
     expect(document.querySelector(".fixed.inset-0")).toBeNull();
-    // Bounded by the canvas, not the viewport: a `fixed` aside spans the full
-    // viewport height and covers the review bar's Apply button at <=1280px.
-    expect(panel.className).toContain("absolute");
+    // Reserves space, never overlays (issue #134): as a flex sibling of the
+    // canvas the panel cannot cover the review bar OR the map's rightmost
+    // column, both of which an out-of-flow aside did. jsdom has no layout, so
+    // this can only check that the panel is not taken OUT of flow — the load-
+    // bearing proof is geometric and lives in the Playwright lane
+    // (test_link_inspector_survives_range_change).
+    expect(panel.className).not.toContain("absolute");
     expect(panel.className).not.toContain("fixed");
+    expect(panel.className).toContain("shrink-0");
   });
 
   it("renders nothing when no edge is selected", () => {

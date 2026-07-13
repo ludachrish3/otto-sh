@@ -13,13 +13,24 @@
 // — its own interaction (clicking a row) closes it, so it never needs
 // background interactivity while open.
 //
-// ABSOLUTE, not fixed: TopologyPage's canvas div is `relative`, so this aside is
-// bounded by the canvas and physically cannot reach the review bar. It used to
-// be `fixed inset-y-0`, spanning the full viewport height and covering the
-// review bar's Apply button at <=1280px. The obvious repair — offsetting by the
-// chrome height — does not work: ReviewBar is flex-wrap, so at exactly those
-// narrow widths it wraps to a second row and any hardcoded offset is already
-// stale. Bounding by the canvas needs no constant at all.
+// IN FLOW, not overlaid: this aside is a flex SIBLING of the React Flow
+// container (see TopologyPage), so it reserves its own column and the canvas
+// genuinely narrows to make room. It cannot cover anything, because there is
+// nothing underneath it.
+//
+// Two occlusion bugs got us here, and the second is why "overlay" is not an
+// option. It was first `fixed inset-y-0`, which spanned the full viewport
+// height and covered the review bar's Apply button at <=1280px. Anchoring it to
+// the canvas (`absolute`) fixed that but only moved the problem inside: the
+// layered layout puts the deepest column hard against the canvas's right edge —
+// exactly where a right-anchored panel sits — and fitView fits the graph to the
+// canvas's FULL width, knowing nothing about a panel that will cover 384px of
+// it. So selecting a link hid the map's rightmost nodes (issue #134).
+//
+// Both bugs are the same mistake: an overlay's reach is a function of geometry
+// somebody has to keep in their head. A panel that takes up space needs no such
+// bookkeeping — not a chrome offset, not a fitView padding that has to be kept
+// equal to w-96 by hand. The layout engine already knows how wide this is.
 import { useEffect } from "react";
 
 import type { TopoEdge } from "../data/topology";
@@ -56,8 +67,8 @@ export function LinkInspector(props: { edge: TopoEdge | null; onClose: () => voi
   return (
     <aside
       data-testid="link-inspector"
-      className="absolute inset-y-0 right-0 z-30 flex w-96 max-w-full flex-col gap-3 overflow-y-auto
-        border-l border-gray-200 bg-white p-4 shadow-lg dark:border-gray-800 dark:bg-gray-950"
+      className="flex w-96 max-w-full shrink-0 flex-col gap-3 overflow-y-auto border-l
+        border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
     >
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">{title}</h2>

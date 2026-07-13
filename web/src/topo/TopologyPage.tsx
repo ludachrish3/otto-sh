@@ -11,8 +11,9 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 
 import { useIsDark } from "../charts/useIsDark";
@@ -47,6 +48,48 @@ function FitButton() {
       Fit
     </button>
   );
+}
+
+// Re-fit whenever the canvas box actually changes size — which, now that the
+// inspector reserves a column instead of overlaying one, is what opening and
+// closing it does.
+//
+// Without this the graph keeps the transform it was fitted with at the OLD
+// width, so the right-hand column falls outside the narrowed flow container and
+// is clipped: not hidden under the panel any more, but just as unreachable.
+// Re-fitting is what turns "the panel takes 384px" into "the map lives in what
+// is left".
+//
+// Keyed on React Flow's OWN measured width, not on whether an edge is selected.
+// The panel's open-state changes one render BEFORE the resize is observed, so an
+// effect keyed on it would fit against dimensions the store has not caught up to
+// yet. `width` updates only once the ResizeObserver has reported the new box,
+// which is precisely the moment a fit is meaningful.
+//
+// Animated: the map should be seen to make room, not teleport. The cost is that
+// for the ~200ms of flight the nodes are still sliding out from under the panel,
+// so anything that samples the layout the instant the panel opens sees the OLD
+// positions — the e2e reachability check polls for exactly this reason, and its
+// docstring says so. What the animation must never do is outlive the gesture:
+// the fit is keyed on the measured width, so it runs once per resize.
+function RefitOnResize() {
+  const { fitView } = useReactFlow();
+  const width = useStore((s) => s.width);
+  const measured = useRef<number | null>(null);
+  useEffect(() => {
+    if (width === 0) return;
+    const previous = measured.current;
+    measured.current = width;
+    // The FIRST measurement is not a resize. <ReactFlow fitView> already fits
+    // the graph on init, so animating this one replays a fit that has already
+    // happened — and leaves the map in motion for 200ms after load, which is
+    // long enough for anything reading edge geometry to act on coordinates that
+    // have already moved. (That is not hypothetical: it took out the two
+    // topology specs that sample a point on an edge's stroke and then click it.)
+    if (previous === null || previous === width) return;
+    void fitView({ padding: 0.2, duration: 200 });
+  }, [width, fitView]);
+  return null;
 }
 
 // The brief's first-draft toolbar put FitButton in its own ReactFlowProvider,
@@ -172,34 +215,40 @@ export function TopologyPage() {
             {graph.warnings.join(" · ")}
           </p>
         )}
-        <div className="relative min-h-0 grow rounded-lg border border-gray-200 dark:border-gray-800">
-          <ReactFlow
-            nodes={flow.nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            colorMode={dark ? "dark" : "light"}
-            fitView
-            minZoom={0.2}
-            proOptions={{ hideAttribution: true }}
-            onNodeClick={(_evt, node) => {
-              const target = (node.data as { enterTarget?: string }).enterTarget;
-              if (target) navigate(target);
-            }}
-            onEdgeClick={(_evt, edge) => {
-              // Link presence, not provenance: after the class collapse a
-              // synthesized hop path draws exactly like a declared link, and
-              // only one of them has anything to inspect. The hover card
-              // already names the ones that don't.
-              const data = edge.data as { edge?: TopoEdge } | undefined;
-              if (data?.edge && primaryLink(data.edge) !== null) onSelectEdge(data.edge);
-            }}
-            onEdgeMouseEnter={(_evt, edge) => setHoveredEdge(edge.id)}
-            onEdgeMouseLeave={() => setHoveredEdge(null)}
-          >
-            <Controls showInteractive={false} />
-            <TopoLegend />
-          </ReactFlow>
+        <div
+          className="flex min-h-0 grow overflow-hidden rounded-lg border border-gray-200
+            dark:border-gray-800"
+        >
+          <div className="min-w-0 grow">
+            <ReactFlow
+              nodes={flow.nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              edgeTypes={edgeTypes}
+              colorMode={dark ? "dark" : "light"}
+              fitView
+              minZoom={0.2}
+              proOptions={{ hideAttribution: true }}
+              onNodeClick={(_evt, node) => {
+                const target = (node.data as { enterTarget?: string }).enterTarget;
+                if (target) navigate(target);
+              }}
+              onEdgeClick={(_evt, edge) => {
+                // Link presence, not provenance: after the class collapse a
+                // synthesized hop path draws exactly like a declared link, and
+                // only one of them has anything to inspect. The hover card
+                // already names the ones that don't.
+                const data = edge.data as { edge?: TopoEdge } | undefined;
+                if (data?.edge && primaryLink(data.edge) !== null) onSelectEdge(data.edge);
+              }}
+              onEdgeMouseEnter={(_evt, edge) => setHoveredEdge(edge.id)}
+              onEdgeMouseLeave={() => setHoveredEdge(null)}
+            >
+              <Controls showInteractive={false} />
+              <TopoLegend />
+            </ReactFlow>
+            <RefitOnResize />
+          </div>
           <LinkInspector edge={selectedEdge} onClose={() => setSelected(null)} />
         </div>
       </main>

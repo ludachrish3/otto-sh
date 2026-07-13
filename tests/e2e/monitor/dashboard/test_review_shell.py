@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 pytestmark = [
     pytest.mark.hostless,
@@ -95,6 +96,42 @@ def _wait_for_links(page, at_least: int) -> None:
         "(n) => document.querySelectorAll('[data-testid^=\"topo-link-\"]').length >= n",
         arg=at_least,
     )
+
+
+def _assert_reachable(page, testid: str) -> None:
+    """Assert a real pointer at this element's centre actually lands ON it.
+
+    Deliberately NOT expressed as ``locator.click()``. Playwright's hit-target
+    check is engine-dependent: when the link inspector covered the topology's
+    rightmost node (issue #134), firefox and webkit refused the click with
+    "subtree intercepts pointer events" while CHROMIUM CLICKED IT ANYWAY and the
+    lane went green — even though ``elementFromPoint`` proved the panel was on
+    top and a raw ``mouse.click()`` at that point failed to navigate in chromium
+    too. A click is therefore not a trustworthy occlusion check on its own.
+
+    ``elementFromPoint`` is: it asks the browser what the USER would hit, and it
+    answers identically in all three engines.
+
+    Polls rather than sampling once. Opening the inspector narrows the canvas,
+    and React Flow re-fits the graph only after its ResizeObserver reports the
+    new box — a frame or two later. Sampling the instant the panel appears reads
+    the pre-fit layout, which is a race, not a finding (it caught webkit and not
+    chromium purely on scheduling luck). The claim under test is that the map
+    SETTLES with nothing of it hidden, so the assertion has to let it settle.
+    """
+    hit_expr = f"""() => {{
+      const el = document.querySelector('[data-testid="{testid}"]');
+      if (el === null) return null;
+      const b = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2);
+      return hit?.closest('[data-testid]')?.getAttribute('data-testid') ?? null;
+    }}"""
+    try:
+        page.wait_for_function(f"({hit_expr})() === {testid!r}", timeout=5000)
+    except PlaywrightTimeoutError:
+        hit = page.evaluate(hit_expr)
+        msg = f"{testid} is occluded: a click at its centre lands on {hit!r}"
+        raise AssertionError(msg) from None
 
 
 def _set_theme(page, *, dark: bool) -> None:
@@ -686,10 +723,18 @@ def test_link_inspector_survives_range_change(shell_dash, page):
     inspector used to be a viewport-fixed full-height right aside, so at 1280px
     its span (x >= 896) covered the review bar's right end where Apply sits
     (center x ~1016) — this test had to force a 1600px viewport to reach the
-    button at all. The aside is now absolutely positioned INSIDE the canvas box,
-    so it cannot reach the review bar at any width, and the `range-apply` click
-    below is the proof: Playwright's actionability check fails it if anything
-    overlays the button."""
+    button at all. The inspector no longer overlays ANYTHING: it is a layout
+    sibling of the canvas that reserves its own 384px column, so it can reach
+    neither the review bar nor the map. Both claims are proved below — the
+    `range-apply` click (Playwright fails it if anything overlays the button)
+    and `_assert_reachable` on the map's rightmost node.
+
+    That node is the second proof for a reason. The 1600px override was hiding
+    TWO occlusions, not one: while it was in force the canvas was wide enough
+    that the panel missed the map's deepest column too. Once the override came
+    off, the panel — then an overlay pinned to the canvas's right edge — landed
+    squarely on `chassis-a` (the only depth-2 element, laid out at x = 2*COL_W,
+    hard against the right edge that fitView fits it to). That is issue #134."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/topology")
@@ -725,6 +770,11 @@ def test_link_inspector_survives_range_change(shell_dash, page):
         "'[data-testid=\"range-presets\"] [data-selected]').length === 0"
     )
     assert panel.is_visible()
+
+    # The open panel must not have eaten any of the map (issue #134). Asserted
+    # BEFORE the click, and geometrically rather than by clicking, because
+    # chromium's hit-target check would let the click through even if it had.
+    _assert_reachable(page, "topo-node-chassis-a")
 
     # Navigating into an element view is a different view identity ->
     # the inspector detaches.

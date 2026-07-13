@@ -1,9 +1,10 @@
 // The anchored key for the topology canvas.
 //
-// Bottom-left, NOT right: LinkInspector is a right-anchored aside filling the
-// canvas's right edge, so a right-anchored panel would be covered the moment an
-// edge is selected. `mb-28` lifts it clear of React Flow's own zoom Controls,
-// which occupy the same corner.
+// Bottom-left, NOT right: LinkInspector occupies the canvas's right edge, and
+// while it no longer overlays the map (it reserves a column — see its header),
+// a right-anchored key would still be the thing the canvas gives up width from
+// the moment an edge is selected. `mb-28` lifts it clear of React Flow's own
+// zoom Controls, which occupy the same corner.
 //
 // Every swatch renders from EDGE_STYLES / STATUS_DOT — the same tables the
 // canvas draws from — so the key cannot drift from what it explains.
