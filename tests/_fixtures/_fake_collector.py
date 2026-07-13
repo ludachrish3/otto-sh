@@ -31,8 +31,8 @@ class FakeCollector(MetricCollector):
     ``hosts=[]`` builds zero targets, so the base class installs the
     production DEFAULT_PARSERS catalog itself (a targetless collector still
     declares its parser/view catalog — see MetricCollector.__init__) — push()
-    resolves commands and /api/meta serves the real tabs/metrics, exactly as a
-    live single-host collector would.
+    resolves commands and get_meta_model() serves the real tabs/metrics,
+    exactly as a live single-host collector would.
     """
 
     def __init__(
@@ -40,10 +40,27 @@ class FakeCollector(MetricCollector):
         *,
         force_live: bool = True,
         extra_parsers: "Sequence[MetricParser] | None" = None,
+        interval: float | None = None,
     ) -> None:
         parsers = [*default_catalog().values(), *extra_parsers] if extra_parsers else None
         super().__init__(hosts=[], parsers=parsers)
         self._force_live = force_live
+        if interval is not None:
+            # Stand in for what MetricCollector.run() stamps as its very first
+            # statement (collector.py) before a real live run's collection loop
+            # starts — a scripted collector that only ever calls push() never
+            # reaches that line, so get_meta_model().interval (and so
+            # session.meta.interval on the wire) stays None *permanently*
+            # (test_meta_interval_is_none_before_run pins exactly that as the
+            # DEFAULT — hence this stays opt-in, not a new default). Live
+            # dashboard specs (Plan 5b Task 13) need a real interval: the
+            # OverviewPage liveness clock only ticks when
+            # `session.meta.interval != null`, and unreachable-host dimming
+            # (data/health.ts) resolves cadence from the same field — without
+            # this, both stay permanently unresolvable ("unknown") under a
+            # FakeCollector-backed live server, no matter how many points are
+            # pushed.
+            self._global_interval = interval
 
     @override
     def get_meta_model(self) -> MonitorMeta:

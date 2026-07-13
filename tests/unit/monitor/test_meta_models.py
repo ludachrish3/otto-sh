@@ -1,4 +1,4 @@
-"""MonitorMeta — the typed /api/meta contract."""
+"""MonitorMeta — the typed internal chart/tab-layout contract."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -91,7 +91,9 @@ async def test_fake_collector_push_log_events_uses_production_path() -> None:
     await fake.push_log_events(
         "host1", tab="syslog", rows=[(ts, {"proc": "sshd", "message": "hi"})]
     )
-    assert q.get_nowait()["type"] == "log_event"
+    msg = q.get_nowait()
+    assert msg["format"] == 1
+    assert msg["log_events"][0]["host"] == "host1"
     assert fake.get_log_events()[0]["host"] == "host1"
 
 

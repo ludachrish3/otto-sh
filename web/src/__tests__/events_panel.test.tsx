@@ -22,7 +22,7 @@ afterEach(() => {
   cleanup();
   useReviewStore.setState({
     sessions: [],
-    rawDocument: null,
+    rawMonitorSessions: null,
     sourceName: null,
     warnings: [],
     importError: null,
@@ -32,7 +32,7 @@ afterEach(() => {
 });
 
 function load() {
-  useReviewStore.getState().actions.importText(KITCHEN, "kitchen-sink.json");
+  useReviewStore.getState().actions.importMonitorSessions(KITCHEN, "kitchen-sink.json");
   const onClose = vi.fn();
   render(<EventsPanel isOpen onClose={onClose} />);
   return { onClose, session: useReviewStore.getState().sessions[0] };
@@ -65,7 +65,7 @@ describe("EventsPanel", () => {
   it("shows the empty state without events", async () => {
     useReviewStore
       .getState()
-      .actions.importText(
+      .actions.importMonitorSessions(
         readFileSync(join(HERE, "../../fixtures/minimal.json"), "utf-8"),
         "minimal.json",
       );
@@ -93,7 +93,7 @@ describe("EventsPanel", () => {
         },
       ],
     });
-    useReviewStore.getState().actions.importText(synthDoc, "test.json");
+    useReviewStore.getState().actions.importMonitorSessions(synthDoc, "test.json");
     const onClose = vi.fn();
     render(<EventsPanel isOpen onClose={onClose} />);
     await screen.findByTestId("events-panel");

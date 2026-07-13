@@ -18,10 +18,13 @@ export type Tabs = TabSpec[];
 export type Interval1 = number | null;
 
 /**
- * The typed ``/api/meta`` payload: hosts, chart specs, and tab layout.
+ * The typed internal contract: hosts, chart specs, and tab layout.
  *
  * The declarative contract the frontend renders from; TS types are
- * generated from this schema in Phase 2.
+ * generated from this schema in Phase 2. This model is never served
+ * directly — every dashboard boot (live or review) hydrates from
+ * ``GET /api/monitor_sessions``, whose ``format:1`` shape carries this same
+ * information reshaped into each session's :class:`SessionMeta`.
  *
  * ``interval`` is the global collection interval in seconds — ``None`` until
  * :meth:`~otto.monitor.collector.MetricCollector.run` has recorded one (a
@@ -29,7 +32,7 @@ export type Interval1 = number | null;
  * from ``otto monitor <source>``) carries this in its own
  * :class:`SessionMeta` instead — see :func:`otto.monitor.export.session_meta`.
  */
-export interface MonitorDashboardApiMetaPayload {
+export interface MonitorDashboardChartTabLayoutModel {
   hosts: Hosts;
   live: Live;
   metrics: Metrics;
@@ -37,10 +40,13 @@ export interface MonitorDashboardApiMetaPayload {
   interval?: Interval1;
 }
 /**
- * One dashboard chart descriptor served by ``/api/meta``.
+ * One dashboard chart descriptor: otto's typed, internal parser-catalog view.
  *
  * The declarative contract the frontend renders from; TS types are
- * generated from this schema in Phase 2.
+ * generated from this schema in Phase 2. Not served at any endpoint of its
+ * own — it is reshaped into :class:`ChartSpecRecord` inside
+ * :class:`SessionMeta` for the ``monitor_sessions``/SSE wire (see
+ * :func:`otto.monitor.export.session_meta`).
  */
 export interface ChartSpec {
   label: Label;
@@ -51,12 +57,13 @@ export interface ChartSpec {
   interval?: Interval;
 }
 /**
- * One dashboard tab descriptor served by ``/api/meta``.
+ * One dashboard tab descriptor: otto's typed, internal parser-catalog view.
  *
  * The declarative contract the frontend renders from; TS types are
  * generated from this schema in Phase 2. ``kind="table"`` tabs render an
  * event table (schema in ``columns``) instead of charts, and carry
- * ``metrics=[]``.
+ * ``metrics=[]``. Not served at any endpoint of its own — see
+ * :class:`ChartSpec` for the wire path.
  */
 export interface TabSpec {
   id: Id;

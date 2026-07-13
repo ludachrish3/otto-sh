@@ -3,6 +3,7 @@
 // assigned HERE, once, from the unfiltered tree — the palette follows the
 // entity, so search/chips/checkbox filtering never recolors survivors.
 import type { NormalizedSession, TimeRange } from "./exportDoc";
+import { seriesKey, sliceSeries } from "./seriesIndex";
 import { parseTs } from "./time";
 
 export interface SeriesNode {
@@ -34,29 +35,50 @@ export function buildSeriesTree(session: NormalizedSession, subjectId: string): 
   const element = session.elements.find((e) => e.id === subjectId);
   const members = new Set(isElement ? (element?.hostIds ?? []) : []);
 
-  // Distinct (host, label, source) triples relevant to this subject.
+  // Distinct (host, label, source) triples relevant to this subject — walked
+  // off the per-series index (O(this subject's own + its members' series)),
+  // NOT a scan of session.metrics. This runs on every SubjectPage render —
+  // i.e. every live tick, for however long the page stays open — so an
+  // O(total session points) scan here is the exact same fatal cliff
+  // metricsForSubject/healthForHosts were switched to the index to avoid
+  // (see seriesIndex.ts's header); a sustained live stream (Plan 5b Task 13's
+  // replay soak) reliably found the main thread falling permanently behind
+  // once session.metrics reached ~10^5 points, well before any real run
+  // would generate that much.
+  // subjectId itself is always scanned: an element can carry its OWN
+  // directly-attached series (metrics recorded with `host` == the element's
+  // own id, e.g. a chassis-level "ambient" sensor with no member host of
+  // its own) on top of whatever its member hosts report.
+  const relevantHosts = isElement ? [subjectId, ...members] : [subjectId];
   const raw = new Map<string, RawNode>();
-  for (const m of session.metrics) {
-    const host = m.host ?? "";
-    let node: RawNode | null = null;
-    if (host === subjectId) {
-      node = {
-        key: m.label,
-        label: m.label,
-        host,
-        source: m.source ?? null,
-        elementTarget: isElement,
-      };
-    } else if (members.has(host)) {
-      node = {
-        key: `${host}/${m.label}`,
-        label: m.label,
-        host,
-        source: m.source ?? null,
-        elementTarget: false,
-      };
+  for (const host of relevantHosts) {
+    for (const key of session.index.keysByHost.get(host) ?? []) {
+      // Every record under one index key shares the same label; the FIRST
+      // one determines `.source` here too, exactly as the pre-index scan's
+      // "first metric seen for this (host,label) wins" `!raw.has(...)` guard
+      // did (iteration order differs — index-of-this-host vs global metric
+      // arrival order — but insertion order into `raw` never affects the
+      // output, which is re-sorted below regardless).
+      const rec = session.index.recs.get(key)?.[0];
+      if (rec === undefined) continue;
+      const node: RawNode =
+        host === subjectId
+          ? {
+              key: rec.label,
+              label: rec.label,
+              host,
+              source: rec.source ?? null,
+              elementTarget: isElement,
+            }
+          : {
+              key: `${host}/${rec.label}`,
+              label: rec.label,
+              host,
+              source: rec.source ?? null,
+              elementTarget: false,
+            };
+      if (!raw.has(node.key)) raw.set(node.key, node);
     }
-    if (node && !raw.has(node.key)) raw.set(node.key, node);
   }
 
   // Group by chart label -> spec.
@@ -126,31 +148,31 @@ export function sourcesIn(tree: ChartNode[]): string[] {
   return [...set].sort();
 }
 
-/** In-range [ms, value] point arrays for the checked series keys, one pass
- * over the session's metrics, time-sorted (fixture data is generated
- * sorted; the sort is a cheap invariant guard). */
+/** In-range [ms, value] point arrays for the checked series keys — sliced
+ * directly off the per-series index (`sliceSeries`, a binary search per
+ * key), not a pass over the session's whole metrics array. Same rationale
+ * as `buildSeriesTree` above: this is called straight from SubjectPage's
+ * render body (no memo), so on a long live run an O(total points) scan here
+ * runs on literally every tick. `sliceSeries`'s binary search relies on
+ * each series' samples being time-ascending in the index, same invariant
+ * every other index reader (health.ts, seriesIndex.ts itself) already
+ * trusts rather than re-verifying. */
 export function collectSeriesPoints(
   session: NormalizedSession,
   tree: ChartNode[],
   checked: Set<string>,
   range: TimeRange | null,
 ): Map<string, [number, number][]> {
-  const keyOf = new Map<string, string>(); // "host|label" -> node key
+  const out = new Map<string, [number, number][]>();
   for (const chart of tree) {
     for (const s of chart.series) {
-      if (checked.has(s.key)) keyOf.set(`${s.host}|${s.label}`, s.key);
+      if (!checked.has(s.key)) continue;
+      const recs = sliceSeries(session.index, seriesKey(s.host, s.label), range);
+      out.set(
+        s.key,
+        recs.map((r): [number, number] => [parseTs(r.timestamp), r.value]),
+      );
     }
   }
-  const out = new Map<string, [number, number][]>();
-  for (const m of session.metrics) {
-    const key = keyOf.get(`${m.host ?? ""}|${m.label}`);
-    if (key === undefined) continue;
-    const ts = parseTs(m.timestamp);
-    if (range && (ts < range.from || ts > range.to)) continue;
-    const arr = out.get(key);
-    if (arr) arr.push([ts, m.value]);
-    else out.set(key, [[ts, m.value]]);
-  }
-  for (const arr of out.values()) arr.sort((a, b) => a[0] - b[0]);
   return out;
 }

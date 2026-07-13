@@ -23,7 +23,6 @@
     "@tailwindcss/vite": "4.3.2",
     "@xyflow/react": "12.11.2",
     "echarts": "6.1.0",
-    "plotly.js-gl2d-dist-min": "3.7.0",
     "react": "19.2.7",
     "react-aria-components": "1.19.0",
     "react-dom": "19.2.7",

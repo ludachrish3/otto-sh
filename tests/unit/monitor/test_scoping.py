@@ -2,8 +2,8 @@
 
 Two mock shell hosts; UptimeParser registered for host A only. Proves the
 executed third-party extension path (registration -> get_host_parsers ->
-build_monitor_collector -> series -> /api/meta) AND its scoping: the host
-that did NOT register keeps exactly the defaults.
+build_monitor_collector -> series -> get_meta_model()) AND its scoping: the
+host that did NOT register keeps exactly the defaults.
 """
 
 import asyncio
@@ -79,6 +79,6 @@ class TestPerHostScoping:
             assert "scoping-host-b/Uptime" not in series  # unregistered host does NOT
             assert "scoping-host-b/Memory Usage" in series  # ...and keeps the untouched defaults
             meta = collector.get_meta_model()
-            assert any(m.chart == "Uptime" for m in meta.metrics)  # /api/meta grew the chart
+            assert any(m.chart == "Uptime" for m in meta.metrics)  # the meta model grew the chart
         finally:
             HOST_PARSERS.unregister("scoping-host-a")

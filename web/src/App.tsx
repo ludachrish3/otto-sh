@@ -2,11 +2,15 @@
 // door hydrates the review store, same as always. The one addition (Plan
 // 5a Task 6) is a single soft-failing boot fetch — see
 // data/bootstrap.ts's header for the full contract — that hydrates from a
-// same-origin otto monitor server already sitting on a review document,
-// so an `otto monitor <source>` review server opens straight into the
-// dashboard. Live mode (SSE, /api/meta) returns at the live-hookup phase;
-// the legacy live data layer (store.ts/api/sse.ts) is intentionally kept,
-// unreferenced, for it.
+// same-origin otto monitor server already sitting on a review document (or
+// a running live session — both modes hydrate through the same
+// /api/monitor_sessions endpoint and format:1 shape), so an `otto monitor
+// <source>` review server, or an `otto monitor --live` server, opens
+// straight into the dashboard. In live mode the shell then attaches
+// data/stream.ts's SSE client (/api/stream) to grow that same session in
+// place (Plan 5b) — a new streaming layer built against the format:1
+// session shape, not a revival of the legacy Plotly-era live data layer
+// (the zustand store, SSE client, and REST client) deleted in Task 12.
 
 import { useEffect } from "react";
 import { Route, Router, Switch } from "wouter";

@@ -217,3 +217,30 @@ def test_monitor_export_schema_shape():
     assert doc["title"] == "Monitor historical export document"
     assert set(doc["required"]) == {"format", "sessions"}
     assert doc["properties"]["format"]["const"] == 1
+
+
+def test_monitor_export_schema_carries_an_unreachable_fragment_def():
+    """MonitorSessionFragment rides in ``$defs`` so export.gen.ts gets its TS type
+    (via ``json-schema-to-typescript --unreachableDefinitions``), but it must stay
+    unreachable from the document's own ``properties``/``required`` — the fragment
+    is not part of the on-disk export format (see ``_monitor_export_schema``)."""
+    doc = build_schemas(builtins_only=True)["monitor-export"]
+    frag_def = doc["$defs"]["MonitorSessionFragment"]
+    assert set(frag_def["required"]) == {"session"}
+    assert set(frag_def["properties"]) == {
+        "format",
+        "session",
+        "metrics",
+        "events",
+        "log_events",
+        "deleted_event_ids",
+        "chart_map",
+        "meta",
+    }
+    # Not reachable from the export document's own root shape.
+    assert set(doc["required"]) == {"format", "sessions"}
+    assert "session" not in doc["properties"]
+    # Reuses the SAME $defs the export document already carries for
+    # SessionRecord's fields — no duplicate MetricRecord/EventRecord/etc.
+    assert frag_def["properties"]["metrics"]["items"]["$ref"] == "#/$defs/MetricRecord"
+    assert frag_def["properties"]["events"]["items"]["$ref"] == "#/$defs/EventRecord"

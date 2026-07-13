@@ -18,6 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 
 import { useIsDark } from "../charts/useIsDark";
+import { useNow } from "../data/clock";
 import { healthForHosts } from "../data/health";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { buildTopoGraph, deriveReachability, pairKey, type TopoEdge } from "../data/topology";
@@ -104,6 +105,7 @@ export function TopologyPage() {
   const [, navigate] = useLocation();
   const session = useActiveSession();
   const range = useReviewStore((s) => s.range);
+  const mode = useReviewStore((s) => s.mode);
   const [sources, setSources] = useState(false);
   const [minimap, setMinimap] = useState(false);
   // React Flow's stock chrome (the zoom controls) reads its dark tokens from a
@@ -111,6 +113,16 @@ export function TopologyPage() {
   // <html> can't reach — the library only sets it from `colorMode`. Same reason
   // charts need this hook: a surface CSS `dark:` variants don't reach.
   const dark = useIsDark();
+  // Unreachable dimming needs a clock, not events (mirrors OverviewPage.tsx):
+  // a silent host emits no SSE message, so without a tick topology would
+  // never re-render it, and healthForHosts would default `nowMs` to
+  // session.endMs — which, in live mode, only ever advances when SOME host
+  // ticks. If every host in the lab goes silent at once (a wedged collector,
+  // or a single-host lab), endMs freezes too and every host reads "ok"
+  // forever (Plan 5b final review, Finding I4).
+  const tickMs =
+    mode === "live" && session?.meta.interval != null ? session.meta.interval * 1000 : null;
+  const now = useNow(tickMs);
   const expand = params.elementId;
   // Selection is scoped to the view identity — survives range/sources changes
   // (a selected link is static config) and nulls on session/element change.
@@ -126,10 +138,16 @@ export function TopologyPage() {
 
   const graph = useMemo(() => {
     if (!session) return null;
-    const { effective, warnings } = deriveReachability(session, healthForHosts(session, range));
+    // Liveness keeps ticking while paused, same rule as OverviewPage: nowMs
+    // comes from the wall clock whenever live, independent of `range`.
+    const nowMs = mode === "live" ? now : undefined;
+    const { effective, warnings } = deriveReachability(
+      session,
+      healthForHosts(session, range, nowMs),
+    );
     const g = buildTopoGraph(session, effective, { expand, sources });
     return { ...g, warnings: [...warnings, ...g.warnings] };
-  }, [session, range, expand, sources]);
+  }, [session, range, expand, sources, mode, now]);
 
   const flow = useMemo(() => {
     if (!graph || !session) return { nodes: [] as Node[], edges: [] as Edge[] };

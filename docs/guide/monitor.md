@@ -32,10 +32,9 @@ Two commands live under one binary:
 Bare `otto monitor` (neither `--live` nor a source) prints usage and exits 2;
 `--live` together with a source is a mutually exclusive error, also exit 2.
 See [Web dashboard](#web-dashboard) below for what the dashboard shows and
-how a document gets into it either way; live streaming straight into an
-*open* dashboard tab — watching a running `--live` session's charts grow in
-real time rather than loading a document at boot or by hand — isn't wired up
-yet, see the note at the end of that section.
+how it gets loaded either way — including live streaming straight into an
+*open* dashboard tab, watching a running `--live` session's charts grow in
+real time rather than requiring a reload.
 
 ## Live mode
 
@@ -73,6 +72,17 @@ seconds, minimum: 1 second):
 ```bash
 otto --lab my_lab monitor --live --interval 2.0
 ```
+
+The 1-second floor is deliberate: a host needs time to answer every query in
+the interval without being taxed by the polling itself. It's enforced at
+every human-facing boundary that names an interval — `otto monitor
+--interval` above, `otto test --monitor-interval` (see [Monitoring during a
+test run](#monitoring-during-a-test-run) below), and
+`OttoSuite.start_monitor()` (see [Monitoring from test
+suites](#monitoring-from-test-suites) below) all reject anything lower.
+`MetricCollector` itself is deliberately exempt — it's the mechanism, not a
+knob a human sets, and otto's own tests drive it as fast as 0.01s against
+fake hosts.
 
 ### Persisting data — sessions
 
@@ -170,23 +180,27 @@ free port and logs the dashboard URL at startup (`Server running at
 http://<ip>:<port>`, one URL per non-loopback interface).
 
 On load, the dashboard shell asks that same server one question — `GET
-/api/mode` — and if the answer is `{"mode": "review", ...}` (i.e. you're
-looking at `otto monitor <source>`), it immediately follows up with `GET
-/api/document` and renders the result, exactly as if you'd used Import
-yourself: no click needed. A `--live` server answers `{"mode": "live",
-...}` instead, so a browser pointed at a running capture still opens to the
-plain Import screen below — watching a `--live` session's chart data update
-as new points arrive isn't wired up yet (see the note at the end of this
-section). The same boot fetch is also why the dashboard still works when
-served by a bare static file server with no `/api/*` routes at all (used
-for the screenshots on this page, and for ad-hoc demos): any failure —
-connection refused, a non-JSON body, whatever a dumb server hands back —
-is swallowed and falls back to the same empty Import screen, never a
-broken page.
+/api/mode` — then, regardless of the answer, follows up with `GET
+/api/monitor_sessions` and renders the result, exactly as if you'd used
+Import yourself: no click needed. Live and review servers hydrate through
+that *same* endpoint and the *same* `format:1` shape — a live monitor
+session is simply one whose `end` is still open, exactly like a crashed
+session found on disk — so the fleet grid and charts populate immediately
+either way, not just in review mode. In live mode, once that initial
+hydrate succeeds the shell also opens `GET /api/stream` (Server-Sent
+Events) and *grows* the loaded session in place by appending each fragment
+as it arrives — the wire fragments carry the same field names as the
+payload they append to, so there is no separate live shape to reconcile.
+The same boot fetch is also why the dashboard still works when served by a
+bare static file server with no `/api/*` routes at all (used for the
+screenshots on this page, and for ad-hoc demos): any failure — connection
+refused, a non-JSON body, whatever a dumb server hands back — is swallowed
+and falls back to the same empty Import screen, never a broken page.
 
 Feed it a monitor export document yourself at any time — drag a file onto
 the window, or use the **⋯** overflow menu's *Import* — and it renders
-that document entirely in the browser:
+that document entirely in the browser, exactly like a boot-fetched monitor
+session:
 
 - **Fleet grid.** Element-grouped host tiles, each with a status dot, an
   element-level health-rollup bar, and a labeled headline metric; a down
@@ -220,16 +234,42 @@ that document entirely in the browser:
 - **Export.** The **⋯** menu re-downloads whatever document is currently
   loaded, unchanged.
 
-Loading a document — automatically at boot for `otto monitor <source>`, or
-by hand via Import — is real today and covered by the browser e2e suite
+Loading a session — automatically at boot in either mode, growing live via
+SSE, or by hand via Import — is covered by the browser e2e suite
 (`tests/e2e/monitor/dashboard/`, see the [behavior-spec
-contract](#frontend-development) below). What isn't wired up yet is a
-*live* feed: watching a running `--live` session's charts grow in the
-browser in real time, via the collector's `/api/stream` SSE endpoint,
-rather than loading a finished document. That's later, "live-hookup phase"
-work — today, seeing a `--live` run's data in the dashboard means capturing
-it to a document first (`--db`, or `otto test --monitor`'s `.json`) and
-then opening that with `otto monitor <source>`.
+contract](#frontend-development) below).
+
+### Live status, pause, and reconnect
+
+While `--live`, the app bar's status dot and text track the SSE connection:
+**`Live`** while the stream is open and receiving fragments, **`Reconnecting…`**
+while a dropped connection is retrying with backoff, and **`Reviewing`** for
+a review-mode server. (A client-side Import with no backing server keeps the
+pre-existing "Historical"/"No data" wording, unaffected by any of this.)
+
+**Pause is a view control, not a data control.** Clicking **Pause** freezes
+the visible time window; it does not stop ingestion — fragments keep
+applying to the loaded session in the background, so clicking **Resume**
+catches up immediately with no gap to backfill. "Paused" is *derived*
+rather than a separately stored flag: it is exactly "live mode with a
+pinned range," so pausing and manually picking a custom range (a chart
+drag-zoom, for example) are the same state and can never disagree with each
+other — toggling pause from either one resumes following the tail.
+
+**Reconnect re-fetches; it never replays.** When the SSE connection drops,
+the client backs off and retries, and immediately before reopening the
+stream it re-fetches the whole `/api/monitor_sessions` payload rather than
+trying to replay whatever fragments it missed while disconnected — the
+fresh snapshot is already the truth, so there's no sequence-number
+bookkeeping and no way for client and server to disagree about history.
+
+**A silent host dims.** Health (see [Health, scoped to the viewed
+range](#web-dashboard) above) is derived from the gap since a host's last
+sample: a host goes **down** once that gap exceeds `HEALTH_K` (3) times its
+collection cadence. In live mode that evaluation runs against a moving
+"now" rather than a fixed range boundary, driven by a clock that ticks at
+the collection interval — polling the health check faster than the
+collector itself couldn't learn anything sooner anyway.
 
 ### Frontend development
 
@@ -254,9 +294,8 @@ make web-test      # vitest — store reducers, SSE handling, chart-series
 
 `make web-dev`'s proxy target is a running server process — an `otto
 monitor --live` collector or an `otto monitor <source>` review server both
-serve `/api/*` — useful for developing against real backend responses
-ahead of the live-hookup work described above. `make web` is what actually
-ships in the wheel.
+serve `/api/*` — useful for developing against real backend responses,
+live or historical. `make web` is what actually ships in the wheel.
 
 **Behavior-spec contract.** `tests/e2e/monitor/dashboard/` is a Playwright
 suite that pins the dashboard's observable surface through `data-testid`

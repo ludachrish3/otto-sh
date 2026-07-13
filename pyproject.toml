@@ -210,6 +210,7 @@ markers = [
     "stability: heavy stability/soak tests — excluded from `make coverage`; run via `make stability` / `make stability-embedded`",
     "concurrency: fast, no-VM SessionManager concurrency/soak tests — run via `make stability-unit`; stays in coverage",
     "e2e: end-to-end-tier test, auto-stamped from tests/e2e/ (level axis; orthogonal to the integration/embedded resource markers)",
+    "soak: heavy browser-driven replay stress test (tests/e2e/monitor/dashboard/test_replay_soak.py) — excluded from `make dashboard`'s default -m selection and from noxfile.py's `dashboard` session (keep both in sync); chromium-only (`make dashboard-soak`, or -m soak --browser chromium — the test itself skips on other engines)",
 ]
 
 # NB: coverage.py config lives in .coveragerc, not here — that file is shared

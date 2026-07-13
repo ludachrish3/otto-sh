@@ -21,7 +21,7 @@ This writes (into `schemas/`):
 | `unix-host.schema.json`, `embedded-host.schema.json` | a single host of one type |
 | `settings.schema.json` | `settings.toml` |
 | `reservations.schema.json` | the reservations JSON file |
-| `monitor-meta.schema.json` | the monitor dashboard's `/api/meta` payload — not a file you edit; it drives the generated TypeScript types the web dashboard builds against (`scripts/gen_web_types.sh`) |
+| `monitor-meta.schema.json` | the monitor dashboard's internal chart/tab-layout model — not a file you edit, and not served at any endpoint; it drives the generated TypeScript types the web dashboard builds against (`scripts/gen_web_types.sh`) |
 
 Run it again after upgrading otto to pick up new fields. Custom host classes
 registered via an init module in `.otto/settings.toml` are included

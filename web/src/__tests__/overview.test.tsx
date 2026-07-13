@@ -12,7 +12,7 @@ const KITCHEN = readFileSync(join(HERE, "../../fixtures/kitchen-sink.json"), "ut
 const MIN = 60_000;
 
 function load(range: { from: number; to: number } | null = null) {
-  useReviewStore.getState().actions.importText(KITCHEN, "kitchen-sink.json");
+  useReviewStore.getState().actions.importMonitorSessions(KITCHEN, "kitchen-sink.json");
   if (range) useReviewStore.getState().actions.setRange(range);
   return render(<OverviewPage />);
 }
@@ -21,7 +21,7 @@ afterEach(() => {
   cleanup();
   useReviewStore.setState({
     sessions: [],
-    rawDocument: null,
+    rawMonitorSessions: null,
     sourceName: null,
     warnings: [],
     importError: null,
@@ -64,6 +64,6 @@ describe("fleet grid", () => {
 });
 
 function importAndGetStart(): number {
-  useReviewStore.getState().actions.importText(KITCHEN, "kitchen-sink.json");
+  useReviewStore.getState().actions.importMonitorSessions(KITCHEN, "kitchen-sink.json");
   return useReviewStore.getState().sessions[0].startMs;
 }

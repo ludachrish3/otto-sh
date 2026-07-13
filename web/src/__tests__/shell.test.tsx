@@ -34,7 +34,7 @@ if (typeof globalThis.CSS === "undefined") {
 function resetStore() {
   useReviewStore.setState({
     sessions: [],
-    rawDocument: null,
+    rawMonitorSessions: null,
     sourceName: null,
     warnings: [],
     importError: null,

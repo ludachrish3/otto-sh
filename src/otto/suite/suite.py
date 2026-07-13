@@ -446,6 +446,7 @@ class OttoSuite(Generic[TOptions]):
         Returns:
             Dashboard URL, e.g. 'http://127.0.0.1:8080'.
         """
+        from otto.models import validate_interval
         from otto.monitor.collector import MetricCollector
         from otto.monitor.export import build_session_metric_db
         from otto.monitor.server import MonitorServer
@@ -456,24 +457,30 @@ class OttoSuite(Generic[TOptions]):
 
         if isinstance(interval, (int, float)):
             interval = timedelta(seconds=float(interval))
+        validate_interval(interval.total_seconds())
+
+        # Real session identity + lab snapshot (spec 2026-07-12), built
+        # unconditionally: MonitorServer stamps collector.session_id from
+        # `frame` and (live mode) needs both `frame`/`lab` to serve
+        # /api/monitor_sessions, regardless of whether this run also
+        # persists to a --db archive. No suite/run name is threaded through
+        # today, so `label`/`note` stay None (honest, not a placeholder) —
+        # same as otto.suite.plugin's --monitor --db path.
+        snapshot_hosts = (
+            [target.host for target in targets] if targets is not None else list(hosts or [])
+        )
+        frame = new_frame(label=None, note=None)
+        lab = snapshot_lab(snapshot_hosts, declared=[])
 
         monitor_db = None
         if db_path is not None:
-            # Real session identity + lab snapshot + meta (spec 2026-07-12) —
-            # see otto.monitor.export.build_session_metric_db for why a
+            # See otto.monitor.export.build_session_metric_db for why a
             # throwaway meta_collector (never run, never handed this
             # MetricDB), built the SAME way (targets, or hosts+parsers) as
-            # the real collector below, is unavoidable here. No suite/run
-            # name is threaded through today, so `label`/`note` stay None
-            # (honest, not a placeholder) — same as otto.suite.plugin's
-            # --monitor --db path. chart_map is NOT built here either: it
-            # accumulates as points arrive, so the collector writes it into
-            # the session row itself (MetricDB.write_chart_map).
-            snapshot_hosts = (
-                [target.host for target in targets] if targets is not None else list(hosts or [])
-            )
-            frame = new_frame(label=None, note=None)
-            lab = snapshot_lab(snapshot_hosts, declared=[])
+            # the real collector below, is unavoidable here. chart_map is
+            # NOT built here either: it accumulates as points arrive, so the
+            # collector writes it into the session row itself
+            # (MetricDB.write_chart_map).
             meta_collector = (
                 MetricCollector(targets=targets)
                 if targets is not None
@@ -499,6 +506,8 @@ class OttoSuite(Generic[TOptions]):
             self._monitor_collector,
             host=bind,
             port=port,
+            frame=frame,
+            lab=lab,
         )
 
         collector = self._monitor_collector

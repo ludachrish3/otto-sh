@@ -1,7 +1,19 @@
+// Pins src/data/logevents.ts — the Task 12 re-homing of the legacy
+// src/logevents.ts's still-needed pieces (SubjectPage.tsx's log-table tabs
+// call `groupRowsFromData`/`logKey`/`visibleRows`). Named `logevents.data.test.ts`
+// (not `logevents.test.ts`, which pinned the now-deleted legacy module and
+// also covered `appendRows` — dropped in the port: the new stack's
+// fragment.ts pushes every row onto session.logEvents directly, and nothing
+// survives that called the legacy store's incremental capped append).
 import { describe, expect, it } from "vitest";
 
-import type { LogEventRow } from "../api/client";
-import { appendRows, groupRowsFromData, logKey, MAX_TABLE_ROWS, visibleRows } from "../logevents";
+import {
+  groupRowsFromData,
+  logKey,
+  type LogEventRow,
+  MAX_TABLE_ROWS,
+  visibleRows,
+} from "../data/logevents";
 
 function row(n: number, host = "host1", tab = "syslog"): LogEventRow {
   return {
@@ -18,35 +30,21 @@ describe("logKey", () => {
   });
 });
 
-describe("appendRows", () => {
-  it("appends under the (host, tab) key without touching other keys", () => {
-    const first = appendRows({}, "host1", "syslog", [row(1)]);
-    const second = appendRows(first, "host2", "syslog", [row(2, "host2")]);
-    expect(second["host1/syslog"]).toHaveLength(1);
-    expect(second["host2/syslog"]).toHaveLength(1);
-  });
-
-  it("caps at MAX_TABLE_ROWS keeping the newest", () => {
-    const many = Array.from({ length: MAX_TABLE_ROWS + 20 }, (_, i) => row(i));
-    const out = appendRows({}, "host1", "syslog", many);
-    const kept = out["host1/syslog"];
-    expect(kept).toHaveLength(MAX_TABLE_ROWS);
-    expect(kept[kept.length - 1].fields.message).toBe(`row ${MAX_TABLE_ROWS + 19}`);
-    expect(kept[0].fields.message).toBe("row 20");
-  });
-
-  it("returns the same object for an empty batch", () => {
-    const existing = { "host1/syslog": [row(1)] };
-    expect(appendRows(existing, "host1", "syslog", [])).toBe(existing);
-  });
-});
-
 describe("groupRowsFromData", () => {
-  it("groups a /api/data snapshot by (host, tab) and caps each", () => {
+  it("groups a session's log-event rows by (host, tab)", () => {
     const rows = [row(1), row(2, "host2"), row(3)];
     const grouped = groupRowsFromData(rows);
     expect(grouped["host1/syslog"].map((r) => r.fields.message)).toEqual(["row 1", "row 3"]);
     expect(grouped["host2/syslog"]).toHaveLength(1);
+  });
+
+  it("caps each key at MAX_TABLE_ROWS, keeping the newest", () => {
+    const many = Array.from({ length: MAX_TABLE_ROWS + 20 }, (_, i) => row(i));
+    const grouped = groupRowsFromData(many);
+    const kept = grouped["host1/syslog"];
+    expect(kept).toHaveLength(MAX_TABLE_ROWS);
+    expect(kept[kept.length - 1].fields.message).toBe(`row ${MAX_TABLE_ROWS + 19}`);
+    expect(kept[0].fields.message).toBe("row 20");
   });
 });
 

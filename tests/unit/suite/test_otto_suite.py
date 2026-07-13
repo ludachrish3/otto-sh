@@ -15,7 +15,10 @@ Tests verify:
 """
 
 import asyncio
+import contextlib
+import json
 import sys
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -26,6 +29,7 @@ from otto.config.lab import Lab
 from otto.context import OttoContext, reset_context, set_context
 from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
+from otto.models import MonitorExport
 from otto.monitor.collector import MetricCollector
 from otto.monitor.db import read_sessions
 from otto.monitor.export import build_db_export
@@ -521,9 +525,9 @@ class TestActiveMonitorCollector:
 def _make_unconnected_host(host_id: str = "router1") -> UnixHost:
     """A real UnixHost that makes no connection at construction.
 
-    ``snapshot_lab`` (called by ``start_monitor``'s db_path branch) validates
-    its result against pydantic's ``HostSnapshot`` — a bare
-    ``MagicMock(spec=UnixHost)`` fails that validation because its unset
+    ``snapshot_lab`` (called unconditionally by ``start_monitor``, spec
+    2026-07-12) validates its result against pydantic's ``HostSnapshot`` — a
+    bare ``MagicMock(spec=UnixHost)`` fails that validation because its unset
     attributes are auto-vivified ``Mock`` objects, not strings (see
     ``tests/unit/suite/test_plugin.py``'s identical helper).
     """
@@ -594,3 +598,51 @@ class TestStartMonitorArchive:
         # archive's own column can (mirrors test_plugin.py's identical check).
         (raw_session,) = read_sessions(str(out_path))
         assert raw_session.end is not None, "a clean stop_monitor() left end unstamped"
+
+
+class TestStartMonitorLiveSessionWiring:
+    @pytest.mark.asyncio
+    async def test_no_db_path_still_stamps_session_id_and_serves_monitor_sessions(
+        self, tmp_path: Path, hermetic_monitor_dist: Path
+    ) -> None:
+        """Pins an escaped defect found building Task 2: ``start_monitor()``
+        used to build ``frame``/``lab`` only inside its ``if db_path is not
+        None:`` branch, so the in-memory-only (``db_path=None``) path — the
+        one every suite/pytest-plugin caller actually uses — passed neither
+        to ``MonitorServer``. Two silent consequences: (a) ``collector.
+        session_id`` stayed ``""``, so every SSE fragment published on this
+        path is addressed to a session the browser never holds and is
+        dropped; (b) ``/api/monitor_sessions`` in live mode requires
+        ``frame``/``lab`` and 500s (``RuntimeError``) without them. This
+        boots a real MonitorServer (hence ``hermetic_monitor_dist`` — pytest
+        never runs `make web`) and hits the live endpoint over a real socket
+        rather than only inspecting private attributes, so a regression that
+        broke serving (not just the id stamp) would fail it too.
+        """
+        del hermetic_monitor_dist
+        suite = _make_suite(tmp_path)
+
+        with patch.object(MetricCollector, "run", _fake_collector_run):
+            url = await suite.start_monitor(
+                hosts=[_make_unconnected_host("router1")],
+                interval=1.0,
+            )
+            try:
+                assert suite._monitor_collector is not None
+                assert suite._monitor_collector.session_id != "", (
+                    "collector.session_id was never stamped — MonitorServer "
+                    "was built without frame= on the db_path=None path"
+                )
+
+                resp = await asyncio.to_thread(
+                    urllib.request.urlopen, f"{url}/api/monitor_sessions", timeout=10
+                )
+                with contextlib.closing(resp) as opened:
+                    payload = json.loads(opened.read())
+                export = MonitorExport.model_validate(payload)
+                assert export.format == 1
+                (session,) = export.sessions
+                assert session.id == suite._monitor_collector.session_id
+                assert session.end is None, "a live session is one whose end is still open"
+            finally:
+                await suite.stop_monitor()

@@ -1,10 +1,10 @@
 // Derived health (contract spec 2026-07-10 §6): a pure function of
 // (samples, selected range, cadences). Nothing is stored — "last known
 // status" means last known WITHIN THE SELECTED RANGE, so narrowing the
-// range re-evaluates it. The same functions will drive live mode's
-// unreachable-dimming at the hookup phase.
+// range re-evaluates it. The same functions also drive live mode's
+// unreachable-dimming (Plan 5b): OverviewPage passes a live `nowMs` from
+// data/clock.ts instead of leaving it to default to the session's endMs.
 import type { DerivedElement, NormalizedSession, TimeRange } from "./exportDoc";
-import { parseTs } from "./time";
 
 /** Down when the gap past the last sample exceeds K x the host's cadence. */
 export const HEALTH_K = 3;
@@ -35,47 +35,67 @@ function cadenceMs(session: NormalizedSession, labels: Set<string>): number | nu
   return session.meta.interval != null ? session.meta.interval * 1000 : null;
 }
 
+/** Highest index i such that tsMs[i] <= t, or -1 if every sample is after t.
+ * Binary search — O(log n) per series, never a scan of the series itself. */
+function lastIndexAtOrBefore(tsMs: number[], t: number): number {
+  let lo = 0;
+  let hi = tsMs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (tsMs[mid] <= t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo - 1;
+}
+
 export function healthForHosts(
   session: NormalizedSession,
   range: TimeRange | null,
+  /** Wall clock for live mode. Defaults to the session's end — which is what an
+   * ARCHIVE means by "now". A live session's end is open, so if we defaulted there
+   * the gap would always be zero and a dead host would never go amber. */
+  nowMs?: number,
 ): Map<string, SubjectHealth> {
   const evalFrom = range?.from ?? session.startMs;
-  const evalTo = Math.min(range?.to ?? session.endMs, session.endMs);
-
-  // One pass: per-host last in-range sample + the labels each host reports
-  // anywhere in the session (cadence must not depend on the range).
-  const lastSeen = new Map<string, number>();
-  const labelsByHost = new Map<string, Set<string>>();
-  for (const m of session.metrics) {
-    if (!session.hostIds.has(m.host ?? "")) continue; // element-targeted rows
-    const host = m.host as string;
-    let labels = labelsByHost.get(host);
-    if (!labels) {
-      labels = new Set();
-      labelsByHost.set(host, labels);
-    }
-    labels.add(m.label);
-    const ts = parseTs(m.timestamp);
-    if (ts >= evalFrom && ts <= evalTo && ts > (lastSeen.get(host) ?? -Infinity)) {
-      lastSeen.set(host, ts);
-    }
-  }
+  const evalTo = nowMs ?? Math.min(range?.to ?? session.endMs, session.endMs);
 
   const out = new Map<string, SubjectHealth>();
   for (const host of session.lab.hosts) {
-    const labels = labelsByHost.get(host.id);
-    if (!labels) {
+    // The series this host reports, anywhere in the session — cadence must
+    // not depend on the range, so this comes from the index, not a scan.
+    const keys = session.index.keysByHost.get(host.id);
+    if (!keys || keys.length === 0) {
       // No metric series at all in this session: log-only or silent.
       // No health claim either way (spec: absence of logs proves nothing).
       out.set(host.id, { status: "unknown", lastSeenMs: null, outageMs: 0 });
       continue;
     }
-    const last = lastSeen.get(host.id) ?? null;
+
+    // Last sample WITHIN [evalFrom, evalTo], per series via binary search,
+    // then the max across the host's series — same universe of samples the
+    // old full scan visited, just reached by index lookup instead of a scan.
+    let last: number | null = null;
+    const labels = new Set<string>();
+    for (const key of keys) {
+      labels.add(key.slice(host.id.length + 1));
+      // biome-ignore lint/style/noNonNullAssertion: tsMs always has an entry for every key in keysByHost
+      const tsMs = session.index.tsMs.get(key)!;
+      const idx = lastIndexAtOrBefore(tsMs, evalTo);
+      if (idx < 0) continue;
+      const ts = tsMs[idx];
+      if (ts < evalFrom) continue;
+      if (last === null || ts > last) last = ts;
+    }
+
     if (last === null) {
       out.set(host.id, { status: "no-data", lastSeenMs: null, outageMs: 0 });
       continue;
     }
-    const cadence = cadenceMs(session, labels);
+    // Live sessions know their cadence directly (meta.interval, set from the
+    // collector). Archives that lack a global interval fall back to the
+    // per-chart scan.
+    const cadence =
+      session.meta.interval !== null ? session.meta.interval * 1000 : cadenceMs(session, labels);
     if (cadence === null) {
       out.set(host.id, { status: "unknown", lastSeenMs: last, outageMs: 0 });
       continue;
@@ -113,7 +133,14 @@ function formatValue(value: number): string {
 
 /** Labeled headline metric for a host tile (UX spec §8): CPU-preferred,
  * else the first meta-order chart with in-range samples. The LABEL matters
- * because of the fallback — "34% cpu", "7212 rpm fan". */
+ * because of the fallback — "34% cpu", "7212 rpm fan".
+ *
+ * OverviewPage is the fleet grid — the page the liveness clock re-renders on
+ * every collection tick — so this must not scan `session.metrics` (that was
+ * O(all points) x hosts, per tick, once this task's caller went live). Reads
+ * through the index instead, the same way metricsForSubject and
+ * healthForHosts do: only this host's own series, and a binary search per
+ * series rather than a linear scan of it. */
 export function headlineFor(
   session: NormalizedSession,
   hostId: string,
@@ -126,14 +153,25 @@ export function headlineFor(
     const cpuB = b.unit === "%" && /cpu/i.test(b.label) ? 0 : 1;
     return cpuA - cpuB;
   });
+
+  const keys = session.index.keysByHost.get(hostId) ?? [];
+
   for (const spec of specs) {
     let best: { ts: number; value: number } | null = null;
-    for (const m of session.metrics) {
-      if (m.host !== hostId) continue;
-      if ((session.chartMap[m.label] ?? m.label) !== spec.label) continue;
-      const ts = parseTs(m.timestamp);
-      if (ts < evalFrom || ts > evalTo) continue;
-      if (!best || ts > best.ts) best = { ts, value: m.value };
+    for (const key of keys) {
+      // seriesKey is `${host}/${label}` (seriesIndex.ts) — same slice
+      // healthForHosts already uses to recover the raw label from a key.
+      const rawLabel = key.slice(hostId.length + 1);
+      if ((session.chartMap[rawLabel] ?? rawLabel) !== spec.label) continue;
+      // biome-ignore lint/style/noNonNullAssertion: tsMs/recs always have an entry for every key in keysByHost
+      const tsMs = session.index.tsMs.get(key)!;
+      const idx = lastIndexAtOrBefore(tsMs, evalTo);
+      if (idx < 0) continue;
+      const ts = tsMs[idx];
+      if (ts < evalFrom) continue;
+      // biome-ignore lint/style/noNonNullAssertion: tsMs and recs are index-aligned
+      const value = session.index.recs.get(key)![idx].value;
+      if (!best || ts > best.ts) best = { ts, value };
     }
     if (best) {
       const unit = spec.unit === "%" ? "%" : ` ${spec.unit}`;

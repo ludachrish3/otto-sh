@@ -1,6 +1,6 @@
 """Pydantic boundary models for the monitor subsystem.
 
-Two seams:
+Three seams:
 
 * :class:`MetricPoint` — the in-memory series element (replaces the old
   ``(ts, value, meta)`` 3-tuple in ``MetricStore.series``). It is an
@@ -18,9 +18,24 @@ Two seams:
   ``validation_alias`` also accepts the SQLite column spelling
   (``ts``/``end_ts``) so one model validates both seams.
 
+* :class:`MonitorSessionFragment` — the live SSE wire boundary (spec
+  2026-07-12 §The stream speaks format:1). It reuses ``MetricRecord`` /
+  ``EventRecord`` / ``LogEventRecord`` / ``SessionMeta`` verbatim rather than
+  mirroring their fields under new names, so the fragment cannot drift from
+  the ``format:1`` payload it appends to.
+
+:data:`MIN_INTERVAL_SECONDS` / :func:`validate_interval` also live here rather
+than in ``otto.monitor`` — see their docstrings for why.
+
 Leaf isolation: this module imports only :mod:`otto.models.base`, pydantic, and
 the stdlib — no runtime or ``otto.monitor`` edge — so it stays a pure leaf inside
-the models package.
+the models package. This matters beyond tidiness: ``otto.cli.test`` needs
+``MIN_INTERVAL_SECONDS`` for its ``--monitor-interval`` option but must NOT pay
+for importing the monitor runtime package (collector/db/snmp/aiosqlite, ...)
+just to render ``--help`` — that regressed the import-budget guard once
+already (spec 2026-07-12 §monitor-live-streaming, the ``otto.monitor.interval``
+module). Keeping the floor in this already-leaf module gives every caller
+(CLI, library, pytest plugin) one definition without paying that cost.
 """
 
 from datetime import datetime
@@ -29,6 +44,29 @@ from typing import Any, Literal
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from .base import OttoModel
+
+MIN_INTERVAL_SECONDS: float = 1.0
+"""The collection-interval floor — one home for the constant and the check.
+
+An interval below one second is not meaningful in practice: a host must be
+given time to answer every query in the interval without being taxed by the
+polling itself. The floor is enforced where a *human* names an interval — the
+CLI, the library, the pytest plugin — and NOT in
+:class:`~otto.monitor.collector.MetricCollector`, which is the mechanism
+rather than a knob: the monitor tests drive it at 0.01-0.2s against fake
+hosts, where no real host is ever polled.
+"""
+
+
+def validate_interval(seconds: float) -> float:
+    """Return *seconds*, or raise ``ValueError`` if it is below the floor."""
+    if seconds < MIN_INTERVAL_SECONDS:
+        raise ValueError(
+            f"monitor interval must be at least {MIN_INTERVAL_SECONDS}s, got {seconds}s — "
+            "a host needs time to answer every query in the interval without being "
+            "taxed by the polling itself."
+        )
+    return seconds
 
 
 class MetricPoint(OttoModel):
@@ -44,10 +82,13 @@ class MetricPoint(OttoModel):
 
 
 class ChartSpec(OttoModel):
-    """One dashboard chart descriptor served by ``/api/meta``.
+    """One dashboard chart descriptor: otto's typed, internal parser-catalog view.
 
     The declarative contract the frontend renders from; TS types are
-    generated from this schema in Phase 2.
+    generated from this schema in Phase 2. Not served at any endpoint of its
+    own — it is reshaped into :class:`ChartSpecRecord` inside
+    :class:`SessionMeta` for the ``monitor_sessions``/SSE wire (see
+    :func:`otto.monitor.export.session_meta`).
     """
 
     label: str
@@ -59,12 +100,13 @@ class ChartSpec(OttoModel):
 
 
 class TabSpec(OttoModel):
-    """One dashboard tab descriptor served by ``/api/meta``.
+    """One dashboard tab descriptor: otto's typed, internal parser-catalog view.
 
     The declarative contract the frontend renders from; TS types are
     generated from this schema in Phase 2. ``kind="table"`` tabs render an
     event table (schema in ``columns``) instead of charts, and carry
-    ``metrics=[]``.
+    ``metrics=[]``. Not served at any endpoint of its own — see
+    :class:`ChartSpec` for the wire path.
     """
 
     id: str
@@ -75,10 +117,13 @@ class TabSpec(OttoModel):
 
 
 class MonitorMeta(OttoModel):
-    """The typed ``/api/meta`` payload: hosts, chart specs, and tab layout.
+    """The typed internal contract: hosts, chart specs, and tab layout.
 
     The declarative contract the frontend renders from; TS types are
-    generated from this schema in Phase 2.
+    generated from this schema in Phase 2. This model is never served
+    directly — every dashboard boot (live or review) hydrates from
+    ``GET /api/monitor_sessions``, whose ``format:1`` shape carries this same
+    information reshaped into each session's :class:`SessionMeta`.
 
     ``interval`` is the global collection interval in seconds — ``None`` until
     :meth:`~otto.monitor.collector.MetricCollector.run` has recorded one (a
@@ -248,7 +293,7 @@ class ChartSpecRecord(ChartSpec):
     Same fields; ``extra="ignore"`` so an older otto can read exports written
     by a newer one whose chart specs carry new fields (the :class:`RowModel`
     boundary philosophy). :class:`ChartSpec` itself stays ``extra="forbid"``
-    as the otto-built live ``/api/meta`` contract.
+    as the otto-built internal parser-catalog contract.
     """
 
     model_config = ConfigDict(extra="ignore")
@@ -278,7 +323,8 @@ class SessionRecord(RowModel):
     """One self-contained monitoring session: config snapshot + data.
 
     ``end=None`` means a still-open session. ``chart_map`` maps bare series
-    labels to chart keys (:attr:`ChartSpec.label`), as ``/api/data`` does today.
+    labels to chart keys (:attr:`ChartSpec.label`), as the dashboard does
+    today via the ``monitor_sessions``/SSE wire.
     """
 
     id: str
@@ -304,3 +350,32 @@ class MonitorExport(RowModel):
 
     format: Literal[1]
     sessions: list[SessionRecord]
+
+
+class MonitorSessionFragment(RowModel):
+    """An incremental update to ONE live monitor session.
+
+    Spec 2026-07-12 §The stream speaks format:1.
+
+    A fragment is a *partial* :class:`SessionRecord`: every payload field is
+    optional and carries the SAME name and type as its counterpart there, so the
+    client appends rather than translates. This is deliberate — Plan 5a lost
+    three fix waves to a rename across a lenient boundary model
+    (``MonitorMeta.metrics`` vs ``SessionMeta.charts``), invisible to the type
+    checker because both sides were ``str`` at the seam. The strongest defence is
+    not a mapping function but the absence of a second model: these ARE the
+    payload's models.
+
+    ``deleted_event_ids`` is the one thing a partial record cannot express by
+    presence, so it is explicit. Event *updates* need no separate kind — the
+    client upserts by ``id``, so an edited event is just an event.
+    """
+
+    format: Literal[1] = 1
+    session: str
+    metrics: list[MetricRecord] = Field(default_factory=list)
+    events: list[EventRecord] = Field(default_factory=list)
+    log_events: list[LogEventRecord] = Field(default_factory=list)
+    deleted_event_ids: list[int] = Field(default_factory=list)
+    chart_map: dict[str, str] = Field(default_factory=dict)
+    meta: SessionMeta | None = None

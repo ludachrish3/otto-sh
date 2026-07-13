@@ -1,7 +1,16 @@
 /** Time helpers for the review UI. All internal times are epoch ms. */
+import type { TimeRange } from "./exportDoc";
 
 export function parseTs(iso: string): number {
   return Date.parse(iso);
+}
+
+/** The live window: follow the tail unless the view is pinned. `nowMs` is
+ * the reference instant — callers pass the active session's `endMs` (the
+ * latest ingested sample) rather than a raw wall clock, so the window
+ * advances exactly when new data arrives and never races a real clock. */
+export function liveRange(nowMs: number, windowMs: number): TimeRange {
+  return { from: nowMs - windowMs, to: nowMs };
 }
 
 /** ms → the value a <input type="datetime-local"> wants, in LOCAL time. */

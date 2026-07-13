@@ -27,9 +27,10 @@ from pathlib import Path
 
 import pytest
 
-from otto.models import MonitorExport
+from otto.models import HostSnapshot, LabSnapshot, MonitorExport
 from otto.monitor.collector import MetricCollector
 from otto.monitor.server import _dist_index_path
+from otto.monitor.session import new_frame
 from tests._fixtures._browser_guard import browser_tests_could_run
 from tests._fixtures._dashboard_harness import DashboardHarness
 from tests._fixtures._fake_collector import FakeCollector
@@ -195,6 +196,60 @@ def live_dash() -> Iterator[DashboardHarness[FakeCollector]]:
     harness.stop()
 
 
+# Every host id any Plan 5b Task 13 live-shell/soak spec pushes a point for.
+# Declared up front (one shared lab snapshot) rather than per-test: a host
+# tile/subject-link/chart only exists in the DOM for a host that is a member
+# of `lab.hosts` (deriveElements(), web/src/data/exportDoc.ts) — pushing a
+# point for an undeclared host records it server-side but never surfaces a
+# clickable tile, so a test that goes straight from `push()` to
+# `page.locator('[data-testid="subject-link-..."]')` would simply hang
+# against an element that can never appear.
+_LIVE_STREAM_HOSTS = ["r1", "r2", *[f"h{i}" for i in range(7)]]
+
+# healthForHosts (web/src/data/health.ts) only considers a sample "seen" when
+# its timestamp falls >= session.startMs — a point pushed with an EARLIER
+# timestamp is invisible to health, not "stale" (a real gap needs a real
+# prior sample within the session's own lifetime; otherwise it's genuinely
+# "no-data", a different status). Backdating the frame by an hour gives every
+# spec in this lane room to push a "went silent N seconds ago" point without
+# racing the wall clock: real-time frame.start (`new_frame`'s default) would
+# put session.startMs at fixture setup, only milliseconds before the test
+# body's own push() call, leaving no room for a point old enough to cross the
+# down threshold (cadence x HEALTH_K) while still landing inside the session.
+_FRAME_BACKDATE = timedelta(hours=1)
+
+
+@pytest.fixture
+def live_stream_dash() -> Iterator[DashboardHarness[FakeCollector]]:
+    """A live-mode, dist-serving harness the test can push points into.
+
+    Unlike ``live_dash``, this one carries a ``frame`` + ``lab``, so
+    ``/api/monitor_sessions`` serves a real live snapshot and the shell
+    hydrates without an Import step (see ``bootstrapFromServer``, which
+    fetches ``/api/mode`` then ``/api/monitor_sessions`` for both server
+    modes). ``lab`` declares every host id the Task 13 specs push to, each
+    its own singleton element — see ``_LIVE_STREAM_HOSTS``.
+
+    ``interval=5.0`` stamps the run's collection cadence up front (see
+    ``FakeCollector.__init__``'s docstring): without it, ``push()`` alone
+    never sets it (unlike a real ``collector.run()``), and both the
+    liveness clock (``OverviewPage``'s ``useNow``) and dimming
+    (``data/health.ts``'s cadence resolution) stay permanently unresolvable.
+    The frame itself is backdated (see ``_FRAME_BACKDATE``) so a "went silent
+    N seconds ago" spec has room to land inside the session.
+    """
+    harness = DashboardHarness(
+        FakeCollector(interval=5.0),
+        mode="live",
+        frame=new_frame(
+            label="live run", note=None, now=datetime.now(tz=timezone.utc) - _FRAME_BACKDATE
+        ),
+        lab=LabSnapshot(hosts=[HostSnapshot(id=h, element=h) for h in _LIVE_STREAM_HOSTS]),
+    ).start()
+    yield harness
+    harness.stop()
+
+
 @pytest.fixture
 def shell_dash() -> Iterator[DashboardHarness[FakeCollector]]:
     """A dist-serving harness with an empty collector — the review shell
@@ -229,10 +284,10 @@ def review_dash() -> Iterator[DashboardHarness[MetricCollector]]:
     """A dist-serving, review-mode harness that boots already hydrated.
 
     Unlike ``shell_dash`` (empty collector; data arrives via client-side
-    Import), this server answers ``/api/mode``/``/api/document`` (Task 6)
-    with a real two-session document — the browser-lane proof that
-    ``otto monitor <source>`` opens straight into the dashboard with no
-    Import interaction.
+    Import), this server answers ``/api/mode``/``/api/monitor_sessions``
+    (Task 6, endpoint renamed in Plan 5b Task 3) with a real two-session
+    document — the browser-lane proof that ``otto monitor <source>`` opens
+    straight into the dashboard with no Import interaction.
     """
     harness = DashboardHarness(
         MetricCollector(hosts=[], parsers=[]),

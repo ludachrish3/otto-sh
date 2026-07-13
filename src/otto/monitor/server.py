@@ -6,9 +6,10 @@ Endpoints
 GET  /              Serves the React dashboard's built index.html (``web/``, via ``make web``)
 GET  /static/...    Serves the built dist/ assets (JS/CSS bundles, etc.)
 GET  /api/mode      JSON ``{"mode": "live"|"review", "source": str|None}``
-GET  /api/document  Review-mode document (``format:1`` JSON); 404 in live mode
-GET  /api/meta      JSON metadata (host name, metric labels, units)
-GET  /api/data      JSON snapshot of all metric series and events
+GET  /api/monitor_sessions  The ``format:1`` payload: the loaded archive in
+review mode, or a snapshot of the running session in live mode (a live
+session is just one whose ``end`` is still open). Both modes hydrate
+through this one endpoint.
 GET  /api/stream    SSE stream — pushes metric updates and events in real time
 POST /api/event     Record a manual event from the dashboard UI
 GET  /api/export/json  Download the current data as a ``format:1`` document
@@ -21,10 +22,10 @@ from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from logging import Filter, LogRecord, getLogger
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
@@ -103,8 +104,8 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
     app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     # *document* never changes after construction, so serialize it once here
-    # rather than on every /api/document and /api/export/json hit — a --db
-    # archive's document can hold many sessions, and re-running
+    # rather than on every /api/monitor_sessions and /api/export/json hit —
+    # a --db archive's document can hold many sessions, and re-running
     # model_dump_json() per request is pure waste for data that's already
     # fixed.
     _document_body = document_json(document) if document is not None else None
@@ -134,29 +135,32 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         """Report whether this server serves live data or a loaded review document."""
         return JSONResponse({"mode": mode, "source": source_name})
 
-    @app.get("/api/document")
-    async def get_document() -> Response:  # type: ignore[reportUnusedFunction]
-        """Serve the loaded review document verbatim; 404 in live mode."""
-        if mode != "review":
-            raise HTTPException(status_code=404, detail="no document in live mode")
-        return Response(content=_require_document_body(), media_type="application/json")
+    @app.get("/api/monitor_sessions")
+    async def monitor_sessions() -> Response:  # type: ignore[reportUnusedFunction]
+        """Serve the format:1 payload: the loaded archive, or a snapshot of the live run.
 
-    @app.get("/api/meta")
-    async def meta() -> JSONResponse:  # type: ignore[reportUnusedFunction]
-        return JSONResponse(collector.get_meta())
+        Live and review hydrate through the SAME endpoint and the SAME shape —
+        that is what lets every view work live with no per-view work. A live
+        monitor session is just one whose ``end`` is still open, exactly like a
+        crashed session on disk.
 
-    @app.get("/api/data")
-    async def data() -> JSONResponse:  # type: ignore[reportUnusedFunction]
-        payload: dict[str, Any] = {
-            "series": {
-                label: [pt.model_dump(mode="json", exclude_none=True) for pt in pts]
-                for label, pts in collector.get_series().items()
-            },
-            "events": [e.to_dict() for e in collector.get_events()],
-            "chart_map": collector.get_chart_map(),
-            "log_events": collector.get_log_events(),
-        }
-        return JSONResponse(payload)
+        A ``mode="live"`` server that isn't recording a session (``frame``/
+        ``lab`` unset — e.g. a bare ``DashboardHarness`` used only to serve the
+        Import shell, or a dashboard opened before ``otto monitor --live`` has
+        attached one) has no session to serve. That's a legitimate "nothing
+        here", not a programming error: it 404s rather than raising, so the
+        client's soft-fail boot contract (bootstrap.ts) sees an ordinary failed
+        hydrate instead of a 500 + server traceback on every such page load.
+        """
+        if mode == "review":
+            return Response(content=_require_document_body(), media_type="application/json")
+        if frame is None or lab is None:
+            return JSONResponse(
+                {"error": "no monitor session is being recorded"},
+                status_code=404,
+            )
+        body = document_json(build_live_export(frame, collector, lab))
+        return Response(content=body, media_type="application/json")
 
     @app.get("/api/stream")
     async def stream(request: Request) -> EventSourceResponse:  # type: ignore[reportUnusedFunction]
@@ -319,8 +323,8 @@ class MonitorServer:
 
     * ``mode="live"`` (default) — serves a running
       :class:`~otto.monitor.collector.MetricCollector`. ``frame`` and ``lab``
-      must both be supplied so ``/api/export/json`` can build a document on
-      demand; ``/api/document`` 404s.
+      must both be supplied so ``/api/monitor_sessions``/``/api/export/json``
+      can build a snapshot document on demand.
     * ``mode="review"`` — serves a pre-built ``document`` (a
       ``format:1`` :class:`~otto.models.monitor.MonitorExport`, e.g. read back
       from a ``--db`` session archive). ``source_name`` is the human-facing
@@ -352,6 +356,10 @@ class MonitorServer:
         self._source_name = source_name
         self._frame = frame
         self._lab = lab
+        # The collector has no notion of sessions; the server holds the frame, so
+        # it stamps the id here — one place, so no construction site can forget.
+        if frame is not None:
+            collector.session_id = frame.id
         self._app = _build_app(
             collector,
             mode=mode,

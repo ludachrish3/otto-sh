@@ -38,7 +38,7 @@ let mockSubject = "chassis-a_lc1";
 
 function load(subject: string) {
   mockSubject = subject;
-  useReviewStore.getState().actions.importText(KITCHEN, "kitchen-sink.json");
+  useReviewStore.getState().actions.importMonitorSessions(KITCHEN, "kitchen-sink.json");
   return render(<SubjectPage />);
 }
 
@@ -47,7 +47,7 @@ afterEach(() => {
   setOptions.length = 0;
   useReviewStore.setState({
     sessions: [],
-    rawDocument: null,
+    rawMonitorSessions: null,
     sourceName: null,
     warnings: [],
     importError: null,

@@ -89,15 +89,21 @@ export function zoomToRange(startPct: number, endPct: number, window: TimeRange)
   };
 }
 
-export function buildStackOption(args: {
-  unit: string;
-  yTitle: string;
-  series: SeriesInput[];
-  window: TimeRange;
-  events: EventMarker[];
-  theme: ChartTheme;
-}): Record<string, unknown> {
-  const { unit, yTitle, series, window, events, theme } = args;
+/** markLine/markArea for a chart's anchor (index-0) series — split out of
+ * buildStackOption so ChartPanel can re-apply just this overlay as a cheap
+ * merge patch (see windowPatch) whenever the window slides, without
+ * rebuilding the full series data/styling option. Both call sites must stay
+ * on this one implementation so the incremental patch and the full rebuild
+ * never draw different markers for the same window. */
+export interface EventOverlay {
+  markLine: { symbol: string; animation: boolean; label: Record<string, unknown>; data: unknown[] };
+  markArea: { silent: boolean; animation: boolean; data: unknown[] };
+}
+
+export function eventOverlay(
+  events: EventMarker[],
+  theme: Pick<ChartTheme, "muted">,
+): EventOverlay {
   const markLine = {
     symbol: "none",
     animation: false,
@@ -120,6 +126,44 @@ export function buildStackOption(args: {
         { xAxis: e.toMs as number },
       ]),
   };
+  return { markLine, markArea };
+}
+
+/** Cheap incremental patch for a live tick that only moved the window (a
+ * DIFFERENT series ticked, but session.endMs — and therefore liveRange — is
+ * global, so this chart's x-axis is stale even though its own series didn't
+ * change). Meant for `chart.setOption(patch, { notMerge: false })`: it only
+ * touches xAxis bounds and the anchor series' markLine/markArea, never
+ * series `data`, so it costs O(events) instead of O(points) — see
+ * ChartPanel.tsx. `anchorSeriesId` is the id (SeriesInput.key) of the
+ * chart's index-0 series, i.e. the one buildStackOption attaches
+ * markLine/markArea to; pass null when the chart has no series yet. */
+export function windowPatch(args: {
+  window: TimeRange;
+  events: EventMarker[];
+  theme: Pick<ChartTheme, "muted">;
+  anchorSeriesId: string | null;
+}): Record<string, unknown> {
+  const { window, events, theme, anchorSeriesId } = args;
+  const patch: Record<string, unknown> = {
+    xAxis: { min: window.from, max: window.to },
+  };
+  if (anchorSeriesId !== null) {
+    patch.series = [{ id: anchorSeriesId, ...eventOverlay(events, theme) }];
+  }
+  return patch;
+}
+
+export function buildStackOption(args: {
+  unit: string;
+  yTitle: string;
+  series: SeriesInput[];
+  window: TimeRange;
+  events: EventMarker[];
+  theme: ChartTheme;
+}): Record<string, unknown> {
+  const { unit, yTitle, series, window, events, theme } = args;
+  const { markLine, markArea } = eventOverlay(events, theme);
   return {
     animation: false,
     grid: { left: 56, right: 16, top: 28, bottom: 28 },

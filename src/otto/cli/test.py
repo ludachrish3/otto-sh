@@ -151,6 +151,7 @@ from rich.table import Table
 
 from ..config import get_repos
 from ..context import get_context
+from ..models import MIN_INTERVAL_SECONDS
 from ..suite.register import SUITES
 
 # The suite-run engine lives in ``otto.suite.run`` (library-extraction Phase A):
@@ -468,7 +469,7 @@ def main(  # noqa: PLR0913 — CLI command params
             "--monitor-interval",
             metavar="SECONDS",
             help="Sampling interval for --monitor.",
-            min=1.0,
+            min=MIN_INTERVAL_SECONDS,
         ),
     ] = 5.0,
     monitor_output: Annotated[

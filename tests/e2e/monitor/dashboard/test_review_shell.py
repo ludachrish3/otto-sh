@@ -6,7 +6,8 @@ free to change. Fixtures are the committed Plan-1 dummy-data documents
 every test here runs with zero backend data and zero external network —
 except the two Task-7 boot specs at the bottom, which exist specifically to
 prove the *other* path: a review-mode server hydrating the shell itself via
-``/api/mode``/``/api/document`` (Plan 5a Task 6), with no Import interaction.
+``/api/mode``/``/api/monitor_sessions`` (Plan 5a Task 6; endpoint renamed in
+Plan 5b Task 3), with no Import interaction.
 """
 
 import json

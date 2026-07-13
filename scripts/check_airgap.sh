@@ -31,35 +31,20 @@ ALLOWLIST=(
     # React itself does not fetch it.
     'https://react.dev/errors/'
     # XML/SVG/MathML namespace URIs used by React's DOM renderer
-    # (createElementNS / namespaced-attribute lookups), and by Plotly's own
-    # SVG rendering (d3-selection's namespace map). Per the XML Namespaces
-    # spec these are opaque identifiers, not URLs that get dereferenced.
+    # (createElementNS / namespaced-attribute lookups). Per the XML
+    # Namespaces spec these are opaque identifiers, not URLs that get
+    # dereferenced.
     'http://www.w3.org/1998/Math/MathML'
     'http://www.w3.org/1999/xlink'
     'http://www.w3.org/1999/xhtml'
     'http://www.w3.org/2000/svg'
     'http://www.w3.org/2000/xmlns/'
     'http://www.w3.org/XML/1998/namespace'
-    # plotly.js-gl2d-dist-min (Task 6): otto only ever draws `scattergl`
-    # line charts via this bundle — none of the following are ever fetched
-    # by that code path, only ever surfaced as inert config defaults, doc
-    # comments, or user-clickable links.
-    #   - `topojsonURL`'s schema default, for choropleth/geo trace types
-    #     otto's dashboard never uses.
-    'https://cdn.plot.ly/un/'
-    #   - the modebar's "Produced with Plotly" attribution link and the
-    #     animation-API's thrown-error message text — both user-facing,
-    #     same category as the already-allowlisted `react.dev/errors/` link.
-    'https://plotly.com/'
-    'https://plotly.com/javascript/animations/'
-    #   - the WebGL-unavailable fallback message's href/link text (shown,
-    #     never fetched, and only when the browser lacks WebGL at all).
-    'http://get.webgl.org'
-    'https://get.webgl.org'
-    #   - bundled d3-format/d3-time-format's format-string documentation
-    #     links (constants, surfaced only in developer-facing error text).
-    'https://github.com/d3/d3-format/tree/v1.4.5#d3-format'
-    'https://github.com/d3/d3-time-format/tree/v2.2.3#locale_format'
+    # (plotly.js-gl2d-dist-min's entries used to live here (Task 6) —
+    # removed along with the rest of the legacy Plotly data layer (Plan 5b
+    # Task 12). None of its URLs ever actually reached the shipped bundle by
+    # that point — grepping the pre-deletion dist for them turned up zero
+    # matches — so dropping the entries changes nothing this gate checks.)
     # tailwindcss v4 (Task 5): its bundled `/*! tailwindcss vX.Y.Z | MIT
     # License | https://tailwindcss.com */` banner comment atop the built
     # CSS — a license attribution string baked in by the tailwind compiler,
@@ -71,7 +56,8 @@ ALLOWLIST=(
     #     so it ships in the bundle regardless of props, but the component
     #     returns null under `proOptions.hideAttribution` (which the
     #     topology page sets), so the <a href> never reaches the DOM (same
-    #     category as the plotly.com attribution entry above).
+    #     category as the react.dev/errors/ entry above — shown, never
+    #     fetched).
     'https://reactflow.dev?utm_source=attribution'
     #   - the default onError handler's docs pointer, interpolated only
     #     into console.warn message text (same category as

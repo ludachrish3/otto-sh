@@ -9,7 +9,7 @@ import { useEffect, useRef } from "react";
 
 import type { TimeRange } from "../data/exportDoc";
 import { echarts } from "./echarts";
-import { zoomToRange } from "./options";
+import { type ChartTheme, type EventMarker, windowPatch, zoomToRange } from "./options";
 
 const HEIGHT_PX = 280;
 const ZOOM_DEBOUNCE_MS = 200;
@@ -27,10 +27,18 @@ export function ChartPanel(props: {
   option: Record<string, unknown>;
   groupId: string;
   window: TimeRange;
+  /** Present only when the caller wants the cheap incremental axis/marker
+   * patch (SubjectPage's live charts). Omitted by tests exercising the bare
+   * option-replace lifecycle — see chartpanel.test.tsx. */
+  markers?: EventMarker[];
+  theme?: Pick<ChartTheme, "muted">;
+  /** id (SeriesInput.key) of the chart's index-0 series — the one
+   * buildStackOption/eventOverlay attach markLine/markArea to. */
+  anchorSeriesId?: string | null;
   onZoom?: (range: TimeRange) => void;
   testId?: string;
 }) {
-  const { option, groupId, window: win, onZoom, testId } = props;
+  const { option, groupId, window: win, markers, theme, anchorSeriesId, onZoom, testId } = props;
   const el = useRef<HTMLDivElement>(null);
   const chart = useRef<EChartsLike | null>(null);
   const latest = useRef({ win, onZoom });
@@ -70,6 +78,41 @@ export function ChartPanel(props: {
   useEffect(() => {
     chart.current?.setOption(option, { notMerge: true, lazyUpdate: true });
   }, [option]);
+
+  // Cheap incremental patch (bug: window/markers were consumed inside the
+  // memoized `option` but never in its dep list — a chart whose own series
+  // didn't tick kept a stale x-axis even though session.endMs (and so
+  // liveRange) is global and advances on ANY host's fragment). Gated on the
+  // window's own bounds rather than `markers`'/`theme`'s object identity —
+  // both are fresh values every SubjectPage render — via a content key, so
+  // this doesn't fire on every unrelated re-render either. Deliberately a
+  // MERGE (notMerge: false) touching only xAxis + the anchor series'
+  // markLine/markArea, never series `data` — see options.ts's windowPatch.
+  const markersKey = (markers ?? []).map((m) => `${m.id}:${m.fromMs}:${m.toMs ?? ""}`).join("|");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: markersKey/theme?.muted are content-based stand-ins for `markers`/`theme`, which are fresh objects every render (see comment above)
+  useEffect(() => {
+    if (markers === undefined) return; // no incremental-patch contract for this caller
+    chart.current?.setOption(
+      windowPatch({
+        window: win,
+        events: markers,
+        theme: theme ?? { muted: "" },
+        anchorSeriesId: anchorSeriesId ?? null,
+      }),
+      { notMerge: false, lazyUpdate: true },
+    );
+    // Stamped HERE, inside the effect that actually made the imperative
+    // setOption() call above — deliberately NOT echoed from a render-body
+    // prop. A Task 13 review found that SubjectPage's `data-window-to`
+    // (on the outer <section>, in ChartSection's render body) merely
+    // reflects the `window_` prop every render, regardless of whether this
+    // effect ever ran — so a browser spec asserting on it could not
+    // distinguish "ECharts' axis actually advanced" from "React re-rendered
+    // with a new prop" and could not fail even when this effect's own dep
+    // list was broken (the exact Task 11 regression). This attribute is the
+    // one genuinely gated on this effect firing with these bounds.
+    if (el.current) el.current.dataset.echartsWindowTo = String(win.to);
+  }, [win.from, win.to, markersKey, theme?.muted, anchorSeriesId]);
 
   return <div ref={el} data-testid={testId} style={{ height: HEIGHT_PX }} className="w-full" />;
 }

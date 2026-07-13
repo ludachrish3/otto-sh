@@ -55,6 +55,20 @@ HOSTLESS_TEST_ARGS = (
     "--cov-fail-under=85",
 )
 
+# The per-push browser lane's marker expression. MUST match the Makefile's
+# `dashboard` target (`-m "browser and not soak"`) — `soak` is the heavy,
+# minutes-long replay stress test (tests/e2e/monitor/dashboard/test_replay_soak.py),
+# gated to run only on demand (`make dashboard-soak`, chromium-only; see that
+# test's module docstring), never on every push. There is no single source
+# these two can share: this Makefile target is invoked directly (CI's
+# `dashboard-e2e` job runs `uv run nox -k <browser>`, not `make dashboard`),
+# so Make has no natural way to read a Python constant here without shelling
+# out to a second interpreter for one string. That gap is exactly how this
+# shipped once already: nox's `dashboard` session selected bare `browser`
+# (no `not soak`), so the soak test ran on every push, on every engine,
+# timing out on WebKit. If either expression changes, change both.
+DASHBOARD_MARKER_EXPR = "browser and not soak"
+
 
 @nox_uv.session(python=PYTHON_VERSIONS, uv_groups=["dev"])
 def tests_unit(session: nox.Session) -> None:
@@ -207,6 +221,14 @@ def dashboard(session: nox.Session, browser: str) -> None:
     the hostless gate (and its 5-Python CI matrix) so only this session needs a
     browser binary; installs just this variant's engine.
 
+    Uses `DASHBOARD_MARKER_EXPR` (`browser and not soak`), matching `make
+    dashboard` exactly: this is the per-push lane, and the `soak` replay
+    stress test (test_replay_soak.py) is on-demand only (`make
+    dashboard-soak`) — see `DASHBOARD_MARKER_EXPR`'s comment for why this
+    string is a hand-kept duplicate rather than a shared constant, and why
+    that duplication is exactly what let the soak run on every push here
+    before this comment existed.
+
     This suite drives the built React dashboard (`src/otto/monitor/static/
     dist/`) through a real `MonitorServer` — there's no legacy static
     fallback since the Task 9 cutover, so `dist/` must already exist before
@@ -226,7 +248,7 @@ def dashboard(session: nox.Session, browser: str) -> None:
         "pytest",
         "tests/e2e/monitor/dashboard",
         "-m",
-        "browser",
+        DASHBOARD_MARKER_EXPR,
         "--browser",
         browser,
         # CI-only lane: unlike `make dashboard` (which writes coverage data for

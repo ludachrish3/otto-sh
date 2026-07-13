@@ -148,8 +148,11 @@ def _run_monitor_briefly(
     """Start, tick, and cleanly stop ``otto monitor`` against *host*.
 
     Shared choreography for the monitor e2e tests: start the subprocess with
-    ``--hosts <host> --interval <interval> --db <db_path>``, poll the DB for up
-    to 6 s waiting for the first collection tick, send SIGINT, and wait up to
+    ``--live --hosts <host> --interval <interval> --db <db_path>`` (``--live``
+    is required since spec 2026-07-12 made ``otto monitor`` require exactly
+    one of ``--live``/``<source>`` — bare ``otto monitor <flags>`` is now a
+    usage error, exit 2), poll the DB for up to 6 s waiting for the first
+    collection tick, send SIGINT, and wait up to
     30 s for a clean exit — failing loudly (never skipping) if the live-bed
     process wedges. Returns the process's exit status and captured output so
     callers apply their own assertions.
@@ -168,6 +171,7 @@ def _run_monitor_briefly(
     """
     proc = _start_monitor(
         [
+            "--live",
             "--hosts",
             host,
             "--interval",

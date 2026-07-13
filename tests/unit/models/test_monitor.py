@@ -282,8 +282,8 @@ class TestExportDocument:
         assert doc.sessions[0].meta.tabs[0].id == "overview"
 
     def test_live_meta_specs_stay_strict(self):
-        # Both halves of the seam split: the live /api/meta specs stay strict,
-        # their export-record variants stay lenient.
+        # Both halves of the seam split: the live, internal meta specs stay
+        # strict, their export-record variants stay lenient.
         assert ChartSpec.model_config["extra"] == "forbid"
         assert TabSpec.model_config["extra"] == "forbid"
         assert ChartSpecRecord.model_config["extra"] == "ignore"

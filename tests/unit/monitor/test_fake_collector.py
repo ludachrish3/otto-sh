@@ -48,6 +48,8 @@ async def test_push_publishes_sse_payload() -> None:
     q = fake.subscribe()
     await fake.push("host1", "Overall CPU", 42.5)
     msg = q.get_nowait()
-    assert msg["type"] == "metric"
-    assert msg["key"] == "host1/Overall CPU"
-    assert msg["chart"] == "CPU"
+    assert msg["format"] == 1
+    assert msg["metrics"][0]["host"] == "host1"
+    assert msg["metrics"][0]["label"] == "Overall CPU"
+    # A brand-new label ships its chart_map + meta with the same fragment.
+    assert msg["chart_map"]["Overall CPU"] == "CPU"

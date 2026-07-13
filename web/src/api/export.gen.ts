@@ -74,6 +74,12 @@ export type Host2 = string;
 export type Tab = string;
 export type LogEvents = LogEventRecord[];
 export type Sessions = SessionRecord[];
+export type Format1 = 1;
+export type Session = string;
+export type Metrics2 = MetricRecord[];
+export type Events1 = EventRecord[];
+export type LogEvents1 = LogEventRecord[];
+export type DeletedEventIds = number[];
 
 /**
  * The versioned historical-export document (spec 2026-07-10 §3).
@@ -91,7 +97,11 @@ export interface MonitorHistoricalExportDocument {
  * One self-contained monitoring session: config snapshot + data.
  *
  * ``end=None`` means a still-open session. ``chart_map`` maps bare series
- * labels to chart keys (:attr:`ChartSpec.label`), as ``/api/data`` does today.
+ * labels to chart keys (:attr:`ChartSpec.label`), as the dashboard does
+ * today via the ``monitor_sessions``/SSE wire.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "SessionRecord".
  */
 export interface SessionRecord {
   id: Id;
@@ -109,6 +119,9 @@ export interface SessionRecord {
 }
 /**
  * A session's lab config as it was at run time (spec 2026-07-10 §3).
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "LabSnapshot".
  */
 export interface LabSnapshot {
   elements?: Elements;
@@ -125,6 +138,9 @@ export interface LabSnapshot {
  * singleton behavior). An explicit entry with zero member hosts renders as an
  * empty element (e.g. an unpopulated chassis). ``singleton`` is always
  * derived from membership count, never stored (spec 2026-07-10 §2).
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "ElementRecord".
  */
 export interface ElementRecord {
   id: Id1;
@@ -138,6 +154,9 @@ export interface ElementRecord {
  * Deliberately **never** credentials (spec 2026-07-10 §3.1). ``interfaces``
  * is flattened to ``netdev -> ip`` (the frontend needs no more). Lenient
  * read-back like every export row (:class:`RowModel`).
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "HostSnapshot".
  */
 export interface HostSnapshot {
   id: Id2;
@@ -167,6 +186,9 @@ export interface Interfaces {
  * ``dynamic`` value stays for parity with the runtime enum (and the live
  * topology view). ``impair`` is the *declared* in-path middlebox host id —
  * static config, unlike applied netem parameters.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "LinkSnapshot".
  */
 export interface LinkSnapshot {
   id: Id3;
@@ -179,6 +201,9 @@ export interface LinkSnapshot {
 }
 /**
  * One end of a snapshotted link (mirrors ``otto.link.model.LinkEndpoint``).
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "LinkEndpointSnapshot".
  */
 export interface LinkEndpointSnapshot {
   host: Host;
@@ -194,6 +219,9 @@ export interface LinkEndpointSnapshot {
  * health needs per-series cadences, and chart definitions drift over months
  * exactly like lab configs (spec 2026-07-10 §2, §4) — hence the lenient
  * ``*Record`` spec variants, not the strict live-meta classes.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "SessionMeta".
  */
 export interface SessionMeta {
   interval?: Interval;
@@ -207,7 +235,10 @@ export interface SessionMeta {
  * Same fields; ``extra="ignore"`` so an older otto can read exports written
  * by a newer one whose chart specs carry new fields (the :class:`RowModel`
  * boundary philosophy). :class:`ChartSpec` itself stays ``extra="forbid"``
- * as the otto-built live ``/api/meta`` contract.
+ * as the otto-built internal parser-catalog contract.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "ChartSpecRecord".
  */
 export interface ChartSpecRecord {
   label: Label1;
@@ -220,6 +251,9 @@ export interface ChartSpecRecord {
 }
 /**
  * Lenient read-back variant of :class:`TabSpec` (see :class:`ChartSpecRecord`).
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "TabSpecRecord".
  */
 export interface TabSpecRecord {
   id: Id4;
@@ -239,6 +273,9 @@ export interface TabSpecRecord {
  * column). Exporting with ``model_dump(mode='json', exclude_none=True)`` emits
  * the JSON spelling and omits ``meta`` when ``None`` (``host=''`` is still
  * emitted — empty string is not ``None``).
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "MetricRecord".
  */
 export interface MetricRecord {
   timestamp: Timestamp;
@@ -257,6 +294,9 @@ export interface MetricRecord {
  * event *export* stays ``MonitorEvent.to_dict()``. ``timestamp`` is required
  * (a row without one is skipped, as before); everything else defaults. ``id``
  * is ``None`` when absent so the collector can assign its running id.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "EventRecord".
  */
 export interface EventRecord {
   id?: Id5;
@@ -275,6 +315,9 @@ export interface EventRecord {
  * attaches. The JSON export format spells the time key ``timestamp``; the
  * SQLite column is ``ts`` (its ``fields`` column is JSON-decoded by the
  * loader before validation).
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "LogEventRecord".
  */
 export interface LogEventRecord {
   timestamp: Timestamp2;
@@ -287,5 +330,40 @@ export interface Fields {
   [k: string]: string;
 }
 export interface ChartMap {
+  [k: string]: string;
+}
+/**
+ * An incremental update to ONE live monitor session.
+ *
+ * Spec 2026-07-12 §The stream speaks format:1.
+ *
+ * A fragment is a *partial* :class:`SessionRecord`: every payload field is
+ * optional and carries the SAME name and type as its counterpart there, so the
+ * client appends rather than translates. This is deliberate — Plan 5a lost
+ * three fix waves to a rename across a lenient boundary model
+ * (``MonitorMeta.metrics`` vs ``SessionMeta.charts``), invisible to the type
+ * checker because both sides were ``str`` at the seam. The strongest defence is
+ * not a mapping function but the absence of a second model: these ARE the
+ * payload's models.
+ *
+ * ``deleted_event_ids`` is the one thing a partial record cannot express by
+ * presence, so it is explicit. Event *updates* need no separate kind — the
+ * client upserts by ``id``, so an edited event is just an event.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "MonitorSessionFragment".
+ */
+export interface MonitorSessionFragment {
+  format?: Format1;
+  session: Session;
+  metrics?: Metrics2;
+  events?: Events1;
+  log_events?: LogEvents1;
+  deleted_event_ids?: DeletedEventIds;
+  chart_map?: ChartMap1;
+  meta?: SessionMeta | null;
+  [k: string]: unknown;
+}
+export interface ChartMap1 {
   [k: string]: string;
 }

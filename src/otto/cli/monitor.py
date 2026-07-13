@@ -23,7 +23,7 @@ import typer
 from pydantic import ValidationError
 
 from ..config import all_hosts, get_lab
-from ..models import MonitorExport
+from ..models import MIN_INTERVAL_SECONDS, MonitorExport
 from ..monitor.collector import MetricCollector
 from ..monitor.db import MetricDB, UnsupportedDBError
 from ..monitor.export import build_db_export, build_session_metric_db
@@ -66,7 +66,7 @@ def monitor(
             "-i",
             metavar="SECONDS",
             help="Collection interval in seconds.",
-            min=1.0,
+            min=MIN_INTERVAL_SECONDS,
         ),
     ] = 5.0,
     db: Annotated[

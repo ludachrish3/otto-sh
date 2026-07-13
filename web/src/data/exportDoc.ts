@@ -14,6 +14,7 @@ import type {
   SessionRecord,
   TabSpecRecord,
 } from "../api/export.gen";
+import { buildIndex, type SeriesIndex, sliceSeries } from "./seriesIndex";
 import { parseTs } from "./time";
 
 export class ExportParseError extends Error {}
@@ -55,6 +56,9 @@ export interface NormalizedSession {
   metrics: MetricRecord[];
   events: NonNullable<SessionRecord["events"]>;
   logEvents: NonNullable<SessionRecord["log_events"]>;
+  /** Per-series index over `metrics` — what review AND live read from instead
+   * of scanning the flat array (see seriesIndex.ts). */
+  index: SeriesIndex;
   chartMap: Record<string, string>;
   elements: DerivedElement[];
   hostIds: Set<string>;
@@ -141,11 +145,58 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     metrics,
     events: raw.events ?? [],
     logEvents: raw.log_events ?? [],
+    index: buildIndex(metrics),
     chartMap: raw.chart_map ?? {},
     elements,
     hostIds,
     elementIds: new Set(elements.map((e) => e.id)),
   };
+}
+
+/** Inverse of `normalizeSession` — rebuilds a wire-shape `SessionRecord` from
+ * a `NormalizedSession`. Backs live export (Plan 5b final review, Finding
+ * I2): `applyFragment` (fragment.ts) only ever updates the fields on the
+ * `NormalizedSession` it's given — `events`/`chart_map`/`meta` are REPLACED
+ * there, never written back onto the raw document object the shell booted
+ * with (only `metrics` happens to survive, by accidental array aliasing —
+ * `normalizeSession` hands out the SAME array reference and `applyFragment`
+ * pushes into it in place). A live export re-serializing the stale raw
+ * document would silently drop every post-boot chart_map/meta update and
+ * every post-boot event — routine mid-run, since the producer ships
+ * chart_map/meta whenever a new `proc/<pid>` series first reports. Rebuilding
+ * from `sessions[]` (the state every live tick actually keeps current) makes
+ * a live export truthful structurally, not by relying on that aliasing. */
+export function sessionToRecord(session: NormalizedSession): SessionRecord {
+  return {
+    id: session.id,
+    label: session.label,
+    note: session.note,
+    start: new Date(session.startMs).toISOString(),
+    end: new Date(session.endMs).toISOString(),
+    lab: {
+      hosts: session.lab.hosts,
+      links: session.lab.links,
+      elements: session.lab.explicitElements,
+    },
+    meta: {
+      interval: session.meta.interval,
+      charts: session.meta.charts,
+      tabs: session.meta.tabs,
+    },
+    metrics: session.metrics,
+    events: session.events,
+    log_events: session.logEvents,
+    chart_map: session.chartMap,
+  };
+}
+
+/** Rebuilds a whole `format:1` export document from the store's live
+ * `sessions[]` — see `sessionToRecord`'s header for why this, not the raw
+ * boot-time document, is what a live export must serialize. */
+export function documentFromSessions(
+  sessions: NormalizedSession[],
+): MonitorHistoricalExportDocument {
+  return { format: 1, sessions: sessions.map(sessionToRecord) };
 }
 
 export function parseExportDocument(text: string): ParseResult {
@@ -210,10 +261,11 @@ export function metricsForSubject(
   subjectId: string,
   range: TimeRange | null,
 ): MetricRecord[] {
-  return session.metrics.filter((m) => {
-    if (m.host !== subjectId) return false;
-    if (range === null) return true;
-    const ts = parseTs(m.timestamp);
-    return ts >= range.from && ts <= range.to;
-  });
+  // Was: session.metrics.filter(...) — an O(total points) scan per subject, per
+  // render. Now: only the subject's own series, sliced by binary search.
+  const keys = session.index.keysByHost.get(subjectId);
+  if (keys === undefined) return [];
+  const out: MetricRecord[] = [];
+  for (const key of keys) out.push(...sliceSeries(session.index, key, range));
+  return out;
 }

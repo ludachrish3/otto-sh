@@ -4,6 +4,7 @@
 // derived, range-scoped (data/health.ts) — nothing here is stored state.
 import { Link, useLocation } from "wouter";
 
+import { useNow } from "../data/clock";
 import { elementRollup, headlineFor, healthForHosts, type SubjectHealth } from "../data/health";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { formatSpan } from "../data/time";
@@ -27,9 +28,23 @@ export function OverviewPage() {
   const [, navigate] = useLocation();
   const session = useActiveSession();
   const range = useReviewStore((s) => s.range);
+  const mode = useReviewStore((s) => s.mode);
+  // Unreachable dimming needs a clock, not events: a silent host emits no
+  // SSE message, so nothing would ever re-render it without a tick. Ticks
+  // at the session's own collection interval (design: the down threshold
+  // IS HEALTH_K x cadence, so a faster clock can't learn anything sooner).
+  // Only live mode ticks at all — an archive's "now" is its own endMs, no
+  // wall clock involved. This clock lives in its own store (data/clock.ts)
+  // specifically so a tick re-renders only this page, never chart pages.
+  const tickMs =
+    mode === "live" && session?.meta.interval != null ? session.meta.interval * 1000 : null;
+  const now = useNow(tickMs);
   if (!session) return null;
 
-  const healths = healthForHosts(session, range);
+  // Liveness keeps ticking while paused (spec): nowMs comes from the wall
+  // clock whenever live, independent of `range` — a paused/frozen VIEW must
+  // not freeze the fleet's actual down/ok verdicts.
+  const healths = healthForHosts(session, range, mode === "live" ? now : undefined);
   const hostById = new Map(session.lab.hosts.map((h) => [h.id, h]));
 
   return (
@@ -100,6 +115,7 @@ export function OverviewPage() {
                     >
                       <article
                         data-testid={`host-tile-${hostId}`}
+                        data-health={health.status}
                         className="flex min-w-36 flex-col gap-1"
                       >
                         <span className="flex items-center gap-2 font-medium">

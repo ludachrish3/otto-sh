@@ -28,6 +28,7 @@ from .host import (
     UnixHostSpec,
 )
 from .monitor import (
+    MIN_INTERVAL_SECONDS,
     ChartSpec,
     ChartSpecRecord,
     ElementRecord,
@@ -45,6 +46,7 @@ from .monitor import (
     SessionRecord,
     TabSpec,
     TabSpecRecord,
+    validate_interval,
 )
 from .options import (
     FtpOptionsSpec,
@@ -69,6 +71,7 @@ from .settings import (
 )
 
 __all__ = [
+    "MIN_INTERVAL_SECONDS",
     "ChartSpec",
     "ChartSpecRecord",
     "DockerComposeSpec",
@@ -108,4 +111,5 @@ __all__ = [
     "TftpOptionsSpec",
     "ToolchainSpec",
     "UnixHostSpec",
+    "validate_interval",
 ]

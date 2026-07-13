@@ -182,12 +182,14 @@ class MetricCollector:
         self._parsers: dict[str, MetricParser] = {p.command: p for p in unified}
 
         # A collector built via `hosts=[]` with no live targets (e.g. a
-        # scripted test collector) still declares its parser CATALOG: /api/meta
-        # must describe tabs/charts even with nothing collected yet. This does
-        # NOT fire for review mode's `MetricCollector(targets=[])` (targets is
-        # explicitly `[]`, not `None`) — that collector intentionally serves
-        # empty meta, since review mode renders from the loaded `document`
-        # (see otto.monitor.export/otto.cli.monitor), not from /api/meta.
+        # scripted test collector) still declares its parser CATALOG: the
+        # typed meta model must describe tabs/charts even with nothing
+        # collected yet, since it feeds every session's SessionMeta on the
+        # monitor_sessions/SSE wire. This does NOT fire for review mode's
+        # `MetricCollector(targets=[])` (targets is explicitly `[]`, not
+        # `None`) — that collector intentionally serves empty meta, since
+        # review mode renders from the loaded `document` (see
+        # otto.monitor.export/otto.cli.monitor), not from get_meta_model().
         if not self._targets and targets is None:
             unified = list(parser_dict.values())
             self._parsers = dict(parser_dict)
@@ -223,6 +225,11 @@ class MetricCollector:
         # collectors that never call run() report it as None via
         # get_meta_model().
         self._global_interval: float | None = None
+
+        # Stamped by MonitorServer from the SessionFrame (the collector has no
+        # notion of sessions). Empty in the no-server paths (unit tests, the
+        # pytest plugin's file export), where nothing consumes the stream.
+        self.session_id: str = ""
 
         # Parser-health state, keyed (host_name, command) — or (host_name, oid)
         # for the SNMP layer. Command failures are edge-triggered: _failing
@@ -470,20 +477,33 @@ class MetricCollector:
             await self._db.write_point(ts, host_name, label, dp.value)
             if map_changed:
                 await self._db.write_chart_map(json.dumps(self._store.chart_map))
-        msg: dict[str, Any] = {
-            "type": "metric",
+        # A fragment IS a partial SessionRecord — same field names as the payload
+        # it appends to, so the client appends instead of translating (spec §The
+        # stream speaks format:1).
+        record: dict[str, Any] = {
+            "timestamp": ts.isoformat(),
             "host": host_name,
             "label": label,
-            "chart": view.chart,
-            "y_title": view.y_title,
-            "unit": view.unit,
-            "key": key,
-            "ts": ts.isoformat(),
             "value": dp.value,
         }
         if dp.meta is not None:
-            msg["meta"] = dp.meta
-        self._publish(msg)
+            record["meta"] = dp.meta
+        frag: dict[str, Any] = {
+            "format": 1,
+            "session": self.session_id,
+            "metrics": [record],
+        }
+        if map_changed:
+            # A label seen for the first time: ship the chart specs with it so the
+            # client can render a brand-new chart without re-fetching. Deferred
+            # import — otto.monitor.export imports this module.
+            from .export import session_meta
+
+            frag["chart_map"] = dict(self._store.chart_map)
+            frag["meta"] = session_meta(self, interval=self._global_interval).model_dump(
+                mode="json"
+            )
+        self._publish(frag)
 
     async def _record_log_events(self, host_name: str, tab: str, events: "list[LogEvent]") -> None:
         """Store, persist, and publish one tick's log-event rows.
@@ -497,10 +517,17 @@ class MetricCollector:
                 await self._db.write_log_event(ev.ts, host_name, tab, ev.fields)
         self._publish(
             {
-                "type": "log_event",
-                "host": host_name,
-                "tab": tab,
-                "rows": [{"ts": ev.ts.isoformat(), "fields": dict(ev.fields)} for ev in events],
+                "format": 1,
+                "session": self.session_id,
+                "log_events": [
+                    {
+                        "timestamp": ev.ts.isoformat(),
+                        "host": host_name,
+                        "tab": tab,
+                        "fields": dict(ev.fields),
+                    }
+                    for ev in events
+                ],
             }
         )
 
@@ -627,7 +654,7 @@ class MetricCollector:
         )
         rowid = await self._db.write_event(event) if self._db else 0
         event = self._store.add_event(event, rowid)
-        self._publish({"type": "event", **event.to_dict()})
+        self._publish({"format": 1, "session": self.session_id, "events": [event.to_dict()]})
         return event
 
     async def delete_event(self, event_id: int) -> bool:
@@ -636,7 +663,7 @@ class MetricCollector:
             return False
         if self._db:
             await self._db.delete_event(event_id)
-        self._publish({"type": "event_deleted", "id": event_id})
+        self._publish({"format": 1, "session": self.session_id, "deleted_event_ids": [event_id]})
         return True
 
     async def update_event(
@@ -657,7 +684,9 @@ class MetricCollector:
         ev.end_timestamp = end_timestamp
         if self._db:
             await self._db.update_event(ev)
-        self._publish({"type": "event_updated", **ev.to_dict()})
+        # No separate "updated" kind: the client upserts events by id, so an
+        # edited event is just an event. One merge rule, not two.
+        self._publish({"format": 1, "session": self.session_id, "events": [ev.to_dict()]})
         return ev
 
     # ------------------------------------------------------------------
@@ -674,10 +703,10 @@ class MetricCollector:
     def get_chart_map(self) -> dict[str, str]:
         """Return a mapping of series label → chart group key.
 
-        Used by the dashboard to assign historical series (loaded from ``/api/data``)
-        to their correct Plotly chart containers without requiring ``series_labels()``
-        on each parser.  The map is built lazily as data arrives in
-        ``_process_host_results()``.
+        Used by the dashboard to assign historical series (loaded from the
+        ``monitor_sessions``/SSE wire) to their correct chart containers
+        without requiring ``series_labels()`` on each parser.  The map is
+        built lazily as data arrives in ``_process_host_results()``.
         """
         return self._store.snapshot_chart_map()
 
@@ -686,7 +715,7 @@ class MetricCollector:
         return self._store.events()
 
     def get_log_events(self) -> "list[dict[str, Any]]":
-        """JSON-safe log-event rows for ``/api/data`` and export.
+        """JSON-safe log-event rows for the ``monitor_sessions``/SSE wire and export.
 
         Shape per row: ``{"timestamp", "host", "tab", "fields"}`` —
         the ``LogEventRecord`` spelling, insertion-ordered per (host, tab) ring.
@@ -697,7 +726,10 @@ class MetricCollector:
         ]
 
     def get_meta_model(self) -> MonitorMeta:
-        """Return the typed /api/meta payload (see get_meta for the dict form)."""
+        """Return the typed internal meta model (see get_meta for the dict form).
+
+        Not served at any endpoint directly — see :class:`~otto.models.monitor.MonitorMeta`.
+        """
         # Derive host names from series keys (all series, including proc)
         hosts = self._store.hosts_from_series()
         # Fall back to the list of live hosts if no data has arrived yet

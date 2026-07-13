@@ -1,8 +1,10 @@
-"""Harness self-tests + the wire-contract pins Phase 1 must keep green.
+"""Harness self-tests + the wire-contract pins Phase 1/Plan 5b must keep green.
 
 No browser: these run everywhere the hostless gate runs. The *_KEYS sets pin
-the exact JSON shapes of /api/meta, /api/data, and SSE metric messages — the
-contract the Phase 1 backend refactor and Phase 2 React port build against.
+the exact JSON shapes of /api/monitor_sessions and the SSE fragment messages —
+the contract the Phase 1 backend refactor, Phase 2 React port, and Plan 5b
+live streaming build against. ``/api/meta``/``/api/data`` were retired in
+Plan 5b Task 3 (both modes now hydrate through /api/monitor_sessions).
 """
 
 import contextlib
@@ -11,7 +13,6 @@ import json
 import socket
 import threading
 import time
-import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
@@ -64,20 +65,16 @@ def _tolerate_missing_dist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
 
 
 MODE_KEYS = {"mode", "source"}
-META_KEYS = {"hosts", "live", "metrics", "tabs", "interval"}
-# "interval" (global cadence) added in Phase 2 — deliberate contract evolution.
-META_METRIC_KEYS = {"label", "y_title", "unit", "command", "chart", "interval"}
-# "interval" added in Phase 1 (per-parser collection intervals) — deliberate contract evolution.
-META_TAB_KEYS = {"id", "label", "metrics", "kind", "columns"}
-# "kind"/"columns" added in Phase 3 Plan B (table tabs) — deliberate contract evolution.
-DATA_KEYS = {"series", "events", "chart_map", "log_events"}
-# "log_events" added in Phase 3 Plan B (log-sourced data) — deliberate contract evolution.
 LOG_EVENT_ROW_KEYS = {"timestamp", "host", "tab", "fields"}
-SSE_LOG_EVENT_KEYS = {"type", "host", "tab", "rows"}
 EVENT_KEYS = {"id", "timestamp", "label", "source", "color", "dash", "end_timestamp"}
-SSE_METRIC_KEYS = {"type", "host", "label", "chart", "y_title", "unit", "key", "ts", "value"}
-SSE_EVENT_KEYS = {"type", *EVENT_KEYS}
-SSE_EVENT_DELETED_KEYS = {"type", "id"}
+# The SSE stream speaks format:1 (plan 5b, Task 2): every message is a
+# MonitorSessionFragment-shaped dict, so its top-level keys are always a
+# subset of {"format", "session", "metrics", "events", "log_events",
+# "deleted_event_ids", "chart_map", "meta"} — never a bare "type" tag.
+SSE_LOG_EVENT_KEYS = {"format", "session", "log_events"}
+SSE_METRIC_KEYS = {"format", "session", "metrics"}
+SSE_EVENT_KEYS = {"format", "session", "events"}
+SSE_EVENT_DELETED_KEYS = {"format", "session", "deleted_event_ids"}
 
 
 def _get_json(url: str) -> Any:
@@ -122,12 +119,16 @@ def _two_session_document() -> MonitorExport:
 
 @pytest.fixture
 def live_export_dash() -> Iterator[DashboardHarness[FakeCollector]]:
-    """A live-mode harness with ``frame``/``lab`` supplied, for ``/api/export/json``.
+    """A live-mode harness with ``frame``/``lab`` supplied, for the routes that need them.
 
     ``live_dash`` (conftest.py) deliberately omits ``frame``/``lab`` — every
-    pin that fixture backs hits ``/api/meta``/``/api/data``/``/api/stream``,
-    none of which need them. Only the export pin does, so it gets its own
-    minimal harness rather than widening ``live_dash`` for every consumer.
+    pin that fixture backs hits ``/api/stream`` or ``/api/mode``, neither of
+    which need them. ``/api/monitor_sessions`` and ``/api/export/json`` in
+    live mode both build a snapshot document from ``frame``/``collector``/
+    ``lab`` (see ``MonitorServer``'s ``monitor_sessions``/``export_json``
+    routes) and 500 (``RuntimeError``) without them, so those pins get their
+    own minimal harness rather than widening ``live_dash`` for every
+    consumer.
     """
     harness = DashboardHarness(
         FakeCollector(), frame=new_frame(label=None, note=None), lab=LabSnapshot()
@@ -147,53 +148,6 @@ def review_dash() -> Iterator[DashboardHarness[MetricCollector]]:
     ).start()
     yield harness
     harness.stop()
-
-
-def test_serves_meta_and_data(live_dash: DashboardHarness[FakeCollector]) -> None:
-    meta = _get_json(live_dash.url + "/api/meta")
-    assert meta["live"] is True
-    assert meta["hosts"] == ["host1", "host2"]
-    data = _get_json(live_dash.url + "/api/data")
-    assert len(data["series"]["host1/Overall CPU"]) == 3  # the preloaded ticks
-
-
-def test_meta_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
-    meta = _get_json(live_dash.url + "/api/meta")
-    assert set(meta) == META_KEYS
-    assert all(set(m) == META_METRIC_KEYS for m in meta["metrics"])
-    assert all(set(t) == META_TAB_KEYS for t in meta["tabs"])
-    assert [t["id"] for t in meta["tabs"]] == ["cpu", "memory", "disk", "network"]
-
-
-def test_data_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
-    live_dash.run(live_dash.collector.add_event(label="pinned", color="#112233", dash="dot"))
-    data = _get_json(live_dash.url + "/api/data")
-    assert set(data) == DATA_KEYS
-    # Points carry ts/value always; meta only when present (exclude_none).
-    point_keys = {k for pts in data["series"].values() for p in pts for k in p}
-    assert {"ts", "value"} <= point_keys <= {"ts", "value", "meta"}
-    # Pin the wire format, not just the key set: ts must stay ISO-8601.
-    first_point = next(p for pts in data["series"].values() for p in pts)
-    datetime.fromisoformat(first_point["ts"].replace("Z", "+00:00"))
-    assert all(set(e) == EVENT_KEYS for e in data["events"])
-
-
-def test_data_log_events_wire_contract(live_dash: DashboardHarness[FakeCollector]) -> None:
-    ts = datetime(2026, 7, 4, 12, 0, tzinfo=timezone.utc)
-    live_dash.run(
-        live_dash.collector.push_log_events(
-            "host1", tab="syslog", rows=[(ts, {"message": "pinned"})]
-        )
-    )
-    data = _get_json(live_dash.url + "/api/data")
-    assert all(set(row) == LOG_EVENT_ROW_KEYS for row in data["log_events"])
-    row = data["log_events"][0]
-    assert row == {
-        "timestamp": ts.isoformat(),
-        "host": "host1",
-        "tab": "syslog",
-        "fields": {"message": "pinned"},
-    }
 
 
 def test_sse_stream_delivers_batched_log_events(
@@ -222,15 +176,15 @@ def test_sse_stream_delivers_batched_log_events(
             assert line, "SSE stream closed before a log_event message arrived"
             if line.startswith("data:"):
                 candidate = json.loads(line[len("data:") :])
-                if candidate["type"] == "log_event":
+                if "log_events" in candidate:
                     payload = candidate
     finally:
         conn.close()
     assert set(payload) == SSE_LOG_EVENT_KEYS
-    assert payload["host"] == "host1"
-    assert payload["tab"] == "syslog"
-    assert [r["fields"]["message"] for r in payload["rows"]] == ["a", "b"]
-    assert all(set(r) == {"ts", "fields"} for r in payload["rows"])
+    assert [le["host"] for le in payload["log_events"]] == ["host1", "host1"]
+    assert [le["tab"] for le in payload["log_events"]] == ["syslog", "syslog"]
+    assert [le["fields"]["message"] for le in payload["log_events"]] == ["a", "b"]
+    assert all(set(le) == LOG_EVENT_ROW_KEYS for le in payload["log_events"])
 
 
 def test_sse_stream_delivers_metric_messages(
@@ -254,10 +208,11 @@ def test_sse_stream_delivers_metric_messages(
     finally:
         conn.close()
     assert set(payload) == SSE_METRIC_KEYS
-    assert payload["type"] == "metric"
-    assert payload["key"] == "host1/Overall CPU"
-    # Pin the wire format, not just the key set: ts must stay ISO-8601.
-    datetime.fromisoformat(payload["ts"].replace("Z", "+00:00"))
+    assert payload["metrics"][0]["host"] == "host1"
+    assert payload["metrics"][0]["label"] == "Overall CPU"
+    assert payload["metrics"][0]["value"] == 42.0
+    # Pin the wire format, not just the key set: timestamp must stay ISO-8601.
+    datetime.fromisoformat(payload["metrics"][0]["timestamp"].replace("Z", "+00:00"))
 
 
 def test_sse_stream_delivers_metric_messages_with_meta(
@@ -279,8 +234,11 @@ def test_sse_stream_delivers_metric_messages_with_meta(
                 payload = json.loads(line[len("data:") :])
     finally:
         conn.close()
-    assert set(payload) == SSE_METRIC_KEYS | {"meta"}
-    assert payload["meta"] == {"Used": "1 G"}
+    # dp.meta rides inside the metric record itself (MetricRecord.meta), a
+    # different field from the fragment's own top-level "meta" (the session
+    # chart-catalog) — so the top-level key set is unchanged.
+    assert set(payload) == SSE_METRIC_KEYS
+    assert payload["metrics"][0]["meta"] == {"Used": "1 G"}
 
 
 def test_mode_wire_contract_live(live_dash: DashboardHarness[FakeCollector]) -> None:
@@ -290,18 +248,21 @@ def test_mode_wire_contract_live(live_dash: DashboardHarness[FakeCollector]) -> 
     assert payload["source"] is None
 
 
-def test_document_404_in_live_mode(live_dash: DashboardHarness[FakeCollector]) -> None:
-    with pytest.raises(urllib.error.HTTPError) as exc_info:
-        urllib.request.urlopen(live_dash.url + "/api/document", timeout=10)
-    # An HTTPError IS the response object, holding an open socket. Closing it is
-    # not hygiene-for-its-own-sake: `filterwarnings = error` turns the
-    # ResourceWarning it emits when garbage-collected into an exception raised
-    # inside a __del__, which pytest reports as an unraisable against whichever
-    # test happens to be running when GC fires (issue #133). Same idiom as
-    # tests/unit/monitor/test_server.py's DELETE-404 test.
-    with contextlib.closing(exc_info.value) as err:
-        assert err.code == 404
-        assert json.loads(err.read()) == {"detail": "no document in live mode"}
+def test_monitor_sessions_serves_a_live_snapshot(
+    live_export_dash: DashboardHarness[FakeCollector],
+) -> None:
+    """Live boot reuses review's hydration path: the snapshot IS a format:1 payload.
+
+    ``live_dash`` (no frame/lab) can't hit this route — /api/monitor_sessions
+    in live mode needs both to build the snapshot, exactly like
+    /api/export/json — so this uses ``live_export_dash`` instead, same as
+    ``test_export_json_emits_format_1`` below.
+    """
+    payload = _get_json(live_export_dash.url + "/api/monitor_sessions")
+    assert payload["format"] == 1
+    assert len(payload["sessions"]) == 1
+    session = payload["sessions"][0]
+    assert "end" not in session, "a live session is one whose end is still open"
 
 
 def test_export_json_emits_format_1(
@@ -322,10 +283,15 @@ def test_mode_wire_contract_review(review_dash: DashboardHarness[MetricCollector
     assert payload["source"] == "x.db"
 
 
-def test_document_round_trips_in_review_mode(
+def test_monitor_sessions_round_trips_in_review_mode(
     review_dash: DashboardHarness[MetricCollector],
 ) -> None:
-    payload = _get_json(review_dash.url + "/api/document")
+    """/api/monitor_sessions in review mode re-serves the loaded document verbatim.
+
+    Same endpoint as the live snapshot above — review and live hydrate
+    through the one route (see the module docstring).
+    """
+    payload = _get_json(review_dash.url + "/api/monitor_sessions")
     assert MonitorExport.model_validate(payload) == _two_session_document()
 
 
@@ -423,7 +389,7 @@ def _next_sse_payload(resp: http.client.HTTPResponse) -> dict[str, Any]:
 def test_sse_event_lifecycle_wire_contract(
     live_dash: DashboardHarness[FakeCollector],
 ) -> None:
-    """Pin the event/event_updated/event_deleted SSE shapes (metric shape is pinned above)."""
+    """Pin the add/update/delete event SSE fragment shapes (metric shape is pinned above)."""
     port = urlsplit(live_dash.url).port
     assert port is not None
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
@@ -434,22 +400,23 @@ def test_sse_event_lifecycle_wire_contract(
         ev = live_dash.run(live_dash.collector.add_event(label="pin", color="#112233", dash="dot"))
         created = _next_sse_payload(resp)
         assert set(created) == SSE_EVENT_KEYS
-        assert created["type"] == "event"
-        assert created["id"] == ev.id
-        # Pin the wire format, not just the key set: ts must stay ISO-8601.
-        datetime.fromisoformat(created["timestamp"])
+        assert set(created["events"][0]) == EVENT_KEYS
+        assert created["events"][0]["id"] == ev.id
+        # Pin the wire format, not just the key set: timestamp must stay ISO-8601.
+        datetime.fromisoformat(created["events"][0]["timestamp"])
 
         live_dash.run(
             live_dash.collector.update_event(ev.id, label="pin2", color="#445566", dash="dash")
         )
         updated = _next_sse_payload(resp)
         assert set(updated) == SSE_EVENT_KEYS
-        assert updated["type"] == "event_updated"
-        assert updated["label"] == "pin2"
+        # No separate "updated" kind — the client upserts by id, so an edited
+        # event is just an event.
+        assert updated["events"][0]["label"] == "pin2"
 
         live_dash.run(live_dash.collector.delete_event(ev.id))
         deleted = _next_sse_payload(resp)
         assert set(deleted) == SSE_EVENT_DELETED_KEYS
-        assert deleted == {"type": "event_deleted", "id": ev.id}
+        assert deleted == {"format": 1, "session": "", "deleted_event_ids": [ev.id]}
     finally:
         conn.close()

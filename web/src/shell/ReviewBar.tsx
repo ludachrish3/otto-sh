@@ -22,6 +22,7 @@ export function ReviewBar() {
   const sourceName = useReviewStore((s) => s.sourceName);
   const activeSessionId = useReviewStore((s) => s.activeSessionId);
   const range = useReviewStore((s) => s.range);
+  const mode = useReviewStore((s) => s.mode);
   const { selectSession, setRange, resetView } = useReviewStore((s) => s.actions);
   const session = useActiveSession();
 
@@ -41,7 +42,16 @@ export function ReviewBar() {
     setTo(msToLocalInput(range?.to ?? boundsTo));
   }, [range?.from, range?.to, boundsFrom, boundsTo]);
 
-  if (!session || !bounds) return null;
+  // UX spec §12: "Review bar (per-view context row, historical only)". Live
+  // mode gets its own follow/pause chrome in AppBar instead (Task 9) — the
+  // HISTORICAL tag + range presets/Reset here would otherwise contradict the
+  // "Live"/pause-toggle chrome rendering at the same time. This hiding was
+  // reverted (commit 7a9e849) only because bootstrap.ts set mode="live"
+  // before a boot hydrate had actually succeeded, so an empty live server
+  // claimed to be live and broke the dashboard Playwright suite; that root
+  // cause is now fixed (mode is set only after a successful hydrate — see
+  // bootstrap.ts), so hiding is safe to restore (Plan 5b final review, C1).
+  if (!session || !bounds || mode === "live") return null;
 
   const activePreset =
     range === null

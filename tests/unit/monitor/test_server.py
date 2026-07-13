@@ -10,15 +10,19 @@ Covers:
 
 import asyncio
 import contextlib
+import json
 import urllib.error
 import urllib.request
 from pathlib import Path
 
 import pytest
 
+from otto.models import LabSnapshot, MonitorExport
 from otto.monitor import server as server_module
 from otto.monitor.collector import MetricCollector
 from otto.monitor.server import MonitorServer, _build_app
+from otto.monitor.session import new_frame
+from tests._fixtures._fake_collector import FakeCollector
 
 
 def _empty_collector() -> MetricCollector:
@@ -310,3 +314,90 @@ class TestDashboardRoute:
 
         with pytest.raises(RuntimeError, match="make web"):
             MonitorServer(_empty_collector(), host="127.0.0.1", port=0)
+
+
+class TestMonitorSessionsEndpoint:
+    @pytest.mark.asyncio
+    async def test_live_mode_serves_a_snapshot_of_the_running_session(self) -> None:
+        """Live boot reuses review's hydration path: the snapshot IS a format:1 payload."""
+        collector = FakeCollector()
+        frame = new_frame(label="run", note=None)
+        server = MonitorServer(
+            collector, host="127.0.0.1", port=0, mode="live", frame=frame, lab=LabSnapshot()
+        )
+        task = asyncio.create_task(server.serve())
+        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
+            await asyncio.sleep(0.05)
+        try:
+            await collector.push("r1", "cpu", 1.0)
+            url = f"http://127.0.0.1:{server._port}/api/monitor_sessions"
+            resp = await asyncio.to_thread(urllib.request.urlopen, url)
+            with contextlib.closing(resp):
+                payload = json.loads(resp.read())
+            export = MonitorExport.model_validate(payload)
+            assert export.format == 1
+            assert len(export.sessions) == 1
+            assert export.sessions[0].id == frame.id
+            assert export.sessions[0].end is None, "a live session is one whose end is still open"
+            assert any(m.host == "r1" for m in export.sessions[0].metrics)
+        finally:
+            server.stop()
+            await task
+
+    @pytest.mark.asyncio
+    async def test_live_mode_with_no_session_returns_404(self) -> None:
+        """A live server built without frame/lab has no session to serve.
+
+        Both in-repo consumers that build a bare ``DashboardHarness``/
+        ``MonitorServer`` (``shell_dash`` in the dashboard e2e conftest, and
+        ``scripts/capture_docs_media.py``) get exactly this: the default
+        ``mode="live"`` with ``frame=None``/``lab=None``. Before this fix, that
+        combination raised ``RuntimeError`` from inside the route handler —
+        an uncaught 500 + uvicorn traceback on every page load through either
+        consumer, silently swallowed by the client's soft-fail boot contract
+        so no test went red (issue found in Plan 5b Task 8 review). A "nothing
+        is being recorded yet" live server is a legitimate empty state, not a
+        programming error, so this must 404 with a clear detail instead.
+        """
+        collector = _empty_collector()
+        # mode="live" default, no frame/lab.
+        server = MonitorServer(collector, host="127.0.0.1", port=0)
+        task = asyncio.create_task(server.serve())
+        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
+            await asyncio.sleep(0.05)
+        try:
+            url = f"http://127.0.0.1:{server._port}/api/monitor_sessions"
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                await asyncio.to_thread(urllib.request.urlopen, url)
+            with contextlib.closing(exc_info.value) as err:
+                assert err.code == 404
+                body = json.loads(err.read())
+                assert "no monitor session is being recorded" in body["error"]
+        finally:
+            server.stop()
+            await task
+
+    @pytest.mark.asyncio
+    async def test_retired_endpoints_are_gone(self) -> None:
+        collector = FakeCollector()
+        server = MonitorServer(
+            collector,
+            host="127.0.0.1",
+            port=0,
+            mode="live",
+            frame=new_frame(label=None, note=None),
+            lab=LabSnapshot(),
+        )
+        task = asyncio.create_task(server.serve())
+        while not server.started:  # noqa: ASYNC110 — polling external uvicorn state; no event source available
+            await asyncio.sleep(0.05)
+        try:
+            for path in ("/api/document", "/api/meta", "/api/data"):
+                url = f"http://127.0.0.1:{server._port}{path}"
+                with pytest.raises(urllib.error.HTTPError) as exc_info:
+                    await asyncio.to_thread(urllib.request.urlopen, url)
+                with contextlib.closing(exc_info.value) as err:
+                    assert err.code == 404, f"{path} should be gone"
+        finally:
+            server.stop()
+            await task

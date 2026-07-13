@@ -17,13 +17,25 @@ Emitted documents (default):
   (:class:`~otto.models.link.LinkSpec`),
 - ``settings`` — for ``settings.toml``,
 - ``reservations`` — for the reservations JSON file,
-- ``monitor-meta`` — the monitor dashboard's ``/api/meta`` payload
-  (:class:`~otto.models.monitor.MonitorMeta`); not user-edited, it feeds the
-  web dashboard's generated TS types (``scripts/gen_web_types.sh``).
+- ``monitor-meta`` — the monitor dashboard's internal chart/tab-layout model
+  (:class:`~otto.models.monitor.MonitorMeta`); not user-edited and not served
+  at any endpoint (it is reshaped into each session's ``SessionMeta`` for the
+  ``monitor_sessions``/SSE wire — see :func:`otto.monitor.export.session_meta`),
+  it feeds the web dashboard's generated TS types (``scripts/gen_web_types.sh``).
 - ``monitor-export`` — the versioned historical export document
   (:class:`~otto.models.monitor.MonitorExport`, ``format: 1``); not
   user-edited, it feeds the web dashboard's generated TS types like
-  ``monitor-meta``.
+  ``monitor-meta``. It also carries an otherwise-unreferenced ``$defs`` entry
+  for :class:`~otto.models.monitor.MonitorSessionFragment` (the live SSE wire
+  model, spec 2026-07-12) — see :func:`_monitor_export_schema` — so that
+  ``web/src/api/export.gen.ts`` gets a ``MonitorSessionFragment`` TS type
+  built from the *same* ``MetricRecord``/``EventRecord``/``LogEventRecord``/
+  ``SessionMeta`` ``$defs`` the export document already reaches, rather than
+  a second, duplicate set of interfaces from a second schema document. The
+  fragment is deliberately NOT reachable from the document's own
+  ``properties``/``required`` — it is not part of the on-disk export format,
+  and folding it in there would risk exactly the export-schema drift the
+  ``format:1`` payload guards against.
 """
 
 import re
@@ -36,7 +48,7 @@ from ..host.os_profile import registered_host_specs
 from ..host.transfer import TRANSFER_BACKENDS
 from .host import HostSpec
 from .link import LinkSpec
-from .monitor import MonitorExport, MonitorMeta
+from .monitor import MonitorExport, MonitorMeta, MonitorSessionFragment
 from .settings import ReservationFile, SettingsModel
 
 _SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
@@ -168,6 +180,32 @@ def _hosts_array_schema(
     }
 
 
+def _monitor_export_schema() -> dict[str, Any]:
+    """Build the ``monitor-export`` document, plus an unreachable fragment ``$defs`` entry.
+
+    The document is :class:`MonitorExport`'s schema with one addition: a
+    ``$defs`` entry for :class:`~otto.models.monitor.MonitorSessionFragment`.
+    The fragment reuses ``MetricRecord``/``EventRecord``/``LogEventRecord``/
+    ``SessionMeta`` verbatim, so its own ``$defs`` (from a standalone
+    ``model_json_schema()`` call) are already present under those same keys
+    in the export document's ``$defs`` — ``setdefault`` below is a no-op in
+    practice, kept only so a future divergence would show up as a schema
+    difference rather than being silently overwritten either direction.
+    Nothing in the document's own ``properties`` references the
+    ``MonitorSessionFragment`` def, by design (see the module docstring);
+    ``json-schema-to-typescript --unreachableDefinitions`` (see
+    ``scripts/gen_web_types.sh``) still emits a type for it.
+    """
+    doc = MonitorExport.model_json_schema()
+    frag = MonitorSessionFragment.model_json_schema()
+    frag_defs = frag.pop("$defs", {})
+    defs = doc.setdefault("$defs", {})
+    for key, value in frag_defs.items():
+        defs.setdefault(key, value)
+    defs["MonitorSessionFragment"] = frag
+    return doc
+
+
 def _lab_schema(hosts_array: dict[str, Any]) -> dict[str, Any]:
     """Build the ``lab.json`` object schema: ``hosts``/``links`` sections + ``_`` comments."""
     link_doc = LinkSpec.model_json_schema(ref_template="#/$defs/{model}")
@@ -215,10 +253,10 @@ def build_schemas(*, builtins_only: bool = False) -> dict[str, dict[str, Any]]:
     docs["monitor-meta"] = _decorate(
         MonitorMeta.model_json_schema(),
         "monitor-meta",
-        "Monitor dashboard /api/meta payload",
+        "Monitor dashboard chart/tab-layout model",
     )
     docs["monitor-export"] = _decorate(
-        MonitorExport.model_json_schema(),
+        _monitor_export_schema(),
         "monitor-export",
         "Monitor historical export document",
     )

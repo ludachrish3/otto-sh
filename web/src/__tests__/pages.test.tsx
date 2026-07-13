@@ -39,7 +39,7 @@ const KITCHEN = readFileSync(join(__dir, "../../fixtures/kitchen-sink.json"), "u
 function resetStore() {
   useReviewStore.setState({
     sessions: [],
-    rawDocument: null,
+    rawMonitorSessions: null,
     sourceName: null,
     warnings: [],
     importError: null,

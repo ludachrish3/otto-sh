@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -423,11 +423,29 @@ WEB_SRCS := $(shell find web/src -type f) \
 $(DASHBOARD_DIST) $(COVREPORT_DIST) &: $(WEB_SRCS) $(WEB_NODE_MODULES)
 	$(MAKE) web
 
-dashboard: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; (re)builds web/'s dist bundles when missing or older than web/src/ (see `make web`).
-	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m browser $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
+# The `-m "browser and not soak"` below MUST match noxfile.py's
+# DASHBOARD_MARKER_EXPR (the `dashboard` session's marker, which is what
+# CI's `dashboard-e2e` job actually runs via `uv run nox -k <browser>` — NOT
+# this target). See that constant's comment for why the two can't share one
+# literal source and for the concrete incident (soak ran on every push, on
+# every engine, until nox's expression was brought back in line with this
+# one) that makes keeping them in step worth a standing comment. If this
+# expression changes, change noxfile.py's too.
+dashboard: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the browser e2e suites (monitor dashboard + coverage report) on DASHBOARD_BROWSERS (default: chromium — feeds `coverage`). Full matrix: `make dashboard-all`. Needs `make browsers` once; (re)builds web/'s dist bundles when missing or older than web/src/ (see `make web`). Excludes `soak` (see `dashboard-soak`) — minutes of pushing, not a per-task gate.
+	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard tests/e2e/cov/report_browser -m "browser and not soak" $(foreach b,$(DASHBOARD_BROWSERS),--browser $(b)) -n 1 --cov-report= --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard)
 
 dashboard-all: ## Run the dashboard e2e on ALL engines (Chromium + Firefox + WebKit); invoked by `make release`. Needs `make browsers` once.
 	$(MAKE) dashboard DASHBOARD_BROWSERS="chromium firefox webkit"
+
+# --browser chromium is intentionally hardcoded, not DASHBOARD_BROWSERS:
+# measured directly, the soak passes on Chromium in ~15s but WebKit's main
+# thread can't answer a single DOM read within Playwright's 60s action
+# timeout under the ~180k-point SSE firehose (see test_replay_soak.py's
+# module docstring for the measurement). The test itself now skips loudly
+# on any non-chromium `browser_name`, so this flag is belt-and-suspenders,
+# not the only guard.
+dashboard-soak: $(DASHBOARD_DIST) $(COVREPORT_DIST) ## Run the dashboard replay soak (Tier-3, `soak`-marked; NOT part of `make dashboard`/`make coverage`) — drives FakeCollector at max rate in-process, no VM. Chromium only (see comment above). JUnit XML lands in reports/junit/dashboard-soak/.
+	$(TIMEOUT_CMD) uv run pytest tests/e2e/monitor/dashboard/test_replay_soak.py -m "browser and soak" --browser chromium -n 1 --no-cov --screenshot only-on-failure --output reports/playwright $(call junitxml,dashboard-soak)
 
 # Soak/stability + repeat targets disable coverage (--no-cov, overriding the
 # --cov in pytest addopts). Per-test `--cov-context=test` tracing adds overhead

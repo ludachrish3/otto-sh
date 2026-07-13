@@ -12,14 +12,18 @@ The monitor backend was reworked behind a stable
 {class}`~otto.monitor.collector.MetricCollector` facade: the collector
 decomposes into `store`/`db`/`broadcast` modules — joined by `session` (a
 run's identity and lab snapshot) and `export` (the `format:1` producer) —
-dashboard metadata is typed `TabSpec`/`ChartSpec` models served at
-`/api/meta`, and a project-level `register_parsers()` joins the per-host
-registry. The dashboard itself was ported from a single vanilla-JS file to a
-React + Vite + TypeScript single-page app (`web/`, built to `static/dist/`)
-behind the same observable surface. See {doc}`../../guide/monitor` for the
-frontend dev workflow (`make web-dev`) — `tests/e2e/monitor/dashboard/` pins
-the exact ids/classes/behaviors that must survive any further change to
-either side.
+dashboard metadata is typed `TabSpec`/`ChartSpec` models, reshaped into each
+session's `SessionMeta` for the `GET /api/monitor_sessions`/`GET
+/api/stream` wire (spec 2026-07-12 monitor-live-streaming), and a
+project-level `register_parsers()` joins the per-host registry. The
+dashboard itself was ported from a single vanilla-JS file to a React + Vite
++ TypeScript single-page app (`web/`, built to `static/dist/`) behind the
+same observable surface, and later gained a real live producer: both live
+and review boot through the same `/api/monitor_sessions` endpoint, and a
+live tab keeps growing via `/api/stream` SSE fragments rather than
+reloading. See {doc}`../../guide/monitor` for the frontend dev workflow
+(`make web-dev`) — `tests/e2e/monitor/dashboard/` pins the exact
+ids/classes/behaviors that must survive any further change to either side.
 ```
 
 ```{graphviz}
@@ -72,9 +76,12 @@ so "CPU spiked" and "test_load started" correlate.
 
 **Serving and persistence.** A live dashboard
 ({class}`~otto.monitor.server.MonitorServer`) binds an OS-assigned port and
-serves the collector's buffer to the built React frontend. With `--db`,
-each run's samples persist as one session in a SQLite archive — WAL
-journaling on local disks, DELETE on network filesystems
+serves the collector's buffer to the built React frontend: an initial
+`GET /api/monitor_sessions` snapshot (the same `format:1` shape review mode
+loads) plus a live `GET /api/stream` SSE feed of `format:1`-shaped fragments
+that grows an already-open tab in real time. With `--db`, each run's
+samples persist as one session in a SQLite archive — WAL journaling on
+local disks, DELETE on network filesystems
 ({doc}`../subsystems/data-boundary`); running against the same `--db` path
 again appends another session rather than overwriting the archive. The
 positional `otto monitor <source>` form instead replays a saved `.json`

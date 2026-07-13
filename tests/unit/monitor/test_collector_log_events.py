@@ -145,12 +145,21 @@ async def test_record_log_events_publishes_one_batched_sse_message() -> None:
     await collector._record_log_events("host1", "syslog", events)
     msg = q.get_nowait()
     assert msg == {
-        "type": "log_event",
-        "host": "host1",
-        "tab": "syslog",
-        "rows": [
-            {"ts": TS1.isoformat(), "fields": {"message": "a"}},
-            {"ts": TS2.isoformat(), "fields": {"message": "b"}},
+        "format": 1,
+        "session": "",
+        "log_events": [
+            {
+                "timestamp": TS1.isoformat(),
+                "host": "host1",
+                "tab": "syslog",
+                "fields": {"message": "a"},
+            },
+            {
+                "timestamp": TS2.isoformat(),
+                "host": "host1",
+                "tab": "syslog",
+                "fields": {"message": "b"},
+            },
         ],
     }
     assert q.empty()  # batched: exactly one message for the tick

@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import App from "../App";
@@ -36,12 +36,13 @@ if (typeof globalThis.CSS === "undefined") {
 function resetStore() {
   useReviewStore.setState({
     sessions: [],
-    rawDocument: null,
+    rawMonitorSessions: null,
     sourceName: null,
     warnings: [],
     importError: null,
     activeSessionId: null,
     range: null,
+    mode: null,
   });
 }
 
@@ -130,6 +131,23 @@ describe("ReviewBar", () => {
     // The un-noted session's option carries no title attribute at all.
     const firstOption = within(screen.getByRole("listbox")).getByText("minimal");
     expect(firstOption.getAttribute("title")).toBeNull();
+  });
+
+  // Plan 5b final review, Finding C1: mode="live" must hide the whole
+  // HISTORICAL bar, not just leave it dangling under AppBar's "Live ●"
+  // status. This hiding was reverted (commit 7a9e849) only because
+  // bootstrap.ts used to set mode="live" BEFORE a boot hydrate had
+  // succeeded — that root cause is fixed now (mode is set only after a
+  // successful hydrate), so the hiding in ReviewBar itself is safe again.
+  it("hides entirely in live mode, independent of AppBar's own live status", async () => {
+    render(<App />);
+    await importText(MINIMAL, "minimal.json");
+    expect(screen.getByTestId("historical-tag")).toBeTruthy();
+    act(() => {
+      useReviewStore.setState({ mode: "live" });
+    });
+    expect(screen.queryByTestId("review-bar")).toBeNull();
+    expect(screen.queryByTestId("historical-tag")).toBeNull();
   });
 
   it("clamps a custom range that exceeds the session bounds (follow-up #2)", async () => {
