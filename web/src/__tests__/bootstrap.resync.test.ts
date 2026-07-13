@@ -31,7 +31,10 @@ const MINIMAL = readFileSync(join(__dir, "../../fixtures/minimal.json"), "utf-8"
 // `sessions`, not just a no-op replay, while range/activeSessionId hold.
 const GROWN = (() => {
   const doc = JSON.parse(MINIMAL) as {
-    sessions: { end: string; metrics: { timestamp: string; host: string; label: string; value: number }[] }[];
+    sessions: {
+      end: string;
+      metrics: { timestamp: string; host: string; label: string; value: number }[];
+    }[];
   };
   const session = doc.sessions[0];
   session.end = "2026-07-01T09:00:00Z";

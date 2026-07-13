@@ -50,7 +50,10 @@ afterEach(() => {
 
 describe("live export truthfulness", () => {
   it("a live export taken after a fragment carrying new chart_map/meta/events contains them", async () => {
-    const bootSession = { ...synthSession({ hosts: 1, seriesPerHost: 1, ticks: 1, intervalS: 5 }), id: "s" };
+    const bootSession = {
+      ...synthSession({ hosts: 1, seriesPerHost: 1, ticks: 1, intervalS: 5 }),
+      id: "s",
+    };
     // Boot-time raw document (what /api/monitor_sessions served before any
     // streaming happened) — deliberately stale, matching bootstrap.ts's real
     // behavior: rawMonitorSessions is set once at import/hydrate time and
