@@ -98,6 +98,16 @@ export function ElementNode({ data }: { data: TopoNode }) {
 export function HostNode({ data }: { data: TopoNode & { slotBadge?: boolean } }) {
   const slotBadge = data.slotBadge ?? false;
   const status = data.effective ?? "unknown";
+  // Parts, then join — not string concatenation with a baked-in separator. The
+  // old form emitted "unreachable · " with nothing after it when a host had
+  // neither a slot badge nor a board, and an empty <p> (still carrying its
+  // margin) when it had neither and was reachable.
+  const detail = [
+    status === "unreachable" ? "unreachable" : null,
+    slotBadge && data.host?.slot != null ? `slot ${data.host.slot}` : (data.host?.board ?? null),
+  ]
+    .filter((part) => part !== null && part !== "")
+    .join(" · ");
   return (
     <div
       data-testid={`topo-node-${data.id}`}
@@ -110,11 +120,7 @@ export function HostNode({ data }: { data: TopoNode & { slotBadge?: boolean } })
         <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[status]}`} />
         <span className="truncate">{data.label}</span>
       </p>
-      <p className="mt-0.5 text-xs text-gray-400">
-        {status === "unreachable" ? "unreachable · " : ""}
-        {slotBadge && data.host?.slot != null ? `slot ${data.host.slot}` : ""}
-        {slotBadge && data.host?.slot != null ? "" : (data.host?.board ?? "")}
-      </p>
+      {detail !== "" && <p className="mt-0.5 text-xs text-gray-400">{detail}</p>}
       <Ports />
     </div>
   );

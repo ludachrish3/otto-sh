@@ -33,43 +33,45 @@ function App() {
   }, []);
   return (
     <ImportProvider>
-      <AppBar />
-      {hasData ? (
-        <Router hook={useHashLocation}>
-          <ReviewBar />
-          {importError !== null && (
-            <div
-              data-testid="import-error"
-              className="flex items-center justify-between gap-3 border-b border-status-warn/30
-                bg-status-warn/10 px-4 py-2 text-sm text-status-warn dark:bg-status-warn/15"
-            >
-              <span>{importError}</span>
-              <button
-                type="button"
-                data-testid="import-error-dismiss"
-                onClick={clearImportError}
-                className="cursor-pointer rounded-md px-2 py-0.5 font-medium underline-offset-2
-                  hover:underline"
+      <div className="flex min-h-screen flex-col">
+        <AppBar />
+        {hasData ? (
+          <Router hook={useHashLocation}>
+            <ReviewBar />
+            {importError !== null && (
+              <div
+                data-testid="import-error"
+                className="flex items-center justify-between gap-3 border-b border-status-warn/30
+                  bg-status-warn/10 px-4 py-2 text-sm text-status-warn dark:bg-status-warn/15"
               >
-                Dismiss
-              </button>
-            </div>
-          )}
-          <Switch>
-            <Route path="/" component={OverviewPage} />
-            <Route path="/host/:id" component={SubjectPage} />
-            <Route path="/topology" component={TopologyPage} />
-            <Route path="/topology/:elementId" component={TopologyPage} />
-            <Route>
-              <main data-testid="not-found" className="p-4 text-sm text-gray-500">
-                Not found.
-              </main>
-            </Route>
-          </Switch>
-        </Router>
-      ) : (
-        <EmptyState />
-      )}
+                <span>{importError}</span>
+                <button
+                  type="button"
+                  data-testid="import-error-dismiss"
+                  onClick={clearImportError}
+                  className="cursor-pointer rounded-md px-2 py-0.5 font-medium underline-offset-2
+                    hover:underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            <Switch>
+              <Route path="/" component={OverviewPage} />
+              <Route path="/host/:id" component={SubjectPage} />
+              <Route path="/topology" component={TopologyPage} />
+              <Route path="/topology/:elementId" component={TopologyPage} />
+              <Route>
+                <main data-testid="not-found" className="p-4 text-sm text-gray-500">
+                  Not found.
+                </main>
+              </Route>
+            </Switch>
+          </Router>
+        ) : (
+          <EmptyState />
+        )}
+      </div>
     </ImportProvider>
   );
 }

@@ -89,7 +89,9 @@ export function deriveReachability(
   return { effective, warnings };
 }
 
-function pairKey(a: string, b: string): string {
+/** The key for an UNORDERED pair of nodes: sorted, so `pairKey(a, b)` and
+ * `pairKey(b, a)` agree. Parallel-edge grouping depends on that. */
+export function pairKey(a: string, b: string): string {
   return a < b ? `${a}~${b}` : `${b}~${a}`;
 }
 

@@ -27,7 +27,26 @@ def test_deterministic():
 
 def test_documents_round_trip_and_stems():
     docs = build_all()
-    assert set(docs) == {"kitchen-sink", "minimal", "drift", "cascade"}
+    # Subset, not equality. An inventory list here has to be edited every time a
+    # fixture is added — pure tax, and one of the three near-misses this
+    # duplication already caused. What IS worth pinning: every stem named below
+    # is read by literal filename somewhere downstream, so silently dropping one
+    # from build_all() must fail HERE rather than as an ENOENT in a later gate.
+    # kitchen-sink: web/src/__tests__/exportdoc.test.ts, topology.test.ts,
+    #   health.test.ts, seriestree.test.ts, subjectpage.test.tsx, overview.test.tsx,
+    #   pages.test.tsx, events_panel.test.tsx; and repeated
+    #   _import_fixture(page, "kitchen-sink.json") calls in
+    #   tests/e2e/monitor/dashboard/test_review_shell.py.
+    # minimal: web/src/__tests__/reviewbar.test.tsx, reviewstore.test.ts,
+    #   shell.test.tsx, bootstrap.test.ts, events_panel.test.tsx; the dashboard
+    #   e2e conftest (tests/e2e/monitor/dashboard/conftest.py) reads
+    #   web/fixtures/minimal.json directly to build shell_dash; and
+    #   _import_fixture(page, "minimal.json") calls in test_review_shell.py.
+    # drift: web/src/__tests__/reviewbar.test.tsx, reviewstore.test.ts; and
+    #   _import_fixture(page, "drift.json") in test_review_shell.py.
+    # cascade: web/src/__tests__/topology.test.ts; and
+    #   _import_fixture(page, "cascade.json") in test_review_shell.py.
+    assert {"kitchen-sink", "minimal", "drift", "cascade"} <= set(docs)
     for doc in docs.values():
         assert MonitorExport.model_validate(json.loads(dumps(doc))) is not None
 

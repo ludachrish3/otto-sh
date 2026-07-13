@@ -7,19 +7,20 @@ import "@xyflow/react/dist/style.css";
 import {
   Controls,
   type Edge,
+  MiniMap,
   type Node,
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
   useStore,
 } from "@xyflow/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 
 import { useIsDark } from "../charts/useIsDark";
 import { healthForHosts } from "../data/health";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
-import { buildTopoGraph, deriveReachability, type TopoEdge } from "../data/topology";
+import { buildTopoGraph, deriveReachability, pairKey, type TopoEdge } from "../data/topology";
 import { ToggleGroup } from "../ui/ToggleGroup";
 import { LinkEdge } from "./LinkEdge";
 import { LinkInspector } from "./LinkInspector";
@@ -104,6 +105,7 @@ export function TopologyPage() {
   const session = useActiveSession();
   const range = useReviewStore((s) => s.range);
   const [sources, setSources] = useState(false);
+  const [minimap, setMinimap] = useState(false);
   // React Flow's stock chrome (the zoom controls) reads its dark tokens from a
   // `dark` class on ITS OWN container, which the class theme.ts toggles on
   // <html> can't reach — the library only sets it from `colorMode`. Same reason
@@ -116,6 +118,11 @@ export function TopologyPage() {
   const [selected, setSelected] = useState<{ key: string; edge: TopoEdge } | null>(null);
   const selectedEdge = selected?.key === viewKey ? selected.edge : null;
   const [hoveredEdge, setHoveredEdge] = useState<string | null>(null);
+  // Stable identity: LinkInspector's Escape effect depends on `onClose`, so a
+  // fresh arrow every render made it tear down and re-subscribe the document
+  // keydown listener on every render. `setSelected` is a useState setter and is
+  // itself stable, so the empty dep array is correct.
+  const closeInspector = useCallback(() => setSelected(null), []);
 
   const graph = useMemo(() => {
     if (!session) return null;
@@ -142,7 +149,7 @@ export function TopologyPage() {
     });
     const groupSizes = new Map<string, number>();
     for (const e of graph.edges) {
-      const key = [e.source, e.target].sort().join("~");
+      const key = pairKey(e.source, e.target);
       groupSizes.set(key, (groupSizes.get(key) ?? 0) + 1);
     }
     const edges: Edge[] = graph.edges.map((e) => ({
@@ -150,7 +157,7 @@ export function TopologyPage() {
       source: e.source,
       target: e.target,
       type: "link",
-      data: { edge: e, groupSize: groupSizes.get([e.source, e.target].sort().join("~")) ?? 1 },
+      data: { edge: e, groupSize: groupSizes.get(pairKey(e.source, e.target)) ?? 1 },
     }));
     return { nodes, edges };
   }, [graph, session, expand]);
@@ -176,7 +183,7 @@ export function TopologyPage() {
 
   return (
     <ReactFlowProvider>
-      <main data-testid="topology-page" className="flex h-[calc(100vh-6.5rem)] flex-col gap-3 p-4">
+      <main data-testid="topology-page" className="flex min-h-0 flex-1 flex-col gap-3 p-4">
         <div className="flex items-center gap-3">
           <ToggleGroup
             testId="view-toggle"
@@ -207,6 +214,19 @@ export function TopologyPage() {
             }`}
           >
             Sources
+          </button>
+          <button
+            type="button"
+            data-testid="minimap-toggle"
+            aria-pressed={minimap}
+            onClick={() => setMinimap((v) => !v)}
+            className={`cursor-pointer rounded-full border px-2 py-0.5 text-xs ${
+              minimap
+                ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
+                : "border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-400"
+            }`}
+          >
+            Minimap
           </button>
           <FitButton />
         </div>
@@ -246,10 +266,24 @@ export function TopologyPage() {
             >
               <Controls showInteractive={false} />
               <TopoLegend />
+              {/* MiniMap doesn't forward arbitrary props (incl. data-testid) to its
+                  rendered Panel — it hardcodes its own "rf__minimap" — so a wrapper
+                  carries our testid instead. `contents` (not a plain block div): the
+                  Panel inside is absolutely positioned, so a normal wrapper collapses
+                  to a 0x0 box and Playwright then treats OUR testid element as
+                  hidden (empty bounding box) even though the minimap itself is
+                  plainly on screen. `display: contents` takes the wrapper out of box
+                  generation entirely, so it doesn't interfere with the Panel's
+                  absolute bottom-right positioning either. */}
+              {minimap && (
+                <div data-testid="topo-minimap" className="contents">
+                  <MiniMap pannable zoomable />
+                </div>
+              )}
             </ReactFlow>
             <RefitOnResize />
           </div>
-          <LinkInspector edge={selectedEdge} onClose={() => setSelected(null)} />
+          <LinkInspector edge={selectedEdge} onClose={closeInspector} />
         </div>
       </main>
     </ReactFlowProvider>

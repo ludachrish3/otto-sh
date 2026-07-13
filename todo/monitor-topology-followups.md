@@ -6,18 +6,31 @@ to merge; none of these block it.
 
 ## Mechanical follow-ups
 
-1. Retire the fixture-stem enumeration class: derive the two Python stem
+1. ~~Retire the fixture-stem enumeration class: derive the two Python stem
    lists and the exportdoc fixture list from one source (`build_all()` keys /
-   fixtures glob). Three near-misses this phase.
-2. MiniMap (+ `onlyRenderVisibleElements`) when labs outgrow tens of nodes —
-   deferred from the spec with Chris's veto invited.
-3. Cosmetics: dangling "unreachable · " separator in `HostNode` when no
+   fixtures glob). Three near-misses this phase.~~ Shipped in Task 1
+   (2026-07-12): `build_all()` in `scripts/gen_monitor_fixtures.py` is now the
+   single source; the drift guard parametrizes from it and `exportdoc.test.ts`
+   reads the fixtures directory.
+2. ~~MiniMap~~ shipped as an opt-in toggle, default off (Task 4, 2026-07-12).
+3. `onlyRenderVisibleElements` is deliberately **not** shipped alongside the
+   minimap toggle: it culls off-screen elements from the DOM entirely, and
+   the dashboard e2e counts edges on a canvas that already withholds them
+   until both endpoint nodes are measured — the exact mechanism behind the
+   #130 webkit flake. Turning on DOM culling on top of that needs its own
+   justification first (measure whether React Flow is actually slow at the
+   node/edge counts we actually hit — kitchen-sink is small) and its own test
+   strategy for not reintroducing a #130-shaped race into the e2e suite.
+4. ~~Cosmetics: dangling "unreachable · " separator in `HostNode` when no
    badge/board; export `pairKey` from `topology.ts` (`TopologyPage`
-   duplicates the sort-join twice).
+   duplicates the sort-join twice).~~ Shipped in Task 2 (2026-07-12):
+   `HostNode`'s detail line now builds parts and joins them instead of
+   concatenating a fixed separator, and `pairKey` is exported from
+   `topology.ts`.
 
 ## Deferred from the legend + routing spec (2026-07-12)
 
-4. **Static-link layering ("D\*").** Push a hub's peers one column deeper so
+5. **Static-link layering ("D\*").** Push a hub's peers one column deeper so
    same-column links become forward links — Chris's idea, and it makes db-01's
    peers read as downstream. Layer on **declared + implicit links only**: if a
    *dynamic* link gets a vote, a tunnel coming up shoves edge-gw and chassis-a a
@@ -30,7 +43,7 @@ to merge; none of these block it.
    ALL links takes same-column edges 2 → 0 but swallowed edges 0 → 3. Net worse.
    The static-only variant is 1 and 1.
 
-5. **Tunnels as overlays on their underlay links.** `Tunnel` already carries its
+6. **Tunnels as overlays on their underlay links.** `Tunnel` already carries its
    ordered chain (`path: tuple[TunnelHop, ...]`, `src/otto/tunnel/model.py`) but
    the monitor export **discards it** — a tunnel is flattened to a two-endpoint
    `LinkSnapshot` with `provenance: "dynamic"`. Rendering a tunnel riding the
@@ -42,7 +55,7 @@ to merge; none of these block it.
    nothing to wrap. Exercising it needs a multi-hop tunnel in the fixture. The
    grey casing (shipped) is the cheap stand-in.
 
-6. **Obstacle-aware routing for skip-column cross-depth edges.** `routeCrossColumn`
+7. **Obstacle-aware routing for skip-column cross-depth edges.** `routeCrossColumn`
    anchors face-to-face between its two endpoints with no awareness of columns it
    passes over; a link that skips a column can still be swallowed by a node in an
    overlapping row band in the column it crosses. Trigger: an element at depth >= 3
@@ -52,22 +65,19 @@ to merge; none of these block it.
    also not caught by anything in CI today: `kitchen-sink` has no element deep enough
    to produce a skip-column edge, so a new fixture with a deeper hop chain is needed
    before this can even be demonstrated, let alone regression-tested. Design this
-   together with item 4 (static-link layering) — D\* changes which nodes sit at which
+   together with item 5 (static-link layering) — D\* changes which nodes sit at which
    depth, and therefore which edges skip a column in the first place; routing the
    skip-column case before deciding on layering risks solving the wrong shape.
 
 ## Residue notes (2026-07-12)
 
-- **`h-[calc(100vh-6.5rem)]` on `TopologyPage`'s `<main>`.** The same stale
-  chrome-height constant the inspector used to carry: `ReviewBar` is
-  `flex-wrap`, so when it wraps to a second row (≤1280px, or with a session
-  picker) the canvas is taller than the space left for it and the page scrolls.
-  Pre-existing, and the inspector no longer depends on it (2026-07-12, it is now
-  bounded by the canvas box). Fixing it properly means making the shell a flex
-  column with `min-h-0` rather than subtracting a guess.
-- **`LinkInspector`'s `onClose` re-subscribes the Escape listener every
-  render.** The prop is a fresh arrow function on every render of
-  `TopologyPage`, so the Escape keydown effect (now guarded to only register
-  while an edge is selected) tears down and re-subscribes on every render.
-  Pre-existing and harmless, not introduced by the Escape guard (2026-07-12);
-  a `useCallback` around the handler passed as `onClose` would settle it.
+- ~~`h-[calc(100vh-6.5rem)]` on `TopologyPage`'s `<main>`~~ fixed in `e3116a0`
+  (shell is now `flex min-h-screen flex-col`; the topology `<main>` is
+  `min-h-0 flex-1`). Task 4 added a committed regression guard for it
+  (`test_topology_page_does_not_scroll`, forces a 1100px-wide viewport since
+  the wrap only reproduces below ~1150px — Playwright's default 1280x720
+  never triggers it on either fixture).
+- ~~`LinkInspector`'s `onClose` re-subscribes the Escape listener every
+  render.~~ Fixed in Task 2 (2026-07-12): `onClose` is now wrapped in
+  `useCallback` in `TopologyPage`, so the Escape keydown effect's identity is
+  stable and stops tearing down/re-subscribing on every render.

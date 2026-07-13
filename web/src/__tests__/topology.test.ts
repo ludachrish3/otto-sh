@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseExportDocument } from "../data/exportDoc";
 import { healthForHosts } from "../data/health";
-import { buildTopoGraph, deriveReachability } from "../data/topology";
+import { buildTopoGraph, deriveReachability, pairKey } from "../data/topology";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const kitchen = parseExportDocument(
@@ -170,5 +170,11 @@ describe("buildTopoGraph — intra-element", () => {
     const pair = intra.edges.filter((e) => e.provenance === "declared" && e.source !== e.target);
     expect(pair).toHaveLength(2);
     expect(pair.map((e) => e.parallelIndex).sort()).toEqual([0, 1]);
+  });
+});
+
+describe("pairKey", () => {
+  it("is order-independent, so an unordered pair has one key", () => {
+    expect(pairKey("a", "b")).toBe(pairKey("b", "a"));
   });
 });

@@ -1,12 +1,18 @@
 // The import-path contract, tested against the REAL committed fixtures —
-// the same files the Playwright specs and manual dev use. Fixture JSON is
-// imported directly (vite/vitest resolve JSON imports).
+// the same files the Playwright specs and manual dev use.
+//
+// The "every committed fixture" test below reads the DIRECTORY rather than a
+// hand-written list of imports, so its name is true by construction: a new
+// fixture is covered the moment it is committed. (node:fs, not Vite's
+// import.meta.glob — tsconfig has no `vite/client` in `types`, and readFileSync
+// is already the idiom in topology.test.ts and pages.test.tsx.)
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
-import cascadeDoc from "../../fixtures/cascade.json";
-import driftDoc from "../../fixtures/drift.json";
 import kitchenDoc from "../../fixtures/kitchen-sink.json";
-import minimalDoc from "../../fixtures/minimal.json";
 import {
   ExportParseError,
   metricsForSubject,
@@ -15,6 +21,8 @@ import {
   sessionBounds,
   subjectKind,
 } from "../data/exportDoc";
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "../../fixtures");
 
 const parse = (doc: unknown) => parseExportDocument(JSON.stringify(doc));
 
@@ -32,10 +40,13 @@ describe("parseExportDocument", () => {
   });
 
   it("parses every committed fixture without warnings", () => {
-    for (const doc of [kitchenDoc, minimalDoc, driftDoc, cascadeDoc]) {
-      const result = parse(doc);
-      expect(result.warnings).toEqual([]);
-      expect(result.sessions.length).toBeGreaterThan(0);
+    const files = readdirSync(FIXTURES).filter((name) => name.endsWith(".json"));
+    // Guard the guard: an empty glob would make every assertion below vacuous.
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const result = parseExportDocument(readFileSync(join(FIXTURES, file), "utf-8"));
+      expect(result.warnings, file).toEqual([]);
+      expect(result.sessions.length, file).toBeGreaterThan(0);
     }
   });
 

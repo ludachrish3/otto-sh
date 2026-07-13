@@ -73,6 +73,36 @@ describe("HostNode", () => {
     render(<HostNode data={host} />);
     expect(screen.getByTestId("topo-node-h").textContent).not.toContain("slot");
   });
+
+  it("renders no dangling separator when there is nothing to separate", () => {
+    // "unreachable · " with nothing after it: the separator is punctuation
+    // BETWEEN two parts, so it must not survive when the second part is absent.
+    const host: TopoNode = {
+      id: "lonely",
+      kind: "host",
+      depth: 1,
+      label: "lonely",
+      host: { id: "lonely", element: "lonely" } as TopoNode["host"],
+      effective: "unreachable",
+    };
+    render(<HostNode data={host} />);
+    const root = screen.getByTestId("topo-node-lonely");
+    expect(root.textContent).toContain("unreachable");
+    expect(root.textContent).not.toContain("·");
+  });
+
+  it("separates two present parts with a single ·", () => {
+    const host: TopoNode = {
+      id: "rack-a_n1",
+      kind: "host",
+      depth: 2,
+      label: "rack-a_n1",
+      host: { id: "rack-a_n1", element: "rack-a", slot: 1 } as TopoNode["host"],
+      effective: "unreachable",
+    };
+    render(<HostNode data={{ ...host, slotBadge: true }} />);
+    expect(screen.getByTestId("topo-node-rack-a_n1").textContent).toContain("unreachable · slot 1");
+  });
 });
 
 describe("LocalNode", () => {

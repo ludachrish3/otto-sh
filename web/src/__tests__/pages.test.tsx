@@ -98,3 +98,30 @@ describe("Subject page", () => {
     await waitFor(() => expect(screen.getByTestId("not-found")).toBeTruthy());
   });
 });
+
+describe("Topology page", () => {
+  it("sizes the topology canvas by flex, not by a guessed chrome height", async () => {
+    // h-[calc(100vh-6.5rem)] hardcoded AppBar + ReviewBar's height. ReviewBar is
+    // flex-wrap, so below ~1150px it wraps and that constant is wrong — the canvas
+    // ends up overtall and the page scrolls. (Playwright's default 1280x720 never
+    // triggers the wrap, which is why the e2e regression guard forces 1100px.)
+    // Same class as the two occlusion bugs in #134: a magic constant that is
+    // stale exactly where it matters.
+    render(<App />);
+    await importKitchen();
+    window.location.hash = "#/topology";
+    const main = await screen.findByTestId("topology-page");
+    expect(main.className).not.toContain("100vh");
+    expect(main.className).toContain("flex-1");
+  });
+
+  it("hides the minimap by default and shows it when toggled", async () => {
+    render(<App />);
+    await importKitchen();
+    window.location.hash = "#/topology";
+    await screen.findByTestId("topology-page");
+    expect(screen.queryByTestId("topo-minimap")).toBeNull();
+    fireEvent.click(screen.getByTestId("minimap-toggle"));
+    expect(await screen.findByTestId("topo-minimap")).toBeTruthy();
+  });
+});

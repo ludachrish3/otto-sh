@@ -636,6 +636,88 @@ def test_link_less_edges_do_not_open_the_inspector(shell_dash, page):
     assert page.locator('[data-testid="link-inspector"]').count() == 0
 
 
+def test_minimap_toggles_and_does_not_occlude_the_map(shell_dash, page):
+    """The minimap is off by default, toggles on, and — being an overlay panel in
+    the canvas's bottom-right — must not cover a node.
+
+    The occlusion assertion is elementFromPoint, NOT locator.click(): click()
+    auto-scrolls and retries, so it can manufacture a click on an element a real
+    user could never reach. That is precisely how chromium false-passed #134 while
+    the panel was covering chassis-a the whole time.
+    """
+    # Matches the layout guard's viewport (test_topology_page_does_not_scroll):
+    # below ~1150px wide, ReviewBar wraps to a second row, the canvas is
+    # shorter, and the graph re-fits — the default 1280x720 viewport never
+    # exercises that wrapped-chrome regime, so it can't tell us whether a node
+    # then lands under the minimap.
+    page.set_viewport_size({"width": 1100, "height": 720})
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topology-page"]').wait_for()
+    _wait_for_links(page, 6)
+
+    minimap = page.locator('[data-testid="topo-minimap"]')
+    assert minimap.count() == 0
+    page.locator('[data-testid="minimap-toggle"]').click()
+    # MiniMap doesn't forward data-testid to its rendered Panel (it hardcodes its
+    # own "rf__minimap"), so a wrapper carries our testid instead, and that
+    # wrapper is `display: contents` so it doesn't disturb the Panel's absolute
+    # positioning — which also means the wrapper itself always has an empty
+    # bounding box, so Playwright's default visible-state wait never resolves on
+    # it. `attached` is the correct state for the wrapper; the panel's actual
+    # on-screen presence is confirmed via its real rendered class below.
+    minimap.wait_for(state="attached")
+    panel = page.locator(".react-flow__minimap")
+    panel.wait_for()
+    assert panel.bounding_box() is not None, "minimap toggled on but nothing rendered visibly"
+
+    # Every node must still be the top element at its own centre.
+    nodes = page.locator('[data-testid^="topo-node-"]').all()
+    assert nodes, "no topo-node-* elements found — testid prefix may have drifted"
+    for node in nodes:
+        testid = node.get_attribute("data-testid")
+        box = node.bounding_box()
+        assert box is not None, f"{testid} has no box"
+        hit = page.evaluate(
+            "([x, y]) => document.elementFromPoint(x, y)?.closest('[data-testid]')"
+            "?.getAttribute('data-testid')",
+            [box["x"] + box["width"] / 2, box["y"] + box["height"] / 2],
+        )
+        assert hit == testid, f"{testid} is covered at its centre by {hit}"
+
+
+def test_topology_page_does_not_scroll(shell_dash, page):
+    """Layout regression guard for the flex-based canvas sizing (replacing a
+    hardcoded ``h-[calc(100vh-6.5rem)]`` chrome-height constant, e3116a0).
+
+    The vitest for this (``pages.test.tsx``'s "sizes the topology canvas by
+    flex, not by a guessed chrome height") only pins the CSS class strings —
+    jsdom does no box layout, so it would stay green even if the real layout
+    genuinely overflowed. This is the only committed check that actually
+    measures the box: the canvas is supposed to fit exactly in the viewport
+    below the chrome, so the document must not scroll.
+
+    Forces a narrower-than-default viewport on purpose. ReviewBar is
+    flex-wrap, but empirically it only wraps to a second row below ~1150px
+    wide — Playwright's default 1280x720 viewport never triggers it, on
+    either fixture, so a test at the default size would pass vacuously
+    whether or not the fix is present (verified: it stayed green against the
+    old hardcoded height too). At 1100px the old constant measurably
+    overflowed the document by ~40px; this width is what actually reproduces
+    the bug the fix addresses.
+    """
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topology-page"]').wait_for()
+    page.set_viewport_size({"width": 1100, "height": 720})
+    overflow = page.evaluate(
+        "() => document.documentElement.scrollHeight - document.documentElement.clientHeight"
+    )
+    assert overflow <= 1, f"topology page scrolls by {overflow}px — the canvas is overtall"
+
+
 def test_sources_overlay_toggles_reports_edges(shell_dash, page):
     """Sources overlay (UX §10): default off; toggling reveals the mgmt
     reports-for edge and toggling again removes it."""
