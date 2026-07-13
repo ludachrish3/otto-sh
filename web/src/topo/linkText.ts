@@ -2,7 +2,7 @@
 // two never disagree about what a link is called.
 import type { LinkSnapshot } from "../api/export.gen";
 import type { TopoEdge } from "../data/topology";
-import { EDGE_STYLES } from "./edgeStyles";
+import { EDGE_STYLES, edgeClass } from "./edgeStyles";
 
 export function endpointText(link: LinkSnapshot): string {
   return link.endpoints
@@ -14,7 +14,11 @@ export function endpointText(link: LinkSnapshot): string {
     .join("  ⇄  ");
 }
 
-function primaryLink(edge: TopoEdge): LinkSnapshot | null {
+/** The link an edge is "about", or null if it has none. Also the selection
+ * gate: an edge with no link has nothing for the inspector to inspect, so it
+ * is not selectable (TopologyPage). `reports-for` never has one, nor does a
+ * synthesized `local:*` or intra-view `hop:*` edge. */
+export function primaryLink(edge: TopoEdge): LinkSnapshot | null {
   return edge.link ?? edge.links?.[0] ?? null;
 }
 
@@ -30,7 +34,7 @@ export function edgeTitle(edge: TopoEdge): string {
 }
 
 export function edgeSubtitle(edge: TopoEdge): string {
-  const label = EDGE_STYLES[edge.provenance].label;
+  const label = EDGE_STYLES[edgeClass(edge.provenance)].label;
   if (edge.links !== undefined && edge.links.length > 1) {
     return `${label} · ${edge.links.length} links`;
   }

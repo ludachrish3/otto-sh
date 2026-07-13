@@ -24,22 +24,24 @@
   --color-status-error: #d03b3b;
 }
 
-/* Topology edge strokes (Plan 4, provenance table): consumed by inline SVG
-   style objects in LinkEdge.tsx, which can't use Tailwind dark: variants —
-   so plain custom properties (not @theme tokens), flipped by the same
-   `dark` class on <html> that drives everything else. implicit/reports
-   have no dark alternate in the binding table; dynamic shares declared's
-   variable. */
+/* Topology edge strokes: consumed by inline SVG style objects in LinkEdge.tsx,
+   which can't use Tailwind dark: variants — so plain custom properties (not
+   @theme tokens), flipped by the same `dark` class on <html> that drives
+   everything else.
+
+   `--topo-edge-reports` MUST keep a dark alternate that differs from
+   `--topo-edge-static`. Static and reports-for share a 1.5px width, so colour
+   and dash are all that separate a network link from a metrics-attribution
+   arrow — and without the override below BOTH resolve to #9ca3af in dark mode.
+   topoedge.test.tsx pins this. */
 :root {
-  --topo-edge-implicit: #9ca3af;
-  --topo-edge-declared: #4b5563;
-  --topo-edge-local: #d1d5db;
+  --topo-edge-static: #4b5563;
   --topo-edge-reports: #9ca3af;
   --topo-edge-tunnel-casing: #9ca3af;
 }
 .dark {
-  --topo-edge-declared: #9ca3af;
-  --topo-edge-local: #374151;
+  --topo-edge-static: #9ca3af;
+  --topo-edge-reports: #6b7280;
   --topo-edge-tunnel-casing: #4b5563;
 }
 

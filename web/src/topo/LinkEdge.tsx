@@ -11,7 +11,7 @@ import { BaseEdge, EdgeLabelRenderer, type EdgeProps, useInternalNode } from "@x
 
 import type { TopoEdge } from "../data/topology";
 import { EdgeHoverCard } from "./EdgeHoverCard";
-import { EDGE_STYLES, edgeStyle } from "./edgeStyles";
+import { EDGE_STYLES, edgeClass, edgeStyle } from "./edgeStyles";
 import { ImpairPill } from "./ImpairPill";
 import { type Rect, routeEdge } from "./routing";
 
@@ -57,7 +57,7 @@ export function LinkEdge(props: EdgeProps) {
           labelY: (sourceY + targetY) / 2,
         };
 
-  const casing = EDGE_STYLES[edge.provenance].casing;
+  const casing = EDGE_STYLES[edgeClass(edge.provenance)].casing;
   const emphasized = (selected ?? false) || hovered;
   return (
     <g data-testid={`topo-link-${edge.id}`}>

@@ -3,11 +3,11 @@
 // and it cannot jitter under the pointer. pointer-events:none — hovering must
 // never steal the click that opens the inspector.
 import type { TopoEdge } from "../data/topology";
-import { edgeSubtitle, edgeTitle, endpointText } from "./linkText";
+import { edgeSubtitle, edgeTitle, endpointText, primaryLink } from "./linkText";
 
 export function EdgeHoverCard(props: { edge: TopoEdge; x: number; y: number }) {
   const { edge, x, y } = props;
-  const link = edge.link ?? edge.links?.[0] ?? null;
+  const link = primaryLink(edge);
   return (
     <div
       data-testid={`topo-hover-${edge.id}`}

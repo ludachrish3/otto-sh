@@ -53,7 +53,6 @@ export function LocalNode({ data: _data }: { data: TopoNode }) {
         dark:bg-gray-950"
     >
       ◉ local
-      <span className="ml-2 text-xs font-normal text-gray-400">you are here</span>
       <Ports />
     </div>
   );

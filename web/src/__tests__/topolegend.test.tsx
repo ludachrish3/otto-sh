@@ -32,7 +32,7 @@ describe("TopoLegend", () => {
     renderLegend();
     // Iterate EDGE_STYLES's own keys, not a second hand-written list here —
     // a hand-written copy in both TopoLegend.tsx and this test would let a
-    // sixth provenance ship a canvas style with no legend row and no test
+    // fourth class ship a canvas style with no legend row and no test
     // catching it. See the LINK_ORDER exhaustiveness test below.
     for (const p of Object.keys(EDGE_STYLES)) {
       expect(screen.getByTestId(`topo-legend-link-${p}`)).toBeTruthy();
@@ -44,9 +44,9 @@ describe("TopoLegend", () => {
   });
 
   it("LINK_ORDER covers exactly the keys of EDGE_STYLES", () => {
-    // TypeScript only forces EDGE_STYLES's Record<Provenance, ...> to be
+    // TypeScript only forces EDGE_STYLES's Record<EdgeClass, ...> to be
     // exhaustive; LINK_ORDER is a plain array and could silently drift —
-    // missing a provenance (canvas draws it, legend omits it) or carrying a
+    // missing a class (canvas draws it, legend omits it) or carrying a
     // stale one. Compare as sets so either direction fails.
     expect(new Set(LINK_ORDER)).toEqual(new Set(Object.keys(EDGE_STYLES)));
     expect(LINK_ORDER.length).toBe(Object.keys(EDGE_STYLES).length);

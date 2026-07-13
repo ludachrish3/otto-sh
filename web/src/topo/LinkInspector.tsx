@@ -4,18 +4,26 @@
 // existing NOW teaches the mental model that links are configurable objects.
 //
 // Non-modal by design: §10 describes this as a side-panel, not a dialog — the
-// map and the review bar (range presets, sources toggle) must stay
-// interactive while a link is under inspection, since the selection itself is
-// meant to survive ordinary review-bar interaction. A react-aria Modal (as
-// used by SlideOver) traps focus and blocks all pointer/keyboard input to
-// the rest of the page, which would make that intent unreachable. So this
-// renders as a plain fixed aside with Escape-to-close instead. The events
-// panel stays on SlideOver — its own interaction (clicking a row) closes it,
-// so it never needs background interactivity while open.
+// map and the review bar (range presets, sources toggle) must stay interactive
+// while a link is under inspection, since the selection itself is meant to
+// survive ordinary review-bar interaction. A react-aria Modal (as used by
+// SlideOver) traps focus and blocks all pointer/keyboard input to the rest of
+// the page, which would make that intent unreachable. So this renders as a
+// plain aside with Escape-to-close instead. The events panel stays on SlideOver
+// — its own interaction (clicking a row) closes it, so it never needs
+// background interactivity while open.
+//
+// ABSOLUTE, not fixed: TopologyPage's canvas div is `relative`, so this aside is
+// bounded by the canvas and physically cannot reach the review bar. It used to
+// be `fixed inset-y-0`, spanning the full viewport height and covering the
+// review bar's Apply button at <=1280px. The obvious repair — offsetting by the
+// chrome height — does not work: ReviewBar is flex-wrap, so at exactly those
+// narrow widths it wraps to a second row and any hardcoded offset is already
+// stale. Bounding by the canvas needs no constant at all.
 import { useEffect } from "react";
 
 import type { TopoEdge } from "../data/topology";
-import { endpointText } from "./linkText";
+import { endpointText, primaryLink } from "./linkText";
 
 function Row(props: { label: string; testId: string; children: React.ReactNode }) {
   return (
@@ -29,21 +37,26 @@ function Row(props: { label: string; testId: string; children: React.ReactNode }
 export function LinkInspector(props: { edge: TopoEdge | null; onClose: () => void }) {
   const { edge, onClose } = props;
 
+  // Guarded on `edge`, not just mounted: without this the listener is live
+  // whenever the topology page is, so Escape fires onClose with nothing
+  // selected. The `return null` below cannot do this job — hooks can't be
+  // conditional, so the effect must decline the work itself.
   useEffect(() => {
+    if (edge === null) return;
     const onKeyDown = (evt: KeyboardEvent): void => {
       if (evt.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  }, [edge, onClose]);
 
   if (edge === null) return null;
-  const primary = edge.link ?? edge.links?.[0] ?? null;
+  const primary = primaryLink(edge);
   const title = primary?.name ?? primary?.id ?? edge.id;
   return (
     <aside
       data-testid="link-inspector"
-      className="fixed inset-y-0 right-0 z-30 flex w-96 max-w-full flex-col gap-3 overflow-y-auto
+      className="absolute inset-y-0 right-0 z-30 flex w-96 max-w-full flex-col gap-3 overflow-y-auto
         border-l border-gray-200 bg-white p-4 shadow-lg dark:border-gray-800 dark:bg-gray-950"
     >
       <div className="flex items-center justify-between">

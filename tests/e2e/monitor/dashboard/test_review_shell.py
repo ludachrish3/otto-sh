@@ -560,6 +560,45 @@ def test_link_inspector_and_parallel_edges(shell_dash, page):
     panel.wait_for(state="detached")
 
 
+def test_link_less_edges_do_not_open_the_inspector(shell_dash, page):
+    """A reports-for edge carries no LinkSnapshot — there is nothing to inspect,
+    so clicking it is inert and the hover card is its whole story. Before the
+    edge-class collapse this opened a degenerate panel: raw edge id as the
+    title, no fact rows, and a NetEm section for a relation that has no link
+    object to configure."""
+    page.goto(shell_dash.url)
+    _import_fixture(page, "kitchen-sink.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topology-page"]').wait_for()
+    _wait_for_links(page, 6)
+    page.locator('[data-testid="sources-toggle"]').click()
+    page.wait_for_function(
+        "() => document.querySelectorAll('[data-testid^=\"topo-link-reports:\"]').length === 1"
+    )
+
+    _click_edge(page, "reports:mgmt-01~chassis-a")
+
+    # A negative assertion needs a barrier, or it passes trivially by running
+    # before the click is even processed. NOT a sleep (this repo has no
+    # wait_for_timeout anywhere, and an arbitrary budget is a flake waiting to
+    # happen). The barrier is sound because Playwright's `page.mouse.click()`
+    # blocks through its CDP round-trips (move → down → up); Chromium
+    # synthesizes and dispatches the native `click` event synchronously inside
+    # the `mouseReleased` call, and React flushes discrete-event state updates
+    # synchronously within that same dispatch. By the time `_click_edge()`
+    # returns to the test script, the click's full effect is already committed
+    # to the DOM — no window is left for the assertion to race. This suite
+    # (noxfile.py `dashboard`) also runs on Firefox and WebKit: both dispatch
+    # their synthesized click synchronously within the same input-processing
+    # task and flush React's resulting state update before yielding back to
+    # Playwright, so the same no-window argument holds on all three engines.
+    # The hover-card wait is a belt-and-braces check that the pointer genuinely
+    # landed on the edge (the thing `_point_on_edge` exists to guarantee), not
+    # the thing that makes the assertion safe.
+    page.locator('[data-testid="topo-hover-reports:mgmt-01~chassis-a"]').wait_for()
+    assert page.locator('[data-testid="link-inspector"]').count() == 0
+
+
 def test_sources_overlay_toggles_reports_edges(shell_dash, page):
     """Sources overlay (UX §10): default off; toggling reveals the mgmt
     reports-for edge and toggling again removes it."""
@@ -640,17 +679,17 @@ def test_topology_pan_zoom_fit(shell_dash, page):
 
 def test_link_inspector_survives_range_change(shell_dash, page):
     """Inspector selection is scoped to the view identity: it survives a
-    review-bar range apply (a selected link is static config) and closes
-    on navigation to another view.
+    review-bar range apply (a selected link is static config) and closes on
+    navigation to another view.
 
-    Desktop-width viewport: the non-modal inspector is a fixed full-height
-    right aside, 384px wide (LinkInspector.tsx). At Playwright's default
-    1280px width the panel's span (x >= 896) physically covers the review
-    bar's right end where Apply sits (center x ~1016) — plain visual
-    occlusion, not a focus trap or backdrop; everything left of the panel
-    is fully interactive. Real desktop widths put the whole review bar left
-    of the panel edge; 1600px reproduces that."""
-    page.set_viewport_size({"width": 1600, "height": 900})
+    Runs at Playwright's DEFAULT 1280px width, and that is the point. The
+    inspector used to be a viewport-fixed full-height right aside, so at 1280px
+    its span (x >= 896) covered the review bar's right end where Apply sits
+    (center x ~1016) — this test had to force a 1600px viewport to reach the
+    button at all. The aside is now absolutely positioned INSIDE the canvas box,
+    so it cannot reach the review bar at any width, and the `range-apply` click
+    below is the proof: Playwright's actionability check fails it if anything
+    overlays the button."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     page.goto(f"{shell_dash.url}#/topology")
@@ -706,8 +745,8 @@ def test_topology_legend_hover_and_tunnel_casing(shell_dash, page):
 
     legend = page.locator('[data-testid="topo-legend"]')
     legend.wait_for()
-    for provenance in ("declared", "implicit", "dynamic", "reports-for", "local"):
-        assert legend.locator(f'[data-testid="topo-legend-link-{provenance}"]').count() == 1
+    for edge_class in ("static", "tunnel", "reports-for"):
+        assert legend.locator(f'[data-testid="topo-legend-link-{edge_class}"]').count() == 1
     for status in ("ok", "down", "unreachable", "no-data", "unknown"):
         assert legend.locator(f'[data-testid="topo-legend-status-{status}"]').count() == 1
 

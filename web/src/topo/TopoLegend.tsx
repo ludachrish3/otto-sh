@@ -1,9 +1,9 @@
 // The anchored key for the topology canvas.
 //
-// Bottom-left, NOT right: LinkInspector is a `fixed inset-y-0 right-0 w-96`
-// aside, so a right-anchored panel would be covered the moment an edge is
-// selected. `mb-28` lifts it clear of React Flow's own zoom Controls, which
-// occupy the same corner.
+// Bottom-left, NOT right: LinkInspector is a right-anchored aside filling the
+// canvas's right edge, so a right-anchored panel would be covered the moment an
+// edge is selected. `mb-28` lifts it clear of React Flow's own zoom Controls,
+// which occupy the same corner.
 //
 // Every swatch renders from EDGE_STYLES / STATUS_DOT — the same tables the
 // canvas draws from — so the key cannot drift from what it explains.
@@ -11,15 +11,15 @@ import { Panel } from "@xyflow/react";
 
 import type { EffectiveStatus } from "../data/topology";
 import { Disclosure } from "../ui/Disclosure";
-import { EDGE_STYLES, type Provenance } from "./edgeStyles";
+import { EDGE_STYLES, type EdgeClass } from "./edgeStyles";
 import { ImpairPill } from "./ImpairPill";
 import { STATUS_DOT } from "./nodes";
 
 // Explicit, not derived from Object.keys(EDGE_STYLES): display order is a
-// deliberate design choice, not alphabetical. Exported so a test can assert
-// it covers exactly EDGE_STYLES's keys — TypeScript alone doesn't force this
+// deliberate design choice, not alphabetical. Exported so a test can assert it
+// covers exactly EDGE_STYLES's keys — TypeScript alone doesn't force this
 // hand-written array to be exhaustive, only EDGE_STYLES's own Record type is.
-export const LINK_ORDER: Provenance[] = ["declared", "implicit", "dynamic", "reports-for", "local"];
+export const LINK_ORDER: EdgeClass[] = ["static", "tunnel", "reports-for"];
 const STATUS_ORDER: EffectiveStatus[] = ["ok", "down", "unreachable", "no-data", "unknown"];
 const STATUS_LABEL: Record<EffectiveStatus, string> = {
   ok: "ok",
@@ -32,8 +32,8 @@ const STATUS_LABEL: Record<EffectiveStatus, string> = {
 const ROW = "flex items-center gap-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-300";
 const HEAD = "mb-1 text-[10px] font-semibold tracking-wide text-gray-400 uppercase";
 
-function Swatch({ provenance }: { provenance: Provenance }) {
-  const spec = EDGE_STYLES[provenance];
+function Swatch({ cls }: { cls: EdgeClass }) {
+  const spec = EDGE_STYLES[cls];
   return (
     <svg width="30" height="10" aria-hidden="true" className="shrink-0">
       {spec.casing && (
@@ -64,15 +64,15 @@ export function TopoLegend() {
         <div className="grid grid-cols-2">
           <ul className="border-r border-gray-100 p-2 dark:border-gray-800">
             <li className={HEAD}>Links</li>
-            {LINK_ORDER.map((p) => (
+            {LINK_ORDER.map((c) => (
               <li
-                key={p}
-                data-testid={`topo-legend-link-${p}`}
+                key={c}
+                data-testid={`topo-legend-link-${c}`}
                 className={ROW}
-                title={EDGE_STYLES[p].hint}
+                title={EDGE_STYLES[c].hint}
               >
-                <Swatch provenance={p} />
-                {EDGE_STYLES[p].label}
+                <Swatch cls={c} />
+                {EDGE_STYLES[c].label}
               </li>
             ))}
             <li data-testid="topo-legend-link-impair" className={ROW}>

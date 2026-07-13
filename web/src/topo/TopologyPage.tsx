@@ -23,6 +23,7 @@ import { ToggleGroup } from "../ui/ToggleGroup";
 import { LinkEdge } from "./LinkEdge";
 import { LinkInspector } from "./LinkInspector";
 import { layoutTopo } from "./layout";
+import { primaryLink } from "./linkText";
 import { ElementNode, HostNode, LocalNode } from "./nodes";
 import { TopoLegend } from "./TopoLegend";
 
@@ -171,7 +172,7 @@ export function TopologyPage() {
             {graph.warnings.join(" · ")}
           </p>
         )}
-        <div className="min-h-0 grow rounded-lg border border-gray-200 dark:border-gray-800">
+        <div className="relative min-h-0 grow rounded-lg border border-gray-200 dark:border-gray-800">
           <ReactFlow
             nodes={flow.nodes}
             edges={edges}
@@ -186,8 +187,12 @@ export function TopologyPage() {
               if (target) navigate(target);
             }}
             onEdgeClick={(_evt, edge) => {
+              // Link presence, not provenance: after the class collapse a
+              // synthesized hop path draws exactly like a declared link, and
+              // only one of them has anything to inspect. The hover card
+              // already names the ones that don't.
               const data = edge.data as { edge?: TopoEdge } | undefined;
-              if (data?.edge && data.edge.provenance !== "local") onSelectEdge(data.edge);
+              if (data?.edge && primaryLink(data.edge) !== null) onSelectEdge(data.edge);
             }}
             onEdgeMouseEnter={(_evt, edge) => setHoveredEdge(edge.id)}
             onEdgeMouseLeave={() => setHoveredEdge(null)}
@@ -195,8 +200,8 @@ export function TopologyPage() {
             <Controls showInteractive={false} />
             <TopoLegend />
           </ReactFlow>
+          <LinkInspector edge={selectedEdge} onClose={() => setSelected(null)} />
         </div>
-        <LinkInspector edge={selectedEdge} onClose={() => setSelected(null)} />
       </main>
     </ReactFlowProvider>
   );

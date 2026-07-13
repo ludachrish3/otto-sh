@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { TopoNode } from "../data/topology";
-import { ElementNode, HostNode } from "../topo/nodes";
+import { ElementNode, HostNode, LocalNode } from "../topo/nodes";
 
 afterEach(cleanup);
 
@@ -72,5 +72,15 @@ describe("HostNode", () => {
     };
     render(<HostNode data={host} />);
     expect(screen.getByTestId("topo-node-h").textContent).not.toContain("slot");
+  });
+});
+
+describe("LocalNode", () => {
+  it("names itself without narrating that the user is here", () => {
+    const local: TopoNode = { id: "local", kind: "local", depth: 0, label: "local" };
+    render(<LocalNode data={local} />);
+    const root = screen.getByTestId("topo-node-local");
+    expect(root.textContent).toContain("local");
+    expect(root.textContent).not.toContain("you are here");
   });
 });
