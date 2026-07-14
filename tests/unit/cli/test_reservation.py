@@ -108,7 +108,7 @@ def test_whoami_reports_requested_lab_names_without_loading(capsys):
 
     whoami(ctx)
 
-    assert "tech1, overlay" in capsys.readouterr().out
+    assert "tech1+overlay" in capsys.readouterr().out
 
 
 def test_whoami_is_lab_free(capsys):

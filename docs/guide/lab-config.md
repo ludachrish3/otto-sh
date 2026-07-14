@@ -454,14 +454,15 @@ For the full `*_options` field reference and per-field semantics, see
 
 ## Merging labs
 
-Pass multiple lab names to combine them:
+Combine lab names with `+` to merge them:
 
 ```bash
-otto --lab lab_a,lab_b test TestDevice
+otto --lab lab_a+lab_b test TestDevice
 ```
 
-Hosts from all labs are merged into a single lab.  If two labs define the
-same host ID, the later lab's definition wins.
+Hosts from all labs are merged into a single lab named `lab_a+lab_b`.  If two
+labs define the same host ID, the later lab's definition wins.  `+` is the same
+operator the `Lab` objects themselves use to merge.
 
 ## Exploring labs
 

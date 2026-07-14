@@ -56,7 +56,8 @@ in a host's JSON definition or use `--hop` on the CLI.
 A **Lab** is a JSON file that describes a set of hosts and their topology.
 Otto loads labs at startup (via `--lab` or the `OTTO_LAB` environment
 variable) and makes every host available to instructions, test suites, and
-the monitor. Multiple labs can be merged by passing several names.
+the monitor. Multiple labs can be merged by combining their names with `+`
+(`--lab lab_a+lab_b`).
 
 ```json
 [

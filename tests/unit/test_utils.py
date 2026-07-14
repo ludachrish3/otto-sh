@@ -10,7 +10,7 @@ from typing import Literal
 
 import pytest
 
-from otto.utils import _get_literal_values, is_literal, split_on_commas
+from otto.utils import _get_literal_values, complete_separated_list, is_literal, split_on
 
 # Sample Literal aliases used purely as fixtures for the utility functions
 # below. The host term/transfer selectors are now plain ``str`` (the registries
@@ -70,18 +70,51 @@ class TestIsLiteral:
         assert is_literal(val, TermLiteral) is val
 
 
-# ── split_on_commas ───────────────────────────────────────────────────────────
+# ── split_on ────────────────────────────────────────────────────────────────
 
 
-class TestSplitOnCommas:
+class TestSplitOn:
     def test_string_input(self):
-        assert split_on_commas("a,b,c") == ["a", "b", "c"]
+        assert split_on("a,b,c") == ["a", "b", "c"]
 
     def test_list_input(self):
-        assert split_on_commas(["a,b", "c,d"]) == ["a", "b", "c", "d"]
+        assert split_on(["a,b", "c,d"]) == ["a", "b", "c", "d"]
 
     def test_single_value(self):
-        assert split_on_commas("single") == ["single"]
+        assert split_on("single") == ["single"]
 
     def test_empty_string(self):
-        assert split_on_commas("") == [""]
+        assert split_on("") == [""]
+
+    def test_custom_separator(self):
+        assert split_on("a+b", sep="+") == ["a", "b"]
+
+    def test_custom_separator_leaves_the_default_alone(self):
+        """With sep='+', a comma is just a character — and vice versa."""
+        assert split_on("a,b", sep="+") == ["a,b"]
+        assert split_on("a+b") == ["a+b"]
+
+
+# ── complete_separated_list ─────────────────────────────────────────────────
+
+
+class TestCompleteSeparatedList:
+    def test_completes_first_segment(self):
+        assert complete_separated_list(["tech1", "tech2", "prod"], "tech") == ["tech1", "tech2"]
+
+    def test_keeps_prefix_and_drops_already_chosen(self):
+        assert complete_separated_list(["tech1", "tech2"], "tech1,tech") == ["tech1,tech2"]
+
+    def test_custom_separator(self):
+        assert complete_separated_list(["tech1", "tech2"], "tech1+tech", sep="+") == ["tech1+tech2"]
+
+    def test_default_separator_is_still_the_comma(self):
+        """The regression this refactor invites: `--tests` must not acquire a new separator.
+
+        Both assertions flip if the default separator ever changes to `+`.
+        """
+        # A comma IS a separator by default: the typed prefix is kept and the
+        # already-chosen candidate is dropped.
+        assert complete_separated_list(["x", "y"], "x,") == ["x,y"]
+        # A `+` is NOT: it is an ordinary character, so nothing completes it.
+        assert complete_separated_list(["x", "y"], "x+") == []

@@ -19,6 +19,46 @@ if TYPE_CHECKING:
     from ..link.model import Link
 
 
+LAB_SEPARATOR = "+"
+"""Character combining lab names in ``--lab``, ``OTTO_LAB``, and :func:`load_lab`.
+
+It is deliberately the same operator ``Lab.__add__`` uses to merge labs, so
+one character means "combined labs" at every layer.
+"""
+
+
+def split_lab_names(value: str) -> list[str]:
+    """Split a ``+``-combined lab selection into individual lab names.
+
+    Each segment is stripped, so ``"a + b"`` and ``"a+b"`` are equivalent. An
+    empty segment is a fail-loud error rather than a silently dropped name. The
+    comma has no special meaning — it is an ordinary character in a lab name.
+
+    Args:
+        value: A lab selection such as ``"tech1"`` or ``"tech1+overlay"``.
+
+    Returns:
+        The individual lab names, in the order given.
+
+    Raises:
+        ValueError: If any segment is empty after stripping.
+
+    >>> split_lab_names("tech1+overlay")
+    ['tech1', 'overlay']
+    >>> split_lab_names("tech1")
+    ['tech1']
+    >>> split_lab_names("a,b")
+    ['a,b']
+    """
+    names = [segment.strip() for segment in value.split(LAB_SEPARATOR)]
+    if not all(names):
+        raise ValueError(
+            f"Invalid lab selection {value!r}: empty lab name "
+            f"(names are combined with {LAB_SEPARATOR!r}). Expected LAB[+LAB...]"
+        )
+    return names
+
+
 @dataclass
 class Lab:
     """Container for a named lab environment and its registered hosts.
@@ -153,7 +193,7 @@ class Lab:
         from ..host.remote_host import RemoteHost
 
         pre_merge_name = self.name
-        self.name = f"{self.name}_{other.name}"
+        self.name = f"{self.name}{LAB_SEPARATOR}{other.name}"
         self.resources = self.resources.union(other.resources)
         for host in other.hosts.values():
             if isinstance(host, RemoteHost):
@@ -248,7 +288,8 @@ def load_lab(
     Parameters
     ----------
     labnames : str | list[str]
-        Name(s) of lab data to retrieve (a comma-separated string is split).
+        Name(s) of lab data to retrieve. A string is split on ``+``
+        (see :func:`split_lab_names`); a list is used as-is.
     search_paths : list[Path] | None
         Directories searched by the default json backend. Ignored when
         ``repository`` is supplied.
@@ -269,7 +310,7 @@ def load_lab(
     """
     match labnames:
         case str():
-            lab_names = labnames.split(",")
+            lab_names = split_lab_names(labnames)
         case _:
             lab_names = labnames
 

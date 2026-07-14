@@ -384,8 +384,9 @@ napoleon_use_ivar = True
 
 doctest_global_setup = """
 import asyncio
-from otto.utils import Status, complete_comma_list, split_on_commas
+from otto.utils import Status, complete_separated_list, split_on
 from otto.result import CommandResult, Result, Results
+from otto.config.lab import split_lab_names
 from otto.host.local_host import LocalHost
 from otto.monitor.parsers import human_readable
 from otto.registry import Registry

@@ -16,54 +16,57 @@ from typing import (
 )
 
 
-# TODO: add more complicated tag parsing later
-def split_on_commas(values: list[str] | str) -> list[str]:
-    """Split a string or list of strings on commas into a flat list.
+def split_on(values: list[str] | str, sep: str = ",") -> list[str]:
+    """Split a string or list of strings on *sep* into a flat list.
 
     Args:
-        values: A single comma-separated string, or a list of such strings.
+        values: A single *sep*-separated string, or a list of such strings.
+        sep: The separator to split on.
 
     Returns:
         A flat list of the individual values.
 
-    >>> split_on_commas("a,b,c")
+    >>> split_on("a,b,c")
     ['a', 'b', 'c']
-    >>> split_on_commas(["a,b", "c,d"])
+    >>> split_on(["a,b", "c,d"])
     ['a', 'b', 'c', 'd']
-    >>> split_on_commas("single")
+    >>> split_on("a+b", sep="+")
+    ['a', 'b']
+    >>> split_on("single")
     ['single']
     """
     all_values: list[str] = []
 
     match values:
         case str():
-            return values.split(",")
+            return values.split(sep)
 
         case list():
             for value in values:
-                new_values = split_on_commas(value)
-                all_values += new_values
+                all_values += split_on(value, sep)
 
             return all_values
 
 
-def complete_comma_list(candidates: list[str], incomplete: str) -> list[str]:
-    """Filter *candidates* for tab-completing one entry of a comma-separated option.
+def complete_separated_list(candidates: list[str], incomplete: str, sep: str = ",") -> list[str]:
+    """Filter *candidates* for tab-completing one entry of a *sep*-separated option.
 
-    Options like ``--lab a,b`` and ``--tests x,y`` take a comma-joined value,
+    Options like ``--lab a+b`` and ``--tests x,y`` take a separator-joined value,
     which the shell hands to the completer as a single ``incomplete`` word.
-    Complete only the final (in-progress) segment, keep the already-typed
-    prefix intact, and drop candidates already present earlier in the list so
-    completion never re-offers them.
+    Complete only the final (in-progress) segment, keep the already-typed prefix
+    intact, and drop candidates already present earlier in the list so completion
+    never re-offers them.
 
-    >>> complete_comma_list(["tech1", "tech2", "prod"], "tech")
+    >>> complete_separated_list(["tech1", "tech2", "prod"], "tech")
     ['tech1', 'tech2']
-    >>> complete_comma_list(["tech1", "tech2", "prod"], "tech1,te")
+    >>> complete_separated_list(["tech1", "tech2", "prod"], "tech1,te")
     ['tech1,tech2']
+    >>> complete_separated_list(["tech1", "tech2", "prod"], "tech1+te", sep="+")
+    ['tech1+tech2']
     """
-    head, sep, frag = incomplete.rpartition(",")
-    already = set(head.split(",")) if sep else set()
-    prefix = head + sep  # "" when there is no comma yet
+    head, found, frag = incomplete.rpartition(sep)
+    already = set(head.split(sep)) if found else set()
+    prefix = head + found  # "" when the separator has not been typed yet
     return [prefix + c for c in candidates if c.startswith(frag) and c not in already]
 
 

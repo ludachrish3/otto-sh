@@ -273,4 +273,5 @@ def test_cmdb_conforms():
 
 `LabNotFoundError: Lab '...' not found`
 : The backend has no lab by that name. Check `--lab` / `OTTO_LAB` against
-  `list_labs()`.
+  `list_labs()`. Labs are combined with `+`, not `,` — `--lab a,b` asks for one
+  lab literally named `a,b`.

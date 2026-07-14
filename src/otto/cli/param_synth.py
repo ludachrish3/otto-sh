@@ -17,7 +17,7 @@ from typing import Annotated, Any, Union, get_args, get_origin, get_type_hints
 
 import typer
 
-from ..utils import Arg, Exclude, Opt
+from ..utils import Arg, Exclude, Opt, split_on
 
 
 def coerce_scalar(value: str, target: type) -> Any:
@@ -39,7 +39,7 @@ def parse_comma_list(raw: str | None, elem_type: type) -> list[Any] | None:
         return None
     if raw == "":
         return []
-    return [coerce_scalar(s, elem_type) for s in raw.split(",")]
+    return [coerce_scalar(s, elem_type) for s in split_on(raw)]
 
 
 def parse_kv_dict(raw: str | None, val_type: type) -> dict[str, Any] | None:
@@ -52,7 +52,7 @@ def parse_kv_dict(raw: str | None, val_type: type) -> dict[str, Any] | None:
     if raw == "":
         return {}
     out: dict[str, Any] = {}
-    for pair in raw.split(","):
+    for pair in split_on(raw):
         key, _, val = pair.partition("=")
         out[key] = coerce_scalar(val, val_type)
     return out

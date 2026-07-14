@@ -130,6 +130,17 @@ class TestEagerOptions:
         result = runner.invoke(app, ["--list-labs"])
         assert result.exit_code == 0
 
+    def test_lab_help_advertises_the_plus_separator(self, monkeypatch: pytest.MonkeyPatch):
+        # Pin the rich console width: under CliRunner (non-tty) rich resolves
+        # width from COLUMNS, defaulting to 80. At narrow widths (e.g. 56) rich
+        # squeezes the metavar column and folds "LAB[+LAB...]" mid-string,
+        # making the substring assertion width-dependent (GH issue #89).
+        monkeypatch.setenv("COLUMNS", "300")
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert "LAB[+LAB...]" in result.output
+        assert "COMMA SEPARATED LIST" not in result.output
+
 
 # ── Argument validation ───────────────────────────────────────────────────────
 
@@ -406,14 +417,69 @@ class TestLabLoading:
         # `local` is the built-in host injected into every lab by load_lab.
         assert set(lab.hosts.keys()) == {"host1", "host2", "local"}
 
-    def test_multiple_labs_split_on_comma(self, real_main_mocks):
+    def test_multiple_labs_combine_on_plus(self, real_main_mocks):
         # Append the probe leaf so the lazy preamble loads the lab (Task 7).
-        result = runner.invoke(app, ["--lab", "test_lab,lab2", "_main_probe"])
+        result = runner.invoke(app, ["--lab", "test_lab+lab2", "_main_probe"])
         assert result.exit_code == 0
         from otto.config import get_lab
 
         lab = get_lab()
         assert set(lab.hosts.keys()) == {"host1", "host2", "host3", "local"}
+
+    def test_parse_lab_selection_accumulates_and_splits(self):
+        """`--lab a+b --lab c` selects all three: repeats accumulate AND each value splits."""
+        from otto.cli.main import parse_lab_selection
+
+        assert parse_lab_selection(["a+b", "c"]) == ["a", "b", "c"]
+
+    def test_parse_lab_selection_passes_none_through(self):
+        """Unset --lab (and OTTO_LAB="") arrive as None and must stay None, never []."""
+        from otto.cli.main import parse_lab_selection
+
+        assert parse_lab_selection(None) is None
+
+    def test_comma_is_not_a_separator(self, real_main_mocks):
+        """The comma lost its meaning: `a,b` is one lab name, and no such lab exists."""
+        result = runner.invoke(app, ["--lab", "test_lab,lab2", "_main_probe"])
+        assert result.exit_code != 0
+
+    @pytest.mark.parametrize("bad", ["a++b", "+a", "a+", ""])
+    def test_malformed_lab_selection_is_a_usage_error(
+        self, bad, real_main_mocks, monkeypatch: pytest.MonkeyPatch
+    ):
+        # Pin the rich console width: Rich renders BadParameter inside a
+        # bordered, word-wrapped panel. At COLUMNS=100 the fold lands between
+        # "lab" and "name", making the substring assertion below width-dependent
+        # (GH issue #89) even though CI's 80-column default happens to pass.
+        monkeypatch.setenv("COLUMNS", "300")
+        result = runner.invoke(app, ["--lab", bad, "_main_probe"])
+        assert result.exit_code == 2, result.output
+        assert "empty lab name" in (result.output + (result.stderr or ""))
+        # repr("") is `''`, too weak to search for — only pin the echoed value
+        # for the non-empty malformed cases.
+        if bad:
+            assert repr(bad) in (result.output + (result.stderr or ""))
+
+    def test_lab_selection_from_env_var_splits_on_plus(self, real_main_mocks):
+        result = runner.invoke(app, ["_main_probe"], env={"OTTO_LAB": "test_lab+lab2"})
+        assert result.exit_code == 0
+        from otto.config import get_lab
+
+        assert set(get_lab().hosts.keys()) == {"host1", "host2", "host3", "local"}
+
+    def test_empty_env_var_still_means_no_lab(self, real_main_mocks):
+        """OTTO_LAB="" must still be treated as "no lab selected".
+
+        parse_lab_selection returns None for a falsy value, and the preamble's
+        ``if not opts.labs:`` check (otto/cli/invoke.py) raises the same exit-2
+        "Missing option '--lab'" usage error for None. This test pins the
+        callback's None contract for the empty-string-env-var input; the
+        contract itself (None, never []) is pinned directly by
+        test_parse_lab_selection_passes_none_through.
+        """
+        result = runner.invoke(app, ["_main_probe"], env={"OTTO_LAB": ""})
+        assert result.exit_code == 2
+        assert "--lab" in (result.output + (result.stderr or ""))
 
     def test_multiple_lab_flags(self, real_main_mocks):
         # Append the probe leaf so the lazy preamble loads the lab (Task 7).

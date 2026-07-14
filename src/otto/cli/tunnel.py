@@ -19,7 +19,7 @@ from ..tunnel import (
     remove_all_tunnels,
     remove_tunnel,
 )
-from ..utils import async_typer_command, complete_comma_list
+from ..utils import async_typer_command, complete_separated_list
 
 if TYPE_CHECKING:
     from ..config.repo import Repo
@@ -131,7 +131,7 @@ def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
         if narrowed:
             ids = narrowed
 
-    return complete_comma_list(sorted(ids), incomplete)
+    return complete_separated_list(sorted(ids), incomplete)
 
 
 def _tunnel_id_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001

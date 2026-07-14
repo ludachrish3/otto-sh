@@ -119,7 +119,8 @@ occurs:
 4. **Lab loading** -- Otto builds the host source via `build_lab_repository`
    (selected by `[lab] backend`, defaulting to the built-in `json` source over
    the merged `labs` search paths) and loads the lab(s) named by `--lab` or
-   `OTTO_LAB`. Multiple labs are merged, combining their hosts. The host source
+   `OTTO_LAB`. Multiple labs are merged, combining their hosts — name them with
+   `+` (`--lab lab_a+lab_b`). The host source
    is pluggable — see {doc}`host-database`.
 
 5. **Context creation** -- The global `OttoContext` is created with the

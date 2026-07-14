@@ -30,9 +30,6 @@ from ..config.env import (
     SUT_DIRS_ENV_VAR,
     XDIR_ENV_VAR,
 )
-from ..utils import (
-    split_on_commas,
-)
 from ..version import get_version
 from .builtin_commands import register_builtin_commands
 
@@ -139,19 +136,48 @@ def _lab_completer(ctx: "typer.Context", incomplete: str) -> list[str]:  # noqa:
 
     Prefers the completion-cache snapshot; falls back to a live, data-only scan
     (:func:`~otto.config.completion_cache.collect_lab_names`, no user
-    code). ``--lab`` is comma-separated, so only the in-progress segment is
-    completed and already-named labs are dropped.
+    code). ``--lab`` combines labs with ``+``, so only the in-progress segment
+    is completed and already-named labs are dropped.
     """
     from ..config import get_completion_names, get_repos
     from ..config.completion_cache import collect_lab_names
-    from ..utils import complete_comma_list
+    from ..config.lab import LAB_SEPARATOR
+    from ..utils import complete_separated_list
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("labs"), list):
         names = cached["labs"]
     else:
         names = collect_lab_names(get_repos())
-    return complete_comma_list(sorted(names), incomplete)
+    return complete_separated_list(sorted(names), incomplete, sep=LAB_SEPARATOR)
+
+
+def parse_lab_selection(value: list[str] | None) -> list[str] | None:
+    """Typer callback for ``--lab``: split each value on ``+``.
+
+    Typer hands this ``None`` when neither ``--lab`` nor ``OTTO_LAB`` is set — and
+    also when ``OTTO_LAB`` is set but empty (verified empirically). Both pass
+    straight through as ``None``, so the preamble's no-lab path is unchanged.
+    Repeats accumulate and each value is itself split, so ``--lab a+b --lab c``
+    selects ``a``, ``b``, and ``c``. Malformed input is a usage error (exit 2).
+
+    The grammar itself lives in :func:`otto.config.lab.split_lab_names` — this is
+    only the CLI adapter, translating its ``ValueError`` into a Typer usage error.
+    The import is function-local to match this module's existing convention for
+    narrowly-used helpers (see ``_lab_completer`` above and ``reservation.py``).
+    """
+    if not value:
+        return None
+
+    from ..config.lab import split_lab_names
+
+    names: list[str] = []
+    try:
+        for item in value:
+            names += split_lab_names(item)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+    return names
 
 
 class _OttoGroup(TyperGroup):
@@ -345,10 +371,10 @@ def main(  # noqa: PLR0913 — CLI command params
             "--lab",
             "-l",
             envvar=LAB_ENV_VAR,
-            callback=split_on_commas,
+            callback=parse_lab_selection,
             autocompletion=_lab_completer,
-            metavar="COMMA SEPARATED LIST",
-            help="Name of lab(s) to reserve and use.",
+            metavar="LAB[+LAB...]",
+            help="Name of lab(s) to reserve and use; combine labs with '+'.",
         ),
     ] = None,
     xdir: Annotated[

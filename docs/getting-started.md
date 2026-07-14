@@ -375,7 +375,7 @@ Other useful environment variables:
 | Variable | Purpose | Default |
 | -------- | ------- | ------- |
 | `OTTO_SUT_DIRS` | Comma-separated paths to repos under test | *(required)* |
-| `OTTO_LAB` | Lab name(s) to use | *(or use `--lab`)* |
+| `OTTO_LAB` | Lab name(s) to use; combine several with `+` | *(or use `--lab`)* |
 | `OTTO_XDIR` | Output directory for logs and artifacts | current directory |
 | `OTTO_LOG_LEVEL` | Logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` |
 | `OTTO_LOG_DAYS` | Number of days to retain logs | `30` |

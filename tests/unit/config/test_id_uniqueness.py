@@ -39,9 +39,9 @@ def test_same_host_in_two_labs_merges_without_error():
 
 def test_merge_error_names_pre_merge_lab_not_already_merged_name():
     """The duplicate-id error must name the lab as it was BEFORE the merge
-    (``self.name`` is reassigned to ``f"{self.name}_{other.name}"`` before
-    the guard formats its message) — otherwise the error misleadingly
-    blames a lab name ("a_b") that didn't exist when the collision arose.
+    (``self.name`` is reassigned to ``f"{self.name}{LAB_SEPARATOR}{other.name}"``
+    before the guard formats its message) — otherwise the error misleadingly
+    blames a lab name ("a+b") that didn't exist when the collision arose.
     """
     a = Lab(name="a")
     a.add_host(_mk("server"))

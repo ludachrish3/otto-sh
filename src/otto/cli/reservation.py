@@ -92,8 +92,10 @@ def whoami(ctx: typer.Context) -> None:
         rprint("[yellow]No identity resolved (did the top-level callback run?)[/yellow]")
         raise typer.Exit(1)
 
+    from ..config.lab import LAB_SEPARATOR
+
     opts = ctx.meta.get("_otto_root_options")
-    labs = ", ".join(opts.labs) if opts is not None and opts.labs else "<none>"
+    labs = LAB_SEPARATOR.join(opts.labs) if opts is not None and opts.labs else "<none>"
     rprint(
         f"username: [bold]{identity.username}[/bold]\n"
         f"source:   {identity.source}\n"

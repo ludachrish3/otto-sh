@@ -192,7 +192,7 @@ def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
         maybe_warm_collected_tests,
         read_collected_tests,
     )
-    from ..utils import complete_comma_list
+    from ..utils import complete_separated_list
 
     repos = get_repos()
     cached = get_completion_names()
@@ -207,7 +207,7 @@ def _tests_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa:
     if collected:
         names.update(collected)
 
-    return complete_comma_list(sorted(names), incomplete)
+    return complete_separated_list(sorted(names), incomplete)
 
 
 def run_selection(ctx: typer.Context) -> None:

@@ -8,7 +8,7 @@ These options are available on every `otto` command:
 
 | Option | Env var | Default | Description |
 | ------ | ------- | ------- | ----------- |
-| `--lab, -l` | `OTTO_LAB` | *(required)* | Lab name(s), comma-separated |
+| `--lab, -l` | `OTTO_LAB` | *(required)* | Lab name(s); combine several with `+` (e.g. `tech1+overlay`) |
 | `--xdir, -x` | `OTTO_XDIR` | current dir | Output directory for logs and artifacts |
 | `--field / --debug` | `OTTO_FIELD_PRODUCTS` | `--debug` | Use field or debug products |
 | `--log-days` | `OTTO_LOG_DAYS` | `30` | Number of days to retain logs |
@@ -46,9 +46,10 @@ for a suite, or `--interval` for `monitor`) go **after** the subcommand.
 After `otto --install-completion`, tab completion covers the dynamic,
 otto-specific values a static shell script couldn't know: suite and
 instruction names, host ids and their per-class verbs, transfer/term
-backends, reservation usernames, and — comma-separated lists included —
-`--lab` names and `--tests` names.  It is served from a per-repo cache so the
-process answering the keystroke never runs your init modules or test code.
+backends, reservation usernames, and — multi-value lists included — `--lab`
+names (`+`-combined) and `--tests` names (comma-separated).  It is served
+from a per-repo cache so the process answering the keystroke never runs your
+init modules or test code.
 `--tests` completes by base name and layers a static source scan (the instant
 floor) with a pytest-collected set that also includes dynamically-generated
 tests; that set warms itself from any real `otto test --list-tests` run, or

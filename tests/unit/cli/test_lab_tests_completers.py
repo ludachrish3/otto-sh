@@ -22,17 +22,6 @@ def test_lab_completer_falls_back_to_live(monkeypatch):
     assert _lab_completer(None, "") == ["alpha", "beta"]
 
 
-def test_lab_completer_continues_after_comma(monkeypatch):
-    import otto.config as cm
-
-    monkeypatch.setattr(cm, "get_completion_names", lambda: {"labs": ["tech1", "tech2"]})
-    from otto.cli.main import _lab_completer
-
-    # First lab typed; completing the second must keep the prefix and not
-    # re-offer the one already chosen.
-    assert _lab_completer(None, "tech1,tech") == ["tech1,tech2"]
-
-
 def _patch_no_collected(monkeypatch):
     """Neutralize the collected-tests layer so a test exercises just the floor."""
     import otto.config as cm
@@ -41,6 +30,28 @@ def _patch_no_collected(monkeypatch):
     monkeypatch.setattr(cm, "get_repos", list)
     monkeypatch.setattr(cc, "read_collected_tests", lambda repos: None)
     monkeypatch.setattr(cc, "maybe_warm_collected_tests", lambda repos: None)
+
+
+def test_lab_completer_continues_after_plus(monkeypatch):
+    import otto.config as cm
+
+    monkeypatch.setattr(cm, "get_completion_names", lambda: {"labs": ["tech1", "tech2"]})
+    from otto.cli.main import _lab_completer
+
+    # First lab typed; completing the second must keep the prefix and not
+    # re-offer the one already chosen.
+    assert _lab_completer(None, "tech1+tech") == ["tech1+tech2"]
+
+
+def test_tests_completer_still_continues_after_comma(monkeypatch):
+    """`--tests` keeps the comma — the separator generalization must not leak."""
+    import otto.config as cm
+
+    monkeypatch.setattr(cm, "get_completion_names", lambda: {"tests": ["test_a", "test_b"]})
+    _patch_no_collected(monkeypatch)
+    from otto.cli.test import _tests_completer
+
+    assert _tests_completer(None, "test_a,test_") == ["test_a,test_b"]
 
 
 def test_tests_completer_prefers_cache(monkeypatch):
