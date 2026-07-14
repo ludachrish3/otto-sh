@@ -2,6 +2,21 @@
 
 ## General
 
+- tunnel creation for some reason uses docker???
+- Turn off scrolling in graphs to zoom in. It makes zooming on the page impossible
+- Add a random token to the URL for the sake of security. This makes it so that most visitors can only enter if they have that specific URL with the token.
+- Make sure we're up-to-date for Untitled component versions: <https://www.untitledui.com/react/docs/upgrade>
+- Update components to use Untitled UI components.
+  - The time/date picker should be the Untitled `Range calendar card` (<https://www.untitledui.com/react/components/date-pickers>)
+  - The options dropdown should be an `Icon Advanced` instead of the ellipses (<https://www.untitledui.com/react/components/dropdowns>)
+    - Dark/light mode should have the appropriate icon next to the text
+    - Import and export should be in a separate option group
+- Add a topology screenshot to the guide — trivially rides the rewritten capture now.
+- Retire the fixture-stem enumeration class (three near-misses this phase; derive all lists from one source).
+- MiniMap: deferred from the spec with your veto invited — say the word and it's a small task.
+- Slot ≥ 8 palette policy (top of the Plan-3 follow-ups): what a 9th series does — design decision, not code yet.
+- One issue I've noticed is with the edges in the topology view. They really need a legend/key so that we know what each color and line type mean. Also, the lines connect in odd locations on the boxes in the topology view. I'm looking at the kitchen-sink for reference: `db-01` has connections to other elements at the same depth, but its lines all start on its left side and end on its peers'right sides. I think it would look more natural if those lines originated on the side of `db-01` closest to each host. In this case, all the peers are below `db-0`, so they'd start on `db-01`'s bottom edge and end on all the peers' top edges. The lines that connect elements at different depth layers looks right to me
+- safari's chart titles bleed into the menu on the lefthand side
 - socat tunnel stability tests (bringing up and down many times is good enough)
 - External libraries should also be able to provide data plots. A possible example is an external traffic generator. If it has metrics to share and record (packets/sec, connections/sec), it should also be able to record these in the graphs and DB entries.
 - per-ticket coverage report
@@ -108,3 +123,5 @@
 
 - Possibly need a new database table for NetEm connections.
   - Defined as connecting 2 NEs together (the NE's would have lab names and NE IDs associated with them)
+
+- **Dev-VM memory leak: VSCode server accumulates swap over a session (noticed ~late Jun/early Jul 2026).** Observed 2026-07-12 after ~7h uptime: swap 3.3Gi/3.7Gi used, of which ~2.5Gi is held by four `.vscode-server/cli/servers/Stable-*` processes (top holder 1.13Gi swapped alone) plus ~370Mi across two `anthropic.claude-code` extension hosts. PSI stays 0.00 (they're cold/idle pages, not active churn), so it doesn't stall — but it eats the headroom that `make coverage` needs, which is what made the full-suite target thrash the host. Investigate: (a) which extension host grows (disable-bisect, or `--disable-extensions` baseline); (b) whether it correlates with long-lived terminal scrollback / file-watcher counts on this repo (many worktrees = many watchers); (c) whether raising the VM's RAM or adding a periodic `vscode-server` restart is the pragmatic fix. Cheap mitigation meanwhile: reconnect the remote window (kills+respawns the server) before running full-suite gates.
