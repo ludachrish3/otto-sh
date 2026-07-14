@@ -1,6 +1,10 @@
 // Custom edge: provenance-styled path with a tunnel casing, an impair pill and
 // a hover card. Wrapped in <g data-testid> so Playwright can click/assert edges
-// — BaseEdge's own prop passthrough is not part of our contract.
+// — BaseEdge's own prop passthrough is not part of our contract. The same <g>
+// also carries data-provenance: it is the ONE place `edge.provenance` reaches
+// the DOM verbatim, so anything measuring "which edges are data-plane" (the
+// layout budget, tests/e2e/monitor/dashboard/test_topology_budget.py) can read
+// the real value instead of guessing it from the edge id or its stroke.
 //
 // Anchors come from the NODE RECTS (useInternalNode), not from the handles.
 // nodes.tsx only exposes a left target and a right source, so a link between
@@ -60,7 +64,7 @@ export function LinkEdge(props: EdgeProps) {
   const casing = EDGE_STYLES[edgeClass(edge.provenance)].casing;
   const emphasized = (selected ?? false) || hovered;
   return (
-    <g data-testid={`topo-link-${edge.id}`}>
+    <g data-testid={`topo-link-${edge.id}`} data-provenance={edge.provenance}>
       {casing && (
         <path
           d={geom.path}

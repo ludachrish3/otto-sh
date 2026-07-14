@@ -28,8 +28,9 @@
 // only ever sees a 200 `/api/monitor_sessions` body; ITS validation
 // failures are not swallowed — they surface through the store's existing
 // `importError`, the same as a bad file chosen through Import.
-import { startStream } from "./stream";
+
 import { useReviewStore } from "./reviewStore";
+import { startStream } from "./stream";
 
 interface ModePayload {
   mode: "live" | "review";

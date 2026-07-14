@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { startStream } from "../data/stream";
 import { useReviewStore } from "../data/reviewStore";
+import { startStream } from "../data/stream";
 import { synthSession } from "./_synth";
 
 class FakeEventSource {

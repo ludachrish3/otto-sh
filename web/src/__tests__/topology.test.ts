@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { parseExportDocument } from "../data/exportDoc";
 import { healthForHosts } from "../data/health";
-import { buildTopoGraph, deriveReachability, pairKey } from "../data/topology";
+import { buildTopoGraph, deriveReachability, isManagementElement, pairKey } from "../data/topology";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const kitchen = parseExportDocument(
@@ -15,6 +15,11 @@ const kitchen = parseExportDocument(
 const cascade = parseExportDocument(
   readFileSync(join(HERE, "../../fixtures/cascade.json"), "utf-8"),
 ).sessions[0];
+const ispCore = parseExportDocument(
+  readFileSync(join(HERE, "../../fixtures/isp-core.json"), "utf-8"),
+).sessions[0];
+const sprawl = parseExportDocument(readFileSync(join(HERE, "../../fixtures/sprawl.json"), "utf-8"))
+  .sessions[0];
 
 function effectiveOf(session: typeof kitchen) {
   return deriveReachability(session, healthForHosts(session, null));
@@ -176,5 +181,80 @@ describe("buildTopoGraph — intra-element", () => {
 describe("pairKey", () => {
   it("is order-independent, so an unordered pair has one key", () => {
     expect(pairKey("a", "b")).toBe(pairKey("b", "a"));
+  });
+});
+
+describe("management partition", () => {
+  it("treats an element with no data-plane links as management", () => {
+    // isp-core: jump-01 and the two EMS carry only hop/reports-for edges.
+    const { effective } = effectiveOf(ispCore);
+    const g = buildTopoGraph(ispCore, effective, { sources: true });
+    const mgmt = g.nodes.filter((n) => isManagementElement(n, g.managementIds)).map((n) => n.id);
+    expect(new Set(mgmt)).toEqual(new Set(["local", "jump-01", "ems-01", "ems-02"]));
+  });
+
+  it("does NOT treat a network element as management, however few links it has", () => {
+    const { effective } = effectiveOf(ispCore);
+    const g = buildTopoGraph(ispCore, effective, { sources: true });
+    // hss-01 has exactly ONE declared link. One is not zero.
+    const hss = g.nodes.find((n) => n.id === "hss-01");
+    if (!hss) throw new Error("isp-core fixture is missing hss-01");
+    expect(isManagementElement(hss, g.managementIds)).toBe(false);
+  });
+
+  it("does NOT treat a genuinely under-described leaf as management (zephyr-02)", () => {
+    // sprawl: zephyr-01 and zephyr-02 are identical embedded-target
+    // siblings, both hung off console-01's hop chain. zephyr-01 happens to
+    // have a declared skip-column link (zephyr-tor, to tor-sw-b); zephyr-02
+    // has none. Under the OLD "zero declared links" rule alone, that
+    // asymmetry alone flipped zephyr-02 into management -- an
+    // under-described element, not a management one. The fixed rule
+    // requires a POSITIVE management fact (a hop target, or a metrics
+    // source for another element), not just an absence of data-plane
+    // links -- zephyr-02 is neither, so it stays in the data plane, same as
+    // its sibling.
+    const { effective } = effectiveOf(sprawl);
+    const g = buildTopoGraph(sprawl, effective, { sources: true });
+    const zephyr02 = g.nodes.find((n) => n.id === "zephyr-02");
+    if (!zephyr02) throw new Error("sprawl fixture is missing zephyr-02");
+    expect(isManagementElement(zephyr02, g.managementIds)).toBe(false);
+  });
+
+  it("infers the same shape on sprawl: local, mgmt-01, jump-01, console-01", () => {
+    // console-01 is a console server with zero declared links -- landing in
+    // management is CORRECT and expected, not a bug: it carries only the hop
+    // chain down to the zephyr boards, never a data-plane link of its own,
+    // AND it is a hop target (zephyr-01/zephyr-02 both route through it).
+    //
+    // mgmt-01 has no links at all in the fixture except as a metrics
+    // SOURCE for console-01 and tor-sw-a -- both different elements -- so
+    // it qualifies via the "reports for a different element" branch.
+    const { effective } = effectiveOf(sprawl);
+    const g = buildTopoGraph(sprawl, effective, { sources: true });
+    const mgmt = g.nodes.filter((n) => isManagementElement(n, g.managementIds)).map((n) => n.id);
+    expect(new Set(mgmt)).toEqual(new Set(["local", "mgmt-01", "jump-01", "console-01"]));
+  });
+
+  it("is invariant under the Sources toggle -- the partition is a session property", () => {
+    // reports-for edges (and the metric-source fact they visualize) only
+    // RENDER when sources is on, but the underlying session fact is always
+    // there. mgmt-01's management status must not depend on whether the
+    // Sources toggle happens to be on when the graph is built -- otherwise
+    // the default (sources: false) view would silently un-manage it.
+    for (const [name, session] of [
+      ["isp-core", ispCore],
+      ["sprawl", sprawl],
+    ] as const) {
+      const { effective } = effectiveOf(session);
+      const withSources = buildTopoGraph(session, effective, { sources: true });
+      const withoutSources = buildTopoGraph(session, effective, { sources: false });
+      expect(withoutSources.managementIds, name).toEqual(withSources.managementIds);
+    }
+  });
+
+  it("is always true for the local node, even with an empty management set", () => {
+    expect(
+      isManagementElement({ id: "local", kind: "local", depth: 0, label: "local" }, new Set()),
+    ).toBe(true);
   });
 });

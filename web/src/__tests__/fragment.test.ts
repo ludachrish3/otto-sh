@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { MonitorSessionFragment } from "../api/export.gen";
 import { applyFragment } from "../data/fragment";
 import { seriesKey } from "../data/seriesIndex";
 import { synthSession } from "./_synth";
-import type { MonitorSessionFragment } from "../api/export.gen";
 
 const frag = (over: Partial<MonitorSessionFragment>): MonitorSessionFragment =>
   ({

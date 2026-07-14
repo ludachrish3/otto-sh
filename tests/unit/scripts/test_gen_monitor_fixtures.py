@@ -46,7 +46,10 @@ def test_documents_round_trip_and_stems():
     #   _import_fixture(page, "drift.json") in test_review_shell.py.
     # cascade: web/src/__tests__/topology.test.ts; and
     #   _import_fixture(page, "cascade.json") in test_review_shell.py.
-    assert {"kitchen-sink", "minimal", "drift", "cascade"} <= set(docs)
+    # sprawl, isp-core: load-bearing for the topology layout-budget tests
+    # (topology layout redesign, 2026-07-14) — deep management chain and
+    # degenerate-hops-from-local cases kitchen-sink/cascade cannot produce.
+    assert {"kitchen-sink", "minimal", "drift", "cascade", "sprawl", "isp-core"} <= set(docs)
     for doc in docs.values():
         assert MonitorExport.model_validate(json.loads(dumps(doc))) is not None
 
@@ -133,3 +136,40 @@ def test_no_credentials_anywhere():
 def test_size_caps():
     for stem, doc in build_all().items():
         assert len(dumps(doc)) < 3_500_000, stem
+
+
+def test_sprawl_is_deep():
+    """sprawl exists to exercise DEPTH: a 3-hop management chain, which
+    kitchen-sink (max depth 1) cannot produce."""
+    lab = build_all()["sprawl"].sessions[0].lab
+    by_id = {h.id: h for h in lab.hosts}
+
+    def depth(host):
+        n, cur = 0, host.hop
+        while cur:
+            n += 1
+            cur = by_id[cur].hop if cur in by_id else None
+        return n
+
+    assert max(depth(h) for h in lab.hosts) >= 3
+
+
+def test_isp_core_is_shallow_but_meshed():
+    """isp-core exists to exercise the DEGENERATE case the redesign targets:
+    management paths are SHORT (every element 0 or 1 hops out), so the old
+    hops-from-local layout collapses 23 elements into 3 columns — while the
+    data plane is deep and richly meshed."""
+    lab = build_all()["isp-core"].sessions[0].lab
+    by_id = {h.id: h for h in lab.hosts}
+
+    def depth(host):
+        n, cur = 0, host.hop
+        while cur:
+            n += 1
+            cur = by_id[cur].hop if cur in by_id else None
+        return n
+
+    assert max(depth(h) for h in lab.hosts) <= 1, "management paths must stay short"
+    declared = [lk for lk in lab.links if (lk.provenance or "declared") == "declared"]
+    assert len(declared) >= 25, "the data plane must be richly meshed"
+    assert len({h.element for h in lab.hosts}) >= 20

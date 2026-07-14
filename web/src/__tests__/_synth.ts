@@ -1,7 +1,8 @@
 // A synthetic NormalizedSession at a chosen scale, for the tier-1 budget guards.
-import { buildIndex } from "../data/seriesIndex";
-import type { NormalizedSession } from "../data/exportDoc";
+
 import type { HostSnapshot, MetricRecord } from "../api/export.gen";
+import type { NormalizedSession } from "../data/exportDoc";
+import { buildIndex } from "../data/seriesIndex";
 
 const T0 = Date.parse("2026-07-12T00:00:00Z");
 

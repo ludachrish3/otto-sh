@@ -49,10 +49,18 @@ describe("edgeClass", () => {
 });
 
 describe("edgeStyle", () => {
-  it("draws declared, implicit and local identically", () => {
-    const declared = JSON.stringify(edgeStyle("declared", false));
-    expect(JSON.stringify(edgeStyle("implicit", false))).toBe(declared);
-    expect(JSON.stringify(edgeStyle("local", false))).toBe(declared);
+  // Stroke/width/dash are still identical across the three "static"
+  // provenances -- there is no functional difference in what they draw.
+  // Opacity is a SEPARATE axis (checked below): declared is data-plane and
+  // stays full-strength; implicit/local are management and fade.
+  it("draws declared, implicit and local with the same stroke, width and dash", () => {
+    const strokeOnly = (s: ReturnType<typeof edgeStyle>) => {
+      const { opacity: _opacity, ...rest } = s;
+      return JSON.stringify(rest);
+    };
+    const declared = strokeOnly(edgeStyle("declared", false));
+    expect(strokeOnly(edgeStyle("implicit", false))).toBe(declared);
+    expect(strokeOnly(edgeStyle("local", false))).toBe(declared);
   });
 
   it("maps the five provenances onto three distinct strokes", () => {
@@ -60,14 +68,53 @@ describe("edgeStyle", () => {
     expect(edgeStyle("declared", false).strokeWidth).toBe(1.5);
     expect(edgeStyle("dynamic", false).strokeDasharray).toBe("7 4");
     expect(edgeStyle("reports-for", false).strokeDasharray).toBe("2 5");
-    const styles = ALL_PROVENANCE.map((p) => JSON.stringify(edgeStyle(p, false)));
-    expect(new Set(styles).size).toBe(3);
+    const strokesOnly = ALL_PROVENANCE.map((p) => {
+      const { opacity: _opacity, ...rest } = edgeStyle(p, false);
+      return JSON.stringify(rest);
+    });
+    expect(new Set(strokesOnly).size).toBe(3);
   });
 
   it("emphasized state thickens the stroke", () => {
     expect(edgeStyle("declared", true).strokeWidth).toBeGreaterThan(
       edgeStyle("declared", false).strokeWidth,
     );
+  });
+
+  // The faint-management-line treatment (design doc §4): a pale management
+  // edge crossing behind an element is honest and unobtrusive, and hiding it
+  // costs the user real information -- so it is dimmed, never hidden.
+  describe("management fade", () => {
+    it("fades implicit, local and reports-for, but not declared or dynamic", () => {
+      expect(edgeStyle("declared", false).opacity).toBeUndefined();
+      expect(edgeStyle("dynamic", false).opacity).toBeUndefined();
+      expect(edgeStyle("implicit", false).opacity).toBeDefined();
+      expect(edgeStyle("local", false).opacity).toBeDefined();
+      expect(edgeStyle("reports-for", false).opacity).toBeDefined();
+    });
+
+    it("is not zero -- dimmed, not hidden", () => {
+      const opacity = edgeStyle("implicit", false).opacity as number;
+      expect(opacity).toBeGreaterThan(0);
+      expect(opacity).toBeLessThan(1);
+    });
+
+    it("uses the SAME opacity for every management provenance", () => {
+      const implicitOpacity = edgeStyle("implicit", false).opacity;
+      expect(edgeStyle("local", false).opacity).toBe(implicitOpacity);
+      expect(edgeStyle("reports-for", false).opacity).toBe(implicitOpacity);
+    });
+
+    it("restores full opacity when emphasized (hovered or selected)", () => {
+      expect(edgeStyle("implicit", true).opacity).toBeUndefined();
+      expect(edgeStyle("local", true).opacity).toBeUndefined();
+      expect(edgeStyle("reports-for", true).opacity).toBeUndefined();
+    });
+
+    it("never fades a data-plane or tunnel edge, emphasized or not", () => {
+      expect(edgeStyle("declared", true).opacity).toBeUndefined();
+      expect(edgeStyle("dynamic", true).opacity).toBeUndefined();
+    });
   });
 });
 

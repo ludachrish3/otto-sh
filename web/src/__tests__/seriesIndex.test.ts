@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appendToIndex, buildIndex, sliceSeries } from "../data/seriesIndex";
 import type { MetricRecord } from "../api/export.gen";
+import { appendToIndex, buildIndex, sliceSeries } from "../data/seriesIndex";
 
 const rec = (host: string, label: string, iso: string, value: number): MetricRecord =>
   ({ host, label, timestamp: iso, value }) as MetricRecord;

@@ -25,7 +25,8 @@ export interface EdgeGeometry {
  * from the bottom *centre* instead would mean travelling half the box width
  * sideways before clearing it, and the gap to the next row is only 38px — the
  * curve physically cannot turn that fast. Leaning the anchor is what makes the
- * bow fit the EXISTING 72px gutter, with no layout change. */
+ * bow fit the EXISTING 112px gutter (COL_W minus the 208px element node —
+ * see layout.ts's own COL_W comment), with no layout change. */
 const LEAN_INSET = 20;
 
 /** Cap on how far down (in px) the control points sit below their anchors.
@@ -74,6 +75,16 @@ const GUTTER_MARGIN = 8;
  * (the old `curvature * FAN_SCALE`, i.e. 0.35 * 70). */
 const CROSS_FAN = 24.5;
 
+/** Horizontal separation between parallel adjacent-row links (`rowSpan <= 1`
+ * in `routeSameColumn`), comfortably above `INTERACTION_WIDTH / 2` so each
+ * keeps its own pointer target. This is the SAME invariant #131 fixed for
+ * the bowed multi-row case (`FAN_STEP`) — it just went unneeded here until a
+ * layout could plant two heavily-linked peers in adjacent rows of one
+ * column instead of far-apart ones. Without it, every parallel link in the
+ * group draws the identical face-centre line, and only the last one painted
+ * is ever clickable. */
+const ADJACENT_FAN = 28;
+
 /** A cubic with both interior control points offset by k bulges only 0.75k. */
 const BULGE = 0.75;
 
@@ -108,9 +119,13 @@ function routeSameColumn(
 
   if (rowSpan <= 1) {
     // Adjacent rows: nothing sits between them, so a straight face-centre line
-    // is both the shortest path and the natural one.
-    const sx = centerX(upper);
-    const tx = centerX(lower);
+    // is both the shortest path and the natural one. A lone edge (groupSize 1)
+    // takes the exact centre (offset 0, unchanged from before); two or more
+    // parallel links between the same adjacent pair fan out sideways,
+    // symmetric around the centre, so they don't all draw the same line.
+    const offset = (parallelIndex - (groupSize - 1) / 2) * ADJACENT_FAN;
+    const sx = centerX(upper) + offset;
+    const tx = centerX(lower) + offset;
     return { path: `M${sx},${sy} L${tx},${ty}`, labelX: (sx + tx) / 2, labelY: (sy + ty) / 2 };
   }
 

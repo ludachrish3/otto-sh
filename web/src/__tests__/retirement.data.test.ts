@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 
 import type { MetricRecord } from "../api/export.gen";
 import { isProcMetric, RETIRE_AFTER_TICKS, retireStaleSeries } from "../data/retirement";
-import { buildIndex, seriesKey, type SeriesIndex } from "../data/seriesIndex";
+import { buildIndex, type SeriesIndex, seriesKey } from "../data/seriesIndex";
 
 const HOST = "hostA";
 

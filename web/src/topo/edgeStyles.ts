@@ -71,19 +71,52 @@ export const EDGE_STYLES: Record<EdgeClass, EdgeStyleSpec> = {
 /** Stroke-width delta when an edge is selected or hovered. */
 export const EMPHASIS_WIDTH = 1.5;
 
+/** How faint a management edge renders by default. Deliberately NOT zero and
+ * NOT hidden behind a toggle: a pale management line crossing behind an
+ * element is honest and unobtrusive, and hiding the management plane costs
+ * the user real information (design doc §4). This is a product ruling, not a
+ * detail. */
+const MANAGEMENT_OPACITY = 0.5;
+
+/** `declared` (data-plane) and `dynamic` (tunnel) edges are the network a
+ * user came to read; everything else -- `implicit`, `local`, `reports-for`
+ * -- is the management star that touches everything and gets faded. This
+ * mirrors measure.ts's `classifyEdge` "management" bucket, kept local rather
+ * than imported: edgeStyles.ts already keeps its own provenance -> drawing
+ * mapping self-contained (see `edgeClass` above), and this is one more axis
+ * on that same mapping, not a new module dependency. */
+function isManagementProvenance(provenance: Provenance): boolean {
+  return provenance !== "declared" && provenance !== "dynamic";
+}
+
 /** The core stroke, as an inline SVG style object. Strokes are CSS custom
  * properties (app.css), not hex: inline style objects don't participate in
  * Tailwind's `dark:` variant, so the dark alternates flip via the vars'
- * `.dark-mode` overrides instead. */
+ * `.dark-mode` overrides instead.
+ *
+ * Opacity is a SEPARATE axis from `EdgeClass`, deliberately: `declared` and
+ * `implicit`/`local` share one `static` class (identical stroke/width/dash --
+ * there is no functional difference in what they draw), but they are NOT the
+ * same for this purpose -- `declared` is data-plane and stays full-strength,
+ * `implicit`/`local` are management and fade. Folding that into `EDGE_STYLES`
+ * would force every `static` edge to fade, taking the data-plane network down
+ * with it. Reusing the existing classes and layering opacity on top, rather
+ * than inventing a fourth `EdgeClass`, is exactly what keeps that distinction
+ * intact. */
 export function edgeStyle(
   provenance: Provenance,
   emphasized: boolean,
-): { stroke: string; strokeWidth: number; strokeDasharray?: string } {
+): { stroke: string; strokeWidth: number; strokeDasharray?: string; opacity?: number } {
   const spec = EDGE_STYLES[edgeClass(provenance)];
+  // Emphasis (hover/select) always restores full opacity: a user who has
+  // singled out a management edge to inspect it should see it plainly, not
+  // squint at a faded one.
+  const faint = isManagementProvenance(provenance) && !emphasized;
   const base = {
     stroke: spec.stroke,
     strokeWidth: spec.strokeWidth,
     ...(spec.strokeDasharray === undefined ? {} : { strokeDasharray: spec.strokeDasharray }),
+    ...(faint ? { opacity: MANAGEMENT_OPACITY } : {}),
   };
   return emphasized ? { ...base, strokeWidth: base.strokeWidth + EMPHASIS_WIDTH } : base;
 }

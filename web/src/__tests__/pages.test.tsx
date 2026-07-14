@@ -32,6 +32,7 @@ vi.mock("../charts/echarts", () => ({
 import App from "../App";
 import { presetRange, sessionBounds } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";
+import { FIT_PADDING } from "../topo/TopologyPage";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const KITCHEN = readFileSync(join(__dir, "../../fixtures/kitchen-sink.json"), "utf-8");
@@ -123,5 +124,22 @@ describe("Topology page", () => {
     expect(screen.queryByTestId("topo-minimap")).toBeNull();
     fireEvent.click(screen.getByTestId("minimap-toggle"));
     expect(await screen.findByTestId("topo-minimap")).toBeTruthy();
+  });
+
+  it("keeps FIT_PADDING.bottom as an absolute px string, not a bare fraction", () => {
+    // React Flow's fitView `padding` treats a bare number as a FRACTION of the
+    // viewport, even inside this per-side object -- only the "NNpx" string
+    // form is an absolute reserve (verified against
+    // node_modules/@xyflow/system's parsePadding). A regression back to the
+    // bare number 260 reads deceptively close to correct at Playwright's
+    // default 1280x720 viewport (~298px) and is why this needs pinning here
+    // too, not just behaviorally: jsdom does no real box layout, so this
+    // can't observe the actual squeeze the way a browser can -- see
+    // `test_fit_padding_bottom_is_an_absolute_reserve_at_a_tall_viewport` in
+    // tests/e2e/monitor/dashboard/test_review_shell.py for the behavioral
+    // proof (measured ~0.50 fitted-content-depth with the bare number,
+    // ~0.80 with the string, at a 1400px-tall canvas). This test exists so
+    // the type-level mistake itself fails fast, in vitest, without a browser.
+    expect(FIT_PADDING.bottom).toBe("260px");
   });
 });

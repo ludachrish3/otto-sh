@@ -12,9 +12,8 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-
-import type { HostSnapshot, MetricRecord } from "../api/export.gen";
 import App from "../App";
+import type { HostSnapshot, MetricRecord } from "../api/export.gen";
 import { useClockStore } from "../data/clock";
 import { deriveElements, type NormalizedSession } from "../data/exportDoc";
 import { useReviewStore } from "../data/reviewStore";

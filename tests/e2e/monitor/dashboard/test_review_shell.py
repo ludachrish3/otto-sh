@@ -965,6 +965,59 @@ def test_topology_pan_zoom_fit(shell_dash, page):
     page.locator('[data-testid="topo-node-local"]').wait_for()
 
 
+def test_fit_padding_bottom_is_an_absolute_reserve_at_a_tall_viewport(shell_dash, page):
+    """``TopologyPage``'s ``FIT_PADDING.bottom`` must be the STRING ``"260px"``,
+    not the bare number ``260``.
+
+    React Flow's ``parsePadding`` (``@xyflow/system``) treats a bare number as
+    a FRACTION of the viewport dimension, even inside the per-side padding
+    object — only the ``"NNpx"`` string form is an absolute reserve. At
+    Playwright's default 1280x720 viewport the fraction happens to evaluate to
+    ~298px, close enough to the intended 260px that every existing gate
+    (vitest, tsc, Biome, all three browser engines) stayed green with the bug
+    in place. At a genuinely tall canvas the fraction saturates toward HALF
+    the canvas height, so this only shows up away from the default size —
+    which is the whole reason it shipped unnoticed.
+
+    ``sprawl.json`` is deliberately tall relative to its width in MODEL space
+    (~1168 x ~1887, verified via ``layoutTopo`` — its longest chain is
+    isp-core's twin, but sprawl's leaf-heavy shape stacks taller), so
+    ``fitView``'s ``zoom = min(xZoom, yZoom)`` is HEIGHT-bound here: the
+    bottom reserve is the actual binding constraint, not slack a
+    wide/short fixture would hide.
+
+    Hand-computed at width=1280/height=1400 (this test's viewport):
+    buggy fractional 260 reserves ~647px of the 1400px canvas, leaving the
+    fitted graph's lowest edge at almost exactly the vertical midpoint
+    (~0.50); the fixed ``"260px"`` reserves a flat 260px regardless of
+    canvas height, leaving the graph extending to ~0.80. 0.65 sits with a
+    wide margin on both sides of that split.
+    """
+    page.set_viewport_size({"width": 1280, "height": 1400})
+    page.goto(shell_dash.url)
+    _import_fixture(page, "sprawl.json")
+    page.goto(f"{shell_dash.url}#/topology")
+    page.locator('[data-testid="topology-page"]').wait_for()
+    _wait_for_links(page, 30)
+
+    canvas = page.locator(".react-flow__pane").bounding_box()
+    assert canvas is not None, "no react-flow pane rendered"
+    nodes = page.locator(".react-flow__node").all()
+    assert nodes, "no react-flow nodes rendered"
+    boxes = [n.bounding_box() for n in nodes]
+    assert all(boxes), "a react-flow node had no bounding box"
+    lowest_bottom = max(b["y"] + b["height"] for b in boxes)
+    lowest_frac = (lowest_bottom - canvas["y"]) / canvas["height"]
+
+    assert lowest_frac > 0.65, (
+        f"the fitted map's lowest node bottom sits at only {lowest_frac:.2f} of "
+        "the canvas height down -- the graph looks squeezed into the top half. "
+        'FIT_PADDING.bottom likely regressed from "260px" to a bare number '
+        "260, which React Flow's parsePadding treats as a FRACTION, not an "
+        "absolute px reserve (see TopologyPage.tsx)."
+    )
+
+
 def test_link_inspector_survives_range_change(shell_dash, page):
     """Inspector selection is scoped to the view identity: it survives a
     review-bar range apply (a selected link is static config) and closes on

@@ -3,10 +3,10 @@
 // noise, and the thing that kills us is an O(total-run) term hiding in a per-tick
 // path. Only a ratio test catches that.
 import { describe, expect, it } from "vitest";
-import { appendToIndex, buildIndex, seriesKey } from "../data/seriesIndex";
+import type { MetricRecord } from "../api/export.gen";
 import { healthForHosts } from "../data/health";
 import { retireStaleSeries } from "../data/retirement";
-import type { MetricRecord } from "../api/export.gen";
+import { appendToIndex, buildIndex, seriesKey } from "../data/seriesIndex";
 import { synthSession } from "./_synth";
 
 const HOSTS = 7;

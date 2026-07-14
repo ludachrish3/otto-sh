@@ -1,8 +1,13 @@
 // Topology graph model (spec 2026-07-11): reachability cascade + node/edge
-// derivation. Pure. Only the hop skeleton (single-parent => tree) determines
-// depth; every data-plane link is a cross-edge that never places a node, so
-// connectivity cycles cost nothing. Hop cycles (misconfig) are guarded,
-// clamped and warned — never an infinite loop.
+// derivation. Pure. The layout redesign (docs/superpowers/plans/2026-07-14-
+// topology-layout-redesign.md) inverted which structure places a node:
+// `layoutTopo` (topo/layout.ts) now derives every node's COLUMN from the
+// DATA-PLANE (`declared`-link) graph alone -- the hop skeleton places
+// nothing. `TopoNode.depth` is still computed here (walking the hop chain
+// via `chainOf`/`depthOf`), but is write-only in production; see its own
+// doc comment for why it survives. Hop cycles (misconfig) are guarded,
+// clamped and warned — never an infinite loop -- independently of depth,
+// via `deriveReachability`'s own walk of every host's hop chain.
 import type { HostSnapshot, LinkSnapshot } from "../api/export.gen";
 import type { DerivedElement, NormalizedSession } from "./exportDoc";
 import type { SubjectHealth } from "./health";
@@ -17,6 +22,21 @@ export interface ReachabilityResult {
 export interface TopoNode {
   id: string;
   kind: "local" | "element" | "host";
+  /** Hop-chain depth from `local` (`local` = 0, +1 per hop toward it) --
+   * WRITE-ONLY in production now: `layoutTopo` (topo/layout.ts) no longer
+   * takes it, having switched to columning by DATA-PLANE (`declared`-link)
+   * structure instead (see this file's header comment). Kept, rather than
+   * deleted, for two reasons: computing it (`depthOf` below) walks each
+   * host's `hop` chain via `chainOf`, which is what surfaces hop-cycle
+   * misconfiguration warnings into this graph's own `warnings` (a walk
+   * `deriveReachability` also performs independently, over every host,
+   * regardless of view -- so this one is currently redundant belt-and-
+   * braces, not the sole source, but the two are separate call sites, and
+   * dropping this one is a separate change from dropping the field); and
+   * `topology.test.ts` asserts exact depth values as a pin on that walk.
+   * Untangling "keep the warning walk, stop storing the number" would touch
+   * every TopoNode literal the tests construct by hand -- left for a
+   * follow-up, not folded into this fix. */
   depth: number;
   label: string;
   element?: DerivedElement;
@@ -41,6 +61,11 @@ export interface TopoGraph {
   nodes: TopoNode[];
   edges: TopoEdge[];
   warnings: string[];
+  /** Element ids inferred as management infrastructure -- see
+   * `deriveManagementIds`. Computed once from the session, independent of
+   * `opts` (identical whether `expand`/`sources` are set or not), so
+   * `layoutTopo` and callers don't have to re-derive it. */
+  managementIds: Set<string>;
 }
 
 interface ChainResult {
@@ -93,6 +118,81 @@ export function deriveReachability(
  * `pairKey(b, a)` agree. Parallel-edge grouping depends on that. */
 export function pairKey(a: string, b: string): string {
   return a < b ? `${a}~${b}` : `${b}~${a}`;
+}
+
+/** Element ids inferred as MANAGEMENT infrastructure, computed from the
+ * SESSION alone -- never from the rendered graph. This must give the
+ * IDENTICAL set regardless of the Sources toggle, because whether an
+ * element is management is a property of the lab, not of which view
+ * options happen to be on.
+ *
+ * An element qualifies when it has zero `declared` (data-plane) links in
+ * `session.lab.links` -- "one declared link" is not "zero declared links",
+ * so a network element keeps its data-plane status however few links it
+ * has -- AND at least one of:
+ *
+ * - it is something another host routes THROUGH: some host's `hop` field
+ *   resolves to a host that is a member of this element; or
+ * - it is something that REPORTS: it is the metric `source` for a host
+ *   that belongs to a DIFFERENT element.
+ *
+ * The naive version of this reads those two facts off the rendered
+ * `TopoEdge[]` instead -- `hop` edges and `reports-for` edges. That is
+ * wrong: `reports-for` edges are only rendered when `opts.sources` is on,
+ * and `TopologyPage`'s Sources toggle defaults OFF, so an EMS-like element
+ * would silently un-manage itself in the default view. Reading `hop` and
+ * `source`/`host` off the session directly sidesteps that -- both are
+ * present whether or not `sources` is on.
+ *
+ * An explicit `management`/`tier` field is a later phase that merely
+ * overrides this inference -- it does not replace it. */
+export function deriveManagementIds(session: NormalizedSession): Set<string> {
+  const elementOf = new Map<string, string>();
+  for (const el of session.elements) {
+    for (const id of el.hostIds) elementOf.set(id, el.id);
+  }
+
+  const declared = new Set<string>();
+  for (const link of session.lab.links) {
+    if ((link.provenance ?? "declared") !== "declared") continue;
+    for (const ep of link.endpoints) {
+      const el = elementOf.get(ep.host);
+      if (el) declared.add(el);
+    }
+  }
+
+  const hopTargets = new Set<string>(); // host ids some other host routes through
+  for (const host of session.lab.hosts) {
+    if (host.hop != null) hopTargets.add(host.hop);
+  }
+
+  const reportSources = new Set<string>(); // host ids reporting for a DIFFERENT element
+  for (const m of session.metrics) {
+    if (m.source == null || m.host == null) continue;
+    const srcEl = elementOf.get(m.source);
+    const hostEl = elementOf.get(m.host);
+    if (srcEl != null && hostEl != null && srcEl !== hostEl) reportSources.add(m.source);
+  }
+
+  const ids = new Set<string>();
+  for (const el of session.elements) {
+    if (declared.has(el.id)) continue; // >=1 declared link: data-plane, full stop
+    const isHopTarget = el.hostIds.some((id) => hopTargets.has(id));
+    const isReportSource = el.hostIds.some((id) => reportSources.has(id));
+    if (isHopTarget || isReportSource) ids.add(el.id);
+  }
+  return ids;
+}
+
+/** True for the `local` node, and for any element/host node whose OWNING
+ * element is in `managementIds` (see `deriveManagementIds`). A `host`-kind
+ * node (intra-element view) resolves through its own `host.element`, since
+ * `managementIds` is always an ELEMENT-id set -- management-ness is a
+ * property of the element, not of the view level it's rendered at. */
+export function isManagementElement(node: TopoNode, managementIds: Set<string>): boolean {
+  if (node.kind === "local") return true;
+  const elementId = node.kind === "host" ? (node.host?.element ?? node.id) : node.id;
+  return managementIds.has(elementId);
 }
 
 function assignParallelIndices(edges: TopoEdge[]): void {
@@ -322,5 +422,5 @@ export function buildTopoGraph(
   }
 
   assignParallelIndices(edges);
-  return { nodes, edges, warnings: uniq(warnings) };
+  return { nodes, edges, warnings: uniq(warnings), managementIds: deriveManagementIds(session) };
 }

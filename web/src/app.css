@@ -60,6 +60,34 @@
   --topo-edge-tunnel-casing: #4b5563;
 }
 
+/* WEBKIT: make React Flow's edge hit target actually hit-testable.
+   React Flow gives every edge a wide invisible `interaction` path to be its
+   pointer target — but it renders it with NO stroke paint at all (BaseEdge
+   emits `fill="none" strokeOpacity={0} strokeWidth={interactionWidth}` and
+   never sets `stroke`, so `stroke` computes to `none`). Its inherited
+   `pointer-events: visibleStroke` then means "hit the STROKE" — and WebKit
+   declines to hit-test a stroke that has no paint, while Chromium and Firefox
+   hit it anyway. So in Safari the ONLY hit target an edge has is its ~1.5px
+   VISIBLE stroke, and clicking or hovering a link is a pixel-hunt.
+
+   Nothing caught this until the barycentric row-sort landed: it pulls
+   data-plane-linked peers into adjacent rows (which is its whole job), so
+   kitchen-sink's `workers`/`db-01` pair — joined by the parallel `app-db` and
+   `metrics-udp` links — became vertically stacked, and those two links became
+   40px VERTICAL stubs in the gap between the boxes. A vertical stroke sits at
+   one fixed x (e.g. 738.74), and a pointer lands on integer pixels, so the
+   0.74px miss is no longer a coin-flip you sometimes win on a diagonal — it is
+   deterministic. Measured on WebKit: the interaction path was hit-testable at
+   0 of 19 sampled points along the stub (19/19 on Chromium), the click landed
+   on `.react-flow__pane`, and the link inspector could not be opened AT ALL.
+
+   Giving the path a transparent stroke PAINT (not opacity — paint) restores
+   the intended 20px band in WebKit. Verified: with this rule the click opens
+   the inspector and the hover card appears; without it, neither does. */
+.react-flow__edge-interaction {
+  stroke: transparent;
+}
+
 body {
   @apply bg-primary font-sans text-primary antialiased;
 }

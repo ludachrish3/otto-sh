@@ -120,11 +120,20 @@ jobs:
       - name: Run dashboard browser e2e (${{ matrix.browser }})
         run: uv run nox -k ${{ matrix.browser }}
 
-  # web/ TypeScript quality gates (Biome lint + format, tsc, vitest v8
-  # coverage) — the TS analogue of the lint/typecheck jobs. Node-only: no
-  # Python, no browsers, no dashboard build, so it runs fast and in parallel.
-  # Each make target below takes the node_modules stamp as a prerequisite, so
-  # the first one runs npm ci and the rest reuse it — no explicit install step.
+  # web/ TypeScript quality gates — the TS analogue of the lint/typecheck jobs.
+  # Node-only: no Python, no browsers, no dashboard build, so it runs fast and in
+  # parallel. `web-check` takes the node_modules stamp as a prerequisite, so it
+  # runs npm ci itself — no explicit install step.
+  #
+  # ONE STEP, AND IT MUST STAY ONE STEP: this job invokes the `web-check` UMBRELLA
+  # rather than re-listing its sub-targets. It used to hand-list them
+  # (`web-lint` + `web-format-check` + `web-typecheck` + `web-coverage`), and that
+  # list silently drifted from the gate it was copying: `biome lint` and
+  # `biome format` do NOT report Biome's ASSIST actions (organize-imports), so
+  # unsorted imports passed both while failing `biome check` — the command
+  # developers actually run. Ten such errors sat on main with this job green.
+  # A CI job that re-enumerates a gate's steps is a second copy of that gate, and
+  # it will drift. Call the gate. `tests/unit/test_ci_web_gate.py` pins this.
   web-quality:
     name: web-quality
     runs-on: ubuntu-latest
@@ -134,14 +143,8 @@ jobs:
         uses: actions/setup-node@v6.4.0
         with:
           node-version-file: .nvmrc
-      - name: Lint (Biome)
-        run: make web-lint
-      - name: Format check (Biome)
-        run: make web-format-check
-      - name: Type-check (tsc --noEmit)
-        run: make web-typecheck
-      - name: Unit tests + coverage floor (vitest v8)
-        run: make web-coverage
+      - name: web/ gates (Biome lint+format+assists, tsc, vitest coverage floor)
+        run: make web-check
 
   lint:
     runs-on: ubuntu-latest

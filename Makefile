@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev web-test web-clean web-lint web-format web-format-check web-typecheck web-coverage web-check wheel-check
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev web-test web-clean web-lint web-format web-format-check web-biome web-typecheck web-coverage web-check wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -179,7 +179,7 @@ validate-python: ## (Build & Release) Python validation (clean-dist, lint, typec
 		&& $(MAKE) $(COVERAGE_TARGET) \
 		&& $(MAKE) docs
 
-validate-ts: web-check ## (Build & Release) TypeScript validation: Biome lint + format-check, tsc, vitest coverage (see web-check)
+validate-ts: web-check ## (Build & Release) TypeScript validation: Biome (lint+format+assists), tsc, vitest coverage (see web-check)
 
 clean-dist:
 	@rm -rf dist
@@ -272,7 +272,7 @@ web-test: $(WEB_NODE_MODULES) ## (Dev) Run the web/ vitest suite once (store red
 # `npm ci` exactly once and an unchanged tree pays nothing. It also means CI's
 # web-quality job no longer needs its own npm-ci step — the gate it invokes
 # brings its own dependencies.
-web-lint: $(WEB_NODE_MODULES) ## (Quality) Lint web/ (TS + CSS) with Biome
+web-lint: $(WEB_NODE_MODULES) ## (Quality) Lint web/ (TS + CSS) with Biome — RULES ONLY, see web-biome
 	cd web && npm run lint
 
 web-format: $(WEB_NODE_MODULES) ## (Quality) Apply the Biome formatter to web/ (writes changes)
@@ -281,13 +281,23 @@ web-format: $(WEB_NODE_MODULES) ## (Quality) Apply the Biome formatter to web/ (
 web-format-check: $(WEB_NODE_MODULES) ## (Quality) Check web/ formatting with Biome (no writes)
 	cd web && npm run format:check
 
+# `biome check` = lint rules + formatting + ASSIST actions (organize-imports).
+# `web-lint` + `web-format-check` together are STRICTLY WEAKER: neither reports an
+# assist action, so unsorted imports pass both and fail `biome check`. That gap sat
+# on main undetected — CI hand-listed the sub-targets instead of invoking the
+# umbrella, so the two drifted. This target is the single authoritative Biome gate
+# and is what `web-check` (and therefore CI) runs; web-lint/web-format-check remain
+# only as narrower dev conveniences.
+web-biome: $(WEB_NODE_MODULES) ## (Quality) The authoritative Biome gate for web/: lint + format + assists (`biome check`)
+	cd web && npm run check
+
 web-typecheck: $(WEB_NODE_MODULES) ## (Quality) Type-check web/ with tsc --noEmit (no build)
 	cd web && npm run typecheck
 
 web-coverage: $(WEB_NODE_MODULES) ## (Quality) Run the web/ vitest suite with v8 coverage and enforce the floor
 	cd web && npm run test:coverage
 
-web-check: web-lint web-format-check web-typecheck web-coverage ## (Quality) All web/ gates: lint + format-check + typecheck + coverage (= validate-ts)
+web-check: web-biome web-typecheck web-coverage ## (Quality) All web/ gates: Biome (lint+format+assists) + typecheck + coverage (= validate-ts)
 
 coverage-ts: web-coverage ## (Quality) Alias of web-coverage (TS coverage; the Python `coverage` gate stays separate)
 

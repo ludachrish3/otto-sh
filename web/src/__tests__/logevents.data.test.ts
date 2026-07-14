@@ -9,8 +9,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   groupRowsFromData,
-  logKey,
   type LogEventRow,
+  logKey,
   MAX_TABLE_ROWS,
   visibleRows,
 } from "../data/logevents";

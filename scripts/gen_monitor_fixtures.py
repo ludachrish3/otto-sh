@@ -50,6 +50,9 @@ OUTAGE_S = (3600.0, 4800.0)
 _DURATION_S = 7200.0  # kitchen-sink session length: 2 h
 _CADENCE_S = 15.0  # base cadence; spec §12 allows trimming from the 5 s sketch
 
+_SPARSE_DURATION_S = 1800.0  # sprawl/isp-core session length: 30 min
+_SPARSE_CADENCE_S = 300.0  # sprawl/isp-core cadence: lab-rich, metrics-sparse fixtures
+
 
 # --- lab building blocks -----------------------------------------------------
 
@@ -530,6 +533,391 @@ def cascade() -> MonitorExport:
     return MonitorExport(format=1, sessions=[session])
 
 
+def sprawl() -> MonitorExport:
+    """Build a deep management chain the layout redesign is judged against.
+
+    ``jump-01`` -> {``edge-gw``, ``core-gw``} -> {app/cache/queue/workers
+    hosts under ``core-gw``; ``chassis-a`` + ``console-01`` under
+    ``edge-gw``} -> ``zephyr-01``/``zephyr-02`` under ``console-01``: a
+    3-hop chain kitchen-sink (management depth capped at 1) cannot produce.
+    The data plane skips columns (``chassis-a_lc1``/``app-01``/``zephyr-01``
+    all reach back to the top-of-rack switches directly, bypassing their own
+    management chain) and fans out in parallel (``workers_w1``/``w3`` both
+    to ``db-01``). ``core-gw`` and everything hopping through it go dark for
+    the back half of the session — a wider cascade than the two-host one in
+    :func:`cascade`.
+    """
+    rng = random.Random(20260712)  # noqa: S311 — deterministic dummy data, not cryptography
+    hosts = [
+        _host("jump-01", "jump-01", "10.60.0.1"),
+        _host("mgmt-01", "mgmt-01", "10.60.0.2"),
+        _host("tor-sw-a", "tor-sw-a", "10.60.0.3"),
+        _host("tor-sw-b", "tor-sw-b", "10.60.0.4"),
+        _host(
+            "edge-gw",
+            "edge-gw",
+            "10.60.1.1",
+            hop="jump-01",
+            interfaces={"eth0": "10.60.1.1", "eth1": "10.60.1.101"},
+        ),
+        _host("core-gw", "core-gw", "10.60.1.2", hop="jump-01"),
+        _host("db-01", "db-01", "10.60.1.3", hop="jump-01"),
+        _host("db-02", "db-02", "10.60.1.4", hop="jump-01"),
+        _host("app-01", "app-01", "10.60.2.1", hop="core-gw"),
+        _host("app-02", "app-02", "10.60.2.2", hop="core-gw"),
+        _host("app-03", "app-03", "10.60.2.3", hop="core-gw"),
+        _host("app-04", "app-04", "10.60.2.4", hop="core-gw"),
+        _host("cache-01", "cache-01", "10.60.2.5", hop="core-gw"),
+        _host("queue-01", "queue-01", "10.60.2.6", hop="core-gw"),
+        _host("workers_w1", "workers", "10.60.2.11", board="w1", hop="core-gw"),
+        _host("workers_w2", "workers", "10.60.2.12", board="w2", hop="core-gw"),
+        _host("workers_w3", "workers", "10.60.2.13", board="w3", hop="core-gw"),
+        _host("workers_w4", "workers", "10.60.2.14", board="w4", hop="core-gw"),
+        _host("chassis-a_lc1", "chassis-a", "10.60.3.1", board="lc1", slot=1, hop="edge-gw"),
+        _host("chassis-a_lc2", "chassis-a", "10.60.3.2", board="lc2", slot=2, hop="edge-gw"),
+        _host("chassis-a_sup", "chassis-a", "10.60.3.3", board="sup", slot=3, hop="edge-gw"),
+        _host("console-01", "console-01", "10.60.3.10", hop="edge-gw"),
+        _host("zephyr-01", "zephyr-01", "10.60.4.1", hop="console-01"),
+        _host("zephyr-02", "zephyr-02", "10.60.4.2", hop="console-01"),
+    ]
+    links = [
+        *_implicit_links(hosts),
+        _link(
+            ("tor-sw-a", "eth0", "10.60.0.3"), ("tor-sw-b", "eth0", "10.60.0.4"), name="mlag-peer"
+        ),
+        _link(("edge-gw", "eth0", "10.60.1.1"), ("core-gw", "eth0", "10.60.1.2"), name="edge-core"),
+        _link(("db-01", "eth0", "10.60.1.3"), ("db-02", "eth0", "10.60.1.4"), name="db-repl"),
+        _link(
+            ("app-01", "eth0", "10.60.2.1"), ("cache-01", "eth0", "10.60.2.5"), name="app01-cache"
+        ),
+        _link(
+            ("app-02", "eth0", "10.60.2.2"), ("cache-01", "eth0", "10.60.2.5"), name="app02-cache"
+        ),
+        _link(
+            ("app-03", "eth0", "10.60.2.3"), ("queue-01", "eth0", "10.60.2.6"), name="app03-queue"
+        ),
+        _link(
+            ("app-04", "eth0", "10.60.2.4"), ("queue-01", "eth0", "10.60.2.6"), name="app04-queue"
+        ),
+        _link(
+            ("app-01", "eth0", "10.60.2.1"),
+            ("db-01", "eth0", "10.60.1.3"),
+            name="app01-db",
+            impair="edge-gw",
+        ),
+        _link(("app-02", "eth0", "10.60.2.2"), ("db-01", "eth0", "10.60.1.3"), name="app02-db"),
+        _link(("app-03", "eth0", "10.60.2.3"), ("db-02", "eth0", "10.60.1.4"), name="app03-db"),
+        _link(("app-04", "eth0", "10.60.2.4"), ("db-02", "eth0", "10.60.1.4"), name="app04-db"),
+        _link(("workers_w1", "eth0", "10.60.2.11"), ("db-01", "eth0", "10.60.1.3"), name="w1-db"),
+        _link(("workers_w3", "eth0", "10.60.2.13"), ("db-01", "eth0", "10.60.1.3"), name="w3-db"),
+        _link(
+            ("chassis-a_lc1", "eth0", "10.60.3.1"),
+            ("tor-sw-a", "eth0", "10.60.0.3"),
+            name="chassis-mgmt",
+        ),
+        _link(("app-01", "eth0", "10.60.2.1"), ("tor-sw-a", "eth0", "10.60.0.3"), name="app01-tor"),
+        _link(
+            ("zephyr-01", "eth0", "10.60.4.1"), ("tor-sw-b", "eth0", "10.60.0.4"), name="zephyr-tor"
+        ),
+        _link(
+            ("jump-01", None, "10.60.0.1"),
+            ("zephyr-01", None, "10.60.4.1"),
+            provenance="dynamic",
+            name="tun-jump-zephyr",
+            ports=(15002, 23),
+        ),
+    ]
+    # core-gw down; everything that hops through it goes dark with it (a
+    # wider cascade than the two-host one in `cascade()`).
+    down = (
+        "core-gw",
+        "app-01",
+        "app-02",
+        "app-03",
+        "app-04",
+        "cache-01",
+        "queue-01",
+        "workers_w1",
+        "workers_w2",
+        "workers_w3",
+        "workers_w4",
+    )
+    dead = (600.0, _SPARSE_DURATION_S + _SPARSE_CADENCE_S)  # see cascade()'s boundary-tick note
+    metrics: list[MetricRecord] = []
+    for h in hosts:
+        args = {
+            "start": BASE,
+            "duration_s": _SPARSE_DURATION_S,
+            "gaps": (dead,) if h.id in down else (),
+        }
+        metrics += _series(
+            rng,
+            h.id,
+            "CPU %",
+            _diurnal(rng, base=35.0, amp=20.0),
+            cadence_s=_SPARSE_CADENCE_S,
+            **args,
+        )
+        metrics += _series(
+            rng,
+            h.id,
+            "Memory MB",
+            _sawtooth(lo=900.0, hi=3100.0, period_s=2700.0),
+            cadence_s=_SPARSE_CADENCE_S,
+            **args,
+        )
+    for hid in ("tor-sw-a", "console-01"):  # reports-for star: mgmt-01 is the ambient source
+        metrics += _series(
+            rng,
+            hid,
+            "Ambient °C",
+            _noisy(rng, base=24.0, jitter=1.0),
+            start=BASE,
+            duration_s=_SPARSE_DURATION_S,
+            cadence_s=_SPARSE_CADENCE_S,
+            source="mgmt-01",
+        )
+    meta = _meta(
+        [
+            ("CPU %", "%", "cpu", _SPARSE_CADENCE_S),
+            ("Memory MB", "MB", "mem", _SPARSE_CADENCE_S),
+            ("Ambient °C", "°C", "ambient", _SPARSE_CADENCE_S),
+        ],
+        tables=False,
+    )
+    session = SessionRecord(
+        id="2026-07-01T08-00-00-sprawl",
+        label="sprawl",
+        note="Deep management chain (jump -> gateway -> console -> zephyr) with skip-column links.",
+        start=BASE,
+        end=BASE + timedelta(seconds=_SPARSE_DURATION_S),
+        lab=LabSnapshot(hosts=hosts, links=links),
+        meta=meta,
+        metrics=metrics,
+        chart_map=_chart_map(meta),
+    )
+    return MonitorExport(format=1, sessions=[session])
+
+
+def isp_core() -> MonitorExport:
+    """Build the degenerate case the layout redesign targets.
+
+    Every element sits 0 or 1 management hops from ``jump-01``, so the
+    hops-from-local axis alone cannot separate 23 elements into anything but
+    a handful of columns — while the data plane underneath (border -> core
+    -> aggregation -> access, plus a mobile-core side-mesh) is four tiers
+    deep and richly meshed. ``ems-01`` is the metrics source for
+    pe/core/mobile-core, ``ems-02`` for agg/acc: two disjoint reports-for
+    stars. ``core-02`` goes dark for the back half of the session — a plain
+    "down", not a cascade, since nothing hops through it.
+    """
+    rng = random.Random(20260713)  # noqa: S311 — deterministic dummy data, not cryptography
+    hosts = [
+        _host("jump-01", "jump-01", "10.70.0.1"),
+        _host("ems-01", "ems-01", "10.70.0.2"),
+        _host("ems-02", "ems-02", "10.70.0.3"),
+        _host("pe-01", "pe-01", "10.70.1.1"),
+        _host("pe-02", "pe-02", "10.70.1.2"),
+        _host("core-01", "core-01", "10.70.1.11"),
+        _host("core-02", "core-02", "10.70.1.12"),
+        _host("mme-01", "mme-01", "10.70.1.21"),
+        _host("sgw-01", "sgw-01", "10.70.1.22"),
+        _host("pgw-01", "pgw-01", "10.70.1.23"),
+        _host("hss-01", "hss-01", "10.70.1.24"),
+        _host("agg-01_lc1", "agg-01", "10.70.2.11", board="lc1", slot=1, hop="jump-01"),
+        _host("agg-01_lc2", "agg-01", "10.70.2.12", board="lc2", slot=2, hop="jump-01"),
+        _host("agg-01_lc3", "agg-01", "10.70.2.13", board="lc3", slot=3, hop="jump-01"),
+        _host("agg-02", "agg-02", "10.70.2.21", hop="jump-01"),
+        _host("agg-03", "agg-03", "10.70.2.31", hop="jump-01"),
+        _host("agg-04", "agg-04", "10.70.2.41", hop="jump-01"),
+        _host("acc-01", "acc-01", "10.70.3.1", hop="jump-01"),
+        _host("acc-02", "acc-02", "10.70.3.2", hop="jump-01"),
+        _host("acc-03", "acc-03", "10.70.3.3", hop="jump-01"),
+        _host("acc-04", "acc-04", "10.70.3.4", hop="jump-01"),
+        _host("acc-05", "acc-05", "10.70.3.5", hop="jump-01"),
+        _host("acc-06", "acc-06", "10.70.3.6", hop="jump-01"),
+        _host("acc-07", "acc-07", "10.70.3.7", hop="jump-01"),
+        _host("acc-08", "acc-08", "10.70.3.8", hop="jump-01"),
+    ]
+    links = [
+        *_implicit_links(hosts),
+        _link(
+            ("pe-01", "eth0", "10.70.1.1"), ("core-01", "eth0", "10.70.1.11"), name="pe01-core01"
+        ),
+        _link(
+            ("pe-01", "eth0", "10.70.1.1"), ("core-02", "eth0", "10.70.1.12"), name="pe01-core02"
+        ),
+        _link(
+            ("pe-02", "eth0", "10.70.1.2"), ("core-01", "eth0", "10.70.1.11"), name="pe02-core01"
+        ),
+        _link(
+            ("pe-02", "eth0", "10.70.1.2"), ("core-02", "eth0", "10.70.1.12"), name="pe02-core02"
+        ),
+        _link(
+            ("core-01", "eth0", "10.70.1.11"),
+            ("core-02", "eth0", "10.70.1.12"),
+            name="core01-core02",
+        ),
+        _link(
+            ("agg-01_lc1", "eth0", "10.70.2.11"),
+            ("core-01", "eth0", "10.70.1.11"),
+            name="agg01-core01",
+        ),
+        _link(
+            ("agg-01_lc2", "eth0", "10.70.2.12"),
+            ("core-02", "eth0", "10.70.1.12"),
+            name="agg01-core02",
+        ),
+        _link(
+            ("agg-02", "eth0", "10.70.2.21"), ("core-01", "eth0", "10.70.1.11"), name="agg02-core01"
+        ),
+        _link(
+            ("agg-02", "eth0", "10.70.2.21"), ("core-02", "eth0", "10.70.1.12"), name="agg02-core02"
+        ),
+        _link(
+            ("agg-03", "eth0", "10.70.2.31"), ("core-01", "eth0", "10.70.1.11"), name="agg03-core01"
+        ),
+        _link(
+            ("agg-03", "eth0", "10.70.2.31"), ("core-02", "eth0", "10.70.1.12"), name="agg03-core02"
+        ),
+        _link(
+            ("agg-04", "eth0", "10.70.2.41"), ("core-01", "eth0", "10.70.1.11"), name="agg04-core01"
+        ),
+        _link(
+            ("agg-04", "eth0", "10.70.2.41"), ("core-02", "eth0", "10.70.1.12"), name="agg04-core02"
+        ),
+        _link(
+            ("acc-01", "eth0", "10.70.3.1"),
+            ("agg-01_lc3", "eth0", "10.70.2.13"),
+            name="acc01-agg01",
+        ),
+        _link(
+            ("acc-02", "eth0", "10.70.3.2"),
+            ("agg-01_lc3", "eth0", "10.70.2.13"),
+            name="acc02-agg01",
+        ),
+        _link(
+            ("acc-03", "eth0", "10.70.3.3"), ("agg-02", "eth0", "10.70.2.21"), name="acc03-agg02"
+        ),
+        _link(
+            ("acc-04", "eth0", "10.70.3.4"), ("agg-02", "eth0", "10.70.2.21"), name="acc04-agg02"
+        ),
+        _link(
+            ("acc-05", "eth0", "10.70.3.5"), ("agg-03", "eth0", "10.70.2.31"), name="acc05-agg03"
+        ),
+        _link(
+            ("acc-06", "eth0", "10.70.3.6"), ("agg-03", "eth0", "10.70.2.31"), name="acc06-agg03"
+        ),
+        _link(
+            ("acc-07", "eth0", "10.70.3.7"), ("agg-04", "eth0", "10.70.2.41"), name="acc07-agg04"
+        ),
+        _link(
+            ("acc-08", "eth0", "10.70.3.8"), ("agg-04", "eth0", "10.70.2.41"), name="acc08-agg04"
+        ),
+        _link(("acc-01", "eth0", "10.70.3.1"), ("acc-02", "eth0", "10.70.3.2"), name="acc-ring-1"),
+        _link(("acc-03", "eth0", "10.70.3.3"), ("acc-04", "eth0", "10.70.3.4"), name="acc-ring-2"),
+        _link(("acc-05", "eth0", "10.70.3.5"), ("acc-06", "eth0", "10.70.3.6"), name="acc-ring-3"),
+        _link(("acc-07", "eth0", "10.70.3.7"), ("acc-08", "eth0", "10.70.3.8"), name="acc-ring-4"),
+        _link(
+            ("mme-01", "eth0", "10.70.1.21"), ("core-01", "eth0", "10.70.1.11"), name="mme01-core01"
+        ),
+        _link(
+            ("sgw-01", "eth0", "10.70.1.22"), ("core-01", "eth0", "10.70.1.11"), name="sgw01-core01"
+        ),
+        _link(
+            ("pgw-01", "eth0", "10.70.1.23"), ("core-02", "eth0", "10.70.1.12"), name="pgw01-core02"
+        ),
+        _link(
+            ("hss-01", "eth0", "10.70.1.24"), ("core-02", "eth0", "10.70.1.12"), name="hss01-core02"
+        ),
+        _link(
+            ("pgw-01", "eth0", "10.70.1.23"),
+            ("pe-01", "eth0", "10.70.1.1"),
+            name="pgw01-pe01",
+            impair="core-02",
+        ),
+        _link(
+            ("jump-01", None, "10.70.0.1"),
+            ("acc-07", None, "10.70.3.7"),
+            provenance="dynamic",
+            name="tun-jump-acc07",
+            ports=(15003, 22),
+        ),
+    ]
+    dead = (600.0, _SPARSE_DURATION_S + _SPARSE_CADENCE_S)  # see cascade()'s boundary-tick note
+    ems01_hosts = ["pe-01", "pe-02", "core-01", "core-02", "mme-01", "sgw-01", "pgw-01", "hss-01"]
+    ems02_hosts = [
+        "agg-01_lc1",
+        "agg-01_lc2",
+        "agg-01_lc3",
+        "agg-02",
+        "agg-03",
+        "agg-04",
+        "acc-01",
+        "acc-02",
+        "acc-03",
+        "acc-04",
+        "acc-05",
+        "acc-06",
+        "acc-07",
+        "acc-08",
+    ]
+    metrics: list[MetricRecord] = []
+    for h in hosts:
+        metrics += _series(
+            rng,
+            h.id,
+            "CPU %",
+            _diurnal(rng, base=35.0, amp=20.0),
+            start=BASE,
+            duration_s=_SPARSE_DURATION_S,
+            cadence_s=_SPARSE_CADENCE_S,
+            gaps=(dead,) if h.id == "core-02" else (),
+        )
+    for hid in ems01_hosts:
+        metrics += _series(
+            rng,
+            hid,
+            "PSU Temp °C",
+            _noisy(rng, base=42.0, jitter=2.0),
+            start=BASE,
+            duration_s=_SPARSE_DURATION_S,
+            cadence_s=_SPARSE_CADENCE_S,
+            source="ems-01",
+            gaps=(dead,) if hid == "core-02" else (),
+        )
+    for hid in ems02_hosts:
+        metrics += _series(
+            rng,
+            hid,
+            "PSU Temp °C",
+            _noisy(rng, base=39.0, jitter=2.0),
+            start=BASE,
+            duration_s=_SPARSE_DURATION_S,
+            cadence_s=_SPARSE_CADENCE_S,
+            source="ems-02",
+        )
+    meta = _meta(
+        [
+            ("CPU %", "%", "cpu", _SPARSE_CADENCE_S),
+            ("PSU Temp °C", "°C", "psu-temp", _SPARSE_CADENCE_S),
+        ],
+        tables=False,
+    )
+    session = SessionRecord(
+        id="2026-07-01T08-00-00-isp-core",
+        label="isp-core",
+        note="Short management paths (0-1 hops); deep, richly meshed data plane.",
+        start=BASE,
+        end=BASE + timedelta(seconds=_SPARSE_DURATION_S),
+        lab=LabSnapshot(hosts=hosts, links=links),
+        meta=meta,
+        metrics=metrics,
+        chart_map=_chart_map(meta),
+    )
+    return MonitorExport(format=1, sessions=[session])
+
+
 def drift() -> MonitorExport:
     """Three sessions across months over one evolving lab (spec §5)."""
     rng = random.Random(77)  # noqa: S311 — deterministic dummy data, not cryptography
@@ -660,6 +1048,8 @@ def build_all() -> dict[str, MonitorExport]:
         "minimal": minimal(),
         "drift": drift(),
         "cascade": cascade(),
+        "sprawl": sprawl(),
+        "isp-core": isp_core(),
     }
 
 

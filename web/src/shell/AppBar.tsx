@@ -2,9 +2,9 @@
 // far right = status text · status dot · ⋯ menu (Import/Export/theme — the
 // infrequent actions). The status dot never moves; only its color and the
 // text beside it change with mode/connection.
-import { useState } from "react";
 
 import { DotsHorizontal } from "@untitledui/icons";
+import { useState } from "react";
 
 import { ButtonGroup, ButtonGroupItem } from "@/components/base/button-group/button-group";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";

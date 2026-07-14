@@ -37,13 +37,45 @@ const nodeTypes = {
 };
 const edgeTypes = { link: LinkEdge };
 
+// Every fitView call in this page (initial load, the Fit button, the resize
+// re-fit) shares this padding, so the graph never jumps between two
+// different framings depending on which code path happened to fit it last.
+//
+// `bottom` carries an absolute px reserve, not the uniform 0.2 fraction the
+// other sides use: TopoLegend and the MiniMap are both anchored to the
+// canvas's bottom corners (bottom-left/bottom-right), fixed-size overlays in
+// SCREEN space, not the graph's model space. A fraction-based bottom padding
+// scales with the fitted content's own height, so a short/wide graph (few
+// rows, several columns -- exactly what a management-band reclassification
+// can produce, since column 0's row count directly sets the tallest
+// column's height) gets barely any bottom margin and its leftmost column
+// can end up rendered UNDER the legend. 260px comfortably clears both
+// panels' measured height (~169px/~150px) with margin for engine-to-engine
+// font-metric differences, independent of the graph's own aspect ratio.
+//
+// MUST be the STRING "260px", not the bare number 260. React Flow's
+// `parsePadding` (`@xyflow/system`) treats a bare number as a FRACTION of the
+// viewport dimension -- even inside this per-side object, where every OTHER
+// field genuinely is meant as a 0.2 fraction. A bare 260 is parsed as
+// "260x the viewport", which `parsePadding` clamps down via
+// `viewport - viewport/(1+260)`, saturating toward HALF the canvas height
+// on a tall canvas (~647px reserve out of 1400) while reading deceptively
+// close to the intended 260px on a short one (~298px out of 600, e.g.
+// Playwright's default viewport) -- which is exactly why this shipped and
+// stayed green everywhere: vitest, tsc, Biome, and all three browser
+// engines all ran at sizes where the bug was nearly invisible. See
+// `test_fit_padding_bottom_is_an_absolute_reserve_at_a_tall_viewport` in
+// tests/e2e/monitor/dashboard/test_review_shell.py for the regression guard,
+// proven to fail against a bare 260 and pass against "260px".
+export const FIT_PADDING = { top: 0.2, left: 0.2, right: 0.2, bottom: "260px" } as const;
+
 function FitButton() {
   const { fitView } = useReactFlow();
   return (
     <button
       type="button"
       data-testid="topo-fit"
-      onClick={() => fitView({ padding: 0.2 })}
+      onClick={() => fitView({ padding: FIT_PADDING })}
       className="cursor-pointer rounded-md border border-secondary px-2 py-1 text-xs text-tertiary
         hover:bg-primary_hover"
     >
@@ -89,7 +121,7 @@ function RefitOnResize() {
     // have already moved. (That is not hypothetical: it took out the two
     // topology specs that sample a point on an edge's stroke and then click it.)
     if (previous === null || previous === width) return;
-    void fitView({ padding: 0.2, duration: 200 });
+    void fitView({ padding: FIT_PADDING, duration: 200 });
   }, [width, fitView]);
   return null;
 }
@@ -151,7 +183,7 @@ export function TopologyPage() {
 
   const flow = useMemo(() => {
     if (!graph || !session) return { nodes: [] as Node[], edges: [] as Edge[] };
-    const positions = layoutTopo(graph.nodes);
+    const positions = layoutTopo(graph.nodes, graph.edges, graph.managementIds);
     const expandEl = session.elements.find((e) => e.id === expand);
     const physical = expandEl?.type === "physical";
     const nodes: Node[] = graph.nodes.map((n) => {
@@ -262,6 +294,7 @@ export function TopologyPage() {
               edgeTypes={edgeTypes}
               colorMode={dark ? "dark" : "light"}
               fitView
+              fitViewOptions={{ padding: FIT_PADDING }}
               minZoom={0.2}
               proOptions={{ hideAttribution: true }}
               onNodeClick={(_evt, node) => {

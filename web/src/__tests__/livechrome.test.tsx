@@ -2,8 +2,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AppBar } from "../shell/AppBar";
 import { useReviewStore } from "../data/reviewStore";
+import { AppBar } from "../shell/AppBar";
 
 beforeEach(() => {
   useReviewStore.setState({ mode: "live", connection: "live", range: null, windowMs: 900_000 });

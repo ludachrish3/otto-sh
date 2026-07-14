@@ -10,11 +10,19 @@ import { INTERACTION_WIDTH, type Rect, routeEdge } from "../topo/routing";
 const W = 208; // element node: w-52
 const H = 72; // element node height
 
-/** kitchen-sink's real inter-element layout. db-01, edge-gw, mgmt-01,
- * spare-chassis and workers all have depth 1, so they stack in one column
- * (rowOrder sorts by id); chassis-a is the only depth-2 node.
- * spare-chassis is an element with 0 hosts — it still lands at depth 1,
- * which is why the column is five deep, not four. */
+/** A synthetic same-column stack, built by hand rather than read off a real
+ * layout run: five element-sized boxes 110px apart in one column, plus one
+ * more a column over. It borrows kitchen-sink's element names and sizes but
+ * is NOT today's actual kitchen-sink positions -- the management partition
+ * (Task 3) now pulls edge-gw and mgmt-01 out into column 0 (verified via
+ * `deriveManagementIds`/`layoutTopo` against the real fixture: kitchen-sink's
+ * management set is exactly {edge-gw, mgmt-01}), leaving column 1 as
+ * {chassis-a, db-01, spare-chassis, workers} -- four deep, not five. Built
+ * this way instead so db-01 and workers sit a fixed four rows apart with
+ * three other boxes between them -- the shape the same-column occlusion test
+ * below needs -- and chassis-a is placed one column over for the
+ * cross-column tests further down. spare-chassis is an element with 0
+ * hosts and still gets a row here. */
 const NODES: Record<string, Rect> = {
   "db-01": { x: COL_W, y: 0 * ROW_H, width: W, height: H },
   "edge-gw": { x: COL_W, y: 1 * ROW_H, width: W, height: H },
@@ -77,6 +85,38 @@ describe("routeEdge — same column", () => {
     const { path } = routeEdge(NODES["db-01"], NODES["edge-gw"], 0, 1);
     const cx = COL_W + W / 2;
     expect(path).toBe(`M${cx},${H} L${cx},${ROW_H}`);
+  });
+
+  it("fans MULTIPLE parallel links between adjacent rows apart, not onto one line", () => {
+    // Two heavily-linked peers can land in adjacent rows of the SAME column
+    // -- e.g. kitchen-sink's app-db and metrics-udp both connect
+    // workers<->db-01. The management partition (Task 3) pulls edge-gw and
+    // mgmt-01 out of that column entirely -- they're kitchen-sink's only two
+    // management elements; chassis-a, db-01, spare-chassis and workers all
+    // stay. workers and db-01 still land ADJACENT within that four-element
+    // column, but only because app-db and metrics-udp connect them: Rule 5's
+    // same-column adjacency bias (`barycentricRowSort` in layout.ts) nudges
+    // data-plane-linked peers together -- it is not an emptied column. An
+    // unfanned centreline drew both parallel links on the EXACT same path --
+    // geometrically fine (never swallowed), but only the last-painted one
+    // was ever clickable (#131's failure mode, one row apart instead of one
+    // column apart).
+    const a = routeEdge(NODES["db-01"], NODES["edge-gw"], 0, 2);
+    const b = routeEdge(NODES["db-01"], NODES["edge-gw"], 1, 2);
+    expect(a.path).not.toBe(b.path);
+    const [ax] = samplePath(a.path, 1);
+    const [bx] = samplePath(b.path, 1);
+    const cx = COL_W + W / 2;
+    // Symmetric around the shared centreline, not shifted wholesale to one side.
+    expect(cx - ax[0]).toBeCloseTo(bx[0] - cx);
+    // And far enough apart that each keeps its own INTERACTION_WIDTH pointer
+    // target — the same threshold #131 pinned for the bowed multi-row case.
+    expect(Math.abs(bx[0] - ax[0])).toBeGreaterThan(INTERACTION_WIDTH / 2);
+  });
+
+  it("keeps a lone adjacent-row edge exactly centred (groupSize 1 is unaffected)", () => {
+    const a = routeEdge(NODES["db-01"], NODES["edge-gw"], 0, 1);
+    expect(a.path).toBe(`M${COL_W + W / 2},${H} L${COL_W + W / 2},${ROW_H}`);
   });
 
   it("fans parallel bowed links OUTWARD only", () => {
