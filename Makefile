@@ -241,7 +241,7 @@ WEB_NODE_MODULES := web/node_modules/.package-lock.json
 $(WEB_NODE_MODULES): web/package.json web/package-lock.json
 	$(MAKE) web-install
 
-web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + the covreport bundle (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh)
+web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + the covreport bundle (vite) into their static dist dirs, then gate both against absolute http(s) URLs (air-gap requirement — labs have no network access, see scripts/check_airgap.sh) and the dashboard against a resolved-brand-color regression (scripts/check_brand_tokens.sh)
 	# Regenerate web/src/api/types.gen.ts and web/src/api/export.gen.ts from
 	# the live pydantic models and fail BEFORE the vite build if either
 	# committed file has drifted — a stale wire contract should be caught by
@@ -253,6 +253,7 @@ web: $(WEB_NODE_MODULES) ## (Build & Release) Build the web/ React dashboard + t
 	cd web && npm run build:covreport
 	scripts/check_airgap.sh
 	scripts/check_airgap.sh src/otto/coverage/renderer/static/dist
+	scripts/check_brand_tokens.sh
 
 web-dev: $(WEB_NODE_MODULES) ## (Dev) Run the web/ Vite dev server with hot reload; proxies /api to a running otto monitor (default target http://127.0.0.1:8080, override with VITE_OTTO_TARGET=http://host:port)
 	cd web && npm run dev

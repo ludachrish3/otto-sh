@@ -17,12 +17,12 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 
+import { ButtonGroup, ButtonGroupItem } from "@/components/base/button-group/button-group";
 import { useIsDark } from "../charts/useIsDark";
 import { useNow } from "../data/clock";
 import { healthForHosts } from "../data/health";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { buildTopoGraph, deriveReachability, pairKey, type TopoEdge } from "../data/topology";
-import { ToggleGroup } from "../ui/ToggleGroup";
 import { LinkEdge } from "./LinkEdge";
 import { LinkInspector } from "./LinkInspector";
 import { layoutTopo } from "./layout";
@@ -44,8 +44,8 @@ function FitButton() {
       type="button"
       data-testid="topo-fit"
       onClick={() => fitView({ padding: 0.2 })}
-      className="cursor-pointer rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-500
-        hover:bg-gray-50 dark:border-gray-800 dark:hover:bg-gray-900"
+      className="cursor-pointer rounded-md border border-secondary px-2 py-1 text-xs text-tertiary
+        hover:bg-primary_hover"
     >
       Fit
     </button>
@@ -191,7 +191,7 @@ export function TopologyPage() {
   if (!session) return null;
   if (expand && !session.elementIds.has(expand)) {
     return (
-      <main data-testid="not-found" className="p-4 text-sm text-gray-500">
+      <main data-testid="not-found" className="p-4 text-sm text-tertiary">
         Unknown element "{expand}" in this session. <Link href="/topology">Back to topology</Link>
       </main>
     );
@@ -203,20 +203,20 @@ export function TopologyPage() {
     <ReactFlowProvider>
       <main data-testid="topology-page" className="flex min-h-0 flex-1 flex-col gap-3 p-4">
         <div className="flex items-center gap-3">
-          <ToggleGroup
-            testId="view-toggle"
-            label="View"
-            selectedId="topology"
-            onSelect={(id) => {
-              if (id === "grid") navigate("/");
+          <ButtonGroup
+            aria-label="View"
+            data-testid="view-toggle"
+            selectedKeys={new Set(["topology"])}
+            disallowEmptySelection
+            onSelectionChange={(keys) => {
+              if ([...keys][0] === "grid") navigate("/");
             }}
-            options={[
-              { id: "grid", label: "Grid" },
-              { id: "topology", label: "Topology" },
-            ]}
-          />
+          >
+            <ButtonGroupItem id="grid">Grid</ButtonGroupItem>
+            <ButtonGroupItem id="topology">Topology</ButtonGroupItem>
+          </ButtonGroup>
           {expand && (
-            <nav data-testid="topo-breadcrumb" className="text-sm text-gray-400">
+            <nav data-testid="topo-breadcrumb" className="text-sm text-quaternary">
               <Link href="/topology">Topology</Link> / {expand}
             </nav>
           )}
@@ -228,7 +228,7 @@ export function TopologyPage() {
             className={`cursor-pointer rounded-full border px-2 py-0.5 text-xs ${
               sources
                 ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
-                : "border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-400"
+                : "border-secondary text-tertiary"
             }`}
           >
             Sources
@@ -241,7 +241,7 @@ export function TopologyPage() {
             className={`cursor-pointer rounded-full border px-2 py-0.5 text-xs ${
               minimap
                 ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
-                : "border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-400"
+                : "border-secondary text-tertiary"
             }`}
           >
             Minimap
@@ -253,10 +253,7 @@ export function TopologyPage() {
             {graph.warnings.join(" · ")}
           </p>
         )}
-        <div
-          className="flex min-h-0 grow overflow-hidden rounded-lg border border-gray-200
-            dark:border-gray-800"
-        >
+        <div className="flex min-h-0 grow overflow-hidden rounded-lg border border-secondary">
           <div className="min-w-0 grow">
             <ReactFlow
               nodes={flow.nodes}

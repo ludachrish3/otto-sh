@@ -4,24 +4,24 @@
 // derived, range-scoped (data/health.ts) — nothing here is stored state.
 import { Link, useLocation } from "wouter";
 
+import { ButtonGroup, ButtonGroupItem } from "@/components/base/button-group/button-group";
 import { useNow } from "../data/clock";
 import { elementRollup, headlineFor, healthForHosts, type SubjectHealth } from "../data/health";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
-import { formatSpan } from "../data/time";
-import { ToggleGroup } from "../ui/ToggleGroup";
+import { formatOutage } from "../data/time";
 
 const DOT_CLASS: Record<SubjectHealth["status"], string> = {
   ok: "bg-status-ok",
   down: "bg-status-error",
-  "no-data": "bg-gray-300 dark:bg-gray-600",
-  unknown: "bg-gray-200 dark:bg-gray-700",
+  "no-data": "bg-fg-quaternary",
+  unknown: "bg-quaternary",
 };
 
 const SEGMENT_CLASS: Record<SubjectHealth["status"], string> = {
   ok: "bg-status-ok",
   down: "bg-status-error",
-  "no-data": "bg-gray-300 dark:bg-gray-600",
-  unknown: "bg-gray-200 dark:bg-gray-700",
+  "no-data": "bg-fg-quaternary",
+  unknown: "bg-quaternary",
 };
 
 export function OverviewPage() {
@@ -50,18 +50,18 @@ export function OverviewPage() {
   return (
     <main data-testid="overview-page" className="flex flex-col gap-6 p-4">
       <div className="flex items-center gap-3">
-        <ToggleGroup
-          testId="view-toggle"
-          label="View"
-          selectedId="grid"
-          onSelect={(id) => {
-            if (id === "topology") navigate("/topology");
+        <ButtonGroup
+          aria-label="View"
+          data-testid="view-toggle"
+          selectedKeys={new Set(["grid"])}
+          disallowEmptySelection
+          onSelectionChange={(keys) => {
+            if ([...keys][0] === "topology") navigate("/topology");
           }}
-          options={[
-            { id: "grid", label: "Grid" },
-            { id: "topology", label: "Topology" },
-          ]}
-        />
+        >
+          <ButtonGroupItem id="grid">Grid</ButtonGroupItem>
+          <ButtonGroupItem id="topology">Topology</ButtonGroupItem>
+        </ButtonGroup>
       </div>
       {session.elements.map((el) => {
         const rollup = elementRollup(el, healths, session);
@@ -75,7 +75,7 @@ export function OverviewPage() {
             <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold">
               <span aria-hidden>{el.type === "physical" ? "▦" : "▤"}</span>
               {el.id}
-              <span className="font-normal text-gray-400">
+              <span className="font-normal text-quaternary">
                 {el.hostIds.length} host{el.hostIds.length === 1 ? "" : "s"}
                 {el.description ? ` · ${el.description}` : ""}
               </span>
@@ -110,8 +110,8 @@ export function OverviewPage() {
                     <Link
                       href={`/host/${hostId}`}
                       data-testid={`subject-link-${hostId}`}
-                      className="block rounded-lg border border-gray-200 px-3 py-2 text-sm
-                        hover:border-brand-500 dark:border-gray-800 dark:hover:border-brand-500"
+                      className="block rounded-lg border border-secondary px-3 py-2 text-sm
+                        hover:border-brand-500"
                     >
                       <article
                         data-testid={`host-tile-${hostId}`}
@@ -126,23 +126,28 @@ export function OverviewPage() {
                           />
                           {hostId}
                         </span>
-                        <span className="text-xs text-gray-400">
+                        <span className="text-xs text-quaternary">
                           {host?.board ?? "—"}
                           {host?.slot != null ? ` · slot ${host.slot}` : ""}
                         </span>
                         {health.status === "down" ? (
                           <span className="text-xs font-medium text-status-error">
-                            down · {formatSpan(0, health.outageMs)}
+                            {/* formatOutage (Task 5), not formatSpan: the down
+                                threshold (HEALTH_K x cadence) is reachable in
+                                seconds, and formatSpan alone prints "0m" for
+                                any outage under a minute (Minor 5, 5b
+                                follow-ups review). */}
+                            down · {formatOutage(health.outageMs)}
                           </span>
                         ) : health.status === "ok" && headline ? (
                           <span
                             data-testid={`headline-${hostId}`}
-                            className="text-xs text-gray-600 dark:text-gray-300"
+                            className="text-xs text-secondary"
                           >
                             {headline.text}
                           </span>
                         ) : (
-                          <span className="text-xs text-gray-400">
+                          <span className="text-xs text-quaternary">
                             {health.status === "no-data" ? "no data" : "—"}
                           </span>
                         )}
@@ -152,7 +157,7 @@ export function OverviewPage() {
                 );
               })}
               {el.hostIds.length === 0 && (
-                <li className="text-sm text-gray-400">empty — no hosts fitted</li>
+                <li className="text-sm text-quaternary">empty — no hosts fitted</li>
               )}
             </ul>
           </section>

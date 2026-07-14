@@ -7,9 +7,21 @@
 // Idiom follows subjectpage.retirement.test.tsx: mock ../charts/options to
 // spy on buildStackOption, mock ../charts/echarts so ChartPanel doesn't
 // touch a real canvas, and drive wouter's useParams directly.
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Untitled UI's Checkbox puts data-testid on the <label>, not the
+// visually-hidden <input> nested inside — react-aria's Checkbox needs the
+// real pointer-event sequence userEvent produces (fireEvent.click doesn't
+// drive it), and jsdom doesn't replay that sequence's label->control
+// forwarding reliably, so tests here act on the checkbox role found inside
+// the testid'd wrapper (see seriespanel.test.tsx's "checkbox toggle reports
+// the series key" for the same pattern, verified empirically).
+function seriesCheckbox(testid: string): HTMLInputElement {
+  return within(screen.getByTestId(testid)).getByRole("checkbox") as HTMLInputElement;
+}
 
 globalThis.ResizeObserver ??= class {
   observe() {}
@@ -105,6 +117,11 @@ describe("chart option memoization", () => {
       activeSessionId: null,
       range: null,
       mode: null,
+      // Reset back to the store's own default -- the setWindow test below
+      // deliberately leaves this at a non-default width, and without this
+      // reset that leaks into whichever test runs next (WINDOW_MS above
+      // pins the default explicitly rather than re-deriving it).
+      windowMs: WINDOW_MS,
     });
   });
 
@@ -147,6 +164,25 @@ describe("chart option memoization", () => {
         chart_map: {},
         meta: null,
       } as never);
+    });
+    expect(buildStackOption.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  // Task 6 follow-up regression: `setWindow` (AppBar's 5m/15m/1h presets)
+  // resizes the follow window's WIDTH while following (`range` stays null --
+  // reviewStore.ts's setWindow doc comment). Neither `revKey` (this chart's
+  // series didn't tick) nor `range` (still null) moves for that, so a memo
+  // that doesn't ALSO key on `windowMs` silently keeps drawing the old,
+  // narrower slice of points forever under a widened axis -- exactly the bug
+  // a review caught by instrumenting the real ECharts option (axis widened,
+  // series `data` didn't). This is the mutation-proof pin: dropping
+  // `windowMs` from ChartSection's memo deps (SubjectPage.tsx) must turn
+  // this RED.
+  it("DOES rebuild when the follow window's WIDTH changes via setWindow, even though no series ticked", () => {
+    render(<SubjectPage />);
+    const before = buildStackOption.mock.calls.length;
+    act(() => {
+      useReviewStore.getState().actions.setWindow(3_600_000); // the "1h" preset
     });
     expect(buildStackOption.mock.calls.length).toBeGreaterThan(before);
   });
@@ -240,8 +276,7 @@ describe("chart option memoization", () => {
 
     // The checkbox now exists (the tree grew) AND is auto-checked -- not
     // left behind unchecked the way a `treeKey`-only reset used to.
-    const box = screen.getByTestId("series-node-m0") as HTMLInputElement;
-    expect(box.checked).toBe(true);
+    expect(seriesCheckbox("series-node-m0").checked).toBe(true);
     // ...and the chart actually asked to draw it, not just the checkbox UI.
     const lastCall = buildStackOption.mock.calls.at(-1)?.[0] as
       | { series: { key: string }[] }
@@ -253,10 +288,11 @@ describe("chart option memoization", () => {
   // DIFFERENT, brand-new series appears -- the growth-triggered auto-select
   // above must not clobber existing choices, only add ones that never had a
   // choice made about them yet.
-  it("a later-appearing series does not resurrect an earlier manual uncheck", () => {
+  it("a later-appearing series does not resurrect an earlier manual uncheck", async () => {
+    const user = userEvent.setup();
     render(<SubjectPage />); // beforeEach's session: h0/m0, h1/m0, 3 ticks each
-    fireEvent.click(screen.getByTestId("series-node-m0"));
-    expect((screen.getByTestId("series-node-m0") as HTMLInputElement).checked).toBe(false);
+    await user.click(seriesCheckbox("series-node-m0"));
+    expect(seriesCheckbox("series-node-m0").checked).toBe(false);
 
     // A brand-new label for h0 -- the tree grows, which is what drives the
     // auto-select effect at all.
@@ -273,7 +309,7 @@ describe("chart option memoization", () => {
       } as never);
     });
 
-    expect((screen.getByTestId("series-node-m0") as HTMLInputElement).checked).toBe(false);
-    expect((screen.getByTestId("series-node-m1") as HTMLInputElement).checked).toBe(true);
+    expect(seriesCheckbox("series-node-m0").checked).toBe(false);
+    expect(seriesCheckbox("series-node-m1").checked).toBe(true);
   });
 });

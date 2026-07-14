@@ -3,26 +3,74 @@
 Triaged by the final whole-branch review. Everything here was consciously
 deferred; nothing blocks the merge.
 
-## Spec items not built
+## Resolved
 
-1. **The drilled-in unreachable treatment does not exist.** The spec says a
-   drilled-in unreachable host shows "last-known data, frozen and dimmed, with
-   the *Unreachable for 2m — showing last-known data* banner". `SubjectPage`
-   computes no health at all, so a dead host's subject page renders its charts
-   normally with no indication. The fleet grid and topology both dim correctly;
-   only the drill-in is missing. This is a spec→plan gap — the plan routed
-   "unreachable + clock" only to the health/clock tasks, so no per-task review
-   could have caught it. **Needs a ruling: build it, or descope to 5c and amend
-   the spec.**
+1. **The drilled-in unreachable treatment — BUILT.** `SubjectHealthBanner`
+   (`web/src/shell/SubjectHealthBanner.tsx`) now wraps the drill-in's chart
+   stack. It reads `health.ts`'s `healthForHost` — extracted from
+   `healthForHosts` so the drill-in can ask about one host without forking
+   the down rule — and renders per spec §A: a host subject shows "Unreachable
+   for 2m — showing last-known data" and dims its chart stack; an element
+   subject instead names each unreachable member with that member's *own*
+   outage duration (e.g. "tech2 (2m), tech3 (20s) unreachable — showing
+   last-known data") and does **not** dim, because its healthy members'
+   charts are still live and correct and dimming them too would lie.
 
-2. **Range presets do not set the live window.** The spec's table says "preset
-   chosen → sets `windowMs`; still following". Shipped: `windowMs` is a
-   `900_000` literal with **no setter**, and the ReviewBar presets call
-   `setRange(...)`, which *pins* the view (i.e. pauses). ReviewBar is now hidden
-   in live mode, so this is unreachable today rather than wrong — but the live
-   window is fixed at 15 minutes with no way to change it.
+2. **Range presets do not set the live window — BUILT, but not the way this
+   item imagined.** The spec's table wanted the ReviewBar's presets to set
+   `windowMs` directly. Shipped instead: the live follow-window is resizable
+   via `reviewStore`'s new `setWindow(windowMs)` action, driven by a
+   dedicated 5m/15m/1h `ButtonGroup` in the AppBar that only appears in live
+   mode (`web/src/shell/AppBar.tsx`). The historical ReviewBar's presets still
+   call `setRange(...)`, which *pins* an absolute range — a pinned range and
+   a follow-window are different concepts, and the two rows must not disagree
+   by sharing one setter.
 
-## Worth doing next time these files are touched
+## Resolved in the Untitled UI adoption branch (2026-07-14)
+
+Items **3, 4, 6, 8** and **9** were cleaned up before that branch merged; see
+`todo/untitled-ui-adoption-followups.md` for what the same sweep left behind.
+
+- **3 — a resync can strand the session picker.** Fixed: `resyncMonitorSessions`
+  now falls back to `sessions[0]` + `range: null` **only** when the previous id is
+  absent from the new snapshot, so a server restart re-seeds the picker while a
+  transient blip still preserves a paused/pinned view.
+- **4 — the snapshot→stream gap.** Not closed (it is small and the same shape at
+  boot and at resync), but it is now stated plainly in the code instead of being
+  papered over by the spec's "provably correct".
+- **6 — `stop()` did not cancel a pending reconnect.** Fixed: `stop()` cancels the
+  timer, and the reconnect path checks `stopped` *before* it hydrates — so a
+  stopped stream can no longer fire one last hydrate over the store, and mode
+  switches / HMR no longer leak EventSources.
+- **8 — the engine-exemption test pinned source text.** Rewritten to assert the
+  BEHAVIOUR: the collector still ticks at a sub-second interval. Proof it now
+  bites: flooring `MetricCollector` turns the new test red, while the old
+  `inspect.getsource` assertion stayed green under the identical mutation.
+- **9 — the small cleanups.** Dead `_drain()` deleted; the duplicated live
+  frame/lab guard factored into `_require_live_snapshot_body()`; the
+  `jsonschema.py` docstring corrected (it had `setdefault`'s guarantee
+  *backwards* — it silently keeps the document's value and discards the
+  fragment's, and nothing "shows up as a difference"); the generated `ChartMap1`
+  duplicate removed at the generator, not by hand-editing the generated file.
+
+## Still open
+
+5. **Browser/server clock skew flips fleet health — ACCEPTED RISK, not fixed.**
+   Health compares browser `Date.now()` against server-stamped samples, so skew
+   greater than `HEALTH_K × cadence` (15s at a 5s interval) would mark the whole
+   fleet down, and negative skew would hide real outages by the skew amount.
+   Ruled out of scope (Chris, 2026-07-14): skew that large is extremely unlikely
+   in a lab. Revisit only if a lab without NTP shows up.
+
+7. **SeriesPanel's checkbox tree never retires PIDs — DEFERRED, but we do intend
+   to retire them.** Chart *series* are retired; the selector sidebar still lists
+   every PID the session ever saw, forever, so a long run's sidebar grows without
+   bound. Deliberately deferred (Chris, 2026-07-14) rather than accepted as
+   permanent behaviour — this is not "by design", it is unfinished. The tension to
+   resolve when it is picked up: retiring the selector too costs you the ability
+   to tick a PID that died early in a long archive.
+
+## Superseded — the original list
 
 3. **A resync can strand the session picker.** `resyncMonitorSessions` keeps
    `activeSessionId` unconditionally. If the monitor *server restarts* while a

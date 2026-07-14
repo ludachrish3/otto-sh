@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildStackOption, chartTheme, eventMarkers, zoomToRange } from "../charts/options";
+import {
+  assignLanes,
+  buildStackOption,
+  chartTheme,
+  eventMarkers,
+  eventOverlay,
+  zoomToRange,
+} from "../charts/options";
 import { MAX_SERIES_PER_CHART, SERIES_DARK, SERIES_LIGHT } from "../charts/palette";
 
 const WINDOW = { from: 1_000_000, to: 2_000_000 };
@@ -127,5 +134,139 @@ describe("eventMarkers", () => {
 describe("zoomToRange", () => {
   it("maps percentages onto the window", () => {
     expect(zoomToRange(25, 75, WINDOW)).toEqual({ from: 1_250_000, to: 1_750_000 });
+  });
+});
+
+// Follow-up: two overlapping span events (kitchen-sink.json's "stress run"
+// 09:25-09:35 and "log capture" 09:30-09:40) used to draw their markArea
+// labels at the SAME default position — ECharts does not lay markArea
+// labels out to avoid each other — so the glyphs overlapped into unreadable
+// mush, in both themes, on a chart neither this branch nor its predecessor
+// touched. `assignLanes` is the pure, directly-testable core of the fix: a
+// greedy interval-graph colouring that gives overlapping events distinct
+// lanes and leaves the non-overlapping common case alone.
+describe("assignLanes", () => {
+  it("non-overlapping events all land in lane 0 — the common case is unchanged", () => {
+    const events = [
+      { fromMs: 0, toMs: 10 },
+      { fromMs: 20, toMs: 30 },
+      { fromMs: 40, toMs: 50 },
+    ];
+    expect(assignLanes(events)).toEqual([0, 0, 0]);
+  });
+
+  it("two overlapping events get distinct lanes", () => {
+    const events = [
+      { fromMs: 0, toMs: 10 },
+      { fromMs: 5, toMs: 15 },
+    ];
+    const lanes = assignLanes(events);
+    expect(lanes[0]).not.toBe(lanes[1]);
+    expect(new Set(lanes).size).toBe(2);
+  });
+
+  it("three mutually overlapping events get three distinct lanes", () => {
+    const events = [
+      { fromMs: 0, toMs: 30 },
+      { fromMs: 5, toMs: 25 },
+      { fromMs: 10, toMs: 20 },
+    ];
+    const lanes = assignLanes(events);
+    expect(new Set(lanes).size).toBe(3);
+  });
+
+  it("half-open intervals: an event starting exactly when another ends does NOT overlap it, and reuses the lane", () => {
+    const events = [
+      { fromMs: 0, toMs: 10 },
+      { fromMs: 10, toMs: 20 }, // starts exactly at the first one's end
+    ];
+    expect(assignLanes(events)).toEqual([0, 0]);
+  });
+
+  it("kitchen-sink.json's own overlap: stress run (09:25-09:35) vs log capture (09:30-09:40)", () => {
+    const stressRun = {
+      fromMs: Date.parse("2026-07-01T09:25:00Z"),
+      toMs: Date.parse("2026-07-01T09:35:00Z"),
+    };
+    const logCapture = {
+      fromMs: Date.parse("2026-07-01T09:30:00Z"),
+      toMs: Date.parse("2026-07-01T09:40:00Z"),
+    };
+    const lanes = assignLanes([stressRun, logCapture]);
+    expect(lanes[0]).not.toBe(lanes[1]);
+  });
+
+  it("returns lanes in the SAME order as the input, not sorted order", () => {
+    // Input is start-descending; assignLanes sorts internally by start but
+    // must hand back lanes zipped to the ORIGINAL index order. An
+    // overlapping pair (rather than a non-overlapping one, which would
+    // trivially land both in lane 0 either way) is what actually detects an
+    // index-vs-sort-order swap.
+    const events = [
+      { fromMs: 50, toMs: 60 }, // index 0: starts SECOND chronologically
+      { fromMs: 0, toMs: 55 }, // index 1: starts FIRST, overlaps index 0
+    ];
+    const lanes = assignLanes(events);
+    // index 1 (the earlier start) is the one that claims lane 0 first;
+    // index 0 (later start, overlapping) is pushed to a new lane.
+    expect(lanes[1]).toBe(0);
+    expect(lanes[0]).toBe(1);
+  });
+
+  it("empty input returns an empty array", () => {
+    expect(assignLanes([])).toEqual([]);
+  });
+});
+
+describe("eventOverlay markArea lanes", () => {
+  const theme = { muted: "#999" };
+
+  it("gives two overlapping span events distinct label positions", () => {
+    const events = [
+      { id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
+      { id: 2, label: "log capture", color: "#2f9e6e", fromMs: 1_500, toMs: 2_500 },
+    ];
+    const { markArea } = eventOverlay(events, theme) as {
+      markArea: { data: [{ label: { position: unknown[] } }, unknown][] };
+    };
+    const pos0 = markArea.data[0][0].label.position;
+    const pos1 = markArea.data[1][0].label.position;
+    expect(pos0).not.toEqual(pos1); // stacked, not colliding
+  });
+
+  it("non-overlapping span events keep the same (lane-0) label position", () => {
+    const events = [
+      { id: 1, label: "a", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
+      { id: 2, label: "b", color: "#2f9e6e", fromMs: 3_000, toMs: 4_000 },
+    ];
+    const { markArea } = eventOverlay(events, theme) as {
+      markArea: { data: [{ label: { position: unknown[] } }, unknown][] };
+    };
+    const pos0 = markArea.data[0][0].label.position;
+    const pos1 = markArea.data[1][0].label.position;
+    expect(pos0).toEqual(pos1); // both lane 0 — the common case is unchanged
+  });
+
+  it("leaves label text and colour untouched — a layout fix, not a restyle", () => {
+    const events = [
+      { id: 1, label: "stress run", color: "#ff6b6b", fromMs: 1_000, toMs: 2_000 },
+      { id: 2, label: "log capture", color: "#2f9e6e", fromMs: 1_500, toMs: 2_500 },
+    ];
+    const { markArea } = eventOverlay(events, theme) as {
+      markArea: { data: [{ name: string; itemStyle: { color: string } }, unknown][] };
+    };
+    expect(markArea.data[0][0].name).toBe("stress run");
+    expect(markArea.data[0][0].itemStyle.color).toBe("#ff6b6b");
+    expect(markArea.data[1][0].name).toBe("log capture");
+    expect(markArea.data[1][0].itemStyle.color).toBe("#2f9e6e");
+  });
+
+  it("leaves markLine (instant-event) behaviour untouched", () => {
+    const events = [{ id: 1, label: "config reload", color: "#7c5cff", fromMs: 1_000, toMs: null }];
+    const { markLine } = eventOverlay(events, theme) as {
+      markLine: { data: { xAxis: number; name: string }[] };
+    };
+    expect(markLine.data).toHaveLength(1);
+    expect(markLine.data[0].xAxis).toBe(1_000);
   });
 });

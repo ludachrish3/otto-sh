@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 globalThis.ResizeObserver ??= class {
@@ -71,10 +72,18 @@ describe("SubjectPage chart stack", () => {
     );
   });
 
-  it("unchecking a series removes it from the chart options", () => {
+  it("unchecking a series removes it from the chart options", async () => {
     load("chassis-a_lc1");
     const before = setOptions.length;
-    fireEvent.click(screen.getByTestId("series-node-CPU %"));
+    // Untitled UI's Checkbox puts data-testid on the <label>, not the
+    // visually-hidden <input> — react-aria's Checkbox needs the real
+    // pointer-event sequence userEvent produces (fireEvent.click doesn't
+    // drive it), and jsdom doesn't replay that sequence's label->control
+    // forwarding reliably, so this clicks the checkbox role directly (see
+    // seriespanel.test.tsx's "checkbox toggle reports the series key").
+    const user = userEvent.setup();
+    const checkbox = within(screen.getByTestId("series-node-CPU %")).getByRole("checkbox");
+    await user.click(checkbox);
     expect(setOptions.length).toBeGreaterThan(before);
     const last = setOptions[setOptions.length - 1] as { series: { id: string }[] };
     // The cpu chart re-rendered without its only series -> panel unmounts;

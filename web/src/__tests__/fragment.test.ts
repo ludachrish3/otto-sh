@@ -132,4 +132,209 @@ describe("applyFragment", () => {
     const next = applyFragment(s, frag({}));
     expect(next).toBe(s);
   });
+
+  // Follow-up: the live path had the same NaN exposure the import path
+  // (exportDoc.ts's dropInvalidTimestamps) was just closed for. stream.ts's
+  // isFragment() checks structure only (metrics IS an array), never each
+  // row's own timestamp — so a malformed metric among good ones used to
+  // flow straight through applyFragment into appendToIndex and land in the
+  // series index's `tsMs`, which every reader (health.ts's
+  // lastIndexAtOrBefore, seriesIndex.ts's own lowerBound) binary-searches
+  // assuming ASCENDING order. `tsMs[mid] <= t` is always false for NaN, so
+  // one bad sample silently broke every search over that series from then
+  // on — wrong slicing, not a crash.
+  describe("invalid metric timestamps (live-path NaN exposure)", () => {
+    it("drops the bad row, keeps the good ones, leaves tsMs finite and ascending, and surfaces a warning", () => {
+      const s = base();
+      const metricsBefore = s.metrics.length;
+      const goodTs = new Date(s.endMs + 5000).toISOString();
+      const warnings: string[] = [];
+
+      const next = applyFragment(
+        s,
+        frag({
+          metrics: [
+            { host: "h0", label: "m0", timestamp: goodTs, value: 1 },
+            { host: "h0", label: "m0", timestamp: "not-a-timestamp", value: 2 },
+          ] as never,
+        }),
+        warnings,
+      );
+
+      // Only the good row landed.
+      expect(next.metrics).toHaveLength(metricsBefore + 1);
+      expect(next.metrics.every((m) => Number.isFinite(Date.parse(m.timestamp)))).toBe(true);
+
+      // tsMs for the touched series is finite and strictly ascending — the
+      // invariant every binary-search reader depends on.
+      const key = seriesKey("h0", "m0");
+      // biome-ignore lint/style/noNonNullAssertion: the touched series always gets an index entry
+      const tsMs = next.index.tsMs.get(key)!;
+      expect(tsMs.every((t) => Number.isFinite(t))).toBe(true);
+      for (let i = 1; i < tsMs.length; i++) {
+        expect(tsMs[i]).toBeGreaterThanOrEqual(tsMs[i - 1]);
+      }
+
+      // Surfaced once, not swallowed.
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/dropped 1 metric.*invalid timestamp/);
+    });
+
+    it("a fragment whose ONLY content is an invalid-timestamp metric is still a session no-op — but still warns", () => {
+      const s = base();
+      const warnings: string[] = [];
+      const next = applyFragment(
+        s,
+        frag({
+          metrics: [{ host: "h0", label: "m0", timestamp: "garbage", value: 1 }] as never,
+        }),
+        warnings,
+      );
+      // Nothing survived filtering, so this is exactly a heartbeat fragment
+      // from the merge's point of view: same object, no store write.
+      expect(next).toBe(s);
+      expect(warnings).toHaveLength(1);
+    });
+
+    it("drops multiple bad rows in one fragment and reports the count", () => {
+      const s = base();
+      const warnings: string[] = [];
+      applyFragment(
+        s,
+        frag({
+          metrics: [
+            { host: "h0", label: "m0", timestamp: "not-a-timestamp-a", value: 1 },
+            { host: "h0", label: "m0", timestamp: "not-a-timestamp-b", value: 2 },
+          ] as never,
+        }),
+        warnings,
+      );
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/dropped 2 metrics.*invalid timestamp/);
+    });
+  });
+
+  // Finding [2] (5b final follow-ups review): the import path
+  // (exportDoc.ts's normalizeSession) already drops bad-timestamp
+  // events/log_events, but applyFragment appended `frag.events`/
+  // `frag.log_events` UNVALIDATED — an SSE row with a garbage timestamp
+  // landed in `session.events`/`logEvents`, rendered "Invalid Date" in
+  // EventsPanel, was invisible on charts (NaN fails eventMarkers' overlap
+  // comparisons), and then silently disappeared on the next resync (the
+  // same payload re-parsed via the import path, which DOES drop it) — the
+  // same payload, two behaviours. Fixed by routing both through the same
+  // `dropInvalidTimestamps` the metrics test above already covers.
+  describe("invalid event/log_event timestamps (live-path parity with the import path)", () => {
+    it("drops a bad-timestamp event, keeps the good one, and surfaces a warning", () => {
+      const s = base();
+      const warnings: string[] = [];
+      const next = applyFragment(
+        s,
+        frag({
+          events: [
+            { id: 1, timestamp: "2026-07-12T00:00:01Z", label: "good" },
+            { id: 2, timestamp: "not-a-timestamp", label: "bad" },
+          ] as never,
+        }),
+        warnings,
+      );
+      expect(next.events).toHaveLength(1);
+      expect(next.events[0].label).toBe("good");
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/dropped 1 event.*invalid timestamp/);
+    });
+
+    it("drops a bad-timestamp log_event and surfaces a warning", () => {
+      const s = base();
+      const warnings: string[] = [];
+      const next = applyFragment(
+        s,
+        frag({
+          log_events: [
+            { timestamp: "2026-07-12T00:00:01Z", host: "h0", tab: "kernel" },
+            { timestamp: "not-a-timestamp", host: "h0", tab: "kernel" },
+          ] as never,
+        }),
+        warnings,
+      );
+      expect(next.logEvents).toHaveLength(1);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/dropped 1 log event.*invalid timestamp/);
+    });
+
+    it("a fragment whose ONLY content is an invalid-timestamp event is still a session no-op — but still warns", () => {
+      const s = base();
+      const warnings: string[] = [];
+      const next = applyFragment(
+        s,
+        frag({ events: [{ timestamp: "garbage", label: "bad" }] as never }),
+        warnings,
+      );
+      expect(next).toBe(s);
+      expect(warnings).toHaveLength(1);
+    });
+
+    it("a fragment whose ONLY content is an invalid-timestamp log_event is still a session no-op — but still warns", () => {
+      const s = base();
+      const warnings: string[] = [];
+      const next = applyFragment(
+        s,
+        frag({ log_events: [{ timestamp: "garbage", host: "h0" }] as never }),
+        warnings,
+      );
+      expect(next).toBe(s);
+      expect(warnings).toHaveLength(1);
+    });
+  });
+
+  // Finding [3] (5b final follow-ups review): neither boundary validated
+  // `EventRecord.end_timestamp` (a SPAN event's end) — only `timestamp`. A
+  // span with a valid start and a malformed end passed both boundaries,
+  // then produced a NaN `toMs` wherever end_timestamp is read
+  // (charts/options.ts's eventMarkers), silently vanishing from every chart
+  // with no warning at all.
+  describe("invalid end_timestamp (live-path span-event validation, Finding [3])", () => {
+    it("drops an event whose start is valid but whose end_timestamp is malformed", () => {
+      const s = base();
+      const warnings: string[] = [];
+      const next = applyFragment(
+        s,
+        frag({
+          events: [
+            {
+              id: 1,
+              timestamp: "2026-07-12T00:00:01Z",
+              end_timestamp: "not-a-real-end",
+              label: "broken span",
+            },
+          ] as never,
+        }),
+        warnings,
+      );
+      expect(next.events).toHaveLength(0);
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/dropped 1 event.*invalid timestamp/);
+    });
+
+    it("keeps a span event whose start AND end_timestamp both parse", () => {
+      const s = base();
+      const warnings: string[] = [];
+      const next = applyFragment(
+        s,
+        frag({
+          events: [
+            {
+              id: 1,
+              timestamp: "2026-07-12T00:00:01Z",
+              end_timestamp: "2026-07-12T00:00:05Z",
+              label: "real span",
+            },
+          ] as never,
+        }),
+        warnings,
+      );
+      expect(next.events).toHaveLength(1);
+      expect(warnings).toHaveLength(0);
+    });
+  });
 });

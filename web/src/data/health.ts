@@ -48,6 +48,65 @@ function lastIndexAtOrBefore(tsMs: number[], t: number): number {
   return lo - 1;
 }
 
+/** Health of a single host (spec §6, same rule as healthForHosts — this IS
+ * the rule, not a parallel copy of it). healthForHosts is a loop over this. */
+export function healthForHost(
+  session: NormalizedSession,
+  hostId: string,
+  range: TimeRange | null,
+  /** Wall clock for live mode. Defaults to the session's end — which is what an
+   * ARCHIVE means by "now". A live session's end is open, so if we defaulted there
+   * the gap would always be zero and a dead host would never go amber. */
+  nowMs?: number,
+): SubjectHealth {
+  const evalFrom = range?.from ?? session.startMs;
+  const evalTo = nowMs ?? Math.min(range?.to ?? session.endMs, session.endMs);
+
+  // The series this host reports, anywhere in the session — cadence must
+  // not depend on the range, so this comes from the index, not a scan.
+  const keys = session.index.keysByHost.get(hostId);
+  if (!keys || keys.length === 0) {
+    // No metric series at all in this session: log-only or silent.
+    // No health claim either way (spec: absence of logs proves nothing).
+    return { status: "unknown", lastSeenMs: null, outageMs: 0 };
+  }
+
+  // Last sample WITHIN [evalFrom, evalTo], per series via binary search,
+  // then the max across the host's series — same universe of samples the
+  // old full scan visited, just reached by index lookup instead of a scan.
+  let last: number | null = null;
+  const labels = new Set<string>();
+  for (const key of keys) {
+    labels.add(key.slice(hostId.length + 1));
+    // biome-ignore lint/style/noNonNullAssertion: tsMs always has an entry for every key in keysByHost
+    const tsMs = session.index.tsMs.get(key)!;
+    const idx = lastIndexAtOrBefore(tsMs, evalTo);
+    if (idx < 0) continue;
+    const ts = tsMs[idx];
+    if (ts < evalFrom) continue;
+    if (last === null || ts > last) last = ts;
+  }
+
+  if (last === null) {
+    return { status: "no-data", lastSeenMs: null, outageMs: 0 };
+  }
+  // Live sessions know their cadence directly (meta.interval, set from the
+  // collector). Archives that lack a global interval fall back to the
+  // per-chart scan.
+  const cadence =
+    session.meta.interval !== null ? session.meta.interval * 1000 : cadenceMs(session, labels);
+  if (cadence === null) {
+    return { status: "unknown", lastSeenMs: last, outageMs: 0 };
+  }
+  const gap = evalTo - last;
+  const down = gap > HEALTH_K * cadence;
+  return {
+    status: down ? "down" : "ok",
+    lastSeenMs: last,
+    outageMs: down ? gap : 0,
+  };
+}
+
 export function healthForHosts(
   session: NormalizedSession,
   range: TimeRange | null,
@@ -56,57 +115,9 @@ export function healthForHosts(
    * the gap would always be zero and a dead host would never go amber. */
   nowMs?: number,
 ): Map<string, SubjectHealth> {
-  const evalFrom = range?.from ?? session.startMs;
-  const evalTo = nowMs ?? Math.min(range?.to ?? session.endMs, session.endMs);
-
   const out = new Map<string, SubjectHealth>();
   for (const host of session.lab.hosts) {
-    // The series this host reports, anywhere in the session — cadence must
-    // not depend on the range, so this comes from the index, not a scan.
-    const keys = session.index.keysByHost.get(host.id);
-    if (!keys || keys.length === 0) {
-      // No metric series at all in this session: log-only or silent.
-      // No health claim either way (spec: absence of logs proves nothing).
-      out.set(host.id, { status: "unknown", lastSeenMs: null, outageMs: 0 });
-      continue;
-    }
-
-    // Last sample WITHIN [evalFrom, evalTo], per series via binary search,
-    // then the max across the host's series — same universe of samples the
-    // old full scan visited, just reached by index lookup instead of a scan.
-    let last: number | null = null;
-    const labels = new Set<string>();
-    for (const key of keys) {
-      labels.add(key.slice(host.id.length + 1));
-      // biome-ignore lint/style/noNonNullAssertion: tsMs always has an entry for every key in keysByHost
-      const tsMs = session.index.tsMs.get(key)!;
-      const idx = lastIndexAtOrBefore(tsMs, evalTo);
-      if (idx < 0) continue;
-      const ts = tsMs[idx];
-      if (ts < evalFrom) continue;
-      if (last === null || ts > last) last = ts;
-    }
-
-    if (last === null) {
-      out.set(host.id, { status: "no-data", lastSeenMs: null, outageMs: 0 });
-      continue;
-    }
-    // Live sessions know their cadence directly (meta.interval, set from the
-    // collector). Archives that lack a global interval fall back to the
-    // per-chart scan.
-    const cadence =
-      session.meta.interval !== null ? session.meta.interval * 1000 : cadenceMs(session, labels);
-    if (cadence === null) {
-      out.set(host.id, { status: "unknown", lastSeenMs: last, outageMs: 0 });
-      continue;
-    }
-    const gap = evalTo - last;
-    const down = gap > HEALTH_K * cadence;
-    out.set(host.id, {
-      status: down ? "down" : "ok",
-      lastSeenMs: last,
-      outageMs: down ? gap : 0,
-    });
+    out.set(host.id, healthForHost(session, host.id, range, nowMs));
   }
   return out;
 }

@@ -7,7 +7,18 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**", "!src/api/types.gen.ts", "!coverage", "!fixtures"]
+    "includes": [
+      "**",
+      "!src/api/types.gen.ts",
+      "!coverage",
+      "!fixtures",
+      "!src/components",
+      "!src/styles",
+      "!src/utils/cx.ts",
+      "!src/utils/is-react-component.ts",
+      "!src/hooks/use-breakpoint.ts",
+      "!src/hooks/use-resize-observer.ts"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -35,7 +46,10 @@
       "preset": "recommended",
       "correctness": {
         "useExhaustiveDependencies": "error",
-        "useHookAtTopLevel": "error"
+        "useHookAtTopLevel": "error",
+        "noUnusedVariables": "error",
+        "noUnusedFunctionParameters": "error",
+        "noUnusedImports": "error"
       }
     }
   },

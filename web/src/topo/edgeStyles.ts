@@ -74,7 +74,7 @@ export const EMPHASIS_WIDTH = 1.5;
 /** The core stroke, as an inline SVG style object. Strokes are CSS custom
  * properties (app.css), not hex: inline style objects don't participate in
  * Tailwind's `dark:` variant, so the dark alternates flip via the vars'
- * `.dark` overrides instead. */
+ * `.dark-mode` overrides instead. */
 export function edgeStyle(
   provenance: Provenance,
   emphasized: boolean,

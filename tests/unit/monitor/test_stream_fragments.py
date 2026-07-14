@@ -5,19 +5,9 @@ from datetime import datetime, timezone
 import pytest
 
 from otto.models.monitor import MonitorSessionFragment
-from otto.monitor.collector import MetricCollector
 from otto.monitor.server import MonitorServer
 from otto.monitor.session import new_frame
 from tests._fixtures._fake_collector import FakeCollector
-
-
-def _drain(collector: MetricCollector) -> list[dict]:
-    q = collector.subscribe()
-    out: list[dict] = []
-    while not q.empty():
-        out.append(q.get_nowait())
-    collector.unsubscribe(q)
-    return out
 
 
 class TestPublishedPayloadsAreFragments:

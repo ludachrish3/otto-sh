@@ -2,6 +2,8 @@
 // key below type-checks; it re-exports vite's own config type merged with
 // vitest's, and is a drop-in for plain `vite build`/`vite dev` too.
 
+import path from "node:path";
+
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
@@ -16,6 +18,13 @@ const OTTO_TARGET = process.env.VITE_OTTO_TARGET ?? "http://127.0.0.1:8080";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "/static/dist/",
+  // Vite does not read tsconfig.json's "paths" — this alias is the source of
+  // truth for `@/*`, and vitest inherits it from this same defineConfig.
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
   build: {
     outDir: "../src/otto/monitor/static/dist",
     emptyOutDir: true,
@@ -57,6 +66,17 @@ export default defineConfig({
         "src/api/types.gen.ts",
         "src/main.tsx",
         "src/covreport/main.ts",
+        // Vendored Untitled UI source — not ours to test. web/src/ui/** (our
+        // own components) stays measured. Same vendor boundary Biome's
+        // files.includes excludes from format/lint; see web/README.md
+        // ("Vendored source (Untitled UI)") for the full rationale and the
+        // never-hand-edit rule.
+        "src/components/**",
+        "src/styles/**",
+        "src/utils/cx.ts",
+        "src/utils/is-react-component.ts",
+        "src/hooks/use-breakpoint.ts",
+        "src/hooks/use-resize-observer.ts",
       ],
       // Ratchet floor: ~2-3% below the current measured baseline
       // (stmts 83.63 / branch 75.49 / funcs 82.73 / lines 84.78), mirroring the

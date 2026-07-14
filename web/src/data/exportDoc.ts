@@ -112,16 +112,99 @@ export function deriveElements(hosts: HostSnapshot[], explicit: ElementRecord[])
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id));
 }
 
+/** Drop individual `kind` records (metrics/events/log_events) whose own
+ * `timestamp` parses to NaN, pushing ONE summary warning naming what was
+ * dropped and how many — the same non-fatal "warn, don't fail" treatment
+ * `normalizeSession`/`parseExportDocument` already give a duplicate id. One
+ * bad row must not poison the whole session (see this function's callers'
+ * doc comment). Kept generic over the three record kinds rather than
+ * written three times: all three carry a required `timestamp: string`
+ * field at this wire boundary (MetricRecord/EventRecord/LogEventRecord).
+ * Exported: fragment.ts's applyFragment reuses this SAME function for the
+ * live path's metrics/events/log_events, rather than a parallel filter, so
+ * a NaN timestamp is dropped-and-warned identically whether it arrives via
+ * Import or SSE (Plan 5b final-review Finding [2]).
+ *
+ * `endTimestamp`, when passed, reads a record's own end-of-span timestamp
+ * (only `EventRecord.end_timestamp` has one — a SPAN event's end) and
+ * applies the SAME drop rule to it: a span whose start parses fine but
+ * whose end doesn't is not a usable span (Finding [3]) — half a span is as
+ * useless to every reader (`eventMarkers`'s overlap check, `assignLanes`)
+ * as a fully malformed one, so it is dropped and warned exactly like a bad
+ * `timestamp`, not silently left to produce a NaN `toMs` downstream. */
+export function dropInvalidTimestamps<T extends { timestamp: string }>(
+  records: T[],
+  kind: string,
+  sessionId: string,
+  warnings: string[],
+  endTimestamp?: (rec: T) => string | null | undefined,
+): T[] {
+  let dropped = 0;
+  const kept: T[] = [];
+  for (const rec of records) {
+    const end = endTimestamp?.(rec);
+    const badStart = Number.isNaN(parseTs(rec.timestamp));
+    const badEnd = end != null && Number.isNaN(parseTs(end));
+    if (badStart || badEnd) {
+      dropped += 1;
+      continue;
+    }
+    kept.push(rec);
+  }
+  if (dropped > 0) {
+    warnings.push(
+      `session ${sessionId}: dropped ${dropped} ${kind}${dropped === 1 ? "" : "s"} with invalid timestamp`,
+    );
+  }
+  return kept;
+}
+
 function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSession {
   const hosts = raw.lab?.hosts ?? [];
   const links = raw.lab?.links ?? [];
   const explicitElements = raw.lab?.elements ?? [];
-  const metrics = raw.metrics ?? [];
+  // A session's OWN time anchors are fail-loud, not warn-and-drop: there is
+  // no sane fallback for a session's own start (and, when present, end) —
+  // a silently anchorless session is exactly the failure this guards
+  // against (Plan 5b follow-up #5). Individual metric/event/log rows are
+  // different: the SESSION is still well-formed with one bad sample
+  // dropped, so those warn instead (dropInvalidTimestamps above).
   const startMs = parseTs(raw.start);
+  if (Number.isNaN(startMs)) {
+    throw new ExportParseError(
+      `session ${raw.id}: invalid start timestamp ${JSON.stringify(raw.start)}`,
+    );
+  }
+  let parsedEnd: number | null = null;
+  if (raw.end != null) {
+    parsedEnd = parseTs(raw.end);
+    if (Number.isNaN(parsedEnd)) {
+      throw new ExportParseError(
+        `session ${raw.id}: invalid end timestamp ${JSON.stringify(raw.end)}`,
+      );
+    }
+  }
+  const metrics = dropInvalidTimestamps(raw.metrics ?? [], "metric", raw.id, warnings);
+  const events = dropInvalidTimestamps(
+    raw.events ?? [],
+    "event",
+    raw.id,
+    warnings,
+    (e) => e.end_timestamp,
+  );
+  const logEvents = dropInvalidTimestamps(raw.log_events ?? [], "log event", raw.id, warnings);
+  // `metrics` above already excludes every NaN-timestamp row, so this
+  // Math.max can never itself resolve to NaN the way the raw array could —
+  // a single malformed sample among thousands used to poison the whole
+  // session's endMs (`Math.max` returns NaN if ANY argument is NaN, and
+  // `raw.end != null ? ... : (lastSampleMs ?? startMs)` — `??` does NOT
+  // catch NaN, only null/undefined — so it walked straight through here
+  // and from there into sessionBounds/clampRange/presetRange and
+  // seriesIndex's ascending `tsMs` arrays, see seriesIndex.ts).
   const lastSampleMs = metrics.length
     ? Math.max(...metrics.map((m) => parseTs(m.timestamp)))
     : null;
-  const endMs = raw.end != null ? parseTs(raw.end) : (lastSampleMs ?? startMs);
+  const endMs = parsedEnd ?? lastSampleMs ?? startMs;
 
   const hostIds = new Set<string>();
   for (const h of hosts) {
@@ -143,8 +226,8 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
       tabs: raw.meta?.tabs ?? [],
     },
     metrics,
-    events: raw.events ?? [],
-    logEvents: raw.log_events ?? [],
+    events,
+    logEvents,
     index: buildIndex(metrics),
     chartMap: raw.chart_map ?? {},
     elements,

@@ -13,19 +13,17 @@ export function EdgeHoverCard(props: { edge: TopoEdge; x: number; y: number }) {
       data-testid={`topo-hover-${edge.id}`}
       style={{ transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` }}
       className="pointer-events-none absolute z-10 flex flex-col gap-0.5 rounded-lg border
-        border-gray-200 bg-white px-2.5 py-1.5 shadow-md dark:border-gray-800 dark:bg-gray-950"
+        border-secondary bg-primary px-2.5 py-1.5 shadow-md"
     >
       <p className="text-xs font-semibold whitespace-nowrap">{edgeTitle(edge)}</p>
-      <p className="text-[10px] whitespace-nowrap text-gray-500 dark:text-gray-400">
-        {edgeSubtitle(edge)}
-      </p>
+      <p className="text-[10px] whitespace-nowrap text-tertiary">{edgeSubtitle(edge)}</p>
       {link && (
-        <p className="font-mono text-[10px] whitespace-nowrap text-gray-500 dark:text-gray-400">
+        <p className="font-mono text-[10px] whitespace-nowrap text-tertiary">
           {endpointText(link)}
         </p>
       )}
       {edge.impair !== null && (
-        <p className="text-[10px] whitespace-nowrap text-gray-500 dark:text-gray-400">
+        <p className="text-[10px] whitespace-nowrap text-tertiary">
           in-path middlebox: {edge.impair}
         </p>
       )}

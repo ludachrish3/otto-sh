@@ -329,6 +329,10 @@ export interface LogEventRecord {
 export interface Fields {
   [k: string]: string;
 }
+/**
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "ChartMap".
+ */
 export interface ChartMap {
   [k: string]: string;
 }
@@ -360,10 +364,7 @@ export interface MonitorSessionFragment {
   events?: Events1;
   log_events?: LogEvents1;
   deleted_event_ids?: DeletedEventIds;
-  chart_map?: ChartMap1;
+  chart_map?: ChartMap;
   meta?: SessionMeta | null;
   [k: string]: unknown;
-}
-export interface ChartMap1 {
-  [k: string]: string;
 }

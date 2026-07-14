@@ -120,6 +120,20 @@ export async function bootstrapFromServer(): Promise<void> {
   if (modeBody.mode === "live") {
     if (hydrated) {
       useReviewStore.getState().actions.setMode("live");
+      // Known, undocumented-no-longer gap (Plan 5b follow-ups #4): any point
+      // the server publishes strictly between `hydrate()`'s response above
+      // and this `startStream` call's `new EventSource(url)` actually
+      // opening (stream.ts's `connect`) is neither in that response NOR
+      // replayed by the stream — the stream only carries what's published
+      // AFTER it opens, and the snapshot only carries what existed as of
+      // its own request. The window is a handful of event-loop turns, and
+      // `resync` (below, stream.ts's onerror -> resync -> reopen) reopens
+      // through this exact same shape on every reconnect, not just at boot.
+      // Small and real, not zero: the spec's "provably correct" framing
+      // overstated it. Left open — closing it needs either a
+      // sequence-numbered replay buffer or a shared server-side cursor
+      // between the snapshot fetch and the stream open, neither of which
+      // exists today.
       startStream({ resync });
     }
   } else {

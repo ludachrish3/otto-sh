@@ -21,6 +21,7 @@ import { useReviewStore } from "./data/reviewStore";
 import { OverviewPage } from "./pages/OverviewPage";
 import { SubjectPage } from "./pages/SubjectPage";
 import { AppBar } from "./shell/AppBar";
+import { DataWarningsBanner } from "./shell/DataWarningsBanner";
 import { EmptyState } from "./shell/EmptyState";
 import { ImportProvider } from "./shell/ImportExport";
 import { ReviewBar } from "./shell/ReviewBar";
@@ -60,13 +61,14 @@ function App() {
                 </button>
               </div>
             )}
+            <DataWarningsBanner />
             <Switch>
               <Route path="/" component={OverviewPage} />
               <Route path="/host/:id" component={SubjectPage} />
               <Route path="/topology" component={TopologyPage} />
               <Route path="/topology/:elementId" component={TopologyPage} />
               <Route>
-                <main data-testid="not-found" className="p-4 text-sm text-gray-500">
+                <main data-testid="not-found" className="p-4 text-sm text-tertiary">
                   Not found.
                 </main>
               </Route>

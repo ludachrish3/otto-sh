@@ -32,6 +32,95 @@ def _import_fixture(page, name: str) -> None:
     page.locator('[data-testid="review-bar"]').wait_for()
 
 
+# --- RangePicker (Task 7) driving helpers -----------------------------
+#
+# The old preset ButtonGroup + two datetime-local <input>s + Apply + Reset
+# (`range-presets` / `range-from` / `range-to` / `range-apply` /
+# `range-reset`) are retired. The replacement is ONE popover card
+# (`data-testid="range-picker"`): a trigger button showing the current
+# range, a preset rail (Full / Last 15m / Last 1h), and two minute-
+# granularity date fields with Cancel/Apply. "Full" subsumes the old Reset.
+
+
+def _open_range_picker(page) -> None:
+    """Open the range picker's popover via its trigger button.
+
+    `data-testid="range-picker"` lands on the wrapper `AriaDateRangePicker`
+    itself renders (react-aria-components puts caller `data-*` props on its
+    own root, not on the inner trigger `<button>`) — same "wrapper, not
+    leaf" situation as the session picker documents elsewhere in this file.
+    Playwright hit-tests by pixel, so scoping to the wrapper and clicking
+    the button inside it is unaffected either way.
+    """
+    page.locator('[data-testid="range-picker"]').get_by_role("button").first.click()
+
+
+def _click_range_preset(page, label: str) -> None:
+    page.get_by_role("button", name=label, exact=True).click()
+
+
+def _apply_range_picker(page) -> None:
+    page.get_by_role("button", name="Apply", exact=True).click()
+
+
+def _range_picker_label(page) -> str:
+    """The trigger button's own displayed text — "Full range" or the
+    formatted from/to — which is derived straight from the committed
+    `range` value, not from whatever is mid-edit inside an open popover."""
+    return page.locator('[data-testid="range-picker"]').inner_text()
+
+
+def _read_range_field(page, field_index: int) -> datetime:
+    """Read one of the open popover's two date fields (0=from, 1=to) back
+    into a naive local-wall-clock `datetime` — the segment-typing analogue
+    of the old idiom of reading `range-from`'s pre-populated value instead
+    of hardcoding a window against the fixture's UTC timestamps (a
+    UTC-derived window would land outside the session on a non-UTC host).
+    """
+
+    def seg(kind: str) -> str:
+        return page.locator(f'[data-type="{kind}"]').nth(field_index).inner_text()
+
+    month, day, year = int(seg("month")), int(seg("day")), int(seg("year"))
+    hour12, minute = int(seg("hour")), int(seg("minute"))
+    is_pm = seg("dayPeriod").strip().upper() == "PM"
+    hour = (hour12 % 12) + (12 if is_pm else 0)
+    return datetime(year, month, day, hour, minute)  # noqa: DTZ001 — naive local wall-clock by design
+
+
+def _set_range_field(page, field_index: int, dt: datetime) -> None:
+    """Type an exact local wall-clock instant into one of the popover's two
+    date fields (0=from, 1=to).
+
+    These are react-aria date SEGMENTS (`<span role="spinbutton">`, one per
+    `data-type` — month/day/year/hour/minute/dayPeriod), not `<input>`
+    elements, so `.fill()` doesn't apply. react-aria segments DO auto-advance
+    focus when typed into continuously (like a native `<input type="date">`'s
+    constituent parts), but that auto-advance is driven by a React state
+    update between keystrokes — `page.keyboard.type()`'s keypresses land
+    faster than that round-trip, so later digits land on whichever segment
+    was focused when they were sent, not on the segment the earlier digits'
+    auto-advance was heading for. Targeting each segment by its own
+    `data-type` selector sidesteps the timing question entirely: every
+    keystroke goes exactly where intended regardless of auto-advance.
+    """
+    hour12 = dt.hour % 12 or 12
+    for kind, value, width in (
+        ("month", dt.month, 2),
+        ("day", dt.day, 2),
+        ("year", dt.year, 4),
+        ("hour", hour12, 2),
+        ("minute", dt.minute, 2),
+    ):
+        page.locator(f'[data-type="{kind}"]').nth(field_index).click()
+        page.keyboard.type(str(value).zfill(width))
+    period_seg = page.locator('[data-type="dayPeriod"]').nth(field_index)
+    want = "PM" if dt.hour >= 12 else "AM"
+    if period_seg.inner_text().strip().upper() != want:
+        period_seg.click()
+        page.keyboard.press("ArrowUp")
+
+
 def _point_on_edge(page, edge_id: str) -> dict:
     """Find a point on a topology edge's actual rendered stroke, not its
     naive bounding-box center.
@@ -137,12 +226,12 @@ def _assert_reachable(page, testid: str) -> None:
 
 def _set_theme(page, *, dark: bool) -> None:
     """Drive the overflow menu's two-state toggle to a known theme."""
-    if page.evaluate("document.documentElement.classList.contains('dark')") is dark:
+    if page.evaluate("document.documentElement.classList.contains('dark-mode')") is dark:
         return
     page.locator('[data-testid="overflow-menu"]').click()
     page.locator('[data-testid="menu-theme"]').click()
     page.wait_for_function(
-        "(want) => document.documentElement.classList.contains('dark') === want", arg=dark
+        "(want) => document.documentElement.classList.contains('dark-mode') === want", arg=dark
     )
 
 
@@ -222,19 +311,19 @@ def test_range_presets_change_subject_summary(page, shell_dash):
     page.locator('[data-testid="subject-page"]').wait_for()
     full = page.locator('[data-testid="series-summary"]').inner_text()
 
-    # react-aria's Radio wraps a visually-hidden (clip-rect'd) native
-    # <input> inside its <label>; the input's own tiny clipped box makes
-    # Playwright's role-based click land on the label instead and time out
-    # on "element intercepts pointer events". The label text is the real
-    # click target users see, so target it directly, scoped to the presets
-    # group in case the label text ever appears elsewhere on the page.
-    page.locator('[data-testid="range-presets"]').get_by_text("Last 15m", exact=True).click()
+    _open_range_picker(page)
+    _click_range_preset(page, "Last 15m")
+    _apply_range_picker(page)
     page.wait_for_function(
         "(prev) => document.querySelector('[data-testid=\"series-summary\"]').innerText !== prev",
         arg=full,
     )
-    page.locator('[data-testid="range-reset"]').click()
-    # Reset returns to the overview state: first session + full range.
+
+    # "Full" subsumes the old Reset — returns to the overview state: first
+    # session + full range.
+    _open_range_picker(page)
+    _click_range_preset(page, "Full")
+    _apply_range_picker(page)
     page.wait_for_function(
         "(prev) => document.querySelector('[data-testid=\"series-summary\"]') === null"
         " || document.querySelector('[data-testid=\"series-summary\"]').innerText === prev",
@@ -244,28 +333,22 @@ def test_range_presets_change_subject_summary(page, shell_dash):
 
 def test_custom_range_apply_and_reset(page, shell_dash):
     """Custom from/to window (UX spec §12): Apply narrows the subject's
-    range-scoped selection; Reset restores the full range."""
+    range-scoped selection; the Full preset restores the full range."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     page.locator('[data-testid="subject-link-workers_w1"]').click()
     page.locator('[data-testid="subject-page"]').wait_for()
     full = page.locator('[data-testid="series-summary"]').inner_text()
 
-    # datetime-local inputs hold LOCAL time (msToLocalInput), so derive the
-    # narrow window from the pre-populated session-start value instead of
-    # hardcoding strings off the fixture's UTC timestamps — on a non-UTC
-    # host a UTC-derived window would land outside the session entirely.
-    start_local = page.locator('[data-testid="range-from"]').input_value()
-    # DTZ007 suppressed: deliberately naive — a datetime-local value is
-    # wall-clock text with no timezone; it round-trips into the same input.
-    t0 = datetime.strptime(start_local, "%Y-%m-%dT%H:%M")  # noqa: DTZ007
-    page.locator('[data-testid="range-from"]').fill(
-        (t0 + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M")
-    )
-    page.locator('[data-testid="range-to"]').fill(
-        (t0 + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M")
-    )
-    page.locator('[data-testid="range-apply"]').click()
+    # The popover opens pre-seeded with the session's own full bounds (see
+    # RangePicker.tsx), so read the "from" field back rather than hardcoding
+    # a window off the fixture's UTC timestamps — on a non-UTC host a
+    # UTC-derived window would land outside the session entirely.
+    _open_range_picker(page)
+    t0 = _read_range_field(page, 0)
+    _set_range_field(page, 0, t0 + timedelta(minutes=10))
+    _set_range_field(page, 1, t0 + timedelta(minutes=20))
+    _apply_range_picker(page)
     page.wait_for_function(
         "(prev) => document.querySelector('[data-testid=\"series-summary\"]').innerText !== prev",
         arg=full,
@@ -280,7 +363,9 @@ def test_custom_range_apply_and_reset(page, shell_dash):
     narrowed_count = int(re.search(r"(\d+) samples in range", narrowed).group(1))
     assert 0 < narrowed_count < full_count
 
-    page.locator('[data-testid="range-reset"]').click()
+    _open_range_picker(page)
+    _click_range_preset(page, "Full")
+    _apply_range_picker(page)
     page.wait_for_function(
         "(prev) => document.querySelector('[data-testid=\"series-summary\"]').innerText === prev",
         arg=full,
@@ -360,14 +445,96 @@ def test_import_error_banner_in_loaded_state(page, shell_dash, tmp_path):
     assert page.locator('[data-testid="import-error"]').count() == 0
 
 
+def test_dropped_row_surfaces_data_warnings_banner(page, shell_dash, tmp_path):
+    """Plan 5b final-review Finding [1]: `state.warnings` (rows dropped for an
+    invalid timestamp — data/exportDoc.ts's dropInvalidTimestamps) had no
+    render site at all — "drop and warn" was, in practice, "drop silently."
+    Imports a one-off document (same tmp_path + set_input_files pattern as
+    test_import_error_banner_in_loaded_state above) carrying one good and one
+    malformed-timestamp metric row and asserts the user actually SEES the
+    resulting warning, can dismiss it, and a later fresh warning re-shows it.
+    """
+    page.goto(shell_dash.url)
+
+    with_bad_row = tmp_path / "warn-fixture.json"
+    with_bad_row.write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "sessions": [
+                    {
+                        "id": "warn-fixture",
+                        "start": "2026-07-01T08:00:00Z",
+                        "lab": {"hosts": [{"id": "solo", "element": "solo"}]},
+                        "metrics": [
+                            {
+                                "timestamp": "2026-07-01T08:00:00Z",
+                                "host": "solo",
+                                "label": "CPU %",
+                                "value": 1,
+                            },
+                            {
+                                "timestamp": "not-a-timestamp",
+                                "host": "solo",
+                                "label": "CPU %",
+                                "value": 2,
+                            },
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    page.locator('[data-testid="import-input"]').set_input_files(with_bad_row)
+    page.locator('[data-testid="review-bar"]').wait_for()
+
+    banner = page.locator('[data-testid="data-warnings-banner"]')
+    banner.wait_for()
+    assert "dropped 1 metric with invalid timestamp" in banner.inner_text()
+
+    page.locator('[data-testid="data-warnings-dismiss"]').click()
+    assert page.locator('[data-testid="data-warnings-banner"]').count() == 0
+
+    # A fresh warning (a second, unrelated dropped row) re-shows the banner —
+    # dismissal must not permanently silence the channel.
+    second_bad_row = tmp_path / "warn-fixture-2.json"
+    second_bad_row.write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "sessions": [
+                    {
+                        "id": "warn-fixture-2",
+                        "start": "2026-07-01T09:00:00Z",
+                        "lab": {"hosts": [{"id": "solo", "element": "solo"}]},
+                        "metrics": [
+                            {
+                                "timestamp": "still-not-a-timestamp",
+                                "host": "solo",
+                                "label": "CPU %",
+                                "value": 3,
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    page.locator('[data-testid="import-input"]').set_input_files(second_bad_row)
+    banner.wait_for()
+    assert "dropped 1 metric with invalid timestamp" in banner.inner_text()
+
+
 def test_theme_toggle_persists_across_reload(page, shell_dash):
     page.goto(shell_dash.url)
     page.locator('[data-testid="overflow-menu"]').click()
-    before = page.evaluate("document.documentElement.classList.contains('dark')")
+    before = page.evaluate("document.documentElement.classList.contains('dark-mode')")
     page.locator('[data-testid="menu-theme"]').click()
-    assert page.evaluate("document.documentElement.classList.contains('dark')") is not before
+    assert page.evaluate("document.documentElement.classList.contains('dark-mode')") is not before
     page.reload()
-    assert page.evaluate("document.documentElement.classList.contains('dark')") is not before
+    assert page.evaluate("document.documentElement.classList.contains('dark-mode')") is not before
 
 
 def test_export_downloads_loaded_set(page, shell_dash):
@@ -397,14 +564,12 @@ def test_grid_health_tiles_and_headline(shell_dash, page):
     assert page.locator('[data-testid="health-rollup-chassis-a"] > *').count() == 3
 
     # End the range inside workers_w2's 60-80min outage: derive +70min from
-    # the pre-populated LOCAL from-input (same derivation the custom-range
-    # spec uses — datetime-local is local wall-clock).
-    start_raw = page.locator('[data-testid="range-from"]').input_value()
-    start = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M")  # noqa: DTZ007 — naive local wall-clock by design
-    page.locator('[data-testid="range-to"]').fill(
-        (start + timedelta(minutes=70)).strftime("%Y-%m-%dT%H:%M")
-    )
-    page.locator('[data-testid="range-apply"]').click()
+    # the popover's pre-seeded "from" field (same derivation the custom-range
+    # spec uses).
+    _open_range_picker(page)
+    start = _read_range_field(page, 0)
+    _set_range_field(page, 1, start + timedelta(minutes=70))
+    _apply_range_picker(page)
     page.wait_for_function(
         "() => document.querySelector('[data-testid=\"host-tile-workers_w2\"]')"
         ".innerText.includes('down ·')"
@@ -449,11 +614,11 @@ def test_source_badges_and_source_filter(shell_dash, page):
 
 def test_events_slide_over_jumps_range(shell_dash, page):
     """Events (UX §11 review subset): reverse-chron slide-over; a row jump
-    re-scopes the shared range (review-bar inputs follow)."""
+    re-scopes the shared range (the range picker's trigger label follows)."""
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
     assert page.locator('[data-testid="events-count"]').inner_text() == "4"
-    before = page.locator('[data-testid="range-from"]').input_value()
+    before = _range_picker_label(page)
     page.locator('[data-testid="events-button"]').click()
     page.locator('[data-testid="events-panel"]').wait_for()
     rows = page.locator('[data-testid^="event-row-"]')
@@ -462,7 +627,7 @@ def test_events_slide_over_jumps_range(shell_dash, page):
     page.locator('[data-testid="event-row-2"]').click()  # stress-run span
     page.locator('[data-testid="events-panel"]').wait_for(state="detached")
     page.wait_for_function(
-        "(prev) => document.querySelector('[data-testid=\"range-from\"]').value !== prev",
+        "(prev) => document.querySelector('[data-testid=\"range-picker\"]').innerText !== prev",
         arg=before,
     )
 
@@ -495,13 +660,15 @@ def test_element_subject_renders_member_series(shell_dash, page):
 
 def test_theme_toggle_with_charts_open(shell_dash, page):
     """Theme flip re-renders open charts without error (canvas persists,
-    dark class lands).
+    dark-mode class lands).
 
     The overflow menu's theme toggle is a strict two-state light<->dark
     flip (web/src/theme.ts: ``Theme = "light" | "dark"``, no "system"
     state) applied synchronously by AppBar's toggleTheme -> saveTheme ->
-    applyTheme (theme.ts:16-18) — one click always flips the `dark` class,
-    so waiting for it to differ from its pre-click value is a genuinely
+    applyTheme (theme.ts) — one click always flips the single `dark-mode`
+    class (Untitled UI's vendored theme.css gates its dark tokens on it;
+    app.css's `@custom-variant dark` reads the same class), so waiting for
+    `dark-mode` to differ from its pre-click value is a genuinely
     discriminating wait (unlike a `!== undefined` check against a boolean,
     which is always true and asserts nothing)."""
     page.goto(shell_dash.url)
@@ -509,10 +676,11 @@ def test_theme_toggle_with_charts_open(shell_dash, page):
     page.locator('[data-testid="subject-link-db-01"]').click()
     page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
     page.locator('[data-testid="overflow-menu"]').click()
-    before_dark = page.evaluate("document.documentElement.classList.contains('dark')")
+    before_dark = page.evaluate("document.documentElement.classList.contains('dark-mode')")
     page.locator('[data-testid="menu-theme"]').click()
     page.wait_for_function(
-        "(prev) => document.documentElement.classList.contains('dark') !== prev", arg=before_dark
+        "(prev) => document.documentElement.classList.contains('dark-mode') !== prev",
+        arg=before_dark,
     )
     page.locator('[data-testid="chart-panel-cpu"] canvas').wait_for()
 
@@ -535,10 +703,10 @@ def test_topology_toggle_and_map(shell_dash, page):
 def test_topology_zoom_controls_follow_theme(shell_dash, page):
     """React Flow's stock chrome (the zoom controls) is themed by the library's
     own ``.react-flow.dark`` token block, which keys off a `dark` class on the
-    React Flow CONTAINER — the `dark` class theme.ts toggles on <html> cannot
-    reach that selector. The page must hand React Flow an explicit colorMode;
-    without it the zoom buttons keep their light-mode white background while
-    the rest of the app is dark.
+    React Flow CONTAINER — the `dark-mode` class theme.ts toggles on <html>
+    cannot reach that selector (different class, different element). The page
+    must hand React Flow an explicit colorMode; without it the zoom buttons
+    keep their light-mode white background while the rest of the app is dark.
     """
     page.goto(shell_dash.url)
     _import_fixture(page, "kitchen-sink.json")
@@ -809,8 +977,8 @@ def test_link_inspector_survives_range_change(shell_dash, page):
     button at all. The inspector no longer overlays ANYTHING: it is a layout
     sibling of the canvas that reserves its own 384px column, so it can reach
     neither the review bar nor the map. Both claims are proved below — the
-    `range-apply` click (Playwright fails it if anything overlays the button)
-    and `_assert_reachable` on the map's rightmost node.
+    range picker's Apply click (Playwright fails it if anything overlays the
+    button) and `_assert_reachable` on the map's rightmost node.
 
     That node is the second proof for a reason. The 1600px override was hiding
     TWO occlusions, not one: while it was in force the canvas was wide enough
@@ -829,28 +997,22 @@ def test_link_inspector_survives_range_change(shell_dash, page):
     panel = page.locator('[data-testid="link-inspector"]')
     panel.wait_for()
 
-    # Custom range apply — same from-input-derived idiom as
+    # Custom range apply — same segment-typing idiom as
     # test_custom_range_apply_and_reset: narrow +10..+20min off the
-    # pre-populated LOCAL from-input (datetime-local is local wall-clock).
-    start_local = page.locator('[data-testid="range-from"]').input_value()
-    t0 = datetime.strptime(start_local, "%Y-%m-%dT%H:%M")  # noqa: DTZ007 — naive local wall-clock by design
-    page.locator('[data-testid="range-from"]').fill(
-        (t0 + timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M")
-    )
-    page.locator('[data-testid="range-to"]').fill(
-        (t0 + timedelta(minutes=20)).strftime("%Y-%m-%dT%H:%M")
-    )
-    # Before Apply: the default "Full" range preset is still selected
-    # (react-aria's Radio marks the active one with a `data-selected` attr).
-    assert page.locator('[data-testid="range-presets"] [data-selected]').count() == 1
-    page.locator('[data-testid="range-apply"]').click()
+    # popover's pre-seeded "from" field.
+    before_label = _range_picker_label(page)
+    _open_range_picker(page)
+    t0 = _read_range_field(page, 0)
+    _set_range_field(page, 0, t0 + timedelta(minutes=10))
+    _set_range_field(page, 1, t0 + timedelta(minutes=20))
+    _apply_range_picker(page)
     # Discriminating proof the apply actually landed (not just that the
-    # inputs hold the typed text): a custom window matches none of the
-    # presets, so the "Full" pill loses its selected state once the store's
+    # fields hold the typed text): the trigger label is derived straight
+    # from the committed `range` value, so it only changes once the store's
     # range is genuinely applied.
     page.wait_for_function(
-        "() => document.querySelectorAll("
-        "'[data-testid=\"range-presets\"] [data-selected]').length === 0"
+        "(prev) => document.querySelector('[data-testid=\"range-picker\"]').innerText !== prev",
+        arg=before_label,
     )
     assert panel.is_visible()
 
@@ -923,10 +1085,14 @@ def test_topology_legend_hover_and_tunnel_casing(shell_dash, page):
 def test_review_mode_boots_hydrated(review_dash, page):
     """Boot hydration (Plan 5a Task 6): a review-mode server opens straight
     into the dashboard from its loaded document, with no Import interaction
-    — plus the session-note tooltip's end-to-end proof (Select.tsx: a bare
-    ``title=`` prop is silently stripped by react-aria's ``filterDOMProps``;
-    the ``render``-prop workaround only earns its keep if the attribute
-    actually survives to the rendered DOM option, which this asserts)."""
+    — plus the session-note supporting-text's end-to-end proof. Task 3
+    follow-up: the fork that hand-built the picker's trigger button (and
+    smuggled the note through a ``title`` attribute react-aria-components'
+    ``filterDOMProps`` would otherwise strip) is gone; the note now maps
+    onto vendored Untitled UI Select's native ``supportingText`` field
+    (select-shared.tsx's ``SelectItemType``), which select-item.tsx renders
+    as a second, always-visible text node under the option's label — this
+    asserts that text actually reaches the rendered DOM option."""
     page.goto(review_dash.url)
     page.locator('[data-testid="review-bar"]').wait_for()
     assert page.locator('[data-testid="source-name"]').inner_text() == "minimal.json"
@@ -940,10 +1106,14 @@ def test_review_mode_boots_hydrated(review_dash, page):
     # DOM. Wait for the render transition first — the file's existing idiom.
     page.get_by_role("option").first.wait_for()
     assert page.get_by_role("option").count() == 2
+    # The option's accessible name comes from the label slot alone
+    # (select-item.tsx's `AriaText slot="label"`, wired to aria-labelledby)
+    # — the supportingText slot is a separate, aria-describedby'd node, so
+    # `name=` matching by label continues to work unscoped by the note.
     plain = page.get_by_role("option", name="minimal", exact=True)
     noted = page.get_by_role("option", name="second", exact=True)
-    assert plain.get_attribute("title") is None
-    assert noted.get_attribute("title") == "second run"
+    assert "second run" not in plain.inner_text()
+    assert "second run" in noted.inner_text()
     page.keyboard.press("Escape")
     noted.wait_for(state="detached")  # popover closed
 

@@ -9,9 +9,8 @@ export function ImpairPill(props: { impair?: string; testId?: string; x?: number
       style={
         positioned ? { transform: `translate(-50%, -50%) translate(${x}px, ${y}px)` } : undefined
       }
-      className={`${positioned ? "absolute " : ""}rounded-full border border-gray-300 bg-white
-        px-1.5 py-0.5 text-[10px] whitespace-nowrap text-gray-500 dark:border-gray-700
-        dark:bg-gray-950 dark:text-gray-400`}
+      className={`${positioned ? "absolute " : ""}rounded-full border border-primary bg-primary
+        px-1.5 py-0.5 text-[10px] whitespace-nowrap text-tertiary`}
     >
       {impair === undefined ? "impair" : `impair · ${impair}`}
     </span>

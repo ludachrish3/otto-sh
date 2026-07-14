@@ -180,6 +180,41 @@ def _hosts_array_schema(
     }
 
 
+def _dedupe_chart_map(doc: dict[str, Any]) -> None:
+    """Collapse two models' identical inline ``chart_map`` schemas into one ``$defs/ChartMap``.
+
+    ``SessionRecord`` and ``MonitorSessionFragment`` both declare a plain
+    ``chart_map: dict[str, str]`` (see
+    :class:`~otto.models.monitor.SessionRecord`,
+    :class:`~otto.models.monitor.MonitorSessionFragment`) — pydantic only
+    hoists a field's schema to ``$defs`` for a *named* nested model, never for
+    a plain generic like ``dict[str, str]``, so each occurrence is inlined
+    separately even though they are byte-identical. ``json-schema-to-typescript``
+    then has no ``$ref`` telling it these are the same type, so it synthesizes
+    two names for two structurally-identical objects: ``ChartMap`` and
+    ``ChartMap1`` (spec 2026-07-10, Plan 5b follow-ups #9 — cosmetic, but real
+    drift-gate noise every time either model's schema shifts nearby).
+
+    The clean fix would promote ``chart_map`` to a real shared submodel type —
+    but that changes its RUNTIME type from a plain ``dict`` to a pydantic model
+    everywhere it's read or written (``otto/monitor/export.py``,
+    ``otto/monitor/db.py``, ``otto/cli/monitor.py``, ``otto/suite/suite.py`` and
+    their tests), which is a lot of surface for a cosmetic TS naming fix. So
+    this rewrites the OUTPUT schema only, post pydantic generation — same
+    surgery ``_monitor_export_schema`` already does to fold in the fragment's
+    ``$defs`` — leaving both fields' Python type exactly as ``dict[str, str]``.
+    """
+    defs = doc.setdefault("$defs", {})
+    chart_map_schema = defs.get("SessionRecord", {}).get("properties", {}).get("chart_map")
+    if not isinstance(chart_map_schema, dict) or "$ref" in chart_map_schema:
+        return  # nothing to dedupe against, or already deduped
+    defs.setdefault("ChartMap", chart_map_schema)
+    for owner in ("SessionRecord", "MonitorSessionFragment"):
+        props = defs.get(owner, {}).get("properties", {})
+        if "chart_map" in props:
+            props["chart_map"] = {"$ref": "#/$defs/ChartMap"}
+
+
 def _monitor_export_schema() -> dict[str, Any]:
     """Build the ``monitor-export`` document, plus an unreachable fragment ``$defs`` entry.
 
@@ -189,8 +224,14 @@ def _monitor_export_schema() -> dict[str, Any]:
     ``SessionMeta`` verbatim, so its own ``$defs`` (from a standalone
     ``model_json_schema()`` call) are already present under those same keys
     in the export document's ``$defs`` — ``setdefault`` below is a no-op in
-    practice, kept only so a future divergence would show up as a schema
-    difference rather than being silently overwritten either direction.
+    practice. It is kept as a no-clobber guard, not an early-warning
+    tripwire: ``dict.setdefault`` only ever *adds* a key that is missing —
+    for a key already present (the expected case here) it leaves the
+    document's own value untouched and silently discards the fragment's.
+    So a future divergence would NOT show up as a visible schema
+    difference; it would be resolved silently, always in the document's
+    favor, protecting the ``properties`` that reference these ``$defs``
+    from being altered by a value pulled in from the fragment's copy.
     Nothing in the document's own ``properties`` references the
     ``MonitorSessionFragment`` def, by design (see the module docstring);
     ``json-schema-to-typescript --unreachableDefinitions`` (see
@@ -203,6 +244,7 @@ def _monitor_export_schema() -> dict[str, Any]:
     for key, value in frag_defs.items():
         defs.setdefault(key, value)
     defs["MonitorSessionFragment"] = frag
+    _dedupe_chart_map(doc)
     return doc
 
 

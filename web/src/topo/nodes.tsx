@@ -10,16 +10,16 @@ export const STATUS_DOT: Record<EffectiveStatus, string> = {
   ok: "bg-status-ok",
   down: "bg-status-error",
   unreachable: "border border-status-error/60 bg-transparent",
-  "no-data": "bg-gray-300 dark:bg-gray-600",
-  unknown: "bg-gray-200 dark:bg-gray-700",
+  "no-data": "bg-fg-quaternary",
+  unknown: "bg-quaternary",
 };
 
 export const STATUS_SEGMENT: Record<EffectiveStatus, string> = {
   ok: "bg-status-ok",
   down: "bg-status-error",
   unreachable: "bg-status-error/25",
-  "no-data": "bg-gray-300 dark:bg-gray-600",
-  unknown: "bg-gray-200 dark:bg-gray-700",
+  "no-data": "bg-fg-quaternary",
+  unknown: "bg-quaternary",
 };
 
 const SEVERITY: EffectiveStatus[] = ["down", "unreachable", "no-data", "unknown", "ok"];
@@ -49,8 +49,7 @@ export function LocalNode({ data: _data }: { data: TopoNode }) {
     <div
       data-testid="topo-node-local"
       data-status="local"
-      className="rounded-lg border-2 border-brand-500 bg-white px-3 py-2 text-sm font-semibold
-        dark:bg-gray-950"
+      className="rounded-lg border-2 border-brand-500 bg-primary px-3 py-2 text-sm font-semibold"
     >
       ◉ local
       <Ports />
@@ -64,13 +63,13 @@ export function ElementNode({ data }: { data: TopoNode }) {
     <div
       data-testid={`topo-node-${data.id}`}
       data-status={worst(rollup)}
-      className="w-52 cursor-pointer rounded-lg border border-gray-200 bg-white px-3 py-2
-        hover:border-brand-500 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-brand-500"
+      className="w-52 cursor-pointer rounded-lg border border-secondary bg-primary px-3 py-2
+        hover:border-brand-500"
     >
       <p className="flex items-center gap-2 text-sm font-medium">
         <span aria-hidden>{data.element?.type === "physical" ? "▦" : "▤"}</span>
         <span className="truncate">{data.label}</span>
-        <span aria-hidden className="ml-auto text-gray-400">
+        <span aria-hidden className="ml-auto text-quaternary">
           ⤢
         </span>
       </p>
@@ -86,7 +85,7 @@ export function ElementNode({ data }: { data: TopoNode }) {
           ))}
         </div>
       )}
-      <p className="mt-1 text-xs text-gray-400">
+      <p className="mt-1 text-xs text-quaternary">
         {data.element?.hostIds.length ?? 0} host
         {(data.element?.hostIds.length ?? 0) === 1 ? "" : "s"}
       </p>
@@ -112,15 +111,15 @@ export function HostNode({ data }: { data: TopoNode & { slotBadge?: boolean } })
     <div
       data-testid={`topo-node-${data.id}`}
       data-status={status}
-      className={`w-44 cursor-pointer rounded-lg border border-gray-200 bg-white px-3 py-2
-        hover:border-brand-500 dark:border-gray-800 dark:bg-gray-950 dark:hover:border-brand-500
+      className={`w-44 cursor-pointer rounded-lg border border-secondary bg-primary px-3 py-2
+        hover:border-brand-500
         ${status === "unreachable" ? "opacity-60" : ""}`}
     >
       <p className="flex items-center gap-2 text-sm font-medium">
         <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[status]}`} />
         <span className="truncate">{data.label}</span>
       </p>
-      {detail !== "" && <p className="mt-0.5 text-xs text-gray-400">{detail}</p>}
+      {detail !== "" && <p className="mt-0.5 text-xs text-quaternary">{detail}</p>}
       <Ports />
     </div>
   );

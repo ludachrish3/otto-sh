@@ -77,6 +77,25 @@ export function ChartPanel(props: {
 
   useEffect(() => {
     chart.current?.setOption(option, { notMerge: true, lazyUpdate: true });
+    // data-echarts-point-count: stamped HERE, inside the effect that actually
+    // makes the imperative setOption() call above — same reasoning as
+    // data-echarts-window-to below (see its comment). SubjectPage's
+    // `data-point-count` (ChartSection's render body) merely echoes the
+    // `series` PROP every render, whether or not THIS effect re-ran — Task 6
+    // follow-up's bug was exactly that gap: widening the live window
+    // (setWindow) re-slices `series` and bumps `data-point-count` on every
+    // SubjectPage render regardless, but the option memo (gated on
+    // `revKey`/`range`/... — see ChartSection in SubjectPage.tsx) didn't
+    // include the window's width, so this effect never re-fired and ECharts
+    // kept drawing the OLD series data under a widened axis. Counting off
+    // `option.series[].data` — what this call is actually handing
+    // setOption() — rather than the `series` prop is what makes this
+    // attribute able to fail when that one couldn't.
+    if (el.current) {
+      const drawn = (option.series as { data?: unknown[] }[] | undefined) ?? [];
+      const pointCount = drawn.reduce((n, s) => n + (s.data?.length ?? 0), 0);
+      el.current.dataset.echartsPointCount = String(pointCount);
+    }
   }, [option]);
 
   // Cheap incremental patch (bug: window/markers were consumed inside the

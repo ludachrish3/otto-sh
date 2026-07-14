@@ -1,0 +1,36 @@
+{
+  "cli": "untitledui@0.1.64",
+  "vendoredAt": "2026-07-14",
+  "components": [
+    "button",
+    "button-group",
+    "badges",
+    "button-utility",
+    "select",
+    "input",
+    "dropdown",
+    "tooltip",
+    "range-calendar",
+    "date-picker",
+    "slideout-menu",
+    "empty-state",
+    "table",
+    "tabs",
+    "checkbox",
+    "tags"
+  ],
+  "paths": [
+    "src/components/**",
+    "src/styles/theme.css",
+    "src/utils/cx.ts",
+    "src/utils/is-react-component.ts",
+    "src/hooks/use-breakpoint.ts",
+    "src/hooks/use-resize-observer.ts"
+  ],
+  "contentHash": {
+    "algorithm": "sha256",
+    "value": "79afbe1b71fa16efd170a16450c340c266650b581c7cf0117f64a9f5e6ebc53a",
+    "recipe": "cd web && { find src/components -type f; echo src/styles/theme.css; echo src/utils/cx.ts; echo src/utils/is-react-component.ts; echo src/hooks/use-breakpoint.ts; echo src/hooks/use-resize-observer.ts; } | LC_ALL=C sort | xargs sha256sum | sha256sum"
+  },
+  "note": "Copy-in source, not an npm dependency — Dependabot's npm//web entry (.github/dependabot.yml) covers only the ordinary npm packages Untitled UI pulls in (react-aria-components, @internationalized/date, ...), not this. There is no version to resolve and no lockfile entry for these files, so an upstream fix to their Select would never reach us and nothing would tell us it exists. scripts/check_untitledui_drift.sh is the substitute: it re-vendors this exact `components` list with the pinned `cli` above into a throwaway project and diffs the result against `paths`. Pinning `cli` does NOT pin the content — the CLI is just a downloader and the registry it fetches from is live, so content can (and does) change under a fixed CLI version. `contentHash` is a fingerprint of this tree at `vendoredAt` (see `recipe`), useful as a quick 'has this moved locally' check independent of the network-based drift script. Byte-exactness is load-bearing: never hand-edit these files — see web/README.md's vendored-source section."
+}

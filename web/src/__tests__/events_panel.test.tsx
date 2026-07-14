@@ -5,7 +5,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 if (typeof CSS === "undefined" || !CSS.escape) {
-  // Same polyfill as ui.test.tsx — react-aria portals call CSS.escape.
+  // Same polyfill as reviewbar.test.tsx/shell.test.tsx — react-aria portals
+  // call CSS.escape.
   (globalThis as { CSS?: unknown }).CSS = {
     escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`),
   };

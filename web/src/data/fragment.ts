@@ -3,18 +3,62 @@
 // here: if you find yourself writing one, the wire has drifted from the payload and
 // the fix belongs in the model, not here.
 import type { MonitorSessionFragment } from "../api/export.gen";
-import type { NormalizedSession } from "./exportDoc";
+import { dropInvalidTimestamps, type NormalizedSession } from "./exportDoc";
 import { appendToIndex } from "./seriesIndex";
 
+/**
+ * Applies one live-stream fragment to a session. `warnings`, when passed, is
+ * mutated in place with a summary entry whenever a metric/event/log_event
+ * row is dropped for a non-finite (start or, for a span event, end)
+ * timestamp — the caller (reviewStore.ts's mergeFragments) folds those into
+ * the store's `warnings` channel, the live-path twin of what
+ * `parseExportDocument`/`normalizeSession` (exportDoc.ts) already do for an
+ * imported document. Optional (defaults to a throwaway array) so existing
+ * direct callers/tests that don't care about warnings are unaffected.
+ *
+ * WHY this matters: stream.ts's `isFragment` only checks STRUCTURE (is
+ * `metrics` an array, etc.), never each record's own timestamp(s). Without
+ * this filter:
+ *  - a malformed metric row would flow straight through to `appendToIndex`
+ *    below and land in the series index's `tsMs` array — which every reader
+ *    (health.ts's `lastIndexAtOrBefore`, seriesIndex.ts's own `lowerBound`)
+ *    assumes is ASCENDING and binary-searches. A NaN entry there doesn't
+ *    crash anything; `tsMs[mid] <= t` is always false for NaN, so the search
+ *    silently misbehaves and slices the wrong window from then on.
+ *  - a malformed event/log_event row would land in `session.events`/
+ *    `logEvents` unfiltered (Plan 5b final-review Finding [2]): it renders
+ *    "Invalid Date" in EventsPanel, is invisible on charts (a NaN `fromMs`
+ *    fails every overlap comparison in `eventMarkers`), and — since the
+ *    import path (exportDoc.ts) already drops the same row — silently
+ *    DISAPPEARS again on the next resync. One rule, applied at both
+ *    boundaries via this same `dropInvalidTimestamps`, closes that gap: a
+ *    bad row behaves identically whether it arrives via Import or SSE.
+ *  - an `EventRecord` with a valid `timestamp` but a malformed
+ *    `end_timestamp` (a span whose end can't be parsed) would pass this
+ *    filter, then produce a NaN `toMs` wherever `end_timestamp` is read
+ *    (charts/options.ts's `eventMarkers`, EventsPanel.tsx) — NaN fails every
+ *    overlap comparison, so the span silently vanishes from every chart,
+ *    un-warned (Finding [3]). `dropInvalidTimestamps`'s `endTimestamp`
+ *    selector below closes that gap too, on both boundaries.
+ * Filtered ONCE here — the point a fragment enters the store — rather than
+ * in every reader.
+ */
 export function applyFragment(
   session: NormalizedSession,
   frag: MonitorSessionFragment,
+  warnings: string[] = [],
 ): NormalizedSession {
   if (frag.session !== session.id) return session;
 
-  const metrics = frag.metrics ?? [];
-  const logEvents = frag.log_events ?? [];
-  const fragEvents = frag.events ?? [];
+  const metrics = dropInvalidTimestamps(frag.metrics ?? [], "metric", session.id, warnings);
+  const logEvents = dropInvalidTimestamps(frag.log_events ?? [], "log event", session.id, warnings);
+  const fragEvents = dropInvalidTimestamps(
+    frag.events ?? [],
+    "event",
+    session.id,
+    warnings,
+    (e) => e.end_timestamp,
+  );
   const deletedIds = frag.deleted_event_ids ?? [];
   const chartMapPatch = frag.chart_map ?? {};
   const hasMetaPatch = frag.meta !== null && frag.meta !== undefined;

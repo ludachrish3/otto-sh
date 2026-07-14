@@ -244,3 +244,22 @@ def test_monitor_export_schema_carries_an_unreachable_fragment_def():
     # SessionRecord's fields — no duplicate MetricRecord/EventRecord/etc.
     assert frag_def["properties"]["metrics"]["items"]["$ref"] == "#/$defs/MetricRecord"
     assert frag_def["properties"]["events"]["items"]["$ref"] == "#/$defs/EventRecord"
+
+
+def test_monitor_export_schema_chart_map_is_deduped_to_one_shared_def():
+    """SessionRecord and MonitorSessionFragment both declare a plain
+    ``chart_map: dict[str, str]`` field. Pydantic inlines a plain-dict field's
+    schema at each occurrence (it only hoists NAMED nested models to $defs),
+    so without _dedupe_chart_map the two occurrences are structurally
+    identical but textually unlinked — json-schema-to-typescript then
+    synthesizes two names for them (``ChartMap``/``ChartMap1``, Plan 5b
+    follow-ups #9). Both fields must instead $ref the SAME $defs/ChartMap
+    entry, so the generated TS carries exactly one interface, reused by both.
+    """
+    doc = build_schemas(builtins_only=True)["monitor-export"]
+    defs = doc["$defs"]
+    assert "ChartMap" in defs
+    assert defs["ChartMap"]["type"] == "object"
+    assert defs["ChartMap"]["additionalProperties"] == {"type": "string"}
+    assert defs["SessionRecord"]["properties"]["chart_map"] == {"$ref": "#/$defs/ChartMap"}
+    assert defs["MonitorSessionFragment"]["properties"]["chart_map"] == {"$ref": "#/$defs/ChartMap"}

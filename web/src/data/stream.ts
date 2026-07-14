@@ -30,6 +30,11 @@ export function startStream(
   let attempt = 0;
   let buffer: MonitorSessionFragment[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
+  // The reconnect backoff timer scheduled by onerror below (resync -> reopen).
+  // Tracked separately from `timer` (the per-frame flush timer) so stop() can
+  // cancel BOTH kinds of pending work — leaving this one untracked was the
+  // bug: a stopped stream's already-scheduled reconnect fired anyway.
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ~90 fragments arrive per tick (one per point). Applying each separately would
   // be ~90 store updates and ~90 render passes; one flush per frame makes it one.
@@ -82,11 +87,25 @@ export function startStream(
       if (stopped) return;
       const delay = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
       attempt += 1;
-      setTimeout(() => {
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        // stop() may have fired while this backoff was pending — checked
+        // BEFORE resync (not just before the reopen below), so a stopped
+        // stream performs no hydrate at all, not even one.
+        if (stopped) return;
         // Resync BEFORE reopening: re-fetch the whole payload rather than trying to
         // replay what we missed. The snapshot is the truth and already contains it —
         // no sequence numbers, no replay buffer, no way to disagree about history.
-        void (opts.resync?.() ?? Promise.resolve()).finally(connect);
+        //
+        // Known gap (Plan 5b follow-ups #4, see bootstrap.ts's `startStream`
+        // call for the full note): a point published strictly between this
+        // resync's fetch response and `connect()` below re-opening the
+        // EventSource is neither in that response nor replayed once the
+        // stream reopens. Same small window as the initial boot hydrate,
+        // recurring on every reconnect. Not closed here.
+        void (opts.resync?.() ?? Promise.resolve()).finally(() => {
+          if (!stopped) connect();
+        });
       }, delay);
     };
   };
@@ -96,6 +115,7 @@ export function startStream(
   return () => {
     stopped = true;
     if (timer !== null) clearTimeout(timer);
+    if (reconnectTimer !== null) clearTimeout(reconnectTimer);
     source?.close();
   };
 }

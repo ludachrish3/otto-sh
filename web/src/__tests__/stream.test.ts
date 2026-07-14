@@ -124,4 +124,32 @@ describe("startStream", () => {
     vi.advanceTimersByTime(20); // one frame — flush would run if buffered
     expect(useReviewStore.getState().sessions[0].metrics.length).toBe(before);
   });
+
+  // Plan 5b follow-up #6: stop() left the reconnect backoff timer (scheduled
+  // by onerror below) untracked, so it fired anyway after stop() — a mode
+  // switch or HMR teardown leaked both a live EventSource-reconnect cycle
+  // AND a hydrate that could overwrite the store after the caller believed
+  // the stream was dead. Latent in production today (nothing stops the
+  // stream yet), but real for HMR and any future mode-switch teardown.
+  describe("stop()", () => {
+    it("cancels a pending reconnect timer — leaves no timer scheduled", () => {
+      const stop = startStream();
+      FakeEventSource.last?.onerror?.(); // schedules the backoff-delayed reconnect
+      expect(vi.getTimerCount()).toBeGreaterThan(0); // the reconnect timer is pending
+      stop();
+      expect(vi.getTimerCount()).toBe(0); // no leaked timer after stop()
+    });
+
+    it("a stopped stream performs no hydrate, even once every backoff tier has elapsed", async () => {
+      const resync = vi.fn().mockResolvedValue(undefined);
+      const stop = startStream({ resync });
+      FakeEventSource.last?.onerror?.(); // schedules the first backoff-delayed reconnect
+      stop(); // stop BEFORE the backoff elapses
+      // Exhaust every backoff tier (1000+2000+5000+10000+30000ms) — if the
+      // timer had survived stop(), or the reconnect path hydrated before
+      // checking `stopped`, resync would fire somewhere in this window.
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(resync).not.toHaveBeenCalled();
+    });
+  });
 });

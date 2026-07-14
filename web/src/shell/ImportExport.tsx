@@ -49,8 +49,8 @@ export function ExportButton() {
       disabled={!hasData}
       onClick={exportLoadedDocument}
       aria-label="Export"
-      className="cursor-pointer rounded-md px-2 py-1 text-sm text-gray-500 hover:bg-gray-100
-        disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-400 dark:hover:bg-gray-900"
+      className="cursor-pointer rounded-md px-2 py-1 text-sm text-tertiary hover:bg-primary_hover
+        disabled:cursor-not-allowed disabled:opacity-50"
     >
       Export
     </button>

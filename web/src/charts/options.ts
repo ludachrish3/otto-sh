@@ -89,6 +89,46 @@ export function zoomToRange(startPct: number, endPct: number, window: TimeRange)
   };
 }
 
+/** Vertical pixel step between stacked markArea labels — see `assignLanes`. */
+const LANE_LABEL_STEP_PX = 14;
+
+/** Greedy interval-graph lane assignment: the pure core of the overlapping-
+ * span-event label fix (found by a visual gate against kitchen-sink.json's
+ * "stress run" 09:25-09:35 and "log capture" 09:30-09:40 — two overlapping
+ * span events whose markArea labels used to render at the same default
+ * position and collide into unreadable mush).
+ *
+ * Intervals are half-open `[fromMs, toMs)`: an event starting exactly when
+ * another ends does NOT overlap it. Sorts by start (ties by end) and gives
+ * each event the lowest-numbered lane whose most recently placed occupant
+ * has already ended — standard greedy interval-graph colouring, minimal in
+ * the number of lanes used. Two events whose intervals overlap always land
+ * in distinct lanes; events that never overlap anything all settle into
+ * lane 0, so the common (non-overlapping) case is unchanged.
+ *
+ * Returns lanes in the SAME order as `events` (not sorted order), so a
+ * caller can zip the result straight back onto its own array. Pure and
+ * synchronous — no ECharts/DOM dependency — so it's unit-testable directly,
+ * independent of eventOverlay's wiring below. */
+export function assignLanes(events: { fromMs: number; toMs: number }[]): number[] {
+  const order = events
+    .map((_, i) => i)
+    .sort((a, b) => {
+      const byStart = events[a].fromMs - events[b].fromMs;
+      return byStart !== 0 ? byStart : events[a].toMs - events[b].toMs;
+    });
+  const laneEnds: number[] = []; // laneEnds[lane] = end (toMs) of that lane's last occupant
+  const lanes: number[] = new Array(events.length);
+  for (const i of order) {
+    const ev = events[i];
+    let lane = 0;
+    while (lane < laneEnds.length && laneEnds[lane] > ev.fromMs) lane++;
+    lanes[i] = lane;
+    laneEnds[lane] = ev.toMs;
+  }
+  return lanes;
+}
+
 /** markLine/markArea for a chart's anchor (index-0) series — split out of
  * buildStackOption so ChartPanel can re-apply just this overlay as a cheap
  * merge patch (see windowPatch) whenever the window slides, without
@@ -116,15 +156,28 @@ export function eventOverlay(
         lineStyle: { color: e.color, type: "dashed", width: 1 },
       })),
   };
+  // Span events only (instant events use markLine above, untouched). Lanes
+  // are assigned over exactly the set being drawn here — deterministic and
+  // stateless, recomputed fresh on every call (no identity to keep in sync
+  // as the window/event set changes).
+  const spans = events.filter((e) => e.toMs !== null);
+  const lanes = assignLanes(spans.map((e) => ({ fromMs: e.fromMs, toMs: e.toMs as number })));
   const markArea = {
     silent: true,
     animation: false,
-    data: events
-      .filter((e) => e.toMs !== null)
-      .map((e) => [
-        { xAxis: e.fromMs, name: e.label, itemStyle: { color: e.color, opacity: 0.12 } },
-        { xAxis: e.toMs as number },
-      ]),
+    data: spans.map((e, i) => [
+      {
+        xAxis: e.fromMs,
+        name: e.label,
+        itemStyle: { color: e.color, opacity: 0.12 },
+        // Stack overlapping events' labels instead of colliding: each lane
+        // sits LANE_LABEL_STEP_PX further down from the region's top edge.
+        // Position-only — text, colour and the markLine path above are
+        // untouched (a layout fix, not a restyle).
+        label: { position: ["50%", lanes[i] * LANE_LABEL_STEP_PX] },
+      },
+      { xAxis: e.toMs as number },
+    ]),
   };
   return { markLine, markArea };
 }

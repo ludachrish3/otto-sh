@@ -1,11 +1,12 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AppBar } from "../shell/AppBar";
 import { useReviewStore } from "../data/reviewStore";
 
 beforeEach(() => {
-  useReviewStore.setState({ mode: "live", connection: "live", range: null });
+  useReviewStore.setState({ mode: "live", connection: "live", range: null, windowMs: 900_000 });
 });
 
 // vitest's config doesn't set `test.globals: true`, so
@@ -73,5 +74,48 @@ describe("live chrome", () => {
     useReviewStore.setState({ mode: "review" });
     render(<AppBar />);
     expect(screen.queryByTestId("pause-toggle")).toBeNull();
+  });
+});
+
+// Task 6 (Plan 5b follow-ups): the live-window ButtonGroup beside Pause —
+// 5m/15m/1h, live-only, selection derived from `windowMs` rather than
+// stored (same "derive, don't store" lesson as `useIsPaused` above).
+describe("live window control", () => {
+  it("renders only in live mode", () => {
+    render(<AppBar />);
+    expect(screen.getByTestId("live-window")).toBeTruthy();
+    cleanup();
+    useReviewStore.setState({ mode: "review" });
+    render(<AppBar />);
+    expect(screen.queryByTestId("live-window")).toBeNull();
+    cleanup();
+    useReviewStore.setState({ mode: null });
+    render(<AppBar />);
+    expect(screen.queryByTestId("live-window")).toBeNull();
+  });
+
+  it("the selected item reflects windowMs, not a separately stored choice", () => {
+    render(<AppBar />);
+    // Default windowMs (900_000, the store's own default) -> "15m" selected.
+    expect(screen.getByTestId("live-window-15m").getAttribute("data-selected")).not.toBeNull();
+    expect(screen.getByTestId("live-window-5m").getAttribute("data-selected")).toBeNull();
+    expect(screen.getByTestId("live-window-1h").getAttribute("data-selected")).toBeNull();
+
+    cleanup();
+    useReviewStore.setState({ windowMs: 3_600_000 });
+    render(<AppBar />);
+    expect(screen.getByTestId("live-window-1h").getAttribute("data-selected")).not.toBeNull();
+    expect(screen.getByTestId("live-window-15m").getAttribute("data-selected")).toBeNull();
+  });
+
+  it("clicking a preset calls setWindow with that preset's width", async () => {
+    // usePress (react-aria) listens for pointer events, not the single
+    // synthetic `click` fireEvent dispatches — userEvent synthesizes the
+    // full pointerdown/pointerup/click sequence (same reasoning as
+    // overview.test.tsx's session-picker helper).
+    const user = userEvent.setup();
+    render(<AppBar />);
+    await user.click(screen.getByTestId("live-window-5m"));
+    expect(useReviewStore.getState().windowMs).toBe(300_000);
   });
 });

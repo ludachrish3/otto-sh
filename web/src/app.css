@@ -1,12 +1,27 @@
 /* The redesigned monitor's single stylesheet: Tailwind v4 + theme tokens.
    Replaces dashboard.css when the new shell lands (Task 4). Theme is a
-   `dark` class on <html> (theme.ts v2), not media-query-only, so the
-   in-app toggle can override the OS preference. */
+   `dark-mode` class on <html> (theme.ts v2), not media-query-only, so the
+   in-app toggle can override the OS preference.
+
+   Foundation is vendored Untitled UI (./styles/theme.css) — the full
+   semantic token vocabulary (bg-primary, text-tertiary, border-secondary,
+   ...) plus its type scale, gated on `.dark-mode`. Never hand-edit that
+   file. Anything we author lives in src/ui/**. */
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
+@import "./styles/theme.css";
 
-@custom-variant dark (&:where(.dark, .dark *));
+@plugin "tailwindcss-animate";
+@plugin "tailwindcss-react-aria-components";
 
+@custom-variant dark (&:where(.dark-mode, .dark-mode *));
+@custom-variant label (& [data-label]);
+@custom-variant focus-input-within (&:has(input:focus));
+
+/* OUR @theme block comes AFTER the import above, so these win over Untitled
+   UI's brand purple (#9E77ED). charts/palette.ts reads --color-brand-500, and
+   a token collision that resolves the wrong way is invisible to every gate
+   except the one in tokens.test.ts. */
 @theme {
   --font-sans: "Inter Variable", system-ui, sans-serif;
   /* Brand: violet, matching the existing event-default #7c5cff family. */
@@ -26,8 +41,8 @@
 
 /* Topology edge strokes: consumed by inline SVG style objects in LinkEdge.tsx,
    which can't use Tailwind dark: variants — so plain custom properties (not
-   @theme tokens), flipped by the same `dark` class on <html> that drives
-   everything else.
+   @theme tokens), flipped by the same `.dark-mode` class on <html> that
+   drives everything else.
 
    `--topo-edge-reports` MUST keep a dark alternate that differs from
    `--topo-edge-static`. Static and reports-for share a 1.5px width, so colour
@@ -39,12 +54,12 @@
   --topo-edge-reports: #9ca3af;
   --topo-edge-tunnel-casing: #9ca3af;
 }
-.dark {
+.dark-mode {
   --topo-edge-static: #9ca3af;
   --topo-edge-reports: #6b7280;
   --topo-edge-tunnel-casing: #4b5563;
 }
 
 body {
-  @apply bg-white font-sans text-gray-900 antialiased dark:bg-gray-950 dark:text-gray-100;
+  @apply bg-primary font-sans text-primary antialiased;
 }

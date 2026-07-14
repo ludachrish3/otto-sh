@@ -1,7 +1,9 @@
 // Theme v2 (UX spec §7): seed from prefers-color-scheme when nothing is
 // stored; a 2-state toggle persists BOTH values (unlike v1, which only
-// ever wrote "light"); applied as a `dark` class on <html> for Tailwind's
-// @custom-variant.
+// ever wrote "light"); applied as a `dark-mode` class on <html> — Untitled
+// UI's vendored theme.css gates its dark token block on that class, and
+// app.css's `@custom-variant dark` reads the same class, so it is the only
+// one theme.ts needs to touch.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { applyTheme, loadTheme, saveTheme } from "../theme";
@@ -17,7 +19,7 @@ function mockMedia(dark: boolean) {
 afterEach(() => {
   localStorage.clear();
   vi.unstubAllGlobals();
-  document.documentElement.classList.remove("dark");
+  document.documentElement.classList.remove("dark", "dark-mode");
 });
 
 describe("loadTheme", () => {
@@ -38,17 +40,32 @@ describe("loadTheme", () => {
 });
 
 describe("saveTheme / applyTheme", () => {
-  it("persists and toggles the html dark class", () => {
+  it("persists and toggles the html dark-mode class", () => {
     saveTheme("dark");
     expect(localStorage.getItem("otto-theme")).toBe("dark");
-    expect(document.documentElement.classList.contains("dark")).toBe(true);
+    expect(document.documentElement.classList.contains("dark-mode")).toBe(true);
     saveTheme("light");
     expect(localStorage.getItem("otto-theme")).toBe("light");
-    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    expect(document.documentElement.classList.contains("dark-mode")).toBe(false);
   });
 
   it("applyTheme alone does not persist", () => {
     applyTheme("dark");
     expect(localStorage.getItem("otto-theme")).toBeNull();
+  });
+
+  // .dark-mode is the ONLY class: it's what the vendored, byte-exact
+  // theme.css gates its dark token block on, and app.css's `@custom-variant
+  // dark` reads the same class for every `dark:` utility (ours and Untitled
+  // UI's). We do not shadow it with a second `.dark` class — that was tried
+  // and reverted (a coupling nobody pays for). This must fail if the class
+  // is absent, not just assert something true by default.
+  it("toggles .dark-mode on <html>, and nothing else", () => {
+    expect(document.documentElement.classList.contains("dark-mode")).toBe(false);
+    applyTheme("dark");
+    expect(document.documentElement.classList.contains("dark-mode")).toBe(true);
+    expect(document.documentElement.classList.contains("dark")).toBe(false);
+    applyTheme("light");
+    expect(document.documentElement.classList.contains("dark-mode")).toBe(false);
   });
 });

@@ -125,6 +125,27 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
             )
         return _document_body
 
+    def _require_live_snapshot_body() -> str:
+        """Build the current live-session document body, or fail loud.
+
+        Mirrors ``_require_document_body()``'s "the caller broke the contract"
+        framing: a ``mode="live"`` server with no ``frame``/``lab`` has no
+        session to build a snapshot from, which is a programming error here —
+        the CLI always supplies both for live mode. Only ``/api/export/json``
+        calls this directly; ``/api/monitor_sessions`` hits the identical
+        missing-frame/lab state during ordinary page loads (see its
+        docstring) and so must check ``frame``/``lab`` itself first to return
+        its softer 404 instead of raising — it then calls this for the
+        build once it knows both are present.
+        """
+        if frame is None or lab is None:
+            raise RuntimeError(
+                "MonitorServer built with mode='live' but no frame/lab — this "
+                "is a programming error: the CLI always supplies both for "
+                "live mode."
+            )
+        return document_json(build_live_export(frame, collector, lab))
+
     @app.get("/", response_class=HTMLResponse)
     async def dashboard() -> HTMLResponse:  # type: ignore[reportUnusedFunction]
         """Serve the React dashboard's built ``index.html``."""
@@ -159,8 +180,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
                 {"error": "no monitor session is being recorded"},
                 status_code=404,
             )
-        body = document_json(build_live_export(frame, collector, lab))
-        return Response(content=body, media_type="application/json")
+        return Response(content=_require_live_snapshot_body(), media_type="application/json")
 
     @app.get("/api/stream")
     async def stream(request: Request) -> EventSourceResponse:  # type: ignore[reportUnusedFunction]
@@ -230,16 +250,7 @@ def _build_app(  # noqa: C901 — FastAPI route-factory; complexity is route cou
         Review mode re-serves the loaded document verbatim; live mode builds
         a fresh single-session document from *frame*/*collector*/*lab*.
         """
-        if mode == "review":
-            body = _require_document_body()
-        else:
-            if frame is None or lab is None:
-                raise RuntimeError(
-                    "MonitorServer built with mode='live' but no frame/lab — this "
-                    "is a programming error: the CLI always supplies both for "
-                    "live mode."
-                )
-            body = document_json(build_live_export(frame, collector, lab))
+        body = _require_document_body() if mode == "review" else _require_live_snapshot_body()
         return Response(
             content=body,
             media_type="application/json",

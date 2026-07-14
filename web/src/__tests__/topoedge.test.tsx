@@ -98,7 +98,7 @@ describe("EDGE_STYLES", () => {
   // stylesheet itself.
   it("keeps reports-for dimmer than static in BOTH themes", () => {
     const root = block(":root {");
-    const dark = block(".dark {");
+    const dark = block(".dark-mode {");
 
     // Both themes define both variables...
     for (const [theme, css] of [

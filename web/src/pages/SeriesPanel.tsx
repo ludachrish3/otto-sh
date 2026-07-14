@@ -1,8 +1,34 @@
 // Left panel of the subject view (UX spec §9): search -> quick-filter
 // chips (chart groups + Source) -> series tree with checkboxes. Fully
 // controlled; selection state lives in SubjectPage.
+//
+// The chip groups are two separate vendored TagGroups (chart-group chips are
+// genuinely multi-select; the Source chip is single-select but must still
+// deselect on a second click of the same chip, which is why it passes
+// `disallowEmptySelection={false}` — TagGroup defaults single-select to
+// disallowing an empty selection, same as a radio group would).
+//
+// Tag drops `data-testid` on the floor: its prop destructuring lists a fixed
+// set of names with no `...rest` capture, so an unrecognized prop never
+// reaches the DOM at all — not even on a wrapper, the way Badge/Select/
+// Input's testid gaps do. A `<span data-testid=...>` wrapped AROUND `<Tag>`
+// doesn't work either: react-aria's TagList collection-builder does a
+// special hidden-tree walk to find Tag items, and a plain host element
+// (span) between TagList and Tag makes the scanner drop the item entirely
+// (verified — it renders an empty `role="grid"`, zero tags). The only place
+// left to put it is `children`, which Tag renders verbatim inside its own
+// interactive root, so a click anywhere inside (including the span) bubbles
+// to Tag's press handler same as clicking the tag directly. The cost: Tag
+// only derives its accessible `textValue` when `children` is a plain
+// string, and there is no prop to override that (same destructuring gap) —
+// non-string children triggers a harmless dev-only console warning
+// ("A `textValue` prop is required..."). Accepted as the least-bad option
+// short of forking Tag's className/layout logic to reach the raw
+// react-aria-components primitive directly.
+import { Badge } from "@/components/base/badges/badges";
+import { Checkbox } from "@/components/base/checkbox/checkbox";
+import { Tag, TagGroup, TagList } from "@/components/base/tags/tags";
 import { type ChartNode, sourcesIn } from "../data/seriesTree";
-import { Badge } from "../ui/Badge";
 import { TextInput } from "../ui/TextInput";
 
 export function SeriesPanel(props: {
@@ -19,76 +45,84 @@ export function SeriesPanel(props: {
   const { tree, checked, onToggle, search, onSearch, chips, onChips, source, onSource } = props;
   const sources = sourcesIn(tree);
 
-  const toggleChip = (chartKey: string) => {
-    const next = new Set(chips ?? []);
-    if (next.has(chartKey)) next.delete(chartKey);
-    else next.add(chartKey);
-    onChips(next.size === 0 ? null : next);
-  };
-
   return (
     <aside
       data-testid="series-panel"
-      className="flex w-64 shrink-0 flex-col gap-3 border-r border-gray-200 pr-4 dark:border-gray-800"
+      className="flex w-64 shrink-0 flex-col gap-3 border-r border-secondary pr-4"
     >
       <TextInput label="Search" value={search} onChange={onSearch} testId="series-search" />
-      <div className="flex flex-wrap gap-1.5">
-        {tree.map((chart) => (
-          <button
-            key={chart.chartKey}
-            type="button"
-            data-testid={`chip-${chart.chartKey}`}
-            onClick={() => toggleChip(chart.chartKey)}
-            className={`cursor-pointer rounded-full border px-2 py-0.5 text-xs ${
-              chips?.has(chart.chartKey)
-                ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
-                : "border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-400"
-            }`}
+      <div className="flex flex-col gap-2">
+        {tree.length > 0 && (
+          <TagGroup
+            label="Chart filters"
+            selectionMode="multiple"
+            selectedKeys={chips ?? new Set()}
+            onSelectionChange={(keys) => {
+              const next =
+                keys === "all"
+                  ? new Set(tree.map((c) => c.chartKey))
+                  : new Set([...keys].map(String));
+              onChips(next.size === 0 ? null : next);
+            }}
           >
-            {chart.chartLabel}
-          </button>
-        ))}
-        {sources.map((src) => (
-          <button
-            key={src}
-            type="button"
-            data-testid={`chip-source-${src}`}
-            onClick={() => onSource(source === src ? null : src)}
-            className={`cursor-pointer rounded-full border px-2 py-0.5 text-xs ${
-              source === src
-                ? "border-brand-500 bg-brand-50 text-brand-700 dark:bg-brand-500/15 dark:text-brand-300"
-                : "border-gray-200 text-gray-500 dark:border-gray-700 dark:text-gray-400"
-            }`}
+            <TagList className="flex flex-wrap gap-1.5">
+              {tree.map((chart) => (
+                <Tag key={chart.chartKey} id={chart.chartKey}>
+                  <span data-testid={`chip-${chart.chartKey}`}>{chart.chartLabel}</span>
+                </Tag>
+              ))}
+            </TagList>
+          </TagGroup>
+        )}
+        {sources.length > 0 && (
+          <TagGroup
+            label="Source filters"
+            selectionMode="single"
+            disallowEmptySelection={false}
+            selectedKeys={source ? new Set([source]) : new Set()}
+            onSelectionChange={(keys) => {
+              const arr = keys === "all" ? [] : [...keys];
+              onSource(arr.length > 0 ? String(arr[0]) : null);
+            }}
           >
-            src: {src}
-          </button>
-        ))}
+            <TagList className="flex flex-wrap gap-1.5">
+              {sources.map((src) => (
+                <Tag key={src} id={src}>
+                  <span data-testid={`chip-source-${src}`}>src: {src}</span>
+                </Tag>
+              ))}
+            </TagList>
+          </TagGroup>
+        )}
       </div>
       <div className="flex flex-col gap-2 overflow-y-auto text-sm">
         {tree.map((chart) => (
           <div key={chart.chartKey}>
-            <p className="mb-1 text-xs font-semibold text-gray-400 uppercase">
+            <p className="mb-1 text-xs font-semibold text-quaternary uppercase">
               {chart.chartLabel}
               {chart.series.length > 6 ? ` (${chart.series.length})` : ""}
             </p>
             <ul className="flex flex-col gap-0.5">
               {chart.series.map((s) => (
                 <li key={s.key} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
+                  <Checkbox
+                    size="sm"
                     data-testid={`series-node-${s.key}`}
-                    checked={checked.has(s.key)}
+                    isSelected={checked.has(s.key)}
                     onChange={() => onToggle(s.key)}
-                    className="accent-brand-600"
                   />
                   <span className="truncate">{s.key === s.label ? s.label : s.host}</span>
-                  {s.source !== null && <Badge>{s.source}</Badge>}
+                  {s.source !== null && (
+                    <Badge type="color" size="sm" color="gray">
+                      {s.source}
+                    </Badge>
+                  )}
                 </li>
               ))}
             </ul>
           </div>
         ))}
-        {tree.length === 0 && <p className="text-xs text-gray-400">No series match.</p>}
+        {tree.length === 0 && <p className="text-xs text-tertiary">No series match.</p>}
       </div>
     </aside>
   );

@@ -7,6 +7,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "wouter";
 
+import { Table } from "@/components/application/table/table";
+import { Tabs } from "@/components/application/tabs/tabs";
+import { Input } from "@/components/base/input/input";
 import { ChartPanel } from "../charts/ChartPanel";
 import {
   buildStackOption,
@@ -25,7 +28,7 @@ import {
   subjectKind,
   type TimeRange,
 } from "../data/exportDoc";
-import { groupRowsFromData, logKey, visibleRows } from "../data/logevents";
+import { groupRowsFromData, type LogEventRow, logKey, visibleRows } from "../data/logevents";
 import { retireStaleSeries } from "../data/retirement";
 import { useActiveSession, useReviewStore } from "../data/reviewStore";
 import { seriesKey } from "../data/seriesIndex";
@@ -36,6 +39,7 @@ import {
   type SeriesNode,
 } from "../data/seriesTree";
 import { liveRange } from "../data/time";
+import { SubjectHealthBanner } from "../shell/SubjectHealthBanner";
 import { SeriesPanel } from "./SeriesPanel";
 
 export function SubjectPage() {
@@ -126,7 +130,7 @@ export function SubjectPage() {
   const kind = subjectKind(session, id);
   if (kind === null) {
     return (
-      <main data-testid="not-found" className="p-4 text-sm text-gray-500">
+      <main data-testid="not-found" className="p-4 text-sm text-tertiary">
         Unknown subject "{id}" in this session. <Link href="/">Back to overview</Link>
       </main>
     );
@@ -184,19 +188,19 @@ export function SubjectPage() {
 
   return (
     <main data-testid="subject-page" className="flex flex-col gap-4 p-4">
-      <nav className="text-sm text-gray-400">
+      <nav className="text-sm text-quaternary">
         <Link href="/">Fleet</Link> / {id}
       </nav>
       <h1 data-testid="subject-title" className="flex items-center gap-2 text-lg font-semibold">
         {id}
-        <span className="text-sm font-normal text-gray-400">
+        <span className="text-sm font-normal text-quaternary">
           {kind}
           {host?.board ? ` · ${host.board}` : ""}
           {host?.slot != null ? ` · slot ${host.slot}` : ""}
           {host?.hop ? ` · via ${host.hop}` : ""}
         </span>
       </h1>
-      <p data-testid="series-summary" className="text-sm text-gray-500 dark:text-gray-400">
+      <p data-testid="series-summary" className="text-sm text-tertiary">
         {labels.length} series · {metrics.length} samples in range
       </p>
       <div className="flex gap-4">
@@ -211,84 +215,100 @@ export function SubjectPage() {
           source={source}
           onSource={setSource}
         />
-        <div data-testid="chart-stack" className="flex min-w-0 grow flex-col gap-4">
-          {filtered.map((chart) => {
-            const activeAll = chart.series.filter((s) => checked.has(s.key));
-            if (activeAll.length === 0) return null;
-            // Retirement (Task 10): drop dead proc/* traces before they're
-            // built, styled, or drawn — a long ARCHIVE has the same
-            // unbounded-legend problem a long live run does, so this runs in
-            // both review and live. session.index is the same SeriesIndex
-            // both modes already read from (see seriesIndex.ts).
-            const byIndexKey = new Map(
-              activeAll.map((s) => [seriesKey(s.host, s.label), s] as const),
-            );
-            const active = retireStaleSeries([...byIndexKey.keys()], session.index)
-              .map((k) => byIndexKey.get(k))
-              .filter((s): s is SeriesNode => s !== undefined);
-            if (active.length === 0) return null;
-            const shown = active.slice(0, MAX_SERIES_PER_CHART);
-            // Pair each SeriesInput with its seriesIndex key (`seriesKey(host,
-            // label)`) WHILE host/label are both still in scope: a host subject's
-            // own series has a bare-label SeriesNode.key ("m0"), which is NOT the
-            // "h0/m0" shape session.index.rev is keyed on — only an element
-            // subject's member series ("host/label") happens to already match.
-            // Losing host/label by flattening into SeriesInput first (as before)
-            // made the revision lookup silently always miss.
-            const entries = shown
-              .map((s) => ({
-                input: {
-                  key: s.key,
-                  name: s.key === s.label ? s.label : s.host,
-                  slot: s.slot,
-                  points: points.get(s.key) ?? [],
-                } satisfies SeriesInput,
-                idxKey: seriesKey(s.host, s.label),
-              }))
-              .filter((e) => e.input.points.length > 0);
-            if (entries.length === 0) return null;
-            const series = entries.map((e) => e.input);
-            const revKey = entries
-              .map((e) => `${e.idxKey}:${session.index.rev.get(e.idxKey) ?? 0}`)
-              .join(",");
-            return (
-              <ChartSection
-                key={chart.chartKey}
-                chartKey={chart.chartKey}
-                chartLabel={chart.chartLabel}
-                unit={chart.unit}
-                yTitle={chart.yTitle}
-                series={series}
-                window_={window_}
-                markers={markers}
-                theme={theme}
-                dark={dark}
-                range={range}
-                sessionEvents={session.events}
-                revKey={revKey}
-                checked={checked}
-                groupId={`subject-${id}`}
-                onZoom={(r) => setRange(clampRange(r, bounds))}
-                overflowCount={active.length > MAX_SERIES_PER_CHART ? active.length : null}
-              />
-            );
-          })}
-          {filtered.length === 0 && (
-            <p className="text-sm text-gray-400">No series match the current filters.</p>
-          )}
-        </div>
+        <SubjectHealthBanner subjectId={id}>
+          <div data-testid="chart-stack" className="flex min-w-0 grow flex-col gap-4">
+            {filtered.map((chart) => {
+              const activeAll = chart.series.filter((s) => checked.has(s.key));
+              if (activeAll.length === 0) return null;
+              // Retirement (Task 10): drop dead proc/* traces before they're
+              // built, styled, or drawn — a long ARCHIVE has the same
+              // unbounded-legend problem a long live run does, so this runs in
+              // both review and live. session.index is the same SeriesIndex
+              // both modes already read from (see seriesIndex.ts).
+              const byIndexKey = new Map(
+                activeAll.map((s) => [seriesKey(s.host, s.label), s] as const),
+              );
+              const active = retireStaleSeries([...byIndexKey.keys()], session.index)
+                .map((k) => byIndexKey.get(k))
+                .filter((s): s is SeriesNode => s !== undefined);
+              if (active.length === 0) return null;
+              const shown = active.slice(0, MAX_SERIES_PER_CHART);
+              // Pair each SeriesInput with its seriesIndex key (`seriesKey(host,
+              // label)`) WHILE host/label are both still in scope: a host subject's
+              // own series has a bare-label SeriesNode.key ("m0"), which is NOT the
+              // "h0/m0" shape session.index.rev is keyed on — only an element
+              // subject's member series ("host/label") happens to already match.
+              // Losing host/label by flattening into SeriesInput first (as before)
+              // made the revision lookup silently always miss.
+              const entries = shown
+                .map((s) => ({
+                  input: {
+                    key: s.key,
+                    name: s.key === s.label ? s.label : s.host,
+                    slot: s.slot,
+                    points: points.get(s.key) ?? [],
+                  } satisfies SeriesInput,
+                  idxKey: seriesKey(s.host, s.label),
+                }))
+                .filter((e) => e.input.points.length > 0);
+              if (entries.length === 0) return null;
+              const series = entries.map((e) => e.input);
+              const revKey = entries
+                .map((e) => `${e.idxKey}:${session.index.rev.get(e.idxKey) ?? 0}`)
+                .join(",");
+              return (
+                <ChartSection
+                  key={chart.chartKey}
+                  chartKey={chart.chartKey}
+                  chartLabel={chart.chartLabel}
+                  unit={chart.unit}
+                  yTitle={chart.yTitle}
+                  series={series}
+                  window_={window_}
+                  windowMs={windowMs}
+                  markers={markers}
+                  theme={theme}
+                  dark={dark}
+                  range={range}
+                  sessionEvents={session.events}
+                  revKey={revKey}
+                  checked={checked}
+                  groupId={`subject-${id}`}
+                  onZoom={(r) => setRange(clampRange(r, bounds))}
+                  overflowCount={active.length > MAX_SERIES_PER_CHART ? active.length : null}
+                />
+              );
+            })}
+            {filtered.length === 0 && (
+              <p className="text-sm text-quaternary">No series match the current filters.</p>
+            )}
+          </div>
+        </SubjectHealthBanner>
       </div>
-      {tableTabs.map((tab) =>
-        tableHosts.map((tableHost) => (
-          <LogTable
-            key={`${tab.id}:${tableHost}`}
-            tabId={tab.id ?? ""}
-            label={tab.label ?? tab.id ?? ""}
-            hostLabel={kind === "element" ? tableHost : null}
-            columns={tab.columns ?? []}
-            rows={grouped[logKey(tableHost, tab.id ?? "")] ?? []}
-          />
-        )),
+      {tableTabs.length > 0 && (
+        <Tabs>
+          <Tabs.List aria-label="Log tables" type="button-border" size="sm">
+            {tableTabs.map((tab) => (
+              <Tabs.Item key={tab.id} id={tab.id ?? ""}>
+                {tab.label ?? tab.id ?? ""}
+              </Tabs.Item>
+            ))}
+          </Tabs.List>
+          {tableTabs.map((tab) => (
+            <Tabs.Panel key={tab.id} id={tab.id ?? ""} className="flex flex-col gap-4 pt-3">
+              {tableHosts.map((tableHost) => (
+                <LogTable
+                  key={`${tab.id}:${tableHost}`}
+                  tabId={tab.id ?? ""}
+                  label={tab.label ?? tab.id ?? ""}
+                  hostLabel={kind === "element" ? tableHost : null}
+                  columns={tab.columns ?? []}
+                  rows={grouped[logKey(tableHost, tab.id ?? "")] ?? []}
+                />
+              ))}
+            </Tabs.Panel>
+          ))}
+        </Tabs>
       )}
     </main>
   );
@@ -309,6 +329,10 @@ function ChartSection(props: {
   yTitle: string;
   series: SeriesInput[];
   window_: TimeRange;
+  /** The follow window's WIDTH (reviewStore's `windowMs`), not its bounds —
+   * see the comment on the memo below for why this, and specifically not
+   * `window_.from`/`window_.to`, is the dep that belongs here. */
+  windowMs: number;
   markers: EventMarker[];
   theme: ReturnType<typeof chartTheme>;
   dark: boolean;
@@ -340,6 +364,7 @@ function ChartSection(props: {
     yTitle,
     series,
     window_,
+    windowMs,
     markers,
     theme,
     dark,
@@ -363,8 +388,8 @@ function ChartSection(props: {
   // on every SubjectPage render regardless. unit/yTitle/series/window_/markers/theme
   // are intentionally left OUT of the deps below — they are fresh objects/arrays
   // every SubjectPage render, and depending on them directly would defeat this
-  // memo on every tick; revKey/range/dark/sessionEvents/checked are the stable
-  // proxies that actually capture "did this chart's own inputs change."
+  // memo on every tick; revKey/range/dark/sessionEvents/checked/windowMs are the
+  // stable proxies that actually capture "did this chart's own inputs change."
   //
   // window_/markers are consumed here too (buildStackOption bakes the window
   // at whatever instant this memo happens to recompute), but NOT tracked as
@@ -376,10 +401,35 @@ function ChartSection(props: {
   // markLine/markArea as a cheap merge patch whenever the window moves,
   // independent of this (expensive, revKey-gated) full rebuild. See
   // ChartPanel.tsx and options.ts's windowPatch.
+  //
+  // `windowMs` IS tracked, though, and deliberately NOT via `window_.from`/
+  // `window_.to` (Task 6 follow-up's bug + fix). Two different things move
+  // the derived `window_` while following: (a) session.endMs advancing on
+  // every live tick — a pure SLIDE, harmless to skip here, because points
+  // that age out of view were already excluded and new ones for THIS
+  // chart's own series arrive via `revKey`; and (b) the user picking a
+  // wider/narrower preset (AppBar's ButtonGroup -> reviewStore's
+  // `setWindow`) — a WIDTH change, which pulls previously-excluded points
+  // back into `series` (collectSeriesPoints re-slices against the new
+  // window in SubjectPage's render body) that this memo must actually bake
+  // in, not just widen the axis around. `revKey` doesn't move for that
+  // (the series' own data didn't change, only which slice of it is in
+  // range), and neither does `range` (still null — the view is still
+  // following, by design; see reviewStore's setWindow doc comment). Nothing
+  // else in this dep list was going to fire a rebuild, so the points would
+  // silently stay stale until this chart's series next ticked on its own —
+  // exactly the bug the browser lane's data-echarts-point-count assertion
+  // pins (test_live_shell.py). `windowMs` is the right proxy for (b)
+  // because it changes ONLY on that rare, user-initiated action; `window_.to`
+  // would also satisfy (b) but reintroduces (a) — it advances on every
+  // single live tick (any host's, via the shared session.endMs) — which
+  // would defeat the whole point of gating the expensive rebuild on
+  // `revKey` in the first place. See chart_memo.test.tsx for both directions
+  // pinned as mutation-proof tests.
   // biome-ignore lint/correctness/useExhaustiveDependencies: see comment above — deliberately partial
   const option = useMemo(
     () => buildStackOption({ unit, yTitle, series, window: window_, events: markers, theme }),
-    [revKey, range, dark, sessionEvents, checked],
+    [revKey, range, dark, sessionEvents, checked, windowMs],
   );
   // data-point-count/data-window-to: the browser lane (Task 13) asserts
   // growth/freezing off these instead of reading canvas pixels — a live tick
@@ -393,7 +443,7 @@ function ChartSection(props: {
       data-point-count={pointCount}
       data-window-to={window_.to}
     >
-      <h2 className="mb-1 text-sm font-medium text-gray-600 dark:text-gray-300">{chartLabel}</h2>
+      <h2 className="mb-1 text-sm font-medium text-secondary">{chartLabel}</h2>
       <ChartPanel
         option={option}
         groupId={groupId}
@@ -405,12 +455,21 @@ function ChartSection(props: {
         testId={`chart-panel-${chartKey}`}
       />
       {overflowCount !== null && (
-        <p data-testid={`series-overflow-${chartKey}`} className="mt-1 text-xs text-gray-400">
+        <p data-testid={`series-overflow-${chartKey}`} className="mt-1 text-xs text-quaternary">
           showing {MAX_SERIES_PER_CHART} of {overflowCount} — narrow the selection
         </p>
       )}
     </section>
   );
+}
+
+// A column descriptor for the vendored `Table`'s dynamic-collection API
+// (react-aria-components' Table needs each column/row item keyed by a
+// unique `id`, unlike a hand-rolled `<table>`'s free-form `.map()`). "time"
+// is always first and synthetic — the wire's `columns` never lists it.
+interface LogColumn {
+  id: string;
+  label: string;
 }
 
 function LogTable(props: {
@@ -424,53 +483,65 @@ function LogTable(props: {
   const [filter, setFilter] = useState("");
   if (rows.length === 0) return null;
   const visible = visibleRows(rows, filter);
+  const tableColumns: LogColumn[] = [
+    { id: "time", label: "time" },
+    ...columns.map((c) => ({ id: c, label: c })),
+  ];
+  // `id: i` (the row's position in `visible`) is the same "static snapshot"
+  // key the pre-migration hand-rolled `<tr key={i}>` used — visible is
+  // recomputed fresh from `rows`/`filter` every render, never reconciled
+  // against a previous list, so there is no reorder/insert for an
+  // index-based id to get wrong.
+  const items = visible.map((row, i) => ({ id: i, row }));
   return (
     <section data-testid={`log-table-${tabId}`} className="max-w-3xl">
       <div className="mb-1 flex items-center gap-3">
-        <h2 className="text-sm font-medium text-gray-600 dark:text-gray-300">
+        <h2 className="text-sm font-medium text-secondary">
           {label}
           {hostLabel ? ` — ${hostLabel}` : ""}
         </h2>
+        {/* Untitled UI's `Input` doesn't forward a `data-testid` it's given
+            onto the `<input>` it renders internally (see ui/TextInput.tsx's
+            module comment for the same gap on `InputBase`) — this control's
+            testid contract is on the WRAPPING element instead (the e2e
+            suite selects `[data-testid="log-filter-<tab>"] input`), so the
+            outer span carries it and `Input` doesn't need its own. */}
         <span data-testid={`log-filter-${tabId}`}>
-          <input
-            type="text"
+          <Input
+            aria-label={`Filter ${label}`}
+            size="sm"
             placeholder="filter…"
             value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="rounded border border-gray-200 px-2 py-0.5 text-xs dark:border-gray-700
-              dark:bg-gray-900"
+            onChange={setFilter}
           />
         </span>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-xs">
-          <thead>
-            <tr className="text-gray-400">
-              <th className="py-1 pr-3 font-medium">time</th>
-              {columns.map((c) => (
-                <th key={c} className="py-1 pr-3 font-medium">
-                  {c}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((row, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: rows are static snapshots
-              <tr key={i} className="border-t border-gray-100 dark:border-gray-800">
-                <td className="py-1 pr-3 text-gray-400">
-                  {new Date(row.timestamp).toLocaleTimeString()}
-                </td>
-                {columns.map((c) => (
-                  <td key={c} className="py-1 pr-3">
-                    {row.fields[c] ?? ""}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <Table aria-label={`${label} log`} size="sm">
+        <Table.Header columns={tableColumns}>
+          {(column: LogColumn) => (
+            // react-aria-components' Table requires exactly one row-header
+            // column for its grid a11y semantics (it throws otherwise) —
+            // "time" is the natural row identifier here, same role the
+            // hand-rolled table's leftmost <td> played implicitly.
+            <Table.Head id={column.id} isRowHeader={column.id === "time"}>
+              {column.label}
+            </Table.Head>
+          )}
+        </Table.Header>
+        <Table.Body items={items}>
+          {(item: { id: number; row: LogEventRow }) => (
+            <Table.Row id={item.id} columns={tableColumns}>
+              {(column: LogColumn) => (
+                <Table.Cell>
+                  {column.id === "time"
+                    ? new Date(item.row.timestamp).toLocaleTimeString()
+                    : (item.row.fields[column.id] ?? "")}
+                </Table.Cell>
+              )}
+            </Table.Row>
+          )}
+        </Table.Body>
+      </Table>
     </section>
   );
 }

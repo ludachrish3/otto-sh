@@ -13,24 +13,17 @@ export function liveRange(nowMs: number, windowMs: number): TimeRange {
   return { from: nowMs - windowMs, to: nowMs };
 }
 
-/** ms → the value a <input type="datetime-local"> wants, in LOCAL time. */
-export function msToLocalInput(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return (
-    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
-    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
-  );
-}
-
-export function localInputToMs(value: string): number | null {
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? null : ms;
-}
-
 export function formatSpan(fromMs: number, toMs: number): string {
   const mins = Math.round((toMs - fromMs) / 60_000);
   if (mins < 60) return `${mins}m`;
   const hours = mins / 60;
   return Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
+}
+
+/** Outage duration for the unreachable banner. The down threshold is
+ * HEALTH_K x cadence — 3s at a 1s interval — so sub-minute outages are
+ * reachable and formatSpan's "0m" would be wrong copy. */
+export function formatOutage(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  return formatSpan(0, ms);
 }

@@ -6,12 +6,16 @@
 // Non-modal by design: §10 describes this as a side-panel, not a dialog — the
 // map and the review bar (range presets, sources toggle) must stay interactive
 // while a link is under inspection, since the selection itself is meant to
-// survive ordinary review-bar interaction. A react-aria Modal (as used by
-// SlideOver) traps focus and blocks all pointer/keyboard input to the rest of
-// the page, which would make that intent unreachable. So this renders as a
-// plain aside with Escape-to-close instead. The events panel stays on SlideOver
-// — its own interaction (clicking a row) closes it, so it never needs
-// background interactivity while open.
+// survive ordinary review-bar interaction. A react-aria Modal (as EventsPanel
+// now uses via the vendored slideout-menu) traps focus and blocks all
+// pointer/keyboard input to the rest of the page, which would make that
+// intent unreachable. So this renders as a plain aside with Escape-to-close
+// instead — it borrows the slideout-menu's Header/Content SLOTS (plain,
+// context-free div/header wrappers, not the Dialog/Modal/ModalOverlay
+// machinery) for the same visual language, deliberately stopping short of the
+// modal wrapper. The events panel stays on the full Dialog/Modal/ModalOverlay
+// composition — its own interaction (clicking a row) closes it, so it never
+// needs background interactivity while open.
 //
 // IN FLOW, not overlaid: this aside is a flex SIBLING of the React Flow
 // container (see TopologyPage), so it reserves its own column and the canvas
@@ -31,15 +35,23 @@
 // somebody has to keep in their head. A panel that takes up space needs no such
 // bookkeeping — not a chrome offset, not a fitView padding that has to be kept
 // equal to w-96 by hand. The layout engine already knows how wide this is.
+//
+// Task 8's migration deliberately does NOT reach for the vendored `Table`
+// (react-aria-components' Table/Row/Cell collection API) for this fact list —
+// it is a handful of fixed label/value pairs, not a sortable/selectable
+// dataset, so a real `<table>` would be the wrong tool same as before.
 import { useEffect } from "react";
 
+import { SlideoutMenu } from "@/components/application/slideout-menus/slideout-menu";
 import type { TopoEdge } from "../data/topology";
 import { endpointText, primaryLink } from "./linkText";
 
 function Row(props: { label: string; testId: string; children: React.ReactNode }) {
   return (
-    <p data-testid={props.testId} className="text-sm">
-      <span className="mr-2 inline-block w-24 text-xs text-gray-400 uppercase">{props.label}</span>
+    <p data-testid={props.testId} className="text-sm text-secondary">
+      <span className="mr-2 inline-block w-24 text-xs text-quaternary uppercase">
+        {props.label}
+      </span>
       {props.children}
     </p>
   );
@@ -67,52 +79,44 @@ export function LinkInspector(props: { edge: TopoEdge | null; onClose: () => voi
   return (
     <aside
       data-testid="link-inspector"
-      className="flex w-96 max-w-full shrink-0 flex-col gap-3 overflow-y-auto border-l
-        border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-950"
+      className="flex w-96 max-w-full shrink-0 flex-col overflow-y-auto border-l border-secondary
+        bg-primary"
     >
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <button
-          type="button"
-          aria-label="Close"
-          onClick={onClose}
-          className="cursor-pointer rounded px-2 text-gray-400 hover:text-gray-600
-            dark:hover:text-gray-200"
-        >
-          ✕
-        </button>
-      </div>
-      {edge.links && edge.links.length > 1 && (
-        <p data-testid="inspector-collapsed-note" className="text-xs text-gray-400">
-          {edge.links.length} hop links — open the element to inspect individually.
-        </p>
-      )}
-      {primary && (
-        <div className="flex flex-col gap-2">
-          <Row label="Protocol" testId="inspector-protocol">
-            {primary.protocol ?? "—"}
-          </Row>
-          <Row label="Provenance" testId="inspector-provenance">
-            {primary.provenance ?? "declared"}
-          </Row>
-          <Row label="Endpoints" testId="inspector-endpoints">
-            {endpointText(primary)}
-          </Row>
-          {edge.impair !== null && (
-            <Row label="Impair" testId="inspector-impair">
-              in-path middlebox: {edge.impair}
+      <SlideoutMenu.Header onClose={onClose}>
+        <h2 className="text-sm font-semibold text-primary">{title}</h2>
+      </SlideoutMenu.Header>
+      <SlideoutMenu.Content className="gap-3 pb-4">
+        {edge.links && edge.links.length > 1 && (
+          <p data-testid="inspector-collapsed-note" className="text-xs text-tertiary">
+            {edge.links.length} hop links — open the element to inspect individually.
+          </p>
+        )}
+        {primary && (
+          <div className="flex flex-col gap-2">
+            <Row label="Protocol" testId="inspector-protocol">
+              {primary.protocol ?? "—"}
             </Row>
-          )}
+            <Row label="Provenance" testId="inspector-provenance">
+              {primary.provenance ?? "declared"}
+            </Row>
+            <Row label="Endpoints" testId="inspector-endpoints">
+              {endpointText(primary)}
+            </Row>
+            {edge.impair !== null && (
+              <Row label="Impair" testId="inspector-impair">
+                in-path middlebox: {edge.impair}
+              </Row>
+            )}
+          </div>
+        )}
+        <div
+          data-testid="inspector-netem"
+          className="rounded-lg border border-dashed border-secondary p-3 text-xs text-tertiary"
+        >
+          <p className="mb-1 font-semibold uppercase">NetEm</p>
+          <p>delay / loss / jitter / rate — Configure — coming soon</p>
         </div>
-      )}
-      <div
-        data-testid="inspector-netem"
-        className="mt-2 rounded-lg border border-dashed border-gray-200 p-3 text-xs text-gray-400
-          dark:border-gray-800"
-      >
-        <p className="mb-1 font-semibold uppercase">NetEm</p>
-        <p>delay / loss / jitter / rate — Configure — coming soon</p>
-      </div>
+      </SlideoutMenu.Content>
     </aside>
   );
 }

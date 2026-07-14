@@ -30,8 +30,8 @@ const STATUS_LABEL: Record<EffectiveStatus, string> = {
   unknown: "unknown",
 };
 
-const ROW = "flex items-center gap-2 py-0.5 text-[11px] text-gray-600 dark:text-gray-300";
-const HEAD = "mb-1 text-[10px] font-semibold tracking-wide text-gray-400 uppercase";
+const ROW = "flex items-center gap-2 py-0.5 text-[11px] text-secondary";
+const HEAD = "mb-1 text-[10px] font-semibold tracking-wide text-quaternary uppercase";
 
 function Swatch({ cls }: { cls: EdgeClass }) {
   const spec = EDGE_STYLES[cls];
@@ -63,7 +63,7 @@ export function TopoLegend() {
     <Panel position="bottom-left" className="!mb-28">
       <Disclosure title="Key" testId="topo-legend" toggleTestId="topo-legend-toggle">
         <div className="grid grid-cols-2">
-          <ul className="border-r border-gray-100 p-2 dark:border-gray-800">
+          <ul className="border-r border-tertiary p-2">
             <li className={HEAD}>Links</li>
             {LINK_ORDER.map((c) => (
               <li

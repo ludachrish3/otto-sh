@@ -1,0 +1,113 @@
+name: Untitled UI drift
+
+# Untitled UI's dashboard components (web/src/components/**, see
+# web/untitledui.lock.json) are copy-in source: `npx untitledui add <name>`
+# copies .tsx files straight into our tree, where they become our files —
+# no version, no manifest, no lockfile entry. Dependabot's npm//web entry
+# (.github/dependabot.yml) already covers every ordinary npm package
+# Untitled UI pulls in, but it cannot see this half: there is nothing to
+# resolve, so nothing to bump. An upstream fix to their Select would never
+# reach us, and nothing would tell us it exists.
+#
+# scripts/check_untitledui_drift.sh is the substitute: it re-vendors the
+# same component list with the pinned CLI into a throwaway project and
+# diffs the result against our committed tree. Pinning the CLI version does
+# NOT pin the content it serves (the registry is live), so this can find
+# drift even on a week where nothing here changed on our side.
+#
+# Weekly cadence to match dependabot.yml's `interval: "weekly"` for
+# web/'s npm deps; offset an hour from nightly.yml's 06:00 UTC slot to
+# avoid runner contention. On drift, this opens (or updates) a tracking
+# issue with the diff — it deliberately does NOT re-vendor automatically:
+# re-vendoring can change class names and markup that call sites depend
+# on, so a human reviews it. That's the difference from Dependabot's
+# auto-PR: this gives the notification, not an unreviewed patch.
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  ISSUE_TITLE: "Untitled UI upstream drift"
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v6.4.0
+        with:
+          node-version-file: .nvmrc
+
+      # scripts/check_untitledui_drift.sh's exit code distinguishes genuine
+      # drift (2) from the check itself failing (1 -- a bad lockfile, or the
+      # CLI's `init`/`add` erroring out, e.g. a network blip) from no drift
+      # (0). That distinction is load-bearing here: only exit 2 opens a
+      # drift issue below. Anything else that isn't 0 fails this step (and
+      # so the job) loudly instead -- an npm registry timeout must never
+      # get filed as "Untitled UI upstream drift". The output is captured
+      # to a file either way, since it's what a human needs to see (in the
+      # issue body on real drift, in the failed job's logs otherwise).
+      - name: Run the Untitled UI drift check
+        id: drift
+        run: |
+          set +e
+          scripts/check_untitledui_drift.sh >drift-output.txt 2>&1
+          status=$?
+          set -e
+          cat drift-output.txt
+          if [ "$status" -eq 0 ]; then
+            echo "drifted=false" >>"$GITHUB_OUTPUT"
+          elif [ "$status" -eq 2 ]; then
+            echo "drifted=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "check_untitledui_drift.sh exited $status (not 0 or 2) -- treating this as a tooling/network failure, not upstream drift. Failing the job instead of filing a misleading drift issue." >&2
+            exit "$status"
+          fi
+
+      - name: Upload drift output
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: untitledui-drift-output
+          path: drift-output.txt
+          retention-days: 30
+
+      # No auto-apply: this only ever opens/updates an issue for a human to
+      # act on. Search by exact title among open issues rather than trusting
+      # a single well-known number, since none is recorded anywhere.
+      - name: Open or update the drift issue
+        if: steps.drift.outputs.drifted == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          body_file="$(mktemp)"
+          {
+            echo "scripts/check_untitledui_drift.sh found that our vendored Untitled UI component source (web/src/components/**, see web/untitledui.lock.json) no longer matches a fresh re-vendor with the pinned CLI."
+            echo
+            echo "This does NOT mean the pinned CLI version changed — Untitled UI's registry is live, so the same CLI version can serve different content on different days. Review the diff below and re-vendor by hand if it warrants it; this issue is only ever opened by the check, never resolved by it."
+            echo
+            echo "Workflow run: $RUN_URL"
+            echo
+            echo '```diff'
+            cat drift-output.txt
+            echo '```'
+          } >"$body_file"
+
+          existing="$(gh issue list --state open --search "\"$ISSUE_TITLE\" in:title" --json number,title \
+            --jq ".[] | select(.title == \"$ISSUE_TITLE\") | .number" | head -n1)"
+
+          if [ -n "$existing" ]; then
+            gh issue edit "$existing" --body-file "$body_file"
+            gh issue comment "$existing" --body "Drift re-detected: $RUN_URL"
+            echo "Updated issue #$existing"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body-file "$body_file" --label dependencies
+          fi

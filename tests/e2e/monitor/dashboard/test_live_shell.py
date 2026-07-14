@@ -48,6 +48,20 @@ def _push_tick(
     dash.run(dash.collector.push(host, "cpu", value, ts=ts))
 
 
+def _format_outage(ms: float) -> str:
+    """Python mirror of ``data/time.ts``'s ``formatOutage`` -- lets a spec that
+    drives the browser's clock deterministically (``page.clock``) compute the
+    EXACT banner text a given, fully-known outage gap should produce, instead
+    of polling and waiting for a real-time value to show up."""
+    if ms < 60_000:
+        return f"{round(ms / 1000)}s"
+    mins = round(ms / 60_000)
+    if mins < 60:
+        return f"{mins}m"
+    hours = mins / 60
+    return f"{hours}h" if hours == int(hours) else f"{hours:.1f}h"
+
+
 def test_live_boots_hydrated_without_an_import_step(
     page: Page, live_stream_dash: DashboardHarness[FakeCollector]
 ) -> None:
@@ -121,6 +135,160 @@ def test_a_silent_host_dims(page: Page, live_stream_dash: DashboardHarness[FakeC
     _push_tick(live_stream_dash, "r1", stale, 10.0)
     page.goto(live_stream_dash.url)
     expect(_tid(page, "host-tile-r1")).to_have_attribute("data-health", "down")
+
+
+def test_a_silent_hosts_drillin_shows_a_growing_unreachable_banner(
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+) -> None:
+    """SubjectPage computed no health at all before this task (Task 5, 5b
+    follow-ups) -- a dead host's drill-in rendered its charts normally with
+    no indication it had stopped reporting. Pins: the banner appears, its
+    outage GROWS on the next collection tick, and the chart itself keeps
+    showing the host's last-known data throughout (frozen, not blanked, not
+    stale-refreshed).
+
+    Deterministic via Playwright's ``page.clock`` (1.61 -- Important 1, 5b
+    follow-ups review), not a real wall-clock wait: the original spec waited
+    on a REAL 5s ``setInterval`` tick with only a 10s (2x) timeout margin --
+    the only wall-clock-dependent assertion in this whole file, run on
+    chromium+firefox+webkit in CI, on a workstream that has already had a
+    webkit timeout under load. ``page.clock`` fakes ``Date``/``setTimeout``/
+    ``setInterval`` for the whole page; empirically (probed against a real
+    browser), it auto-advances roughly with real time after ``install()`` --
+    so navigation/hydration aren't starved of their own timers -- but
+    ``fast_forward()`` still jumps it forward by an EXACT amount on top of
+    wherever it currently sits, firing any due ``setInterval``
+    (``data/clock.ts``'s ``useNow``, which backs the banner's health)
+    exactly once per jump, however large. The banner's health math compares
+    the pushed sample's timestamp against the browser's (now virtualized)
+    ``Date.now()`` -- ``stale`` and the installed clock share the same
+    Python ``ref`` instant so that math means what this test intends, not
+    an artifact of whatever real time navigation happened to take. Neither
+    tick below trusts a GUESSED "now": each reads the browser's own
+    ``Date.now()`` immediately before its jump, so the expected banner text
+    is computed exactly, never polled for.
+    """
+    ref = datetime.now(tz=timezone.utc)
+    stale = ref - timedelta(seconds=20)
+    stale_ms = stale.timestamp() * 1000
+    _push_tick(live_stream_dash, "r1", stale, 10.0)
+
+    page.clock.install(time=ref)
+    page.goto(live_stream_dash.url)
+    _tid(page, "subject-link-r1").click()
+
+    chart = _tid(page, "chart-CPU")  # chart-${chartKey}
+    expect(chart).to_be_visible()
+    point_count = chart.get_attribute("data-point-count")
+
+    banner = _tid(page, "unreachable-banner")
+    # 20s stale is already past HEALTH_K(3) x 5s = 15s the instant the page
+    # loads, with margin for navigation/hydration -- to_be_visible() still
+    # retries in case it isn't quite yet. The banner's actual TEXT at this
+    # instant isn't asserted: it reflects data/clock.ts's `now` store, which
+    # only advances when a setInterval tick fires -- not on every render --
+    # so its exact value here is a function of whatever real time navigation
+    # happened to take (same reason the ORIGINAL spec never pinned it
+    # either). Both ticks below are deterministic instead: each is read via
+    # the browser's own (virtualized) Date.now() immediately before forcing
+    # it, so the expected text is computed, never guessed or waited for.
+    expect(banner).to_be_visible()
+
+    # One full collection tick (session.meta.interval == 5s, matching
+    # live_stream_dash's FakeCollector(interval=5.0)) -- fast_forward fires
+    # the due setInterval exactly once, deterministically, instead of
+    # waiting on a real 5s wall-clock tick. Reading Date.now() immediately
+    # before the jump (rather than assuming it) is what makes the expected
+    # text exact regardless of how long navigation/hydration actually took.
+    pre_tick1_ms = page.evaluate("() => Date.now()")
+    page.clock.fast_forward(5_000)
+    outage1 = _format_outage(pre_tick1_ms + 5_000 - stale_ms)
+    expect(banner).to_have_text(f"Unreachable for {outage1} — showing last-known data")
+
+    # A second tick, same recipe -- pins that the outage keeps GROWING (not
+    # just changing once), the actual property this spec exists to cover.
+    pre_tick2_ms = page.evaluate("() => Date.now()")
+    page.clock.fast_forward(5_000)
+    outage2 = _format_outage(pre_tick2_ms + 5_000 - stale_ms)
+    expect(banner).to_have_text(f"Unreachable for {outage2} — showing last-known data")
+
+    # The chart never lost or gained a point across all of this: it is
+    # showing r1's last-known data, frozen -- not blanked, not stale-refreshed.
+    expect(chart).to_have_attribute("data-point-count", point_count or "")
+
+    # The fleet grid agrees -- this is the SAME derived health
+    # (healthForHost/healthForHosts share one rule, data/health.ts), not a
+    # parallel read that could drift from what the drill-in just showed.
+    page.goto(live_stream_dash.url)
+    expect(_tid(page, "host-tile-r1")).to_have_attribute("data-health", "down")
+
+
+def test_choosing_a_wider_live_window_widens_the_chart_while_still_following(
+    page: Page, live_stream_dash: DashboardHarness[FakeCollector]
+) -> None:
+    """Task 6 (Plan 5b follow-ups): AppBar's live-window ButtonGroup
+    (5m/15m/1h, beside Pause) drives reviewStore.ts's ``setWindow``. Choosing
+    a wider preset must both (a) actually widen what the chart shows -- an
+    older point that was outside the default 15m follow window comes into
+    view -- and (b) leave the view FOLLOWING: the pause toggle must keep
+    reading "Pause", never "Resume".
+
+    (b) is the guard against the bug this task exists to prevent: `paused`
+    is DERIVED from `range` (`useIsPaused`, reviewStore.ts), never a
+    separately stored flag, specifically so a `setWindow` that also pinned
+    `range` (the "following" case wrongly behaving like the "paused" case --
+    see reviewStore.ts's doc comment on the two cases) could not go
+    unnoticed: it would flip this same label.
+
+    Fully deterministic without a wall clock: every timestamp below is an
+    explicit historical ``ts=`` passed to ``push()``, so ``session.endMs``
+    (and so the live-follow window, ``liveRange``) is pinned by the data
+    itself, never by when this test happens to run.
+
+    A review found a REAL bug here (reproduced by instrumenting ECharts'
+    actual ``setOption()`` option object, not just this page's DOM): widening
+    the window while following stretched the x-axis but never added the
+    newly-in-window point to the drawn line -- ``ChartSection``'s option
+    memo (SubjectPage.tsx) is keyed on ``revKey``/``range``/... , none of
+    which ``setWindow`` moves while following (``range`` stays null, by
+    design), so the expensive rebuild that actually bakes ``series`` data
+    into the option never ran. ``data-point-count`` (below) could not catch
+    it: it's computed in SubjectPage's render body straight off the
+    ``series`` prop, which gets re-sliced (and so this attribute moves)
+    every render regardless of whether ECharts was ever handed the new
+    point. This spec now also asserts on ``chart-panel-CPU``'s
+    ``data-echarts-point-count`` -- stamped from *inside* ChartPanel's own
+    ``setOption()`` effect (see ChartPanel.tsx), off ``option.series[].data``
+    itself -- which can only move when ECharts actually was.
+    """
+    _push_tick(live_stream_dash, "r1", NOW - timedelta(minutes=50), 1.0)
+    _push_tick(live_stream_dash, "r1", NOW - timedelta(minutes=10), 2.0)
+    _push_tick(live_stream_dash, "r1", NOW, 3.0)
+    page.goto(live_stream_dash.url)
+    _tid(page, "subject-link-r1").click()
+
+    chart = _tid(page, "chart-CPU")  # chart-${chartKey}
+    panel = _tid(page, "chart-panel-CPU")  # chart-panel-${chartKey}: ChartPanel's own div
+    expect(chart).to_be_visible()
+    # Default window is 15m (windowMs's own store default): the point from
+    # 50 minutes ago falls outside [now - 15m, now] and is not shown.
+    expect(chart).to_have_attribute("data-point-count", "2")
+    # ...and ECharts itself was actually handed those same 2 points, not
+    # just the render-body prop that claims so.
+    expect(panel).to_have_attribute("data-echarts-point-count", "2")
+    expect(_tid(page, "pause-toggle")).to_have_text("Pause")
+
+    _tid(page, "live-window-1h").click()
+
+    # Widening to 1h pulls the 50-minute-old point into view in the
+    # render-body prop...
+    expect(chart).to_have_attribute("data-point-count", "3")
+    # ...AND -- the point this spec exists to pin -- in what ECharts' own
+    # setOption() call actually drew. Under the bug above, this assertion is
+    # the one that fails (stuck at "2") while the one above still passes.
+    expect(panel).to_have_attribute("data-echarts-point-count", "3")
+    # ...while the view keeps following -- never pinned to a range.
+    expect(_tid(page, "pause-toggle")).to_have_text("Pause")
 
 
 def test_a_quiet_hosts_chart_window_advances_when_only_another_host_ticks(

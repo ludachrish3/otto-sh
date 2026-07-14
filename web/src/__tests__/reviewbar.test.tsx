@@ -6,11 +6,11 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import App from "../App";
 import { useReviewStore } from "../data/reviewStore";
-import { msToLocalInput } from "../data/time";
 
 // `new URL(relative, import.meta.url)` throws "The URL must be of scheme
 // file" under this project's vitest/jsdom setup (see shell.test.tsx) —
@@ -31,6 +31,22 @@ if (typeof globalThis.CSS === "undefined") {
     value: { escape: (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch}`) },
     writable: true,
   });
+}
+
+// jsdom doesn't implement `matchMedia` either — RangePicker's vendored
+// RangeCalendar uses `useBreakpoint` (see ui/rangepicker.test.tsx for the
+// full rationale, including why this reports every breakpoint as met).
+if (typeof window.matchMedia !== "function") {
+  window.matchMedia = ((query: string) => ({
+    matches: true,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    addListener: () => {},
+    removeListener: () => {},
+    onchange: null,
+    dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
 }
 
 function resetStore() {
@@ -64,6 +80,27 @@ async function importText(text: string, name: string) {
   await waitFor(() => expect(screen.getByTestId("review-bar")).toBeTruthy());
 }
 
+// The vendored Untitled UI `Select` (components/base/select/select.tsx)
+// spreads unknown props — including `data-testid` — onto the outer wrapper
+// `AriaSelect` itself renders, not onto the pressable button nested inside
+// it (that button is built internally by the vendored component and never
+// receives caller props). `getByTestId("session-picker")` therefore finds
+// the wrapper; the actual click target is the `role="button"` element
+// within it. Real clicks (Playwright) are unaffected — it hit-tests by
+// pixel, and the wrapper sits exactly on top of the button.
+function sessionPickerButton() {
+  return within(screen.getByTestId("session-picker")).getByRole("button");
+}
+
+// react-aria's press handling (`usePress`) is driven by pointer events, not
+// the single synthetic `click` event `fireEvent.click` dispatches —
+// `userEvent` synthesizes the full pointerdown/pointerup/click sequence a
+// real interaction produces, which is what these components actually
+// listen for.
+async function openSessionPicker(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(sessionPickerButton());
+}
+
 describe("ReviewBar", () => {
   it("shows tag + source, hides the session picker for single-session files", async () => {
     render(<App />);
@@ -74,41 +111,27 @@ describe("ReviewBar", () => {
   });
 
   it("switches sessions and re-renders that session's lab (drift)", async () => {
+    const user = userEvent.setup();
     render(<App />);
     await importText(DRIFT, "drift.json");
     expect(screen.getByTestId("session-picker")).toBeTruthy();
     // baseline lab: no workers_w1
     expect(screen.queryByTestId("subject-link-workers_w1")).toBeNull();
-    fireEvent.click(screen.getByTestId("session-picker"));
+    await openSessionPicker(user);
     // react-aria-components' Select also mirrors its options into a
     // visually-hidden native <select> (for autofill/native-form support),
-    // so an unscoped getByText("expanded") matches both that <option> and
-    // the visible popover item — scope to the listbox the popover renders
-    // (see ui.test.tsx).
-    fireEvent.click(within(screen.getByRole("listbox")).getByText("expanded"));
+    // so an unscoped role query would match both that <option> and the
+    // visible popover item — scope to the listbox the popover renders.
+    await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: "expanded" }));
     await waitFor(() => expect(screen.getByTestId("subject-link-workers_w1")).toBeTruthy());
     expect(screen.getByTestId("subject-link-workers_w2")).toBeTruthy();
-    fireEvent.click(screen.getByTestId("session-picker"));
-    fireEvent.click(within(screen.getByRole("listbox")).getByText("rewired"));
+    await openSessionPicker(user);
+    await user.click(within(screen.getByRole("listbox")).getByRole("option", { name: "rewired" }));
     await waitFor(() => expect(screen.queryByTestId("subject-link-workers_w2")).toBeNull());
     expect(screen.getByTestId("subject-link-edge-gw")).toBeTruthy();
   });
 
-  it("reset restores the first session and full range", async () => {
-    render(<App />);
-    await importText(DRIFT, "drift.json");
-    fireEvent.click(screen.getByTestId("session-picker"));
-    fireEvent.click(within(screen.getByRole("listbox")).getByText("rewired"));
-    fireEvent.click(screen.getByTestId("range-reset"));
-    await waitFor(() =>
-      expect(useReviewStore.getState().activeSessionId).toBe(
-        useReviewStore.getState().sessions[0].id,
-      ),
-    );
-    expect(useReviewStore.getState().range).toBeNull();
-  });
-
-  it("carries a session's note as the picker option's title (tooltip)", async () => {
+  it("carries a session's note as the picker option's supporting text", async () => {
     // Build a two-session document from MINIMAL rather than reusing the
     // shared drift/kitchen-sink fixtures — this test owns exactly the shape
     // it needs (one session with a note, one without) without risking
@@ -123,14 +146,21 @@ describe("ReviewBar", () => {
     };
     const doc = JSON.stringify({ format: base.format, sessions: [first, second] });
 
+    const user = userEvent.setup();
     render(<App />);
     await importText(doc, "two-session.json");
-    fireEvent.click(screen.getByTestId("session-picker"));
-    const option = within(screen.getByRole("listbox")).getByText("second");
-    expect(option.getAttribute("title")).toBe("why this run");
-    // The un-noted session's option carries no title attribute at all.
-    const firstOption = within(screen.getByRole("listbox")).getByText("minimal");
-    expect(firstOption.getAttribute("title")).toBeNull();
+    await openSessionPicker(user);
+    const listbox = screen.getByRole("listbox");
+    // Untitled UI's SelectItemType has a native `supportingText` field
+    // (select-shared.tsx), rendered as a second text node under the
+    // label — the session's note maps onto that instead of a `title`
+    // hover tooltip (select.tsx:77, select-item.tsx:115-119).
+    const secondOption = within(listbox).getByRole("option", { name: "second" });
+    expect(within(secondOption).getByText("why this run")).toBeTruthy();
+    // The un-noted session's option renders no supporting-text node.
+    const firstOption = within(listbox).getByRole("option", { name: "minimal" });
+    expect(within(firstOption).queryByText("why this run")).toBeNull();
+    expect(firstOption.textContent).toBe("minimal");
   });
 
   // Plan 5b final review, Finding C1: mode="live" must hide the whole
@@ -150,22 +180,23 @@ describe("ReviewBar", () => {
     expect(screen.queryByTestId("historical-tag")).toBeNull();
   });
 
-  it("clamps a custom range that exceeds the session bounds (follow-up #2)", async () => {
+  // RangePicker's own unit tests (ui/rangepicker.test.tsx) cover its preset
+  // math, minute precision, and bounds-clamping against a mocked onChange —
+  // this checks the real wiring into the store: ReviewBar hands it the
+  // active session's actual bounds and `actions.setRange`, not a stand-in.
+  it("wires the range picker to the store — a preset narrows `range`", async () => {
+    const user = userEvent.setup();
     render(<App />);
     await importText(KITCHEN_SINK, "kitchen-sink.json");
+    expect(screen.getByTestId("range-picker")).toBeTruthy();
+    expect(useReviewStore.getState().range).toBeNull();
+    await user.click(within(screen.getByTestId("range-picker")).getByRole("button"));
+    await user.click(screen.getByRole("button", { name: "Last 15m" }));
+    await user.click(screen.getByRole("button", { name: "Apply" }));
     const session = useReviewStore.getState().sessions[0];
-    // Type a window starting a day early and ending a day late, then Apply.
-    fireEvent.change(screen.getByTestId("range-from") as HTMLInputElement, {
-      target: { value: msToLocalInput(session.startMs - 86_400_000) },
-    });
-    fireEvent.change(screen.getByTestId("range-to") as HTMLInputElement, {
-      target: { value: msToLocalInput(session.endMs + 86_400_000) },
-    });
-    fireEvent.click(screen.getByTestId("range-apply"));
     const range = useReviewStore.getState().range;
     expect(range).not.toBeNull();
-    // datetime-local has minute precision — clamp must land exactly on bounds.
-    expect(range?.from).toBeGreaterThanOrEqual(session.startMs);
-    expect(range?.to).toBeLessThanOrEqual(session.endMs);
+    expect(range?.to).toBe(session.endMs);
+    expect(range?.from).toBe(Math.max(session.startMs, session.endMs - 15 * 60_000));
   });
 });
