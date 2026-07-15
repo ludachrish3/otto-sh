@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-15
+
+### Added
+
+- lay the topology map out by the data plane, not the hop chain
+- close the 5b spec gaps; adopt Untitled UI as the shell's foundation
+- combine labs with '+' instead of ','
+- live streaming into the session-shaped shell
+- retire the fixture-stem enumeration; topology polish
+- collapse the topology edge encoding and fix the link inspector
+- sessionized capture and a real format:1 producer
+- explain the topology canvas and stop its edges from disappearing
+- monitor topology — hop-layered map, link inspector, reachability cascade
+- port-scoped impairment — degrade one service's traffic per link
+- monitor views — derived health, fleet grid, synced ECharts stack, events
+- post-extraction polish — Result naming, named errors, log ergonomics
+- review-first monitor shell — Import front door, hash routing, behavior-spec pivot
+- library-first suite/coverage/reservations + breaking renames
+- versioned export format (format: 1) + committed dummy-data fixtures
+- otto link impair/repair/list — netem impairment with endpoint & in-path placements
+- otto tunnel CLI — bidirectional multi-hop socat tunnels + docker endpoints
+- per-run coverage contexts — line-level run traceability
+- ignore whitespace-only changes in manual-coverage line remapping
+- otto link CLI + live host-resident socat tunnels
+- derive host id from slugged element; lab-scoped logical index; display name
+- export lab.json object schema + link schema, retire hosts array schema
+- async discovery contract and all_links reconciliation
+- versioned owner-agnostic sentinel codec + discovery parser
+- declared-link resolution, implicit hop derivation, Lab.static_links()
+- hard cutover hosts.json -> lab.json object with hosts/links sections
+- runtime Link/LinkEndpoint/Provenance with deterministic route ids
+- LinkSpec/LinkEndpointSpec boundary models for lab.json links entries
+- interfaces become netdev-keyed Interface objects with string shorthand
+
+
+### Changed
+
+- daemon toolkit + pluggable TunnelCarrier seam
+
+
+### Dependencies
+
+- bump ty to 0.0.58 and fix the diagnostics it adds
+- bump @types/node from 26.1.0 to 26.1.1 in /web
+- bump vite from 8.1.3 to 8.1.4 in /web
+- bump hypothesis from 6.156.1 to 6.156.6
+- bump uvicorn from 0.50.0 to 0.51.0
+- bump ruff from 0.15.20 to 0.15.21
+- bump @biomejs/biome from 2.5.2 to 2.5.3 in /web
+- bump astral-sh/setup-uv from 8.3.0 to 8.3.2
+- bump typescript from 6.0.3 to 7.0.2 in /web
+
+
+### Documentation
+
+- port-scoped link impairment design
+- library extraction + breaking renames design
+- lab.json cutover across living docs + otto.link API pages
+- link foundation implementation plan (sub-project #1)
+- planned out `otto link` feature
+
+
+### Fixed
+
+- format two live-streaming test files with Biome
+- make the link inspector reserve space instead of overlaying the map
+- make parallel same-column links independently clickable (#131)
+- wait for React Flow's edges instead of snapshot-counting them (#130)
+- evict side-effect origin modules in _isolate_registries (the other half of #108)
+- topology zoom controls follow the app's dark theme
+- rewrite dashboard media capture for the review-first shell
+- daemons survive last-logout (linger) and telnet-term ps scans (\grep)
+- stub the dashboard media capture — the live page it photographs is gone
+- exclude generated monitor fixtures from Biome
+- re-abort late connections in force_stop so shutdown converges
+- exclude discover_dynamic_links_status from otto.link automodule
+- lowercase protocol in link id, contain unrelated-lab link errors, harden doctor + tests
+- harden cross-lab addressing build against malformed unrelated-lab host records
+- isolate global registries, tmp imports, and otto.cli module identity across repeats
+
+
+### Maintenance
+
+- exclude worktrees from the file watcher and search
+- define worktree discipline
+- increased dev VM RAM to 4 GB
+
+
 ## [0.6.0] - 2026-07-06
 
 ### Added
@@ -783,7 +871,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - added GitHub templates
 - set up release management
 
-[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/ludachrish3/otto-sh/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/ludachrish3/otto-sh/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/ludachrish3/otto-sh/compare/v0.5.4...v0.6.0
 [0.5.4]: https://github.com/ludachrish3/otto-sh/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/ludachrish3/otto-sh/compare/v0.5.2...v0.5.3
