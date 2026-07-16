@@ -265,6 +265,21 @@ def _discovered(tunnel, *, age_seconds=42, uncertain=False, missing=frozenset())
     )
 
 
+def test_list_renders_rich_table_with_column_headers():
+    """Issue #139: `tunnel list` renders a Rich table, not bare log lines."""
+    discovery = TunnelDiscovery(tunnels=[_discovered(_direct_tunnel())], unreachable=[])
+    with (
+        patch("otto.cli.tunnel.get_lab", return_value=object()),
+        patch("otto.cli.tunnel.get_repos", return_value=[]),
+        patch("otto.cli.tunnel.discover_tunnels", AsyncMock(return_value=discovery)),
+        patch("otto.cli.tunnel.record_tunnel_ids"),
+    ):
+        result = runner.invoke(tunnel_app, ["list"])
+    assert result.exit_code == 0, result.output
+    for header in ("ID", "ENDPOINTS", "VIA", "PORT", "PROTO", "AGE", "STATUS"):
+        assert header in result.output
+
+
 def test_list_renders_one_row_per_tunnel_with_all_columns(monkeypatch):
     tunnel = _direct_tunnel()
     discovered = _discovered(tunnel, age_seconds=300)
@@ -345,9 +360,9 @@ def test_list_direct_tunnel_shows_dash_for_via():
     ):
         result = runner.invoke(tunnel_app, ["list"])
     assert result.exit_code == 0, result.output
-    # Column sequence is "... <-> ...  VIA  PORT ...": the dash sits between
-    # two double-spaces.
-    assert "  -  161" in result.output
+    # The VIA cell renders a standalone dash token (the "test2@-" endpoint
+    # dash is glued to "@", so token-splitting isolates the VIA cell).
+    assert "-" in result.output.split()
 
 
 def test_list_unreachable_hosts_produce_yellow_partial_scan_line():

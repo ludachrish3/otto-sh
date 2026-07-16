@@ -421,6 +421,7 @@ VERS
         config.vm.define name, autostart: false do |node|
             node.vm.network "private_network", ip: ip
             provision_test_vm(node, name)
+            provision_data_plane(node, ip)
             provision_docker(node, name)
             provision_mysql(node, name)
         end
@@ -439,6 +440,11 @@ VERS
         # Standard SSH/telnet/FTP baseline (also sets the hostname). Lets otto
         # use this VM as the SSH hop to reach the Zephyr QEMU instance.
         provision_test_vm(zephyr, "zephyr")
+
+        # Data-plane address (192.168.1.14), same as the test peers: basil is
+        # the embedded lab's member on the shared wire, so inter-lab tunnels
+        # (e.g. veggies+embedded) can bind a basil endpoint on the data plane.
+        provision_data_plane(zephyr, "10.10.200.14")
 
         # Override the 1552 MB default — Zephyr SDK install and `west build`
         # need more headroom, and one QEMU process runs per built config.
@@ -1263,6 +1269,23 @@ EOF
     def set_hostname(vm, name, domain = nil)
         base = name.gsub("_", "-")
         vm.vm.hostname = domain ? "#{base}.#{domain}" : base
+    end
+
+    # Second, data-plane address on the same private wire: 192.168.1.<last-octet>
+    # rides eth1 alongside the 10.10.200.x management address. otto's lab data
+    # (tests/_fixtures/lab_data/tech1/lab.json) has always declared
+    # eth1 = 192.168.1.x for the test peers; this makes the bed match, so
+    # `otto tunnel add` can bind ingress sockets to the declared data-plane ip
+    # (otto-sh issue #139 follow-up). Written as a netplan drop-in (60- sorts
+    # after vagrant's 50-) that must repeat the management address: netplan
+    # REPLACES, not merges, per-interface address lists across files.
+    def provision_data_plane(vm, mgmt_ip)
+        octet = mgmt_ip.split(".").last
+        vm.vm.provision "shell", name: "data plane 192.168.1.#{octet}", keep_color: true, inline: <<-SHELL
+            printf 'network:\\n  version: 2\\n  ethernets:\\n    eth1:\\n      addresses:\\n        - #{mgmt_ip}/24\\n        - 192.168.1.#{octet}/24\\n' > /etc/netplan/60-otto-dataplane.yaml
+            chmod 600 /etc/netplan/60-otto-dataplane.yaml
+            netplan apply
+        SHELL
     end
 
     # Run common test VM provisioning steps

@@ -725,3 +725,38 @@ class TestInterfaceSpec:
     def test_runtime_host_gets_interface_objects(self):
         host = UnixHostSpec.model_validate(self._host({"eth1": "10.0.0.5"})).to_host()
         assert host.interfaces["eth1"] == Interface(ip="10.0.0.5")
+
+    def test_subnet_optional_and_parsed(self):
+        spec = UnixHostSpec.model_validate(
+            self._host({"eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}})
+        )
+        assert spec.interfaces["eth1"].subnet == "192.168.1.0/24"
+
+    def test_subnet_defaults_to_none(self):
+        spec = UnixHostSpec.model_validate(self._host({"eth1": {"ip": "10.0.0.5"}}))
+        assert spec.interfaces["eth1"].subnet is None
+
+    def test_malformed_subnet_rejected(self):
+        with pytest.raises(ValidationError, match="CIDR"):
+            UnixHostSpec.model_validate(
+                self._host({"eth1": {"ip": "10.0.0.5", "subnet": "not-a-network"}})
+            )
+
+    def test_subnet_with_host_bits_rejected(self):
+        # The interface's OWN address is not its subnet: declare the network.
+        with pytest.raises(ValidationError, match="CIDR"):
+            UnixHostSpec.model_validate(
+                self._host({"eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.11/24"}})
+            )
+
+    def test_ip_outside_declared_subnet_rejected(self):
+        with pytest.raises(ValidationError, match="not inside"):
+            UnixHostSpec.model_validate(
+                self._host({"eth1": {"ip": "10.0.0.5", "subnet": "192.168.1.0/24"}})
+            )
+
+    def test_runtime_interface_carries_subnet(self):
+        host = UnixHostSpec.model_validate(
+            self._host({"eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}})
+        ).to_host()
+        assert host.interfaces["eth1"] == Interface(ip="192.168.1.11", subnet="192.168.1.0/24")

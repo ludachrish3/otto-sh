@@ -208,12 +208,31 @@ class DockerContainerHost(PosixPrivilege, PosixFileOps, BaseHost):
                 cid = await self._auto_up()
             self.container_id = cid
 
-    async def _resolve_container_id(self) -> str:
+    async def is_running(self) -> bool:
+        """Whether the backing container is live right now — side-effect-free.
+
+        Unlike ``_ensure_running``, this NEVER auto-starts the stack: it
+        is the read-only liveness probe for paths that must not require
+        docker at all (tunnel discovery and manage — a declared-but-down
+        container trivially carries no processes). A placeholder whose
+        container turns out to be running caches the resolved id, so
+        subsequent ``exec`` calls skip both probe and auto-up.
+        """
+        if self.container_id:
+            return True
+        cid = await self._resolve_container_id(log=LogMode.QUIET)
+        if cid:
+            self.container_id = cid
+            return True
+        return False
+
+    async def _resolve_container_id(self, log: LogMode = LogMode.NORMAL) -> str:
         """Return the running container id for this service, or ``""``."""
         result = await self.parent.exec(
             f"docker ps -q "
             f"--filter label=com.docker.compose.project={shlex.quote(self.compose_project)} "
-            f"--filter label=com.docker.compose.service={shlex.quote(self.service)}"
+            f"--filter label=com.docker.compose.service={shlex.quote(self.service)}",
+            log=log,
         )
         if result.status.is_ok and result.value.strip():
             return result.value.strip().splitlines()[0]

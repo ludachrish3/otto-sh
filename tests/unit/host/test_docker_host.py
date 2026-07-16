@@ -294,6 +294,54 @@ async def test_concurrent_access_triggers_single_auto_up(monkeypatch):
     assert h.container_id == "freshcid"
 
 
+# ---------------------------------------------------------------------------
+# is_running — side-effect-free liveness probe (issue #139)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_is_running_true_without_probe_when_id_resolved():
+    """A container whose id is already known needs no docker round-trip."""
+    parent = _mock_parent()
+    h = _make_container(parent)  # container_id set
+    assert await h.is_running() is True
+    parent.exec.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_is_running_probes_quietly_and_caches_id(monkeypatch):
+    """A placeholder probe is one read-only, QUIET `docker ps` — never a compose."""
+    from otto.logger.mode import LogMode
+
+    parent = _mock_parent()
+    parent.exec = AsyncMock(return_value=_ok(out="abc123\n"))
+    h = _make_container(parent, container_id="")
+    compose_up = AsyncMock()
+    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+
+    assert await h.is_running() is True
+
+    assert h.container_id == "abc123"
+    compose_up.assert_not_awaited()
+    cmd = parent.exec.call_args.args[0]
+    assert cmd.startswith("docker ps -q")
+    assert parent.exec.call_args.kwargs.get("log") is LogMode.QUIET
+
+
+@pytest.mark.asyncio
+async def test_is_running_false_when_down_never_composes(monkeypatch):
+    """A down placeholder reports False; is_running must NEVER auto-start."""
+    parent = _mock_parent()  # docker ps returns empty out -> not running
+    h = _make_container(parent, container_id="")
+    compose_up = AsyncMock()
+    monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+
+    assert await h.is_running() is False
+
+    assert h.container_id == ""
+    compose_up.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_put_placeholder_auto_ups(tmp_path, monkeypatch):
     """File transfer against a down container also auto-starts the stack."""

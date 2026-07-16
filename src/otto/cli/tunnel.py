@@ -200,17 +200,41 @@ async def add(
 @async_typer_command
 async def list_tunnels() -> None:
     """List live tunnels (observed truth; spec §9)."""
+    from rich.table import Table
+
     lab = get_lab()
     discovery = await discover_tunnels(lab)
     record_tunnel_ids(get_repos(), [d.tunnel.id for d in discovery.tunnels])
-    for d in discovery.tunnels:
-        t = d.tunnel
-        a, b = t.path[0], t.path[-1]
-        rprint(
-            f"{t.id}  {a.host}@{a.interface or '-'} <-> {b.host}@{b.interface or '-'}  "
-            f"{_fmt_via(t)}  {t.service_port}  {t.protocol}  "
-            f"{_fmt_age(d.age_seconds)}  {d.status}"
+    if discovery.tunnels:
+        # Borderless + single-space gaps: the worst-case row (20-char id,
+        # 22-char endpoints, "degraded (3/4)") must survive an 80-column
+        # terminal without wrapping or truncating — ids get copy-pasted
+        # into `otto tunnel remove`.
+        table = Table(
+            "ID",
+            "ENDPOINTS",
+            "VIA",
+            "PORT",
+            "PROTO",
+            "AGE",
+            "STATUS",
+            box=None,
+            pad_edge=False,
+            padding=(0, 1, 0, 0),
         )
+        for d in discovery.tunnels:
+            t = d.tunnel
+            a, b = t.path[0], t.path[-1]
+            table.add_row(
+                t.id,
+                f"{a.host}@{a.interface or '-'} <-> {b.host}@{b.interface or '-'}",
+                _fmt_via(t),
+                str(t.service_port),
+                t.protocol,
+                _fmt_age(d.age_seconds),
+                d.status,
+            )
+        rprint(table)
     if discovery.unreachable:
         rprint(
             f"[yellow bold]partial scan[/yellow bold] — could not reach: "

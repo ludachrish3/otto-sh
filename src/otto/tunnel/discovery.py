@@ -61,6 +61,14 @@ async def _scan_hosts(hosts: list[Any]) -> tuple[list[tuple[str, Observation]], 
 
     async def scan(host: Any) -> tuple[list[tuple[str, Observation]], str | None]:
         try:
+            # Hosts with a liveness probe (docker containers) are asked first:
+            # a declared-but-down container definitively carries no processes
+            # — a clean empty scan, not an unreachable host — and exec'ing it
+            # would auto-start its whole compose stack (issue #139; docker is
+            # a test aid, never a tunnel requirement).
+            probe = getattr(host, "is_running", None)
+            if probe is not None and not await asyncio.wait_for(probe(), _TUNNEL_HOST_TIMEOUT):
+                return [], None
             result = await asyncio.wait_for(
                 host.exec(DISCOVERY_PS_COMMAND, log=LogMode.QUIET), _TUNNEL_HOST_TIMEOUT
             )

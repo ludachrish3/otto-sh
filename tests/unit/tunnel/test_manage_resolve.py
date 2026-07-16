@@ -144,6 +144,76 @@ class TestContainerRules:
             )
 
 
+def _real_placeholder(running_cid: str = "", inspect_ip: str = "172.17.0.2"):
+    """A REAL placeholder DockerContainerHost (empty container_id) on a mocked parent.
+
+    The parent answers the liveness probe (``docker ps -q``) with
+    *running_cid* and ``docker inspect`` with *inspect_ip* — but only for
+    that exact cid, mirroring real docker (inspecting an empty/unknown id
+    fails). Unlike :func:`_container` above, ``__post_init__`` runs, so the
+    resolve path is exercised end-to-end at the unit level.
+    """
+    from unittest.mock import AsyncMock, MagicMock
+
+    from otto.host.docker_host import DockerContainerHost
+
+    parent = MagicMock()
+    parent.id = "carrot_seed"
+    parent.name = "carrot_seed"
+    parent.term = "ssh"
+    parent.resources = set()
+
+    async def _exec(cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
+        if cmd.startswith("docker ps -q"):
+            return CommandResult(status=Status.Success, value=f"{running_cid}\n", command=cmd)
+        if cmd.startswith("docker inspect") and running_cid and running_cid in cmd:
+            return CommandResult(status=Status.Success, value=f"{inspect_ip}\n", command=cmd)
+        return CommandResult(status=Status.Failed, value="Error: No such object", command=cmd)
+
+    parent.exec = AsyncMock(side_effect=_exec)
+    return DockerContainerHost(
+        parent=parent,
+        container_id="",
+        project="repo1",
+        service="api",
+        compose_project="otto-repo1-x",
+    )
+
+
+class TestContainerLiveness:
+    """Issue #139: `add` never starts containers — docker is a test aid only."""
+
+    def _lab_with(self, ctr):
+        parent = FakeUnix("carrot_seed", ip="10.10.200.11")
+        other = FakeUnix("tomato_soil", ip="10.10.200.12")
+        return _lab(**{parent.id: parent, ctr.id: ctr, other.id: other}), parent, other
+
+    def test_down_container_endpoint_fails_loud_without_compose(self, monkeypatch) -> None:
+        from unittest.mock import AsyncMock, MagicMock
+
+        compose_up = AsyncMock()
+        monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+        monkeypatch.setattr("otto.config.get_repos", MagicMock(return_value=[]))
+        monkeypatch.setattr("otto.config.get_lab", MagicMock())
+        ctr = _real_placeholder(running_cid="")
+        lab, parent, other = self._lab_with(ctr)
+
+        with pytest.raises(ValueError, match="otto docker up"):
+            asyncio.run(_resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)]))
+        compose_up.assert_not_awaited()
+
+    def test_running_container_endpoint_resolves_from_probe(self) -> None:
+        ctr = _real_placeholder(running_cid="abc123")
+        lab, parent, other = self._lab_with(ctr)
+
+        resolved = asyncio.run(
+            _resolve_chain(lab, [(other.id, None), (parent.id, None), (ctr.id, None)])
+        )
+
+        assert resolved[-1].ip == "172.17.0.2"
+        assert ctr.container_id == "abc123"
+
+
 def _discovered(tunnel: Tunnel) -> TunnelDiscovery:
     return TunnelDiscovery(
         tunnels=[

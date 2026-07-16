@@ -204,6 +204,13 @@ neighbor must be **its own parent host** (the docker-capable host that runs
 it). `add` rejects any other placement or neighbor at add time, naming the
 parent it expected.
 
+Docker is a **testing aid, never a requirement**: no tunnel command ever
+starts a container. `add` requires a container endpoint to already be
+running (start it with `otto docker up` first) and fails loudly when it
+isn't; `list` and `remove` probe a declared-but-down container read-only
+and treat it as carrying no tunnel processes — scanning a lab never
+composes a docker stack as a side effect.
+
 A container entry never takes `@iface` — containers have no modeled
 `interfaces` — its data-plane IP is instead resolved through its parent via
 `docker inspect` at add time. The container's two tagged `socat` processes

@@ -7,7 +7,7 @@ The CLI is a thin consumer of ``add_tunnel`` / ``remove_tunnel`` /
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from ..host.daemon import kill_command, launch_command
 from ..logger.mode import LogMode
@@ -25,6 +25,7 @@ from .socat import FREE_PORT_PROBE_COMMAND, parse_listening_ports, pick_free_por
 
 if TYPE_CHECKING:
     from ..config.lab import Lab
+    from ..host.docker_host import DockerContainerHost
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class ResolvedHop:
     host: Any
 
 
-def _is_container(host: Any) -> bool:
+def _is_container(host: Any) -> "TypeGuard[DockerContainerHost]":
     from ..host.docker_host import DockerContainerHost
 
     return isinstance(host, DockerContainerHost)
@@ -82,6 +83,19 @@ async def _resolve_one(lab: "Lab", spec: EndpointSpec) -> ResolvedHop:
         if iface is not None:
             raise ValueError(
                 f"container {host_id!r} takes no @interface (containers have no modeled interfaces)"
+            )
+        # Probe, never start: a tunnel add must not compose a docker stack
+        # (issue #139) — the container is a lab member only while it runs.
+        try:
+            running = await asyncio.wait_for(host.is_running(), _TUNNEL_HOST_TIMEOUT)
+        except asyncio.TimeoutError as e:
+            raise RuntimeError(
+                f"host {host.parent.id!r} timed out probing container {host_id!r}"
+            ) from e
+        if not running:
+            raise ValueError(
+                f"container {host_id!r} is not running — tunnel commands never start "
+                f"containers; run `otto docker up` for project {host.project!r} first"
             )
         return ResolvedHop(hop=TunnelHop(host=host_id), ip=await _container_ip(host), host=host)
     ifaces = getattr(host, "interfaces", {}) or {}

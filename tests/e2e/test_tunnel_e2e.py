@@ -14,15 +14,18 @@ Topology (see ``tests/_fixtures/lab_data/tech1/lab.json``)
 - tomato_seed (test2, 10.10.200.12)
 - pepper_seed (test3, 10.10.200.13)
 
-``lab.json`` declares a fictional ``eth1``/``192.168.1.x`` interface for
-carrot/tomato (fixture data reused from other unit tests), but the real VMs
-have no such interface -- and ``make_host``/``_build_host`` never wires the
-lab-data ``interfaces`` dict onto the constructed ``UnixHost`` anyway (its
-``interfaces`` field defaults to empty). So for every host built here,
-``otto.tunnel.manage._resolve_one`` falls back to the host's own management
-ip (``10.10.200.x``), which the dev VM shares a subnet with -- so datagrams
-are sent directly from this process, exactly like the retired link e2e's
-``_send_udp``.
+``lab.json`` declares an ``eth1``/``192.168.1.x`` data-plane interface for
+carrot/tomato/pepper, and since 2026-07-16 the bed provisions those
+addresses for real (Vagrantfile ``provision_data_plane``: a netplan drop-in
+adds ``192.168.1.<last-octet>/24`` alongside each peer's management address
+on ``eth1``). The library-API tests below still run over the management ips:
+``make_host``/``_build_host`` never wires the lab-data ``interfaces`` dict
+onto the constructed ``UnixHost`` (its ``interfaces`` field defaults to
+empty), so ``otto.tunnel.manage._resolve_one`` falls back to the host's own
+management ip (``10.10.200.x``), which the dev VM shares a subnet with --
+datagrams are sent directly from this process, exactly like the retired
+link e2e's ``_send_udp``. The CLI cycle test (test 5) is the one that loads
+the lab data verbatim and exercises the declared data plane.
 
 Bind semantics changed from the retired ``otto.link`` era
 -----------------------------------------------------------
@@ -54,9 +57,12 @@ Host-down is a loud ``RuntimeError`` naming the unreachable VM -- never a
 
 import asyncio
 import contextlib
+import json
 import random
+import re
 import shlex
 import socket
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -78,6 +84,7 @@ from otto.tunnel.discovery import (
     parse_process_discovery,
 )
 from tests._fixtures.labdata import host_data, make_host
+from tests.e2e._otto_subprocess import REPO1, run_otto
 
 pytestmark = [
     pytest.mark.integration,
@@ -98,6 +105,7 @@ _PORT_DIRECT = 15000
 _PORT_MULTIHOP = 15001
 _PORT_CONTAINER = 15002
 _PORT_DEGRADE = 15003
+_PORT_CLI_CYCLE = 15004
 _PORT_FOREIGN = 45003
 
 REPO2_DIR = Path(__file__).resolve().parents[1] / "repo2"
@@ -668,3 +676,123 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
             timeout=15,
             log=LogMode.QUIET,
         )
+
+
+# ---------------------------------------------------------------------------
+# Test 5: full CLI cycle on a lab that DECLARES docker containers (issue #139)
+# ---------------------------------------------------------------------------
+
+
+def _cli_cycle_sut_dir(tmp_path: Path) -> Path:
+    """Scaffold a sut dir for the CLI cycle: real veggies lab + declared containers.
+
+    Two deliberate properties:
+
+    - The host entries are the tech1 fixture's, verbatim — INCLUDING the
+      declared ``eth1``/``192.168.1.x`` data-plane interfaces. Unlike the
+      library-API tests above (whose ``make_host`` never wires ``interfaces``,
+      so they bind management ips), the CLI path loads lab data verbatim and
+      resolves each endpoint to its declared data-plane ip — so this cycle
+      also guards the bed contract that ``192.168.1.x`` is provisioned on the
+      peers' ``eth1`` (Vagrantfile ``provision_data_plane``); an unprovisioned
+      bed fails loudly at the post-add verify.
+    - The repo is named ``repo1`` and declares the same ``api`` compose as
+      ``tests/repo1``, so lab load registers container-host placeholders —
+      the exact issue #139 trigger. Every tunnel command must leave them
+      alone: probe liveness quietly, never compose the stack.
+    """
+    sut = tmp_path / "cli_cycle_sut"
+    (sut / ".otto").mkdir(parents=True)
+    lab_dir = sut / "lab_data"
+    lab_dir.mkdir()
+    hosts = [host_data(ne) for ne in ("carrot", "tomato")]
+    (lab_dir / "lab.json").write_text(json.dumps({"hosts": hosts, "links": []}))
+    (sut / ".otto" / "settings.toml").write_text(
+        f'name = "repo1"\n'
+        f'version = "1.0.0"\n'
+        f'lab_data_type = "json"\n'
+        f'labs = ["{lab_dir}"]\n'
+        f"\n"
+        f"[lab]\n"
+        f'backend = "json"\n'
+        f"\n"
+        f"[[docker.composes]]\n"
+        f'path = "{REPO1 / "docker" / "compose.yml"}"\n'
+        f'services = ["api"]\n'
+        f'default_host = "tomato_seed"\n'
+    )
+    return sut
+
+
+def _run_cycle(argv: list[str], sut: Path) -> "subprocess.CompletedProcess[str]":
+    return run_otto(argv, sut_dirs=sut, lab="veggies", timeout=180)
+
+
+def _assert_docker_free(proc: "subprocess.CompletedProcess[str]", step: str) -> None:
+    """The issue #139 pin: no tunnel command may run (or even mention) docker."""
+    blob = (proc.stdout + proc.stderr).lower()
+    for needle in ("docker", "compose"):
+        assert needle not in blob, (
+            f"tunnel {step}: CLI output mentions {needle!r} — tunnel commands must "
+            f"not touch docker (issue #139):\n{proc.stdout}\n{proc.stderr}"
+        )
+
+
+@pytest.mark.timeout(900)
+def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
+    """add → list → remove → list through the real ``otto`` CLI, docker-free.
+
+    The scaffolded lab declares container hosts (placeholders register at lab
+    load), so all four invocations exercise the issue #139 surface: pre-fix,
+    even a bare ``otto tunnel list`` auto-started compose stacks on the peers
+    and flooded the console with docker I/O.
+    """
+    for ne in ("carrot", "tomato"):
+        asyncio.run(_assert_reachable(ne, host_data(ne)["ip"]))
+    sut = _cli_cycle_sut_dir(tmp_path)
+    cleanup_id = ""
+    try:
+        add = _run_cycle(
+            [
+                "tunnel",
+                "add",
+                "--hosts",
+                "carrot_seed,tomato_seed",
+                "--port",
+                str(_PORT_CLI_CYCLE),
+                "--protocol",
+                "udp",
+            ],
+            sut,
+        )
+        assert add.returncode == 0, f"add failed:\n{add.stdout}\n{add.stderr}"
+        # Extract the id BEFORE the docker-free pin: if that assertion fires,
+        # the finally below can still reap the tunnel the add just built.
+        match = re.search(r"added (tun-[0-9a-f]{12}-\d+)", add.stdout)
+        assert match, f"no tunnel id in add output:\n{add.stdout}"
+        tid = cleanup_id = match.group(1)
+        _assert_docker_free(add, "add")
+
+        listed = _run_cycle(["tunnel", "list"], sut)
+        assert listed.returncode == 0, f"list failed:\n{listed.stdout}\n{listed.stderr}"
+        _assert_docker_free(listed, "list")
+        assert tid in listed.stdout, f"{tid!r} missing from list:\n{listed.stdout}"
+        for header in ("ID", "ENDPOINTS", "VIA", "PORT", "PROTO", "AGE", "STATUS"):
+            assert header in listed.stdout, f"missing table header {header!r}:\n{listed.stdout}"
+        row = next(line for line in listed.stdout.splitlines() if tid in line)
+        assert row.rstrip().endswith(" ok"), f"expected status 'ok' in row: {row!r}"
+
+        removed = _run_cycle(["tunnel", "remove", tid], sut)
+        assert removed.returncode == 0, f"remove failed:\n{removed.stdout}\n{removed.stderr}"
+        _assert_docker_free(removed, "remove")
+        assert tid in removed.stdout, f"remove did not name {tid!r}:\n{removed.stdout}"
+        cleanup_id = ""  # removed cleanly; disarm the safety net
+
+        relisted = _run_cycle(["tunnel", "list"], sut)
+        assert relisted.returncode == 0, f"re-list failed:\n{relisted.stdout}\n{relisted.stderr}"
+        _assert_docker_free(relisted, "second list")
+        assert tid not in relisted.stdout, f"{tid!r} survived remove:\n{relisted.stdout}"
+    finally:
+        if cleanup_id:
+            with contextlib.suppress(Exception):
+                _run_cycle(["tunnel", "remove", cleanup_id], sut)

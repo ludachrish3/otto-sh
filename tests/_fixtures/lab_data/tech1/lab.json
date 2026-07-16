@@ -17,7 +17,7 @@
                 "carrot"
             ],
             "interfaces": {
-                "eth1": {"ip": "192.168.1.11"}
+                "eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}
             },
             "labs": [
                 "veggies"
@@ -40,7 +40,7 @@
                 "tomato"
             ],
             "interfaces": {
-                "eth1": {"ip": "192.168.1.12"}
+                "eth1": {"ip": "192.168.1.12", "subnet": "192.168.1.0/24"}
             },
             "labs": [
                 "veggies"
@@ -62,6 +62,9 @@
             "resources": [
                 "pepper"
             ],
+            "interfaces": {
+                "eth1": {"ip": "192.168.1.13", "subnet": "192.168.1.0/24"}
+            },
             "labs": [
                 "veggies"
             ]
@@ -81,6 +84,9 @@
             "resources": [
                 "basil"
             ],
+            "interfaces": {
+                "eth1": {"ip": "192.168.1.14", "subnet": "192.168.1.0/24"}
+            },
             "labs": [
                 "embedded"
             ]

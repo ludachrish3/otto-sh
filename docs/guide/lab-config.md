@@ -169,12 +169,13 @@ specific device directly instead of just the host's management `ip`.
 |-------|------|-------------|
 | `interfaces` | object | Map of netdev name (e.g. `"eth0"`, `"eth1"`) to an interface definition. |
 | `interfaces.<name>` | object or string | `{"ip": "10.0.0.5"}`, or the bare string `"10.0.0.5"` as shorthand for the same object. |
+| `interfaces.<name>.subnet` | string | Optional network the interface belongs to, in CIDR form (`"192.168.1.0/24"` — the network address, not a host address). Declares the interface's L3 neighborhood for topology and reachability tooling; when set, the interface `ip` must fall inside it (validated at load). |
 
 ```json
 {
     "interfaces": {
         "eth0": "10.0.0.5",
-        "eth1": { "ip": "10.0.1.5" }
+        "eth1": { "ip": "192.168.1.5", "subnet": "192.168.1.0/24" }
     }
 }
 ```

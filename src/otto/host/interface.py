@@ -14,3 +14,7 @@ class Interface:
 
     ip: str
     """Address assigned to this interface."""
+
+    subnet: str | None = None
+    """Optional network this interface belongs to, in CIDR form
+    (``"192.168.1.0/24"``). ``None`` = undeclared."""

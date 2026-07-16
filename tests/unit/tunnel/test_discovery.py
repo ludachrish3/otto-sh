@@ -2,7 +2,9 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from unittest.mock import AsyncMock, MagicMock
 
+from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.tunnel.discovery import (
     discover_tunnels,
@@ -137,3 +139,79 @@ class TestDiscoverTunnels:
         hosts["a"] = FakeHost("a", extra)
         result = asyncio.run(discover_tunnels(FakeLab(hosts)))
         assert {d.tunnel.id for d in result.tunnels} == {TUNNEL.id, other.id}
+
+
+def _container_placeholder(ps_out: str, exec_ps_text: str = ""):
+    """A real placeholder DockerContainerHost on a mocked parent.
+
+    The parent answers ``docker ps -q`` probes with *ps_out* and any
+    ``docker exec`` (the discovery scan) with *exec_ps_text*; every parent
+    call is recorded as ``(cmd, log_kwarg)`` for probe-shape assertions.
+    """
+    from otto.host.docker_host import DockerContainerHost
+
+    parent = MagicMock()
+    parent.id = "carrot_seed"
+    parent.name = "carrot_seed"
+    parent.term = "ssh"
+    parent.resources = set()
+    calls: list[tuple[str, object]] = []
+
+    async def _exec(cmd: str, timeout: float | None = None, **kw: object) -> CommandResult:
+        calls.append((cmd, kw.get("log")))
+        if cmd.startswith("docker ps -q"):
+            return CommandResult(status=Status.Success, value=ps_out, command=cmd)
+        if cmd.startswith("docker exec"):
+            return CommandResult(status=Status.Success, value=exec_ps_text, command=cmd)
+        return CommandResult(status=Status.Success, value="", command=cmd)
+
+    parent.exec = AsyncMock(side_effect=_exec)
+    ctr = DockerContainerHost(
+        parent=parent,
+        container_id="",
+        project="repo1",
+        service="api",
+        compose_project="otto-repo1-x",
+    )
+    return ctr, calls
+
+
+class TestContainerScanning:
+    """Issue #139: discovery must never start docker — it is a read-only scan."""
+
+    def test_down_placeholder_contributes_nothing_and_never_composes(self, monkeypatch) -> None:
+        compose_up = AsyncMock()
+        monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+        monkeypatch.setattr("otto.config.get_repos", MagicMock(return_value=[]))
+        monkeypatch.setattr("otto.config.get_lab", MagicMock())
+        ctr, calls = _container_placeholder(ps_out="")
+        lab = FakeLab(hosts={"a": FakeHost("a", _full_ps_for("a")), ctr.id: ctr})
+
+        result = asyncio.run(discover_tunnels(lab))
+
+        compose_up.assert_not_awaited()
+        # A stopped container definitively has no processes: that is a clean
+        # scan result, not an unreachable host.
+        assert result.unreachable == []
+        # The parent saw at most the read-only probe — never an exec/compose.
+        assert all(cmd.startswith("docker ps -q") for cmd, _log in calls)
+
+    def test_running_container_scans_through_docker_exec(self, monkeypatch) -> None:
+        compose_up = AsyncMock()
+        monkeypatch.setattr("otto.docker.compose.compose_up", compose_up)
+        ctr, calls = _container_placeholder(
+            ps_out="abc123\n",
+            exec_ps_text=_ps_line(9, "02:00", Direction.FWD, Role.EGRESS, 2),
+        )
+        lab = FakeLab(hosts={"a": FakeHost("a", _full_ps_for("a")), ctr.id: ctr})
+
+        result = asyncio.run(discover_tunnels(lab))
+
+        compose_up.assert_not_awaited()
+        assert result.unreachable == []
+        # The running container WAS scanned: its observation joined the group.
+        (d,) = result.tunnels
+        assert (ctr.id, Direction.FWD, Role.EGRESS) in d.present
+        # The liveness probe is quiet — `tunnel list` output stays clean.
+        probe_logs = [log for cmd, log in calls if cmd.startswith("docker ps -q")]
+        assert probe_logs == [LogMode.QUIET]

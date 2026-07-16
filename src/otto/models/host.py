@@ -8,7 +8,7 @@ their ``to_runtime()`` builders; embedded registry-name fields
 host registries at build time.
 """
 
-from ipaddress import ip_address
+from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -62,6 +62,11 @@ class InterfaceSpec(OttoModel):
 
     ip: str
 
+    subnet: str | None = None
+    """Optional network this interface belongs to, in CIDR form
+    (``"192.168.1.0/24"``). Declares the interface's L3 neighborhood for
+    topology and reachability tooling; when set, ``ip`` must fall inside it."""
+
     @field_validator("ip")
     @classmethod
     def _validate_ip(cls, v: str) -> str:
@@ -71,9 +76,33 @@ class InterfaceSpec(OttoModel):
             raise ValueError(f"interface address {v!r} is not a valid IP") from None
         return v
 
+    @field_validator("subnet")
+    @classmethod
+    def _validate_subnet(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        try:
+            ip_network(v, strict=True)
+        except ValueError:
+            raise ValueError(
+                f"interface subnet {v!r} is not a network in CIDR form "
+                f'(e.g. "192.168.1.0/24" — the network address, not a host address)'
+            ) from None
+        return v
+
+    @model_validator(mode="after")
+    def _ip_inside_subnet(self) -> "InterfaceSpec":
+        # Cross-family containment (v4 ip in a v6 net) is simply False, so a
+        # family mismatch fails with the same "not inside" error.
+        if self.subnet is not None and ip_address(self.ip) not in ip_network(self.subnet):
+            raise ValueError(
+                f"interface address {self.ip!r} is not inside its declared subnet {self.subnet!r}"
+            )
+        return self
+
     def to_runtime(self) -> Interface:
         """Build the runtime ``Interface`` dataclass."""
-        return Interface(ip=self.ip)
+        return Interface(ip=self.ip, subnet=self.subnet)
 
 
 # Common fields passed straight through to the host constructor (no conversion).
