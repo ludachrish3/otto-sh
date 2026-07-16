@@ -384,7 +384,7 @@ Other useful environment variables:
 
 `otto init --lab` (or `--all`) scaffolds `lab_data/lab.json` with one
 example host for you, plus a `lab_data/README.md` walking through its
-fields — see {doc}`guide/setup/host-database` for the full per-field schema. This
+fields — see {doc}`guide/setup/lab-config` for the full per-field schema. This
 section explains the format so you can add real hosts by hand.
 
 A lab file is a JSON object with a `hosts` array (and an optional `links`

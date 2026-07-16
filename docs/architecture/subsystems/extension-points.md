@@ -57,8 +57,13 @@ Each seam's user-facing how-to lives in the guide:
 
 - Connection & transfer backends — {doc}`../../guide/hosts/extending-backends`
 - Embedded targets & command frames — {doc}`../../guide/hosts/extending-embedded`
+- Host classes, OS profiles & host verbs — {doc}`../../guide/hosts/os-profiles`,
+  {doc}`../../guide/hosts/capabilities`
+- Power controllers & product providers — {doc}`../../guide/hosts/extending-backends`,
+  {doc}`../../guide/hosts/capabilities`
 - Host sources — {doc}`../../guide/setup/host-database`
 - Reservation backends — {doc}`../../guide/reservations`
+- Monitor parsers & SNMP metrics — {doc}`../../guide/monitor`
 - Instructions, suites & options — {doc}`../../guide/run/index`, {doc}`../../guide/test`, {doc}`../../guide/run/options`
 - New top-level commands — {doc}`../../guide/extending-cli`
 

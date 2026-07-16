@@ -40,7 +40,7 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 EXAMPLE_HOST_ENTRY = {
     "_comment": (
         "Example host — replace these values. Full host schema: "
-        "docs/guide/setup/host-database.md or `otto schema export`. The `labs` list "
+        "docs/guide/setup/lab-config.md or `otto schema export`. The `labs` list "
         "names the labs this host belongs to (select with --lab/OTTO_LAB)."
     ),
     "ip": "192.0.2.1",
@@ -71,7 +71,7 @@ JSON object with two array sections:
 
 - **`hosts`** — every lab host. Each entry is validated against a pydantic spec
   before otto will use it (`UnixHostSpec` / `EmbeddedHostSpec`, see
-  `docs/guide/setup/host-database.md`). The scaffolded `lab.json` has one example
+  `docs/guide/setup/lab-config.md`). The scaffolded `lab.json` has one example
   host; edit or replace it, and add as many more as your lab needs.
 - **`links`** — declared data-plane routes between hosts (routes not used for
   ssh/telnet access, carrying UDP/HTTP/RTP/etc.). Empty by default; see the
@@ -129,7 +129,7 @@ inside host/link entries. Use it freely.
 
 ## Where to go next
 
-- Full host schema reference: `docs/guide/setup/host-database.md`
+- Full host schema reference: `docs/guide/setup/lab-config.md`
 - Machine-readable schema (for editor validation or codegen):
   `otto schema export`
 - Confirm otto sees your hosts once you've edited this file:

@@ -64,7 +64,7 @@ validated and consistent.
 
 Importing `from otto import options` — rather than reaching for pydantic
 directly — keeps every options class on one standard import and gives otto a
-single seam to evolve options behaviour in the future.
+single seam through which all options behaviour flows.
 
 ## Validating fields
 
