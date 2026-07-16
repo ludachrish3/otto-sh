@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -617,3 +618,76 @@ def test_completer_prefix_filter():
         result = docker_cli._docker_host_completer(MagicMock(), "al")
 
     assert result == ["almond", "alpha"]
+
+
+# ---------------------------------------------------------------------------
+# _docker_host_completer lab scoping (issue #138)
+# ---------------------------------------------------------------------------
+
+
+def _ctx_with_labs(lab_names) -> SimpleNamespace:
+    """Click-like context chain: ``-l/--lab`` lives on the root ``otto`` ctx."""
+    root = SimpleNamespace(info_name="otto", params={"labs": lab_names}, parent=None)
+    return SimpleNamespace(info_name="docker", params={}, parent=root)
+
+
+def test_completer_cache_hit_filters_by_selected_lab():
+    """Lab selected: docker-capable suggestions restricted to that lab's hosts."""
+    fake_cache = {
+        "docker_hosts": ["carrot_seed", "apple_seed"],
+        "hosts_by_lab": {"veggies": ["carrot_seed"], "fruits": ["apple_seed"]},
+    }
+    with patch("otto.config.get_completion_names", return_value=fake_cache):
+        result = docker_cli._docker_host_completer(_ctx_with_labs(["veggies"]), "")
+
+    assert result == ["carrot_seed"]
+
+
+def test_completer_cache_miss_filters_by_selected_lab(tmp_path):
+    """Cache miss + lab selected: the live scan is restricted to the lab."""
+    import json
+
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    creds = [{"login": "u", "password": "p"}]
+    (lab / "lab.json").write_text(
+        json.dumps(
+            {
+                "hosts": [
+                    {
+                        "ip": "1.1.1.1",
+                        "element": "carrot",
+                        "creds": creds,
+                        "docker_capable": True,
+                        "labs": ["veggies"],
+                    },
+                    {
+                        "ip": "1.1.1.2",
+                        "element": "apple",
+                        "creds": creds,
+                        "docker_capable": True,
+                        "labs": ["fruits"],
+                    },
+                ]
+            }
+        )
+    )
+    repo = SimpleNamespace(labs=[lab], docker_settings=None)
+    with (
+        patch("otto.config.get_completion_names", return_value=None),
+        patch("otto.config.get_repos", return_value=[repo]),
+    ):
+        result = docker_cli._docker_host_completer(_ctx_with_labs(["veggies"]), "")
+
+    assert result == ["carrot"]
+
+
+def test_completer_no_lab_selected_keeps_all_docker_hosts():
+    fake_cache = {
+        "docker_hosts": ["carrot_seed", "apple_seed"],
+        "hosts_by_lab": {"veggies": ["carrot_seed"], "fruits": ["apple_seed"]},
+    }
+    with patch("otto.config.get_completion_names", return_value=fake_cache):
+        result = docker_cli._docker_host_completer(_ctx_with_labs(None), "")
+
+    assert result == ["apple_seed", "carrot_seed"]

@@ -106,26 +106,31 @@ def _ip_by_host(repos: list["Repo"]) -> dict[str, str]:
     return ip_by_host
 
 
-def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001
-    from ..config.completion_cache import collect_host_ids
+def _hosts_completer(ctx: typer.Context, incomplete: str) -> list[str]:
+    from .completers import lab_scoped_host_ids
 
     try:
-        ids = collect_host_ids(get_repos())
+        ids = lab_scoped_host_ids(ctx)
     except Exception:  # noqa: BLE001 — completion never crashes the shell
         ids = []
 
     # Once at least one host is already typed (there's a comma), narrow the
     # candidate set to hosts sharing the last-entered host's /24 (simple-L2
-    # reachability, spec §11.3). Best-effort: any failure here — bad lab
-    # data, an unparsable last token, whatever — falls back to the full,
-    # un-narrowed host list rather than ever breaking tab completion. An
-    # empty narrowing (last host has no known L2 neighbors) falls back the
-    # same way: offering nothing would be worse than offering everything.
+    # reachability, spec §11.3), intersected with the lab-scoped candidates so
+    # a neighbor from another lab is never offered (issue #138). Best-effort:
+    # any failure here — bad lab data, an unparsable last token, whatever —
+    # falls back to the full, un-narrowed host list rather than ever breaking
+    # tab completion. An empty narrowing (last host has no known L2 neighbors
+    # in the lab) falls back the same way: offering nothing would be worse
+    # than offering everything.
     head, sep, _frag = incomplete.rpartition(",")
     if sep:
+        candidates = set(ids)
         try:
             last_host, _iface = _parse_endpoint(head.rsplit(",", 1)[-1])
-            narrowed = _l2_reachable(last_host, _ip_by_host(get_repos()))
+            narrowed = [
+                h for h in _l2_reachable(last_host, _ip_by_host(get_repos())) if h in candidates
+            ]
         except Exception:  # noqa: BLE001 — narrowing is best-effort only; fall back below
             narrowed = []
         if narrowed:

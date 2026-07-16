@@ -59,11 +59,12 @@ def docker_callback(ctx: typer.Context) -> None:
         return
 
 
-def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:  # noqa: ARG001 — required by Typer autocompletion callback signature
+def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:
     """Shell-completion source for ``--on``.
 
     Limits suggestions to docker-capable hosts so users don't tab into a parent that can't run
-    containers.
+    containers. Lab-scoped like every other host-id completer (issue #138):
+    when a lab is selected, only docker-capable hosts in that lab are offered.
 
     Prefers the cached entry written by the slow path
     (``cache['docker_hosts']``); falls through to a live ``lab.json``
@@ -71,12 +72,17 @@ def _docker_host_completer(ctx: typer.Context, incomplete: str) -> list[str]:  #
     """
     from ..config import get_completion_names, get_repos
     from ..config.completion_cache import collect_docker_capable_host_ids
+    from .completers import lab_scoped_host_ids, selected_lab_names
 
     cached = get_completion_names()
     if cached is not None and isinstance(cached.get("docker_hosts"), list):
         ids = cached["docker_hosts"]
     else:
         ids = collect_docker_capable_host_ids(get_repos())
+
+    if selected_lab_names(ctx):
+        in_lab = set(lab_scoped_host_ids(ctx))
+        ids = [h for h in ids if h in in_lab]
 
     return sorted(h for h in ids if h.startswith(incomplete))
 
