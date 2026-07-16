@@ -303,7 +303,7 @@ Next steps
 ```
 
 See {doc}`guide/cli-reference` for the full `otto init` flag reference, and
-the {ref}`team-setup-checklist` in {doc}`guide/repo-setup` for the one-time
+the {ref}`team-setup-checklist` in {doc}`guide/setup/repo-setup` for the one-time
 decisions (host source, reservations, shared libs) that come after the
 initial scaffold.
 
@@ -359,7 +359,7 @@ load time.
 ```{tip}
 Setting otto up for a *team* is a one-time exercise — host source, reservation
 gating, shared libs, tab completion. The {ref}`team-setup-checklist` in
-{doc}`guide/repo-setup` walks through it.
+{doc}`guide/setup/repo-setup` walks through it.
 ```
 
 ### Environment variables
@@ -384,11 +384,11 @@ Other useful environment variables:
 
 `otto init --lab` (or `--all`) scaffolds `lab_data/lab.json` with one
 example host for you, plus a `lab_data/README.md` walking through its
-fields — see {doc}`guide/host-database` for the full per-field schema. This
+fields — see {doc}`guide/setup/host-database` for the full per-field schema. This
 section explains the format so you can add real hosts by hand.
 
 A lab file is a JSON object with a `hosts` array (and an optional `links`
-array declaring data-plane routes between hosts — see {doc}`guide/lab-config`).
+array declaring data-plane routes between hosts — see {doc}`guide/setup/lab-config`).
 Place lab files in one of the directories listed in your `labs` setting; each
 host joins one or more labs through its `labs` field, and `--lab <name>`
 selects the matching hosts:
@@ -443,7 +443,7 @@ Every lab also automatically contains a built-in `local` host — a
 {class}`~otto.host.local_host.LocalHost` that runs commands on the machine
 otto itself runs on, with no JSON entry needed — so
 `otto --lab my_lab host local run "uname -a"` always works.  Fleet helpers
-like `all_hosts()` exclude it by default; see {doc}`guide/run`.
+like `all_hosts()` exclude it by default; see {doc}`guide/run/index`.
 
 ## Your first instruction
 
@@ -549,7 +549,7 @@ dataclass decorator: decorating an Options class with it makes the class a
 pydantic dataclass, so its fields are validated. `otto test TestExample
 --retries -1` fails with a clean CLI error (exit code 2) instead of being
 silently accepted. The same `@options` classes power `@instruction(options=...)`
-for `otto run` subcommands. See {doc}`guide/options` for the full picture.
+for `otto run` subcommands. See {doc}`guide/run/options` for the full picture.
 
 The validation runs at construction time, so an out-of-range value is rejected
 before the suite ever runs:
@@ -584,11 +584,11 @@ This opens a web dashboard showing CPU, memory, disk, and network metrics.
 
 - {ref}`team-setup-checklist` -- One-time setup when adopting otto for a team
 - {doc}`guide/index` -- Detailed guides for each CLI command and project configuration
-- {doc}`cookbook/index` -- Recipes for common asyncio patterns
+- {doc}`library/index` -- Using otto as a Python library, plus recipes
 - {doc}`api/index` -- Full API reference
 
 ## Next steps
 
-- {doc}`guide/lab-config` — configuring hosts and labs
-- {doc}`guide/embedded` — firmware/RTOS targets
+- {doc}`guide/setup/lab-config` — configuring hosts and labs
+- {doc}`guide/hosts/embedded` — firmware/RTOS targets
 - {doc}`guide/index` — all command guides

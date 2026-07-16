@@ -1,5 +1,10 @@
 # Contributing
 
+Before changing code, start at {doc}`architecture/index` — it has one design
+page per functional area, mirroring the User Guide's sections, and each page
+ends with a "Where the code lives" section pointing at the modules that
+implement it.
+
 ## Development environment
 
 Vagrant can be used to develop and test changes to `otto`. After
@@ -402,7 +407,7 @@ docs/
 ├── overview.md          # Project overview
 ├── getting-started.md   # Installation and first steps
 ├── guide/               # Narrative user guides (Markdown)
-├── cookbook/             # Recipes with doctest examples (Markdown)
+├── library/             # Using otto as a library + recipes (Markdown)
 ├── architecture/        # How otto is built and why (Markdown)
 ├── contributing.md      # This page
 └── api/                 # API reference (reStructuredText, auto-generated)

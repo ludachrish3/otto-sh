@@ -42,7 +42,7 @@ Scope is the important invariant: **LogMode gates command I/O only** —
 records tagged with the host that emitted them. Framework diagnostics,
 warnings, and errors are never suppressed by LogMode; a `NEVER` host still
 logs its connection failures. This is why the monitor can set its polling
-hosts to `NEVER` ({doc}`../lifecycles/monitor`) without hiding real
+hosts to `NEVER` ({doc}`../subsystems/monitoring`) without hiding real
 problems.
 
 ## otto as a library citizen
@@ -57,3 +57,10 @@ there is no otto-specific logger accessor. The reverse direction is also
 covered: `capture_external_loggers` routes named third-party logger trees
 (product code using `logging.getLogger(__name__)`) into otto's sinks, so
 suite and instruction logs land in the same transcript as otto's own.
+
+## Where the code lives
+
+- {mod}`otto.logger.management` — sink wiring, the `QueueListener`,
+  time-boxed log rotation, and `capture_external_loggers`
+- {mod}`otto.logger.mode` — `LogMode` and `effective_mode`, the
+  most-restrictive-wins composition

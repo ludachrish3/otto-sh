@@ -241,7 +241,7 @@ to see what is available for a specific host.
 | `read-file` | Print a file's text contents |
 | `write-file` | Write text to a file on the host |
 
-See {doc}`host/capabilities` for class-scoping rules and which verbs each host
+See {doc}`hosts/capabilities` for class-scoping rules and which verbs each host
 type exposes.
 
 ### `run` options
@@ -338,7 +338,7 @@ otto cov report [OUTPUT_DIR...] [OPTIONS]
 | Subcommand | Description |
 | ---------- | ----------- |
 | `get` | Fetch `.gcda` counters from the lab and write one `capture.json` per board, anchored to `base_commit` (also run implicitly by `otto test --cov`) |
-| `clean` | Zero remote `.gcda` counters ahead of a fresh session (Unix coverage hosts only — embedded reset is a later phase) |
+| `clean` | Zero remote `.gcda` counters ahead of a fresh session (Unix coverage hosts only) |
 | `report` | Assemble every tier — e2e captures, unit harvest, committed manual store — into an HTML report |
 
 ### `otto cov get` options
@@ -472,7 +472,7 @@ otto reservation check
 ## otto link
 
 Inspect and impair the lab's static links (the topology edges `otto tunnel`
-rides). See {doc}`link` for the full guide (units, merge semantics, in-path
+rides). See {doc}`network/link` for the full guide (units, merge semantics, in-path
 impairment, safety refusals, custom impairers).
 
 ```text
@@ -510,7 +510,7 @@ otto link list
 ## otto tunnel
 
 Create, list, and remove host-resident bidirectional tunnels. See
-{doc}`tunnel` for the full guide (multi-hop chains, docker endpoints, host
+{doc}`network/tunnel` for the full guide (multi-hop chains, docker endpoints, host
 requirements, tunnel identity).
 
 ```text

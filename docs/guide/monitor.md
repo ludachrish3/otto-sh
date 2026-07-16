@@ -36,6 +36,15 @@ how it gets loaded either way — including live streaming straight into an
 *open* dashboard tab, watching a running `--live` session's charts grow in
 real time rather than requiring a reload.
 
+See {doc}`../architecture/subsystems/monitoring` for how collection,
+sessions, the `format:1` producer, and dashboard hydration fit together.
+
+## `otto monitor --help`
+
+```{raw} html
+:file: ../_static/generated/termynal/help-monitor.html
+```
+
 ## Live mode
 
 `--live` is the explicit opt-in that touches hardware; it is never the
@@ -373,13 +382,12 @@ and re-baselines from the new counters — a reboot never shows up as a
 spike.
 
 ```{note}
-{doc}`otto tunnel <tunnel>` discovery (`discover_tunnels`) is built as a
+{doc}`otto tunnel <network/tunnel>` discovery (`discover_tunnels`) is built as a
 `(command, pure parser)` pair for exactly this reason — it maps 1:1 onto the
-`MetricParser` shape below (command / parse / interval) so a future
-collector integration can reuse it as-is. That wiring (scheduling discovery
-on the collection interval, storing edges, topology views) is a later phase;
-today `otto.tunnel` stays monitor-free and `otto tunnel list` is the only
-live view of tunnels.
+`MetricParser` shape below (command / parse / interval). `otto.tunnel` stays
+monitor-free: it does not schedule discovery on the collection interval or
+store edges or topology views, and `otto tunnel list` is the only live view
+of tunnels.
 ```
 
 ## Custom parsers
@@ -698,7 +706,7 @@ network gear — on a separate channel from command execution.
 
 Use SNMP monitoring when a host either has no shell (embedded Zephyr targets) or
 when you prefer to pull metrics through a dedicated management channel rather than
-shell commands.  See {doc}`embedded` for embedded host setup and {doc}`lab-config`
+shell commands.  See {doc}`hosts/embedded` for embedded host setup and {doc}`setup/lab-config`
 for the `snmp` field reference.
 
 ### Configuring the `snmp` block in lab.json
@@ -731,7 +739,7 @@ an embedded device behind a hop this is typically the local end of a UDP relay
 on the hop host, not the device's own address.  `community` defaults to
 `"public"`.  `oids` is the list of OIDs to poll each tick — raw dotted OIDs,
 otto's named bundles (`otto-core`, `otto-net:N`, `otto-fs:N`), or a mix of
-both; see the `snmp.oids` field reference in {doc}`lab-config` for the full
+both; see the `snmp.oids` field reference in {doc}`setup/lab-config` for the full
 bundle syntax.  Presentation (label, chart group, unit) is supplied by the
 descriptor registry, not by lab data.
 
@@ -793,7 +801,7 @@ labels above (`rx if0`, `fs1 used`, …) come from the same descriptor
 registry as the core scalars, so they can be renamed per device — see
 [Extending: registering custom descriptors](#extending-registering-custom-descriptors)
 below.  Lab data never spells out these OIDs directly; the `otto-net:N` /
-`otto-fs:N` bundles (see {doc}`lab-config`) expand them and register their
+`otto-fs:N` bundles (see {doc}`setup/lab-config`) expand them and register their
 descriptors together.
 
 An OID present in `oids` but without a registered descriptor falls back to

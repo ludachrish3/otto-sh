@@ -50,7 +50,7 @@ public seams honest: if a registration API is awkward for otto's own
 built-ins, it is awkward for everyone, and it gets fixed rather than bypassed.
 Downstream repos register from their init modules (the `init` list in
 `.otto/settings.toml`), which bootstrap imports in phase 2
-({doc}`../lifecycles/index`).
+({doc}`../lifecycle`).
 
 ## The CLI command registry
 
@@ -102,10 +102,11 @@ scaffolded demo repo at docs build time:
 :file: ../../_static/generated/termynal/complete-host-ids.html
 ```
 
-More showcases live on the lifecycle pages: suite names and `--tests`
-({doc}`../lifecycles/test`), instruction names ({doc}`../lifecycles/run`),
-per-class host verbs plus registry-backed option values
-({doc}`../lifecycles/host`), and `--lab` ({doc}`../lifecycles/index`).
+More showcases live elsewhere: suite names and `--tests`
+({doc}`../../guide/test`), instruction names ({doc}`../../guide/run/index`),
+per-class host verbs ({doc}`../../guide/hosts/index`) plus registry-backed
+option values ({doc}`../../guide/hosts/connections`), and `--lab`
+({doc}`../lifecycle`).
 
 The consistent rule behind all of them: the process answering the keystroke
 **never runs user code**. Registry names come from the cache the slow path
@@ -117,3 +118,21 @@ disposable, timeout-bounded *subprocess* (warmed for free by any real `otto
 test --list-tests`, or by a one-time slow first TAB), and its result is cached
 under a reserved key so later completions are a plain read. The static scan
 stays as the always-available floor, so `--tests` completion is never empty.
+
+## Where the code lives
+
+- {mod}`otto.registry` — the `Registry` engine underneath every entry in the
+  inventory: loud duplicates, did-you-mean lookups, attribution
+- {mod}`otto.cli.registry` — `CommandSpec`, the CLI command registry, and
+  lazy dispatch
+- {mod}`otto.cli.run` / {mod}`otto.suite.register` — the `INSTRUCTIONS` and
+  `SUITES` registrations (`@instruction()`, `OttoSuite.__init_subclass__`)
+- `otto.config.completion_cache` — the completion fast path's cache
+- the host-side registries live beside the strategy they select:
+  {mod}`otto.host.os_profile`, {mod}`otto.host.connections`,
+  {mod}`otto.host.transfer`, {mod}`otto.host.command_frame`,
+  {mod}`otto.host.binary_loader`, {mod}`otto.host.embedded_filesystem`,
+  {mod}`otto.host.power`
+- `otto.labs`, {mod}`otto.reservations.registry`,
+  {mod}`otto.monitor.parsers`, {mod}`otto.monitor.snmp` — the remaining
+  registries in the inventory table

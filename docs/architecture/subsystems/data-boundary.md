@@ -61,7 +61,7 @@ counterpart fails CI.
 
 `OttoEnvSettings` (pydantic-settings) is the single reader of `OTTO_*`
 variables. Repo `settings.toml` files are parsed during bootstrap phase 1
-into `Repo` objects ({doc}`../lifecycles/index`); their tables (`[docker]`,
+into `Repo` objects ({doc}`../lifecycle`); their tables (`[docker]`,
 `[reservations]`, `[coverage]`, `[[os_profiles]]`, `[host_preferences]`) each
 have spec models. `otto.models.settings` is deliberately a leaf module — it
 must not import the packages it configures, or validation would drag the app
@@ -76,20 +76,27 @@ configured lab paths, and alternatives (a database, an inventory service)
 register a name via {func}`otto.labs.register_lab_repository`.
 {func}`otto.testing.assert_lab_repository_conforms` verifies a custom backend
 against the contract, and `otto.examples.lab_repository` is a copyable
-reference implementation. See {doc}`../../guide/host-database`.
+reference implementation. See {doc}`../../guide/setup/host-database`.
 
 Merging is part of loading: `--lab` may be passed multiple times and the
 resulting `Lab` objects merge, so a shared lab file and a personal overlay
 compose without editing either.
 
-## Schemas as exports, not just validation
+## Exported schemas
 
-Because every boundary is a pydantic model, otto can *emit* its data contracts:
-`otto schema export` writes JSON Schemas for `lab.json`,
+Because every boundary is a pydantic model, otto can *emit* its data
+contracts: `otto schema export` writes JSON Schemas for `lab.json`,
 `settings.toml`, and reservation files, which editors use for completion and
-inline validation ({doc}`../../guide/editor-schemas`). The schema version is
-bumped when host-spec fields change shape, keeping downstream lab data
-diagnosable.
+inline validation ({doc}`../../guide/setup/editor-schemas`). The schema is
+generated from the exact model that validates ingest, so the export and the
+runtime validator cannot disagree — there is no second definition to update,
+and the schema version bumps whenever host-spec fields change shape, keeping
+downstream lab data diagnosable.
+
+Extensions surface automatically: because project-registered host classes
+bring their own spec models ({doc}`hosts`), a repo that extends otto sees its
+fields in the export; `--builtins-only` restricts the export to otto's own
+types.
 
 ## Filesystem awareness
 
@@ -99,3 +106,19 @@ database uses SQLite WAL journaling on local disks but DELETE journaling on
 network mounts (where WAL's shared-memory semantics are unreliable), and log
 rotation time-boxes its directory scans so an NFS stat storm cannot stall
 startup ({doc}`../utilities/logging`).
+
+## Where the code lives
+
+- {mod}`otto.models.host` — `HostSpec`, `UnixHostSpec`, `EmbeddedHostSpec`:
+  the spec half of the spec → runtime pattern
+- {mod}`otto.models.settings` — settings-table spec models, including
+  `OttoEnvSettings`, kept a leaf module
+- {mod}`otto.host.factory` — `create_host_from_dict`, the fixed
+  construction order
+- {mod}`otto.host.os_profile` — `OsProfile`, the base-family → host-class
+  selection
+- {mod}`otto.labs.protocol` — the `LabRepository` host-source contract
+- `otto.testing` / {mod}`otto.examples.lab_repository` — the conformance
+  helper and reference implementation for custom lab repositories
+- `otto.filesystem` — network-filesystem detection behind the
+  write-adaptive components

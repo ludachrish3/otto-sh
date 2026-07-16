@@ -177,7 +177,7 @@ def _session_context(log_dir: Path) -> Iterator[None]:
       normal unknown-host error (plus an ``open_context`` breadcrumb keyed off
       ``LIBRARY_LAB_NAME`` — see :meth:`otto.context.OttoContext.get_host`) —
       correct for hostless library runs; suites that need lab hosts use
-      ``open_context()`` (see the library-usage guide).
+      ``open_context()`` (see the Python library guide).
     - **Active context without an output_dir**: point it at *log_dir* for the
       session (the same assignment the CLI preamble makes) and restore the
       prior value afterwards. The prior value is captured explicitly (``prior

@@ -41,3 +41,9 @@ The shared vocabulary is {class}`~otto.utils.Status`: `Success`, `Failed`,
 A `@cli_exposed` host verb returning any `Result` gets these semantics on the
 CLI for free; returning a plain value exits `0`. See
 {doc}`../subsystems/hosts` for how verbs become CLI commands.
+
+## Where the code lives
+
+- {mod}`otto.result` — `Result`, `CommandResult`, `Results`, and the
+  exit-code derivation
+- {mod}`otto.utils` — the shared `Status` vocabulary

@@ -2,7 +2,7 @@
 
 Drives a plain Python script — no ``otto`` CLI involved at all — that mirrors
 the "Running suites from Python" walkthrough in
-``docs/guide/library-usage.md``: ``bootstrap()``, ``find_suite()``,
+``docs/library/index.md``: ``bootstrap()``, ``find_suite()``,
 ``run_suite()``. This is the flow that caught the extraction's only shipped
 bug (``run_suite`` assuming a CLI-installed context was already active); this
 test regresses it directly, with the CLI layer entirely out of the picture.

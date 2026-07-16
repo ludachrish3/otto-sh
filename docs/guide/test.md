@@ -5,6 +5,12 @@
 registers them automatically.  Each suite becomes its own subcommand with
 typed CLI options.
 
+## `otto test --help`
+
+```{raw} html
+:file: ../_static/generated/termynal/help-test.html
+```
+
 ## Defining a test suite
 
 Create a `test_*.py` file in one of your repo's `tests` directories:
@@ -75,43 +81,17 @@ rule). Registration:
 4. Adds the suite as a subcommand of `otto test`
 
 This all happens at import time when otto scans your `tests` directories.
+Auto-registration is one seam among many; see
+{doc}`Extension points <../architecture/subsystems/extension-points>` for the
+registry machinery behind this and every other way otto can be extended.
 
 ## Options classes
 
-A suite's options class is expanded into `otto test <Suite>` flags and handed to
-each test method as `suite_options` — the test-suite stage of otto's options
-lifecycle ({doc}`options`).
-
-Suite-specific options are defined with `@options` using
-`Annotated[T, typer.Option(...)]` fields.  They automatically appear in
-`otto test <Suite> --help`:
-
-```python
-from otto import options
-
-@options
-class _Options:
-    firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
-```
-
-### Inheriting options
-
-You can share options across suites by inheriting from a base options class:
-
-```python
-from otto import options
-
-@options
-class RepoOptions:
-    device_type: Annotated[str, typer.Option(help="Device type.")] = "router"
-    lab_env: Annotated[str, typer.Option(help="Lab environment.")] = "staging"
-
-@options
-class _Options(RepoOptions):
-    firmware: Annotated[str, typer.Option(help="Firmware version.")] = "latest"
-```
-
-Import the base from a shared module listed in your `init` setting.
+A suite's inner `Options` class is expanded into `otto test <Suite>` flags and
+handed to each test method as `suite_options` — the test-suite stage of
+otto's options lifecycle. See {doc}`run/options` for how to define,
+validate, and share an options class (including inheriting a repo-wide base
+across suites).
 
 ## Running suites
 
@@ -125,9 +105,17 @@ otto test --list-tests                      # list every registered test
 otto test --list-tests --markers slow TestDevice   # narrow by marker and/or suite
 ```
 
+`otto test <SuiteName>` gets registry-backed completion and `--list-suites`
+for free, like every other registry — these candidates are the demo repo's
+registered suites, resolved by the real completion machinery:
+
+```{raw} html
+:file: ../_static/generated/termynal/complete-suites.html
+```
+
 Suites can also run as a plain library call, with no CLI/Typer involved — see
-[Running suites from Python](library-usage.md#running-suites-from-python) in
-the library usage guide.
+[Running suites from Python](../library/index.md#running-suites-from-python)
+in the Python library guide.
 
 ## Running without a suite name
 
@@ -156,22 +144,17 @@ otto test --tests test_login -m slow             # narrow a name selection by ma
 
 `--tests` tab-completes test names, matched by **base name** — a bare
 `test_login` selects every `test_login[...]` parametrization, and
-`TestClass::test_login` disambiguates. Two layers feed the candidates:
+`TestClass::test_login` disambiguates:
 
-- A **static source scan** (the `def test_*` functions and `Test*` class
-  methods otto can see without importing your code) is the always-available
-  floor — instant, and it never runs a test at tab time.
-- A **pytest-collected** set adds tests that only exist after collection —
-  dynamically generated ones (`pytest_generate_tests`, conftest fixtures) a
-  source scan can't see. It's warmed by any real collection: `otto test
-  --list-tests` fills it for free, and otherwise the first `--tests` TAB runs
-  one bounded background collection (a single, capped slow TAB; it falls back
-  to the floor if it can't finish in time) and caches the result — so later
-  completions are fast *and* complete. Editing a test file re-warms it
-  automatically. The collection runs in a throwaway subprocess, so the shell's
-  completion never runs your code directly.
+```{raw} html
+:file: ../_static/generated/termynal/complete-test-names.html
+```
 
-For the exact, fully-expanded per-parametrization list, `otto test
+Candidates come from a static source scan plus, once warmed, real pytest
+collection — so dynamically generated tests are included too, and the first
+slower TAB is a one-time cost. See
+{doc}`../architecture/subsystems/execution` for the two-layer mechanism
+behind it. For the exact, fully-expanded per-parametrization list, `otto test
 --list-tests` still prints every collected id.
 - Multi-repo selection runs write one JUnit file per repo
   (`junit_<repo>.xml`) instead of the single-suite `junit.xml`. An explicit

@@ -13,7 +13,17 @@ authoritative.
 
 ```{note}
 Wiring up reservations is a one-time, team-level decision. See the
-{ref}`team-setup-checklist` in {doc}`repo-setup` for the full onboarding map.
+{ref}`team-setup-checklist` in {doc}`setup/repo-setup` for the full onboarding map.
+```
+
+See {doc}`../architecture/subsystems/reservations` for what makes
+`reservation` unique among the first-party commands — lab-free identity,
+`check` as the preamble's gate standalone, and the break-glass design.
+
+## `otto reservation --help`
+
+```{raw} html
+:file: ../_static/generated/termynal/help-reservation.html
 ```
 
 ## What gets checked, and where
@@ -231,8 +241,8 @@ banner, no warning, no error.
 Omit `[reservations]` or set `backend = "none"` for labs that nobody
 else is using, while keeping `backend = "json"` (or your custom
 backend) on the production labs.  There is currently one
-`[reservations]` section per repo — if you need to vary by lab, that
-lives on the roadmap.
+`[reservations]` section per repo, so the backend cannot be varied by
+lab.
 
 ## Writing a custom backend
 
@@ -290,6 +300,9 @@ passed when present. Selecting an unregistered name raises an error listing the
 registered backends. This is the same named-registry mechanism otto uses for
 host sources, term/transfer backends, and host classes; an `init` module always
 imports before the reservation check runs, so the name is registered in time.
+See {doc}`Extension points <../architecture/subsystems/extension-points>` for
+the registry machinery behind this and every other seam otto can be extended
+at.
 
 ### Verify your backend
 

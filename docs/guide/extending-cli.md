@@ -13,8 +13,8 @@ eight subcommand groups register through this same function — see
 ## Registering a top-level command
 
 Decorate an async function with `@cli_command()` in a module listed in your
-settings file's `init` field (see {doc}`repo-setup`). The ergonomics
-deliberately match `@instruction()` (see {doc}`run`): an `OttoContext`-annotated
+settings file's `init` field (see {doc}`setup/repo-setup`). The ergonomics
+deliberately match `@instruction()` (see {doc}`run/index`): an `OttoContext`-annotated
 parameter is injected and hidden from the CLI, and an `options=` dataclass
 expands into individual flags. Unlike `@instruction()`, `@cli_command()` takes
 keyword arguments only (`options=`, `name=`, `help=`, `lab_free=`, `output_dir=`,
@@ -198,7 +198,7 @@ registration from 'acme.other'. CLI command names cannot be overwritten; pick a
 unique name.
 ```
 
-Unlike the backend registries covered in {doc}`extending-backends` (term,
+Unlike the backend registries covered in {doc}`hosts/extending-backends` (term,
 transfer, host classes, ...), which accept `overwrite=True` for a deliberate
 replacement, **`register_cli_command()` has no `overwrite` parameter at
 all** — there is deliberately no escape hatch for CLI commands. A user-facing
@@ -238,16 +238,18 @@ shell tab completion — there is nothing extra to wire up. Two paths feed this:
 Inside the command body, return whatever your logic produces. If it's a
 `Result` (or `CommandResult`/`Results`), otto derives the process exit code
 from it using the same polymorphic, ssh-like rules `otto host <name> <verb>`
-uses — see [Exit codes](host/index.md#exit-codes) in the host guide for the
+uses — see [Exit codes](hosts/index.md#exit-codes) in the host guide for the
 full table. A plain (non-`Result`) return value is printed as-is and the
 process exits `0`.
 
 ## See also
 
-- {doc}`run` — instructions (`otto run ...`), the closest sibling to a
+- {doc}`run/index` — instructions (`otto run ...`), the closest sibling to a
   `@cli_command()` leaf
-- {doc}`extending-backends` — the term/transfer backend registries, which
+- {doc}`hosts/extending-backends` — the term/transfer backend registries, which
   share {class}`~otto.registry.Registry`'s engine but allow `overwrite=True`
   where CLI commands deliberately don't
-- {doc}`repo-setup` — the `init` field that makes registration modules load
-- {doc}`library-usage` — using otto without the CLI at all
+- {doc}`setup/repo-setup` — the `init` field that makes registration modules load
+- {doc}`../library/index` — using otto without the CLI at all
+- {doc}`Extension points <../architecture/subsystems/extension-points>` — the
+  registry machinery behind this and every other seam otto can be extended at

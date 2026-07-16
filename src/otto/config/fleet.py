@@ -164,7 +164,7 @@ def all_hosts(  # noqa: PLR0913 — wide host-dispatch API (mirrors do_for_all_h
 
     Examples:
         Filter the active lab's hosts by id pattern (see
-        :doc:`/guide/library-usage` for a runnable, in-memory example)::
+        :doc:`/library/index` for a runnable, in-memory example)::
 
             import re
 

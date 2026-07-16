@@ -687,7 +687,7 @@ class BaseHost(ABC):
         user: str | None = None,
         timeout: float | None = None,
     ) -> "AsyncIterator[AppShellT]":
-        """Run *shell_cls* on a dedicated session; see the sessions cookbook.
+        """Run *shell_cls* on a dedicated session; see the sessions recipe.
 
         ``timeout``, if given, becomes this session's default prompt-wait
         (governs the launch wait and every :meth:`~otto.host.app_shell.AppShell.cmd`

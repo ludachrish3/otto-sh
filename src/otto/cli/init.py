@@ -3,7 +3,7 @@
 Each *area* (settings, lab, tests, instructions) can be detected, validated
 (existing artifacts are checked via the SAME ingestion code bootstrap uses —
 never modified), or scaffolded. Interactive by default; ``--all`` or per-area
-flags skip prompts. See docs/guide/repo-setup.md.
+flags skip prompts. See docs/guide/setup/repo-setup.md.
 """
 
 import dataclasses
@@ -28,7 +28,7 @@ tests = ["${{sut_dir}}/tests"]     # defines where test discovery happens
 libs = ["${{sut_dir}}/pylib"]      # added to sys.path at startup
 init = ["{init_module}"]           # modules imported at startup (register instructions)
 
-# --- optional sections (uncomment to use; see docs/guide/repo-setup.md) ---
+# --- optional sections (uncomment to use; see docs/guide/setup/repo-setup.md) ---
 # [lab]                    # host-source backend selection (default: json)
 # [host_preferences."*"]   # selector-scoped term/transfer preferences
 # [os_profiles."my-os"]    # named OS-profile bundles for host entries
@@ -40,7 +40,7 @@ init = ["{init_module}"]           # modules imported at startup (register instr
 EXAMPLE_HOST_ENTRY = {
     "_comment": (
         "Example host — replace these values. Full host schema: "
-        "docs/guide/host-database.md or `otto schema export`. The `labs` list "
+        "docs/guide/setup/host-database.md or `otto schema export`. The `labs` list "
         "names the labs this host belongs to (select with --lab/OTTO_LAB)."
     ),
     "ip": "192.0.2.1",
@@ -56,7 +56,7 @@ EXAMPLE_HOST_ENTRY = {
 LAB_JSON_TEMPLATE: dict[str, Any] = {
     "_comment": (
         "otto lab database: 'hosts' lists every lab host; 'links' declares "
-        "data-plane routes between them (see docs/guide/lab-config.md). "
+        "data-plane routes between them (see docs/guide/setup/lab-config.md). "
         "Keys starting with _ are comments."
     ),
     "hosts": [EXAMPLE_HOST_ENTRY],
@@ -71,7 +71,7 @@ JSON object with two array sections:
 
 - **`hosts`** — every lab host. Each entry is validated against a pydantic spec
   before otto will use it (`UnixHostSpec` / `EmbeddedHostSpec`, see
-  `docs/guide/host-database.md`). The scaffolded `lab.json` has one example
+  `docs/guide/setup/host-database.md`). The scaffolded `lab.json` has one example
   host; edit or replace it, and add as many more as your lab needs.
 - **`links`** — declared data-plane routes between hosts (routes not used for
   ssh/telnet access, carrying UDP/HTTP/RTP/etc.). Empty by default; see the
@@ -129,7 +129,7 @@ inside host/link entries. Use it freely.
 
 ## Where to go next
 
-- Full host schema reference: `docs/guide/host-database.md`
+- Full host schema reference: `docs/guide/setup/host-database.md`
 - Machine-readable schema (for editor validation or codegen):
   `otto schema export`
 - Confirm otto sees your hosts once you've edited this file:

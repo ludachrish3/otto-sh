@@ -14,6 +14,15 @@ interact with one or more remote machines as part of their workflow —
 deploying builds, validating firmware, running integration tests, or
 collecting performance data.
 
+## Where to start
+
+- **Drive your lab from the CLI** → the {doc}`User Guide <guide/index>`,
+  one section per functional area.
+- **Script otto from Python** → the {doc}`Python library <library/index>`
+  section (the {doc}`API reference <api/index>` backs it).
+- **Work on otto itself** → {doc}`Architecture <architecture/index>`, one
+  design page per area, plus {doc}`contributing`.
+
 ## Two ways to use otto
 
 Otto serves two audiences, and the documentation is organized around them:
@@ -53,7 +62,7 @@ Every lab automatically contains a built-in `local` host — a
 {class}`~otto.host.local_host.LocalHost` for the machine otto itself runs
 on, usable as `otto host local <verb>` with no configuration.  It is
 excluded from lab-wide fleet helpers by default so a deploy or monitoring
-sweep never silently operates on the runner; see {doc}`guide/run` for the
+sweep never silently operates on the runner; see {doc}`guide/run/index` for the
 opt-in.
 
 ### Results
@@ -170,7 +179,7 @@ Both suites and instructions accept an options class. For flags that
 are repo-wide (device type, lab environment, etc.), define a single
 `RepoOptions` class in a module listed in your `init` setting — a `libs` path
 like `pylib/` is one common choice — and inherit it from both sides —
-see [Sharing repo-wide options](guide/run.md#sharing-repo-wide-options-across-instructions-and-suites).
+see [Sharing repo-wide options](guide/run/index.md#sharing-repo-wide-options-across-instructions-and-suites).
 
 ### Monitor (`otto monitor`)
 
@@ -220,8 +229,8 @@ Monitoring can also be started from within a test suite using
 - {doc}`getting-started` — Installation and first steps
 - {ref}`team-setup-checklist` — One-time team setup (host source, reservations, libs)
 - {doc}`guide/index` — Detailed guides for each CLI command
-- {doc}`guide/options` — Shared options classes for instructions and suites
+- {doc}`guide/run/options` — Shared options classes for instructions and suites
 - {doc}`guide/extending-cli` — Registering your own top-level `otto` commands
-- {doc}`cookbook/index` — Recipes for common asyncio patterns
+- {doc}`library/index` — Using otto as a Python library, plus recipes
 - {doc}`architecture/index` — How otto is put together, for contributors and extenders
 - {doc}`api/index` — Full API reference for all otto packages

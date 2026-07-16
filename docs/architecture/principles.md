@@ -32,14 +32,14 @@ the seams cannot rot unnoticed. ({doc}`subsystems/registries`)
 components that want their dependencies visible take a `ctx`. The
 context-variable behind {func}`~otto.context.get_context` is plumbing for
 the zero-argument convenience accessors — not license for hidden globals.
-({doc}`lifecycles/index`)
+({doc}`lifecycle`)
 
 ## Deterministic lifecycles, no `__del__`
 
 Resources are closed by scopes (`HostScope`, `async with`, explicit
 `close()`), never by garbage collection. `__del__` was removed deliberately;
 teardown must be orderly and observable — containers close before their
-parent's connection, sessions drain before sockets. ({doc}`lifecycles/index`,
+parent's connection, sessions drain before sockets. ({doc}`lifecycle`,
 {doc}`subsystems/docker-hosts`)
 
 ## The CLI edge is lazy and unbrickable
@@ -49,7 +49,7 @@ modules; shell completion's fast path runs zero user code; a malformed
 `settings.toml` or broken init module degrades to a framed warning, never a
 traceback before argv parsing. A deterministic import-budget guard in the
 test suite keeps startup cost from regressing. ({doc}`subsystems/registries`,
-{doc}`lifecycles/index`)
+{doc}`lifecycle`)
 
 ## Fail loud, fail framed
 
@@ -80,7 +80,7 @@ Where an established tool has trained users, otto follows: exit codes are
 ssh-like (`255` = never ran, otherwise the shell's retcode); test semantics
 are pytest's, not a reinvention; suites and instructions share option
 classes; JSON/TOML field names are `snake_case`, matching the Python they
-become. ({doc}`utilities/results`, {doc}`lifecycles/test`)
+become. ({doc}`utilities/results`, {doc}`subsystems/execution`)
 
 ## Documentation is part of the change
 

@@ -77,12 +77,16 @@ lab. This walks each repo's `[docker]` settings and registers
 When `compose_up()` runs (from CLI or directly from an instruction),
 it overwrites the placeholder with a real entry whose `container_id`
 is resolved from
-`docker compose -p <proj> ps -q <service>`. `compose_down()` removes
-the entry again.
+`docker compose -p <proj> ps -q <service>`. `compose_down()` closes
+each container host before removing its entry — sessions must drain
+while the parent's connection is still alive, so container hosts
+close before their parent, the same teardown discipline described in
+{doc}`../principles` (the session-level mechanics are below, under
+"Persistent shell sessions").
 
 This avoids writing back to `lab.json` at runtime — that file stays
-read-only — while still giving the tab-completion / listing UX the
-TODO asked for.
+read-only — while still keeping `--list-hosts` and tab completion
+populated immediately.
 
 ## Build skipping
 
@@ -100,7 +104,9 @@ A new `DockerContainerHost` copies its parent's `resources` set so
 concurrent test runs that both want `pepper_seed.repo1.api` serialize
 through the existing reservation backend. There's no separate
 container-reservation concept — the parent's reservation transitively
-covers its containers.
+covers its containers. That's also why the `otto docker` command itself
+carries no independent reservation gate (`gate=False` on its `CommandSpec`,
+{doc}`../lifecycle`): gating the parent host is the whole story.
 
 ## Persistent shell sessions
 
@@ -133,11 +139,11 @@ The container id is resolved lazily at session-open time so that
 hosts pre-registered as placeholders (with `container_id=""`) work
 correctly once `compose_up` populates the id.
 
-Lifecycle: `compose_down` now `await`s `host.close()` on each
-container host before popping it from `lab.hosts`, ensuring the
-session's docker exec channel drains while the parent's SSH
-connection is still alive. Container hosts must close before their
-parents.
+This is what makes the close-before-parent ordering described above
+(under "Lifecycle and the lab") concrete: `compose_down` `await`s
+`host.close()` on each container host before popping it from
+`lab.hosts`, so this very session's docker exec channel drains while the
+parent's SSH connection is still alive.
 
 ## Out of scope
 
@@ -149,3 +155,10 @@ parents.
   docker is expected to be managed via Kubernetes rather than as a
   first-class otto host. `exec()` (and `get` / `put`) still work
   against any parent.
+
+## Where the code lives
+
+- {mod}`otto.host.docker_host` — `DockerContainerHost`, `_DockerSshSession`,
+  and parent delegation
+- {mod}`otto.docker` — `build_images`, `compose_up`/`compose_down`, and
+  placeholder registration

@@ -13,7 +13,7 @@ library API behind ``otto tunnel add`` / ``list`` / ``remove``;
 layer it wraps, and ``otto.tunnel.sentinel`` is the argv-tag codec that
 makes every running process self-describing. For CLI usage, multi-hop
 chains, docker endpoints, and host requirements, see the
-:doc:`user guide <../guide/tunnel>`.
+:doc:`user guide <../guide/network/tunnel>`.
 
 .. automodule:: otto.tunnel
    :members:

@@ -6,6 +6,12 @@ addressable by `otto host <id>` for `login`, `run`, `get`, and `put` —
 exactly like any other host. Hops are inherited from the parent host so a
 container behind a multi-hop SSH chain works without extra wiring.
 
+## `otto docker --help`
+
+```{raw} html
+:file: ../_static/generated/termynal/help-docker.html
+```
+
 ## Constraints
 
 - Otto users typically don't have local root. Builds and compose runs
@@ -80,6 +86,9 @@ transfer) auto-starts its compose stack on demand via `compose_up`
 can't be started — for example its image hasn't been built — the command
 fails fast with a clear "run `otto docker up` first" error.
 
+See {doc}`../architecture/subsystems/docker-hosts` for why a container
+delegates to its parent host instead of being a parallel transport stack.
+
 ## Library API (instructions and suites)
 
 The CLI is a thin wrapper around `otto.docker`. Project instructions and
@@ -111,9 +120,9 @@ Each image is tagged with a hash of:
 `docker image inspect <tag>:<hash>` is consulted before every build. A
 match short-circuits the build; `--rebuild` forces it.
 
-## Limitations (MVP)
+## Scope and constraints
 
-- Builds run on the parent only. No local-build path yet.
+- Builds run on the parent only; there is no local-build path.
 - Cross-host networking between containers on different parents is not
   managed.
 - `run()`, `open_session()`, `send()`, and `expect()` require an

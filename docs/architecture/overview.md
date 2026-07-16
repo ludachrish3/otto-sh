@@ -10,20 +10,20 @@ are fanned out with asyncio, never threads.
 
 Everything a user does goes through one of nine first-party commands. Each is
 an ordinary entry in the CLI command registry — registered through the same
-public API a third-party command uses — and each has a lifecycle page
+public API a third-party command uses — and each links to the page
 explaining what it does once the shared machinery hands over control:
 
 | Command | What it is |
 | --- | --- |
-| {doc}`otto run <lifecycles/run>` | Procedures: registered instructions with lab access |
-| {doc}`otto test <lifecycles/test>` | Verdicts: suites and pytest-native selection runs |
-| {doc}`otto host <lifecycles/host>` | Direct host verbs, synthesized from Python methods |
-| {doc}`otto monitor <lifecycles/monitor>` | Live metrics, dashboard, and replay |
-| {doc}`otto cov <lifecycles/cov>` | Cross-compiled gcov coverage reports |
-| {doc}`otto docker <lifecycles/docker>` | Images and compose stacks on lab hosts |
-| {doc}`otto reservation <lifecycles/reservation>` | The reservation gate, made inspectable |
-| {doc}`otto schema <lifecycles/schema>` | The data contracts, exported for editors |
-| {doc}`otto init <lifecycles/init>` | Scaffold a new repo; doctor an existing one |
+| {doc}`otto run <subsystems/execution>` | Procedures: registered instructions with lab access |
+| {doc}`otto test <subsystems/execution>` | Verdicts: suites and pytest-native selection runs |
+| {doc}`otto host <subsystems/hosts>` | Direct host verbs, synthesized from Python methods |
+| {doc}`otto monitor <subsystems/monitoring>` | Live metrics, dashboard, and replay |
+| {doc}`otto cov <subsystems/coverage>` | Cross-compiled gcov coverage reports |
+| {doc}`otto docker <subsystems/docker-hosts>` | Images and compose stacks on lab hosts |
+| {doc}`otto reservation <subsystems/reservations>` | The reservation gate, made inspectable |
+| {doc}`otto schema <subsystems/data-boundary>` | The data contracts, exported for editors |
+| {doc}`otto init <subsystems/bootstrap>` | Scaffold a new repo; doctor an existing one |
 
 These first-party commands stand on shared machinery, and the machinery
 stands on a small set of foundations:
@@ -67,7 +67,7 @@ digraph bigpicture {
 }
 ```
 
-Read {doc}`lifecycles/index` for the shared path every invocation walks —
+Read {doc}`lifecycle` for the shared path every invocation walks —
 bootstrap, dispatch, preamble, teardown — before its command takes over.
 
 ## Layer map
@@ -130,6 +130,6 @@ implementations, conformance-verified in otto's own suite).
   registries reject duplicate names loudly and attribute every entry to the
   module that registered it; see {doc}`subsystems/registries`.
 
-The lifecycle pages cover each first-party command in depth, the subsystem
-pages cover the machinery, and {doc}`principles` collects the recurring
-design rules the codebase holds itself to.
+The lifecycle page and the subsystem pages together cover each first-party
+command in depth, and {doc}`principles` collects the recurring design rules
+the codebase holds itself to.

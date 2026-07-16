@@ -1,44 +1,44 @@
 Architecture
 ============
 
-These pages describe how otto is put together and why it is shaped the way it
-is — written for contributors and for anyone extending otto beyond what the
-:doc:`user guide <../guide/index>` covers. The guide explains how to *use*
-each feature; this section explains the moving parts behind them.
+These pages describe how otto is put together and why it is shaped the way
+it is — written for contributors. The :doc:`User Guide <../guide/index>`
+explains how to *use* each functional area; each page here explains the
+moving parts behind one, and the two link across rather than repeat each
+other.
 
-The section reads like a story, in order:
-
-1. **Overview** — what otto is and its nine first-party commands.
-2. **Command lifecycles** — the shared path every invocation walks (entry,
-   bootstrap, dispatch, preamble, teardown), then what each command does
-   differently once it takes over.
-3. **Subsystems** — the machinery underneath: hosts, registries, the data
-   boundary, and the extension seams.
-4. **Utilities** — the cross-cutting spines every subsystem leans on.
-5. **Principles** — the recurring design rules that keep the codebase
-   coherent, and where each is enforced.
+Start with the overview and the shared command lifecycle, then jump to the
+area you are changing. The extensibility pages describe the registry
+machinery every seam shares; the utilities are the cross-cutting spines;
+the principles are the recurring design rules.
 
 .. toctree::
    :caption: Overview
    :maxdepth: 1
 
    overview
+   lifecycle
 
 .. toctree::
-   :caption: Command lifecycles
-   :maxdepth: 2
-
-   lifecycles/index
-
-.. toctree::
-   :caption: Subsystems
+   :caption: Design by area
    :maxdepth: 1
 
    subsystems/hosts
-   subsystems/registries
-   subsystems/data-boundary
-   subsystems/extension-points
    subsystems/docker-hosts
+   subsystems/execution
+   subsystems/network
+   subsystems/monitoring
+   subsystems/coverage
+   subsystems/reservations
+   subsystems/bootstrap
+   subsystems/data-boundary
+
+.. toctree::
+   :caption: Extensibility
+   :maxdepth: 1
+
+   subsystems/registries
+   subsystems/extension-points
 
 .. toctree::
    :caption: Utilities

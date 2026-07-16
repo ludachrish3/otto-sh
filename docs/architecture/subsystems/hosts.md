@@ -30,9 +30,56 @@ What each layer adds:
 {class}`~otto.host.local_host.LocalHost` exists so instructions can mix local
 build steps with remote deployment through one interface; every lab gets a
 built-in `local` host, excluded from fleet iteration by default
-({doc}`../lifecycles/index`). {class}`~otto.host.docker_host.DockerContainerHost`
+({doc}`../lifecycle`). {class}`~otto.host.docker_host.DockerContainerHost`
 delegates everything to a parent `UnixHost` rather than duplicating the
 transport stack — that design has its own page: {doc}`docker-hosts`.
+
+## The CLI layer: verbs from methods
+
+`otto host <id> <verb>` is not a hand-written command set: every verb is
+synthesized from a `@cli_exposed` coroutine method on the resolved host's
+class. The Python API is the source of truth and the CLI is a projection of
+it — add a method, get a subcommand.
+
+The group behind `otto host` (`HostGroup` in `otto/cli/expose.py`) collects
+`@cli_exposed` methods across every registered host class — built-in and
+project-registered alike — and filters the visible, dispatchable set to the
+verbs defined on the class of the host actually named on the command line.
+Scoping falls out of method *definedness*: `UnixHost` defines `lsmod`, so
+`otto host router1 lsmod` exists; an `EmbeddedHost` doesn't, so the verb
+isn't offered there. A project that registers `MyHost` with a `@cli_exposed`
+method gets its verb with no extra wiring — the same first/third-party
+symmetry as everywhere else ({doc}`registries`). Each verb's flags come from
+the method's own signature, via the same options-to-parameters machinery
+instructions and suites use; `Arg`/`Opt`/`Exclude` annotations fine-tune the
+CLI projection without touching the Python call shape.
+
+A verb's return value is rendered by one shared path: members of the
+{class}`~otto.result.Result` family drive both output and the exit code
+(`result.exit_code`, ssh-like semantics — {doc}`../utilities/results`);
+`None` means side-effect-only success; any other value is the documented
+third-party fallback, printed as-is with exit `0`. Command output itself
+streams live during execution, so a successful `run` verb prints nothing
+extra at the end — the user-facing exit-code table lives in
+{doc}`../../guide/hosts/index`.
+
+Tab completion mirrors the synthesis model at every position: host ids come
+from the completion cache's snapshot, falling back to a live lab scan on a
+cold cache (completion never runs user code, {doc}`registries`); once a host
+id is typed, the verb candidates are that host's class menu — the same
+definedness scoping that decides what is dispatchable; and option values
+backed by registries complete from the registry, so a project-registered
+term backend completes exactly like a built-in one. See these captured live
+in {doc}`../../guide/hosts/index` and {doc}`../../guide/hosts/connections`.
+
+What is unique about `host` among the first-party commands:
+
+- The full preamble applies, but *read-only* verbs (`ls`, `exists`,
+  `read-file`, …) are registered with `output_dir=False` — inspecting a host
+  should not litter `--xdir` with empty run directories.
+- Per-invocation `--term` / `--transfer` / `--hop` overrides apply option
+  overlays to the one resolved host before the verb runs
+  ({doc}`../../guide/hosts/connections`).
 
 ## Sessions: persistent `run` vs stateless `exec`
 
@@ -98,7 +145,7 @@ Which backend a host actually uses is resolved from three inputs:
 
 The same mechanism resolves per-protocol option tables (e.g. `ssh_options`),
 so "prefer netcat on this board family, with these ports" is data, not code.
-See {doc}`../../guide/host/configuration` for the user-facing rules.
+See {doc}`../../guide/hosts/configuration` for the user-facing rules.
 
 ## From lab data to a host object
 
@@ -109,7 +156,7 @@ over a *base family* (`unix`, `embedded`) — the profile picks the host class
 and its pydantic spec, defaults and host fields are merged (host fields win),
 the spec validates, and `to_host()` builds the runtime object. Custom host
 classes and profiles register through `register_host_class` /
-`register_os_profile` ({doc}`../../guide/os-profiles`).
+`register_os_profile` ({doc}`../../guide/hosts/os-profiles`).
 
 Profiles are the **data** half of otto's customization split: they name a
 bundle of defaults many hosts share. The **code** half is products —
@@ -135,3 +182,12 @@ own registry ({doc}`registries`):
 Power control ({class}`~otto.host.power.PowerController`) and privilege
 escalation (`otto.host.privilege`) follow the same pattern: an abstract
 strategy, a registry, and per-host selection from lab data.
+
+## Where the code lives
+
+- `otto.host` — host classes, sessions, connections, transfer, and the
+  embedded strategy objects
+- `otto.cli.expose` — `HostGroup` and the `@cli_exposed` verb synthesis and
+  completion behind `otto host`
+- {mod}`otto.result` — the `Result` family that renders verb output and
+  derives exit codes

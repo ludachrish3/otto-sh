@@ -22,6 +22,16 @@ time by `scripts/capture_docs_media.py` — the same pipeline that captures
 the monitor dashboard — so it can never drift from what `otto cov report`
 actually produces.*
 
+See {doc}`../architecture/subsystems/coverage` for how the fetch → merge →
+capture → render pipeline fits together, and for the design behind tiers,
+validity, and why only manual captures are committed.
+
+## `otto cov --help`
+
+```{raw} html
+:file: ../_static/generated/termynal/help-cov.html
+```
+
 ## Prerequisites
 
 The following system packages must be installed on the **otto host**
@@ -333,7 +343,7 @@ Both `otto cov get` and this `otto test --cov` tail wrap one async library
 function — `collect_coverage()` — paired with `run_coverage_report()` for the
 HTML report. To drive collection and reporting from your own Python (CI glue or
 a custom pipeline), see the *Collecting coverage from Python* section of
-{doc}`library-usage`.
+{doc}`../library/index`.
 ```
 
 ### Choosing a Destination
@@ -392,11 +402,10 @@ otto cov clean
 ```
 
 It targets the same host selection `otto cov get` fetches from, but
-**Unix hosts only**.  Embedded coverage-hosts need a product-side
-`cov_reset` LLEXT function mirroring `cov_dump` (a later phase); when
-the lab has any, the command logs a note and exits `0` rather than
-failing.  A lab with *only* embedded coverage hosts is likewise not an
-error — there is simply nothing this phase can clean yet.
+**Unix hosts only**.  Embedded targets expose no counter-reset hook; when
+the lab has any embedded coverage hosts, the command logs a note and
+exits `0` rather than failing.  A lab with *only* embedded coverage hosts
+is likewise not an error — on embedded hosts it is simply a no-op.
 
 (coverage-tier-kinds)=
 ## Coverage Tiers
@@ -662,9 +671,7 @@ excluded line — but unlike the built-in markers (which `lcov`'s
 `geninfo` strips from the parsed data before it ever reaches otto),
 a custom marker is *not* passed to the `lcov` capture as an `rc`
 override. The line still counts toward the coverage percentages;
-only its visual presentation changes. Making custom markers affect
-the percentages the same way the built-in ones do (wiring them into
-the `lcov` capture as `rc` overrides) is planned follow-up work.
+only its visual presentation changes.
 
 (coverage-colors)=
 ## Colors and Legend
@@ -754,7 +761,7 @@ This means the downstream merge and report pipeline (`lcov --capture`, path
 mapping, HTML render) is reused without modification — the embedded and Unix
 code paths converge at the same `.gcda` file tree, and `otto cov get` produces
 a `capture.json` for an embedded board exactly as it does for a Unix one.
-`otto cov clean` does not yet reach embedded boards — see
+`otto cov clean` does not reach embedded boards — see
 {ref}`coverage-tier-kinds` above.
 
 ### Embedded coverage configuration
@@ -793,5 +800,5 @@ Note that `lcov` is a host-side Perl orchestrator and is **not** part of the
 cross toolchain — point it at the host's `lcov` binary (e.g. `/usr/bin/lcov`),
 not a path under the sysroot.
 
-See {doc}`embedded` for embedded host setup and {doc}`lab-config` for the full
+See {doc}`hosts/embedded` for embedded host setup and {doc}`setup/lab-config` for the full
 `lab.json` schema.

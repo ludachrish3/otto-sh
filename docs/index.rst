@@ -7,7 +7,7 @@ otto
    overview
    getting-started
    guide/index
-   cookbook/index
+   library/index
    architecture/index
    contributing
    release_process

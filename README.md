@@ -215,8 +215,8 @@ The same content lives under `docs/` and can be built locally with `make docs`
 
 - `docs/getting-started.md` — installation and first steps
 - `docs/guide/` — detailed guides for each CLI command
-- `docs/guide/lab-config.md` — full lab/host schema
-- `docs/guide/embedded.md` — embedded (firmware/RTOS) hosts
-- `docs/guide/os-profiles.md` — OS profiles & custom host classes
-- `docs/cookbook/` — recipes for common asyncio patterns
+- `docs/guide/setup/lab-config.md` — full lab/host schema
+- `docs/guide/hosts/embedded.md` — embedded (firmware/RTOS) hosts
+- `docs/guide/hosts/os-profiles.md` — OS profiles & custom host classes
+- `docs/library/` — using otto as a Python library + recipes
 - `docs/api/` — full API reference for all otto packages
