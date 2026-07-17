@@ -1,7 +1,7 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { LinkSnapshot } from "../api/export.gen";
+import type { LinkSnapshot, TunnelRecord } from "../api/export.gen";
 import type { TopoEdge } from "../data/topology";
 import { EdgeHoverCard } from "../topo/EdgeHoverCard";
 import { edgeSubtitle, edgeTitle, primaryLink } from "../topo/linkText";
@@ -48,10 +48,41 @@ const reports: TopoEdge = {
   parallelIndex: 0,
 };
 
+const TUN: TunnelRecord = {
+  id: "tun-x-1",
+  protocol: "udp",
+  service_port: 15001,
+  hops: ["edge-gw", "chassis-a"],
+  status: "degraded",
+  carriers_present: 1,
+  carriers_expected: 2,
+  age_seconds: 5,
+};
+
+const tunnelSeg: TopoEdge = {
+  id: "tun-x-1:0",
+  source: "edge-gw",
+  target: "chassis-a",
+  provenance: "dynamic",
+  impair: null,
+  parallelIndex: 0,
+  tunnel: TUN,
+  tunnelGroupSize: 1,
+};
+
 describe("edge text", () => {
   it("names a declared link by its name", () => {
     expect(edgeTitle(declared)).toBe("app-db");
     expect(edgeSubtitle(declared)).toBe("static · tcp");
+  });
+
+  // A tunnel segment's title/subtitle come from the TunnelRecord it carries,
+  // not from a link -- a tunnel edge has none. The tunnel's own id, status
+  // and protocol are more useful here than the pair name or the static
+  // "tunnel" legend label alone.
+  it("names a tunnel segment by its tunnel id, with status and protocol in the subtitle", () => {
+    expect(edgeTitle(tunnelSeg)).toBe("tun-x-1");
+    expect(edgeSubtitle(tunnelSeg)).toBe("tunnel · degraded · udp");
   });
 
   // A collapsed hop group's synthetic id is noise; the card names the pair.
@@ -81,6 +112,14 @@ describe("primaryLink", () => {
 
   it("returns null for a reports-for edge, which has no link at all", () => {
     expect(primaryLink(reports)).toBeNull();
+  });
+
+  // A tunnel segment carries a TunnelRecord, never a LinkSnapshot -- it has
+  // nothing for the inspector to read as a "link". TopologyPage's selection
+  // gate admits tunnel edges explicitly (checking `edge.tunnel !== undefined`
+  // alongside `primaryLink(edge) !== null`) rather than through this helper.
+  it("returns null for a tunnel segment, which has no link at all", () => {
+    expect(primaryLink(tunnelSeg)).toBeNull();
   });
 
   it("returns null for a synthesized local edge", () => {

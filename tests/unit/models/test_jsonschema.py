@@ -217,6 +217,7 @@ def test_monitor_export_schema_shape():
     assert doc["title"] == "Monitor historical export document"
     assert set(doc["required"]) == {"format", "sessions"}
     assert doc["properties"]["format"]["const"] == 1
+    assert "TunnelRecord" in doc["$defs"]
 
 
 def test_monitor_export_schema_carries_an_unreachable_fragment_def():
@@ -236,6 +237,7 @@ def test_monitor_export_schema_carries_an_unreachable_fragment_def():
         "deleted_event_ids",
         "chart_map",
         "meta",
+        "tunnels",
     }
     # Not reachable from the export document's own root shape.
     assert set(doc["required"]) == {"format", "sessions"}

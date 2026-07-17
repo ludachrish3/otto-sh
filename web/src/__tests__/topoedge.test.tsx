@@ -6,7 +6,14 @@ import { cleanup } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { TopoEdge } from "../data/topology";
-import { EDGE_STYLES, type EdgeClass, edgeClass, edgeStyle } from "../topo/edgeStyles";
+import {
+  EDGE_STYLES,
+  type EdgeClass,
+  EMPHASIS_WIDTH,
+  edgeClass,
+  edgeStyle,
+  tunnelEdgeStyle,
+} from "../topo/edgeStyles";
 
 afterEach(cleanup);
 
@@ -118,6 +125,31 @@ describe("edgeStyle", () => {
   });
 });
 
+describe("tunnelEdgeStyle", () => {
+  it("ok keeps the shipped tunnel stroke", () => {
+    const s = tunnelEdgeStyle("ok", false);
+    expect(s.stroke).toBe(EDGE_STYLES.tunnel.stroke);
+    expect(s.strokeDasharray).toBe("7 4");
+    expect(s.opacity).toBeUndefined();
+  });
+
+  it("degraded takes the warning accent, same geometry", () => {
+    const s = tunnelEdgeStyle("degraded", false);
+    expect(s.stroke).toBe("var(--topo-edge-tunnel-degraded)");
+    expect(s.strokeDasharray).toBe("7 4");
+  });
+
+  it("uncertain ghosts", () => {
+    expect(tunnelEdgeStyle("uncertain", false).opacity).toBeLessThan(1);
+  });
+
+  it("emphasis widens and restores opacity", () => {
+    const s = tunnelEdgeStyle("uncertain", true);
+    expect(s.strokeWidth).toBe(EDGE_STYLES.tunnel.strokeWidth + EMPHASIS_WIDTH);
+    expect(s.opacity).toBeUndefined();
+  });
+});
+
 describe("EDGE_STYLES", () => {
   // The legend renders from this table. A class without a row would ship a line
   // style that the key silently fails to explain.
@@ -158,6 +190,28 @@ describe("EDGE_STYLES", () => {
     // ...and they never collide.
     expect(value(root, "--topo-edge-reports")).not.toBe(value(root, "--topo-edge-static"));
     expect(value(dark, "--topo-edge-reports")).not.toBe(value(dark, "--topo-edge-static"));
+  });
+
+  // Same dark-mode trap as --topo-edge-reports above, applied to the
+  // degraded-tunnel accent: both theme blocks must define it, and each
+  // theme's value must actually differ from that theme's plain tunnel
+  // stroke (--topo-edge-static), or a degraded tunnel would be visually
+  // indistinguishable from a healthy one.
+  it("defines --topo-edge-tunnel-degraded in BOTH themes, distinct from the tunnel stroke", () => {
+    const root = block(":root {");
+    const dark = block(".dark-mode {");
+
+    for (const [theme, css] of [
+      ["light", root],
+      ["dark", dark],
+    ] as const) {
+      expect(
+        value(css, "--topo-edge-tunnel-degraded"),
+        `--topo-edge-tunnel-degraded in ${theme}`,
+      ).toBeDefined();
+    }
+    expect(value(root, "--topo-edge-tunnel-degraded")).not.toBe(value(root, "--topo-edge-static"));
+    expect(value(dark, "--topo-edge-tunnel-degraded")).not.toBe(value(dark, "--topo-edge-static"));
   });
 
   it("has retired the per-provenance stroke variables", () => {

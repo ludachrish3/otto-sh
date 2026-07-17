@@ -37,6 +37,10 @@ _SCHEMA = """
 -- per CHART; metric rows carry per-SERIES labels, and the two rarely match),
 -- and without it the producer emits chart_map={} and the frontend charts every
 -- series separately (see otto/monitor/export.py, web/src/data/seriesTree.ts).
+--
+-- tunnels_json was likewise added to v2 in place (spec 2026-07-16): the last
+-- known tunnel set as a JSON list of TunnelRecord dumps, overwritten on
+-- change by the collector's tunnel loop — last-known-state only, no history.
 CREATE TABLE IF NOT EXISTS sessions (
     id             TEXT    PRIMARY KEY,
     label          TEXT,
@@ -45,7 +49,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     end            TEXT,
     lab_json       TEXT    NOT NULL DEFAULT '{}',
     meta_json      TEXT    NOT NULL DEFAULT '{}',
-    chart_map_json TEXT    NOT NULL DEFAULT '{}'
+    chart_map_json TEXT    NOT NULL DEFAULT '{}',
+    tunnels_json   TEXT    NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS metrics (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,22 +110,21 @@ def _check_version(version: int, tables: set[str], path: str) -> None:
 
 
 def _check_session_columns(columns: set[str], path: str) -> None:
-    """Refuse a ``sessions`` table that predates the ``chart_map_json`` column.
+    """Refuse a ``sessions`` table missing an in-place v2 column.
 
-    ``chart_map_json`` was added to v2 in place, pre-release (see ``_SCHEMA``),
-    so the version number cannot distinguish the two shapes — only the column
-    can. Databases written by an intermediate development build of v2 exist
-    (on this branch, at least), and ``CREATE TABLE IF NOT EXISTS`` will not
-    add the column to them. Without this guard they die on the first SELECT
-    with a raw ``sqlite3.OperationalError`` instead of otto's own fail-loud
-    error.
+    ``chart_map_json`` and ``tunnels_json`` were both added to v2 in place,
+    pre-release (see ``_SCHEMA``) — the version number cannot distinguish the
+    shapes, only the columns can. Refused loud, no migration, naming the
+    missing column.
     """
-    if columns and "chart_map_json" not in columns:
-        raise UnsupportedDBError(
-            f"'{path}' uses an early development build of schema v2 (its sessions "
-            "table has no chart_map_json column); otto provides no migration — "
-            "use a fresh --db file (not supported: converting pre-column captures)."
-        )
+    for required in ("chart_map_json", "tunnels_json"):
+        if columns and required not in columns:
+            raise UnsupportedDBError(
+                f"'{path}' uses an early development build of schema v2 (its "
+                f"sessions table has no {required} column); otto provides no "
+                "migration — use a fresh --db file (not supported: converting "
+                "pre-column captures)."
+            )
 
 
 def _pragma_version(row: Any, path: str) -> int:
@@ -153,6 +157,7 @@ class SessionRow:
     lab_json: str
     meta_json: str
     chart_map_json: str
+    tunnels_json: str
     metrics: list[tuple[str, str, str, float, str | None]]  # ts, host, label, value, source
     events: list[
         tuple[int, str, str | None, str, str, str, str]
@@ -323,6 +328,21 @@ class MetricDB:
         )
         await self._conn.commit()
 
+    async def write_tunnels(self, tunnels_json: str) -> None:
+        """Overwrite this session's last-known tunnel set. No-op if not open.
+
+        Called by the collector's tunnel loop on every CHANGE (not per tick,
+        not at finalize) — same crash-tolerance rationale as
+        :meth:`write_chart_map`: a crashed session keeps its last known set.
+        """
+        if not self._conn:
+            return
+        await self._conn.execute(
+            "UPDATE sessions SET tunnels_json = ? WHERE id = ?",
+            (tunnels_json, self._frame.id),
+        )
+        await self._conn.commit()
+
     async def write_point(self, ts: datetime, host: str, label: str, value: float) -> None:
         """Insert one metric point. No-op if the connection is not open."""
         if not self._conn:
@@ -429,10 +449,20 @@ def read_sessions(path: str) -> list[SessionRow]:
 
             sessions: list[SessionRow] = []
             for row in conn.execute(
-                "SELECT id, label, note, start, end, lab_json, meta_json, chart_map_json "
-                "FROM sessions ORDER BY start"
+                "SELECT id, label, note, start, end, lab_json, meta_json, "
+                "chart_map_json, tunnels_json FROM sessions ORDER BY start"
             ):
-                session_id, label, note, start, end, lab_json, meta_json, chart_map_json = row
+                (
+                    session_id,
+                    label,
+                    note,
+                    start,
+                    end,
+                    lab_json,
+                    meta_json,
+                    chart_map_json,
+                    tunnels_json,
+                ) = row
                 metrics = conn.execute(
                     "SELECT ts, host, label, value, source FROM metrics "
                     "WHERE session_id = ? ORDER BY ts",
@@ -457,6 +487,7 @@ def read_sessions(path: str) -> list[SessionRow]:
                         lab_json=lab_json,
                         meta_json=meta_json,
                         chart_map_json=chart_map_json,
+                        tunnels_json=tunnels_json,
                         metrics=[tuple(r) for r in metrics],
                         events=[tuple(r) for r in events],
                         log_events=[tuple(r) for r in log_events],

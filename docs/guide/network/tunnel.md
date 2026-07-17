@@ -269,11 +269,12 @@ there. True CentOS-6/2.6.32 validation remains a documented manual check.
 every `has_bash` host plus a pure parser, with each tagged process's `argv[0]`
 self-describing the whole tunnel so any single survivor reconstructs it — which
 is why discovery survives every other chain host being down. The design — and
-how it reuses the monitor's `(command, parser)` parser shape without feeding the
-monitor (tunnels do not appear in topology or edge views) — is covered in
+how it reuses the monitor's `(command, parser)` parser shape — is covered in
 {doc}`../../architecture/subsystems/network`; see also
 [Custom parsers](../monitor.md#custom-parsers) in {doc}`../monitor` for the
-parser contract it is shaped to plug into.
+parser contract it is shaped to plug into. Tunnels appear live in the
+monitor's topology view, riding the links their path traverses — see
+[Topology view](../monitor.md#topology-view) in {doc}`../monitor`.
 
 ## Shell completion
 

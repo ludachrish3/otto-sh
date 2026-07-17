@@ -197,8 +197,16 @@ export function TopologyPage() {
         connectable: false,
       };
     });
+    // Tunnel segments are excluded from this count: their geometry is
+    // carried on tunnelGroupSize (frozen against the underlay's own static
+    // group), not derived by counting. A static edge sharing a pair with a
+    // tunnel must NOT see its delivered groupSize grow when the tunnel
+    // appears -- its own parallelIndex stays frozen too, and a larger
+    // groupSize with the same parallelIndex re-fans the underlay on the
+    // spot (the exact regression this split forbids).
     const groupSizes = new Map<string, number>();
     for (const e of graph.edges) {
+      if (e.tunnel !== undefined) continue; // frozen static slots only
       const key = pairKey(e.source, e.target);
       groupSizes.set(key, (groupSizes.get(key) ?? 0) + 1);
     }
@@ -207,7 +215,13 @@ export function TopologyPage() {
       source: e.source,
       target: e.target,
       type: "link",
-      data: { edge: e, groupSize: groupSizes.get(pairKey(e.source, e.target)) ?? 1 },
+      data: {
+        edge: e,
+        groupSize:
+          e.tunnel !== undefined
+            ? (e.tunnelGroupSize ?? 1)
+            : (groupSizes.get(pairKey(e.source, e.target)) ?? 1),
+      },
     }));
     return { nodes, edges };
   }, [graph, session, expand]);
@@ -215,9 +229,31 @@ export function TopologyPage() {
   // Hover lives here, not in LinkEdge: React Flow already hit-tests each
   // edge's interaction path, so its own callbacks give us the affordance
   // without hanging mouse handlers off a static SVG group.
+  //
+  // Whole-tunnel emphasis: hovering or selecting ANY segment of a tunnel
+  // (riding or fanned) highlights every other segment of that same tunnel,
+  // not just the one under the pointer -- a tunnel reads as one path across
+  // several hops, so the map should answer "which edges" as a set.
+  const hoveredTunnel = useMemo(() => {
+    const hit = flow.edges.find((e) => e.id === hoveredEdge);
+    return ((hit?.data as { edge?: TopoEdge } | undefined)?.edge?.tunnel?.id ?? null) as
+      | string
+      | null;
+  }, [flow.edges, hoveredEdge]);
+  const selectedTunnel = selectedEdge?.tunnel?.id ?? null;
   const edges = useMemo(
-    () => flow.edges.map((e) => ({ ...e, data: { ...e.data, hovered: e.id === hoveredEdge } })),
-    [flow.edges, hoveredEdge],
+    () =>
+      flow.edges.map((e) => {
+        const edge = (e.data as { edge: TopoEdge }).edge;
+        const sameTunnel =
+          edge.tunnel !== undefined &&
+          (edge.tunnel.id === hoveredTunnel || edge.tunnel.id === selectedTunnel);
+        return {
+          ...e,
+          data: { ...e.data, hovered: e.id === hoveredEdge, tunnelEmphasized: sameTunnel },
+        };
+      }),
+    [flow.edges, hoveredEdge, hoveredTunnel, selectedTunnel],
   );
 
   if (!session) return null;
@@ -305,9 +341,15 @@ export function TopologyPage() {
                 // Link presence, not provenance: after the class collapse a
                 // synthesized hop path draws exactly like a declared link, and
                 // only one of them has anything to inspect. The hover card
-                // already names the ones that don't.
+                // already names the ones that don't. Tunnels have no link at
+                // all (primaryLink is always null) but the inspector reads
+                // TunnelRecord facts instead, so they are admitted explicitly.
                 const data = edge.data as { edge?: TopoEdge } | undefined;
-                if (data?.edge && primaryLink(data.edge) !== null) onSelectEdge(data.edge);
+                if (
+                  data?.edge &&
+                  (primaryLink(data.edge) !== null || data.edge.tunnel !== undefined)
+                )
+                  onSelectEdge(data.edge);
               }}
               onEdgeMouseEnter={(_evt, edge) => setHoveredEdge(edge.id)}
               onEdgeMouseLeave={() => setHoveredEdge(null)}

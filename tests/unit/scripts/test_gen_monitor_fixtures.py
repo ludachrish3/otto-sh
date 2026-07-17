@@ -3,7 +3,8 @@
 The generator builds documents THROUGH the export models, so schema
 conformance is by construction; these tests pin the *content* contracts the
 UI phase relies on: determinism, subject resolvability, the outage window,
-drift across sessions, and the fixture-only status of the dynamic link.
+drift across sessions, and the fixture-only tunnels each session carries
+(spec 2026-07-16 §1).
 """
 
 import json
@@ -70,8 +71,6 @@ def test_kitchen_sink_shapes():
     # the empty chassis is explicit; the populated explicit element merges
     assert {e.id for e in s.lab.elements} == {"spare-chassis", "workers"}
     assert all(h.element != "spare-chassis" for h in s.lab.hosts)
-    # exactly one dynamic link, fixture-only (spec §2)
-    assert sum(1 for ln in s.lab.links if ln.provenance == "dynamic") == 1
     assert any(ln.impair for ln in s.lab.links)
     assert any(ln.provenance == "implicit" for ln in s.lab.links)
     # metadata holes for edge-case rendering
@@ -117,13 +116,6 @@ def test_drift_sessions_evolve():
     assert slot["s2"] != slot["s3"]  # board slot moved
     assert any(ln.impair for ln in s3.lab.links)  # impairment added
     assert not any(ln.impair for ln in s2.lab.links)
-
-
-def test_no_dynamic_links_outside_kitchen_sink():
-    docs = build_all()
-    for stem in ("minimal", "drift"):
-        for s in docs[stem].sessions:
-            assert not [ln for ln in s.lab.links if ln.provenance == "dynamic"]
 
 
 def test_no_credentials_anywhere():
@@ -173,3 +165,74 @@ def test_isp_core_is_shallow_but_meshed():
     declared = [lk for lk in lab.links if (lk.provenance or "declared") == "declared"]
     assert len(declared) >= 25, "the data plane must be richly meshed"
     assert len({h.element for h in lab.hosts}) >= 20
+
+
+def test_kitchen_sink_tunnels_pinned():
+    """The kitchen-sink tunnel is a deliberately BARE segment: hops
+    edge-gw<->db-01 with no underlay link joining them (spec 2026-07-16 §2)."""
+    doc = build_all()["kitchen-sink"]
+    (s,) = doc.sessions
+    assert [(t.id, t.status, t.hops) for t in s.tunnels] == [
+        ("tun-00000000demo-15001", "ok", ["edge-gw", "db-01"]),
+    ]
+
+
+def test_sprawl_tunnels_pinned():
+    """sprawl carries exactly the riding 3-hop tunnel plus the 2-hop
+    jump-zephyr tunnel; both content and status are pinned."""
+    doc = build_all()["sprawl"]
+    (s,) = doc.sessions
+    got = {t.id: (t.status, t.hops) for t in s.tunnels}
+    assert got == {
+        "tun-000000a9db01-15002": ("degraded", ["tor-sw-a", "app-01", "db-01"]),
+        "tun-0000jumpzeph-15004": ("ok", ["jump-01", "zephyr-01"]),
+    }
+
+
+def test_isp_core_tunnels_pinned():
+    """isp-core carries exactly the one uncertain tunnel."""
+    doc = build_all()["isp-core"]
+    (s,) = doc.sessions
+    got = {t.id: (t.status, t.hops) for t in s.tunnels}
+    assert got == {
+        "tun-0000jumpacc7-15003": ("uncertain", ["jump-01", "acc-07"]),
+    }
+
+
+def test_sprawl_multihop_tunnel_rides_declared_links():
+    """The riding-overlay invariant: every consecutive hop pair of a >=3-hop
+    tunnel must be joined by an actual link (declared or implicit) in the
+    SAME fixture's lab -- otherwise the tunnel can't ride the data plane it
+    claims to overlay (spec 2026-07-16, the riding vector).
+
+    Deliberately general: this walks ``tunnel.hops`` pairwise and checks
+    link endpoint SETS, so renaming a link (e.g. ``app01-db``) still passes
+    as long as a link between the pair exists, while deleting the link with
+    no replacement fails.
+    """
+    doc = build_all()["sprawl"]
+    (s,) = doc.sessions
+    link_pairs = {frozenset(e.host for e in ln.endpoints) for ln in s.lab.links}
+    multihop = [t for t in s.tunnels if len(t.hops) >= 3]
+    assert multihop, "sprawl must carry at least one >=3-hop tunnel to exercise riding"
+    for tunnel in multihop:
+        for a, b in zip(tunnel.hops, tunnel.hops[1:], strict=False):
+            assert frozenset((a, b)) in link_pairs, (tunnel.id, a, b)
+
+
+def test_tunnel_statuses_cover_all_values():
+    """Across all fixtures, every TunnelRecord status value is exercised at
+    least once -- a missing one means a status the UI renders is untested."""
+    statuses = {t.status for doc in build_all().values() for s in doc.sessions for t in s.tunnels}
+    assert {"ok", "degraded", "uncertain"} <= statuses
+
+
+def test_tunnel_hops_reference_known_hosts():
+    """Every tunnel hop host id must resolve within its OWN fixture's
+    lab.hosts -- a dangling hop can't be placed on the topology map."""
+    for stem, doc in build_all().items():
+        for s in doc.sessions:
+            host_ids = {h.id for h in s.lab.hosts}
+            for t in s.tunnels:
+                for hop in t.hops:
+                    assert hop in host_ids, (stem, t.id, hop)

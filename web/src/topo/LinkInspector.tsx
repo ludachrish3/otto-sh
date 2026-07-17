@@ -43,8 +43,9 @@
 import { useEffect } from "react";
 
 import { SlideoutMenu } from "@/components/application/slideout-menus/slideout-menu";
+import { formatOutage } from "../data/time";
 import type { TopoEdge } from "../data/topology";
-import { endpointText, primaryLink } from "./linkText";
+import { endpointText, primaryLink, tunnelPathText } from "./linkText";
 
 function Row(props: { label: string; testId: string; children: React.ReactNode }) {
   return (
@@ -75,7 +76,8 @@ export function LinkInspector(props: { edge: TopoEdge | null; onClose: () => voi
 
   if (edge === null) return null;
   const primary = primaryLink(edge);
-  const title = primary?.name ?? primary?.id ?? edge.id;
+  const tunnel = edge.tunnel;
+  const title = tunnel?.id ?? primary?.name ?? primary?.id ?? edge.id;
   return (
     <aside
       data-testid="link-inspector"
@@ -107,6 +109,30 @@ export function LinkInspector(props: { edge: TopoEdge | null; onClose: () => voi
                 in-path middlebox: {edge.impair}
               </Row>
             )}
+          </div>
+        )}
+        {tunnel && (
+          <div className="flex flex-col gap-2" data-testid="inspector-tunnel">
+            <Row label="Status" testId="inspector-tunnel-status">
+              {tunnel.status ?? "ok"}
+            </Row>
+            <Row label="Carriers" testId="inspector-tunnel-carriers">
+              {tunnel.carriers_present ?? 0}/{tunnel.carriers_expected ?? 0}
+            </Row>
+            <Row label="Protocol" testId="inspector-tunnel-protocol">
+              {tunnel.protocol ?? "udp"}
+            </Row>
+            <Row label="Service port" testId="inspector-tunnel-port">
+              {tunnel.service_port}
+            </Row>
+            {tunnel.age_seconds != null && (
+              <Row label="Age" testId="inspector-tunnel-age">
+                {formatOutage(tunnel.age_seconds * 1000)}
+              </Row>
+            )}
+            <Row label="Path" testId="inspector-tunnel-path">
+              {tunnelPathText(tunnel.hops)}
+            </Row>
           </div>
         )}
         <div

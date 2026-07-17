@@ -124,7 +124,9 @@ already started and raises — no half-built tunnel survives a failed `add`.
 either: discovery ({mod}`otto.tunnel.discovery`) is a `(command, pure parser)`
 pair — one portable `ps` run on every eligible host, plus a pure function
 turning its output into observations, the same shape the monitor's parser
-contract expects. Every tagged process carries an `otto-tunnel:v1:` sentinel in
+contract expects — a resemblance that is now WIRED, not just structural (see
+"Tunnels in the monitor" below). Every tagged process carries an
+`otto-tunnel:v1:` sentinel in
 its `argv[0]` that self-describes that process's role, direction, and the
 tunnel's full path, so *any one* surviving process is enough to reconstruct the
 whole intended tunnel. Discovery therefore survives every other chain host
@@ -139,6 +141,35 @@ where it does not (older distros, and inside Docker containers). The socat
 address forms, the `exec -a` argv-tagging trick, and the discovery `ps` command
 all stay within an old-stable portability floor, so the same mechanism works on
 long-lived lab hardware as on a current distro.
+
+**Tunnels in the monitor.** The live tunnel set rides the monitor's own
+session wire as `TunnelRecord` rows ({mod}`otto.models.monitor`) — id,
+protocol, service port, ordered hop path, `ok`/`degraded`/`uncertain`
+status, carrier counts, and age. `SessionRecord.tunnels` carries the current
+set; on the live stream, `MonitorSessionFragment.tunnels` is a
+REPLACE-semantics field — `None` means no tunnel update in that fragment, a
+list (including `[]`) replaces the session's set wholesale, the same
+last-known-state contract the `meta` field already follows. A collector-side
+loop drives this: `MetricCollector._tunnel_loop`, a sibling of the metric
+bucket loops, runs on the collector's own collection interval and is fed an
+injected `discover_tunnel_records` callable rather than importing
+`otto.tunnel` directly — the monitor package stays tunnel-blind, and the
+adapter from `DiscoveredTunnel` to `TunnelRecord` lives tunnel-side, in
+{mod}`otto.tunnel.discovery`'s sibling module `otto/tunnel/records.py`;
+`otto.cli.monitor` composes the callable over the *whole lab*, not the
+monitored host subset, since a tunnel can traverse hosts otto isn't
+otherwise polling. On the monitor side, persistence is last-known-state
+only, not a timeline: the `sessions` table's `tunnels_json` column (added to
+the v2 schema in place, the `chart_map_json` precedent — no migration) holds
+the current set as JSON, overwritten on change, with no per-tick history. A
+scan that reaches none of the lab's scannable hosts is a *failed* scan, not
+an empty lab:
+`discover_tunnel_records` raises rather than returning `[]`, so the
+collector's tunnel loop keeps the last known set — never blanks it — and
+logs a warning, the same "guard what you emit" rule the metric-collection
+paths already follow. The monitor's topology view renders this set as an
+overlay along the links each tunnel's hop path traverses; see
+{doc}`../../guide/monitor`'s Topology view section for what that looks like.
 
 ## Where the code lives
 
@@ -164,5 +195,8 @@ Tunnels — `otto.tunnel`:
 - {mod}`otto.tunnel.manage` — `add`/`remove` orchestration, the post-launch
   verify and teardown
 - {mod}`otto.tunnel.discovery` — the `(command, pure parser)` live scan
+- `otto/tunnel/records.py` — the discovery-to-`TunnelRecord` adapter that
+  feeds the collector's tunnel loop, keeping `otto.monitor` free of any
+  import on `otto.tunnel`
 - {mod}`otto.tunnel.sentinel` — the `argv[0]` sentinel codec that makes every
   process self-describing

@@ -49,6 +49,7 @@ function liveSession(lastSampleMs: number): NormalizedSession {
     logEvents: [],
     index: buildIndex(metrics),
     chartMap: {},
+    tunnels: [],
     elements,
     hostIds: new Set(["h0"]),
     elementIds: new Set(elements.map((e) => e.id)),

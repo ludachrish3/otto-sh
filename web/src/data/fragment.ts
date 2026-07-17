@@ -2,7 +2,7 @@
 // so this appends — it does not translate. There is deliberately no mapping table
 // here: if you find yourself writing one, the wire has drifted from the payload and
 // the fix belongs in the model, not here.
-import type { MonitorSessionFragment } from "../api/export.gen";
+import type { MonitorSessionFragment, TunnelRecord } from "../api/export.gen";
 import { dropInvalidTimestamps, type NormalizedSession } from "./exportDoc";
 import { appendToIndex } from "./seriesIndex";
 
@@ -63,6 +63,10 @@ export function applyFragment(
   const chartMapPatch = frag.chart_map ?? {};
   const hasMetaPatch = frag.meta !== null && frag.meta !== undefined;
   const hasChartMapPatch = Object.keys(chartMapPatch).length > 0;
+  // REPLACE semantics (the meta precedent): null/undefined = no update,
+  // a list — including [] — replaces the set wholesale. Last known state,
+  // expressed on the wire (spec 2026-07-16 §1).
+  const hasTunnels = frag.tunnels != null;
 
   // A heartbeat/no-op fragment (right session, nothing else set) has nothing
   // to mutate or replace below — return the SAME session object rather than
@@ -80,7 +84,8 @@ export function applyFragment(
     fragEvents.length === 0 &&
     deletedIds.length === 0 &&
     !hasMetaPatch &&
-    !hasChartMapPatch
+    !hasChartMapPatch &&
+    !hasTunnels
   ) {
     return session;
   }
@@ -130,5 +135,7 @@ export function applyFragment(
 
   const chartMap = hasChartMapPatch ? { ...session.chartMap, ...chartMapPatch } : session.chartMap;
 
-  return { ...session, events, endMs, meta, chartMap };
+  const tunnels = hasTunnels ? (frag.tunnels as TunnelRecord[]) : session.tunnels;
+
+  return { ...session, events, endMs, meta, chartMap, tunnels };
 }

@@ -473,8 +473,8 @@ Which impairer a placement host actually uses is resolved the same way as
 ## Python API
 
 `otto link impair`/`repair`/`list` are thin renderers over four functions in
-`otto.link` — the single API the CLI, a future monitor/GUI topology
-overlay, and any direct importer all call exactly the same way:
+`otto.link` — the single API the CLI, the monitor's topology overlay, and
+any direct importer all call exactly the same way:
 
 ```python
 from otto.link import ImpairmentParams, impair_link, read_link_states, repair_link

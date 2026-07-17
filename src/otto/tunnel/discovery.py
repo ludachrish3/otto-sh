@@ -10,7 +10,7 @@ must exist.
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..host.daemon import parse_ps_output, ps_scan_command
 from ..logger.mode import LogMode
@@ -113,6 +113,22 @@ class DiscoveredTunnel:
         expected = len(self.tunnel.expected_processes())
         base = "ok" if not self.missing else f"degraded ({len(self.present)}/{expected})"
         return f"{base}?" if self.uncertain else base
+
+    @property
+    def health(self) -> Literal["ok", "degraded", "uncertain"]:
+        """Single-word health class — the monitor wire enum's exact values.
+
+        ``uncertain`` dominates ``degraded`` dominates ``ok``. The human
+        :attr:`status` string stays deliberately richer (it shows
+        degradation AND uncertainty at once, e.g. ``degraded (4/6)?``);
+        any consumer needing ONE word — the GUI, a future CLI filter —
+        must read this, never re-derive from ``missing``/``uncertain``.
+        """
+        if self.uncertain:
+            return "uncertain"
+        if self.missing:
+            return "degraded"
+        return "ok"
 
 
 @dataclass(frozen=True, slots=True)

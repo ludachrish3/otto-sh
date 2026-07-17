@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { MonitorSessionFragment } from "../api/export.gen";
+import type { MonitorSessionFragment, TunnelRecord } from "../api/export.gen";
+import { parseExportDocument } from "../data/exportDoc";
 import { applyFragment } from "../data/fragment";
 import { seriesKey } from "../data/seriesIndex";
 import { synthSession } from "./_synth";
@@ -336,5 +337,60 @@ describe("applyFragment", () => {
       expect(next.events).toHaveLength(1);
       expect(warnings).toHaveLength(0);
     });
+  });
+});
+
+// Task 8 (spec 2026-07-16 §1): SessionRecord.tunnels rides REPLACE semantics
+// (the meta precedent, not the append rule) — null/undefined means "no
+// update in this fragment", a list (including []) replaces the session's
+// tunnel set wholesale.
+const TUN: TunnelRecord = {
+  id: "tun-a-1",
+  protocol: "udp",
+  service_port: 15001,
+  hops: ["a", "b"],
+  status: "ok",
+  carriers_present: 4,
+  carriers_expected: 4,
+  age_seconds: 60,
+};
+
+function freshSession() {
+  const doc = {
+    format: 1,
+    sessions: [{ id: "s1", start: "2026-07-16T10:00:00Z", lab: { hosts: [], links: [] } }],
+  };
+  return parseExportDocument(JSON.stringify(doc)).sessions[0];
+}
+
+function tunnelFrag(extra: Partial<MonitorSessionFragment>): MonitorSessionFragment {
+  return { format: 1, session: "s1", ...extra } as MonitorSessionFragment;
+}
+
+describe("tunnel fragments", () => {
+  it("normalizes a session without tunnels to an empty list", () => {
+    expect(freshSession().tunnels).toEqual([]);
+  });
+
+  it("replaces the set wholesale", () => {
+    const s1 = applyFragment(freshSession(), tunnelFrag({ tunnels: [TUN] }));
+    expect(s1.tunnels).toEqual([TUN]);
+    const s2 = applyFragment(s1, tunnelFrag({ tunnels: [{ ...TUN, status: "degraded" }] }));
+    expect(s2.tunnels).toHaveLength(1);
+    expect(s2.tunnels[0].status).toBe("degraded");
+  });
+
+  it("[] empties; absent leaves untouched — the wire's None/[] distinction", () => {
+    const s1 = applyFragment(freshSession(), tunnelFrag({ tunnels: [TUN] }));
+    const untouched = applyFragment(s1, tunnelFrag({ metrics: [] }));
+    expect(untouched.tunnels).toEqual([TUN]);
+    const emptied = applyFragment(s1, tunnelFrag({ tunnels: [] }));
+    expect(emptied.tunnels).toEqual([]);
+  });
+
+  it("a tunnels-only fragment is not treated as a no-op heartbeat", () => {
+    const s0 = freshSession();
+    const s1 = applyFragment(s0, tunnelFrag({ tunnels: [TUN] }));
+    expect(s1).not.toBe(s0);
   });
 });

@@ -116,3 +116,17 @@ class TestBuildMonitorCollector:
         )
         collector = build_monitor_collector([host])
         assert collector._targets[0].snmp.oids == list(CORE_OIDS)
+
+
+def test_factory_passes_tunnel_source_through() -> None:
+    from otto.models.monitor import TunnelRecord
+
+    async def source() -> list[TunnelRecord]:
+        return []
+
+    collector = build_monitor_collector(hosts=[], tunnel_source=source)
+    assert collector._tunnel_source is source
+
+
+def test_factory_defaults_to_no_tunnel_source() -> None:
+    assert build_monitor_collector(hosts=[])._tunnel_source is None

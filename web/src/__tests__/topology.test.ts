@@ -135,10 +135,12 @@ describe("buildTopoGraph — inter-element (kitchen-sink)", () => {
     expect(declared.map((e) => e.parallelIndex).sort()).toEqual([0, 1]);
   });
 
-  it("passes impair through and styles dynamic separately", () => {
+  it("passes impair through", () => {
     const impaired = graph.edges.find((e) => e.impair !== null);
     expect(impaired?.impair).toBe("edge-gw");
-    expect(graph.edges.some((e) => e.provenance === "dynamic")).toBe(true);
+    // Dynamic-tunnel edge coverage lives in topology.tunnels.test.ts now
+    // (spec 2026-07-16 §4: tunnels overlay riding/bare segments from
+    // SessionRecord.tunnels, not from LinkSnapshot.provenance).
   });
 
   it("attaches hop-less elements to local", () => {

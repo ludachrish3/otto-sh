@@ -93,6 +93,7 @@ function retirementSession(): NormalizedSession {
     logEvents: [],
     index: buildIndex(metrics),
     chartMap: { "proc/1": "CPU", "proc/2": "CPU" },
+    tunnels: [],
     elements: [],
     hostIds: new Set(["h1"]),
     elementIds: new Set(),

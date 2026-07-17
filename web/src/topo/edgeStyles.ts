@@ -120,3 +120,23 @@ export function edgeStyle(
   };
   return emphasized ? { ...base, strokeWidth: base.strokeWidth + EMPHASIS_WIDTH } : base;
 }
+
+export type TunnelStatus = "ok" | "degraded" | "uncertain";
+
+/** Ghost opacity for a tunnel whose last scan couldn't reach a hop host. */
+const UNCERTAIN_OPACITY = 0.4;
+
+/** Status variants over the ONE tunnel class (spec 2026-07-16 §4): ok = the
+ * shipped stroke, degraded = warning accent on identical geometry, uncertain
+ * = ghosted. One tunnel, one status — callers apply this to every segment.
+ * Colour values exist in BOTH theme blocks (resolve the values, not the
+ * vars — the dark-mode-only collision lesson). */
+export function tunnelEdgeStyle(
+  status: TunnelStatus,
+  emphasized: boolean,
+): { stroke: string; strokeWidth: number; strokeDasharray?: string; opacity?: number } {
+  const base = edgeStyle("dynamic", emphasized);
+  if (status === "degraded") return { ...base, stroke: "var(--topo-edge-tunnel-degraded)" };
+  if (status === "uncertain" && !emphasized) return { ...base, opacity: UNCERTAIN_OPACITY };
+  return base;
+}

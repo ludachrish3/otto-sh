@@ -6,13 +6,14 @@ are the production ones — only the "poll a host" step is replaced by
 :meth:`FakeCollector.push`.
 """
 
+import json
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
 from typing_extensions import override
 
-from otto.models.monitor import MonitorMeta
+from otto.models.monitor import MonitorMeta, TunnelRecord
 from otto.monitor.collector import MetricCollector
 from otto.monitor.parsers import LogEvent, MetricDataPoint, MetricParser, default_catalog
 
@@ -68,6 +69,29 @@ class FakeCollector(MetricCollector):
         model = super().get_meta_model()
         model.live = self._force_live
         return model
+
+    async def push_tunnels(self, tunnels: "list[dict[str, Any]]") -> None:
+        """Replace the live tunnel set -- mirrors the real ``_tunnel_pass``'s
+        publish half (store update + SSE broadcast), skipping the
+        scan/diff/failure-tracking machinery a scripted collector never
+        needs (there is no ``_tunnel_source`` here, so ``_tunnel_pass``
+        itself never runs).
+
+        Takes wire dicts (``TunnelRecord`` dumps) so specs read like the SSE
+        payloads they assert on, exactly as ``push()`` takes raw values
+        rather than a ``MetricPoint``. Round-trips them through
+        ``TunnelRecord`` (validate then re-dump) rather than publishing the
+        input dicts verbatim, so a test-supplied dict that skips a
+        server-defaulted field (``status``, ``protocol``, ...) still
+        publishes the same fully-populated shape a real scan would.
+        """
+        self._tunnels = sorted(
+            (TunnelRecord.model_validate(t) for t in tunnels), key=lambda r: r.id
+        )
+        payload = [r.model_dump(mode="json") for r in self._tunnels]
+        if self._db:
+            await self._db.write_tunnels(json.dumps(payload))
+        self._publish({"format": 1, "session": self.session_id, "tunnels": payload})
 
     async def push_log_events(
         self, host: str, *, tab: str, rows: "list[tuple[datetime, dict[str, str]]]"

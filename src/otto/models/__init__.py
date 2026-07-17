@@ -46,6 +46,7 @@ from .monitor import (
     SessionRecord,
     TabSpec,
     TabSpecRecord,
+    TunnelRecord,
     validate_interval,
 )
 from .options import (
@@ -110,6 +111,7 @@ __all__ = [
     "TelnetOptionsSpec",
     "TftpOptionsSpec",
     "ToolchainSpec",
+    "TunnelRecord",
     "UnixHostSpec",
     "validate_interval",
 ]

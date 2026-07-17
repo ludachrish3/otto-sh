@@ -166,8 +166,9 @@ parity for free, no timeline.
     offsets, reusing the existing parallel-edge indexing.
   The now-dead `link.provenance === "dynamic"` branches (`topology.ts:304`,
   `:401`) are removed. A hop host absent from the lab snapshot cannot occur
-  for real data (discovery is lab-scoped) — the mapping fails loud in dev
-  builds rather than dropping a segment silently.
+  for real data (discovery is lab-scoped) — the mapping drops that segment
+  and pushes a warning into `TopoGraph.warnings`, which the topology page
+  renders in its warnings strip (a named render site, never a silent drop).
 - **Layout is untouched and untouchable by tunnels.** Layering and coordinate
   assignment key on `declared` edges only (`web/src/topo/layout.ts:28`,
   `:354`); riding segments borrow underlay geometry and bare segments are
@@ -217,7 +218,34 @@ parity for free, no timeline.
 - New guards are proven able to fail: mutate the production code (drop the
   change-detection, emit `[]` on failure) and confirm the guard goes red.
 
-## 6. Sequencing & risks
+## 6. Documentation
+
+Doc updates target the **restructured layout** (`worktree-docs-toctree-restructure`,
+essentially complete: guide areas + design-only architecture pages) and follow
+its editorial rules — behavior in the guide, mechanism in architecture, one
+canonical page per topic, no roadmap/phasing language. The docs task is
+sequenced after that branch merges; paths below are its paths.
+
+- `guide/monitor.md` (`## Web dashboard`): the topology view is currently
+  undocumented — add a topology subsection (map, legend, inspector) that
+  covers the tunnel overlay and health styling as part of introducing the
+  view. Rewrite the now-false monitor-free note (currently `:389`).
+- `guide/network/tunnel.md`: replace the "tunnels do not appear in topology
+  or edge views" clause (currently `:274`) with a cross-link to the monitor
+  page's topology subsection.
+- `guide/network/link.md` (currently `:476`): "a future monitor/GUI topology
+  overlay" becomes present tense.
+- `architecture/subsystems/network.md` (`## Tunnels`): extend with the
+  monitor seam — `TunnelRecord`, the collector `_tunnel_loop`, the injected
+  adapter, `"dynamic"` leaving `LinkSnapshot`, the overlay-along-underlay
+  rule — and update "where the code lives".
+- Captures: only `kitchen-sink.json` feeds `make docs` media, neither
+  captured view is the topology map, and `tun-demo` keeps its current look —
+  no existing screenshot changes. A topology capture showing the overlay is
+  optional net-new work (a `capture_docs_media.py` step + a tunnel-bearing
+  view), decided at planning time.
+
+## 7. Sequencing & risks
 
 - No blocking prerequisites: the topology layout redesign (`11068ca`) and the
   5b follow-ups / Untitled UI shell (`f9e9d6e`) are both on main; this design

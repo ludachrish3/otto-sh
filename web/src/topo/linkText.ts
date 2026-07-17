@@ -26,6 +26,7 @@ export function primaryLink(edge: TopoEdge): LinkSnapshot | null {
  * group carries `links[]` with a synthetic id — showing that id would be
  * noise, so name the pair instead. */
 export function edgeTitle(edge: TopoEdge): string {
+  if (edge.tunnel !== undefined) return edge.tunnel.id;
   if (edge.provenance === "reports-for") return `${edge.source} → ${edge.target}`;
   if (edge.provenance === "local") return `local → ${edge.target}`;
   if (edge.links !== undefined && edge.links.length > 1) return `${edge.source} ⇄ ${edge.target}`;
@@ -34,10 +35,19 @@ export function edgeTitle(edge: TopoEdge): string {
 }
 
 export function edgeSubtitle(edge: TopoEdge): string {
+  if (edge.tunnel !== undefined) {
+    // status/protocol are optional on the wire (server defaults "ok"/"udp" —
+    // models/monitor.py) but a real value in every practical case.
+    return `tunnel · ${edge.tunnel.status ?? "ok"} · ${edge.tunnel.protocol ?? "udp"}`;
+  }
   const label = EDGE_STYLES[edgeClass(edge.provenance)].label;
   if (edge.links !== undefined && edge.links.length > 1) {
     return `${label} · ${edge.links.length} links`;
   }
   const protocol = primaryLink(edge)?.protocol;
   return protocol ? `${label} · ${protocol}` : label;
+}
+
+export function tunnelPathText(hops: string[]): string {
+  return hops.join(" → ");
 }

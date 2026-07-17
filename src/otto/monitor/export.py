@@ -17,6 +17,7 @@ from ..models import (
     SessionMeta,
     SessionRecord,
     TabSpecRecord,
+    TunnelRecord,
 )
 from .collector import MetricCollector
 from .db import MetricDB, SessionRow, read_sessions
@@ -206,6 +207,7 @@ def build_live_export(
         events=_event_records(collector),
         log_events=_log_event_records(collector),
         chart_map=collector.get_chart_map(),
+        tunnels=collector.get_tunnel_records(),
     )
     return MonitorExport(format=1, sessions=[session])
 
@@ -285,6 +287,7 @@ def _session_record(row: SessionRow) -> SessionRecord:
         events=events,
         log_events=log_events,
         chart_map=json.loads(row.chart_map_json),
+        tunnels=[TunnelRecord.model_validate(t) for t in json.loads(row.tunnels_json)],
     )
 
 

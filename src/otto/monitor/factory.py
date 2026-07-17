@@ -6,11 +6,12 @@ both call sites consistent — same parser-registry lookup, same per-host log
 silencing, same target construction.
 """
 
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import cast
 
 from ..host.remote_host import RemoteHost
 from ..logger.mode import LogMode
+from ..models.monitor import TunnelRecord
 from .collector import MetricCollector, MonitorTarget
 from .db import MetricDB
 from .parsers import get_host_parsers
@@ -20,6 +21,7 @@ from .snmp import SnmpClient, SnmpSource, SnmpVersion, expand_oid_bundles
 def build_monitor_collector(
     hosts: Sequence[RemoteHost],
     db: MetricDB | None = None,
+    tunnel_source: Callable[[], Awaitable[list[TunnelRecord]]] | None = None,
 ) -> MetricCollector:
     """Build a :class:`~otto.monitor.collector.MetricCollector` over *hosts*.
 
@@ -40,6 +42,10 @@ def build_monitor_collector(
             (unopened); ``None`` means in-memory. The frame (session identity) is
             the caller's job — this factory stays session-blind, same as the
             collector it builds.
+        tunnel_source: Optional full-lab tunnel discovery callable for the
+            collector's tunnel loop (spec 2026-07-16). The CLI composes this
+            over the WHOLE lab — tunnels may traverse hosts that metric
+            collection was never pointed at.
     """
     targets: list[MonitorTarget] = []
     for host in hosts:
@@ -65,4 +71,5 @@ def build_monitor_collector(
     return MetricCollector(
         targets=targets,
         db=db,
+        tunnel_source=tunnel_source,
     )

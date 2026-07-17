@@ -7,10 +7,11 @@ the frame is stamped at the edges (CLI at launch, shutdown hook at exit).
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Literal
 
 from ..host.remote_host import RemoteHost
 from ..link.derive import implicit_links
-from ..link.model import Link
+from ..link.model import Link, Provenance
 from ..models import HostSnapshot, LabSnapshot, LinkEndpointSnapshot, LinkSnapshot
 
 
@@ -78,6 +79,26 @@ def _host_snapshot(host: RemoteHost) -> HostSnapshot:
     )
 
 
+def _link_provenance(provenance: Provenance) -> Literal["implicit", "declared"]:
+    """Narrow the runtime enum's three values to the snapshot wire's two.
+
+    ``snapshot_lab`` only ever freezes ``implicit_links()``/
+    ``resolve_declared_links()`` output, so ``Provenance.DYNAMIC`` cannot
+    reach here structurally — but the raise keeps that invariant loud rather
+    than silently mis-tagging a future caller's tunnel-derived link as
+    ``declared``. Dynamic tunnels ride ``SessionRecord.tunnels`` instead
+    (spec 2026-07-16 §1).
+    """
+    if provenance is Provenance.IMPLICIT:
+        return "implicit"
+    if provenance is Provenance.DECLARED:
+        return "declared"
+    raise ValueError(
+        f"cannot freeze a {provenance.value!r}-provenance link into a static "
+        "LinkSnapshot — dynamic tunnels ride SessionRecord.tunnels instead"
+    )
+
+
 def _link_snapshot(link: Link) -> LinkSnapshot:
     """Map a runtime :class:`~otto.link.model.Link` into a :class:`LinkSnapshot`.
 
@@ -97,7 +118,7 @@ def _link_snapshot(link: Link) -> LinkSnapshot:
             ),
         ],
         protocol=link.protocol,
-        provenance=link.provenance.value,
+        provenance=_link_provenance(link.provenance),
         name=link.name,
         impair=link.impair,
     )

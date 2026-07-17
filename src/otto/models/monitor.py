@@ -263,18 +263,19 @@ class LinkEndpointSnapshot(RowModel):
 class LinkSnapshot(RowModel):
     """One static link frozen into a session's lab snapshot.
 
-    Mirrors the runtime ``otto.link.model.Link``. Real exporters write only
-    ``implicit`` + ``declared`` provenances — the snapshot is a static-config
-    document and dynamic tunnels are runtime state (spec 2026-07-10 §2); the
-    ``dynamic`` value stays for parity with the runtime enum (and the live
-    topology view). ``impair`` is the *declared* in-path middlebox host id —
-    static config, unlike applied netem parameters.
+    Mirrors the runtime ``otto.link.model.Link``. The snapshot is a
+    static-config document: ``implicit`` + ``declared`` only. Dynamic tunnels
+    are runtime state and ride ``SessionRecord.tunnels`` as first-class
+    :class:`TunnelRecord` rows instead (spec 2026-07-16) — the runtime
+    ``Provenance.DYNAMIC`` enum value survives for the link-conflict rules,
+    but it never reaches this wire. ``impair`` is the *declared* in-path
+    middlebox host id — static config, unlike applied netem parameters.
     """
 
     id: str
     endpoints: list[LinkEndpointSnapshot] = Field(min_length=2, max_length=2)
     protocol: str = "tcp"
-    provenance: Literal["implicit", "declared", "dynamic"] = "declared"
+    provenance: Literal["implicit", "declared"] = "declared"
     name: str | None = None
     impair: str | None = None
 
@@ -285,6 +286,26 @@ class LabSnapshot(RowModel):
     elements: list[ElementRecord] = Field(default_factory=list)
     hosts: list[HostSnapshot] = Field(default_factory=list)
     links: list[LinkSnapshot] = Field(default_factory=list)
+
+
+class TunnelRecord(RowModel):
+    """One live tunnel's last known state (spec 2026-07-16 §1).
+
+    ``hops`` is the ordered host-id chain of ``otto.tunnel.model.Tunnel.path``
+    — ``hops[0]`` the entry end, ``hops[-1]`` the exit end; the topology view
+    consumes consecutive pairs. Host ids share the id space of
+    :class:`LinkEndpointSnapshot.host`. ``status`` is derived from discovery
+    fields, never parsed from the human ``DiscoveredTunnel.status`` string.
+    """
+
+    id: str
+    protocol: str = "udp"
+    service_port: int
+    hops: list[str] = Field(min_length=2)
+    status: Literal["ok", "degraded", "uncertain"] = "ok"
+    carriers_present: int = 0
+    carriers_expected: int = 0
+    age_seconds: float | None = None
 
 
 class ChartSpecRecord(ChartSpec):
@@ -338,6 +359,7 @@ class SessionRecord(RowModel):
     events: list[EventRecord] = Field(default_factory=list)
     log_events: list[LogEventRecord] = Field(default_factory=list)
     chart_map: dict[str, str] = Field(default_factory=dict)
+    tunnels: list[TunnelRecord] = Field(default_factory=list)
 
 
 class MonitorExport(RowModel):
@@ -369,6 +391,11 @@ class MonitorSessionFragment(RowModel):
     ``deleted_event_ids`` is the one thing a partial record cannot express by
     presence, so it is explicit. Event *updates* need no separate kind — the
     client upserts by ``id``, so an edited event is just an event.
+
+    ``tunnels`` is the one REPLACE-semantics payload field (the ``meta``
+    precedent, not the append rule): ``None`` means "no tunnel update in this
+    fragment"; a list — including ``[]`` — replaces the session's set
+    wholesale. That is "last known state" expressed on the wire.
     """
 
     format: Literal[1] = 1
@@ -379,3 +406,4 @@ class MonitorSessionFragment(RowModel):
     deleted_event_ids: list[int] = Field(default_factory=list)
     chart_map: dict[str, str] = Field(default_factory=dict)
     meta: SessionMeta | None = None
+    tunnels: list[TunnelRecord] | None = None

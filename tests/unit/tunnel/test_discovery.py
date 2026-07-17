@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from otto.logger.mode import LogMode
 from otto.result import CommandResult
 from otto.tunnel.discovery import (
+    DiscoveredTunnel,
     discover_tunnels,
     parse_process_discovery,
 )
@@ -139,6 +140,52 @@ class TestDiscoverTunnels:
         hosts["a"] = FakeHost("a", extra)
         result = asyncio.run(discover_tunnels(FakeLab(hosts)))
         assert {d.tunnel.id for d in result.tunnels} == {TUNNEL.id, other.id}
+
+
+def _discovered_tunnel(
+    missing: frozenset = frozenset(), uncertain: bool = False
+) -> DiscoveredTunnel:
+    expected = TUNNEL.expected_processes()
+    return DiscoveredTunnel(
+        tunnel=TUNNEL,
+        present=expected - missing,
+        missing=set(missing),
+        age_seconds=120,
+        uncertain=uncertain,
+    )
+
+
+class TestHealth:
+    """``health`` — the single shared tri-state primitive (spec 2026-07-16 §2).
+
+    ``uncertain`` dominates ``degraded`` dominates ``ok``; this is the ONLY
+    place the precedence is decided — ``tunnel_record`` and any future
+    consumer must read it, never re-derive from ``missing``/``uncertain``.
+    """
+
+    def test_clean_is_ok(self) -> None:
+        assert _discovered_tunnel().health == "ok"
+
+    def test_missing_only_is_degraded(self) -> None:
+        some = frozenset(list(TUNNEL.expected_processes())[:2])
+        assert _discovered_tunnel(missing=some).health == "degraded"
+
+    def test_uncertain_and_missing_is_uncertain(self) -> None:
+        some = frozenset(list(TUNNEL.expected_processes())[:2])
+        assert _discovered_tunnel(missing=some, uncertain=True).health == "uncertain"
+
+    def test_uncertain_with_nothing_missing_is_uncertain(self) -> None:
+        assert _discovered_tunnel(uncertain=True).health == "uncertain"
+
+    def test_status_stays_composite_while_health_collapses_to_one_word(self) -> None:
+        """The human string shows degradation AND uncertainty at once; health
+        can only ever say one word — that's the whole reason it exists."""
+        some = frozenset(list(TUNNEL.expected_processes())[:2])
+        d = _discovered_tunnel(missing=some, uncertain=True)
+        expected = len(TUNNEL.expected_processes())
+        present = len(d.present)
+        assert d.status == f"degraded ({present}/{expected})?"
+        assert d.health == "uncertain"
 
 
 def _container_placeholder(ps_out: str, exec_ps_text: str = ""):

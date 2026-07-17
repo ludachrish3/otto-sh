@@ -248,6 +248,46 @@ SSE, or by hand via Import — is covered by the browser e2e suite
 (`tests/e2e/monitor/dashboard/`, see the [behavior-spec
 contract](#frontend-development) below).
 
+### Topology view
+
+The topology map (`/topology`, with an intra-element drill-down at
+`/topology/<element>`) lays the lab out by its data-plane structure rather
+than the management hop chain — see
+{doc}`../architecture/subsystems/network` for the underlay/overlay model it
+draws from. The inter-element map aggregates each element into one node;
+opening an element expands it into its individual hosts, alongside the
+`local` node for otto's own management path.
+
+The bottom-left **Key** panel documents the canvas's two axes — link class
+and health status — from the same style tables the canvas itself draws from,
+so the legend can never drift from what's on screen. There are three link
+classes:
+
+- **static** — from the lab config: a declared link, a hop-derived one, or
+  the `local` management star.
+- **tunnel** — a live `otto tunnel`, drawn dashed with a wide casing sleeve
+  (the only class drawn with one) so it reads as wrapped around a path
+  rather than as a peer of the static links.
+- **reports for** — metrics sourced from a management host rather than the
+  subject itself.
+
+**Tunnels are a live overlay**, not a snapshot. Each tunnel is drawn along
+the links its hop path actually traverses: a consecutive pair of hops rides
+its underlay link's exact geometry where one joins that pair, and gets a
+plain routed segment between the two nodes where none does. Status styles
+the whole tunnel uniformly, never per-segment — **ok** is the shipped
+dashed-plus-casing stroke, **degraded** is a warning-accent variant of the
+same geometry, and **uncertain** ghosts it down to a faint opacity. Clicking
+any segment of a tunnel — riding or bare — selects the whole tunnel,
+highlights every other segment of its path, and opens the tunnel block in
+the link inspector: status, carriers (`present/expected`), protocol,
+service port, age, and the ordered hop path.
+
+Tunnel discovery runs on the collector's own collection interval and scans
+the *whole lab*, independent of which hosts are actually monitored — a
+tunnel between two otherwise-unpolled hosts still appears, on the same
+cadence as every other metric tick.
+
 ### Live status, pause, and reconnect
 
 While `--live`, the app bar's status dot and text track the SSE connection:
@@ -384,10 +424,11 @@ spike.
 ```{note}
 {doc}`otto tunnel <network/tunnel>` discovery (`discover_tunnels`) is built as a
 `(command, pure parser)` pair for exactly this reason — it maps 1:1 onto the
-`MetricParser` shape below (command / parse / interval). `otto.tunnel` stays
-monitor-free: it does not schedule discovery on the collection interval or
-store edges or topology views, and `otto tunnel list` is the only live view
-of tunnels.
+`MetricParser` shape below (command / parse / interval). `otto tunnel` needs
+no monitor to function — `otto tunnel list` is the CLI's own live view. When
+`otto monitor` *is* running, the collector also scans the whole lab for
+tunnels on each collection interval and streams them into the topology view
+as overlays; see [Topology view](#topology-view) above.
 ```
 
 ## Custom parsers

@@ -15,7 +15,7 @@ import { BaseEdge, EdgeLabelRenderer, type EdgeProps, useInternalNode } from "@x
 
 import type { TopoEdge } from "../data/topology";
 import { EdgeHoverCard } from "./EdgeHoverCard";
-import { EDGE_STYLES, edgeClass, edgeStyle } from "./edgeStyles";
+import { EDGE_STYLES, edgeClass, edgeStyle, tunnelEdgeStyle } from "./edgeStyles";
 import { ImpairPill } from "./ImpairPill";
 import { type Rect, routeEdge } from "./routing";
 
@@ -23,6 +23,8 @@ export interface LinkEdgeData {
   edge: TopoEdge;
   groupSize: number;
   hovered?: boolean;
+  /** Another segment of the same tunnel is hovered/selected. */
+  tunnelEmphasized?: boolean;
   [key: string]: unknown;
 }
 
@@ -62,9 +64,22 @@ export function LinkEdge(props: EdgeProps) {
         };
 
   const casing = EDGE_STYLES[edgeClass(edge.provenance)].casing;
-  const emphasized = (selected ?? false) || hovered;
+  const tunnel = edge.tunnel;
+  const emphasized = (selected ?? false) || hovered || (data.tunnelEmphasized ?? false);
+  // TunnelRecord.status is optional on the wire (server default "ok" —
+  // models/monitor.py) but a real value in every practical case; default
+  // matches that server default rather than leaving a ghost tunnel style.
+  const style =
+    tunnel !== undefined
+      ? tunnelEdgeStyle(tunnel.status ?? "ok", emphasized)
+      : edgeStyle(edge.provenance, emphasized);
   return (
-    <g data-testid={`topo-link-${edge.id}`} data-provenance={edge.provenance}>
+    <g
+      data-testid={`topo-link-${edge.id}`}
+      data-provenance={edge.provenance}
+      data-tunnel={tunnel?.id}
+      data-tunnel-status={tunnel?.status}
+    >
       {casing && (
         <path
           d={geom.path}
@@ -75,7 +90,7 @@ export function LinkEdge(props: EdgeProps) {
           strokeOpacity={casing.opacity}
         />
       )}
-      <BaseEdge id={id} path={geom.path} style={edgeStyle(edge.provenance, emphasized)} />
+      <BaseEdge id={id} path={geom.path} style={style} />
       <EdgeLabelRenderer>
         {hovered ? (
           // The card replaces the pill rather than stacking on it — both want

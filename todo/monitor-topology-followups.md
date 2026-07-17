@@ -78,17 +78,18 @@ to merge; none of these block it.
    future layout change reintroduces a swallowed skip-column edge — the budget
    test will say so.
 
-7. **Tunnels as overlays on their underlay links.** `Tunnel` already carries its
-   ordered chain (`path: tuple[TunnelHop, ...]`, `src/otto/tunnel/model.py`) but
-   the monitor export **discards it** — a tunnel is flattened to a two-endpoint
-   `LinkSnapshot` with `provenance: "dynamic"`. Rendering a tunnel riding the
-   links it traverses needs that path exported (a `format:1` change: schema,
-   `export.gen.ts`, generator, fixtures, drift guards), then a rule mapping each
-   consecutive hop-pair onto an existing link and drawing a bare segment where
-   none exists. Note it would not change kitchen-sink at all: `tun-demo` runs
-   edge-gw ⇄ db-01, between which no declared or implicit link exists — there is
-   nothing to wrap. Exercising it needs a multi-hop tunnel in the fixture. The
-   grey casing (shipped) is the cheap stand-in.
+7. ~~**Tunnels as overlays on their underlay links.**~~
+   **SHIPPED (2026-07-16).** The full overlay landed with the dynamic-tunnels
+   feature (spec: `docs/superpowers/specs/2026-07-16-dynamic-tunnels-topology-design.md`):
+   `TunnelRecord` carries the ordered hop path on format:1 (`SessionRecord.tunnels`,
+   replace-semantics fragments), the collector discovers live tunnels on the
+   collection interval across the whole lab, and the web maps each consecutive
+   hop-pair onto its underlay link (riding segments reproduce the underlay's
+   `routeEdge` geometry exactly) or draws a bare segment where none exists —
+   with ok/degraded/uncertain styling, whole-tunnel selection, and an inspector
+   block. `"dynamic"` left `LinkSnapshot.provenance` entirely; sprawl's 3-hop
+   fixture tunnel exercises the riding case, kitchen-sink's `tun-demo` pins the
+   bare-segment fallback.
 
 ## New from the topology layout redesign (2026-07-14)
 

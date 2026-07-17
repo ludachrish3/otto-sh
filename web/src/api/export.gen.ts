@@ -34,7 +34,7 @@ export type Interface = string | null;
 export type Ip1 = string;
 export type Port = number | null;
 export type Protocol = string;
-export type Provenance = "implicit" | "declared" | "dynamic";
+export type Provenance = "implicit" | "declared";
 export type Name1 = string | null;
 export type Impair = string | null;
 export type Links = LinkSnapshot[];
@@ -73,6 +73,18 @@ export type Timestamp2 = string;
 export type Host2 = string;
 export type Tab = string;
 export type LogEvents = LogEventRecord[];
+export type Id6 = string;
+export type Protocol1 = string;
+export type ServicePort = number;
+/**
+ * @minItems 2
+ */
+export type Hops = [string, string, ...string[]];
+export type Status = "ok" | "degraded" | "uncertain";
+export type CarriersPresent = number;
+export type CarriersExpected = number;
+export type AgeSeconds = number | null;
+export type Tunnels = TunnelRecord[];
 export type Sessions = SessionRecord[];
 export type Format1 = 1;
 export type Session = string;
@@ -80,6 +92,7 @@ export type Metrics2 = MetricRecord[];
 export type Events1 = EventRecord[];
 export type LogEvents1 = LogEventRecord[];
 export type DeletedEventIds = number[];
+export type Tunnels1 = TunnelRecord[] | null;
 
 /**
  * The versioned historical-export document (spec 2026-07-10 §3).
@@ -115,6 +128,7 @@ export interface SessionRecord {
   events?: Events;
   log_events?: LogEvents;
   chart_map?: ChartMap;
+  tunnels?: Tunnels;
   [k: string]: unknown;
 }
 /**
@@ -180,12 +194,13 @@ export interface Interfaces {
 /**
  * One static link frozen into a session's lab snapshot.
  *
- * Mirrors the runtime ``otto.link.model.Link``. Real exporters write only
- * ``implicit`` + ``declared`` provenances — the snapshot is a static-config
- * document and dynamic tunnels are runtime state (spec 2026-07-10 §2); the
- * ``dynamic`` value stays for parity with the runtime enum (and the live
- * topology view). ``impair`` is the *declared* in-path middlebox host id —
- * static config, unlike applied netem parameters.
+ * Mirrors the runtime ``otto.link.model.Link``. The snapshot is a
+ * static-config document: ``implicit`` + ``declared`` only. Dynamic tunnels
+ * are runtime state and ride ``SessionRecord.tunnels`` as first-class
+ * :class:`TunnelRecord` rows instead (spec 2026-07-16) — the runtime
+ * ``Provenance.DYNAMIC`` enum value survives for the link-conflict rules,
+ * but it never reaches this wire. ``impair`` is the *declared* in-path
+ * middlebox host id — static config, unlike applied netem parameters.
  *
  * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
  * via the `definition` "LinkSnapshot".
@@ -337,6 +352,29 @@ export interface ChartMap {
   [k: string]: string;
 }
 /**
+ * One live tunnel's last known state (spec 2026-07-16 §1).
+ *
+ * ``hops`` is the ordered host-id chain of ``otto.tunnel.model.Tunnel.path``
+ * — ``hops[0]`` the entry end, ``hops[-1]`` the exit end; the topology view
+ * consumes consecutive pairs. Host ids share the id space of
+ * :class:`LinkEndpointSnapshot.host`. ``status`` is derived from discovery
+ * fields, never parsed from the human ``DiscoveredTunnel.status`` string.
+ *
+ * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
+ * via the `definition` "TunnelRecord".
+ */
+export interface TunnelRecord {
+  id: Id6;
+  protocol?: Protocol1;
+  service_port: ServicePort;
+  hops: Hops;
+  status?: Status;
+  carriers_present?: CarriersPresent;
+  carriers_expected?: CarriersExpected;
+  age_seconds?: AgeSeconds;
+  [k: string]: unknown;
+}
+/**
  * An incremental update to ONE live monitor session.
  *
  * Spec 2026-07-12 §The stream speaks format:1.
@@ -354,6 +392,11 @@ export interface ChartMap {
  * presence, so it is explicit. Event *updates* need no separate kind — the
  * client upserts by ``id``, so an edited event is just an event.
  *
+ * ``tunnels`` is the one REPLACE-semantics payload field (the ``meta``
+ * precedent, not the append rule): ``None`` means "no tunnel update in this
+ * fragment"; a list — including ``[]`` — replaces the session's set
+ * wholesale. That is "last known state" expressed on the wire.
+ *
  * This interface was referenced by `MonitorHistoricalExportDocument`'s JSON-Schema
  * via the `definition` "MonitorSessionFragment".
  */
@@ -366,5 +409,6 @@ export interface MonitorSessionFragment {
   deleted_event_ids?: DeletedEventIds;
   chart_map?: ChartMap;
   meta?: SessionMeta | null;
+  tunnels?: Tunnels1;
   [k: string]: unknown;
 }

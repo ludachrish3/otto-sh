@@ -87,6 +87,7 @@ function liveSession(): NormalizedSession {
     logEvents: [],
     index: buildIndex(metrics),
     chartMap: { cpu: "CPU" },
+    tunnels: [],
     elements,
     hostIds: new Set(["h1"]),
     elementIds: new Set(elements.map((e) => e.id)),

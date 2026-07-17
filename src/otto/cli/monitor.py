@@ -212,7 +212,18 @@ def monitor(
             str(db), frame, lab, build_monitor_collector(hosts=selected), interval=interval
         )
 
-    collector = build_monitor_collector(hosts=selected, db=monitor_db)
+    # Tunnel discovery scans the WHOLE lab, not `selected`: stats gathering
+    # may target a few hosts while tunnels traverse hosts outside that set
+    # (spec 2026-07-16, decision 3). Deferred import, matching this module's
+    # convention — and keeping otto.tunnel out of CLI startup (import budget).
+    from ..tunnel.records import discover_tunnel_records
+
+    active_lab = get_lab()
+    collector = build_monitor_collector(
+        hosts=selected,
+        db=monitor_db,
+        tunnel_source=lambda: discover_tunnel_records(active_lab),
+    )
     asyncio.run(
         _run_monitor(
             collector=collector,

@@ -13,6 +13,7 @@ import type {
   MonitorHistoricalExportDocument,
   SessionRecord,
   TabSpecRecord,
+  TunnelRecord,
 } from "../api/export.gen";
 import { buildIndex, type SeriesIndex, sliceSeries } from "./seriesIndex";
 import { parseTs } from "./time";
@@ -60,6 +61,7 @@ export interface NormalizedSession {
    * of scanning the flat array (see seriesIndex.ts). */
   index: SeriesIndex;
   chartMap: Record<string, string>;
+  tunnels: TunnelRecord[];
   elements: DerivedElement[];
   hostIds: Set<string>;
   elementIds: Set<string>;
@@ -230,6 +232,7 @@ function normalizeSession(raw: SessionRecord, warnings: string[]): NormalizedSes
     logEvents,
     index: buildIndex(metrics),
     chartMap: raw.chart_map ?? {},
+    tunnels: raw.tunnels ?? [],
     elements,
     hostIds,
     elementIds: new Set(elements.map((e) => e.id)),
@@ -270,6 +273,7 @@ export function sessionToRecord(session: NormalizedSession): SessionRecord {
     events: session.events,
     log_events: session.logEvents,
     chart_map: session.chartMap,
+    tunnels: session.tunnels,
   };
 }
 

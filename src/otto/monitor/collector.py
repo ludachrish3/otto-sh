@@ -18,12 +18,12 @@ import contextlib
 import copy
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ..models import ChartSpec, MetricPoint, MonitorMeta, TabSpec
+from ..models import ChartSpec, MetricPoint, MonitorMeta, TabSpec, TunnelRecord
 from ..result import CommandResult, Results
 from .broadcast import Broadcaster
 from .db import MetricDB
@@ -148,6 +148,7 @@ class MetricCollector:
         parsers: list[MetricParser] | None = None,
         db: MetricDB | None = None,
         targets: "list[MonitorTarget] | None" = None,
+        tunnel_source: "Callable[[], Awaitable[list[TunnelRecord]]] | None" = None,
     ) -> None:
         parser_dict: dict[str, MetricParser] = {}
         if targets is not None:
@@ -230,6 +231,17 @@ class MetricCollector:
         # notion of sessions). Empty in the no-server paths (unit tests, the
         # pytest plugin's file export), where nothing consumes the stream.
         self.session_id: str = ""
+
+        # Tunnel layer (spec 2026-07-16): an injected full-lab discovery
+        # callable — the monitor package never imports otto.tunnel. None
+        # (suite, plugin, scripted collectors) means no tunnel loop at all.
+        self._tunnel_source = tunnel_source
+        # Last known tunnel set, sorted by id. NEVER blanked by a failed
+        # scan — only a successful scan may change it (guard what you emit).
+        self._tunnels: list[TunnelRecord] = []
+        # Edge-triggered failure logging: warn on the 0->1 transition and on
+        # recovery, debug in between (mirrors the parser-health pattern).
+        self._tunnel_scan_failing = False
 
         # Parser-health state, keyed (host_name, command) — or (host_name, oid)
         # for the SNMP layer. Command failures are edge-triggered: _failing
@@ -437,15 +449,54 @@ class MetricCollector:
                 )
 
         # Known dormant risk (no shipped parser sets .interval yet, so this
-        # gather has exactly one bucket today): if a bucket loop ever escapes
-        # with a processing exception (parser.parse or a DB write raising —
-        # collection errors are contained per-tick inside _collect_bucket),
-        # gather() re-raises without cancelling sibling bucket loops, and the
+        # gather has exactly one bucket loop today — plus _tunnel_loop below
+        # whenever a tunnel source is wired, making it a genuine second
+        # concurrent coroutine): if a loop ever escapes with a processing
+        # exception (parser.parse or a DB write raising — collection errors
+        # are contained per-tick inside _collect_bucket and _tunnel_pass
+        # alike), gather() re-raises without cancelling siblings, and the
         # CLI's collection_task.cancel() is a no-op on the already-failed
-        # task — orphaned buckets would keep polling until process exit.
-        # First real multi-bucket activation should harden this (cancel
-        # siblings on first exception).
-        await asyncio.gather(*(_bucket_loop(s, e) for s, e in buckets.items()))
+        # task — the orphaned loop(s) would keep polling until process exit.
+        # Symmetric either direction: a bucket escape orphans the tunnel
+        # loop, and a tunnel-pass DB-write escape orphans the bucket loops.
+        # First real multi-bucket activation (or tunnel-loop hardening)
+        # should address this (cancel siblings on first exception).
+        loops = [_bucket_loop(s, e) for s, e in buckets.items()]
+        if self._tunnel_source is not None:
+            loops.append(self._tunnel_loop(secs, start, duration))
+        await asyncio.gather(*loops)
+
+    async def _tunnel_pass(self) -> None:
+        """One discovery pass: scan, diff, persist-then-publish on change."""
+        assert self._tunnel_source is not None  # noqa: S101 — loop only spawns with a source
+        try:
+            records = sorted(await self._tunnel_source(), key=lambda r: r.id)
+        except Exception as err:  # noqa: BLE001 — any scan failure keeps last state
+            if not self._tunnel_scan_failing:
+                logger.warning("Monitor: tunnel scan failed (keeping last known set): %s", err)
+                self._tunnel_scan_failing = True
+            else:
+                logger.debug("Monitor: tunnel scan still failing: %s", err)
+            return
+        if self._tunnel_scan_failing:
+            logger.warning("Monitor: tunnel scan recovered")
+            self._tunnel_scan_failing = False
+        if records == self._tunnels:
+            return
+        self._tunnels = records
+        payload = [r.model_dump(mode="json") for r in records]
+        # DB first, then broadcast: a crash between the two can only make
+        # hydrate FRESHER than the stream, never staler (spec §2).
+        if self._db:
+            await self._db.write_tunnels(json.dumps(payload))
+        self._publish({"format": 1, "session": self.session_id, "tunnels": payload})
+
+    async def _tunnel_loop(
+        self, secs: float, start: datetime, duration: "timedelta | None"
+    ) -> None:
+        await self._tunnel_pass()
+        while duration is None or datetime.now(tz=timezone.utc) - start < duration:
+            await asyncio.gather(asyncio.sleep(secs), self._tunnel_pass())
 
     async def _record_point(
         self,
@@ -713,6 +764,10 @@ class MetricCollector:
     def get_events(self) -> list[MonitorEvent]:
         """Return all recorded events in chronological order."""
         return self._store.events()
+
+    def get_tunnel_records(self) -> list[TunnelRecord]:
+        """Last known tunnel set (sorted by id) — the export producer's input."""
+        return list(self._tunnels)
 
     def get_log_events(self) -> "list[dict[str, Any]]":
         """JSON-safe log-event rows for the ``monitor_sessions``/SSE wire and export.

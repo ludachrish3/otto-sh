@@ -211,7 +211,7 @@ git commit -m "feat(monitor): TunnelRecord + tunnels on SessionRecord/fragment; 
 
 **Interfaces:**
 - Consumes: `TunnelRecord` (Task 1).
-- Produces: fixtures whose sessions carry `tunnels` — kitchen-sink: `tun-demo` 2-hop bare `ok`; isp-core: `tun-app-path` 3-hop riding `degraded` + `tun-jump-zephyr` 2-hop `ok`; sprawl: `tun-jump-acc07` 2-hop `uncertain`. Zero `provenance="dynamic"` links anywhere.
+- Produces: fixtures whose sessions carry `tunnels` — kitchen-sink: `tun-demo` 2-hop bare `ok`; sprawl: 3-hop riding `degraded` + `tun-jump-zephyr` 2-hop `ok`; isp-core: `tun-jump-acc07` 2-hop `uncertain`. Zero `provenance="dynamic"` links anywhere.
 
 - [ ] **Step 1: Migrate kitchen-sink.** Delete the `_link(... provenance="dynamic", name="tun-demo" ...)` entry (gen_monitor_fixtures.py:321-329, including the FIXTURE-ONLY comment). Find the fixture's `SessionRecord(...)` construction (grep `SessionRecord(` in the same function) and add:
 
@@ -1873,9 +1873,9 @@ def test_bare_tunnel_renders_as_a_dynamic_edge(page: Page, review_dash: Any) -> 
 
 
 def test_riding_segments_reproduce_their_underlay_geometry(page: Page, review_dash: Any) -> None:
-    """isp-core's tun-...a9db01: both segments ride declared links — the drawn
+    """sprawl's tun-...a9db01: both segments ride declared links — the drawn
     path `d` of each segment equals its underlay's exactly."""
-    # (import isp-core, open /topology)
+    # (import sprawl, open /topology)
     seg0 = _path_d(page, "topo-link-tun-000000a9db01-15002:0")
     seg1 = _path_d(page, "topo-link-tun-000000a9db01-15002:1")
     # Underlay edge ids come from the fixture's declared links between the
@@ -1888,7 +1888,7 @@ def test_riding_segments_reproduce_their_underlay_geometry(page: Page, review_da
 
 
 def test_clicking_any_segment_selects_the_whole_tunnel(page: Page, review_dash: Any) -> None:
-    # (isp-core, /topology)
+    # (sprawl, /topology)
     page.locator('[data-tunnel="tun-000000a9db01-15002"]').first.click(force=True)
     assert _tid(page, "inspector-tunnel-status").inner_text().endswith("degraded")
     assert "4/6" in _tid(page, "inspector-tunnel-carriers").inner_text()
@@ -1903,7 +1903,7 @@ def test_clicking_any_segment_selects_the_whole_tunnel(page: Page, review_dash: 
 
 
 def test_uncertain_tunnel_ghosts(page: Page, review_dash: Any) -> None:
-    # (sprawl, /topology)
+    # (isp-core, /topology)
     seg = page.locator('[data-tunnel="tun-0000jumpacc7-15003"]').first
     assert seg.get_attribute("data-tunnel-status") == "uncertain"
     opacity = seg.locator("path.react-flow__edge-path").evaluate(

@@ -53,11 +53,13 @@
   --topo-edge-static: #4b5563;
   --topo-edge-reports: #9ca3af;
   --topo-edge-tunnel-casing: #9ca3af;
+  --topo-edge-tunnel-degraded: #b54708; /* warning-700 on light */
 }
 .dark-mode {
   --topo-edge-static: #9ca3af;
   --topo-edge-reports: #6b7280;
   --topo-edge-tunnel-casing: #4b5563;
+  --topo-edge-tunnel-degraded: #f79009; /* warning-500 on dark */
 }
 
 /* WEBKIT: make React Flow's edge hit target actually hit-testable.

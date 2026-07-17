@@ -1113,8 +1113,14 @@ def test_topology_legend_hover_and_tunnel_casing(shell_dash, page):
     # attribute (`"0"`, to stay invisible) on every edge, tunnel or not — a
     # bare `path[stroke-opacity]` selector matches that library boilerplate
     # too and overcounts by one, so the casing has to be picked out by name.
+    #
+    # kitchen-sink's bare 2-hop tunnel is `tun-00000000demo-15001` (edge-gw ->
+    # db-01, one segment, index 0) — tunnels moved off `LinkSnapshot` (spec
+    # 2026-07-16), so the segment testid is `topo-link-<tunnelId>:<i>`, not a
+    # link id (the old `tun-demo` link no longer exists).
     tunnel = page.locator(
-        '[data-testid="topo-link-tun-demo"] path[stroke-opacity]:not(.react-flow__edge-interaction)'
+        '[data-testid="topo-link-tun-00000000demo-15001:0"] '
+        "path[stroke-opacity]:not(.react-flow__edge-interaction)"
     )
     assert tunnel.count() == 1
     other = page.locator(

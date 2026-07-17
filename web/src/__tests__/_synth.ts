@@ -47,6 +47,7 @@ export function synthSession(args: {
     logEvents: [],
     index: buildIndex(metrics),
     chartMap: {},
+    tunnels: [],
     elements: [],
     hostIds: new Set(labHosts.map((h) => h.id)),
     elementIds: new Set(),

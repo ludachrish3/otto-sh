@@ -100,7 +100,15 @@ BUDGETS = {
     "sprawl.json": {
         "dp_count": 16,
         "management_count": 19,
-        "tunnel_count": 1,
+        # 1 -> 3 (Task 12): sprawl.json carries TWO tunnels
+        # (tun-000000a9db01-15002, 3 hops -> 2 segments; tun-0000jumpzeph-15004,
+        # 2 hops -> 1 segment) since the fixtures grew a second one (commit
+        # 2209e6b) -- this budget pinned the count from before that landed and
+        # was never reconciled, so `_wait_for_links`'s EXACT total (below)
+        # could never be reached (measured directly against the live DOM:
+        # dpCount 16, managementCount 19, tunnelCount 3 -- the other two
+        # numbers already matched).
+        "tunnel_count": 3,
         "dp_crossings": 6,  # 21 -> 13 (Task 4) -> 6 (Task 5) -> 6 (Task 6, unchanged)
         "dp_swallowed": 0,  # was 3 before Task 4
     },

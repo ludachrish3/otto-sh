@@ -8,7 +8,7 @@
 // doc comment for why it survives. Hop cycles (misconfig) are guarded,
 // clamped and warned — never an infinite loop -- independently of depth,
 // via `deriveReachability`'s own walk of every host's hop chain.
-import type { HostSnapshot, LinkSnapshot } from "../api/export.gen";
+import type { HostSnapshot, LinkSnapshot, TunnelRecord } from "../api/export.gen";
 import type { DerivedElement, NormalizedSession } from "./exportDoc";
 import type { SubjectHealth } from "./health";
 
@@ -55,6 +55,14 @@ export interface TopoEdge {
   links?: LinkSnapshot[];
   impair: string | null;
   parallelIndex: number;
+  /** The tunnel this segment belongs to (`dynamic` edges only). */
+  tunnel?: TunnelRecord;
+  /** Geometry basis for `routeEdge`: a riding segment carries its underlay's
+   * group size so it reproduces the underlay path exactly; a fanned segment
+   * carries static+fanned count. TopologyPage passes this as `groupSize`
+   * INSTEAD of counting (tunnel edges are excluded from the pair counts so
+   * underlays never re-fan when tunnels churn). */
+  tunnelGroupSize?: number;
 }
 
 export interface TopoGraph {
@@ -211,6 +219,107 @@ function assignParallelIndices(edges: TopoEdge[]): void {
   }
 }
 
+/** Tunnel overlay segments (spec 2026-07-16 §4). Called AFTER
+ * assignParallelIndices(staticEdges): the static graph's slots are frozen
+ * first, so tunnel churn can never re-fan an underlay. `nodeOf` maps a hop
+ * HOST id to a node at this view level (element id / host id), undefined if
+ * out of view. `knownHost` distinguishes "out of this view" (silent skip)
+ * from "not in the session at all" (data error -> warning). */
+function buildTunnelEdges(
+  tunnels: TunnelRecord[],
+  nodeOf: (hostId: string) => string | undefined,
+  knownHost: (hostId: string) => boolean,
+  staticEdges: TopoEdge[],
+  warnings: string[],
+): TopoEdge[] {
+  // Unfiltered per-pair grouping -- every provenance, INCLUDING reports-for.
+  // This must mirror assignParallelIndices's own grouping exactly: a riding
+  // segment's parallelIndex is copied from an edge whose value was assigned
+  // over this same unfiltered group, so tunnelGroupSize (and every fan
+  // slot's base) has to be sized from it too, or routeEdge sees a
+  // parallelIndex that doesn't fit inside its claimed group size.
+  const allByPair = new Map<string, TopoEdge[]>();
+  for (const e of staticEdges) {
+    const key = pairKey(e.source, e.target);
+    const list = allByPair.get(key);
+    if (list) list.push(e);
+    else allByPair.set(key, [e]);
+  }
+  const staticSizeOf = (key: string): number => allByPair.get(key)?.length ?? 0;
+
+  // Underlay CANDIDATES exclude reports-for -- it is never an underlay --
+  // but that exclusion applies ONLY to picking which edge a rider copies
+  // geometry from, never to sizing the group (see allByPair above).
+  const candidatesByPair = new Map<string, TopoEdge[]>();
+  for (const e of staticEdges) {
+    if (e.provenance === "reports-for") continue;
+    const key = pairKey(e.source, e.target);
+    const list = candidatesByPair.get(key);
+    if (list) list.push(e);
+    else candidatesByPair.set(key, [e]);
+  }
+  // Underlay preference: declared over anything else, then stable by id.
+  const underlayOf = (key: string): TopoEdge | undefined =>
+    [...(candidatesByPair.get(key) ?? [])].sort(
+      (a, b) =>
+        (a.provenance === "declared" ? 0 : 1) - (b.provenance === "declared" ? 0 : 1) ||
+        a.id.localeCompare(b.id),
+    )[0];
+
+  const out: TopoEdge[] = [];
+  const fanned = new Map<string, TopoEdge[]>(); // non-riding segments per pair
+  const ridden = new Set<string>(); // pairs whose underlay already carries one rider
+  for (const t of [...tunnels].sort((a, b) => a.id.localeCompare(b.id))) {
+    if (!Array.isArray(t.hops) || t.hops.length < 2) {
+      warnings.push(`tunnel ${t.id}: malformed hops (expected >=2 host ids)`);
+      continue;
+    }
+    for (let i = 0; i + 1 < t.hops.length; i++) {
+      const [ha, hb] = [t.hops[i], t.hops[i + 1]];
+      const missing = [ha, hb].filter((h) => !knownHost(h));
+      if (missing.length > 0) {
+        const names = missing.map((h) => `"${h}"`).join(", ");
+        warnings.push(`tunnel ${t.id}: hop host ${names} not in lab snapshot`);
+        continue;
+      }
+      const [a, b] = [nodeOf(ha), nodeOf(hb)];
+      if (!a || !b) continue; // out of this view level
+      if (a === b) continue; // both hops inside one element at this level
+      const key = pairKey(a, b);
+      const underlay = underlayOf(key);
+      const seg: TopoEdge = {
+        id: `${t.id}:${i}`,
+        source: a,
+        target: b,
+        provenance: "dynamic",
+        tunnel: t,
+        impair: null,
+        parallelIndex: 0,
+        tunnelGroupSize: 0,
+      };
+      const staticSize = staticSizeOf(key);
+      if (underlay && !ridden.has(key)) {
+        // First rider reproduces the underlay path exactly.
+        ridden.add(key);
+        seg.parallelIndex = underlay.parallelIndex;
+        seg.tunnelGroupSize = staticSize;
+      } else {
+        const list = fanned.get(key) ?? [];
+        seg.parallelIndex = staticSize + list.length;
+        list.push(seg);
+        fanned.set(key, list);
+      }
+      out.push(seg);
+    }
+  }
+  // Fanned segments learn their final group size once the pair is complete.
+  for (const [key, list] of fanned) {
+    const staticSize = staticSizeOf(key);
+    for (const seg of list) seg.tunnelGroupSize = staticSize + list.length;
+  }
+  return out;
+}
+
 function slotThenId(byId: Map<string, HostSnapshot>) {
   return (a: string, b: string): number => {
     const slotA = byId.get(a)?.slot ?? Number.POSITIVE_INFINITY;
@@ -257,6 +366,11 @@ export function buildTopoGraph(
     }
   }
 
+  // Maps a tunnel hop HOST id to a node at this view level; undefined means
+  // out of view (silent skip in buildTunnelEdges). Assigned in each branch
+  // below, since the mapping differs (element id vs. host id).
+  let nodeOf: (hostId: string) => string | undefined;
+
   if (opts.expand === undefined) {
     // ── Inter-element graph ──────────────────────────────────────────────
     for (const el of session.elements) {
@@ -285,7 +399,7 @@ export function buildTopoGraph(
         });
       }
     }
-    const nodeOf = (hostId: string): string | undefined => elementOf.get(hostId);
+    nodeOf = (hostId: string): string | undefined => elementOf.get(hostId);
     const implicitByPair = new Map<string, { a: string; b: string; links: LinkSnapshot[] }>();
     for (const link of session.lab.links) {
       const a = nodeOf(link.endpoints[0].host);
@@ -301,7 +415,7 @@ export function buildTopoGraph(
           id: link.id,
           source: a,
           target: b,
-          provenance: link.provenance === "dynamic" ? "dynamic" : "declared",
+          provenance: "declared",
           link,
           impair: link.impair ?? null,
           parallelIndex: 0,
@@ -359,6 +473,7 @@ export function buildTopoGraph(
         if ([...fed].some((h) => members.has(h))) addHost(byId.get(src));
       }
     }
+    nodeOf = (hostId: string): string | undefined => (include.has(hostId) ? hostId : undefined);
     const ordered = [...include.values()].sort((a, b) => slotThenId(byId)(a.id, b.id));
     for (const host of ordered) {
       nodes.push({
@@ -398,7 +513,7 @@ export function buildTopoGraph(
         id: link.id,
         source: a,
         target: b,
-        provenance: link.provenance === "dynamic" ? "dynamic" : "declared",
+        provenance: "declared",
         link,
         impair: link.impair ?? null,
         parallelIndex: 0,
@@ -421,6 +536,8 @@ export function buildTopoGraph(
     }
   }
 
-  assignParallelIndices(edges);
+  assignParallelIndices(edges); // static slots FIRST — frozen before tunnels
+  const knownHost = (id: string): boolean => byId.has(id);
+  edges.push(...buildTunnelEdges(session.tunnels, nodeOf, knownHost, edges, warnings));
   return { nodes, edges, warnings: uniq(warnings), managementIds: deriveManagementIds(session) };
 }

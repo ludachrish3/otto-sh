@@ -39,6 +39,7 @@ from otto.models import (
     SessionMeta,
     SessionRecord,
     TabSpecRecord,
+    TunnelRecord,
 )
 
 BASE = datetime(2026, 7, 1, 8, 0, 0, tzinfo=timezone.utc)
@@ -94,7 +95,6 @@ def _link(
     provenance: Literal["implicit", "declared", "dynamic"] = "declared",
     name: str | None = None,
     impair: str | None = None,
-    ports: tuple[int | None, int | None] = (None, None),
 ) -> LinkSnapshot:
     """One fixture link; the id comes from the real static-id derivation."""
     ea = LinkEndpoint(host=a[0], interface=a[1], ip=a[2])
@@ -102,8 +102,8 @@ def _link(
     return LinkSnapshot(
         id=make_static_link_id(ea, eb, name),
         endpoints=[
-            LinkEndpointSnapshot(host=a[0], interface=a[1], ip=a[2], port=ports[0]),
-            LinkEndpointSnapshot(host=b[0], interface=b[1], ip=b[2], port=ports[1]),
+            LinkEndpointSnapshot(host=a[0], interface=a[1], ip=a[2]),
+            LinkEndpointSnapshot(host=b[0], interface=b[1], ip=b[2]),
         ],
         protocol=protocol,
         provenance=provenance,
@@ -318,15 +318,6 @@ def kitchen_sink() -> MonitorExport:
             name="metrics-udp",
             impair="edge-gw",
         ),
-        # FIXTURE-ONLY (spec §2): real exporters never write dynamic links; this
-        # one exists purely so the provenance styling can be seen and tested.
-        _link(
-            ("edge-gw", None, "10.20.0.1"),
-            ("db-01", None, "10.20.3.31"),
-            provenance="dynamic",
-            name="tun-demo",
-            ports=(15001, 22),
-        ),
     ]
     spike = {
         "chassis-a_lc1": lambda cpu: _with_spike(cpu, center_s=5400.0, width_s=180.0, height=45.0)
@@ -430,6 +421,20 @@ def kitchen_sink() -> MonitorExport:
         events=events,
         log_events=log_events,
         chart_map=_chart_map(meta),
+        tunnels=[
+            # Bare 2-hop tunnel: no declared/implicit link joins edge-gw⇄db-01,
+            # so this renders as a bare segment — the old chord look, pinned.
+            TunnelRecord(
+                id="tun-00000000demo-15001",
+                protocol="udp",
+                service_port=15001,
+                hops=["edge-gw", "db-01"],
+                status="ok",
+                carriers_present=4,
+                carriers_expected=4,
+                age_seconds=3600.0,
+            ),
+        ],
     )
     return MonitorExport(format=1, sessions=[session])
 
@@ -619,13 +624,6 @@ def sprawl() -> MonitorExport:
         _link(
             ("zephyr-01", "eth0", "10.60.4.1"), ("tor-sw-b", "eth0", "10.60.0.4"), name="zephyr-tor"
         ),
-        _link(
-            ("jump-01", None, "10.60.0.1"),
-            ("zephyr-01", None, "10.60.4.1"),
-            provenance="dynamic",
-            name="tun-jump-zephyr",
-            ports=(15002, 23),
-        ),
     ]
     # core-gw down; everything that hops through it goes dark with it (a
     # wider cascade than the two-host one in `cascade()`).
@@ -695,6 +693,31 @@ def sprawl() -> MonitorExport:
         meta=meta,
         metrics=metrics,
         chart_map=_chart_map(meta),
+        tunnels=[
+            # 3-hop path riding two DECLARED links (app01-tor, app01-db):
+            # the riding-overlay vector. Degraded: 4 of 6 carriers alive.
+            TunnelRecord(
+                id="tun-000000a9db01-15002",
+                protocol="tcp",
+                service_port=15002,
+                hops=["tor-sw-a", "app-01", "db-01"],
+                status="degraded",
+                carriers_present=4,
+                carriers_expected=6,
+                age_seconds=900.0,
+            ),
+            # The old tun-jump-zephyr, kept as a 2-hop ok tunnel.
+            TunnelRecord(
+                id="tun-0000jumpzeph-15004",
+                protocol="tcp",
+                service_port=15004,
+                hops=["jump-01", "zephyr-01"],
+                status="ok",
+                carriers_present=4,
+                carriers_expected=4,
+                age_seconds=7200.0,
+            ),
+        ],
     )
     return MonitorExport(format=1, sessions=[session])
 
@@ -836,13 +859,6 @@ def isp_core() -> MonitorExport:
             name="pgw01-pe01",
             impair="core-02",
         ),
-        _link(
-            ("jump-01", None, "10.70.0.1"),
-            ("acc-07", None, "10.70.3.7"),
-            provenance="dynamic",
-            name="tun-jump-acc07",
-            ports=(15003, 22),
-        ),
     ]
     dead = (600.0, _SPARSE_DURATION_S + _SPARSE_CADENCE_S)  # see cascade()'s boundary-tick note
     ems01_hosts = ["pe-01", "pe-02", "core-01", "core-02", "mme-01", "sgw-01", "pgw-01", "hss-01"]
@@ -914,6 +930,19 @@ def isp_core() -> MonitorExport:
         meta=meta,
         metrics=metrics,
         chart_map=_chart_map(meta),
+        tunnels=[
+            # Uncertain: a hop host was unreachable during the last scan.
+            TunnelRecord(
+                id="tun-0000jumpacc7-15003",
+                protocol="udp",
+                service_port=15003,
+                hops=["jump-01", "acc-07"],
+                status="uncertain",
+                carriers_present=2,
+                carriers_expected=4,
+                age_seconds=300.0,
+            ),
+        ],
     )
     return MonitorExport(format=1, sessions=[session])
 
