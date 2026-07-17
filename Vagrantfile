@@ -53,6 +53,124 @@ def zephyr_sdk_install(toolchain, versions)
   SHELL
 end
 
+# Per-version Zephyr workspaces for *building/testing* against each
+# otto-supported Zephyr version. 3.7 + 4.4 build the repo3 coverage product
+# (.llext); 2.7 is for testing only (it predates LLEXT, so it can't do
+# coverage). One (venv, workspace) per version, mirroring the zephyr VM's
+# ZEPHYR_VERSIONS table — but with no QEMU/firmware build (this only builds
+# the product on demand; the instances run on the zephyr VM). Needs the
+# arm-zephyr-eabi toolchains from zephyr_sdk_install + the apt build deps
+# (git, cmake, ninja-build, gperf, device-tree-compiler, python3-dev/pip/venv)
+# installed by the caller. First run is slow (clones Zephyr + modules per
+# version); idempotent on re-provision. Shared by the dev and playground VMs.
+def zephyr_workspace_matrix
+  <<-SHELL
+    set -e
+    # version_id | git branch. Redirected heredoc (not a pipe) so the loop
+    # body runs in this shell and `set -e` persists (see the zephyr VM
+    # provisioner). 2.7 + 3.7 share SDK 0.16.8; 4.4 uses 1.0.1 — both
+    # installed by the caller's zephyr_sdk_install step.
+    while IFS='|' read -r ZVER ZBRANCH; do
+        [ -n "${ZVER}" ] || continue
+        ZWORKSPACE="${HOME}/zephyrproject-${ZVER}"
+        ZVENV="${HOME}/zephyr-venv-${ZVER}"
+        echo ""
+        echo "### Zephyr ${ZVER} (${ZBRANCH}) build env"
+
+        # Neutral ground before any west command: a prior iteration leaves
+        # cwd + ZEPHYR_BASE inside its own workspace, which would misdirect
+        # west init/discovery for the next version.
+        cd "${HOME}"
+        unset ZEPHYR_BASE
+
+        # Per-version venv keeps each LTS's west / Python deps isolated.
+        if [ ! -d "${ZVENV}" ]; then
+            python3 -m venv "${ZVENV}"
+        fi
+        # shellcheck disable=SC1091
+        source "${ZVENV}/bin/activate"
+        pip install --quiet --upgrade pip
+        # setuptools for its distutils shim (Py3.12 dropped distutils;
+        # 2.7's build scripts still import it). Harmless for 3.7/4.4.
+        pip install --quiet setuptools west
+
+        # Shallow + narrow workspace init (Zephyr CI's fast path).
+        # Idempotent on .west; a partial checkout self-heals.
+        if [ ! -d "${ZWORKSPACE}/.west" ]; then
+            rm -rf "${ZWORKSPACE}/zephyr"
+            mkdir -p "${ZWORKSPACE}"
+            git clone --depth 1 --branch "${ZBRANCH}" \
+                https://github.com/zephyrproject-rtos/zephyr.git \
+                "${ZWORKSPACE}/zephyr"
+            west init -l "${ZWORKSPACE}/zephyr"
+        fi
+        cd "${ZWORKSPACE}"
+        # Retry west update: it fetches ~90 modules per workspace from
+        # github.com, and across three workspaces in one provision an
+        # occasional transient fetch reset (early EOF / RPC failure) on a
+        # single module would otherwise abort the whole run. west update
+        # is idempotent — already-fetched modules are no-ops — so a retry
+        # only re-attempts the module that got the hiccup. Fail hard only
+        # if it is still failing after three attempts.
+        for attempt in 1 2 3; do
+            if west update --narrow -o=--depth=1; then
+                break
+            elif [ "${attempt}" -eq 3 ]; then
+                echo "west update still failing after 3 attempts" >&2
+                exit 1
+            else
+                echo "west update failed (attempt ${attempt}/3); retrying in 5s..." >&2
+                sleep 5
+            fi
+        done
+        if grep -q 'zephyr-export' zephyr/scripts/west-commands.yml 2>/dev/null; then
+            west zephyr-export
+        fi
+        pip install --quiet -r zephyr/scripts/requirements.txt
+
+        # Apply the per-version source patches from
+        # tests/firmware/zephyr/patches/ (see its README for the
+        # what/why of each). The glob is version-gated, so each
+        # iteration picks up only its own ${ZVER}-*.patch set.
+        # Idempotent: the reverse-check skips an already-patched tree.
+        for patch in /vagrant/tests/firmware/zephyr/patches/${ZVER}-*.patch; do
+            [ -f "${patch}" ] || continue
+            if git -C zephyr apply --reverse --check "${patch}" 2>/dev/null; then
+                echo "=== patch already applied: $(basename "${patch}") ==="
+            else
+                echo "=== applying patch: $(basename "${patch}") ==="
+                git -C zephyr apply "${patch}"
+            fi
+        done
+    done <<'VERS'
+v2_7|v2.7-branch
+v3_7|v3.7-branch
+v4_4|v4.4-branch
+VERS
+
+    echo ""
+    echo "Zephyr build envs ready: ~/zephyrproject-{v2_7,v3_7,v4_4}."
+    echo "Build the coverage product (3.7/4.4) — see tests/repo3/product/README.md, e.g.:"
+    echo "  tests/repo3/product/build.sh ~/build/cov_ext_app_v3_7 v3_7"
+  SHELL
+end
+
+# Installs uv (and its shell completions) via the official astral.sh script.
+# A plain snippet, not a standalone provisioner — the dev VM interpolates it
+# into its larger "dev" step alongside unrelated git config; the playground
+# VM uses it as its own provisioner since it has nothing else to bundle it
+# with. Shared so the two don't carry separate copies of the same 3 lines.
+def uv_install_snippet
+  <<-SNIPPET
+    # Install uv via the official install script
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Set up shell completions for uv and uvx
+    echo 'eval "$(uv generate-shell-completion bash)"' >> ~/.bashrc
+    echo 'eval "$(uvx --generate-shell-completion bash)"' >> ~/.bashrc
+  SNIPPET
+end
+
 Vagrant.configure("2") do |config|
 
   config.vm.box = "bento/ubuntu-24.04"
@@ -107,32 +225,9 @@ Vagrant.configure("2") do |config|
         # Private network (shared with test VMs)
         dev.vm.network "private_network", ip: "10.10.200.100"
 
-        # Grow the root LV + filesystem to use the full virtual disk. The
-        # bento/ubuntu-24.04 box ships the root LV at only ~half its PV (a ~30 G
-        # LV on a ~61 G partition of a 64 G disk), so the per-version Zephyr
-        # workspaces below (~3.6 G each, x3) would otherwise run the box out of
-        # space. Runs first, before the SDK/workspace downloads. Steps are
-        # dynamic (no hard-coded vg/disk names) and idempotent — each is a no-op
-        # once at max. growpart + pvresize also cover the case where the VDI is
-        # later enlarged (e.g. via the vagrant-disksize plugin): the partition
-        # then trails the disk and these grow it; lvextend + resize2fs fill the LV
-        # into the free VG. resize2fs grows ext4 online, so no reboot is needed.
-        dev.vm.provision "shell", name: "dev-grow-disk", keep_color: true, inline: <<-SHELL
-            set -e
-            apt-get install -y cloud-guest-utils >/dev/null 2>&1 || true  # growpart
-            ROOT_LV="$(findmnt -no SOURCE /)"                       # /dev/mapper/<vg>-<lv>
-            PV="$(pvs --noheadings -o pv_name | head -1 | tr -d ' ')" # e.g. /dev/sda3
-            DISK="/dev/$(lsblk -no pkname "${PV}" | head -1)"       # e.g. /dev/sda (head -1: skip the LVM child row)
-            PARTNUM="$(echo "${PV}" | grep -o '[0-9]*$')"
-            echo "root LV=${ROOT_LV} PV=${PV} disk=${DISK} part=${PARTNUM}"
-            if command -v growpart >/dev/null; then
-                growpart "${DISK}" "${PARTNUM}" || true   # rc 2 == NOCHANGE
-            fi
-            pvresize "${PV}"
-            lvextend -l +100%FREE "${ROOT_LV}" || true    # no-op if no free extents
-            resize2fs "${ROOT_LV}"
-            df -h / | tail -1
-        SHELL
+        # Grow the root LV before the Zephyr SDK/workspace downloads below run
+        # it out of space — see grow_root_disk's own comment for the why/how.
+        grow_root_disk(dev, "dev-grow-disk")
 
         dev.vm.provision "shell", name: "dev-root", keep_color: true, inline: <<-SHELL
 
@@ -283,12 +378,7 @@ Vagrant.configure("2") do |config|
             # Set the default branch name to `main` instead of `master`
             git config --global init.defaultBranch main
 
-            # Install uv via the official install script
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-
-            # Set up shell completions for uv and uvx
-            echo 'eval "$(uv generate-shell-completion bash)"' >> ~/.bashrc
-            echo 'eval "$(uvx --generate-shell-completion bash)"' >> ~/.bashrc
+            #{uv_install_snippet}
 
             echo 'git config --global core.editor "vim"' >> ~/.bashrc
             echo 'alias gs="git status"' >> ~/.bashrc
@@ -309,104 +399,11 @@ Vagrant.configure("2") do |config|
         dev.vm.provision "shell", name: "dev-zephyr-sdk", privileged: false, keep_color: true,
             inline: zephyr_sdk_install("arm-zephyr-eabi", ["0.16.8", "1.0.1"])
 
-        # Per-version Zephyr workspaces for *building/testing* against each
-        # otto-supported Zephyr version on this VM. 3.7 + 4.4 build the repo3
-        # coverage product (.llext); 2.7 is for testing only (it predates LLEXT,
-        # so it can't do coverage). One (venv, workspace) per version, mirroring
-        # the zephyr VM's ZEPHYR_VERSIONS table — but with no QEMU/firmware build
-        # (this VM only builds the product on demand; the instances run on the
-        # zephyr VM). Needs the SDKs from dev-zephyr-sdk + the apt build deps
-        # above. First run is slow (clones Zephyr + modules per version);
-        # idempotent on re-provision.
-        dev.vm.provision "shell", name: "dev-zephyr-workspace", privileged: false, keep_color: true, inline: <<-SHELL
-            set -e
-            # version_id | git branch. Redirected heredoc (not a pipe) so the loop
-            # body runs in this shell and `set -e` persists (see the zephyr VM
-            # provisioner). 2.7 + 3.7 share SDK 0.16.8; 4.4 uses 1.0.1 — both
-            # installed by dev-zephyr-sdk above.
-            while IFS='|' read -r ZVER ZBRANCH; do
-                [ -n "${ZVER}" ] || continue
-                ZWORKSPACE="${HOME}/zephyrproject-${ZVER}"
-                ZVENV="${HOME}/zephyr-venv-${ZVER}"
-                echo ""
-                echo "### Zephyr ${ZVER} (${ZBRANCH}) build env"
-
-                # Neutral ground before any west command: a prior iteration leaves
-                # cwd + ZEPHYR_BASE inside its own workspace, which would misdirect
-                # west init/discovery for the next version.
-                cd "${HOME}"
-                unset ZEPHYR_BASE
-
-                # Per-version venv keeps each LTS's west / Python deps isolated.
-                if [ ! -d "${ZVENV}" ]; then
-                    python3 -m venv "${ZVENV}"
-                fi
-                # shellcheck disable=SC1091
-                source "${ZVENV}/bin/activate"
-                pip install --quiet --upgrade pip
-                # setuptools for its distutils shim (Py3.12 dropped distutils;
-                # 2.7's build scripts still import it). Harmless for 3.7/4.4.
-                pip install --quiet setuptools west
-
-                # Shallow + narrow workspace init (Zephyr CI's fast path).
-                # Idempotent on .west; a partial checkout self-heals.
-                if [ ! -d "${ZWORKSPACE}/.west" ]; then
-                    rm -rf "${ZWORKSPACE}/zephyr"
-                    mkdir -p "${ZWORKSPACE}"
-                    git clone --depth 1 --branch "${ZBRANCH}" \
-                        https://github.com/zephyrproject-rtos/zephyr.git \
-                        "${ZWORKSPACE}/zephyr"
-                    west init -l "${ZWORKSPACE}/zephyr"
-                fi
-                cd "${ZWORKSPACE}"
-                # Retry west update: it fetches ~90 modules per workspace from
-                # github.com, and across three workspaces in one provision an
-                # occasional transient fetch reset (early EOF / RPC failure) on a
-                # single module would otherwise abort the whole run. west update
-                # is idempotent — already-fetched modules are no-ops — so a retry
-                # only re-attempts the module that got the hiccup. Fail hard only
-                # if it is still failing after three attempts.
-                for attempt in 1 2 3; do
-                    if west update --narrow -o=--depth=1; then
-                        break
-                    elif [ "${attempt}" -eq 3 ]; then
-                        echo "west update still failing after 3 attempts" >&2
-                        exit 1
-                    else
-                        echo "west update failed (attempt ${attempt}/3); retrying in 5s..." >&2
-                        sleep 5
-                    fi
-                done
-                if grep -q 'zephyr-export' zephyr/scripts/west-commands.yml 2>/dev/null; then
-                    west zephyr-export
-                fi
-                pip install --quiet -r zephyr/scripts/requirements.txt
-
-                # Apply the per-version source patches from
-                # tests/firmware/zephyr/patches/ (see its README for the
-                # what/why of each). The glob is version-gated, so each
-                # iteration picks up only its own ${ZVER}-*.patch set.
-                # Idempotent: the reverse-check skips an already-patched tree.
-                for patch in /vagrant/tests/firmware/zephyr/patches/${ZVER}-*.patch; do
-                    [ -f "${patch}" ] || continue
-                    if git -C zephyr apply --reverse --check "${patch}" 2>/dev/null; then
-                        echo "=== patch already applied: $(basename "${patch}") ==="
-                    else
-                        echo "=== applying patch: $(basename "${patch}") ==="
-                        git -C zephyr apply "${patch}"
-                    fi
-                done
-            done <<'VERS'
-v2_7|v2.7-branch
-v3_7|v3.7-branch
-v4_4|v4.4-branch
-VERS
-
-            echo ""
-            echo "Zephyr build envs ready: ~/zephyrproject-{v2_7,v3_7,v4_4}."
-            echo "Build the coverage product (3.7/4.4) — see tests/repo3/product/README.md, e.g.:"
-            echo "  tests/repo3/product/build.sh ~/build/cov_ext_app_v3_7 v3_7"
-        SHELL
+        # Per-version Zephyr workspace matrix (builds the repo3 coverage
+        # product) — see zephyr_workspace_matrix's own comment for the why/how.
+        # Needs the SDKs from dev-zephyr-sdk + the apt build deps above.
+        dev.vm.provision "shell", name: "dev-zephyr-workspace", privileged: false, keep_color: true,
+            inline: zephyr_workspace_matrix
     end
 
     # Three interchangeable Unix test VMs — carrot / tomato / pepper. Identical
@@ -1279,10 +1276,106 @@ EOF
         SHELL
     end
 
+    # Lightweight playground VM for testing otto as a *user* would
+    # experience it, rather than as a dev workstation. Deliberately thin:
+    # otto itself is left for a manual pip/uv install into a venv (not
+    # pre-provisioned here), so the "installing and learning otto" experience
+    # isn't short-circuited by having it already set up. Same private
+    # network as the dev VM (10.10.200.0/24) so it can reach
+    # test1/test2/test3/zephyr; no dedicated data-plane NIC — the dev VM
+    # doesn't have one either, since that NIC is only for the lab hosts otto
+    # connects TO (see provision_data_plane below).
+    config.vm.define "playground", autostart: false do |playground|
+
+        playground.vm.provider "virtualbox" do |vb|
+            # Zephyr SDK builds + docker workloads need more than a bare
+            # 2 cpu / 1 GB box could support, so this is bumped modestly —
+            # still well under the dev VM's 4 cpu / 4096 MB, which is sized
+            # for the full multi-version Zephyr matrix plus the dashboard
+            # e2e browser suite (neither of which run on this VM).
+            vb.memory = 2048
+            vb.cpus = 2
+        end
+
+        set_hostname(playground, "playground")
+
+        # Private network (shared with test VMs)
+        playground.vm.network "private_network", ip: "10.10.200.101"
+
+        grow_root_disk(playground, "playground-grow-disk")
+
+        # Compiler + Zephyr `west build` deps. Deliberately not the dev VM's
+        # full dev-root list: no gh/graphviz/lcov/ruby, and none of the
+        # Playwright/browser dependency wall — this VM never runs the
+        # dashboard e2e suite. clang is added alongside gcc so both of
+        # otto's cov collection models can be exercised here.
+        playground.vm.provision "shell", name: "playground-deps", keep_color: true, inline: <<-SHELL
+            apt install -y \
+                gcc \
+                clang \
+                wget \
+                xz-utils \
+                git \
+                cmake \
+                ninja-build \
+                gperf \
+                device-tree-compiler \
+                file \
+                libmagic1 \
+                python3-dev \
+                python3-pip \
+                python3-venv
+        SHELL
+
+        # arm-zephyr-eabi toolchains for the embedded (repo3) coverage bed —
+        # same versions/call as the dev VM.
+        playground.vm.provision "shell", name: "playground-zephyr-sdk", privileged: false, keep_color: true,
+            inline: zephyr_sdk_install("arm-zephyr-eabi", ["0.16.8", "1.0.1"])
+
+        # Same per-version Zephyr workspace matrix as the dev VM, so this VM
+        # can build the repo3 coverage product (.llext) locally too.
+        playground.vm.provision "shell", name: "playground-zephyr-workspace", privileged: false, keep_color: true,
+            inline: zephyr_workspace_matrix
+
+        # uv, for installing otto into a venv via pip/uv. otto itself is
+        # intentionally NOT installed here; that's left as a manual step.
+        playground.vm.provision "shell", name: "playground-uv", privileged: false, keep_color: true,
+            inline: uv_install_snippet
+
+        provision_docker(playground, "playground")
+    end
+
     # Dynamically set hostname based on VM name
     def set_hostname(vm, name, domain = nil)
         base = name.gsub("_", "-")
         vm.vm.hostname = domain ? "#{base}.#{domain}" : base
+    end
+
+    # Grow the root LV + filesystem to use the full virtual disk. The
+    # bento/ubuntu-24.04 box ships the root LV at only ~half its PV, so any VM
+    # that builds the per-version Zephyr workspaces (~3.6 G each, x3 — see
+    # zephyr_workspace_matrix) would otherwise run out of space. Steps are
+    # dynamic (no hard-coded vg/disk names) and idempotent — each is a no-op
+    # once at max. Shared by the dev and playground VMs (both build the
+    # Zephyr workspace matrix); `name` lets each caller keep its own
+    # provisioner name for `vagrant provision --provision-with`.
+    def grow_root_disk(vm, name)
+        vm.vm.provision "shell", name: name, keep_color: true, inline: <<-SHELL
+            set -e
+            apt-get install -y cloud-guest-utils >/dev/null 2>&1 || true  # growpart
+            ROOT_LV="$(findmnt -no SOURCE /)"                       # /dev/mapper/<vg>-<lv>
+            PV="$(pvs --noheadings -o pv_name | head -1 | tr -d ' ')" # e.g. /dev/sda3
+            DISK="/dev/$(lsblk -no pkname "${PV}" | head -1)"       # e.g. /dev/sda (head -1: skip the LVM child row)
+            PARTNUM="$(echo "${PV}" | grep -o '[0-9]*$')"
+            echo "root LV=${ROOT_LV} PV=${PV} disk=${DISK} part=${PARTNUM}"
+            if command -v growpart >/dev/null; then
+                growpart "${DISK}" "${PARTNUM}" || true   # rc 2 == NOCHANGE
+            fi
+            pvresize "${PV}"
+            lvextend -l +100%FREE "${ROOT_LV}" || true    # no-op if no free extents
+            resize2fs "${ROOT_LV}"
+            df -h / | tail -1
+        SHELL
     end
 
     # Data-plane address 192.168.1.<last-octet> — a DEDICATED second NIC
