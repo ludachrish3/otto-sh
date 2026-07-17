@@ -1006,6 +1006,12 @@ pytestmark = [
 
 _DELIVERY_FLOOR = 0.95
 _SEND_INTERVAL = 0.1
+# The churn window alone can be seconds on a fast bed — tens of datagrams,
+# where one drop moves the ratio by whole points and the 0.95 floor is
+# nearly binary. The sender therefore keeps running AFTER churn until a
+# real sample exists; the post-churn leg doubles as the survivor-liveness
+# soak. (Review finding, 2026-07-17.)
+_MIN_SENT = max(100, 50 * SOAK_CYCLES)
 
 
 @pytest.mark.asyncio
@@ -1056,6 +1062,11 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
                 procs=6,
             )
             await assert_discovered(tunnel_lab, survivor.tunnel.id, procs=4)
+        # Post-churn top-up: keep the survivor carrying traffic until the
+        # sample is statistically meaningful (see _MIN_SENT). This leg IS
+        # part of the soak — the survivor staying alive after churn ended.
+        while len(sent) < _MIN_SENT:
+            await asyncio.sleep(0.2)
     finally:
         stop.set()
         await sender_task
@@ -1082,8 +1093,9 @@ async def test_survivor_traffic_during_neighbor_churn(tunnel_lab, reap_tunnels) 
         received = {
             line for line in received_text.splitlines() if line.startswith(f"{run_tag}-")
         } - {final_probe}
-        assert sent, "sender never ran"
+        assert len(sent) >= _MIN_SENT, f"sender window too thin: {len(sent)} < {_MIN_SENT}"
         ratio = len(received & set(sent)) / len(sent)
+        print(f"traffic soak: sent={len(sent)} received={len(received & set(sent))} ratio={ratio:.3f}")
         assert ratio >= _DELIVERY_FLOOR, (
             f"delivery ratio {ratio:.3f} < {_DELIVERY_FLOOR} ({len(received)}/{len(sent)})"
         )
@@ -1114,14 +1126,30 @@ Assisted-by: Claude (claude-fable-5)"
 
 ---
 
-### Task 8: Adversity module (`test_adversity.py`) — impaired-port churn + degrade/recover
+### Task 8: Adversity module (`test_adversity.py`) — impaired-port churn + degrade/recover + CLI visibility
 
 **Files:**
 - Create: `tests/e2e/tunnel_stability/test_adversity.py`
+- Modify: `tests/_fixtures/tunnel_bed.py` (extract the CLI-cycle harness)
+- Modify: `tests/e2e/test_tunnel_e2e.py` (import the extracted harness)
 
 **Interfaces:**
 - Consumes: conftest fixtures; `otto.link` (`impair_link`, `repair_link`, `repair_all`, `ImpairmentParams`, `Selector`, `Link`, `LinkEndpoint`); `otto.host.interface.Interface`; `tunnel_bed`; `_harness`.
-- Produces: leaf module.
+- Produces: leaf module, PLUS two `tunnel_bed.py` helpers reused by Task 10: `cli_sut_dir(tmp_path) -> Path` (builds the SUT directory — otto config + bed lab data — that `test_tunnel_e2e.py`'s CLI-cycle test builds today) and `run_tunnel_cli(sut_dir, *args) -> str` (invokes the real `otto tunnel <args>` exactly the way that test invokes it, returning stdout).
+
+**Recovery contract (spec decision 7, added 2026-07-17):** the degrade/recover test must also prove the degradation is *plainly visible to the user* through the real CLI. Extract the CLI-cycle harness from `test_tunnel_e2e.py::test_cli_cycle_add_list_remove_list_docker_free` into `tunnel_bed.py` as `cli_sut_dir` / `run_tunnel_cli` — **preserve its invocation mechanism and SUT-dir contents verbatim** (same extraction discipline as Task 1; the e2e module then imports the helpers, zero behavior change, and its own test keeps passing collection). Then, inside `test_repeated_degrade_recover`'s loop, after the `found.health == "degraded"` assert, add on the first cycle only:
+
+```python
+        if cycle == 0:
+            # Recovery contract (spec decision 7): the degradation must be
+            # PLAINLY VISIBLE to the user — assert the real CLI's rendering,
+            # not just library state.
+            stdout = run_tunnel_cli(cli_sut, "list")
+            assert added.tunnel.id in stdout, f"CLI list does not show {added.tunnel.id!r}"
+            assert "degraded (" in stdout, f"CLI list does not render degradation: {stdout!r}"
+```
+
+with `cli_sut` built once at test start via the extracted `cli_sut_dir(tmp_path)` (add `tmp_path` to the test's signature). The CLI discovers by scanning the same bed hosts over SSH, so a library-added tunnel is visible to it — that cross-layer agreement is exactly what this asserts.
 
 **Background (bed contract, spec decision 6):** the product refuses to impair the netdev carrying a host's management ip (`ensure_not_mgmt`, self-lockout guard — correct and per-netdev, since tc qdiscs are device-scoped). The bed therefore moved the `192.168.1.x` data plane to a **dedicated eth2 NIC** (VirtualBox internal network `otto-dataplane`; Vagrantfile + tech1 `lab.json` changed 2026-07-16, redeploy required — see the fixture's loud precheck). The impaired-churn test declares a `Link` on eth2 and impairs it with the port-scoped `Selector`: ssh is untouched twice over (different netdev AND the selector scopes the netem band to the tunnel's UDP port). Endpoints resolve to the declared eth2 ips via explicit `@interface` specs; traffic probes send from a bed host, because the dev VM has no data-plane address.
 
@@ -1534,8 +1562,10 @@ Assisted-by: Claude (claude-fable-5)"
 - Modify: `tests/e2e/tunnel_stability/test_health.py` (append)
 
 **Interfaces:**
-- Consumes: Task 9's module scaffolding.
+- Consumes: Task 9's module scaffolding; Task 8's `cli_sut_dir` / `run_tunnel_cli` from `tunnel_bed.py`.
 - Produces: `wedge helpers` reused by Task 12 (`sshd_listener_pid`, `assert_sshd_responsive` — move to `_harness.py` if Task 12 prefers; they are defined here first).
+
+**Recovery contract (spec decision 7, added 2026-07-17):** the SIGSTOP test additionally proves, during the wedge: (a) the uncertainty is plainly visible to the user — `run_tunnel_cli(cli_sut, "list")` output contains the tunnel id in a row carrying the `?` uncertainty suffix (the CLI's own scan takes the wedged host's timeout, so budget it); (b) `remove_tunnel` attempted through the wedged lab completes WITHOUT raising, reaps the reachable side, and **names** the wedged host: `assert EXIT in report.unreachable`. After CONT + `assert_sshd_responsive`, the recovered-lab discovery still finds the id (the exit host's processes survived the partial reap — that is what makes the post-recovery removal meaningful), and THEN the final `remove_tunnel` completes the reap: `survivors == []`, `assert_gone`, module sweep clean. Ordering inside the wedge phase: wedged discovery asserts (health "uncertain", scan bounded) → CLI visibility assert → partial remove + unreachable-named assert; the pre-existing "second fresh-lab discovery returns ok" assert is REPLACED by: recovered-lab discovery finds the id with only the exit host's processes present (`found.uncertain is False` and `len(found.present) == 2`, status startswith "degraded (") — the tunnel is now half-reaped by design — followed by the completing remove. Adjust `reap_tunnels` bookkeeping so the id stays tracked until the completing remove succeeds.
 
 - [ ] **Step 1: Append the SIGSTOP test**
 

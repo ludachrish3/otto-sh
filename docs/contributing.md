@@ -307,9 +307,24 @@ what you want to exercise:
 | Unix VMs, incl. multi-hop (resource) | `make coverage-unix` / `make nox-unix` | test1/test2/test3 |
 | Embedded / Zephyr (resource) | `make coverage-embedded` / `make nox-embedded` | zephyr VM |
 | Multi-hop only | `uv run pytest -m hops` | three VMs |
-| Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-embedded`) | lab VMs (`-unit` needs none) |
+| Stability / soak | `make stability` (or `stability-unit` / `stability-unix` / `stability-tunnel` / `stability-embedded`) | lab VMs (`-unit` needs none) |
 | Everything (the dev-VM contract) | `make all` | lab VMs |
 | Cross-Python matrix | `make nox-unit` (quick, no VMs) / `make nox` (full) | `nox` needs VMs |
+
+`make stability-tunnel` soaks the tunnel machinery against the live bed:
+add/remove churn (2- and 3-hop), concurrent populations, racing adds,
+discovery-under-churn, a traffic soak, port-scoped-impairment churn,
+degrade/recover cycling, and host-down health (phantom ip + SIGSTOP — no VM
+is ever powered off). `COUNT=N` repeats the whole suite (default 1);
+`CYCLES=N` sets each test's internal loop depth (default 5; `CYCLES=2` is the
+smoke setting). These tests carry `stability + integration + hops`;
+`stability-unix` excludes them via `not hops`. The no-VM collector tick soak
+(`tests/unit/monitor/test_collector_tunnel_soak.py`) is marked `concurrency`
+instead — it rides `make stability-unit` and stays in coverage. The suite also
+proves the recovery contract: a degraded or uncertain tunnel is plainly visible
+in `otto tunnel list` output, and misbehaving tunnels remove cleanly whenever
+their hosts are reachable — including completing a partial reap after a host
+returns.
 
 `uv run pytest -k <kw>` filters any run by keyword. Recover a wedged embedded bed
 with `make qemu-restart`; probe the whole lab with `make vm-health`.

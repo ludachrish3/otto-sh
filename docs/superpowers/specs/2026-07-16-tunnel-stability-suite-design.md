@@ -53,6 +53,20 @@ transport, and the monitor's tunnel loop (`Collector._tunnel_loop`, landed
    netdev, impairing it is legal — the adversity mode rides the real data
    plane instead of building VLAN scaffolding. Requires a `vagrant reload`
    of test1/2/3 (+ zephyr) — a NIC attach, not just re-provisioning.
+7. **Recovery mechanisms are part of the contract** (added 2026-07-17,
+   mid-execution): finding and hardening failure modes is not enough — the
+   suite must also prove that (a) a misbehaving tunnel is **plainly visible
+   to the user** through the real `otto tunnel list` CLI (degraded renders
+   `degraded (n/m)`, an unreachable chain host renders the `?` uncertainty
+   suffix — asserted against real CLI output on the live bed, not just
+   library state; monitor-side visibility is the collector-record
+   assertions in §5, the web rendering being covered by the merged
+   dynamic-tunnels tests), and (b) **removal of a misbehaving tunnel is
+   supported whenever hosts are reachable**: a degraded tunnel removes to
+   zero residue (adversity mode), and a remove attempted while a chain
+   host is wedged completes partially with the unreachable host **named**
+   in `RemovedReport.unreachable` — never silently — then a post-recovery
+   remove completes the reap to zero residue (SIGSTOP mode).
 
 ## 1. Suite layout & shared harness
 

@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := all
 
-.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev web-test web-clean web-lint web-format web-format-check web-biome web-typecheck web-coverage web-check wheel-check
+.PHONY: help all ci nox nox-unit nox-integration nox-unix nox-embedded nox-hostless validate validate-python validate-ts clean-dist dev build coverage coverage-unit coverage-integration coverage-unix coverage-embedded coverage-hostless coverage-ts docs docs-lint docs-html docs-inventories docs-media doctest doctest-src typecheck typecheck-python typecheck-ts lint lint-python lint-ts format format-python format-ts schema monitor-fixtures clean changelog release stability stability-unit stability-unix stability-tunnel stability-embedded repeat vm-health qemu-restart import-snapshot hyperfine profile browsers dashboard dashboard-all dashboard-soak web-install web web-dev web-test web-clean web-lint web-format web-format-check web-biome web-typecheck web-coverage web-check wheel-check
 
 # Bump component for `make release`. Override on the command line:
 #   make release BUMP=minor
@@ -53,6 +53,15 @@ STABILITY_UNIT_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),50)
 # Iteration count for the Unix-VM leg `make stability-unix`. Default is 10;
 # honor COUNT only when explicitly passed on the command line.
 STABILITY_UNIX_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),10)
+
+# Iteration count for `make stability-tunnel`. Default is 1 (the tests loop
+# internally via OTTO_TUNNEL_SOAK_CYCLES); honor COUNT only when explicitly
+# passed on the command line.
+STABILITY_TUNNEL_COUNT := $(if $(filter command line,$(origin COUNT)),$(COUNT),1)
+
+# Internal soak depth for `make stability-tunnel` (cycles per test). Default 5;
+# override with CYCLES=N (a smoke run: CYCLES=2).
+STABILITY_TUNNEL_CYCLES := $(if $(filter command line,$(origin CYCLES)),$(CYCLES),5)
 
 # Two axes of test selection (see docs/contributing.md → Regression-test
 # categories). Keep these in sync with noxfile.py.
@@ -473,11 +482,20 @@ stability-unit: ## Run no-VM SessionManager concurrency/soak tests by marker. JU
 
 stability-unix: ## Real telnet/SSH soak against the Unix Vagrant VMs (incl. multi-hop). Requires lab VMs. JUnit XML in reports/junit/stability-unix/. Override iterations with COUNT=N (default 10).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
-	    -m "stability and integration and not embedded" \
+	    -m "stability and integration and not embedded and not hops" \
 	    --count=$(STABILITY_UNIX_COUNT) \
 	    -p no:cacheprovider \
 	    --no-cov \
 	    $(call junitxml,stability-unix)
+
+stability-tunnel: ## Tunnel soak against the live bed (churn/concurrency/traffic/adversity/health/monitor-loop). Requires lab VMs. JUnit XML in reports/junit/stability-tunnel/. COUNT=N repeats the suite (default 1); CYCLES=N sets internal loop depth (default 5).
+	OTTO_DETECT_ASYNCIO_LEAKS=1 OTTO_TUNNEL_SOAK_CYCLES=$(STABILITY_TUNNEL_CYCLES) uv run pytest \
+	    tests/e2e/tunnel_stability \
+	    -m "stability and hops" \
+	    --count=$(STABILITY_TUNNEL_COUNT) \
+	    -p no:cacheprovider \
+	    --no-cov \
+	    $(call junitxml,stability-tunnel)
 
 stability-embedded: ## Cross-OS stability contract against real telnet/SSH targets (Zephyr). Requires Vagrant lab up. JUnit XML lands in reports/junit/stability-embedded/. Override iterations with COUNT=N (default 1).
 	OTTO_DETECT_ASYNCIO_LEAKS=1 uv run pytest \
@@ -509,6 +527,9 @@ stability: ## Run the full stability/soak suite: no-VM concurrency, then real te
 	    echo "  jq not installed; skipping ping check (tests will fail fast at fixture connect if VMs are down)."; \
 	fi
 	@$(MAKE) stability-unix COUNT=$(COUNT)
+	@echo
+	@echo "── Tier 2b (tunnel soak) ──"
+	@$(MAKE) stability-tunnel $(if $(filter command line,$(origin COUNT)),COUNT=$(COUNT)) $(if $(filter command line,$(origin CYCLES)),CYCLES=$(CYCLES))
 	@echo
 	@echo "── Tier 3 (cross-OS stability contract — includes embedded) ──"
 	@$(MAKE) stability-embedded COUNT=$(COUNT)
@@ -623,7 +644,7 @@ help: ## Show this help message
 	@printf '  scope:  unit < integration < (all)   ·   unix · embedded   ·   hostless = no-VM CI gate\n'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'coverage-*'   'pinned Python + coverage    (bare coverage = all tiers, gated 94; hostless gated 90)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'nox-*'        'every suffix, all Pythons   (bare nox = full matrix)'
-	@printf '  \033[36m%-30s\033[0m %s\n' 'stability-*'  'pytest-repeat soak          (unit · unix · embedded; bare stability = all tiers)'
+	@printf '  \033[36m%-30s\033[0m %s\n' 'stability-*'  'pytest-repeat soak          (unit · unix · tunnel · embedded; bare stability = all tiers)'
 	@printf '  \033[36m%-30s\033[0m %s\n' 'repeat'       'soak the full unit suite (pytest-repeat)'
 	@awk 'BEGIN { FS=":.*?## "; n=split("Build & Release|Quality|Docs|Lab|Dev",order,"|") } /^[a-zA-Z_-]+:.*## \(/ { d=$$2; s=d; sub(/\).*/,"",s); sub(/^\(/,"",s); sub(/^\([^)]*\) */,"",d); items[s]=items[s] sprintf("  \033[36m%-16s\033[0m %s\n",$$1,d) } END { for(i=1;i<=n;i++) if(order[i] in items) printf "\n\033[1m%s\033[0m\n%s",order[i],items[order[i]] }' \
 		$(MAKEFILE_LIST)

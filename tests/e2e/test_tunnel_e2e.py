@@ -59,11 +59,9 @@ Host-down is a loud ``RuntimeError`` naming the unreachable VM -- never a
 
 import asyncio
 import contextlib
-import json
 import random
 import re
 import shlex
-import socket
 import subprocess
 import time
 import uuid
@@ -80,13 +78,24 @@ from otto.host.docker_host import DockerContainerHost
 from otto.host.unix_host import UnixHost
 from otto.logger.mode import LogMode
 from otto.tunnel import add_tunnel, discover_tunnels, remove_tunnel
-from otto.tunnel.discovery import (
-    DISCOVERY_PS_COMMAND,
-    discover_observations,
-    parse_process_discovery,
+from otto.tunnel.discovery import discover_observations
+from tests._fixtures.labdata import host_data
+from tests._fixtures.tunnel_bed import (
+    BIND_CONFIRM_TIMEOUT,
+    LISTEN_TIMEOUT,
+    POLL_INTERVAL,
+    assert_no_leftover_tunnel_processes,
+    assert_reachable,
+    build_bed_host,
+    cli_sut_dir,
+    random_outfile,
+    remove_remote_file,
+    resolved_ip,
+    send_udp,
+    spawn_udp_listener,
+    wait_for_listener_output,
 )
-from tests._fixtures.labdata import host_data, make_host
-from tests.e2e._otto_subprocess import REPO1, run_otto
+from tests.e2e._otto_subprocess import run_otto
 
 pytestmark = [
     pytest.mark.integration,
@@ -97,11 +106,6 @@ pytestmark = [
 _INGRESS = "carrot_seed"  # test1, 10.10.200.11
 _EXIT = "tomato_seed"  # test2, 10.10.200.12
 _RELAY_DEST = "pepper_seed"  # test3, 10.10.200.13
-
-_SSH_PORT = 22
-_REACHABLE_TIMEOUT = 10
-_LISTEN_TIMEOUT = 20.0
-_POLL_INTERVAL = 1.0
 
 _PORT_DIRECT = 15000
 _PORT_MULTIHOP = 15001
@@ -122,40 +126,14 @@ OLDOS_COMPOSE_PROJECT = "otto-tunnel-e2e-oldos"
 
 def _build_host(ne: str) -> UnixHost:
     """Build a real, docker-capable ``UnixHost`` from the veggies lab data."""
-    return make_host(ne, term="ssh", transfer="scp", log=LogMode.QUIET, docker_capable=True)
-
-
-def _resolved_ip(ne: str) -> str:
-    """The ip ``otto.tunnel.manage._resolve_one`` picks for these test-built hosts.
-
-    These ``UnixHost`` objects never carry a populated ``interfaces`` dict (see
-    the module docstring), so ``_resolve_one`` always falls back to the host's
-    own management ip -- regardless of what ``lab.json`` declares.
-    """
-    return host_data(ne)["ip"]
-
-
-async def _assert_reachable(element: str, ip: str) -> None:
-    """Fail LOUD (host-named) on a down VM -- never skip (dev-VM rule)."""
-    try:
-        _reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(ip, _SSH_PORT), timeout=_REACHABLE_TIMEOUT
-        )
-    except (OSError, asyncio.TimeoutError) as exc:
-        raise RuntimeError(
-            f"{element}_seed ({ip}) unreachable on :{_SSH_PORT} -- bed down? "
-            f"(otto tunnel e2e must fail loud on host-down, never skip): {exc!r}"
-        ) from exc
-    writer.close()
-    with contextlib.suppress(OSError):
-        await writer.wait_closed()
+    return build_bed_host(ne, docker_capable=True)
 
 
 @pytest_asyncio.fixture
 async def tunnel_lab():
     """Real ``Lab`` over the 3-VM veggies bed (carrot/tomato/pepper = test1/2/3)."""
     for ne in ("carrot", "tomato", "pepper"):
-        await _assert_reachable(ne, host_data(ne)["ip"])
+        await assert_reachable(ne, host_data(ne)["ip"])
 
     lab = Lab(name="tunnel_e2e")
     for ne in ("carrot", "tomato", "pepper"):
@@ -174,31 +152,6 @@ async def reap_tunnels(tunnel_lab):
             await remove_tunnel(tunnel_lab, tunnel_id)
 
 
-async def _assert_no_leftover_tunnel_processes() -> None:
-    r"""Scan all three peers for ``otto-tunnel:`` tagged processes; raise if any remain.
-
-    Must decode each line through :func:`parse_process_discovery` (the same
-    strict sentinel parser production discovery uses) rather than treat any
-    non-empty ``DISCOVERY_PS_COMMAND`` output as a leak: that command's own
-    ``ps | \grep -a ' otto-tunnel:'`` pipeline always shows up in its own `ps`
-    snapshot (the grep argv literally contains the search string), which is a
-    self-match, not a real tagged tunnel process. ``parse_process_discovery``
-    requires the full 11-segment sentinel and correctly ignores that noise.
-    """
-    hosts = [_build_host(ne) for ne in ("carrot", "tomato", "pepper")]
-    try:
-        leaks: list[str] = []
-        for host in hosts:
-            result = await host.exec(DISCOVERY_PS_COMMAND, timeout=15, log=LogMode.QUIET)
-            observed = parse_process_discovery(result.value or "")
-            if observed:
-                detail = ", ".join(f"pid={o.pid} tunnel={o.parsed.tunnel.id}" for o in observed)
-                leaks.append(f"{host.id}: {detail}")
-    finally:
-        await asyncio.gather(*(h.close() for h in hosts), return_exceptions=True)
-    assert not leaks, "otto-tunnel processes leaked past test module teardown:\n" + "\n".join(leaks)
-
-
 @pytest.fixture(scope="module", autouse=True)
 def _final_leftover_sweep():
     """Module-final bed hygiene: FAIL (never skip) if any tagged process survived.
@@ -208,116 +161,12 @@ def _final_leftover_sweep():
     this module has already closed, so it needs no ``loop_scope`` coordination.
     """
     yield
-    asyncio.run(_assert_no_leftover_tunnel_processes())
+    asyncio.run(assert_no_leftover_tunnel_processes())
 
 
 # ---------------------------------------------------------------------------
 # UDP send / receive helpers
 # ---------------------------------------------------------------------------
-
-
-def _listener_script(port: int, outfile: str, timeout: float) -> str:
-    """Python source (run remotely) that waits for one UDP datagram and
-    records ``"<source-ip> <payload>"`` to *outfile*.
-
-    Binds ``127.0.0.1`` specifically, never the wildcard ``0.0.0.0``: every
-    delivery target in this module is exactly ``127.0.0.1`` (the egress
-    processes' own hardcoded loopback delivery), and the SAME host always
-    also runs the opposite direction's ingress, which binds *its own*
-    resolved management ip specifically on the very same port. A wildcard
-    bind here would collide with that already-bound specific address.
-    """
-    return (
-        "import socket\n"
-        "s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n"
-        f"s.bind(('127.0.0.1', {port}))\n"
-        f"s.settimeout({timeout})\n"
-        "data, addr = s.recvfrom(65535)\n"
-        f"open({outfile!r}, 'w').write(addr[0] + ' ' + data.decode('utf-8', 'replace'))\n"
-    )
-
-
-_BIND_CONFIRM_TIMEOUT = 5.0
-
-
-async def _wait_for_udp_bound(
-    host: UnixHost, ip: str, port: int, timeout: float = _BIND_CONFIRM_TIMEOUT
-) -> None:
-    """Poll until a UDP socket is bound to *ip*:*port* on *host*.
-
-    Closes a real launch race (found live): ``host.exec`` returns as soon
-    as the remote shell has *accepted* the backgrounded ``setsid python3 ...
-    &`` command, which is well before the python3 interpreter has actually
-    started and called ``bind()``. A UDP datagram sent in that gap arrives at
-    a not-yet-bound port and is simply dropped (never queued) -- so every
-    listener spawn must be followed by this confirmation, not just trusted to
-    already be up by the time a sender fires.
-    """
-    deadline = time.monotonic() + timeout
-    needle = f"{ip}:{port}"
-    while time.monotonic() < deadline:
-        result = await host.exec(
-            "ss -H -u -a -n 2>/dev/null || true", timeout=15, log=LogMode.QUIET
-        )
-        if needle in (result.value or ""):
-            return
-        await asyncio.sleep(0.1)
-    raise AssertionError(f"host {host.id!r}: no UDP listener bound to {needle} within {timeout}s")
-
-
-async def _spawn_udp_listener(host: UnixHost, port: int, outfile: str, timeout: float) -> None:
-    """Start a detached UDP listener on *host* and confirm it is bound before returning.
-
-    See :func:`_wait_for_udp_bound` for why the confirmation is required.
-    """
-    script = _listener_script(port, outfile, timeout)
-    cmd = f"setsid python3 -c {shlex.quote(script)} </dev/null >/dev/null 2>&1 &"
-    await host.exec(cmd, timeout=15, log=LogMode.QUIET)
-    await _wait_for_udp_bound(host, "127.0.0.1", port)
-
-
-async def _wait_for_listener_output(
-    host: UnixHost,
-    outfile: str,
-    timeout: float = _LISTEN_TIMEOUT,
-    interval: float = _POLL_INTERVAL,
-) -> str:
-    """Poll *outfile* on *host* until it holds ``"<source-ip> <payload>"``."""
-    deadline = time.monotonic() + timeout
-    last = ""
-    while time.monotonic() < deadline:
-        result = await host.exec(
-            f"cat {shlex.quote(outfile)} 2>/dev/null || true", timeout=15, log=LogMode.QUIET
-        )
-        last = (result.value or "").strip()
-        if last:
-            return last
-        await asyncio.sleep(interval)
-    raise AssertionError(
-        f"host {host.id!r}: timed out after {timeout}s waiting for a datagram in "
-        f"{outfile!r}; last read: {last!r}"
-    )
-
-
-async def _rm(host: UnixHost, path: str) -> None:
-    """Best-effort remote cleanup of a scratch file."""
-    await host.exec(f"rm -f {shlex.quote(path)}", timeout=15, log=LogMode.QUIET)
-
-
-def _send_udp(ip: str, port: int, payload: bytes) -> None:
-    """Send one UDP datagram from this (dev-VM) process to *ip*:*port*.
-
-    Valid because the resolved ingress ip is each host's real, dev-VM-reachable
-    management ip for every host built in this module (see the module
-    docstring) -- the ingress socat's specific bind still accepts a datagram
-    addressed to exactly that ip.
-    """
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.sendto(payload, (ip, port))
-
-
-def _random_outfile() -> str:
-    return f"/tmp/otto_tunnel_e2e_{uuid.uuid4().hex}.out"
 
 
 def _foreign_socat_port() -> int:
@@ -336,8 +185,8 @@ async def test_direct_tunnel_bidirectional(tunnel_lab, reap_tunnels) -> None:
     carrot = tunnel_lab.hosts[_INGRESS]
     tomato = tunnel_lab.hosts[_EXIT]
     port = _PORT_DIRECT
-    fwd_outfile = _random_outfile()
-    rev_outfile = _random_outfile()
+    fwd_outfile = random_outfile()
+    rev_outfile = random_outfile()
     fwd_payload = f"otto-tunnel-e2e-fwd-{uuid.uuid4().hex}".encode()
     rev_payload = f"otto-tunnel-e2e-rev-{uuid.uuid4().hex}".encode()
 
@@ -348,18 +197,18 @@ async def test_direct_tunnel_bidirectional(tunnel_lab, reap_tunnels) -> None:
         reap_tunnels.append(added.tunnel.id)
 
         # --- FWD: sender near carrot -> listener on tomato loopback ---
-        await _spawn_udp_listener(tomato, port, fwd_outfile, timeout=_LISTEN_TIMEOUT)
-        _send_udp(_resolved_ip("carrot"), port, fwd_payload)
-        fwd_received = await _wait_for_listener_output(tomato, fwd_outfile)
+        await spawn_udp_listener(tomato, port, fwd_outfile, timeout=LISTEN_TIMEOUT)
+        send_udp(resolved_ip("carrot"), port, fwd_payload)
+        fwd_received = await wait_for_listener_output(tomato, fwd_outfile)
         _src_ip, _, fwd_recv_payload = fwd_received.partition(" ")
         assert fwd_recv_payload == fwd_payload.decode(), (
             f"expected FWD payload {fwd_payload.decode()!r} on tomato, got {fwd_received!r}"
         )
 
         # --- REV: b-side sender on tomato -> listener on carrot loopback ---
-        await _spawn_udp_listener(carrot, port, rev_outfile, timeout=_LISTEN_TIMEOUT)
-        _send_udp(_resolved_ip("tomato"), port, rev_payload)
-        rev_received = await _wait_for_listener_output(carrot, rev_outfile)
+        await spawn_udp_listener(carrot, port, rev_outfile, timeout=LISTEN_TIMEOUT)
+        send_udp(resolved_ip("tomato"), port, rev_payload)
+        rev_received = await wait_for_listener_output(carrot, rev_outfile)
         _src_ip, _, rev_recv_payload = rev_received.partition(" ")
         assert rev_recv_payload == rev_payload.decode(), (
             f"expected REV payload {rev_payload.decode()!r} on carrot, got {rev_received!r}"
@@ -383,8 +232,8 @@ async def test_direct_tunnel_bidirectional(tunnel_lab, reap_tunnels) -> None:
             f"{added.tunnel.id!r} still discoverable after remove_tunnel"
         )
     finally:
-        await _rm(tomato, fwd_outfile)
-        await _rm(carrot, rev_outfile)
+        await remove_remote_file(tomato, fwd_outfile)
+        await remove_remote_file(carrot, rev_outfile)
 
 
 # ---------------------------------------------------------------------------
@@ -400,7 +249,7 @@ async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
 
     pepper = tunnel_lab.hosts[_RELAY_DEST]
     port = _PORT_MULTIHOP
-    outfile = _random_outfile()
+    outfile = random_outfile()
     payload = f"otto-tunnel-e2e-multihop-{uuid.uuid4().hex}".encode()
 
     try:
@@ -412,9 +261,9 @@ async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
         )
         reap_tunnels.append(added.tunnel.id)
 
-        await _spawn_udp_listener(pepper, port, outfile, timeout=_LISTEN_TIMEOUT)
-        _send_udp(_resolved_ip("carrot"), port, payload)
-        received = await _wait_for_listener_output(pepper, outfile)
+        await spawn_udp_listener(pepper, port, outfile, timeout=LISTEN_TIMEOUT)
+        send_udp(resolved_ip("carrot"), port, payload)
+        received = await wait_for_listener_output(pepper, outfile)
         _src_ip, _, recv_payload = received.partition(" ")
         assert recv_payload == payload.decode(), (
             f"expected payload {payload.decode()!r} relayed to pepper, got {received!r}"
@@ -438,7 +287,7 @@ async def test_multihop_relay_and_via(tunnel_lab, reap_tunnels) -> None:
         assert report.survivors == [], f"survivors after remove: {report.survivors!r}"
         reap_tunnels.remove(added.tunnel.id)
     finally:
-        await _rm(pepper, outfile)
+        await remove_remote_file(pepper, outfile)
 
 
 # ---------------------------------------------------------------------------
@@ -492,9 +341,9 @@ async def _spawn_container_listener(
     back a previous run's leftover content as a false pass).
 
     Confirms the bind before returning (same launch race as
-    :func:`_wait_for_udp_bound`, but centos:7 has no ``ss`` -- only ``socat``
-    was installed -- so this parses ``/proc/net/udp`` instead, which needs no
-    extra tooling).
+    :func:`tests._fixtures.tunnel_bed.wait_for_udp_bound`, but centos:7 has
+    no ``ss`` -- only ``socat`` was installed -- so this parses
+    ``/proc/net/udp`` instead, which needs no extra tooling).
     """
     await container.exec(f"rm -f {shlex.quote(outfile)}", timeout=15, log=LogMode.QUIET)
     cmd = (
@@ -519,7 +368,7 @@ def _proc_net_udp_needle(ip: str, port: int) -> str:
 
 
 async def _wait_for_container_udp_bound(
-    container: DockerContainerHost, ip: str, port: int, timeout: float = _BIND_CONFIRM_TIMEOUT
+    container: DockerContainerHost, ip: str, port: int, timeout: float = BIND_CONFIRM_TIMEOUT
 ) -> None:
     """Poll ``/proc/net/udp`` inside the container until *ip*:*port* is bound."""
     deadline = time.monotonic() + timeout
@@ -539,8 +388,8 @@ async def _wait_for_container_udp_bound(
 async def _wait_for_container_file(
     container: DockerContainerHost,
     path: str,
-    timeout: float = _LISTEN_TIMEOUT,
-    interval: float = _POLL_INTERVAL,
+    timeout: float = LISTEN_TIMEOUT,
+    interval: float = POLL_INTERVAL,
 ) -> str:
     """Poll a raw file inside the container (socat ``CREATE:`` writes bytes verbatim,
     no source-ip prefix like the python3 listener script)."""
@@ -592,7 +441,7 @@ async def test_container_endpoint_oldos(tunnel_lab, reap_tunnels) -> None:
         reap_tunnels.append(added.tunnel.id)
 
         await _spawn_container_listener(container, port, outfile)
-        _send_udp(_resolved_ip("tomato"), port, payload)
+        send_udp(resolved_ip("tomato"), port, payload)
         received = await _wait_for_container_file(container, outfile)
         assert received == payload.decode(), (
             f"expected payload {payload.decode()!r} in-container, got {received!r}"
@@ -685,47 +534,6 @@ async def test_foreign_socat_excluded_and_outofband_kill_degrades(tunnel_lab, re
 # ---------------------------------------------------------------------------
 
 
-def _cli_cycle_sut_dir(tmp_path: Path) -> Path:
-    """Scaffold a sut dir for the CLI cycle: real veggies lab + declared containers.
-
-    Two deliberate properties:
-
-    - The host entries are the tech1 fixture's, verbatim — INCLUDING the
-      declared ``eth2``/``192.168.1.x`` data-plane interfaces. Unlike the
-      library-API tests above (whose ``make_host`` never wires ``interfaces``,
-      so they bind management ips), the CLI path loads lab data verbatim and
-      resolves each endpoint to its declared data-plane ip — so this cycle
-      also guards the bed contract that ``192.168.1.x`` is provisioned on the
-      peers (Vagrantfile: the dedicated ``eth2`` data-plane NIC); an
-      unprovisioned bed fails loudly at the post-add verify.
-    - The repo is named ``repo1`` and declares the same ``api`` compose as
-      ``tests/repo1``, so lab load registers container-host placeholders —
-      the exact issue #139 trigger. Every tunnel command must leave them
-      alone: probe liveness quietly, never compose the stack.
-    """
-    sut = tmp_path / "cli_cycle_sut"
-    (sut / ".otto").mkdir(parents=True)
-    lab_dir = sut / "lab_data"
-    lab_dir.mkdir()
-    hosts = [host_data(ne) for ne in ("carrot", "tomato")]
-    (lab_dir / "lab.json").write_text(json.dumps({"hosts": hosts, "links": []}))
-    (sut / ".otto" / "settings.toml").write_text(
-        f'name = "repo1"\n'
-        f'version = "1.0.0"\n'
-        f'lab_data_type = "json"\n'
-        f'labs = ["{lab_dir}"]\n'
-        f"\n"
-        f"[lab]\n"
-        f'backend = "json"\n'
-        f"\n"
-        f"[[docker.composes]]\n"
-        f'path = "{REPO1 / "docker" / "compose.yml"}"\n'
-        f'services = ["api"]\n'
-        f'default_host = "tomato_seed"\n'
-    )
-    return sut
-
-
 def _run_cycle(argv: list[str], sut: Path) -> "subprocess.CompletedProcess[str]":
     return run_otto(argv, sut_dirs=sut, lab="veggies", timeout=180)
 
@@ -750,8 +558,8 @@ def test_cli_cycle_add_list_remove_list_docker_free(tmp_path: Path) -> None:
     and flooded the console with docker I/O.
     """
     for ne in ("carrot", "tomato"):
-        asyncio.run(_assert_reachable(ne, host_data(ne)["ip"]))
-    sut = _cli_cycle_sut_dir(tmp_path)
+        asyncio.run(assert_reachable(ne, host_data(ne)["ip"]))
+    sut = cli_sut_dir(tmp_path)
     cleanup_id = ""
     try:
         add = _run_cycle(

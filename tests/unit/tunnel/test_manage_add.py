@@ -3,6 +3,7 @@
 import asyncio
 import re
 from dataclasses import dataclass, field
+from itertools import count
 from typing import Any
 
 import pytest
@@ -516,6 +517,84 @@ class TestInternals:
 
         with pytest.raises(RuntimeError, match="unreachable during verify: b"):
             manage._raise_verify_failure(tunnel, missing, ["b"])
+
+
+@dataclass
+class _RaceHost:
+    """A host double whose discovery scan reflects a SHARED, ground-truth
+    process registry — not a scripted call-count queue like ``FakeHost``.
+
+    A scripted queue (``ps_texts``) can't distinguish "``add_tunnel`` actually
+    serializes same-id racers" from "the second scan just happened to be the
+    queue's Nth call": with only two entries (empty, then full) the second
+    scan on a host returns "full" regardless of whether anything real has
+    launched yet, so the assertion would pass whether or not the lock exists
+    — a false-negative regression guard. Tracking real launched/killed state
+    keyed by :class:`~otto.tunnel.model.ProcKey` makes the scan truthful
+    under genuine interleaving: unserialized, both racers' conflict checks
+    see the registry empty (reproducing the live two-winners bug); serialized,
+    the second entrant's conflict check finds the first's real processes.
+    """
+
+    id: str
+    ip: str
+    registry: dict
+    pids: Any
+    tunnel: Tunnel
+    carrier_fwd: int
+    carrier_rev: int
+    has_bash: bool = True
+    commands: list = field(default_factory=list)
+
+    def _ps_line_for(self, key: ProcKey, pid: int) -> str:
+        host, direction, role = key
+        hop_index = next(i for i, h in enumerate(self.tunnel.path) if h.host == host)
+        carrier = self.carrier_fwd if direction is Direction.FWD else self.carrier_rev
+        return _ps_line(self.tunnel, direction, role, hop_index, carrier, pid)
+
+    async def exec(self, cmd: str, timeout: float | None = None, **_: object) -> CommandResult:
+        self.commands.append(cmd)
+        if "command -v socat" in cmd:
+            return CommandResult(status=Status.Success, value="ok", command=cmd)
+        if cmd == FREE_PORT_PROBE_COMMAND:
+            return CommandResult(status=Status.Success, value="", command=cmd)
+        if cmd == DISCOVERY_PS_COMMAND:
+            lines = [self._ps_line_for(k, p) for k, p in self.registry.items() if k[0] == self.id]
+            return CommandResult(status=Status.Success, value="\n".join(lines), command=cmd)
+        if cmd.startswith("kill "):
+            dead = {int(p) for p in cmd.split()[1:]}
+            for key in [k for k, p in self.registry.items() if p in dead]:
+                del self.registry[key]
+            return CommandResult(status=Status.Success, value="", command=cmd)
+        # Anything else is a launch command.
+        parsed = _extract_sentinel(cmd)
+        self.registry[(self.id, parsed.direction, parsed.role)] = next(self.pids)
+        return CommandResult(status=Status.Success, value="", command=cmd)
+
+
+class TestRacingAdds:
+    @pytest.mark.asyncio
+    async def test_racing_same_spec_adds_exactly_one_wins(self) -> None:
+        """Same (chain, port) raced in-process: one AddedTunnel, one ValueError."""
+        tunnel = Tunnel(protocol="udp", service_port=15999, path=(TunnelHop("a"), TunnelHop("b")))
+        carrier_fwd, carrier_rev = _LO, _LO + 1
+        registry: dict = {}  # shared ground truth between both hosts and both racers
+        pids = count(100)
+        a = _RaceHost("a", "10.0.0.1", registry, pids, tunnel, carrier_fwd, carrier_rev)
+        b = _RaceHost("b", "10.0.0.2", registry, pids, tunnel, carrier_fwd, carrier_rev)
+        lab = _lab(a=a, b=b)
+        chain = [("a", None), ("b", None)]
+
+        results = await asyncio.gather(
+            add_tunnel(lab, chain, port=15999, protocol="udp"),
+            add_tunnel(lab, chain, port=15999, protocol="udp"),
+            return_exceptions=True,
+        )
+        winners = [r for r in results if isinstance(r, AddedTunnel)]
+        losers = [r for r in results if isinstance(r, BaseException)]
+        assert len(winners) == 1, repr(results)
+        assert len(losers) == 1, repr(results)
+        assert isinstance(losers[0], ValueError)  # the duplicate-id conflict, loud
 
 
 class TestCarrierSelection:

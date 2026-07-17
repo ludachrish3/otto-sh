@@ -487,6 +487,36 @@ def _reset_otto_logger_retention():
     management.reset()
 
 
+@pytest.fixture(autouse=True)
+def _reset_tunnel_add_locks():
+    """Clear ``otto.tunnel.manage._ADD_LOCKS`` between tests.
+
+    ``add_tunnel`` serializes racing adds for the same tunnel id with a
+    per-id ``asyncio.Lock`` cached in this module-global dict (tunnel-
+    stability-suite Task 6). A lock that survives past the test that first
+    contended it is a hazard across the whole supported CPython range
+    (3.10-3.12+): ``Lock`` only binds to an event loop on genuinely
+    *contended* acquire (the uncontended fast path never touches
+    ``self._loop``), but once contended
+    it is pinned to that loop forever — a later contention on the SAME id
+    from a DIFFERENT event loop (a fresh loop per test, via
+    ``asyncio_default_fixture_loop_scope = "function"``) raises
+    ``RuntimeError: ... bound to a different event loop`` instead of the
+    intended ``ValueError``. A single CI pass never re-contends the same id,
+    so this only surfaces under the ``tests_unit_repeat`` nox session's
+    ``--count=2 --repeat-scope=session`` single-process repeat.
+
+    Lives in the ROOT conftest per the process-global-state rule: the dict
+    is module-global in ``otto.tunnel.manage``, not local to any one test
+    tree. Uses a lazy ``sys.modules.get`` check so tests that never import
+    the tunnel package don't pay for (or trigger) the import.
+    """
+    yield
+    manage = sys.modules.get("otto.tunnel.manage")
+    if manage is not None:
+        manage._ADD_LOCKS.clear()
+
+
 # ---------------------------------------------------------------------------
 # Lab-data helpers
 # ---------------------------------------------------------------------------

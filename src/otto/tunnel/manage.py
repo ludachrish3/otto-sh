@@ -36,6 +36,23 @@ _VERIFY_RETRY_DELAY = 1.0
 
 _LOOPBACK = "127.0.0.1"
 
+# Two concurrent add_tunnel calls for the SAME (path, port, protocol) share a
+# deterministic tunnel id; their rollback reaps BY id, so an unserialized race
+# lets the loser's rollback kill the winner's processes. Serialize per id —
+# the second entrant then sees the first's processes in _check_conflicts and
+# fails loud, which is the intended exactly-one-wins contract. In-process
+# only by design: cross-process racers are adjudicated by the endpoint
+# socat's specific-ip bind failing, and its own verify-rollback (which we do
+# NOT reach here) — see tests/e2e/tunnel_stability/test_concurrency.py.
+# Remove paths (remove_tunnel / remove_all_tunnels) deliberately do not
+# participate: only add-vs-add shares a deterministic id's fate, and an add
+# racing a remove just fails its verify and rolls back clean.
+_ADD_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _add_lock(tunnel_id: str) -> asyncio.Lock:
+    return _ADD_LOCKS.setdefault(tunnel_id, asyncio.Lock())
+
 
 @dataclass(frozen=True, slots=True)
 class ResolvedHop:
@@ -411,57 +428,58 @@ async def add_tunnel(
         path=tuple(r.hop for r in resolved),
         dest=dest_hop.hop.host if dest_hop else None,
     )
-    _check_conflicts(await discover_tunnels(lab), tunnel)
-    for r in resolved:
-        await _require_tools(r.host, carrier_obj)
+    async with _add_lock(tunnel.id):
+        _check_conflicts(await discover_tunnels(lab), tunnel)
+        for r in resolved:
+            await _require_tools(r.host, carrier_obj)
 
-    used = await _probe_used_ports(resolved) | {port}
-    carrier_fwd = pick_free_port(used)
-    carrier_rev = pick_free_port(used | {carrier_fwd})
+        used = await _probe_used_ports(resolved) | {port}
+        carrier_fwd = pick_free_port(used)
+        carrier_rev = pick_free_port(used | {carrier_fwd})
 
-    ips = [r.ip for r in resolved]
-    deliver_fwd = dest_hop.ip if dest_hop else _LOOPBACK
-    plan = _process_plan(tunnel, ips, carrier_fwd, carrier_rev, deliver_fwd, carrier_obj)
+        ips = [r.ip for r in resolved]
+        deliver_fwd = dest_hop.ip if dest_hop else _LOOPBACK
+        plan = _process_plan(tunnel, ips, carrier_fwd, carrier_rev, deliver_fwd, carrier_obj)
 
-    launched = False
-    try:
-        for proc in plan:
-            sentinel = encode_sentinel(
-                tunnel,
-                direction=proc.direction,
-                role=proc.role,
-                hop_index=proc.hop_index,
-                carrier_port=proc.carrier_port,
-            )
-            host = resolved[proc.hop_index].host
-            # Attempting a launch is enough to warrant rollback: the timeout
-            # below bounds the ack, not the send, so the command may have
-            # already reached the host even if we never see success.
-            launched = True
-            try:
-                result = await asyncio.wait_for(
-                    host.exec(launch_command(sentinel, proc.argv), log=LogMode.QUIET),
-                    _TUNNEL_HOST_TIMEOUT,
+        launched = False
+        try:
+            for proc in plan:
+                sentinel = encode_sentinel(
+                    tunnel,
+                    direction=proc.direction,
+                    role=proc.role,
+                    hop_index=proc.hop_index,
+                    carrier_port=proc.carrier_port,
                 )
-            except asyncio.TimeoutError as e:
-                raise RuntimeError(
-                    f"host {_proc_host_name(resolved, proc)!r} timed out spawning the tunnel"
-                ) from e
-            if not result.is_ok:
-                _raise_launch_failure(resolved, proc, result)
+                host = resolved[proc.hop_index].host
+                # Attempting a launch is enough to warrant rollback: the timeout
+                # below bounds the ack, not the send, so the command may have
+                # already reached the host even if we never see success.
+                launched = True
+                try:
+                    result = await asyncio.wait_for(
+                        host.exec(launch_command(sentinel, proc.argv), log=LogMode.QUIET),
+                        _TUNNEL_HOST_TIMEOUT,
+                    )
+                except asyncio.TimeoutError as e:
+                    raise RuntimeError(
+                        f"host {_proc_host_name(resolved, proc)!r} timed out spawning the tunnel"
+                    ) from e
+                if not result.is_ok:
+                    _raise_launch_failure(resolved, proc, result)
 
-        present, unreachable = await _verify_chain(resolved, tunnel)
-        expected = tunnel.expected_processes()
-        if expected - present:
-            await asyncio.sleep(_VERIFY_RETRY_DELAY)
             present, unreachable = await _verify_chain(resolved, tunnel)
-        missing = expected - present
-        if missing:
-            _raise_verify_failure(tunnel, missing, unreachable)
-    except BaseException:
-        if launched:
-            await _kill_tunnel_on([r.host for r in resolved], tunnel.id)
-        raise
+            expected = tunnel.expected_processes()
+            if expected - present:
+                await asyncio.sleep(_VERIFY_RETRY_DELAY)
+                present, unreachable = await _verify_chain(resolved, tunnel)
+            missing = expected - present
+            if missing:
+                _raise_verify_failure(tunnel, missing, unreachable)
+        except BaseException:
+            if launched:
+                await _kill_tunnel_on([r.host for r in resolved], tunnel.id)
+            raise
     return AddedTunnel(tunnel=tunnel, carrier_fwd=carrier_fwd, carrier_rev=carrier_rev)
 
 
