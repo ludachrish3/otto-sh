@@ -14,11 +14,13 @@ Topology (see ``tests/_fixtures/lab_data/tech1/lab.json``)
 - tomato_seed (test2, 10.10.200.12)
 - pepper_seed (test3, 10.10.200.13)
 
-``lab.json`` declares an ``eth1``/``192.168.1.x`` data-plane interface for
-carrot/tomato/pepper, and since 2026-07-16 the bed provisions those
-addresses for real (Vagrantfile ``provision_data_plane``: a netplan drop-in
-adds ``192.168.1.<last-octet>/24`` alongside each peer's management address
-on ``eth1``). The library-API tests below still run over the management ips:
+``lab.json`` declares an ``eth2``/``192.168.1.x`` data-plane interface for
+carrot/tomato/pepper, and the bed provisions those addresses for real
+(Vagrantfile: a dedicated second NIC on the ``otto-dataplane`` internal
+network — originally stacked onto ``eth1`` 2026-07-16, moved to its own
+``eth2`` netdev the same day so the data plane is impairable; the mgmt
+netdev refusal in ``otto.link`` is per-device). The library-API tests below
+still run over the management ips:
 ``make_host``/``_build_host`` never wires the lab-data ``interfaces`` dict
 onto the constructed ``UnixHost`` (its ``interfaces`` field defaults to
 empty), so ``otto.tunnel.manage._resolve_one`` falls back to the host's own
@@ -689,13 +691,13 @@ def _cli_cycle_sut_dir(tmp_path: Path) -> Path:
     Two deliberate properties:
 
     - The host entries are the tech1 fixture's, verbatim — INCLUDING the
-      declared ``eth1``/``192.168.1.x`` data-plane interfaces. Unlike the
+      declared ``eth2``/``192.168.1.x`` data-plane interfaces. Unlike the
       library-API tests above (whose ``make_host`` never wires ``interfaces``,
       so they bind management ips), the CLI path loads lab data verbatim and
       resolves each endpoint to its declared data-plane ip — so this cycle
       also guards the bed contract that ``192.168.1.x`` is provisioned on the
-      peers' ``eth1`` (Vagrantfile ``provision_data_plane``); an unprovisioned
-      bed fails loudly at the post-add verify.
+      peers (Vagrantfile: the dedicated ``eth2`` data-plane NIC); an
+      unprovisioned bed fails loudly at the post-add verify.
     - The repo is named ``repo1`` and declares the same ``api`` compose as
       ``tests/repo1``, so lab load registers container-host placeholders —
       the exact issue #139 trigger. Every tunnel command must leave them

@@ -420,6 +420,14 @@ VERS
     }.each do |name, ip|
         config.vm.define name, autostart: false do |node|
             node.vm.network "private_network", ip: ip
+            # Dedicated data-plane NIC (eth2). An *internal* network, not
+            # host-only: no host adapter joins the wire, so a real
+            # 192.168.1.0/24 LAN on the host can't clash and VirtualBox's
+            # host-only range whitelist (/etc/vbox/networks.conf) is never
+            # consulted. See provision_data_plane below for the full story.
+            node.vm.network "private_network",
+                ip: "192.168.1.#{ip.split('.').last}",
+                virtualbox__intnet: "otto-dataplane"
             provision_test_vm(node, name)
             provision_data_plane(node, ip)
             provision_docker(node, name)
@@ -437,13 +445,19 @@ VERS
     config.vm.define "zephyr", autostart: false do |zephyr|
         zephyr.vm.network "private_network", ip: "10.10.200.14"
 
+        # Data-plane NIC (eth2, 192.168.1.14), same wire as the test peers:
+        # basil is the embedded lab's member on the shared data plane, so
+        # inter-lab tunnels (e.g. veggies+embedded) can bind a basil endpoint
+        # there. Internal network — see the test-VM block's comment.
+        zephyr.vm.network "private_network",
+            ip: "192.168.1.14",
+            virtualbox__intnet: "otto-dataplane"
+
         # Standard SSH/telnet/FTP baseline (also sets the hostname). Lets otto
         # use this VM as the SSH hop to reach the Zephyr QEMU instance.
         provision_test_vm(zephyr, "zephyr")
 
-        # Data-plane address (192.168.1.14), same as the test peers: basil is
-        # the embedded lab's member on the shared wire, so inter-lab tunnels
-        # (e.g. veggies+embedded) can bind a basil endpoint on the data plane.
+        # Legacy-drop-in cleanup + eth2 assertion for the data plane above.
         provision_data_plane(zephyr, "10.10.200.14")
 
         # Override the 1552 MB default — Zephyr SDK install and `west build`
@@ -1271,20 +1285,41 @@ EOF
         vm.vm.hostname = domain ? "#{base}.#{domain}" : base
     end
 
-    # Second, data-plane address on the same private wire: 192.168.1.<last-octet>
-    # rides eth1 alongside the 10.10.200.x management address. otto's lab data
-    # (tests/_fixtures/lab_data/tech1/lab.json) has always declared
-    # eth1 = 192.168.1.x for the test peers; this makes the bed match, so
-    # `otto tunnel add` can bind ingress sockets to the declared data-plane ip
-    # (otto-sh issue #139 follow-up). Written as a netplan drop-in (60- sorts
-    # after vagrant's 50-) that must repeat the management address: netplan
-    # REPLACES, not merges, per-interface address lists across files.
+    # Data-plane address 192.168.1.<last-octet> — a DEDICATED second NIC
+    # (eth2) on the VirtualBox internal network "otto-dataplane", declared as
+    # a private_network in each peer's define block (vagrant writes the
+    # netplan for it; nothing to configure here). It used to be stacked onto
+    # eth1 alongside the 10.10.200.x management address, which made the mgmt
+    # netdev and the data plane inseparable: `otto link impair` refuses any
+    # placement on the netdev carrying the management ip (the self-lockout
+    # guard in src/otto/link/placement.py), so the data plane could never be
+    # impaired. On its own NIC it can. otto's lab data
+    # (tests/_fixtures/lab_data/tech1/lab.json) declares eth2 = 192.168.1.x
+    # to match.
+    #
+    # This provisioner now does two things:
+    #   (a) removes the stacked-address era's netplan drop-in. netplan
+    #       REPLACES, not merges, per-interface address lists across files —
+    #       a stale 60- file would override vagrant's own eth1 entry and put
+    #       192.168.1.x on BOTH netdevs after a `vagrant reload --provision`.
+    #   (b) fails the provision LOUDLY if eth2 didn't come up with the
+    #       declared address — adding a NIC needs a full `vagrant reload`
+    #       (halt + up), not just re-provisioning a running VM.
     def provision_data_plane(vm, mgmt_ip)
         octet = mgmt_ip.split(".").last
-        vm.vm.provision "shell", name: "data plane 192.168.1.#{octet}", keep_color: true, inline: <<-SHELL
-            printf 'network:\\n  version: 2\\n  ethernets:\\n    eth1:\\n      addresses:\\n        - #{mgmt_ip}/24\\n        - 192.168.1.#{octet}/24\\n' > /etc/netplan/60-otto-dataplane.yaml
-            chmod 600 /etc/netplan/60-otto-dataplane.yaml
-            netplan apply
+        vm.vm.provision "shell", name: "data plane 192.168.1.#{octet} (eth2)", keep_color: true, inline: <<-SHELL
+            set -e
+            if [ -f /etc/netplan/60-otto-dataplane.yaml ]; then
+                rm -f /etc/netplan/60-otto-dataplane.yaml
+                netplan apply
+            fi
+            if ! ip -o addr show dev eth2 2>/dev/null | grep -q "192.168.1.#{octet}/24"; then
+                echo "ERROR: eth2 is missing 192.168.1.#{octet}/24 — the data-plane NIC" >&2
+                echo "needs a full 'vagrant reload' (halt + up) to attach, not a bare" >&2
+                echo "'vagrant provision'." >&2
+                exit 1
+            fi
+            ip -o addr show dev eth2 | head -1
         SHELL
     end
 

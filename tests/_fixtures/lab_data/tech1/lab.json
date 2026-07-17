@@ -17,7 +17,7 @@
                 "carrot"
             ],
             "interfaces": {
-                "eth1": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}
+                "eth2": {"ip": "192.168.1.11", "subnet": "192.168.1.0/24"}
             },
             "labs": [
                 "veggies"
@@ -40,7 +40,7 @@
                 "tomato"
             ],
             "interfaces": {
-                "eth1": {"ip": "192.168.1.12", "subnet": "192.168.1.0/24"}
+                "eth2": {"ip": "192.168.1.12", "subnet": "192.168.1.0/24"}
             },
             "labs": [
                 "veggies"
@@ -63,7 +63,7 @@
                 "pepper"
             ],
             "interfaces": {
-                "eth1": {"ip": "192.168.1.13", "subnet": "192.168.1.0/24"}
+                "eth2": {"ip": "192.168.1.13", "subnet": "192.168.1.0/24"}
             },
             "labs": [
                 "veggies"
@@ -85,7 +85,7 @@
                 "basil"
             ],
             "interfaces": {
-                "eth1": {"ip": "192.168.1.14", "subnet": "192.168.1.0/24"}
+                "eth2": {"ip": "192.168.1.14", "subnet": "192.168.1.0/24"}
             },
             "labs": [
                 "embedded"
@@ -281,8 +281,8 @@
     "links": [
         {
             "endpoints": [
-                {"host": "carrot_seed", "interface": "eth1"},
-                {"host": "tomato_seed", "interface": "eth1"}
+                {"host": "carrot_seed", "interface": "eth2"},
+                {"host": "tomato_seed", "interface": "eth2"}
             ],
             "protocol": "udp"
         }
