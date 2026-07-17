@@ -1,9 +1,11 @@
 """MetricDB schema v2 — session-bound writes, multi-session archives,
 fail-loud on anything that is not v2 (spec 2026-07-12: legacy read DROPPED)."""
 
+import asyncio
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -112,6 +114,51 @@ async def test_crash_leaves_end_null(tmp_path):
     await write_session(path, "crashed", finalize=False)
     (session,) = read_sessions(str(path))
     assert session.end is None  # reader-side fallback is the PRODUCER's job (Task 3)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "abort_at",
+    ["PRAGMA user_version =", "INSERT INTO sessions"],
+    ids=["before-version-stamp", "before-session-row"],
+)
+async def test_cancelled_open_does_not_poison_the_file(tmp_path, abort_at):
+    """A cancelled/interrupted ``open()`` must leave the file as it found it.
+
+    Follow-up to the #136-wave race: open()'s writes used to run outside any
+    transaction (executescript autocommits DDL), so a cancellation landing
+    after the CREATE TABLEs but before the version stamp left ``(tables,
+    user_version=0)`` durable on disk — exactly the state ``_check_version``
+    refuses as "pre-session schema". One interrupted startup then poisoned
+    the --db path for every later run. With open()'s schema + version stamp
+    + session row in a single transaction, nothing of an aborted open
+    survives, and the next open of the same path succeeds.
+    """
+    import aiosqlite
+
+    path = tmp_path / "lab.db"
+    real_execute = aiosqlite.Connection.execute
+
+    def aborting_execute(self, sql, parameters=None):
+        # Raising at the call site stands in for a task cancellation being
+        # delivered at this await point inside open().
+        if sql.startswith(abort_at):
+            raise asyncio.CancelledError
+        return real_execute(self, sql, parameters)
+
+    db = MetricDB(str(path), frame_at("victim"), lab_json="{}", meta_json="{}")
+    with (
+        patch.object(aiosqlite.Connection, "execute", aborting_execute),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await db.open()
+
+    # The interrupted open must not have poisoned the path: a later run
+    # pointed at the same --db file opens it and archives normally.
+    await write_session(path, "survivor")
+    (session,) = read_sessions(str(path))
+    assert session.label == "survivor"
+    assert session.end is not None
 
 
 @pytest.mark.asyncio

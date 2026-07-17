@@ -30,17 +30,23 @@ from .session import SessionFrame
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA = """
--- chart_map_json was added to v2 IN PLACE, before v2 ever shipped — there is
--- deliberately no migration and no version bump to hunt for. It is not
--- derivable from anything else in a session (meta_json's charts are one entry
--- per CHART; metric rows carry per-SERIES labels, and the two rarely match),
--- and without it the producer emits chart_map={} and the frontend charts every
--- series separately (see otto/monitor/export.py, web/src/data/seriesTree.ts).
---
--- tunnels_json was likewise added to v2 in place (spec 2026-07-16): the last
--- known tunnel set as a JSON list of TunnelRecord dumps, overwritten on
--- change by the collector's tunnel loop — last-known-state only, no history.
+# chart_map_json was added to v2 IN PLACE, before v2 ever shipped — there is
+# deliberately no migration and no version bump to hunt for. It is not
+# derivable from anything else in a session (meta_json's charts are one entry
+# per CHART; metric rows carry per-SERIES labels, and the two rarely match),
+# and without it the producer emits chart_map={} and the frontend charts every
+# series separately (see otto/monitor/export.py, web/src/data/seriesTree.ts).
+#
+# tunnels_json was likewise added to v2 in place (spec 2026-07-16): the last
+# known tunnel set as a JSON list of TunnelRecord dumps, overwritten on
+# change by the collector's tunnel loop — last-known-state only, no history.
+#
+# One statement per entry, NOT one executescript blob: open() runs these
+# inside a single explicit transaction together with the version stamp and
+# this session's row (executescript would force-COMMIT it), so an open()
+# interrupted at any point leaves nothing durable — see open().
+_SCHEMA_STATEMENTS = (
+    """
 CREATE TABLE IF NOT EXISTS sessions (
     id             TEXT    PRIMARY KEY,
     label          TEXT,
@@ -51,7 +57,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     meta_json      TEXT    NOT NULL DEFAULT '{}',
     chart_map_json TEXT    NOT NULL DEFAULT '{}',
     tunnels_json   TEXT    NOT NULL DEFAULT '[]'
-);
+)
+""",
+    """
 CREATE TABLE IF NOT EXISTS metrics (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT    NOT NULL REFERENCES sessions(id),
@@ -60,7 +68,9 @@ CREATE TABLE IF NOT EXISTS metrics (
     label      TEXT    NOT NULL,
     value      REAL    NOT NULL,
     source     TEXT
-);
+)
+""",
+    """
 CREATE TABLE IF NOT EXISTS events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT    NOT NULL REFERENCES sessions(id),
@@ -70,7 +80,9 @@ CREATE TABLE IF NOT EXISTS events (
     source     TEXT    NOT NULL DEFAULT 'manual',
     color      TEXT    NOT NULL DEFAULT '#888888',
     dash       TEXT    NOT NULL DEFAULT 'dash'
-);
+)
+""",
+    """
 CREATE TABLE IF NOT EXISTS log_events (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT    NOT NULL REFERENCES sessions(id),
@@ -78,8 +90,9 @@ CREATE TABLE IF NOT EXISTS log_events (
     host       TEXT    NOT NULL DEFAULT '',
     tab        TEXT    NOT NULL DEFAULT '',
     fields     TEXT    NOT NULL DEFAULT '{}'
-);
-"""
+)
+""",
+)
 
 SCHEMA_VERSION = 2
 
@@ -113,7 +126,7 @@ def _check_session_columns(columns: set[str], path: str) -> None:
     """Refuse a ``sessions`` table missing an in-place v2 column.
 
     ``chart_map_json`` and ``tunnels_json`` were both added to v2 in place,
-    pre-release (see ``_SCHEMA``) — the version number cannot distinguish the
+    pre-release (see ``_SCHEMA_STATEMENTS``) — the version number cannot distinguish the
     shapes, only the columns can. Refused loud, no migration, naming the
     missing column.
     """
@@ -241,7 +254,17 @@ class MetricDB:
                         {row[1] async for row in await conn.execute("PRAGMA table_info(sessions)")},
                         self._path,
                     )
-                await conn.executescript(_SCHEMA)
+                # ONE transaction for everything open() writes — schema,
+                # version stamp, this session's row. Outside a transaction,
+                # each statement is durable the moment it runs, so an open()
+                # interrupted between the CREATE TABLEs and the version stamp
+                # left (tables, user_version=0) on disk: exactly the state
+                # _check_version refuses as "pre-session schema", poisoning
+                # the --db path for every later run. (executescript can't be
+                # used here — it force-COMMITs any open transaction first.)
+                await conn.execute("BEGIN IMMEDIATE")
+                for statement in _SCHEMA_STATEMENTS:
+                    await conn.execute(statement)
                 await conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 # chart_map_json is deliberately NOT inserted here: it is empty
                 # at open() by construction (the store's chart_map is populated

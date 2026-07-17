@@ -513,6 +513,17 @@ class OttoSuite(Generic[TOptions]):
         collector = self._monitor_collector
         server = self._monitor_server
 
+        # Open the session archive BEFORE spawning the collector task.
+        # collector.run() also calls init_db() (idempotent), but in-task the
+        # open races server startup — the only thing this method awaits — so
+        # a prompt stop_monitor() could cancel open() mid-flight, leaving a
+        # partially-initialized DB that finalize() silently no-ops on
+        # (nightly/CI flake, issues #136/#137/#142/#143/#144). Awaiting it
+        # here also surfaces a locked/unsupported --db file as a loud error
+        # at start, instead of dying inside the task where _run()'s gather
+        # (return_exceptions=True) would swallow it.
+        await collector.init_db()
+
         async def _run() -> None:
             task = asyncio.create_task(collector.run(interval))
             try:

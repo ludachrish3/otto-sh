@@ -383,6 +383,17 @@ class OttoPlugin:
                 str(db_path), frame, lab, meta_collector, interval=self._monitor_interval
             )
         collector = build_monitor_collector(hosts=hosts, db=monitor_db)
+        # Open the session archive HERE, not inside the per-class collection
+        # task: that task is cancelled at class teardown, and a class that
+        # finishes before open() completes would leave a partially-initialized
+        # DB — which the NEXT class's retry then rejects as unsupported, with
+        # the error swallowed by the task's gather(return_exceptions=True),
+        # and the teardown's finalize() no-oping on the never-opened
+        # connection (same race as suite.start_monitor — issues #136 etc.).
+        # aiosqlite delivers each call's result on the calling loop, so a
+        # connection opened on this session loop is safe to write from the
+        # class loops that drive run().
+        await collector.init_db()
 
         OttoSuite._session_monitor_collector = collector  # noqa: SLF001 — intra-package write to OttoSuite class-level monitor collector slot
         try:

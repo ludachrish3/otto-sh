@@ -31,7 +31,7 @@ from otto.host.login_proxy import Cred
 from otto.host.unix_host import UnixHost
 from otto.models import MonitorExport
 from otto.monitor.collector import MetricCollector
-from otto.monitor.db import read_sessions
+from otto.monitor.db import MetricDB, read_sessions
 from otto.monitor.export import build_db_export
 from otto.suite.plugin import OttoPlugin
 from otto.suite.pytest_plugin import OttoOptionsPlugin
@@ -596,6 +596,53 @@ class TestStartMonitorArchive:
         # always synthesizes one: row.end, else the last sample, else start),
         # so it can't tell a finalized session from a crashed one. Only the
         # archive's own column can (mirrors test_plugin.py's identical check).
+        (raw_session,) = read_sessions(str(out_path))
+        assert raw_session.end is not None, "a clean stop_monitor() left end unstamped"
+
+    @pytest.mark.asyncio
+    async def test_start_monitor_returns_with_session_archive_committed(
+        self, tmp_path: Path, hermetic_monitor_dist: Path
+    ) -> None:
+        """Regression: nightly/CI flake (issues #136/#137/#142/#143/#144).
+
+        ``MetricDB.open()`` used to run only inside the collector task spawned
+        by ``start_monitor``'s ``_run()``, racing uvicorn startup — the only
+        thing ``start_monitor()`` awaits. A prompt ``stop_monitor()`` then
+        cancelled ``open()`` at whichever await point it had reached, leaving
+        the archive in one of three partial states (no tables / user_version
+        0 / no session row) while ``finalize()`` silently no-oped on the
+        never-opened connection. The slowed ``open()`` here turns that
+        CI-load coin flip into a certainty: pre-fix, the collector task is
+        still sleeping when ``start_monitor()`` returns, so the read below
+        finds no committed session. The invariant pinned: when
+        ``start_monitor(db_path=...)`` returns, the session row is already
+        committed — before any cancellable task can be torn down.
+        """
+        del hermetic_monitor_dist
+        out_path = tmp_path / "monitor.db"
+        suite = _make_suite(tmp_path)
+
+        real_open = MetricDB.open
+
+        async def slow_open(db: MetricDB) -> None:
+            await asyncio.sleep(0.5)
+            await real_open(db)
+
+        with (
+            patch.object(MetricCollector, "run", _fake_collector_run),
+            patch.object(MetricDB, "open", slow_open),
+        ):
+            await suite.start_monitor(
+                hosts=[_make_unconnected_host("router1")],
+                db_path=str(out_path),
+                interval=1.0,
+            )
+            try:
+                (session,) = build_db_export(str(out_path)).sessions
+                assert [h.id for h in session.lab.hosts] == ["router1"]
+            finally:
+                await suite.stop_monitor()
+
         (raw_session,) = read_sessions(str(out_path))
         assert raw_session.end is not None, "a clean stop_monitor() left end unstamped"
 
