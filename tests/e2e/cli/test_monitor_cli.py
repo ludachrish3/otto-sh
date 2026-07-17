@@ -255,7 +255,7 @@ def test_live_without_lab_reports_missing_option(tmp_path: Path) -> None:
 #
 # Regression coverage for the live-bed-caught bug: `lab_free=True` (added to
 # fix #7 above) makes `command_preamble` early-return entirely for BOTH of
-# monitor's branches, skipping `ensure_cli_session` (banner + `init_cli_logging`)
+# monitor's branches, skipping `ensure_cli_session` (`init_cli_logging`)
 # for review mode too — not just the lab load. With no handler attached to the
 # `'otto'` logger, `MonitorServer.serve()`'s `logger.info(f"Server running at
 # {url}")` (otto/monitor/server.py) vanished into Python's `lastResort`

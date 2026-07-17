@@ -122,7 +122,7 @@ def monitor(
 
         # monitor's spec is lab_free, so the shared command_preamble
         # early-returns entirely for BOTH branches — including
-        # ensure_cli_session (banner + init_cli_logging), not just the lab
+        # ensure_cli_session (init_cli_logging), not just the lab
         # load. Without it the `'otto'` logger has no handler, so
         # MonitorServer.serve()'s `logger.info(f"Server running at {url}")`
         # silently vanishes into Python's lastResort (WARNING+ only)
@@ -136,7 +136,7 @@ def monitor(
         # --live branch below is: a direct call to monitor() with a
         # hand-built context (this file's own unit tests) never went
         # through the root callback. Run after the source is validated so a
-        # doomed invocation (bad file) doesn't print a banner first.
+        # doomed invocation (bad file) doesn't initialise logging for nothing.
         from .invoke import ensure_cli_session
 
         if ctx.meta.get("_otto_root_options") is not None:

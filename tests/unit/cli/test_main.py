@@ -30,7 +30,7 @@ runner = CliRunner()
 # root callback. Tests that assert lab-load / logging side-effects must therefore
 # dispatch a real (non-help, non-lab-free) leaf so the preamble fires. This
 # scratch command is that leaf: its body is a no-op, but invoking `otto --lab X
-# _main_probe` drives ensure_cli_session (banner/logging) + ensure_lab_context
+# _main_probe` drives ensure_cli_session (logging) + ensure_lab_context
 # (lab load + reservation state) + the per-command output dir + the gate.
 async def _main_probe() -> CommandResult:
     return CommandResult(Status.Success, value="", command="probe", retcode=0)

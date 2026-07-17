@@ -211,27 +211,22 @@ class RootOptions:
 
 
 def ensure_cli_session(ctx: typer.Context) -> None:
-    """Print the banner and initialise CLI logging once per invocation (idempotent).
+    """Initialise CLI logging once per invocation (idempotent).
 
     Split out of :func:`ensure_lab_context` so a soft lab probe (class-scoped
-    ``otto host`` menus via :func:`try_ensure_lab`) never prints the banner or
-    touches logging. Guarded by ``ctx.meta['_otto_session_ready']``.
+    ``otto host`` menus via :func:`try_ensure_lab`) never touches logging.
+    Guarded by ``ctx.meta['_otto_session_ready']``. The banner is not printed
+    here — it shows on help screens only, via :func:`ensure_help_banner`.
     """
     meta = ctx.meta
     if meta.get("_otto_session_ready"):
         return
     meta["_otto_session_ready"] = True
 
-    from rich import print as rprint
-    from rich.align import Align
-
     from ..host import HostFilter
     from ..logger import management
-    from .banner import banner
 
     opts: RootOptions = meta["_otto_root_options"]
-
-    rprint(Align.center(banner))
 
     management.init_cli_logging(
         xdir=opts.xdir,
@@ -488,13 +483,32 @@ def ensure_lab_session(ctx: typer.Context, spec: "CommandSpec") -> None:
         get_context().output_dir = management.create_output_dir(spec.name, sub)
 
 
+def ensure_help_banner(ctx: typer.Context) -> None:
+    """Print the banner before rendered help text, once per invocation (idempotent).
+
+    Independent of :func:`ensure_cli_session`: every help screen shows the
+    banner regardless of which command it belongs to, while real command
+    execution never shows it. Guarded by ``ctx.meta['_otto_help_banner_shown']``
+    — ``ctx.meta`` is shared by reference down the whole context chain, so one
+    guard covers the root context and every leaf/group context beneath it.
+    """
+    meta = ctx.meta
+    if meta.get("_otto_help_banner_shown"):
+        return
+    meta["_otto_help_banner_shown"] = True
+
+    from .banner import print_banner
+
+    print_banner()
+
+
 def command_preamble(ctx: typer.Context) -> None:
     """Run once when a real (non-help) command invocation starts.
 
     Order: bootstrap errors fail loud → lab-free commands are done → CLI
-    session (banner/logging) → lab context → per-command output dir →
-    reservation gate. ``--help`` paths never reach this function: click's
-    help option exits during leaf parse, before ``Command.invoke``.
+    session (logging) → lab context → per-command output dir → reservation
+    gate. ``--help`` paths never reach this function: click's help option
+    exits during leaf parse, before ``Command.invoke``.
     """
     meta = ctx.meta
     if meta.get("_otto_preamble_done"):
@@ -530,6 +544,26 @@ def _wrap_invoke(cmd: Any, spec: "CommandSpec") -> Any:
     return cmd
 
 
+def _wrap_get_help(cmd: Any) -> None:
+    """Wrap *cmd*'s ``get_help`` to print the banner first (idempotent).
+
+    Covers every way help text gets rendered: the eager ``--help``/``-h``
+    option, ``no_args_is_help``, and otto's own manual ``rprint(ctx.get_help())``
+    call sites (e.g. ``otto host``'s class-scoped menu, bare ``otto monitor``)
+    — they all resolve through ``ctx.get_help()`` → ``ctx.command.get_help(ctx)``.
+    """
+    if getattr(cmd, "_otto_help_wrapped", False):
+        return
+    cmd._otto_help_wrapped = True  # noqa: SLF001 — own marker attribute on the command object
+    original_get_help = cmd.get_help
+
+    def _get_help_with_banner(inner_ctx: Any) -> str:
+        ensure_help_banner(inner_ctx)
+        return original_get_help(inner_ctx)
+
+    cmd.get_help = _get_help_with_banner
+
+
 def wrap_leaf_callbacks(cmd: Any, spec: "CommandSpec") -> Any:
     """Wrap every leaf command under *cmd* so its invoke runs the preamble first.
 
@@ -539,9 +573,12 @@ def wrap_leaf_callbacks(cmd: Any, spec: "CommandSpec") -> Any:
     wrap their ``get_command`` so lazily-synthesized subcommands (e.g. the
     dynamic ``otto host <verb>`` commands) are wrapped on resolution too.
     Already-wrapped commands are skipped (resolution results are cached).
+    Also wraps every node's ``get_help`` (see ``_wrap_get_help``) so any
+    help screen reached through this tree shows the banner.
     """
     if getattr(cmd, "_otto_preambled", False):
         return cmd
+    _wrap_get_help(cmd)
     if not hasattr(cmd, "commands"):
         return _wrap_invoke(cmd, spec)
 

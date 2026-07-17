@@ -29,6 +29,78 @@ def test_dispatch_resolves_only_the_target(monkeypatch):
     assert "otto.cli.cov" not in sys.modules
 
 
+# ── Issue #140: banner shows on help screens only ────────────────────────────
+
+
+def _banner_fragment() -> str:
+    """A distinctive line from the otto banner, safe to grep for in CLI output."""
+    from otto.cli.banner import banner
+
+    return banner.plain.splitlines()[1].strip()
+
+
+class TestBannerOnHelpOnly:
+    """The banner shows on every help screen and nowhere else (issue #140)."""
+
+    def test_root_help_shows_banner(self):
+        result = runner.invoke(app, ["--help"])
+        assert result.exit_code == 0
+        assert _banner_fragment() in result.output
+
+    def test_root_bare_invocation_shows_banner(self):
+        """Bare ``otto`` triggers Typer's ``no_args_is_help`` — same banner hook."""
+        result = runner.invoke(app, [])
+        assert _banner_fragment() in result.output
+
+    def test_subcommand_help_shows_banner(self):
+        result = runner.invoke(app, ["host", "--help"])
+        assert result.exit_code == 0
+        assert _banner_fragment() in result.output
+
+    def test_nested_group_help_shows_banner(self):
+        result = runner.invoke(app, ["test", "--help"], env={"OTTO_LAB": ""})
+        assert result.exit_code == 0
+        assert _banner_fragment() in result.output
+
+    def test_bare_host_menu_shows_banner(self):
+        """``otto host`` (no host id) manually echoes ``ctx.get_help()`` — must show it too."""
+        result = runner.invoke(app, ["host"], env={"OTTO_LAB": ""})
+        assert _banner_fragment() in result.output
+
+    def test_banner_shown_exactly_once_on_a_help_screen(self):
+        result = runner.invoke(app, ["--help"])
+        assert result.output.count(_banner_fragment()) == 1
+
+    def test_real_command_execution_shows_no_banner(self, tmp_path):
+        """The banner is help-only: a real (non-help) leaf must never print it."""
+        result = runner.invoke(
+            app,
+            ["schema", "export", "--out", str(tmp_path), "--builtins-only"],
+            env={"OTTO_LAB": ""},
+        )
+        assert result.exit_code == 0, result.output
+        assert _banner_fragment() not in result.output
+
+    def test_bare_monitor_usage_message_shows_banner(self):
+        """``otto monitor`` (neither ``--live`` nor a source) manually echoes
+        ``ctx.get_help()`` before exiting 2 — must show the banner too."""
+        result = runner.invoke(app, ["monitor"], env={"OTTO_LAB": ""})
+        assert result.exit_code == 2
+        assert _banner_fragment() in result.output
+
+    def test_ensure_help_banner_is_idempotent(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from otto.cli.invoke import ensure_help_banner
+
+        ctx = SimpleNamespace(meta={})
+        with patch("otto.cli.banner.print_banner") as mock_print:
+            ensure_help_banner(ctx)
+            ensure_help_banner(ctx)
+        mock_print.assert_called_once()
+
+
 def test_monitor_help_through_root_surfaces_flat_options():
     """``otto monitor --help`` (root dispatch) must show the leaf's own flags.
 

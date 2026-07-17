@@ -217,6 +217,17 @@ class _OttoGroup(TyperGroup):
         pending = ctx.meta.get("_pending_subcmd_args") or []
         return pending[0] if pending else None
 
+    @override
+    def get_help(self, ctx: Any) -> str:
+        # Root help never runs the leaf-invoke preamble, so this is the only
+        # place the ROOT screen's banner gets printed. Subcommand help is
+        # covered separately: `_real()` wraps every resolved node's own
+        # `get_help` (see `otto.cli.invoke._wrap_get_help`).
+        from .invoke import ensure_help_banner
+
+        ensure_help_banner(ctx)
+        return super().get_help(ctx)
+
     def _wants_real(self, ctx: Any, cmd_name: str) -> bool:
         """Return whether *cmd_name* is the invocation's actual dispatch/completion target.
 
