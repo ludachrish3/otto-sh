@@ -2,9 +2,7 @@
 
 ## General
 
-- tunnel creation for some reason uses docker???
-- Turn off scrolling in graphs to zoom in. It makes zooming on the page impossible
-- Add a random token to the URL for the sake of security. This makes it so that most visitors can only enter if they have that specific URL with the token.
+- Turn off scrolling in graphs to zoom in. It makes scrolling on the page impossible
 - Make sure we're up-to-date for Untitled component versions: <https://www.untitledui.com/react/docs/upgrade>
 - Update components to use Untitled UI components.
   - The time/date picker should be the Untitled `Range calendar card` (<https://www.untitledui.com/react/components/date-pickers>)
@@ -13,14 +11,10 @@
     - Import and export should be in a separate option group
 - Add a topology screenshot to the guide — trivially rides the rewritten capture now.
 - Retire the fixture-stem enumeration class (three near-misses this phase; derive all lists from one source).
-- MiniMap: deferred from the spec with your veto invited — say the word and it's a small task.
 - Slot ≥ 8 palette policy (top of the Plan-3 follow-ups): what a 9th series does — design decision, not code yet.
-- One issue I've noticed is with the edges in the topology view. They really need a legend/key so that we know what each color and line type mean. Also, the lines connect in odd locations on the boxes in the topology view. I'm looking at the kitchen-sink for reference: `db-01` has connections to other elements at the same depth, but its lines all start on its left side and end on its peers'right sides. I think it would look more natural if those lines originated on the side of `db-01` closest to each host. In this case, all the peers are below `db-0`, so they'd start on `db-01`'s bottom edge and end on all the peers' top edges. The lines that connect elements at different depth layers looks right to me
 - safari's chart titles bleed into the menu on the lefthand side
-- socat tunnel stability tests (bringing up and down many times is good enough)
 - External libraries should also be able to provide data plots. A possible example is an external traffic generator. If it has metrics to share and record (packets/sec, connections/sec), it should also be able to record these in the graphs and DB entries.
 - per-ticket coverage report
-- Should `otto init` automatically place the JSON schemas in the correct `~/.vscode` location? That simplifies otto's command tree and makes the schema aspect just a flag that's on by default when running `otto init`. If the schemas are already there, validation could be done and prompt the user if they'd like to replace them.
 - Monitor GUI displays UTC times instead of local times
 - Untitled UI component adoption: the token foundation and primitives
   (Button, Badge, segmented control, Select, dropdown/Menu, slideout-menu,
@@ -32,10 +26,8 @@
   Recharts, and it ships no node-graph canvas on any tier). See
   [untitled-ui-adoption-followups.md](untitled-ui-adoption-followups.md) for
   what the adoption leaves behind.
-- If manual coverage reports track the line numbers at the time of test (even after correcting for local change drift), would further changes that shift line numbers in the file be resilient to older manual test runs? Like for instance if line 5 was manually covered and then multiple commits later added code above it (but never touching that manually tested line of code), how would we continue to correlate the manual coverage in later reports? Especially if the manual coverage is committed to the repo and always used as an input for future coverage reports?
 - Maybe each coverage run can take an annotation (manual tests already do), which can be treated like a context in python coverage reports. If a line is covered by multiple tiers and runs of coverage, expanding the line with a dropdown error on the righthand side of the page will highlight all the contexts with the appropriate tier color and the context name.
 - Look into code quality (linting and type checking), coverage reports for the frontend typescript code. I'd like there to be parity in terms of code quality enforcement for all code, python and typescripit alike.
-- Use sonnet to clean up type annotations throughout the repo. I noticed that the host.py file has quoted strings for many types. Annotations should only be strings if they're self-referential to support Python 3.10.
 - Docker redesign to use remote docker daemon management. Can pass through HTTP, TCP, and raw socket data over a tunneled SSH connection to a docker daemon host and control the docker daemon. The daemon needs to open a port that it listens on, and the SSH client sets up a port forwarding rule to access the docker daemon's open port.
 - E2E testing and compatibility matrix
 - Log tracebacks to the complete log file (the otto.log that currently gets saved)
